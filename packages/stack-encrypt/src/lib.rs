@@ -317,14 +317,16 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! # Whole values as one ciphertext
 //!
-//! A struct, a map, or a `Vec` other than the byte string `Vec<u8>` is not a
-//! scalar, and `encrypt` refuses it: there is no generic `Serialize` fallback.
-//! To encrypt a whole value as **one** ciphertext, name it: wrap it in
-//! [`OpaqueBlob`], which encodes it with Vitamin C's versioned storage
-//! profile (the format the Go SDK's opaque structs use too) and seals the
-//! encoding as one leaf through the same path as a scalar. The [`blob`]
-//! module documents the format, its errors, what the ciphertext's length
-//! reveals and what is wiped.
+//! `encrypt` refuses a struct, a map, or any `Vec` other than the byte
+//! string `Vec<u8>`, because none of them is a scalar. The crate has no
+//! `Serialize` fallback. To encrypt a whole value as **one** ciphertext,
+//! wrap it in [`OpaqueBlob`].
+//!
+//! `OpaqueBlob` encodes the value with Vitamin C's versioned storage
+//! profile. The Go SDK's opaque structs use the same profile. `OpaqueBlob`
+//! then seals the encoded bytes as one leaf, in the same way as a scalar.
+//! The [`blob`] module docs cover the format, the errors, what the
+//! ciphertext's length reveals, and what is wiped.
 //!
 //! ```
 //! # use serde::{Deserialize, Serialize};
@@ -333,8 +335,12 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # struct Card { number: String, expiry: (u8, u16) }
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
 //! use stack_encrypt::{OpaqueBlob, StackCipher};
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
 //! let cipher = StackCipher::builder()
-//!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let card = Card { number: "4111 1111 1111 1111".into(), expiry: (12, 2031) };
 //! let ct = keyset.encrypt_with_context(OpaqueBlob::new(card), "users/42/card").await?;
@@ -345,12 +351,13 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
-//! Existing structural plans and derives still use [`StackCipherText`], a tree
-//! of sealed leaves. Their low-level direct entry points are
-//! [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`]; their
-//! borrowed conversion helpers live in [`target::legacy`]. They are separate
-//! from the owned scalar API: a struct sealed through them is one ciphertext
-//! per field, and a struct in an [`OpaqueBlob`] is one ciphertext.
+//! The structural plans and derives still use [`StackCipherText`], a tree
+//! of sealed leaves. Their low-level entry points are
+//! [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`]. Their
+//! borrowed conversion helpers are in [`target::legacy`].
+//!
+//! The structural API is separate from the owned scalar API. A struct sealed through them is one
+//! ciphertext per field. A struct in an [`OpaqueBlob`] is one ciphertext.
 //!
 //! # What is authenticated
 //!

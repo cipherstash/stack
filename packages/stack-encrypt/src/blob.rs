@@ -1,10 +1,14 @@
-//! A whole value as one ciphertext: [`OpaqueBlob`].
+//! Encrypt a whole value as one ciphertext with [`OpaqueBlob`].
 //!
-//! The scalar API ([`KeysetCipher::encrypt`]) seals one scalar as one
-//! [`Ciphertext`], and deliberately refuses everything else: a struct, a
-//! `Vec`, a map. There is no `Serialize` fallback, because a fallback would
-//! decide the stored bytes of every composite silently. `OpaqueBlob<T>` is
-//! the explicit way to say "encrypt this whole value as one ciphertext":
+//! Wrap a struct, map, or `Vec` in `OpaqueBlob` to encrypt all of it as one
+//! [`Ciphertext`], under one data key. Decrypt it by naming
+//! `OpaqueBlob<T>` as the result type.
+//!
+//! You must name the wrapper. [`KeysetCipher::encrypt`] encrypts only a
+//! scalar, such as a `String` or an integer, and a struct passed to it
+//! does not compile. The crate has no `Serialize` fallback, because a
+//! fallback would choose the stored bytes of every struct without the
+//! caller asking.
 //!
 //! ```
 //! use serde::{Deserialize, Serialize};
@@ -20,8 +24,10 @@
 //! }
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
 //! let cipher = StackCipher::builder()
-//!     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
 //!     .init()
 //!     .await?;
 //! let keyset = cipher.default_keyset();
@@ -32,8 +38,8 @@
 //!     tags: vec!["maths".into(), "engines".into()],
 //!     nickname: Some("ada".into()),
 //! };
-//! // One ciphertext, one data key, one leaf: `encrypt` consumes the value
-//! // and wipes it before the pending request is returned.
+//! // `encrypt` takes ownership of the value, and wipes it before it
+//! // returns the pending request.
 //! let ciphertext = keyset
 //!     .encrypt_with_context(OpaqueBlob::new(profile), ("users", "profile"))
 //!     .await?;
@@ -47,202 +53,288 @@
 //! # }).unwrap();
 //! ```
 //!
-//! What this is not: it is not the structural API, which seals a struct as
-//! a tree of leaves, one data key and one ciphertext per field
-//! ([`KeysetCipher::encrypt_tree`], the derives); it is not a batch, which
-//! is many values and many ciphertexts in one request
-//! ([`Pending::all`](crate::Pending::all)); and it is not a searchable
-//! document ([`json`](crate::json)). A blob is one opaque value: nothing
-//! inside it can be queried, and it is read back whole or not at all.
+//! A blob is opaque. You cannot query anything inside it, and you decrypt
+//! all of it or none of it. Use something else for these needs:
 //!
-//! # The codec
+//! - To encrypt each field of a struct as its own ciphertext, use the
+//!   structural API ([`KeysetCipher::encrypt_tree`] and the derives).
+//! - To encrypt many values in one request, use a batch
+//!   ([`Pending::all`](crate::Pending::all)) or a collection (see
+//!   [Collections](#collections)).
+//! - To search inside a JSON document, use the [`json`](crate::json) index.
 //!
-//! The value is encoded with Vitamin C's **storage profile**, version 1
-//! (`vitaminc_aead_frame::storage`), and the encoded bytes are sealed as
-//! one **bytes leaf** of the ordinary [`SealedValue`] v1 envelope. Nothing
-//! else is new: no second envelope, no new key request, no new AAD. The
-//! encoded blob is what the ciphertext would hold if the caller had sealed
-//! a `Vec<u8>` holding those bytes.
+//! # Collections
 //!
-//! The profile is a self-describing binary encoding built from the sealed
-//! leaf's own scalar tags and the transport frame's containers, with four
-//! things added for bytes that are kept: a header naming the profile and
-//! its version, a marker for a present `Option`, map keys that keep their
-//! kind, and a compatibility commitment. Its specification is normative and
-//! lives with the crate that implements it (`STORAGE.md` in
-//! `vitaminc-aead-frame`), pinned by a golden corpus every implementation
-//! must pass. The Go SDK writes and reads the same profile through `vcffi`:
-//! a Go opaque struct and a Rust `OpaqueBlob<T>` are one stored format.
+//! The two ways to combine `Vec` and `OpaqueBlob` give different results:
+//!
+//! - A `Vec<OpaqueBlob<T>>` is a collection of blobs. It encrypts into a
+//!   `Vec<Ciphertext>`, one ciphertext per element, through
+//!   [`EncryptInto`](crate::EncryptInto). The keys for every element are
+//!   requested together, and each element decrypts on its own. This suits
+//!   one blob per database row. The [crate docs on
+//!   collections](crate#collections) give the rules.
+//! - An `OpaqueBlob<Vec<T>>` is one blob that contains the whole `Vec`. It
+//!   encrypts into one `Ciphertext`.
+//!
+//! # The stored format
+//!
+//! The value is encoded with version 1 of Vitamin C's **storage profile**
+//! (`vitaminc_aead_frame::storage`). The encoded bytes are sealed as one
+//! **bytes leaf** of the ordinary [`SealedValue`] v1 envelope. A blob adds
+//! no second envelope, no new kind of key request and no new AAD. The
+//! ciphertext is the same as sealing a `Vec<u8>` that contains the encoded
+//! bytes.
+//!
+//! The storage profile is a binary encoding that describes its own
+//! structure. It uses the sealed leaf's scalar tags and the transport
+//! frame's containers. It adds four things that stored bytes need:
+//!
+//! - a header that names the profile and its version
+//! - a marker for an `Option` that is `Some`
+//! - map keys that keep their kind
+//! - a promise that a version's bytes never change meaning
+//!
+//! The specification is `STORAGE.md` in the `vitaminc-aead-frame` crate.
+//! Every implementation must pass its golden corpus of test vectors. The Go
+//! SDK writes and reads the same profile through `vcffi`, so a Go opaque
+//! struct and a Rust `OpaqueBlob<T>` are one stored format. See [Go](#go)
+//! for the type rules.
 //!
 //! Every blob starts with [`HEADER`]: the ASCII bytes `VCS`, then the
-//! version byte [`VERSION`]. The header is inside the plaintext, so it is
-//! encrypted with the value and authenticated by the leaf's AEAD tag: it is
-//! the authenticated discriminator that tells a blob from any other bytes
-//! leaf, and its version from any later one. Nothing about a blob, its
-//! version included, is visible before decryption.
+//! version byte, [`VERSION`]. The header is part of the plaintext, so it is
+//! encrypted with the value and covered by the leaf's AEAD tag. The header
+//! is what tells a blob apart from other bytes, and one version from
+//! another. Nothing about a blob, including its version, is visible before
+//! it is decrypted.
 //!
 //! ## Supported types
 //!
-//! `T` is any `serde::Serialize` type to encrypt and any
-//! `serde::de::DeserializeOwned` type to decrypt, in both cases also
-//! [`Zeroize`] (see [Cleanup](#cleanup)). The mapping is serde's data
-//! model, with these rules:
+//! To encrypt, `T` must implement `serde::Serialize` and [`Zeroize`]. To
+//! decrypt, `T` must implement `serde::de::DeserializeOwned` and `Zeroize`.
+//! [Cleanup](#cleanup) explains why `Zeroize` is needed. Each serde type is
+//! written as follows:
 //!
-//! | serde                              | blob node                                           |
+//! | serde type                         | Written as                                          |
 //! |------------------------------------|-----------------------------------------------------|
 //! | `bool`                             | bool                                                |
-//! | `i8`…`i128`, `u8`…`u128`           | an integer of that exact width (`u8` is admitted)   |
-//! | `f32`, `f64`                       | a float of that width, by its bits (NaN kept)       |
-//! | `char`, `&str`, `String`           | text (UTF-8)                                        |
-//! | bytes (`serde_bytes`)              | bytes; a `Vec<u8>` without it is an array of `u8`   |
-//! | `()`, unit struct, `None`          | null                                                |
+//! | `i8` to `i128`, `u8` to `u128`     | an integer of that exact width                      |
+//! | `f32`, `f64`                       | a float of that width, by its bits, so NaN is kept  |
+//! | `char`, `&str`, `String`           | text, in UTF-8                                      |
+//! | bytes, with `serde_bytes`          | bytes. A `Vec<u8>` without `serde_bytes` is an array of `u8` |
+//! | `()`, a unit struct, `None`        | null                                                |
 //! | `Some(v)`                          | a presence marker, then `v`                         |
-//! | sequence, tuple, tuple struct      | array                                               |
-//! | struct                             | object, by field name                               |
-//! | map                                | map; keys must be integers, text or bytes           |
-//! | enum                               | externally tagged: a unit variant is its name, any other an object of one entry |
+//! | a sequence, tuple or tuple struct  | an array                                            |
+//! | a struct                           | an object, keyed by field name                      |
+//! | a map                              | a map. Keys must be integers, text or bytes         |
+//! | an enum                            | externally tagged: a unit variant is its name, and any other variant is an object with one entry |
 //!
-//! Refused when writing ([`BlobError::Unwritable`]): nesting deeper than
-//! 128 levels, text or bytes longer than `u32::MAX`, a map key of another
-//! kind, a repeated key, a container whose declared length is not the
-//! number of children it wrote, or a value its own `Serialize` refused.
-//! The profile carries plain scalars only: the logical types the sealed
-//! leaf has (a date, a timestamp, a decimal, a UUID) are carried as what
-//! their serde impls write (text, usually), not as those leaf kinds.
+//! Encryption refuses these values with [`BlobError::Unwritable`]:
 //!
-//! Blobs are not canonical. Equal values of different types write
-//! different bytes (`1u8` and `1u32`), a `HashMap` writes in its iteration
-//! order, and a reader accepts forms a writer does not produce. Compare
-//! values, not blobs.
+//! - nesting deeper than 128 levels
+//! - text or bytes longer than `u32::MAX`
+//! - a map key that is not an integer, text, or bytes
+//! - a repeated map key
+//! - a container whose declared length differs from the number of
+//!   children it wrote
+//! - a value whose own `Serialize` fails
 //!
-//! ## Versioning and schema evolution
+//! The profile stores plain scalars only. A date, a timestamp, a decimal,
+//! or a UUID is stored as whatever its serde impl writes. That is usually
+//! text, not the matching kind of sealed leaf.
 //!
-//! [`VERSION`] names the byte grammar and the serde mapping together. It is
-//! the profile's version, not the application's, and version 1 is frozen:
-//! no release changes what a version 1 blob reads as. A reader meeting a
-//! version it does not read reports [`BlobError::UnsupportedVersion`],
-//! distinct from a corrupt blob, so "upgrade the reader" and "the data is
-//! damaged" are different errors. A new version will be introduced in two
-//! steps, readers first, writers later, and this crate's changelog will say
-//! which version a release writes.
+//! The encoding is not canonical, so compare values, not blobs. Equal
+//! values of different types write different bytes (`1u8` and `1u32`). A
+//! `HashMap` writes its entries in its iteration order. A reader accepts
+//! some forms that no writer produces.
 //!
-//! The application's own schema evolves through the type, and serde's
-//! attributes govern what an old blob does against a new `T`:
+//! ## Versions and schema changes
+//!
+//! [`VERSION`] is the version of the storage profile, not of your
+//! application. It covers the byte format and the serde mapping together.
+//! Version 1 is frozen: no release changes what a version 1 blob reads as.
+//!
+//! A reader that meets a version it cannot read returns
+//! [`BlobError::UnsupportedVersion`]. A damaged blob gives a different
+//! error. So "upgrade the reader" and "the data is damaged" are separate
+//! errors. A new version will arrive in two steps: first a
+//! release that reads it, then a later release that writes it. This
+//! crate's changelog will say which version each release writes.
+//!
+//! Your own schema changes through `T`. Serde's attributes decide how an
+//! old blob reads into a new `T`:
 //!
 //! | Change to `T`                               | An old blob                                          |
 //! |---------------------------------------------|------------------------------------------------------|
 //! | Add a field with `#[serde(default)]`        | reads, with the default                              |
-//! | Add a field without a default               | is refused: [`BlobError::Mismatch`]                  |
+//! | Add a field without a default               | is refused with [`BlobError::Mismatch`]              |
 //! | Remove a field                              | reads, unless `T` denies unknown fields              |
 //! | Rename a field                              | reads with `#[serde(alias = "…")]`                   |
-//! | `F` to `Option<F>`                          | reads as `Some`                                      |
-//! | `Option<F>` to `F`                          | is refused if the blob held `Some`                   |
-//! | Add an enum variant                         | reads; an older reader refuses the new variant       |
-//! | Widen an integer                            | reads; narrowing reads only values that fit          |
+//! | Change `F` to `Option<F>`                   | reads as `Some`                                      |
+//! | Change `Option<F>` to `F`                   | is refused if the blob holds `Some`                  |
+//! | Add an enum variant                         | reads. An older reader refuses the new variant       |
+//! | Widen an integer                            | reads. A narrower integer reads only values that fit |
 //!
-//! An application that needs to tell its own versions apart carries that in
-//! the value (a version field, or an enum of versions). The blob header
-//! never changes because `T` did.
+//! If your application needs to tell its own versions apart, store that in
+//! the value, as a version field or an enum of versions. The blob header
+//! does not change when `T` changes.
 //!
-//! ## Decode errors, and when they can occur
+//! ## Decryption errors
 //!
-//! Decryption **authenticates before it decodes**. The leaf opens first,
-//! under its key and context; only then does the profile's reader see the
-//! bytes. A context other than the one the blob was sealed under is
-//! normally refused before that: ZeroKMS binds each data key to its
-//! context's descriptor and denies the retrieve, so it surfaces as
-//! [`Error::Kms`] and nothing is decrypted. Past key retrieval, the errors
-//! tell three things apart:
+//! Decryption **checks the ciphertext before it decodes the blob**. The
+//! leaf is opened and authenticated first. Only then does the
+//! storage profile's reader see the bytes.
 //!
-//! - [`Error::Aead`]: the leaf did not open. Altered bytes, the wrong key,
-//!   or a wrong context under a key source that ignores descriptors
-//!   (`FakeDataKeySource`, in tests); the blob was never looked at.
-//! - [`Error::OpenedType`]: the leaf opened but is not a bytes leaf: it was
-//!   sealed as a `String` or an integer, say, not as a blob.
-//! - [`Error::Blob`]: the leaf opened as bytes and they are not a blob this
-//!   type reads: not a blob at all ([`BlobError::NotABlob`]), a later
-//!   version ([`BlobError::UnsupportedVersion`]), a blob that breaks a rule
-//!   of version 1 ([`BlobError::Malformed`]), or a well-formed blob that is
-//!   not a `T` ([`BlobError::Mismatch`]).
+//! A wrong context is usually refused before that. ZeroKMS binds each data
+//! key to the context it was created under, and refuses to return the key
+//! for any other context. That refusal is [`Error::Kms`]. Nothing is
+//! decrypted.
 //!
-//! [`Error::OpenedType`] and [`Error::Blob`] are refusals of an authentic
-//! ciphertext, so neither says the data was tampered with; each says the
-//! data was written as something else. Only [`Error::Aead`] (or
-//! [`Error::Kms`]) leaves the ciphertext's authenticity unestablished. The whole blob is validated before `T`'s `Deserialize`
-//! sees any of it: every length is checked against the end of the blob, so
-//! a forged length allocates nothing, and a `Deserialize` impl never builds
-//! part of a value from a malformed blob. No refusal names a value or a map
-//! key; a mismatch names the declared field it is about.
+//! After the key is returned, these errors are possible:
+//!
+//! - [`Error::Aead`]: the leaf did not open. The bytes were changed, or the
+//!   key is wrong. In tests, a key source that ignores contexts
+//!   (`FakeDataKeySource`) also gives this error for a wrong context. The
+//!   blob was never read.
+//! - [`Error::OpenedType`]: the leaf opened, but it is not a bytes leaf.
+//!   For example, it was sealed as a `String` or an integer. The same error
+//!   happens the other way round: a blob decrypted as a `String` or an
+//!   integer is refused.
+//! - [`Error::Blob`]: the leaf opened as bytes, but the bytes are not a
+//!   blob that `T` reads. The bytes might not be a blob at all
+//!   ([`BlobError::NotABlob`]). The blob might be a later version
+//!   ([`BlobError::UnsupportedVersion`]) or break a rule of version 1
+//!   ([`BlobError::Malformed`]). Or the blob might be valid but not a `T`
+//!   ([`BlobError::Mismatch`]).
+//!
+//! A blob is sealed as a plain bytes leaf. Nothing in the leaf marks it as
+//! a blob, so two cases are not refused by type:
+//!
+//! - A blob decrypted as a `Vec<u8>` succeeds, and returns the encoded
+//!   blob. Nothing wipes that `Vec<u8>` on drop.
+//! - A `Vec<u8>` decrypted as an `OpaqueBlob<T>` reaches the blob reader.
+//!   The reader returns an [`Error::Blob`] unless the bytes are a blob.
+//!
+//! The AEAD still binds the context in both cases, so neither case lets a
+//! caller read data they could not read before.
+//!
+//! [`Error::OpenedType`] and [`Error::Blob`] refuse a ciphertext that is
+//! authentic. Neither error means the data was tampered with. Each means
+//! the data was written as something else. Only [`Error::Aead`] and
+//! [`Error::Kms`] leave the ciphertext's authenticity unknown.
+//!
+//! The reader checks the whole blob before `T`'s `Deserialize` sees any of
+//! it. Every length is checked against the end of the blob, so a forged
+//! length allocates nothing. A `Deserialize` impl never builds part of a
+//! value from a malformed blob.
+//!
+//! No error names a text value or a map key. A mismatch names the declared
+//! field it is about.
+//!
+//! Two errors can include a number from the data.
+//! [`BlobError::UnsupportedVersion`] includes the blob's version byte. A
+//! mismatch can include the length of a sequence. Only a caller with the
+//! key can cause either error.
 //!
 //! ## What the ciphertext reveals
 //!
-//! The leaf is AES-256-GCM, which keeps the plaintext's length, and the
-//! profile adds no padding. A blob ciphertext is therefore the encoded
-//! length plus a fixed overhead, and the encoded length is a function of
-//! the value: the length of each string, the number of elements in each
-//! sequence and map, and whether each `Option` is `Some` (the marker and
-//! the value) or `None` (one null byte). Two profiles that differ only in
-//! a nickname being present seal to ciphertexts of different lengths. This
-//! is the same disclosure a `String` scalar makes of its length; a value
-//! whose size must not be visible needs padding the application adds, as a
-//! fixed-length field of its own.
+//! A blob's ciphertext shows the length of the encoded value. The leaf is
+//! encrypted with AES-256-GCM. AES-256-GCM keeps the plaintext's length. The
+//! storage profile adds no padding. So the ciphertext is the encoded length
+//! plus a fixed overhead.
 //!
-//! Neither serde's derived impls nor the profile's writer and reader are
-//! constant time, and nothing here claims otherwise. Encoding takes time
-//! that depends on the value, as serializing any value does. The
-//! cryptography is Vitamin C's and is unchanged; what this module adds runs
-//! before the seal and after the open, on plaintext the caller already
-//! holds.
+//! The encoded length depends on the value:
+//!
+//! - the length of each string
+//! - the number of elements in each sequence and map
+//! - whether each `Option` is `Some`, written as a marker and the value, or
+//!   `None`, written as one null byte
+//!
+//! For example, two profiles that differ only in whether a nickname is
+//! present seal to ciphertexts of different lengths. A `String` scalar
+//! shows its length in the same way. If the size of a value must not be
+//! visible, your application must pad it, for example with a fixed-length
+//! field of its own.
+//!
+//! Serde's derived impls are not constant time. The profile's writer and
+//! reader are not constant time either. Encoding takes time that depends
+//! on the value, as serializing any value does.
+//!
+//! The cryptography is Vitamin C's. This module does not change it. The module's code runs
+//! only on plaintext the caller already has. It runs before the value is
+//! sealed, or after the value is opened.
 //!
 //! ## Cleanup
 //!
-//! On encrypt, the owned `OpaqueBlob<T>` is guarded in [`Protected`] by the
-//! owned conversion before anything runs, encoded through a borrow into a
-//! [`Buffer`] the profile's writer returns (it grows into fresh
-//! allocations and wipes the old ones, writes a `Display` value straight
-//! into the blob, and wipes what it wrote if writing fails), and that
-//! buffer is planned into the leaf and dropped, wiped, before `encrypt`
-//! returns its pending. The source is wiped through `T: Zeroize` at the
-//! same point, on success and on an encoding refusal alike. Nothing of the
-//! plaintext travels in the pending.
+//! On encrypt, these steps happen before `encrypt` returns the pending
+//! request:
 //!
-//! On decrypt, the opened bytes are held `Protected` while the reader runs,
-//! and wiped when it returns, whether it returned a value or a refusal. The
-//! reader borrows text and bytes from that buffer rather than copying them.
-//! The value it returns is an `OpaqueBlob<T>`, which holds its `T` in a
-//! [`Zeroizing`] and **wipes it when it is dropped**. [`into_inner`] hands
-//! the guard over rather than a bare `T`, so the value stays guarded after
-//! it leaves the wrapper; `Zeroizing<T>` derefs to `T`. A caller who moves
-//! the `T` out of the guard (with `mem::take`, say) owns its cleanup.
+//! 1. The owned conversion moves the `OpaqueBlob<T>` into a [`Protected`].
+//! 2. The value is encoded into a [`Buffer`]. The writer wipes each old
+//!    allocation as the buffer grows. It writes a `Display` value straight
+//!    into the blob. If writing fails, it wipes what it wrote.
+//! 3. The buffer is copied into the leaf, then dropped and wiped.
+//! 4. The source is wiped through `T: Zeroize`. This also happens when
+//!    encoding fails.
+//!
+//! The pending request contains no plaintext from the caller.
+//!
+//! On decrypt, the opened bytes are held in a `Protected` buffer while the
+//! reader runs. The buffer is wiped when the reader returns, whether it
+//! returns a value or an error. The reader borrows text and bytes from that
+//! buffer instead of copying them.
+//!
+//! The decrypted `OpaqueBlob<T>` stores its `T` in a [`Zeroizing`], so
+//! **the value is wiped when the blob is dropped**. [`into_inner`] returns the
+//! `Zeroizing<T>`, not a bare `T`, so the value is still wiped on drop after
+//! it leaves the blob. `Zeroizing<T>` derefs to `T`. If you move the `T`
+//! out of the guard, with `mem::take` for example, you are responsible for
+//! wiping it.
 //!
 //! [`into_inner`]: OpaqueBlob::into_inner
 //!
-//! One limit is a property of serde, and is stated rather than solved: a
-//! derived `Deserialize` that has read some fields and then refuses a later
-//! one drops the fields it built as ordinary values, without `T::zeroize`,
-//! because no `T` ever existed to wipe. The profile's up-front validation
-//! means this happens only for a well-formed blob of another shape
-//! ([`BlobError::Mismatch`]), never for a malformed one, and the bytes
-//! those fields were copied from are wiped with the buffer. A type whose
-//! fields are themselves wiped on drop (`Zeroizing<String>`, a
-//! `#[derive(ZeroizeOnDrop)]` type) closes it for those fields.
+//! One gap comes from serde and is not closed here. A derived
+//! `Deserialize` might read some fields and then refuse a later one. It
+//! then drops the fields it built as ordinary values, without
+//! `T::zeroize`, because no `T` was ever built to wipe. The reader checks
+//! the blob first, so this happens only for a valid blob of another shape
+//! ([`BlobError::Mismatch`]), never for a malformed one.
 //!
-//! A Rust move is not an erasure: a `Copy` field leaves its bytes where it
-//! was moved from, and compiler temporaries are not wiped. The promise here
-//! covers the owned source, the encoded buffer, the opened buffer and the
-//! library's own copies, not every byte a program's stack once held.
+//! The bytes those fields were copied from are wiped with the buffer. A
+//! field that wipes itself on drop closes the gap for that field. Examples
+//! are a `Zeroizing<String>` field, or a type that derives `ZeroizeOnDrop`.
+//!
+//! A Rust move does not erase memory. A `Copy` field leaves its bytes
+//! where it was moved from. Compiler temporaries are not wiped. This module
+//! wipes the owned source, the encoded buffer, the opened buffer, and the
+//! library's own copies. It cannot wipe every byte the program's stack
+//! once held.
 //!
 //! # Go
 //!
-//! The Go SDK's opaque struct (a `stashgen` declaration with one `value`
-//! field, sealed as a storage blob under the context `<context>/value`) is
-//! this format: a Rust program opens such a column with
-//! `decrypt_with_context::<OpaqueBlob<T>>(ct, ("<context>", "value"))`,
-//! with `T`'s serde field names matching the Go struct's `vc` tags, and
-//! Go reads a Rust-written blob the same way. Two qualifications, both the
-//! Go writer's: a nil slice or map is written as an empty one, and a
-//! non-nil pointer is written as the bare value (Rust writes every `Some`
-//! with its marker; both readers read either form).
+//! The Go SDK's opaque struct uses this format. An opaque struct is a
+//! `stashgen` declaration with one `value` field, sealed as a storage blob
+//! under the context `<context>/value`. A Rust program opens such a column
+//! with `decrypt_with_context::<OpaqueBlob<T>>(ct, ("<context>", "value"))`.
+//! `T`'s serde field names must match the Go struct's `vc` tags.
+//!
+//! Go reads a Rust-written blob in the same way, when the field types
+//! correspond:
+//!
+//! - A Rust `Option<T>` is a Go `*T`. Go refuses a Rust `Some` read into a
+//!   field that is not a pointer. Go also refuses a Rust `None` read into a
+//!   slice, so an optional `Vec<T>` must be a Go `*[]T`.
+//! - Rust must write a byte string as bytes, with
+//!   `#[serde(with = "serde_bytes")]`, not as a sequence of `u8`. Go writes
+//!   a `[]byte` and a UUID as bytes. Each side refuses the other side's
+//!   form.
+//! - Go writes a nil slice or map as an empty one. A Rust
+//!   `Option<Vec<T>>` reads it as `Some` of an empty `Vec`, not `None`. This
+//!   is the only pairing that changes a value without an error.
+//! - Go writes a non-nil pointer as the bare value. Rust writes every
+//!   `Some` with its marker. An optional field reads both forms.
+//!
+//! A type mismatch is [`BlobError::Mismatch`] in Rust and `ErrMismatch` in
+//! Go.
 //!
 //! [`Error::Aead`]: crate::Error::Aead
 //! [`Error::Kms`]: crate::Error::Kms
@@ -412,14 +504,15 @@ impl<T: DeserializeOwned + Zeroize + Send + 'static> sealed::Decode for OpaqueBl
 }
 impl<T: DeserializeOwned + Zeroize + Send + 'static> OpaqueDecode for OpaqueBlob<T> {}
 
-/// Why an [`OpaqueBlob`] could not be written, or an authenticated
-/// ciphertext did not read as one. One variant per class of refusal, each
-/// with its own code, and none names a value: the profile's own errors
-/// name kinds and declared field names only, and are kept as the source.
+/// Why an [`OpaqueBlob`] could not be written, or why an authentic
+/// ciphertext did not read as one. Each class of refusal has its own
+/// variant and code. The storage profile's own error is kept as the
+/// source. It names kinds and declared field names, never a text value or
+/// a map key.
 ///
 /// On decrypt, every variant means the ciphertext **was authentic**: the
-/// leaf opened under its key and context before the blob was looked at.
-/// See the [module docs](self#decode-errors-and-when-they-can-occur).
+/// leaf opened under its key and context before the blob was read. See
+/// [Decryption errors](self#decryption-errors) in the module docs.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum BlobError {

@@ -9,12 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **`OpaqueDecode` no longer has vitaminc's `Decrypt` as a supertrait.** The
-  trait is sealed, so this changes nothing for a caller naming a type that
-  implements it; generic code bounded on `P: OpaqueDecode` that also used
-  `P::sink()` or another `Decrypt` method adds a `P: Decrypt` bound. The
-  capability moved into the sealed trait so that `OpaqueBlob<T>`, which
-  opens through a bytes leaf and decodes after, can implement it.
+- **`OpaqueDecode` no longer requires vitaminc's `Decrypt` trait.** If you
+  only name types that implement `OpaqueDecode`, nothing changes, because
+  the trait is sealed. If your generic code is bounded on `P: OpaqueDecode`
+  and calls `P::sink()` or another `Decrypt` method, add a `P: Decrypt`
+  bound. The change lets `OpaqueBlob<T>` implement `OpaqueDecode`: a blob
+  opens as a bytes leaf and is decoded afterwards, so it cannot implement
+  `Decrypt`.
 - Repeated plan-chain `.extend(..)` calls now append parts in order, matching
   Go's `Cipher.Extend`, instead of replacing earlier extensions.
   `.extend(())` adds nothing, and grouped `NonEmpty` parts retain their grouping.
@@ -107,68 +108,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Equatable<Protected<Vec<u8>>>`. Until vitaminc-protected implements
   `ConstantTimeEq` for `Vec<u8>` (cipherstash/vitaminc#602), the bytes are
   compared through `TimingSafeEq`.
+- **`OpaqueBlob<T>` encrypts a whole value as one `Ciphertext`** (#1484).
+  Use it to store a struct, map, or `Vec` as one ciphertext under one data
+  key. Encrypt with `keyset.encrypt(OpaqueBlob::new(value))`, for any
+  `Serialize + Zeroize` value. Decrypt with
+  `keyset.decrypt::<OpaqueBlob<T>>(ct)`, for any
+  `DeserializeOwned + Zeroize` type, then call `into_inner()`.
+  - The value is encoded with version 1 of Vitamin C's storage profile
+    (`vitaminc_aead_frame::storage`). The encoded bytes start with a `VCS`
+    header and a version byte, inside the plaintext. The profile has a
+    frozen specification and a golden corpus of test vectors.
+  - The encoded bytes are sealed as one bytes leaf of the `SealedValue` v1
+    envelope. The envelope does not change. Encrypting a blob makes the same key
+    request as encrypting a scalar.
+  - The format is the Go SDK's opaque-struct format
+    (`vcffi.MarshalStorage`). A Go-written opaque column opens in Rust, and
+    a Rust-written one opens in Go, when the field types correspond. The
+    `blob` module docs give the rules. Both test suites pin the same bytes.
+  - A `Vec<OpaqueBlob<T>>` encrypts into a `Vec<Ciphertext>`, one ciphertext
+    per element, with every key requested together. An
+    `OpaqueBlob<Vec<T>>` is one ciphertext.
+  - There is still no `Serialize` fallback. A struct passed to `encrypt`
+    without the wrapper does not compile. An `OpaqueBlob` of a type that
+    does not implement `Zeroize` does not compile either.
+  - `OpaqueBlob::encode` and `OpaqueBlob::decode` give access to the
+    encoding. `blob::HEADER` and `blob::VERSION` are the header bytes.
+  - The `blob` module docs cover the supported types and schema changes.
+    The docs also say what the ciphertext's length reveals: the encoded
+    length plus a constant, because nothing is padded. Architecture
+    decision record ADR-0011 records the decision.
+- **A decrypted `OpaqueBlob<T>` is wiped when it is dropped.** The blob
+  stores its value in a `Zeroizing<T>`. `into_inner` returns that
+  `Zeroizing<T>`, so the value is still wiped on drop after it leaves the
+  blob. `Zeroizing<T>` derefs to `T`. A decrypted scalar is still an ordinary owned value, and nothing
+  wipes it on drop.
+- **Encrypting an `OpaqueBlob` wipes the value in every case.** The value is
+  wiped before `encrypt` returns the pending request, both on success and
+  when the value cannot be encoded. A failed encoding requests no key. A
+  context that is too long for a key request is refused before the value
+  is encoded, as it is for a scalar. The encoded bytes are held in a `Buffer`
+  that wipes itself. On decrypt, the opened bytes are held in a `Protected`
+  buffer while they are read.
+- **`Error::Blob(BlobError)` reports why a blob was refused.** It has one
+  variant and one error code for each kind of refusal:
+  - `blob_unwritable`: the value cannot be encoded. This error happens
+    before any key is requested.
+  - `blob_not_a_blob`: the decrypted bytes are not a storage blob.
+  - `blob_unsupported_version`: the blob is a later version of the storage
+    profile. Upgrade stack-encrypt to read it.
+  - `blob_malformed`: the blob breaks a rule of its version.
+  - `blob_mismatch`: the blob is valid. It is not a value of the type you
+    asked for.
 
-### Added
+  The last four happen only after the ciphertext was authenticated, so
+  they mean the data was written as something else, not tampered with.
+  Other refusals are reported as before:
+  - Tampering is `Aead`.
+  - A wrong context is `Kms`, because ZeroKMS refuses to return the key.
+    A key source that ignores contexts, such as `FakeDataKeySource`,
+    reports `Aead` instead.
+  - A blob decrypted as a scalar other than `Vec<u8>`, or such a scalar
+    decrypted as a blob, is `OpenedType`.
+  - A blob is sealed as a plain bytes leaf. So a blob decrypted as a
+    `Vec<u8>` returns the encoded blob. A `Vec<u8>` decrypted as a blob
+    reaches the blob reader. The reader returns a `Blob` error unless the
+    bytes are a blob.
 
-- **`OpaqueBlob<T>`: encrypt a whole value as one opaque `Ciphertext`**
-  (#1484). `keyset.encrypt(OpaqueBlob::new(value))` encodes any
-  `Serialize + Zeroize` value with Vitamin C's versioned storage profile
-  (`vitaminc_aead_frame::storage`, version 1: a `VCS` header and version
-  byte inside the plaintext, explicit `Some` markers, typed map keys, a
-  frozen specification and golden corpus) and seals the encoding as one
-  bytes leaf of the unchanged `SealedValue` v1 envelope, through the same
-  path as a scalar: one data key, one ciphertext, no new KMS request shape.
-  `keyset.decrypt::<OpaqueBlob<T>>(ct)` authenticates the leaf, then reads
-  it back into any `DeserializeOwned + Zeroize` type; `into_inner()` takes
-  the value. It is the Go SDK's opaque-struct format (`vcffi.MarshalStorage`),
-  so a Go-written opaque column opens in Rust and a Rust-written one in Go
-  (fixed vectors in both test suites). There is still no `Serialize`
-  fallback: a struct handed to `encrypt` without the wrapper does not
-  compile (`tests/ui/opaque_blob_requires_the_wrapper.rs`), and neither
-  does an `OpaqueBlob` of a type that is not `Zeroize`. `OpaqueBlob::encode`
-  and `decode` expose the codec itself, `blob::HEADER` and `blob::VERSION`
-  the discriminator. The `blob` module docs give the supported types, the
-  schema-evolution rules (serde's), what the ciphertext's length reveals (the
-  encoded length plus a constant: no padding, no constant-time claim) and
-  what is wiped; ADR-0011 records the decision.
-- **`Error::Blob(BlobError)`**, transparent, one variant and code per class
-  of refusal: `blob_unwritable` (the value cannot be encoded; raised before
-  any key is requested), and after the leaf authenticated, `blob_not_a_blob`,
-  `blob_unsupported_version` (a later storage version: upgrade the reader),
-  `blob_malformed` and `blob_mismatch` (a well-formed blob of another shape or
-  type). Every decrypt-side `Blob` error means the ciphertext was authentic.
-  Tampering is still `Aead`; a wrong context is refused by ZeroKMS before
-  the AEAD runs and surfaces as `Kms` (only a key source that ignores
-  descriptors, such as `FakeDataKeySource`, lets it reach the AEAD as
-  `Aead`); and a blob opened as a scalar or a scalar as a blob is
-  `OpenedType`. No message or payload names a
-  value; a mismatch's payload names the declared field.
-- **A decrypted `OpaqueBlob<T>` is wiped on drop.** It holds its value in a
-  `Zeroizing<T>`, and `into_inner` returns that `Zeroizing<T>`, which derefs
-  to `T`, so the value stays guarded after it leaves the wrapper. A
-  decrypted scalar is still an ordinary owned value that nothing wipes on
-  drop; `Zeroize` is the bound, not a guard.
-- **`From<SealedValue> for Ciphertext`, and back.** The bytes are the same:
-  a `CipherText::Single` leaf from `encrypt_tree` opens through the owned
-  API, and an owned `Ciphertext` hands its leaf to the structural API.
-- **The owned source is wiped on an encoding refusal** as on success, before
-  the pending is returned and with no key requested; a context no request
-  can carry is refused before the value is encoded, as a scalar's is; the
-  encoded blob is held in a self-wiping `Buffer` while it is planned, and
-  the opened bytes are `Protected` on decrypt while they are read. The heap observer covers blob encrypt, decrypt and a refused
-  shape, checks those paths for marked blocks leaked rather than freed (an
-  opt-in `watched_for_leaks`, with its own negative control), and pins as a
-  negative control the one stated limit: a derived `Deserialize` that built
-  some fields and refuses a later one drops those fields unwiped, because no
-  `T` existed to wipe.
+  No error names a text value or a map key. A mismatch's payload names the
+  declared field. `blob_unsupported_version` includes the blob's version
+  byte, and a mismatch can include the length of a sequence.
+- **`Ciphertext` converts to and from `SealedValue`.** The bytes are the
+  same. A `CipherText::Single` leaf from `encrypt_tree` decrypts through the
+  owned API, and an owned `Ciphertext` can give its leaf to the structural
+  API.
+- **The heap-hygiene tests cover blobs.** They check that encrypting a
+  blob, decrypting one, and refusing one of another shape leave no
+  plaintext on the heap. A new opt-in check, `watched_for_leaks`, also
+  looks for marked blocks that were never freed. That check has its own
+  negative control. A second negative control records the one known gap.
+  A derived `Deserialize` might build some fields and then refuse a later
+  field. It drops the fields it built without wiping them, because no `T`
+  was built.
 
 ### Changed
 
-- The vitaminc crates move from 0.8.0 to 0.8.1, the first release with the
-  storage profile. Nothing 0.8.0 wrote or read changes: the leaf format, the
-  transport frame and every existing ciphertext are unaffected.
-  `vitaminc-aead-frame` is now built unconditionally (with `serde`), where it
-  was behind the `dynamic` feature; that feature adds no dependency now.
+- `vitaminc-aead-frame` is now always built, with its `serde` feature.
+  Before, it was built only with the `dynamic` feature. The `dynamic`
+  feature now adds no dependency.
 
 ## [0.3.0] - 2026-10-27
 
