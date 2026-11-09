@@ -618,11 +618,6 @@ mod tests {
         Stated::One(parts)
     }
 
-    /// [`one`], where a local `one` is a tree.
-    fn one_stated(parts: &[Expect]) -> Stated<'_> {
-        Stated::One(parts)
-    }
-
     #[test]
     fn a_matching_context_passes() {
         check_single(
@@ -636,18 +631,18 @@ mod tests {
     /// one part states the bare part, so the list is stated with `list`.
     #[test]
     fn a_one_part_list_is_stated_with_list() {
-        let one = ContextTree::List(vec![Expect::from("email").0]);
-        check_single(&one, one_stated(&[list(["email"])])).unwrap();
-        let message = check_single(&one, one_stated(&[Expect::from("email")])).unwrap_err();
+        let one_part = ContextTree::List(vec![Expect::from("email").0]);
+        check_single(&one_part, one(&[list(["email"])])).unwrap();
+        let message = check_single(&one_part, one(&[Expect::from("email")])).unwrap_err();
         assert!(
             message.contains("expected `email`, found `(email)`"),
             "{message}"
         );
-        let nested = ContextTree::List(vec![one.clone(), Expect::from(42u64).0]);
-        check_single(&nested, one_stated(&[list(["email"]), Expect::from(42u64)])).unwrap();
+        let nested = ContextTree::List(vec![one_part.clone(), Expect::from(42u64).0]);
+        check_single(&nested, one(&[list(["email"]), Expect::from(42u64)])).unwrap();
         let bare = Expect::from("users").0;
-        check_single(&bare, one_stated(&[Expect::from("users")])).unwrap();
-        assert!(check_single(&bare, one_stated(&[list(["users"])])).is_err());
+        check_single(&bare, one(&[Expect::from("users")])).unwrap();
+        assert!(check_single(&bare, one(&[list(["users"])])).is_err());
     }
 
     #[test]
