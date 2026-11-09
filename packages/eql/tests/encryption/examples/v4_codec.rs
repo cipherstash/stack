@@ -2,12 +2,19 @@
 //! languages.
 //!
 //! TypeScript cannot produce EQL v4 yet: the only v4 producer is Stack
-//! Encrypt, reached from Rust and Go. The live migration suite in
+//! Encrypt, reached from Rust and Go. The live migration suites in
 //! `languages/typescript/packages/protect-ffi/integration-tests` (EQL v2 and
-//! v3 to v4) decrypts legacy rows with protect-ffi and hands the plaintexts
-//! here to re-encrypt them as v4. Every value goes through
-//! `eql_bindings::encryption::targets`, the by-name dispatch the Go guest
-//! uses, so the payloads are the ones a v4 SDK writes.
+//! v3 to v4) decrypt legacy rows with protect-ffi and hand the plaintexts here
+//! to re-encrypt them as v4.
+//!
+//! Every value goes through Stack Encrypt's typed API, the one a Rust
+//! application migrating its own data uses: a legacy value decrypts with the
+//! column it was stored in, and [`Shim`] encrypts it as an EQL v4 type under
+//! that column, through `Encryption::context_from`. The request names each
+//! item's type as a string, and serde reads it into an enum variant, which
+//! also types the plaintext. So a plaintext of the wrong kind and an unknown
+//! type are both refused while the request is read, before any key is
+//! requested.
 //!
 //! Run from `packages/eql`:
 //!
@@ -26,80 +33,154 @@
 //! ```json
 //! {
 //!   "encrypt": [{ "type": "TextEq", "table": "t", "column": "c", "value": "x" }],
-//!   "query":   [{ "type": "IntegerOrd", "table": "t", "column": "c", "value": 7 },
-//!               { "type": "TextSearch", "table": "t", "column": "c", "value": "x", "index": "match" }],
+//!   "query":   [{ "type": "IntegerOrdOre", "table": "t", "column": "c", "value": 7 }],
 //!   "decrypt": [{ "type": "TextEq", "table": "t", "column": "c", "payload": { … } }]
 //! }
 //! ```
 //!
 //! The response has the same three keys, each a list in request order:
-//! stored payloads, query operands (bind as the target's `query_sql_domain`)
-//! and decrypted plaintexts. `type` is a target name from
-//! `eql_bindings::encryption::targets::targets()`. A query goes through one of
-//! the target's indexes. A target with one index uses it. A target with several
-//! (`TextOrdOre`, `TextOrd`, `TextOrdOpe`, `TextSearchOre`, `TextSearch`) needs
-//! `index`, one of its `Target::indexes` keys, because `TextSearch` and
-//! `TextSearchOre` operands carry that index's term alone: the codec does not
-//! guess, and a request naming none is refused with the valid keys.
-//! Plaintexts are JSON strings, booleans and numbers; the target's
-//! `plaintext` kind decides how a number is read. The `float32` kind (`Real*`)
-//! is refused: no caller needs it, and narrowing a JSON number would seal an
-//! out-of-range value as infinity without an error.
+//! stored payloads, query operands (bind as the type's query domain, e.g.
+//! `eql_v4.query_text_eq`) and decrypted plaintexts. Each list is one ZeroKMS
+//! request, whatever mix of types it holds. `type` is one of the variants of
+//! [`Encrypt`] (for `encrypt` and `decrypt`) or [`Query`] (for `query`): the
+//! types the migration suites use, and no others. Adding one is a variant on
+//! each enum.
 
 use std::io::{Read, Write};
 
-use eql_bindings::encryption::targets::{self, Opener};
-use serde::Deserialize;
+use eql_bindings::v4::boolean::Boolean;
+use eql_bindings::v4::double::{DoubleOrdOre, DoubleOrdOreQuery};
+use eql_bindings::v4::integer::{
+    IntegerOrdOpe, IntegerOrdOpeQuery, IntegerOrdOre, IntegerOrdOreQuery,
+};
+use eql_bindings::v4::text::{TextEq, TextEqQuery, TextMatch, TextMatchQuery};
+use eql_bindings::Identifier;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::target::{IndexSpec, Pending};
-use stack_encrypt::{Decrypt, Encrypt, KeysetCipher, Label, StackCipher};
+use stack_encrypt::target::{
+    AcceptsContext, DecryptSource, EncryptTarget, Encryption, NoCallerContext, Pending,
+    RequiredContext, Zeroize,
+};
+use stack_encrypt::{DecryptFrom, EncryptInto, KeysetCipher, NonEmpty, StackCipher};
 use stack_kms::{DataKeySource, IndexKeySource};
 
 type Error = Box<dyn std::error::Error>;
+
+/// A value decrypted from EQL v2 or v3, with the column it was stored in.
+///
+/// On the wire it is `{ "table", "column", "value" }`.
+#[derive(Deserialize)]
+#[serde(from = "Wire<P>", bound(deserialize = "P: Deserialize<'de>"))]
+struct Legacy<P> {
+    i: Identifier,
+    p: P,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Wire<P> {
+    table: String,
+    column: String,
+    value: P,
+}
+
+impl<P> From<Wire<P>> for Legacy<P> {
+    fn from(wire: Wire<P>) -> Self {
+        Legacy {
+            i: Identifier {
+                t: wire.table,
+                c: wire.column,
+            },
+            p: wire.value,
+        }
+    }
+}
+
+impl<P: Zeroize> Zeroize for Legacy<P> {
+    // The column is not secret: it is stored in the clear in `i`.
+    fn zeroize(&mut self) {
+        self.p.zeroize();
+    }
+}
+
+/// An EQL v4 type, encrypted from a [`Legacy`] value under the column in the
+/// value. One impl covers every v4 type whose context is its column, stored
+/// types and query types alike. To rename a column, edit `i` before the call.
+struct Shim<T>(T);
+
+impl<P, T> EncryptTarget<Legacy<P>> for Shim<T>
+where
+    P: Zeroize,
+    T: EncryptTarget<P, ContextInput = RequiredContext<NonEmpty<Identifier>>>,
+{
+    type ContextInput = NoCallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, Legacy<P>, Self, K, NoCallerContext>
+    where
+        Legacy<P>: 's,
+    {
+        T::encryption()
+            .project(|source: &Legacy<P>| &source.p)
+            .context_from(|source: &Legacy<P>| &source.i)
+            .map(Shim)
+    }
+}
+
+/// A stored EQL v4 payload to open, with the column it is read from.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Stored<T> {
+    table: String,
+    column: String,
+    payload: T,
+}
+
+/// An item of `encrypt` or of `decrypt`, by EQL v4 type. Under `encrypt` the
+/// variant types the plaintext; under `decrypt`, the stored payload, whose
+/// shape the type then checks.
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum Encrypt {
+    TextEq(Legacy<String>),
+    TextMatch(Legacy<String>),
+    IntegerOrdOre(Legacy<i32>),
+    IntegerOrdOpe(Legacy<i32>),
+    DoubleOrdOre(Legacy<f64>),
+    Boolean(Legacy<bool>),
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum Decrypt {
+    TextEq(Stored<TextEq>),
+    TextMatch(Stored<TextMatch>),
+    IntegerOrdOre(Stored<IntegerOrdOre>),
+    IntegerOrdOpe(Stored<IntegerOrdOpe>),
+    DoubleOrdOre(Stored<DoubleOrdOre>),
+    Boolean(Stored<Boolean>),
+}
+
+/// An item of `query`, by the EQL v4 type of the column it queries. A type
+/// that answers no query, such as `Boolean`, has no variant.
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum Query {
+    TextEq(Legacy<String>),
+    TextMatch(Legacy<String>),
+    IntegerOrdOre(Legacy<i32>),
+    IntegerOrdOpe(Legacy<i32>),
+    DoubleOrdOre(Legacy<f64>),
+}
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct Request {
     #[serde(default)]
-    encrypt: Vec<Item>,
+    encrypt: Vec<Value>,
     #[serde(default)]
-    query: Vec<Item>,
+    query: Vec<Value>,
     #[serde(default)]
-    decrypt: Vec<Stored>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Item {
-    r#type: String,
-    table: String,
-    column: String,
-    value: Value,
-    /// The index a query goes through, by key. Read for `query` items only.
-    #[serde(default)]
-    index: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Stored {
-    r#type: String,
-    table: String,
-    column: String,
-    payload: Value,
-}
-
-/// The target's plaintext kind, e.g. `"int32"`, or an error naming the type.
-fn plaintext_kind(name: &str) -> Result<&'static str, Error> {
-    let target = targets::target(name).ok_or_else(|| format!("no EQL v4 target named {name}"))?;
-    target
-        .plaintext
-        .ok_or_else(|| format!("{name} has no scalar plaintext kind").into())
-}
-
-fn label(table: &str, column: &str) -> Result<Label, Error> {
-    Ok(Label::new([table, column])?)
+    decrypt: Vec<Value>,
 }
 
 /// A JSON value's type, for an error that must not repeat the value.
@@ -114,112 +195,155 @@ fn json_type(value: &Value) -> &'static str {
     }
 }
 
-/// A JSON plaintext as the engine's runtime frame, read as `name`'s kind.
-fn frame(name: &str, value: &Value) -> Result<ValueFrame, Error> {
-    let kind = plaintext_kind(name)?;
-    let wrong = || {
-        format!(
-            "{name} takes a {kind} plaintext, not a JSON {}",
-            json_type(value)
-        )
-    };
-    let frame = match kind {
-        "string" => ValueFrame::of(value.as_str().ok_or_else(wrong)?.to_owned()),
-        "boolean" | "bool" => ValueFrame::of(value.as_bool().ok_or_else(wrong)?),
-        "int16" => ValueFrame::of(i16::try_from(value.as_i64().ok_or_else(wrong)?)?),
-        "int32" => ValueFrame::of(i32::try_from(value.as_i64().ok_or_else(wrong)?)?),
-        "int64" => ValueFrame::of(value.as_i64().ok_or_else(wrong)?),
-        "float64" => ValueFrame::of(value.as_f64().ok_or_else(wrong)?),
-        other => {
-            return Err(format!("{name}: plaintext kind {other} is not supported here").into())
+/// Read one item of `list` into its enum. serde's message for a value of the
+/// wrong kind quotes the value, and the value is a plaintext, so only the
+/// messages that name nothing but fields and types (an unknown type, a
+/// missing or unknown field) are passed on. Any other refusal names the
+/// item's type and the JSON type of its value or payload.
+fn item<T: DeserializeOwned>(list: &str, n: usize, value: Value) -> Result<T, Error> {
+    let r#type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("(no type)")
+        .to_owned();
+    let content = value
+        .get("value")
+        .or_else(|| value.get("payload"))
+        .map_or("nothing", json_type);
+    serde_json::from_value(value).map_err(|error| {
+        let message = error.to_string();
+        let names_only = ["unknown variant", "missing field", "unknown field"]
+            .iter()
+            .any(|safe| message.starts_with(safe));
+        if names_only {
+            format!("{list}[{n}]: {message}").into()
+        } else {
+            format!("{list}[{n}]: {type} cannot be read from a JSON {content}").into()
         }
-    };
-    Ok(frame?)
+    })
 }
 
-/// An opened frame as JSON, read as `name`'s kind.
-fn plaintext(name: &str, opened: ValueFrame) -> Result<Value, Error> {
-    let kind = plaintext_kind(name)?;
-    let value = match kind {
-        "string" => json!(opened.visit(String::sink())?),
-        "boolean" | "bool" => json!(opened.visit(bool::sink())?),
-        "int16" => json!(opened.visit(i16::sink())?),
-        "int32" => json!(opened.visit(i32::sink())?),
-        "int64" => json!(opened.visit(i64::sink())?),
-        "float64" => json!(opened.visit(f64::sink())?),
-        other => {
-            return Err(format!("{name}: plaintext kind {other} is not supported here").into())
-        }
-    };
-    Ok(value)
-}
-
-/// The index a query on `name` goes through: the one `requested` names, or
-/// the target's only index. Refuses, naming the valid keys, rather than pick
-/// one of several.
-fn query_index(name: &str, requested: Option<&str>) -> Result<IndexSpec, Error> {
-    let target = targets::target(name).ok_or_else(|| format!("no EQL v4 target named {name}"))?;
-    let valid = target.indexes.join(", ");
-    let key = match (requested, target.indexes) {
-        (_, []) => return Err(format!("{name} is storage-only and answers no query").into()),
-        (Some(key), indexes) if indexes.contains(&key) => key,
-        (Some(key), _) => {
-            return Err(format!("{name} carries no {key} index; its indexes are: {valid}").into())
-        }
-        (None, [only]) => *only,
-        (None, _) => return Err(format!("{name} has several indexes; name one of: {valid}").into()),
-    };
-    IndexSpec::parse(key).ok_or_else(|| format!("{name}: index {key} is not recognised").into())
-}
-
-/// The stored payload for each item, in order. One ZeroKMS call for the
-/// whole list; one bad item fails it.
-async fn encrypt_all<K>(keyset: &KeysetCipher<'_, K>, items: &[Item]) -> Result<Vec<Value>, Error>
-where
-    K: DataKeySource + IndexKeySource + Sync + 'static,
-{
-    let pending = items
-        .iter()
-        .map(|item| {
-            Ok(targets::encrypt(
-                &item.r#type,
-                keyset,
-                &label(&item.table, &item.column)?,
-                frame(&item.r#type, &item.value)?,
-            )?)
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-    Pending::all(keyset, pending)
-        .await?
-        .iter()
-        .map(|bytes| Ok(serde_json::from_slice::<Value>(bytes)?))
-        .collect()
-}
-
-/// The plaintext of each stored item, in order. One ZeroKMS call for the
-/// whole list; one bad item fails it.
-async fn decrypt_all<K>(cipher: &StackCipher<K>, items: &[Stored]) -> Result<Vec<Value>, Error>
-where
-    K: DataKeySource + IndexKeySource + Sync + 'static,
-{
-    let pending = items
-        .iter()
-        .map(|item| {
-            let stored = serde_json::to_vec(&item.payload)?;
-            Ok(targets::decrypt(
-                &item.r#type,
-                Opener::Client(cipher),
-                &label(&item.table, &item.column)?,
-                &stored,
-            )?)
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-    Pending::all(cipher, pending)
-        .await?
+fn items<T: DeserializeOwned>(list: &str, values: Vec<Value>) -> Result<Vec<T>, Error> {
+    values
         .into_iter()
-        .zip(items)
-        .map(|(opened, item)| plaintext(&item.r#type, opened))
+        .enumerate()
+        .map(|(n, value)| item(list, n, value))
         .collect()
+}
+
+fn to_json(value: &impl Serialize) -> Result<Value, stack_encrypt::Error> {
+    serde_json::to_value(value).map_err(|error| stack_encrypt::Error::Other(error.into()))
+}
+
+/// Encrypt a legacy value as `T`, which is a stored type or a query type,
+/// under the column the value carries.
+fn seal<'a, P, T, K>(source: Legacy<P>, keyset: &'a KeysetCipher<'_, K>) -> Pending<'a, Value, K>
+where
+    P: Zeroize,
+    T: EncryptTarget<P, ContextInput = RequiredContext<NonEmpty<Identifier>>> + Serialize,
+    K: 'static,
+{
+    source
+        .encrypt_into::<Shim<T>, _>(keyset)
+        .try_map(|Shim(sealed)| to_json(&sealed))
+}
+
+/// Open a stored `T` as its plaintext `P`, under the column it is read from.
+/// A payload stored under any other column is refused before any key is
+/// requested.
+fn open<'a, P, T, K>(
+    stored: Stored<T>,
+    keyset: &'a KeysetCipher<'_, K>,
+) -> Result<Pending<'a, Value, K>, Error>
+where
+    P: Zeroize + Serialize + 'static,
+    T: DecryptSource<P>,
+    T::ContextInput: AcceptsContext,
+    NonEmpty<Identifier>: Into<<T::ContextInput as AcceptsContext>::Value>,
+    K: 'static,
+{
+    let column = Identifier::for_column(stored.table, stored.column)?;
+    Ok(P::decrypt_from_with_context(stored.payload, keyset, column)
+        .try_map(|opened| to_json(&opened)))
+}
+
+fn encrypt_one<'a, K: 'static>(
+    item: Encrypt,
+    keyset: &'a KeysetCipher<'_, K>,
+) -> Pending<'a, Value, K> {
+    match item {
+        Encrypt::TextEq(v) => seal::<_, TextEq, _>(v, keyset),
+        Encrypt::TextMatch(v) => seal::<_, TextMatch, _>(v, keyset),
+        Encrypt::IntegerOrdOre(v) => seal::<_, IntegerOrdOre, _>(v, keyset),
+        Encrypt::IntegerOrdOpe(v) => seal::<_, IntegerOrdOpe, _>(v, keyset),
+        Encrypt::DoubleOrdOre(v) => seal::<_, DoubleOrdOre, _>(v, keyset),
+        Encrypt::Boolean(v) => seal::<_, Boolean, _>(v, keyset),
+    }
+}
+
+fn query_one<'a, K: 'static>(
+    item: Query,
+    keyset: &'a KeysetCipher<'_, K>,
+) -> Pending<'a, Value, K> {
+    match item {
+        Query::TextEq(v) => seal::<_, TextEqQuery, _>(v, keyset),
+        Query::TextMatch(v) => seal::<_, TextMatchQuery, _>(v, keyset),
+        Query::IntegerOrdOre(v) => seal::<_, IntegerOrdOreQuery, _>(v, keyset),
+        Query::IntegerOrdOpe(v) => seal::<_, IntegerOrdOpeQuery, _>(v, keyset),
+        Query::DoubleOrdOre(v) => seal::<_, DoubleOrdOreQuery, _>(v, keyset),
+    }
+}
+
+fn decrypt_one<'a, K: 'static>(
+    item: Decrypt,
+    keyset: &'a KeysetCipher<'_, K>,
+) -> Result<Pending<'a, Value, K>, Error> {
+    match item {
+        Decrypt::TextEq(s) => open::<String, _, _>(s, keyset),
+        Decrypt::TextMatch(s) => open::<String, _, _>(s, keyset),
+        Decrypt::IntegerOrdOre(s) => open::<i32, _, _>(s, keyset),
+        Decrypt::IntegerOrdOpe(s) => open::<i32, _, _>(s, keyset),
+        Decrypt::DoubleOrdOre(s) => open::<f64, _, _>(s, keyset),
+        Decrypt::Boolean(s) => open::<bool, _, _>(s, keyset),
+    }
+}
+
+/// Answer a request: each list is read whole, then sent as one ZeroKMS
+/// request whose results keep request order. One bad item fails its list.
+async fn answer<K>(keyset: &KeysetCipher<'_, K>, request: Request) -> Result<Value, Error>
+where
+    K: DataKeySource + IndexKeySource + Sync + 'static,
+{
+    let encrypt: Vec<Encrypt> = items("encrypt", request.encrypt)?;
+    let query: Vec<Query> = items("query", request.query)?;
+    let decrypt: Vec<Decrypt> = items("decrypt", request.decrypt)?;
+
+    let encrypted = Pending::all(
+        keyset,
+        encrypt
+            .into_iter()
+            .map(|item| encrypt_one(item, keyset))
+            .collect(),
+    )
+    .await?;
+    let queries = Pending::all(
+        keyset,
+        query
+            .into_iter()
+            .map(|item| query_one(item, keyset))
+            .collect(),
+    )
+    .await?;
+    let decrypted = Pending::all(
+        keyset,
+        decrypt
+            .into_iter()
+            .map(|item| decrypt_one(item, keyset))
+            .collect::<Result<_, _>>()?,
+    )
+    .await?;
+
+    Ok(json!({ "encrypt": encrypted, "query": queries, "decrypt": decrypted }))
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -229,26 +353,8 @@ async fn main() -> Result<(), Error> {
     let request: Request = serde_json::from_str(&input)?;
 
     let cipher = StackCipher::new().await?;
-    let keyset = cipher.default_keyset();
+    let response = answer(&cipher.default_keyset(), request).await?;
 
-    let encrypted = encrypt_all(&keyset, &request.encrypt).await?;
-
-    let mut queries = Vec::with_capacity(request.query.len());
-    for item in &request.query {
-        let bytes = targets::query(
-            &item.r#type,
-            &query_index(&item.r#type, item.index.as_deref())?,
-            &keyset,
-            &label(&item.table, &item.column)?,
-            frame(&item.r#type, &item.value)?,
-        )?
-        .await?;
-        queries.push(serde_json::from_slice::<Value>(&bytes)?);
-    }
-
-    let decrypted = decrypt_all(&cipher, &request.decrypt).await?;
-
-    let response = json!({ "encrypt": encrypted, "query": queries, "decrypt": decrypted });
     let mut stdout = std::io::stdout().lock();
     serde_json::to_writer(&mut stdout, &response)?;
     stdout.write_all(b"\n")?;
@@ -266,212 +372,268 @@ mod common;
 mod tests {
     use super::*;
 
-    fn multi_index_targets() -> Vec<&'static targets::Target> {
-        targets::targets()
-            .iter()
-            .filter(|target| target.indexes.len() > 1)
-            .collect()
+    fn request(value: Value) -> Request {
+        serde_json::from_value(value).unwrap()
+    }
+
+    async fn refusal(value: Value) -> String {
+        let (cipher, calls) = common::cipher().await;
+        match answer(&cipher.default_keyset(), request(value)).await {
+            Ok(response) => panic!("the request should be refused, got: {response}"),
+            Err(error) => {
+                let calls = calls.lock().unwrap();
+                assert!(
+                    calls.generate.is_empty() && calls.retrieve.is_empty(),
+                    "a request refused while it is read should request no key"
+                );
+                error.to_string()
+            }
+        }
     }
 
     mod given_a_plaintext_of_the_wrong_kind {
         use super::*;
 
-        fn refusal(name: &str, value: &Value) -> String {
-            match frame(name, value) {
-                Ok(_) => panic!("{name} should refuse a plaintext of the wrong kind"),
-                Err(error) => error.to_string(),
-            }
-        }
-
-        #[test]
-        fn reports_the_json_type_and_never_the_value() {
+        #[tokio::test]
+        async fn refuses_naming_the_json_type_and_never_the_value() {
             let cases = [
                 ("TextEq", json!(12345), "12345", "number"),
-                ("IntegerEq", json!("alice@b.c"), "alice@b.c", "string"),
-                ("IntegerEq", json!(1.5), "1.5", "number"),
+                ("IntegerOrdOre", json!("alice@b.c"), "alice@b.c", "string"),
+                ("IntegerOrdOre", json!(1.5), "1.5", "number"),
+                (
+                    "IntegerOrdOpe",
+                    json!(9_999_999_999_i64),
+                    "9999999999",
+                    "number",
+                ),
                 ("Boolean", json!("secret-flag"), "secret-flag", "string"),
                 ("TextEq", json!({ "ssn": "078-05" }), "078-05", "object"),
             ];
             for (name, value, plaintext, json_type) in cases {
-                let message = refusal(name, &value);
+                let message = refusal(json!({
+                    "encrypt": [{ "type": name, "table": "t", "column": "c", "value": value }]
+                }))
+                .await;
                 assert!(
                     !message.contains(plaintext),
                     "{name}'s refusal should not repeat the plaintext, got: {message}"
                 );
                 assert!(
-                    message.contains(json_type),
-                    "{name}'s refusal should name the JSON type {json_type}, got: {message}"
+                    message.contains(name) && message.contains(json_type),
+                    "{name}'s refusal should name the type and the JSON type {json_type}, got: {message}"
                 );
             }
         }
     }
 
-    mod given_a_target_with_several_indexes {
+    mod given_an_unknown_type {
         use super::*;
 
-        mod and_no_index_named {
-            use super::*;
-
-            #[test]
-            fn refuses_and_lists_the_valid_keys() {
-                let targets = multi_index_targets();
-                assert!(!targets.is_empty(), "the table should have such targets");
-                for target in targets {
-                    match query_index(target.name, None) {
-                        Ok(spec) => panic!(
-                            "{} should not guess among {:?}, chose {spec:?}",
-                            target.name, target.indexes
-                        ),
-                        Err(error) => {
-                            let message = error.to_string();
-                            for key in target.indexes {
-                                assert!(
-                                    message.contains(key),
-                                    "{}'s refusal should name {key}, got: {message}",
-                                    target.name
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+        #[tokio::test]
+        async fn refuses_naming_it() {
+            let message = refusal(json!({
+                "encrypt": [{ "type": "TextOrdOpe", "table": "t", "column": "c", "value": "x" }]
+            }))
+            .await;
+            assert!(
+                message.contains("unknown variant") && message.contains("TextOrdOpe"),
+                "got: {message}"
+            );
         }
 
-        mod and_an_index_named {
-            use super::*;
-
-            #[test]
-            fn selects_that_index_on_every_target_that_carries_it() {
-                for target in multi_index_targets() {
-                    for key in target.indexes {
-                        let selected = query_index(target.name, Some(key)).unwrap();
-                        assert_eq!(
-                            selected,
-                            IndexSpec::parse(key).unwrap(),
-                            "{} queried through {key}",
-                            target.name
-                        );
-                    }
-                }
-            }
+        #[tokio::test]
+        async fn refuses_a_query_on_a_type_that_answers_none() {
+            let message = refusal(json!({
+                "query": [{ "type": "Boolean", "table": "t", "column": "c", "value": true }]
+            }))
+            .await;
+            assert!(message.contains("Boolean"), "got: {message}");
         }
     }
 
-    mod given_an_index_the_target_does_not_carry {
+    mod given_an_empty_column {
         use super::*;
 
-        #[test]
-        fn refuses_and_lists_the_valid_keys() {
-            match query_index("TextEq", Some("ore_block")) {
-                Ok(spec) => panic!("TextEq carries no ore_block index, chose {spec:?}"),
-                Err(error) => {
-                    let message = error.to_string();
-                    assert!(
-                        message.contains("ore_block") && message.contains("eq"),
-                        "the refusal should name the key and the valid keys, got: {message}"
-                    );
-                }
-            }
-        }
-    }
-
-    // The requests `integration-tests/tests/v4-codec.ts` sends today name no
-    // index, so a target with one index must not start needing it.
-    mod given_a_target_with_one_index_and_no_index_named {
-        use super::*;
-
-        #[test]
-        fn uses_that_index() {
-            for target in targets::targets().iter().filter(|t| t.indexes.len() == 1) {
-                let selected = query_index(target.name, None).unwrap();
-                assert_eq!(
-                    selected,
-                    IndexSpec::parse(target.indexes[0]).unwrap(),
-                    "{}'s only index",
-                    target.name
-                );
-            }
+        #[tokio::test]
+        async fn refuses_before_any_key_is_requested() {
+            let (cipher, calls) = common::cipher().await;
+            let result = answer(
+                &cipher.default_keyset(),
+                request(json!({
+                    "encrypt": [{ "type": "TextEq", "table": "t", "column": "", "value": "x" }]
+                })),
+            )
+            .await;
+            assert!(result.is_err(), "an empty column should be refused");
+            assert!(
+                calls.lock().unwrap().generate.is_empty(),
+                "no key was requested"
+            );
         }
     }
 
     mod given_a_request_of_many_items {
         use super::*;
 
+        fn mixed() -> Vec<(&'static str, Value)> {
+            (0..25)
+                .map(|n| match n % 6 {
+                    0 => ("TextEq", json!(format!("value-{n}"))),
+                    1 => ("TextMatch", json!(format!("some words {n}"))),
+                    2 => ("IntegerOrdOre", json!(n)),
+                    3 => ("IntegerOrdOpe", json!(-n)),
+                    // A JSON integer reads as a double, as protect-ffi hands
+                    // an integral number back.
+                    4 => ("DoubleOrdOre", json!(n)),
+                    _ => ("Boolean", json!(n % 2 == 0)),
+                })
+                .collect()
+        }
+
         #[tokio::test]
-        async fn batches_each_direction_into_one_kms_call_and_keeps_the_order() {
+        async fn sends_each_list_as_one_kms_call_and_keeps_the_order() {
             let (cipher, calls) = common::cipher().await;
             let keyset = cipher.default_keyset();
-            let plaintexts: Vec<String> = (0..25).map(|n| format!("value-{n}")).collect();
-            let items: Vec<Item> = plaintexts
+            let items = mixed();
+
+            let encrypt: Vec<Value> = items
                 .iter()
                 .enumerate()
-                .map(|(n, value)| Item {
-                    r#type: "TextEq".to_string(),
-                    table: "t".to_string(),
-                    column: format!("c{}", n % 5),
-                    value: json!(value),
-                    index: None,
+                .map(|(n, (name, value))| {
+                    json!({ "type": name, "table": "t", "column": format!("c{}", n % 5), "value": value })
                 })
                 .collect();
+            let response = answer(&keyset, request(json!({ "encrypt": encrypt })))
+                .await
+                .unwrap();
+            assert_eq!(
+                calls.lock().unwrap().generate.len(),
+                1,
+                "25 values of six types should be one generate call"
+            );
 
-            let encrypted = encrypt_all(&keyset, &items).await.unwrap();
-            let generate_calls = calls.lock().unwrap().generate.len();
-            assert_eq!(generate_calls, 1, "25 values should be one generate call");
-
-            let stored: Vec<Stored> = encrypted
-                .into_iter()
+            let decrypt: Vec<Value> = response["encrypt"]
+                .as_array()
+                .unwrap()
+                .iter()
                 .zip(&items)
-                .map(|(payload, item)| Stored {
-                    r#type: item.r#type.clone(),
-                    table: item.table.clone(),
-                    column: item.column.clone(),
-                    payload,
+                .enumerate()
+                .map(|(n, (payload, (name, _)))| {
+                    json!({ "type": name, "table": "t", "column": format!("c{}", n % 5), "payload": payload })
                 })
                 .collect();
-            let decrypted = decrypt_all(&cipher, &stored).await.unwrap();
-            let retrieve_calls = calls.lock().unwrap().retrieve.len();
-            assert_eq!(retrieve_calls, 1, "25 values should be one retrieve call");
+            let response = answer(&keyset, request(json!({ "decrypt": decrypt })))
+                .await
+                .unwrap();
+            assert_eq!(
+                calls.lock().unwrap().retrieve.len(),
+                1,
+                "25 values of six types should be one retrieve call"
+            );
 
-            let expected: Vec<Value> = plaintexts.iter().map(|value| json!(value)).collect();
-            assert_eq!(decrypted, expected, "output order should be request order");
+            let decrypted = response["decrypt"].as_array().unwrap();
+            for ((name, expected), opened) in items.iter().zip(decrypted) {
+                let matches = match expected {
+                    Value::Number(n) if *name == "DoubleOrdOre" => opened.as_f64() == n.as_f64(),
+                    _ => opened == expected,
+                };
+                assert!(matches, "{name}: expected {expected}, opened {opened}");
+            }
         }
     }
 
-    mod given_a_real_target {
+    mod given_a_query {
         use super::*;
 
-        const REAL_TARGETS: [&str; 5] = ["Real", "RealEq", "RealOrdOre", "RealOrd", "RealOrdOpe"];
-
-        fn assert_refused_without_the_value(name: &str, message: &str) {
-            assert!(
-                message.contains("float32 is not supported"),
-                "{name} should be refused as unsupported, got: {message}"
-            );
-            assert!(
-                !message.contains("1.5"),
-                "{name}'s refusal should not repeat the plaintext, got: {message}"
+        #[tokio::test]
+        async fn its_operand_matches_the_stored_value_of_the_same_column() {
+            let (cipher, _) = common::cipher().await;
+            let keyset = cipher.default_keyset();
+            let item = json!({
+                "type": "TextEq", "table": "customers", "column": "email", "value": "alan@example.com"
+            });
+            let response = answer(
+                &keyset,
+                request(json!({ "encrypt": [item.clone()], "query": [item] })),
+            )
+            .await
+            .unwrap();
+            let stored = &response["encrypt"][0];
+            let operand = &response["query"][0];
+            assert!(stored["hm"].is_string(), "the stored value carries hm");
+            assert_eq!(
+                stored["hm"], operand["hm"],
+                "the query finds the stored value"
             );
         }
+    }
 
-        #[test]
-        fn refuses_a_plaintext_without_repeating_it() {
-            for name in REAL_TARGETS {
-                match frame(name, &json!(1.5)) {
-                    Ok(_) => panic!("{name} should refuse a float32 plaintext"),
-                    Err(error) => assert_refused_without_the_value(name, &error.to_string()),
-                }
-            }
+    // The migration suites relabel a legacy payload as v4 and expect it
+    // refused by name: the refusal must come from the ciphertext's producer,
+    // not from a decode error, or the suite cannot tell the two apart.
+    mod given_a_payload_another_producer_wrote {
+        use super::*;
+
+        #[tokio::test]
+        async fn refuses_it_by_name() {
+            let (cipher, _) = common::cipher().await;
+            let keyset = cipher.default_keyset();
+            let response = answer(
+                &keyset,
+                request(json!({
+                    "encrypt": [{ "type": "TextEq", "table": "t", "column": "email", "value": "x" }]
+                })),
+            )
+            .await
+            .unwrap();
+            let mut legacy = response["encrypt"][0].clone();
+            legacy["c"] = json!("legacy-ciphertext");
+            let error = answer(
+                &keyset,
+                request(json!({
+                    "decrypt": [{ "type": "TextEq", "table": "t", "column": "email", "payload": legacy }]
+                })),
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsupported EQL ciphertext producer or version"),
+                "got: {error}"
+            );
         }
+    }
 
-        #[test]
-        fn refuses_an_opened_value_without_repeating_it() {
-            for name in REAL_TARGETS {
-                let opened = ValueFrame::of(1.5_f32).unwrap();
-                match plaintext(name, opened) {
-                    Ok(value) => panic!("{name} should refuse a float32 value, got: {value}"),
-                    Err(error) => assert_refused_without_the_value(name, &error.to_string()),
-                }
-            }
+    mod given_a_payload_read_from_another_column {
+        use super::*;
+
+        #[tokio::test]
+        async fn refuses_to_open_it() {
+            let (cipher, _) = common::cipher().await;
+            let keyset = cipher.default_keyset();
+            let response = answer(
+                &keyset,
+                request(json!({
+                    "encrypt": [{ "type": "TextEq", "table": "t", "column": "email", "value": "x" }]
+                })),
+            )
+            .await
+            .unwrap();
+            let result = answer(
+                &keyset,
+                request(json!({
+                    "decrypt": [{
+                        "type": "TextEq", "table": "t", "column": "other",
+                        "payload": response["encrypt"][0]
+                    }]
+                })),
+            )
+            .await;
+            assert!(
+                result.is_err(),
+                "a payload stored under email should not open as other"
+            );
         }
     }
 }

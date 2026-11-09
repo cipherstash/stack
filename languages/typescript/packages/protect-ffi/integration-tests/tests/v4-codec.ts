@@ -7,10 +7,11 @@ import type { Client } from 'pg'
 // only: no TypeScript SDK writes `v: 4` yet. The migration suites
 // (`migrate-v*-to-v4.test.ts`) therefore decrypt legacy rows here with
 // protect-ffi and re-encrypt the plaintexts through a small Rust codec,
-// `packages/eql/tests/encryption/examples/v4_codec.rs`. It dispatches on the
-// EQL type name through `eql_bindings::encryption::targets`, the same entry
-// point the Go guest uses, under live ZeroKMS and the same `CS_*` credentials
-// as protect-ffi.
+// `packages/eql/tests/encryption/examples/v4_codec.rs`. It encrypts each value
+// through Stack Encrypt's typed API, under the column the value came from, as
+// a Rust application migrating its own data would, over live ZeroKMS and the
+// same `CS_*` credentials as protect-ffi. Each request list is one ZeroKMS
+// call.
 //
 // Built by `mise run eql:v4:codec` (part of `mise run setup`), under
 // `CARGO_TARGET_DIR` when that is set. Set `EQL_V4_CODEC` to use a binary
@@ -30,7 +31,10 @@ export function codecPathFor(env: NodeJS.ProcessEnv): string {
 
 export const codecPath = codecPathFor(process.env)
 
-/** An EQL v4 type name, e.g. `TextEq`, as `targets::targets()` lists it. */
+/**
+ * An EQL v4 type name, e.g. `TextEq`: one of the variants of the codec's
+ * `Encrypt` enum. `Query` has no `Boolean`, which answers no query.
+ */
 export type V4Type =
   | 'Boolean'
   | 'IntegerOrdOpe'
