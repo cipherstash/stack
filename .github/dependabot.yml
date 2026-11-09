@@ -369,6 +369,42 @@ updates:
         update-types:
           - version-update:semver-major
 
+  # ── uv (languages/python — the Python SDK's test dependencies) ──
+  # The package has no runtime dependency, so uv.lock holds only the `test`
+  # extra: pytest, attrs, Pydantic, SQLAlchemy and psycopg, and what they
+  # need. tests-python.yml installs it with `uv sync --locked`. The extra has
+  # lower bounds and no upper bounds, so a new minor or patch release changes
+  # only the lock.
+  - package-ecosystem: uv
+    directory: /languages/python
+    # Monthly, matching the other non-npm toolchains. No `day:`, for the
+    # reason recorded on the cargo entries.
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      # One pull request for the set, so the tests run once against all the
+      # new versions together.
+      python-test-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
   # ── GitHub Actions ─────────────────────────────────────────────
   - package-ecosystem: github-actions
     directory: /

@@ -65,7 +65,7 @@ is checked by the workflow's own test, not by `supply-chain.e2e.test.ts`.)
 
 ### 5. Cooldown'd auto-updates — practice #6
 
-Dependabot opens grouped, cooldown'd PRs (7 days minor/patch) for `npm`, `cargo`, `gomod`, `pip` (the hashed requirements file for a Python tool CI runs), `github-actions` and `docker` (the digest of the Alpine image the musl binaries are built in). Major bumps are not proposed at all — every entry ignores `version-update:semver-major`, so majors are reviewed and applied by hand.
+Dependabot opens grouped, cooldown'd PRs (7 days minor/patch) for `npm`, `cargo`, `gomod`, `pip` (the hashed requirements file for a Python tool CI runs), `uv` (the Python SDK's test lockfile), `github-actions` and `docker` (the digest of the Alpine image the musl binaries are built in). Major bumps are not proposed at all — every entry ignores `version-update:semver-major`, so majors are reviewed and applied by hand.
 
 There is deliberately **no `semver-major-days` cooldown** on any entry. It would delay major *version update* PRs, which the `ignore` above means Dependabot never opens, and cooldown does not reach the security path either ("the cooldown option is only available for version updates, not security updates"). Don't add one back as a safety net for the day the `ignore` is dropped — dead config reads as policy, and the test below fails on the pair.
 
