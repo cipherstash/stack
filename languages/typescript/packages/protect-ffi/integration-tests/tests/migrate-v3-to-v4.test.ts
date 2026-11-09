@@ -210,7 +210,9 @@ describe('EQL v3 -> v4 migration', () => {
         [index + 1, ...row],
       )
     }
-  })
+    // Vitest's default hook timeout is 10s, too short for live ZeroKMS auth
+    // and bulk encryption; a timeout here would skip every test in the file.
+  }, 60_000)
 
   // In `afterAll`, not returned from `beforeAll`: a returned teardown runs only
   // when setup succeeds, so a throw after `connect()` would leave the socket
@@ -275,6 +277,27 @@ describe('EQL v3 -> v4 migration', () => {
       v: 4,
     }
 
+    // The codec opens a genuine v4 payload, so the refusal below is about the
+    // payload and not a missing binary or bad credentials.
+    const [genuine] = encryptV4([
+      {
+        type: 'TextEq',
+        table: TABLE,
+        column: 'email',
+        value: 'alan@example.com',
+      },
+    ])
+    expect(
+      decryptV4([
+        {
+          type: 'TextEq',
+          table: TABLE,
+          column: 'email',
+          payload: genuine,
+        },
+      ]),
+    ).toEqual(['alan@example.com'])
+
     // Stack Encrypt refuses to open a cipherstash-client ciphertext.
     expect(() =>
       decryptV4([
@@ -285,7 +308,7 @@ describe('EQL v3 -> v4 migration', () => {
           payload: relabelled,
         },
       ]),
-    ).toThrowError()
+    ).toThrowError('unsupported EQL ciphertext producer or version')
 
     // And its search term was derived by the other producer, so a v4 query for
     // the same plaintext does not match it.
@@ -301,7 +324,8 @@ describe('EQL v3 -> v4 migration', () => {
     expect(typeof v4Query.hm).toBe('string')
     expect(typeof relabelled.hm).toBe('string')
     expect(v4Query.hm).not.toEqual(relabelled.hm)
-  })
+    // Four codec launches, each authenticating against live ZeroKMS.
+  }, 60_000)
 
   test('backfill: decrypt every v3 value and re-encrypt it as v4 beside it', async () => {
     // Step 2: one v4 column per v3 column.

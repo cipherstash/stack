@@ -85,12 +85,17 @@ function entryForCompiledFile(crateDir, file) {
   return `${crateDir}/${rel[0]}/**`
 }
 
-/** `tasks/build.sh`'s `#MISE sources` that live under `crates/`. */
-function codegenSources(repoRoot) {
+/** `tasks/build.sh`'s `#MISE sources`, relative to the subtree root. */
+function buildScriptSources(repoRoot) {
   const text = readFileSync(resolve(repoRoot, BUILD_SCRIPT), 'utf8')
   const line = /^#MISE sources=(\[.*\])\s*$/m.exec(text)
   if (!line) throw new Error(`${BUILD_SCRIPT} no longer declares #MISE sources`)
   return JSON.parse(line[1])
+}
+
+/** `tasks/build.sh`'s `#MISE sources` that live under `crates/`. */
+function codegenSources(repoRoot) {
+  return buildScriptSources(repoRoot)
     .filter((source) => source.startsWith('crates/'))
     .map((source) => `${EQL_ROOT}/${source}`)
 }
@@ -118,6 +123,22 @@ export function eqlV4SuiteFilterEntries(repoRoot) {
     ...codegenSources(repoRoot).map(entryForSource),
   ])
   return { features, entries: [...entries].sort() }
+}
+
+/**
+ * The `paths:` filter entries for what `mise run eql:v4:install` reads outside
+ * `crates/`: every other `#MISE sources` entry of `tasks/build.sh`, plus the
+ * script itself, which is what that task runs and does not list itself.
+ *
+ * Kept apart from `eqlV4SuiteFilterEntries` because that function's entries are
+ * the allowlist `wasm-build-inputs-paths-filter.test.mjs` applies under
+ * `packages/eql/crates/`, and nothing here is under it.
+ */
+export function eqlV4SqlBuildEntries(repoRoot) {
+  const sources = buildScriptSources(repoRoot)
+    .filter((source) => !source.startsWith('crates/'))
+    .map((source) => entryForSource(`${EQL_ROOT}/${source}`))
+  return [...new Set([BUILD_SCRIPT, ...sources])].sort()
 }
 
 /**
@@ -219,7 +240,10 @@ function owningWorkspace(rootAbs, crateAbs) {
 
 /**
  * The in-tree crates cargo compiles for `startManifest`'s crate, as repo-relative
- * crate directories, read from the manifests alone so the guard needs no Rust
+ * crate directories, and the workspace manifests whose
+ * `[workspace.dependencies]` their `workspace = true` specs resolved through.
+ * Editing one of those changes what the crates build with while touching no
+ * file in any of them. Read from the manifests alone so the guard needs no Rust
  * toolchain. `path` dependencies are followed through `[dependencies]` and
  * `[build-dependencies]`; `[dev-dependencies]` count only for the starting
  * crate, whose examples and tests are what use them. `foo = { workspace = true }`
@@ -232,11 +256,12 @@ function owningWorkspace(rootAbs, crateAbs) {
  * that cannot be resolved to a manifest throws, so a walk that stopped early
  * cannot read as a small graph.
  */
-export function cargoPathDependencyClosure(repoRoot, startManifest) {
+export function cargoPathDependencyWalk(repoRoot, startManifest) {
   const rootAbs = resolve(repoRoot)
   const rel = (abs) => relative(rootAbs, abs).split(sep).join('/')
   const startAbs = dirname(resolve(rootAbs, startManifest))
   const seen = new Set()
+  const workspaceManifests = new Set()
 
   const crateAt = (dirAbs, declaredBy, name) => {
     if (dirAbs !== rootAbs && !dirAbs.startsWith(`${rootAbs}${sep}`)) {
@@ -261,6 +286,7 @@ export function cargoPathDependencyClosure(repoRoot, startManifest) {
       /^\//,
       '',
     )
+    workspaceManifests.add(workspaceManifest)
     const source = readFileSync(join(workspaceAbs, 'Cargo.toml'), 'utf8')
     const entry = dependencyTables(source)
       .filter((table) => table.kind === 'workspace')
@@ -314,7 +340,15 @@ export function cargoPathDependencyClosure(repoRoot, startManifest) {
       }
     }
   }
-  return [...seen].map(rel).sort()
+  return {
+    crates: [...seen].map(rel).sort(),
+    workspaceManifests: [...workspaceManifests].sort(),
+  }
+}
+
+/** The crate directories of `cargoPathDependencyWalk`. */
+export function cargoPathDependencyClosure(repoRoot, startManifest) {
+  return cargoPathDependencyWalk(repoRoot, startManifest).crates
 }
 
 /**
@@ -338,7 +372,10 @@ const CODEC_CRATE_ENTRIES = new Map([
 ])
 
 export function eqlV4CodecCrateEntries(repoRoot) {
-  const crates = cargoPathDependencyClosure(repoRoot, CODEC_MANIFEST)
+  const { crates, workspaceManifests } = cargoPathDependencyWalk(
+    repoRoot,
+    CODEC_MANIFEST,
+  )
   const entries = crates.flatMap((crate) => {
     const special = CODEC_CRATE_ENTRIES.get(crate)
     if (special) return special
@@ -347,5 +384,5 @@ export function eqlV4CodecCrateEntries(repoRoot) {
       : []
     return [`${crate}/Cargo.toml`, `${crate}/src/**`, ...buildScript]
   })
-  return { crates, entries: [...new Set(entries)].sort() }
+  return { crates, workspaceManifests, entries: [...new Set(entries)].sort() }
 }

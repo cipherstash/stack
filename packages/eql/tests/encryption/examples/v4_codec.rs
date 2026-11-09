@@ -26,7 +26,8 @@
 //! ```json
 //! {
 //!   "encrypt": [{ "type": "TextEq", "table": "t", "column": "c", "value": "x" }],
-//!   "query":   [{ "type": "IntegerOrd", "table": "t", "column": "c", "value": 7 }],
+//!   "query":   [{ "type": "IntegerOrd", "table": "t", "column": "c", "value": 7 },
+//!               { "type": "TextSearch", "table": "t", "column": "c", "value": "x", "index": "match" }],
 //!   "decrypt": [{ "type": "TextEq", "table": "t", "column": "c", "payload": { … } }]
 //! }
 //! ```
@@ -34,8 +35,12 @@
 //! The response has the same three keys, each a list in request order:
 //! stored payloads, query operands (bind as the target's `query_sql_domain`)
 //! and decrypted plaintexts. `type` is a target name from
-//! `eql_bindings::encryption::targets::targets()`. A query uses the target's
-//! first index, which for every scalar target is the one its operators need.
+//! `eql_bindings::encryption::targets::targets()`. A query goes through one of
+//! the target's indexes. A target with one index uses it. A target with several
+//! (`TextOrdOre`, `TextOrd`, `TextOrdOpe`, `TextSearchOre`, `TextSearch`) needs
+//! `index`, one of its `Target::indexes` keys, because `TextSearch` and
+//! `TextSearchOre` operands carry that index's term alone: the codec does not
+//! guess, and a request naming none is refused with the valid keys.
 //! Plaintexts are JSON strings, booleans and numbers; the target's
 //! `plaintext` kind decides how a number is read.
 
@@ -68,6 +73,9 @@ struct Item {
     table: String,
     column: String,
     value: Value,
+    /// The index a query goes through, by key. Read for `query` items only.
+    #[serde(default)]
+    index: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -91,10 +99,27 @@ fn label(table: &str, column: &str) -> Result<Label, Error> {
     Ok(Label::new([table, column])?)
 }
 
+/// A JSON value's type, for an error that must not repeat the value.
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 /// A JSON plaintext as the engine's runtime frame, read as `name`'s kind.
 fn frame(name: &str, value: &Value) -> Result<ValueFrame, Error> {
     let kind = plaintext_kind(name)?;
-    let wrong = || format!("{name} takes a {kind} plaintext, not {value}");
+    let wrong = || {
+        format!(
+            "{name} takes a {kind} plaintext, not a JSON {}",
+            json_type(value)
+        )
+    };
     let frame = match kind {
         "string" => ValueFrame::of(value.as_str().ok_or_else(wrong)?.to_owned()),
         "boolean" | "bool" => ValueFrame::of(value.as_bool().ok_or_else(wrong)?),
@@ -128,13 +153,22 @@ fn plaintext(name: &str, opened: ValueFrame) -> Result<Value, Error> {
     Ok(value)
 }
 
-fn index(name: &str) -> Result<IndexSpec, Error> {
+/// The index a query on `name` goes through: the one `requested` names, or
+/// the target's only index. Refuses, naming the valid keys, rather than pick
+/// one of several.
+fn query_index(name: &str, requested: Option<&str>) -> Result<IndexSpec, Error> {
     let target = targets::target(name).ok_or_else(|| format!("no EQL v4 target named {name}"))?;
-    target
-        .indexes
-        .first()
-        .and_then(|key| IndexSpec::parse(key))
-        .ok_or_else(|| format!("{name} is storage-only and answers no query").into())
+    let valid = target.indexes.join(", ");
+    let key = match (requested, target.indexes) {
+        (_, []) => return Err(format!("{name} is storage-only and answers no query").into()),
+        (Some(key), indexes) if indexes.contains(&key) => key,
+        (Some(key), _) => {
+            return Err(format!("{name} carries no {key} index; its indexes are: {valid}").into())
+        }
+        (None, [only]) => *only,
+        (None, _) => return Err(format!("{name} has several indexes; name one of: {valid}").into()),
+    };
+    IndexSpec::parse(key).ok_or_else(|| format!("{name}: index {key} is not recognised").into())
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -162,7 +196,7 @@ async fn main() -> Result<(), Error> {
     for item in &request.query {
         let bytes = targets::query(
             &item.r#type,
-            &index(&item.r#type)?,
+            &query_index(&item.r#type, item.index.as_deref())?,
             &keyset,
             &label(&item.table, &item.column)?,
             frame(&item.r#type, &item.value)?,
@@ -189,4 +223,138 @@ async fn main() -> Result<(), Error> {
     serde_json::to_writer(&mut stdout, &response)?;
     stdout.write_all(b"\n")?;
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn multi_index_targets() -> Vec<&'static targets::Target> {
+        targets::targets()
+            .iter()
+            .filter(|target| target.indexes.len() > 1)
+            .collect()
+    }
+
+    mod given_a_plaintext_of_the_wrong_kind {
+        use super::*;
+
+        fn refusal(name: &str, value: &Value) -> String {
+            match frame(name, value) {
+                Ok(_) => panic!("{name} should refuse a plaintext of the wrong kind"),
+                Err(error) => error.to_string(),
+            }
+        }
+
+        #[test]
+        fn reports_the_json_type_and_never_the_value() {
+            let cases = [
+                ("TextEq", json!(12345), "12345", "number"),
+                ("IntegerEq", json!("alice@b.c"), "alice@b.c", "string"),
+                ("IntegerEq", json!(1.5), "1.5", "number"),
+                ("Boolean", json!("secret-flag"), "secret-flag", "string"),
+                ("TextEq", json!({ "ssn": "078-05" }), "078-05", "object"),
+            ];
+            for (name, value, plaintext, json_type) in cases {
+                let message = refusal(name, &value);
+                assert!(
+                    !message.contains(plaintext),
+                    "{name}'s refusal should not repeat the plaintext, got: {message}"
+                );
+                assert!(
+                    message.contains(json_type),
+                    "{name}'s refusal should name the JSON type {json_type}, got: {message}"
+                );
+            }
+        }
+    }
+
+    mod given_a_target_with_several_indexes {
+        use super::*;
+
+        mod and_no_index_named {
+            use super::*;
+
+            #[test]
+            fn refuses_and_lists_the_valid_keys() {
+                let targets = multi_index_targets();
+                assert!(!targets.is_empty(), "the table should have such targets");
+                for target in targets {
+                    match query_index(target.name, None) {
+                        Ok(spec) => panic!(
+                            "{} should not guess among {:?}, chose {spec:?}",
+                            target.name, target.indexes
+                        ),
+                        Err(error) => {
+                            let message = error.to_string();
+                            for key in target.indexes {
+                                assert!(
+                                    message.contains(key),
+                                    "{}'s refusal should name {key}, got: {message}",
+                                    target.name
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        mod and_an_index_named {
+            use super::*;
+
+            #[test]
+            fn selects_that_index_on_every_target_that_carries_it() {
+                for target in multi_index_targets() {
+                    for key in target.indexes {
+                        let selected = query_index(target.name, Some(key)).unwrap();
+                        assert_eq!(
+                            selected,
+                            IndexSpec::parse(key).unwrap(),
+                            "{} queried through {key}",
+                            target.name
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    mod given_an_index_the_target_does_not_carry {
+        use super::*;
+
+        #[test]
+        fn refuses_and_lists_the_valid_keys() {
+            match query_index("TextEq", Some("ore_block")) {
+                Ok(spec) => panic!("TextEq carries no ore_block index, chose {spec:?}"),
+                Err(error) => {
+                    let message = error.to_string();
+                    assert!(
+                        message.contains("ore_block") && message.contains("eq"),
+                        "the refusal should name the key and the valid keys, got: {message}"
+                    );
+                }
+            }
+        }
+    }
+
+    // The requests `integration-tests/tests/v4-codec.ts` sends today name no
+    // index, so a target with one index must not start needing it.
+    mod given_a_target_with_one_index_and_no_index_named {
+        use super::*;
+
+        #[test]
+        fn uses_that_index() {
+            for target in targets::targets().iter().filter(|t| t.indexes.len() == 1) {
+                let selected = query_index(target.name, None).unwrap();
+                assert_eq!(
+                    selected,
+                    IndexSpec::parse(target.indexes[0]).unwrap(),
+                    "{}'s only index",
+                    target.name
+                );
+            }
+        }
+    }
 }

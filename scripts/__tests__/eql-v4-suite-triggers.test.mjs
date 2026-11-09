@@ -4,10 +4,12 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   cargoPathDependencyClosure,
+  cargoPathDependencyWalk,
   eqlV4CodecCrateEntries,
+  eqlV4SqlBuildEntries,
   eqlV4SuiteFilterEntries,
 } from './lib/eql-v4-suite-inputs.mjs'
-import { filterCovers } from './lib/paths-filter.mjs'
+import { entryCovers, filterCovers } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
@@ -21,20 +23,6 @@ import { readWorkflow } from './lib/workflows.mjs'
  * coverage skipped. The entries come from `lib/eql-v4-suite-inputs.mjs`.
  */
 const WORKFLOW = '.github/workflows/integration-protect-ffi.yml'
-
-/** A literal or `/**`-tailed filter entry covering the input pattern. */
-function entryCovers(entry, input) {
-  const literal = (p) => {
-    const segments = p.split('/')
-    const at = segments.findIndex((segment) => /[*?[]/.test(segment))
-    return (at === -1 ? segments : segments.slice(0, at)).join('/')
-  }
-  const prefix = literal(entry)
-  const tail = entry.slice(prefix.length).replace(/^\//, '')
-  if (tail !== '' && tail !== '**') return false
-  const target = literal(input)
-  return target === prefix || target.startsWith(`${prefix}/`)
-}
 
 describe('the EQL v4 migration suites trigger on their v4 inputs', () => {
   const { features, entries } = eqlV4SuiteFilterEntries(REPO_ROOT)
@@ -66,8 +54,44 @@ describe('the EQL v4 migration suites trigger on their v4 inputs', () => {
   }
 })
 
+describe('the EQL v4 migration suites trigger on the SQL build inputs outside the crates', () => {
+  const entries = eqlV4SqlBuildEntries(REPO_ROOT)
+
+  it('derives every #MISE sources entry that is not under crates/', () => {
+    // An empty or shrunken derivation would pass the checks below.
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        'packages/eql/Cargo.lock',
+        'packages/eql/Cargo.toml',
+        'packages/eql/src/v3/**',
+        'packages/eql/tasks/build.sh',
+        'packages/eql/tasks/build/ordering.sh',
+        'packages/eql/tasks/uninstall-v3.sql',
+      ]),
+    )
+    expect(
+      entries.filter((entry) => entry.startsWith('packages/eql/crates/')),
+    ).toEqual([])
+  })
+
+  const { on } = readWorkflow(WORKFLOW)
+  for (const event of ['push', 'pull_request']) {
+    it(`${WORKFLOW} (${event}) triggers on every input of the v4 SQL build`, () => {
+      const paths = on?.[event]?.paths ?? []
+      const uncovered = entries.filter(
+        (entry) => !filterCovers(paths, entry, entryCovers),
+      )
+      expect(
+        uncovered,
+        `${WORKFLOW} runs the EQL v4 migration suites against SQL that \`tasks/build.sh\` renders from these files, but its \`${event}\` \`paths:\` filter does not list them, so a SQL-only v4 change starts no suite that runs it. Add each to BOTH copies of the filter.`,
+      ).toEqual([])
+    })
+  }
+})
+
 describe('the EQL v4 migration suites trigger on the crates the codec compiles', () => {
-  const { crates, entries } = eqlV4CodecCrateEntries(REPO_ROOT)
+  const { crates, entries, workspaceManifests } =
+    eqlV4CodecCrateEntries(REPO_ROOT)
 
   it('walks the whole in-tree dependency graph of the codec', () => {
     // The two crates that were missed sit two hops out, one behind
@@ -90,6 +114,12 @@ describe('the EQL v4 migration suites trigger on the crates the codec compiles',
     )
   })
 
+  it('finds the workspace manifest the out-of-workspace crates inherit from', () => {
+    // stack-kms takes stack-auth and stack-profile from the root manifest's
+    // [workspace.dependencies], though cargo builds it from the EQL workspace.
+    expect(workspaceManifests).toContain('Cargo.toml')
+  })
+
   it('leaves eql-bindings to the finer-grained derivation', () => {
     // Only part of the crate reaches the codec. A whole-source entry here would
     // start this suite on files it never compiles.
@@ -107,6 +137,17 @@ describe('the EQL v4 migration suites trigger on the crates the codec compiles',
       expect(
         uncovered,
         `${WORKFLOW} runs the EQL v4 migration suites through a codec that compiles these in-tree crates, but its \`${event}\` \`paths:\` filter does not list them, so a change confined to one starts no suite that runs it. Add each to BOTH copies of the filter.`,
+      ).toEqual([])
+    })
+
+    it(`${WORKFLOW} (${event}) triggers on every workspace manifest those crates inherit dependencies from`, () => {
+      const paths = on?.[event]?.paths ?? []
+      const uncovered = workspaceManifests.filter(
+        (manifest) => !filterCovers(paths, manifest, entryCovers),
+      )
+      expect(
+        uncovered,
+        `The crates the EQL v4 codec compiles take dependency specs from these manifests' [workspace.dependencies], but the \`${event}\` \`paths:\` filter of ${WORKFLOW} does not list them, so a change confined to one starts no suite that runs the codec. Add each to BOTH copies of the filter.`,
       ).toEqual([])
     })
   }
@@ -211,6 +252,24 @@ shared = "1"
     expect(cargoPathDependencyClosure(root, 'nested/start/Cargo.toml')).toEqual(
       ['nested/start', 'outer-member', 'sibling'],
     )
+  })
+
+  it('reports only the workspace manifests it resolved a dependency through', () => {
+    const root = tree({
+      'Cargo.toml': `[workspace]
+members = ["member"]
+
+[workspace.dependencies]
+shared = "1"
+`,
+      'nested/Cargo.toml': '[workspace]\nmembers = ["start"]\n',
+      'nested/start/Cargo.toml': `${pkg('start')}\n[dependencies]\nmember = { path = "../../member" }\n`,
+      'member/Cargo.toml': `${pkg('member')}\n[dependencies]\nshared.workspace = true\n`,
+    })
+    expect(cargoPathDependencyWalk(root, 'nested/start/Cargo.toml')).toEqual({
+      crates: ['member', 'nested/start'],
+      workspaceManifests: ['Cargo.toml'],
+    })
   })
 
   describe('throws rather than stopping short', () => {

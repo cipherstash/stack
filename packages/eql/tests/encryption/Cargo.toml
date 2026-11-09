@@ -17,6 +17,13 @@ name = "query_example"
 path = "../../crates/eql-bindings/src/encryption/query_example.rs"
 harness = false
 
+# Without `test = true`, `cargo test` builds this example but never runs the
+# unit tests in it.
+[[example]]
+name = "v4_codec"
+path = "examples/v4_codec.rs"
+test = true
+
 # Keep crypto/Postgres test dependencies out of eql-bindings' default test build.
 [dev-dependencies]
 # `chrono` and `rust_decimal`: the date, timestamp and decimal plaintexts

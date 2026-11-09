@@ -50,12 +50,15 @@ docker exec -i protect-ffi-postgres psql postgresql://cipherstash:password@postg
 # `tasks/build.sh` is what `mise run build` runs in `packages/eql`, called
 # directly so this task needs only cargo, not that directory's mise config (which
 # a runner has not trusted). It writes both bundles; only v4 is installed here,
-# v3 comes from `eql:v3:install` above.
+# v3 comes from `eql:v3:install` above. `tasks/build.sh` runs cargo without
+# `--locked`, which rewrites a stale Cargo.lock and would let `eql:v4:codec`'s
+# `--locked` pass against the rewritten file, so the lock is checked first.
 ["eql:v4:install"]
 description = "Build EQL v4 from the in-tree source and install it beside v2 and v3"
 dir = "{{ config_root }}/../../../../packages/eql"
 run = """
 set -e
+cargo metadata --locked --format-version 1 >/dev/null
 bash tasks/build.sh
 test -s release/cipherstash-encrypt-v4.sql
 docker exec -i protect-ffi-postgres psql -v ON_ERROR_STOP=1 -q postgresql://cipherstash:password@postgres:5432/cipherstash -f- < release/cipherstash-encrypt-v4.sql
