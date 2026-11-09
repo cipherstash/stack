@@ -13,7 +13,7 @@
 //! every field's context, every key request and the one batch they settle
 //! in are the engine's, so a record written from Go and one written from
 //! Rust under the same declaration are the same bytes because they ran the
-//! same code (ADR-0007, amended).
+//! same code.
 //!
 //! What stays dynamic is one step: a field whose type is known only when its
 //! value arrives dispatches to the typed term operation then, through

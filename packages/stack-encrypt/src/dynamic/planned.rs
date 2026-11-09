@@ -691,7 +691,7 @@ impl<'p, R: TargetResolver + ?Sized> DynamicQuery<'p, R> {
 /// record by name, under the field's label, zipped so every key request
 /// settles in one batch, and the record assembled. This is the one
 /// lowering of a data plan, as the derive's generated code is of a typed
-/// record (ADR-0007, amended): `encrypt_with` and `contexts()` run it. The
+/// record: `encrypt_with` and `contexts()` run it. The
 /// checks a binding asks without a cipher ([`check_values`],
 /// [`check_stored`], [`opening_base`]) are a second statement of the rules
 /// the description enforces through `inspect`, `lift` and `under_by`, and
