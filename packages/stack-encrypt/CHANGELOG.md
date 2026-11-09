@@ -119,6 +119,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `DecryptInto`, and `DecryptField`. So an owned record can be a field of a
     `#[derive(EncryptFrom)]` record, or a typed plan field, with no second
     derive. Derive one pair on a record, not both.
+- **A `Ciphertext` decrypts into a `Protected`.** `OpaqueDecode` now covers
+  every `Decrypt + Zeroize` type, not only the `FromScalar` ones. So
+  `keyset.decrypt::<Protected<String>>(ct)` and
+  `Protected::<i32>::decrypt_from_with_context(ct, &keyset, ctx)` work, and
+  the `Protected` wipes the plaintext when it is dropped. A target that is
+  not a scalar, such as `Vec<String>`, now compiles too. Opening refuses it
+  with `Error::OpenedType`.
 - **`Decryption::zip_wiping`**, a `zip` for recovered plaintext. The right
   side can fail after its key arrives, or panic in its conversion. The
   plaintext that the left side recovered is then wiped, not dropped as it

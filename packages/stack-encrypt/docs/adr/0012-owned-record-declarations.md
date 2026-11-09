@@ -173,6 +173,14 @@ wraps the plaintext as soon as it is recovered. A `Vec` of records decrypts
 into a `Vec<Protected<User>>`. `User::decrypt_from(..)` still works, and
 returns a bare `User` that the caller must wipe.
 
+A single `Ciphertext` decrypts into a `Protected` too:
+`keyset.decrypt::<Protected<String>>(ct)`. Its bound is `Decrypt + Zeroize`,
+as for the other stored types. So a target that is not a scalar, such as
+`Vec<String>`, compiles, and opening refuses it. A compile error for that
+case needs a trait for "a scalar, or a `Protected` of one". Rust allows
+that trait to be implemented for both only in Vitamin C, the crate that
+defines `FromScalar`.
+
 ### 5. The structural traits are a bridge
 
 Each owned derive also implements the structural traits:
@@ -263,5 +271,3 @@ These are deliberate. Each one is documented where the caller meets it.
   an owned record yet. Their plaintext, `serde_json::Value`, does not
   implement `Zeroize`.
 - `Option<T>` and tuple targets have only the structural form.
-- A single value cannot decrypt into a `Protected` yet. That needs Vitamin C
-  to implement its `FromScalar` trait for `Protected<T>`.

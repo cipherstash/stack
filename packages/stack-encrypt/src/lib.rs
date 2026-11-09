@@ -351,7 +351,6 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
-//!
 //! # Records
 //!
 //! A record is a struct that is encrypted field by field. You declare the
@@ -468,10 +467,8 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! [`target::legacy`]. The structural API is separate from the owned scalar
 //! API.
 //!
-//! The owned derives also implement the
-//! structural traits. So an owned record can be a field of a structural
-//! record, or a typed field of a plan. There is no generic `Serialize`
-//! fallback.
+//! The owned derives also implement the structural traits. So an owned
+//! record can be a field of a structural record, or a typed field of a plan.
 //!
 //! A struct sealed through the structural API, or as an owned record, is one
 //! ciphertext per field. A struct in an [`OpaqueBlob`] is one ciphertext.

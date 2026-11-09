@@ -77,6 +77,60 @@ async fn rejects_wrong_context_type_and_tampered_ciphertext() {
 }
 
 #[tokio::test]
+async fn a_scalar_decrypts_straight_into_a_protected() {
+    use vitaminc_protected::{Controlled, Protected};
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let ct = keyset
+        .encrypt("alice@example.com".to_owned())
+        .await
+        .unwrap();
+    let email = keyset.decrypt::<Protected<String>>(ct).await.unwrap();
+    assert_eq!(email.risky_unwrap(), "alice@example.com");
+
+    let ct = keyset
+        .encrypt_with_context(42i32, ("users", "age"))
+        .await
+        .unwrap();
+    let age = Protected::<i32>::decrypt_from_with_context(ct, &keyset, ("users", "age"))
+        .await
+        .unwrap();
+    assert_eq!(age.risky_unwrap(), 42);
+
+    // The same context checks apply inside the `Protected`.
+    let ct = keyset
+        .encrypt_with_context(42i32, ("users", "age"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        keyset
+            .decrypt_with_context::<Protected<i32>>(ct, ("users", "name"))
+            .await,
+        Err(Error::Aead)
+    ));
+}
+
+#[tokio::test]
+async fn a_ciphertext_opens_only_as_a_scalar_whatever_the_target() {
+    // A `Ciphertext` holds one scalar. The bound is `Decrypt`, so a target
+    // that is not a scalar compiles. Opening refuses a sequence, and reads a
+    // nullable target as present.
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let ct = keyset
+        .encrypt("alice@example.com".to_owned())
+        .await
+        .unwrap();
+    assert!(matches!(
+        keyset.decrypt::<Vec<String>>(ct).await,
+        Err(Error::OpenedType { .. })
+    ));
+    let ct = keyset.encrypt(42i32).await.unwrap();
+    assert_eq!(keyset.decrypt::<Option<i32>>(ct).await.unwrap(), Some(42));
+}
+
+#[tokio::test]
 async fn scalar_storage_cross_opens_with_existing_leaf_format() {
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();

@@ -4,9 +4,8 @@ use crate::target::{
     DecryptFrom, DecryptSource, Decryption, EncryptInto, EncryptTarget, Encryption,
     OptionalContext, Pending, ScalarContext,
 };
-use crate::{CipherText, ContextPiece, Error, KeysetCipher, LeafBytesError, SealedValue};
+use crate::{CipherText, ContextPiece, Decrypt, Error, KeysetCipher, LeafBytesError, SealedValue};
 use vitaminc_aead::plaintext::{Encrypt, Scalar, Sink};
-use vitaminc_aead::FromScalar;
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroize;
 
@@ -118,14 +117,20 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 
 /// A plaintext type that one opaque [`Ciphertext`] decrypts to.
 ///
-/// `OpaqueDecode` is implemented for every [`FromScalar`] type that also
+/// `OpaqueDecode` is implemented for every [`Decrypt`] type that also
 /// implements [`Zeroize`], and for [`OpaqueBlob<T>`](crate::OpaqueBlob).
-/// Every built-in [`OpaqueEncode`] type is one. The trait is sealed, as
-/// `OpaqueEncode` is.
+/// The `Decrypt` types include each scalar, such as `String`, and a
+/// [`Protected`](vitaminc_protected::Protected) of one, such as
+/// `Protected<String>`. The trait is sealed, as `OpaqueEncode` is.
 ///
-/// A successful scalar decrypt returns an ordinary owned value, and nothing
-/// wipes it when it is dropped: `Zeroize` is the bound, not a drop guard. A
-/// decrypted `OpaqueBlob<T>` is the exception: it wipes its value on drop.
+/// A scalar decrypted into a bare type, such as `String`, is an ordinary
+/// owned value, and nothing wipes it when it is dropped: `Zeroize` is the
+/// bound, not a drop guard. Decrypt into a `Protected` to have it wiped on
+/// drop. A decrypted `OpaqueBlob<T>` also wipes its value on drop.
+///
+/// A `Ciphertext` holds one scalar. A target that is not a scalar, such as
+/// `Vec<String>`, compiles, but decryption refuses it with
+/// [`Error::OpenedType`].
 pub trait OpaqueDecode: sealed::Decode + Zeroize + Send + 'static {}
 
 // The bridge from an owned `S` to its borrow's walk: `OpaqueEncode`'s
@@ -161,7 +166,7 @@ where
     for<'a> &'a S: Scalar,
 {
 }
-impl<P: FromScalar + Zeroize + Send + 'static> sealed::Decode for P {
+impl<P: Decrypt + Zeroize + Send + 'static> sealed::Decode for P {
     fn open<'a, K: 'static>(
         leaf: SealedValue,
         cipher: &'a crate::StackCipher<K>,
@@ -170,7 +175,7 @@ impl<P: FromScalar + Zeroize + Send + 'static> sealed::Decode for P {
         crate::target::core::open_opaque(CipherText::Single(leaf), cipher, context)
     }
 }
-impl<P: FromScalar + Zeroize + Send + 'static> OpaqueDecode for P {}
+impl<P: Decrypt + Zeroize + Send + 'static> OpaqueDecode for P {}
 
 pub(crate) struct ScalarRef<'a, S>(pub &'a S);
 // The owned conversion keeps the source in Protected and hands this a borrow.
@@ -331,6 +336,8 @@ impl<K: 'static> KeysetCipher<'_, K> {
     }
     /// Open a scalar sealed with empty context, constrained to this keyset.
     /// The caller owns and is responsible for wiping the returned plaintext.
+    /// To have it wiped on drop, decrypt into a `Protected`:
+    /// `keyset.decrypt::<Protected<String>>(ciphertext)`.
     ///
     /// # Errors
     /// Refuses foreign keysets before retrieval; also reports provider,
