@@ -316,42 +316,17 @@ func TestAnUnboundedLimitCutsThePageToTheLargestSQLLimit(t *testing.T) {
 	}
 }
 
-// A query the field does not answer is refused as a mistyped value is: an
-// encoding error that names the field and the rule. The typed path's own
-// refusals are term errors.
-func TestAQueryTheFieldDoesNotAnswerIsRefused(t *testing.T) {
+// Verify and TargetLimit answer match queries alone: an exact operator is
+// refused by its reason, and half a position is not a query term. The
+// QueryTerm refusals (an operator the field does not answer, an unknown
+// operator, a scalar for between, text for an integer, text that cuts no
+// token) and the inverted range QueryTerm accepts are the shared
+// query-refusal corpus, run by TestQueryRefusalConformance.
+func TestVerifyAndTargetLimitRefuseWhatIsNotAMatchQuery(t *testing.T) {
 	f := readQueryFixture(t)
 	c := queryFixtureClient(t, f)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
-	for _, tc := range []struct {
-		field, operator string
-		input           any
-		reason          string
-	}{
-		{"age", "matches", "ali", "operator_not_answered"},
-		{"name", "lt", "ali", "operator_not_answered"},
-		{"age", "like", uint32(1), "unknown_operator"},
-		{"age", "between", uint32(1), "not_a_range"},
-		{"age", "eq", "34", "field_type"},
-	} {
-		_, err := cipher.QueryTerm(ctx, queryPlan, tc.field, tc.operator, tc.input)
-		if !errors.Is(err, encrypt.ErrEncoding) {
-			t.Fatalf("%s on %s: %v, want ErrEncoding", tc.operator, tc.field, err)
-		}
-		var d *encrypt.Diagnostic
-		if !errors.As(err, &d) || d.Field() != tc.field || d.Reason() != tc.reason {
-			t.Fatalf("%s on %s: %v, want field %q and reason %q", tc.operator, tc.field, err, tc.field, tc.reason)
-		}
-	}
-	// An inverted range is not refused, as SQL's BETWEEN is not.
-	if _, err := cipher.QueryTerm(ctx, queryPlan, "age", "between", []any{uint32(65), uint32(18)}); err != nil {
-		t.Fatalf("an inverted range: %v", err)
-	}
-	if _, err := cipher.QueryTerm(ctx, queryPlan, "name", "matches", "al"); !errors.Is(err, encrypt.ErrTerm) {
-		t.Fatalf("text that cuts no token: %v, want ErrTerm", err)
-	}
-
 	_, err := cipher.Verify(ctx, queryPlan, "email", "eq", "bob@example.com", []any{"bob@example.com"})
 	var d *encrypt.Diagnostic
 	if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) || d.Reason() != "exact_operator" {

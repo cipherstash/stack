@@ -307,3 +307,20 @@ Python and TypeScript are reported as not enrolled; no pair is claimed before
 both implementations exist. Fresh JSON document exchange, the remaining EQL
 types and a SQL lane storing one language's fresh rows through the other
 remain open. No frozen fixture, artifact or existing test changed.
+
+## Consolidation checkpoint
+
+The first duplicate case tables came out, now that the shared corpora hold
+their expectations and both runners execute them. Fifteen Rust unit-test
+tables in `src/dynamic/record.rs` and `src/dynamic/query.rs` (ten removed
+whole, five trimmed to the rows the corpora cannot spell) and two Go tests
+(one removed, one trimmed) were replaced by declaration, runtime, read and
+query-refusal cases; five cases were enrolled so every old row had an exact
+home. Each removal is recorded in the
+[coverage map](../../conformance/stack-encrypt/coverage.md#consolidations)
+with its case IDs, its runner and the hand-introduced engine fault the
+runner failed on before the old rows went. Compile-fail, ownership and
+zeroization, batching, property, frozen-bytes, generated-code, host
+conversion, error wrapping, cancellation, guest lifecycle, PostgreSQL and
+live-provider tests are untouched, and the mixed-purpose tests whose unique
+shapes the corpora lack are kept and listed there with the reason.

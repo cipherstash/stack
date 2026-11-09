@@ -78,7 +78,7 @@ func TestFixtureConformanceRequiresGuest(t *testing.T) {
 	names["TestMatchRefusalsNameTheConstructAndItsOffset"] = true
 	names["TestContextConformance"] = true
 	names["TestContextBoundaries"] = true
-	names["TestAQueryTheFieldDoesNotAnswerIsRefused"] = true
+	names["TestVerifyAndTargetLimitRefuseWhatIsNotAMatchQuery"] = true
 	names["TestAMatchesQueryNeverPrintsItsText"] = true
 	tests := make([]string, 0, len(names))
 	for name := range names {
