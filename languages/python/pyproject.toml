@@ -14,8 +14,10 @@ classifiers = ["Private :: Do Not Upload"]
 # attrs, Pydantic and SQLAlchemy only for the tests that declare a model of
 # each kind; the package itself imports none of them. They have lower bounds
 # and no upper bounds on purpose. They are the libraries users build their
-# classes with, so the tests meet each new release when users do. A new
-# release that fails a test is a finding about users' classes.
+# classes with, so the tests meet each new release soon after users do. A new
+# release that fails a test is a finding about users' classes. uv.lock fixes
+# the versions the tests install. Dependabot proposes each new release in its
+# own pull request, after a 7-day cooldown.
 #
 # psycopg for the live tests, which insert an encrypted row (#1389). The
 # binary extra ships libpq, so the tests need no system Postgres client.
