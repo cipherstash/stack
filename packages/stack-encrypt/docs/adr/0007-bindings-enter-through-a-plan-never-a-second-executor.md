@@ -41,8 +41,8 @@ amended:
 > `target_limit` as engine exports, and the operators each EQL type answers,
 > with their fidelity, in the catalog.
 >
-> **Amended 2026-11-09**, after a spike on the `spike/planned-combinators`
-> branch. Two bullets of the decision change. The derive emits the
+> **Amended 2026-11-09**, by #1584, after a spike on the
+> `spike/planned-combinators` branch. Two bullets of the decision change. The derive emits the
 > combinators, not the builder. A data plan is lowered to the combinators by
 > `Planned`, which is a target, and the plan builder is removed. The rest of
 > the decision stands: one executor, and a binding enters through a plan.
@@ -321,7 +321,7 @@ A data plan's match index declares no `expected_tokens` prior, so
 `target_limit` on a field declared as data is unbounded without a measured
 histogram. A data form for the prior is later work.
 
-## Amended 2026-11-09: the derive emits the combinators
+## Amended 2026-11-09 (#1584): the derive emits the combinators
 
 Two bullets of the decision change. The derive emits the combinators,
 not the builder. `Planned` lowers a data plan to the combinators. The
