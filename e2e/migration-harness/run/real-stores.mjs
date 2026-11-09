@@ -24,8 +24,9 @@ async function initializePostgres(actor, eqlBundle) {
   /** @type {import('postgres').Sql|undefined} */
   let admin
   try {
-    // Trusted stores need host-loopback administration; actor egress is
-    // enforced separately by the isolation namespace.
+    // Trusted store servers need a host-loopback admin port. Docker does not
+    // publish ports for containers attached only to an internal bridge.
+    // Actor egress remains restricted by the separate isolation namespace.
     await docker(['network', 'create', network])
     await docker([
       'run',
