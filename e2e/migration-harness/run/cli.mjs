@@ -8,18 +8,15 @@ import { createIsolationTrailWriter } from './isolation-trail.mjs'
 import { createRealDriver } from './real-driver.mjs'
 import { run } from './run.mjs'
 
-const { values } = parseArgs({
-  args: process.argv.slice(2),
-  options: {
-    migrator: { type: 'string' },
-    output: { type: 'string' },
-    stack: { type: 'string' },
-  },
-  strict: true,
-})
-const command = values.migrator
-if (!command || values.output === '' || values.stack === '')
-  throw Error('Usage: harness:run --migrator <command>')
+const args = process.argv.slice(2)
+const command = args[args.indexOf('--migrator') + 1]
+const fakeMigration = args.includes('--fake')
+  ? args[args.indexOf('--fake') + 1]
+  : undefined
+if ((!args.includes('--migrator') || !command) && !fakeMigration)
+  throw Error(
+    'Usage: harness:run --migrator <command> | --fake <variant> [--stack <range|tree|tarball>]',
+  )
 const id = randomUUID()
 const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const output = resolve(values.output ?? `.migration-harness-runs/${id}`)
@@ -63,6 +60,7 @@ try {
     root,
     output,
     command,
+    fakeMigration,
     isolation,
     credentials,
     manifest,
