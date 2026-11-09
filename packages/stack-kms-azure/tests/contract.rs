@@ -222,7 +222,7 @@ async fn a_wrapped_record_rewraps_to_a_new_version_and_keeps_old_values() {
                 .unwrap();
             let sealed = old
                 .default_keyset()
-                .encrypt("v".to_string(), b"ctx")
+                .encrypt_tree("v".to_string(), b"ctx")
                 .await
                 .unwrap();
             let version = emulator.rotate(key);

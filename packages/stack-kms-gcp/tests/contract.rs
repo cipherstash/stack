@@ -129,7 +129,7 @@ async fn rewrap_and_open(emulator: &KmsEmulator, record: KeysetRecord, new_ref: 
         .unwrap();
     let sealed = old
         .default_keyset()
-        .encrypt("v".to_string(), b"ctx")
+        .encrypt_tree("v".to_string(), b"ctx")
         .await
         .unwrap();
     emulator.rotate(KEY);

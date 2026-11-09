@@ -217,7 +217,7 @@ async fn rewrap_keeps_old_values<B: stack_kms_vendor::KeyVendorBackend>(
         .unwrap();
     let sealed = old
         .default_keyset()
-        .encrypt("v".to_string(), b"ctx")
+        .encrypt_tree("v".to_string(), b"ctx")
         .await
         .unwrap();
     let term = old
