@@ -1,5 +1,6 @@
 import type { ClerkMiddlewareAuth } from '@clerk/nextjs/server'
 import type { NextRequest } from 'next/server'
+import { nonEmptyString } from '../session'
 import { syncCtsSession } from '../sync'
 
 /**
@@ -24,10 +25,9 @@ export const protectClerkMiddleware = async (
     req,
     userId
       ? {
-          owner:
-            typeof issuer === 'string' && issuer !== ''
-              ? { issuer, subject: userId }
-              : undefined,
+          owner: nonEmptyString(issuer)
+            ? { issuer, subject: userId }
+            : undefined,
           getOidcToken: () => getToken(),
         }
       : undefined,

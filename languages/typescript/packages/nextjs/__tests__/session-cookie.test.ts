@@ -1,6 +1,6 @@
 /**
- * CIP-5154: the CipherStash session cookie is client-controlled input carrying a
- * bearer token. These cover the three defects that issue grouped:
+ * The CipherStash session cookie is client-controlled input carrying a bearer
+ * token. These tests cover three ways it went wrong:
  *
  * 1. the cookie must be written `httpOnly` (and `secure` in production);
  * 2. a session minted for one user must never be handed to another — in the
@@ -789,6 +789,26 @@ describe('the request seen by downstream handlers', () => {
 
     expect(writtenSession(res)).toBeNull()
     expect(forwardedCookies(res)?.[CS_COOKIE_NAME]).toBeUndefined()
+  })
+
+  it('leaves a redirect without request overrides, even when the session changes', async () => {
+    // A redirect goes straight back to the browser, so there is no forwarded
+    // request to update and no request header may be copied onto it.
+    const callerRes = NextResponse.redirect('https://app.example/sign-in')
+
+    const res = await protectMiddleware(
+      '',
+      requestWith({ [CS_COOKIE_NAME]: JSON.stringify(sessionFor('user_A')) }),
+      callerRes,
+    )
+
+    expect(writtenSession(res)).toBeNull()
+    const copied: string[] = []
+    res.headers.forEach((_value, key) => {
+      if (key.startsWith('x-middleware-request-')) copied.push(key)
+    })
+    expect(copied).toEqual([])
+    expect(res.headers.get('x-middleware-override-headers')).toBeNull()
   })
 })
 

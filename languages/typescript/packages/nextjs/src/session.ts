@@ -1,10 +1,11 @@
 import { decodeJwt } from 'jose'
-import type { NextRequest, NextResponse } from 'next/server'
+import type { NextResponse } from 'next/server'
 import { logger } from '../../utils/logger'
 
 /**
  * The CipherStash session cookie: the one module that knows its name, its
- * format and the attributes it is written with.
+ * format and the attributes it is written with. Carrying it into the request
+ * Next.js forwards is `forward.ts`'s job.
  *
  * The cookie is client-controlled input. Everything that reads it goes through
  * {@link readCtsSession}, which never throws, so a tampered or truncated value
@@ -40,7 +41,7 @@ export type SessionOwner = { issuer: string; subject: string }
 export type CtsSession = CtsToken & { owner?: SessionOwner }
 
 /** Whether `value` is a string with at least one character. */
-const nonEmptyString = (value: unknown): value is string =>
+export const nonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value !== ''
 
 /**
@@ -78,6 +79,11 @@ function parseOwner(value: unknown): SessionOwner | undefined {
     : undefined
 }
 
+/** Whether `token` has expired at `now` (milliseconds since the epoch). */
+export function isExpired(token: CtsToken, now: number = Date.now()): boolean {
+  return token.expiry * 1000 <= now
+}
+
 /**
  * Parse a raw session cookie value. Returns `undefined` for a missing value,
  * for anything that is not JSON of the `{ accessToken, expiry }` shape, and for
@@ -98,7 +104,7 @@ export function readCtsSession(
   }
 
   const token = parseCtsToken(parsed)
-  if (!token || token.expiry * 1000 <= now) return undefined
+  if (!token || isExpired(token, now)) return undefined
 
   const owner = parseOwner((parsed as Record<string, unknown>).owner)
   return owner ? { ...token, owner } : token
@@ -184,87 +190,5 @@ export function writeCtsSession(
 /** Delete the session cookie on `response`. */
 export function clearCtsSession(response: NextResponse) {
   response.cookies.delete(CS_COOKIE_NAME)
-  return response
-}
-
-const OVERRIDE_HEADERS = 'x-middleware-override-headers'
-
-/** The names of every header in `headers`, lower-cased as `Headers` stores them. */
-function headerNames(headers: Headers): string[] {
-  const names: string[] = []
-  headers.forEach((_value, key) => {
-    names.push(key)
-  })
-  return names
-}
-const REQUEST_HEADER_PREFIX = 'x-middleware-request-'
-
-/**
- * Make the request the rest of this request's handlers see agree with the
- * session cookie `response` writes or deletes.
- *
- * A `Set-Cookie` on the middleware response only reaches the browser. Next.js
- * releases before 14.2.10 do not copy it into the request that route handlers
- * and server components read, so without this a user switch would leave the
- * previous user's session visible to `getCtsToken()` for the rest of the
- * request. The forwarded request is changed through the same headers
- * `NextResponse.next({ request: { headers } })` writes. Overriding request
- * headers replaces the whole set, so every other header is carried across, and
- * an override the caller already put on `response` is extended, not replaced.
- *
- * When `response` leaves the session cookie alone, the request's own session
- * is what was decided on. With no override on `response`, Next.js forwards it
- * as-is and nothing is changed. With one, the forwarded cookie is set to the
- * request's session (or to none): an override that carries a session puts
- * back the one this middleware checked, and one that leaves out `cookie`, and
- * so would drop the session, gets it added.
- */
-export function forwardCtsSession(req: NextRequest, response: NextResponse) {
-  const headers = response.headers
-  const existing = headers.get(OVERRIDE_HEADERS)
-  const existingKeys = existing
-    ? existing
-        .split(',')
-        .map((key) => key.trim())
-        .filter(Boolean)
-    : undefined
-
-  const written = response.cookies.get(CS_COOKIE_NAME)
-  if (!written && existingKeys === undefined) return response
-  const value = written
-    ? written.value
-    : (req.cookies.get(CS_COOKIE_NAME)?.value ?? '')
-
-  const keys = existingKeys ?? headerNames(req.headers)
-
-  if (!existing) {
-    req.headers.forEach((headerValue, key) => {
-      headers.set(`${REQUEST_HEADER_PREFIX}${key}`, headerValue)
-    })
-  }
-
-  const currentCookie = keys.includes('cookie')
-    ? (headers.get(`${REQUEST_HEADER_PREFIX}cookie`) ?? '')
-    : existing
-      ? ''
-      : (req.headers.get('cookie') ?? '')
-
-  // Work on the raw header so every other cookie is forwarded byte for byte.
-  const pairs = currentCookie
-    .split(';')
-    .map((pair) => pair.trim())
-    .filter((pair) => pair !== '' && pair.split('=', 1)[0] !== CS_COOKIE_NAME)
-  if (value !== '') {
-    pairs.push(`${CS_COOKIE_NAME}=${encodeURIComponent(value)}`)
-  }
-
-  // `cookie` always stays in the override list, set to an empty header when no
-  // cookie is left: Next.js ignores an empty override list, and dropping
-  // `cookie` from a list that named nothing else would forward the original
-  // request cookie, previous session included.
-  const otherKeys = keys.filter((key) => key !== 'cookie')
-  headers.set(`${REQUEST_HEADER_PREFIX}cookie`, pairs.join('; '))
-  headers.set(OVERRIDE_HEADERS, [...otherKeys, 'cookie'].join(','))
-
   return response
 }

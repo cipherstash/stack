@@ -1,11 +1,11 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { logger } from '../../utils/logger'
 import { setCtsToken } from './cts'
+import { forwardCtsSession } from './forward'
 import {
   CS_COOKIE_NAME,
   type CtsSession,
   clearCtsSession,
-  forwardCtsSession,
   readCtsSession,
   type SessionOwner,
   sessionBelongsTo,
@@ -54,14 +54,20 @@ export async function syncCtsSession(
   identity: SessionIdentity | undefined,
   res?: NextResponse,
 ): Promise<NextResponse> {
-  const preset = res?.cookies.get(CS_COOKIE_NAME)
-  const { response, kept } = await decide(req, identity, res)
+  const callerCookie = res?.cookies.get(CS_COOKIE_NAME)
+  const { response, keptSession } = await decideSession(req, identity, res)
 
-  const after = response.cookies.get(CS_COOKIE_NAME)
-  if (preset && after && after.value === preset.value) {
-    if (kept) {
-      writeCtsSession(response, kept, kept.owner)
-    } else if (after.value !== '') {
+  // The decision left the caller's own session cookie in place when the
+  // cookie on the response is still the one the caller set.
+  const responseCookie = response.cookies.get(CS_COOKIE_NAME)
+  const callerCookieSurvived =
+    callerCookie !== undefined &&
+    responseCookie !== undefined &&
+    responseCookie.value === callerCookie.value
+  if (callerCookieSurvived) {
+    if (keptSession) {
+      writeCtsSession(response, keptSession, keptSession.owner)
+    } else if (responseCookie.value !== '') {
       clearCtsSession(response)
     }
   }
@@ -69,10 +75,10 @@ export async function syncCtsSession(
   return forwardCtsSession(req, response)
 }
 
-type Decision = {
+type SessionDecision = {
   response: NextResponse
   /** The request's own session, when it was checked and kept. */
-  kept?: CtsSession
+  keptSession?: CtsSession
 }
 
 /**
@@ -81,26 +87,26 @@ type Decision = {
  * response) with the session cookie kept, written or deleted, and the
  * request's session when it was the one kept.
  */
-async function decide(
+async function decideSession(
   req: NextRequest,
   identity: SessionIdentity | undefined,
   res: NextResponse | undefined,
-): Promise<Decision> {
+): Promise<SessionDecision> {
   const rawSession = req.cookies.get(CS_COOKIE_NAME)?.value
-  const response = () => res ?? NextResponse.next()
+  const passThrough = () => res ?? NextResponse.next()
 
   if (!identity) {
     if (rawSession) {
       logger.debug(
         'No user is signed in, so the CipherStash session was reset.',
       )
-      return { response: clearCtsSession(response()) }
+      return { response: clearCtsSession(passThrough()) }
     }
 
     logger.debug(
       'No user is signed in, so the CipherStash session was not set.',
     )
-    return { response: response() }
+    return { response: passThrough() }
   }
 
   if (!identity.owner) {
@@ -114,7 +120,7 @@ async function decide(
     logger.debug(
       'The CipherStash session belongs to the signed-in user and was kept.',
     )
-    return { response: response(), kept: session }
+    return { response: passThrough(), keptSession: session }
   }
 
   if (rawSession) {
@@ -129,7 +135,7 @@ async function decide(
       'No token was available for the signed-in user, so the CipherStash session was not set.',
     )
     return {
-      response: rawSession ? clearCtsSession(response()) : response(),
+      response: rawSession ? clearCtsSession(passThrough()) : passThrough(),
     }
   }
 

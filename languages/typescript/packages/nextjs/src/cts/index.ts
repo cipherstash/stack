@@ -3,6 +3,7 @@ import { logger } from '../../../utils/logger'
 import type { GetCtsTokenResponse } from '../index'
 import {
   clearCtsSession,
+  isExpired,
   ownerOfJwt,
   parseCtsToken,
   writeCtsSession,
@@ -258,7 +259,7 @@ export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
   // An already-expired token is refused too: the cookie it would be written to
   // reads as no session, so every later request would mint again.
   const ctsToken = parseCtsToken(body)
-  if (!ctsToken || ctsToken.expiry * 1000 <= Date.now()) {
+  if (!ctsToken || isExpired(ctsToken)) {
     const error = `Failed to fetch CTS token: the CipherStash API returned ${ctsResponse.status} without a valid, unexpired token.`
     logger.error(
       `There was an issue communicating with the CipherStash CTS API, the CipherStash session was not set. ${error}`,
