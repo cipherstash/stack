@@ -306,6 +306,15 @@ credentials**, and **EQL v2, v3 and v4 installed** in the database.
   `eql-v4-suite-triggers.test.mjs`. The wide `packages/eql/crates/**` glob stays
   forbidden by `wasm-build-inputs-paths-filter.test.mjs`, and `test-eql.yml`
   does not run this suite.
+  **The v3 suite covers scalar types only**: TextEq, IntegerOrdOre,
+  IntegerOrdOpe, TextMatch and Boolean, queried with `=`, `>`, `ORDER BY` and
+  `@@`. It has no TextOrd, BigInt, date, float or decimal column and no `<`,
+  `<=`, `>=` or `BETWEEN`, and no JSON: the codec cannot convert a v3 SteVec
+  document to v4's JSON tree. Read a green run as covering those five types,
+  not as "v3 data migrates".
+  `tests/v4-codec-path.test.ts` needs neither credentials nor a database; it
+  pins where the suite looks for the codec (`EQL_V4_CODEC`, else
+  `CARGO_TARGET_DIR` resolved from `packages/eql`, else `packages/eql/target`).
 - **`eql:v3:install` builds `@cipherstash/eql` first, and has to.** The task
   reads the bundle through `@cipherstash/eql/sql`, which the package's `exports`
   map resolves to `dist/sql.js` — a tsup output. That was free while `npm ci`

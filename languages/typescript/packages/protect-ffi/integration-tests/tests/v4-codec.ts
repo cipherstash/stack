@@ -12,14 +12,23 @@ import type { Client } from 'pg'
 // point the Go guest uses, under live ZeroKMS and the same `CS_*` credentials
 // as protect-ffi.
 //
-// Built by `mise run eql:v4:codec` (part of `mise run setup`). Set
-// `EQL_V4_CODEC` to use a binary somewhere else.
+// Built by `mise run eql:v4:codec` (part of `mise run setup`), under
+// `CARGO_TARGET_DIR` when that is set. Set `EQL_V4_CODEC` to use a binary
+// somewhere else.
 
-const repoRoot = resolve(__dirname, '../../../../../..')
+const eqlRoot = resolve(__dirname, '../../../../../../packages/eql')
 
-export const codecPath =
-  process.env.EQL_V4_CODEC ??
-  resolve(repoRoot, 'packages/eql/target/debug/examples/v4_codec')
+/** Where the codec is, given the environment the suite runs in. */
+export function codecPathFor(env: NodeJS.ProcessEnv): string {
+  if (env.EQL_V4_CODEC) return env.EQL_V4_CODEC
+  // `eql:v4:codec` runs cargo from `packages/eql`, and cargo resolves a
+  // relative `CARGO_TARGET_DIR` against its working directory; `resolve`
+  // keeps an absolute one as it is.
+  const targetDir = resolve(eqlRoot, env.CARGO_TARGET_DIR || 'target')
+  return resolve(targetDir, 'debug/examples/v4_codec')
+}
+
+export const codecPath = codecPathFor(process.env)
 
 /** An EQL v4 type name, e.g. `TextEq`, as `targets::targets()` lists it. */
 export type V4Type =
