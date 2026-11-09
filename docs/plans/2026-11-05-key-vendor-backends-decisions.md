@@ -1893,3 +1893,63 @@ ticket that recorded it.
   now refuses it (`RecordError::RewrapToAnotherKey`; `REWRAP_REFUSED` in
   `@cipherstash/auth`; `rewrap_refused` in `stash keyset rewrap`), and allows
   a new version of the same key (`KeyVendorBackend::same_key`).
+
+## Rebase onto `next` (2026-11-09)
+
+The stack was based on `main`. It is now based on `next`, which had
+changed three things the stack builds on. The decisions below were made
+during the rebase, and the commits they changed are named.
+
+### JSON terms under a keyset with no PRF (CIP-5306)
+
+- **Context:** `next` added the JSON index (documents, `JsonSearch`
+  selectors, subtree reads) and block ORE, and each derived under
+  `KeysetCipher::prf()` when the request was planned. CIP-5306 makes that
+  `Option`: a vendor keyset that loads its index key per settle holds no
+  PRF between settles.
+- **Decision:** derive inside the settle, as the other terms do. A document
+  is walked in the settle that mints its data key; a query's terms, a
+  selector and a subtree read key are derived in a settle that loads the
+  index key; a read's row selectors take the PRF of the open's settle
+  (`Selectors::in_settle`). A keyset request answered with a per-settle
+  keyset loads its index key in the same settle. Under ZeroKMS nothing
+  changes: the terms are derived when the request is planned, as before.
+- **Trade-off:** the dynamic read (`json_open`) opens all its row groups in
+  one settle under a per-settle keyset. There, an entry that carries another
+  selector is refused after its data key is retrieved, not before, because
+  the selector is not known before the settle.
+- **Also:** `sem::capture` (the borrowed-value capture for equality terms
+  derived in the settle) was removed: `next` normalizes an equality input to
+  an owned `Normalized` first, which the settle can hold. Its test commit
+  was dropped with it.
+
+### The guest's vendor path moved onto the step loop (CIP-5311)
+
+- **Context:** `next` removed the blocking `transport_send` import from the
+  encrypt guest. An export that needs the network pauses, the Go host
+  performs the request outside the client's lock, and resumes it.
+- **Decision:** a step request is now one of three: an HTTP request, a key
+  vendor credential (vendor byte and OAuth scope), or a wait (a retry's
+  backoff). The guest's `StepVendorTransport` sends and sleeps through the
+  step loop, and `StepCredentialImport` asks for credentials through it.
+  `vendor_credential_get` is gone; `token_get` is still the one import.
+- **Go host:** `performStep` answers a credential request from the
+  backend's source, outside the lock and under the caller's context, once
+  per operation, vendor and scope (the guest still asks before each
+  request and keeps nothing). It attaches the source's error to the call's
+  error. It sits out a wait under the caller's context, cut to 30 seconds.
+- **Also:** `next` reads the guest config with serde, so the key vendor
+  backend keys are `Wire` fields, and the deterministic build reads them in
+  an object beside its seed. `STATUS_NO_ZEROKMS` is 30, because `next`
+  gave 29 to `STATUS_NEEDS_IO`. ADR-0011 has an amendment for the step
+  loop.
+
+### Smaller changes
+
+- The keyset handle's `encrypt(value, aad)` and `decrypt(value, aad)` are
+  `encrypt_tree` and `decrypt_tree` on `next`; the stack's tests use them.
+- The stack's crates now require `stack-encrypt` 0.3.0 and `stack-kms`
+  0.2.0, the versions on `next`.
+- The pinned v1 leaf in `tests/frozen_bytes.rs` was sealed with `main`'s
+  plaintext encoding. `next` puts each leaf's type in its plaintext, so it
+  was sealed again.
