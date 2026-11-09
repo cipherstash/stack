@@ -42,7 +42,9 @@
 //! `TextSearchOre` operands carry that index's term alone: the codec does not
 //! guess, and a request naming none is refused with the valid keys.
 //! Plaintexts are JSON strings, booleans and numbers; the target's
-//! `plaintext` kind decides how a number is read.
+//! `plaintext` kind decides how a number is read. The `float32` kind (`Real*`)
+//! is refused: no caller needs it, and narrowing a JSON number would seal an
+//! out-of-range value as infinity without an error.
 
 use std::io::{Read, Write};
 
@@ -50,8 +52,9 @@ use eql_bindings::encryption::targets::{self, Opener};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::target::IndexSpec;
-use stack_encrypt::{Decrypt, Encrypt, Label, StackCipher};
+use stack_encrypt::target::{IndexSpec, Pending};
+use stack_encrypt::{Decrypt, Encrypt, KeysetCipher, Label, StackCipher};
+use stack_kms::{DataKeySource, IndexKeySource};
 
 type Error = Box<dyn std::error::Error>;
 
@@ -126,7 +129,6 @@ fn frame(name: &str, value: &Value) -> Result<ValueFrame, Error> {
         "int16" => ValueFrame::of(i16::try_from(value.as_i64().ok_or_else(wrong)?)?),
         "int32" => ValueFrame::of(i32::try_from(value.as_i64().ok_or_else(wrong)?)?),
         "int64" => ValueFrame::of(value.as_i64().ok_or_else(wrong)?),
-        "float32" => ValueFrame::of(value.as_f64().ok_or_else(wrong)? as f32),
         "float64" => ValueFrame::of(value.as_f64().ok_or_else(wrong)?),
         other => {
             return Err(format!("{name}: plaintext kind {other} is not supported here").into())
@@ -144,7 +146,6 @@ fn plaintext(name: &str, opened: ValueFrame) -> Result<Value, Error> {
         "int16" => json!(opened.visit(i16::sink())?),
         "int32" => json!(opened.visit(i32::sink())?),
         "int64" => json!(opened.visit(i64::sink())?),
-        "float32" => json!(opened.visit(f32::sink())?),
         "float64" => json!(opened.visit(f64::sink())?),
         other => {
             return Err(format!("{name}: plaintext kind {other} is not supported here").into())
@@ -171,6 +172,56 @@ fn query_index(name: &str, requested: Option<&str>) -> Result<IndexSpec, Error> 
     IndexSpec::parse(key).ok_or_else(|| format!("{name}: index {key} is not recognised").into())
 }
 
+/// The stored payload for each item, in order. One ZeroKMS call for the
+/// whole list; one bad item fails it.
+async fn encrypt_all<K>(keyset: &KeysetCipher<'_, K>, items: &[Item]) -> Result<Vec<Value>, Error>
+where
+    K: DataKeySource + IndexKeySource + Sync + 'static,
+{
+    let pending = items
+        .iter()
+        .map(|item| {
+            Ok(targets::encrypt(
+                &item.r#type,
+                keyset,
+                &label(&item.table, &item.column)?,
+                frame(&item.r#type, &item.value)?,
+            )?)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    Pending::all(keyset, pending)
+        .await?
+        .iter()
+        .map(|bytes| Ok(serde_json::from_slice::<Value>(bytes)?))
+        .collect()
+}
+
+/// The plaintext of each stored item, in order. One ZeroKMS call for the
+/// whole list; one bad item fails it.
+async fn decrypt_all<K>(cipher: &StackCipher<K>, items: &[Stored]) -> Result<Vec<Value>, Error>
+where
+    K: DataKeySource + IndexKeySource + Sync + 'static,
+{
+    let pending = items
+        .iter()
+        .map(|item| {
+            let stored = serde_json::to_vec(&item.payload)?;
+            Ok(targets::decrypt(
+                &item.r#type,
+                Opener::Client(cipher),
+                &label(&item.table, &item.column)?,
+                &stored,
+            )?)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    Pending::all(cipher, pending)
+        .await?
+        .into_iter()
+        .zip(items)
+        .map(|(opened, item)| plaintext(&item.r#type, opened))
+        .collect()
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Error> {
     let mut input = String::new();
@@ -180,17 +231,7 @@ async fn main() -> Result<(), Error> {
     let cipher = StackCipher::new().await?;
     let keyset = cipher.default_keyset();
 
-    let mut encrypted = Vec::with_capacity(request.encrypt.len());
-    for item in &request.encrypt {
-        let bytes = targets::encrypt(
-            &item.r#type,
-            &keyset,
-            &label(&item.table, &item.column)?,
-            frame(&item.r#type, &item.value)?,
-        )?
-        .await?;
-        encrypted.push(serde_json::from_slice::<Value>(&bytes)?);
-    }
+    let encrypted = encrypt_all(&keyset, &request.encrypt).await?;
 
     let mut queries = Vec::with_capacity(request.query.len());
     for item in &request.query {
@@ -205,18 +246,7 @@ async fn main() -> Result<(), Error> {
         queries.push(serde_json::from_slice::<Value>(&bytes)?);
     }
 
-    let mut decrypted = Vec::with_capacity(request.decrypt.len());
-    for item in &request.decrypt {
-        let stored = serde_json::to_vec(&item.payload)?;
-        let opened = targets::decrypt(
-            &item.r#type,
-            Opener::Client(&cipher),
-            &label(&item.table, &item.column)?,
-            &stored,
-        )?
-        .await?;
-        decrypted.push(plaintext(&item.r#type, opened)?);
-    }
+    let decrypted = decrypt_all(&cipher, &request.decrypt).await?;
 
     let response = json!({ "encrypt": encrypted, "query": queries, "decrypt": decrypted });
     let mut stdout = std::io::stdout().lock();
@@ -224,6 +254,12 @@ async fn main() -> Result<(), Error> {
     stdout.write_all(b"\n")?;
     Ok(())
 }
+
+// The call-counting fake KMS the integration tests use.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../tests/common/mod.rs"]
+mod common;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -354,6 +390,87 @@ mod tests {
                     "{}'s only index",
                     target.name
                 );
+            }
+        }
+    }
+
+    mod given_a_request_of_many_items {
+        use super::*;
+
+        #[tokio::test]
+        async fn batches_each_direction_into_one_kms_call_and_keeps_the_order() {
+            let (cipher, calls) = common::cipher().await;
+            let keyset = cipher.default_keyset();
+            let plaintexts: Vec<String> = (0..25).map(|n| format!("value-{n}")).collect();
+            let items: Vec<Item> = plaintexts
+                .iter()
+                .enumerate()
+                .map(|(n, value)| Item {
+                    r#type: "TextEq".to_string(),
+                    table: "t".to_string(),
+                    column: format!("c{}", n % 5),
+                    value: json!(value),
+                    index: None,
+                })
+                .collect();
+
+            let encrypted = encrypt_all(&keyset, &items).await.unwrap();
+            let generate_calls = calls.lock().unwrap().generate.len();
+            assert_eq!(generate_calls, 1, "25 values should be one generate call");
+
+            let stored: Vec<Stored> = encrypted
+                .into_iter()
+                .zip(&items)
+                .map(|(payload, item)| Stored {
+                    r#type: item.r#type.clone(),
+                    table: item.table.clone(),
+                    column: item.column.clone(),
+                    payload,
+                })
+                .collect();
+            let decrypted = decrypt_all(&cipher, &stored).await.unwrap();
+            let retrieve_calls = calls.lock().unwrap().retrieve.len();
+            assert_eq!(retrieve_calls, 1, "25 values should be one retrieve call");
+
+            let expected: Vec<Value> = plaintexts.iter().map(|value| json!(value)).collect();
+            assert_eq!(decrypted, expected, "output order should be request order");
+        }
+    }
+
+    mod given_a_real_target {
+        use super::*;
+
+        const REAL_TARGETS: [&str; 5] = ["Real", "RealEq", "RealOrdOre", "RealOrd", "RealOrdOpe"];
+
+        fn assert_refused_without_the_value(name: &str, message: &str) {
+            assert!(
+                message.contains("float32 is not supported"),
+                "{name} should be refused as unsupported, got: {message}"
+            );
+            assert!(
+                !message.contains("1.5"),
+                "{name}'s refusal should not repeat the plaintext, got: {message}"
+            );
+        }
+
+        #[test]
+        fn refuses_a_plaintext_without_repeating_it() {
+            for name in REAL_TARGETS {
+                match frame(name, &json!(1.5)) {
+                    Ok(_) => panic!("{name} should refuse a float32 plaintext"),
+                    Err(error) => assert_refused_without_the_value(name, &error.to_string()),
+                }
+            }
+        }
+
+        #[test]
+        fn refuses_an_opened_value_without_repeating_it() {
+            for name in REAL_TARGETS {
+                let opened = ValueFrame::of(1.5_f32).unwrap();
+                match plaintext(name, opened) {
+                    Ok(value) => panic!("{name} should refuse a float32 value, got: {value}"),
+                    Err(error) => assert_refused_without_the_value(name, &error.to_string()),
+                }
             }
         }
     }
