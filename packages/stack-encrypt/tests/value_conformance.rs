@@ -170,6 +170,15 @@ async fn shared_record_value_profile() {
         assert!(KINDS[..18].contains(&case.kind.as_str()), "{}", case.id);
         assert!(KINDS.contains(&case.input.kind.as_str()), "{}", case.id);
         assert!(!case.outputs.is_empty() && case.outputs[0] == "c");
+        // An unanswered index must be one the case declares, or the entry
+        // checks nothing.
+        for index in &case.unanswered {
+            assert!(
+                case.outputs[1..].contains(index),
+                "{}: unanswered {index} is not a declared index",
+                case.id
+            );
+        }
         let is_null = case.input.kind == "null";
         assert_eq!(case.frame.is_none(), is_null, "{}: frame", case.id);
         let mut spec = json!({"context": ["conformance", "value"], "outputs": case.outputs, "type": case.kind});
@@ -436,6 +445,49 @@ fn the_float_reader_accepts_only_the_canonical_spelling() {
     for &(bits, text) in NON_CANONICAL_FLOATS {
         assert!(text.parse::<f64>().is_ok(), "{text} parses");
         assert_ne!(canonical(bits, text).as_deref(), Some(text), "float{bits}");
+    }
+}
+
+/// The date and timestamp reader refuses every text Go's `time.Parse`
+/// refuses, so a typo in the corpus fails in both runners, not in one.
+#[test]
+fn the_date_reader_refuses_what_go_refuses() {
+    let refused = |kind: &str, text: &str| {
+        let input = Input {
+            kind: kind.into(),
+            text: text.into(),
+        };
+        std::panic::catch_unwind(|| value(&input)).is_err()
+    };
+    for text in [
+        "2024x02-29",
+        "2024-02x29",
+        "+2024-02-29",
+        "24-02-29",
+        "2024-2-29",
+    ] {
+        assert!(refused("date", text), "date {text} should be refused");
+    }
+    for text in [
+        "2024-02-29T-1:00:00Z",
+        "2024-02-29T+1:00:00Z",
+        "2024-02-29T01:02:03.Z",
+        "2024-02-29T01:02:03.1234567890Z",
+        "2024-02-29T1:02:03Z",
+        "2024-02-29T01-02-03Z",
+    ] {
+        assert!(
+            refused("timestamp", text),
+            "timestamp {text} should be refused"
+        );
+    }
+    for (kind, text) in [
+        ("date", "0001-01-01"),
+        ("date", "2024-02-29"),
+        ("timestamp", "1969-12-31T23:59:59.999999999Z"),
+        ("timestamp", "2026-10-17T01:02:03.1Z"),
+    ] {
+        assert!(!refused(kind, text), "{kind} {text} should be read");
     }
 }
 

@@ -97,11 +97,15 @@ null.
 query of such an index is refused as `operator_not_answered` in both
 runners. Today that is the order index on `bytes`: the declaration admits
 it and the engine stores an order term, but no dynamic operator reads it.
-Recording it here keeps the gap visible instead of silently skipping it.
-Step 1 of the API plan's order of work declares each index's operators
-and admitted plaintexts once. That closes the gap one of two ways: an
-operator reads the index, or the declaration is refused. Refusing it must
-keep data that Go rc.3 stored readable.
+
+This is a leak, not only a gap. Anyone who holds the stored rows can
+compare the order terms without a key. No query uses them.
+
+The typed Rust path has the same fault. An order index needs only
+`Orderable`, but its operators need `Ordered`, and `Vec<u8>` is not
+`Ordered`. The fix is to refuse an order index on `bytes` when it is
+declared, at compile time on the typed path. Data that Go rc.3 stored must
+stay readable. Until then, this entry keeps the behaviour visible.
 
 `expected_error` cases are refused before any pending operation, with the
 structured diagnostic `code`, `reason` and `field`, and no key call. They

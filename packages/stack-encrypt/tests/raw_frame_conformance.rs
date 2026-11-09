@@ -274,6 +274,14 @@ async fn shared_raw_frame_profile() {
                         },
                         _ => fail("the lenient reader refused the frame too".into()),
                     }
+                } else if lenient(&bytes).is_some() {
+                    // The lenient reader is the codec without the
+                    // repeated-key rule. If it reads the frame, that rule
+                    // is the only reason the codec refused it.
+                    fail(
+                        "only the repeated-key rule refuses this frame; give it a native_tree"
+                            .into(),
+                    );
                 }
                 continue;
             }

@@ -98,13 +98,34 @@ where
     })
 }
 
-/// Days since 1970-01-01 of a proleptic Gregorian `YYYY-MM-DD`.
+/// `text` as an unsigned number, if it is exactly `width` ASCII digits:
+/// no sign, no space and no other width, as Go's `time.Parse` reads a
+/// field of a layout.
+fn fixed_digits(text: &str, width: usize) -> Option<u32> {
+    (text.len() == width && text.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| text.parse().expect("digits"))
+}
+
+/// Days since 1970-01-01 of a proleptic Gregorian `YYYY-MM-DD`: a
+/// four-digit year, a two-digit month and day, and `-` between them. This
+/// is the form Go's `time.Parse(time.DateOnly, ..)` reads, so a corpus
+/// typo fails in both runners, not in one.
 fn parse_date(text: &str) -> i32 {
-    let (year, rest) = text.split_at(text.len() - 6);
-    let year: i64 = year.parse().expect("year");
-    let mut parts = rest[1..].split('-');
-    let month: u32 = parts.next().expect("month").parse().expect("month");
-    let day: u32 = parts.next().expect("day").parse().expect("day");
+    let bytes = text.as_bytes();
+    let shape = bytes.len() == 10 && bytes[4] == b'-' && bytes[7] == b'-';
+    let fields = shape
+        .then(|| {
+            Some((
+                fixed_digits(&text[..4], 4)?,
+                fixed_digits(&text[5..7], 2)?,
+                fixed_digits(&text[8..], 2)?,
+            ))
+        })
+        .flatten();
+    let Some((year, month, day)) = fields else {
+        panic!("{text}: not a YYYY-MM-DD date");
+    };
+    let year = i64::from(year);
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
     let days_in_month = match month {
         2 if leap => 29,
@@ -113,7 +134,7 @@ fn parse_date(text: &str) -> i32 {
         _ => 31,
     };
     assert!(
-        parts.next().is_none() && (1..=12).contains(&month) && (1..=days_in_month).contains(&day),
+        (1..=12).contains(&month) && (1..=days_in_month).contains(&day),
         "{text}: not a calendar date"
     );
     i32::try_from(days_from_civil(year, month, day)).expect("date in range")
@@ -133,21 +154,44 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
 
 /// Nanoseconds since the epoch of an RFC 3339 instant in UTC
 /// (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`), to the nanosecond, with no rounding.
+/// Every clock field is two digits, and a fraction is one to nine digits,
+/// as Go's `time.Parse(time.RFC3339Nano, ..)` reads them.
 fn parse_timestamp(text: &str) -> i128 {
     let text = text.strip_suffix('Z').expect("a UTC instant ends in Z");
     let (date, time) = text.split_once('T').expect("a date and a time");
-    let (clock, fraction) = time.split_once('.').unwrap_or((time, ""));
-    let mut parts = clock.split(':');
-    let hour: i128 = parts.next().expect("hour").parse().expect("hour");
-    let minute: i128 = parts.next().expect("minute").parse().expect("minute");
-    let second: i128 = parts.next().expect("second").parse().expect("second");
-    assert!(parts.next().is_none() && hour < 24 && minute < 60 && second < 60);
-    assert!(fraction.len() <= 9, "at most nanoseconds");
-    let nanos: i128 = if fraction.is_empty() {
-        0
-    } else {
-        format!("{fraction:0<9}").parse().expect("fraction")
+    let (clock, fraction) = match time.split_once('.') {
+        Some((clock, fraction)) => (clock, Some(fraction)),
+        None => (time, None),
     };
+    let bytes = clock.as_bytes();
+    let shape = bytes.len() == 8 && bytes[2] == b':' && bytes[5] == b':';
+    let fields = shape
+        .then(|| {
+            Some((
+                fixed_digits(&clock[..2], 2)?,
+                fixed_digits(&clock[3..5], 2)?,
+                fixed_digits(&clock[6..], 2)?,
+            ))
+        })
+        .flatten();
+    let Some((hour, minute, second)) = fields else {
+        panic!("{text}: not an HH:MM:SS time");
+    };
+    assert!(
+        hour < 24 && minute < 60 && second < 60,
+        "{text}: not a time of day"
+    );
+    let nanos: i128 = match fraction {
+        None => 0,
+        Some(fraction) => {
+            assert!(
+                (1..=9).contains(&fraction.len()) && fraction.bytes().all(|b| b.is_ascii_digit()),
+                "{text}: a fraction is one to nine digits"
+            );
+            format!("{fraction:0<9}").parse().expect("fraction")
+        }
+    };
+    let (hour, minute, second) = (i128::from(hour), i128::from(minute), i128::from(second));
     let days = i128::from(parse_date(date));
     ((days * 86_400 + hour * 3_600 + minute * 60 + second) * 1_000_000_000) + nanos
 }

@@ -8,6 +8,7 @@ import (
 	"math"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -120,6 +121,13 @@ func TestValueConformance(t *testing.T) {
 			}
 			if !record.Kind(c.Kind).Known() || c.Kind == "" || len(c.Outputs) == 0 || c.Outputs[0] != "c" {
 				t.Fatal("unsupported declaration")
+			}
+			// An unanswered index must be one the case declares, or the
+			// entry checks nothing.
+			for _, u := range c.Unanswered {
+				if !slices.Contains(c.Outputs[1:], u) {
+					t.Fatalf("unanswered %s is not a declared index", u)
+				}
 			}
 			isNull := c.Input.Type == "null"
 			if (c.Frame == nil) != isNull {

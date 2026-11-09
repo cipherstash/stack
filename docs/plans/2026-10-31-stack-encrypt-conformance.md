@@ -261,11 +261,13 @@ Python/TypeScript enrollment and explicit release gates/version combinations.
 Implemented three shared corpora under `conformance/stack-encrypt/v1`, each
 with a Rust and a Go runner required by `test:conformance`:
 `record-values-v1` ([value contract](../../conformance/stack-encrypt/values-contract.md)),
-every kind at its boundaries with frozen typed frames, sealed and SQL nulls
-for every fixed-width kind, cross-kind write refusals and the Go host
-conversions the host refuses before the engine;
+every kind at its boundaries with frozen typed frames, sealed nulls (with
+the runtime profile, every fixed-width kind), SQL nulls for `bool`, `bytes`
+and `string`, cross-kind write refusals and the Go host conversions the
+host refuses before the engine;
 `record-query-refusals-v1` ([query-refusal contract](../../conformance/stack-encrypt/query-refusals-contract.md)),
-every scalar operator against every capability and operand shape, by refusal
+every scalar operator against every field capability that does not answer
+it and the listed range shapes, by refusal
 class and diagnostic, with no key I/O, and the stage at which the typed Rust
 chain refuses the same query; and `record-raw-frames-v1`
 ([raw-frame contract](../../conformance/stack-encrypt/raw-frames-contract.md)),
