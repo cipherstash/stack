@@ -23,17 +23,47 @@ export const fresh = {
   emailLower: 'FRESH@example.com',
 }
 
-/** Calls only the App Host JSON RPC boundary; never imports application code. */
+/** @typedef {(method:string,args:unknown[])=>Promise<unknown>} AppCall
+ * @typedef {typeof legacy} Customer */
+/** @param {unknown} value @returns {Record<string,unknown>} */
+function record(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw Error('Expected application record')
+  return Object.fromEntries(Object.entries(value))
+}
+/** @param {unknown} value @returns {unknown[]} */
+function records(value) {
+  if (!Array.isArray(value)) throw Error('Expected application records')
+  return value
+}
+/** @param {Customer} customer */
+function postgresRecord(customer) {
+  return {
+    pk: customer.pk,
+    email: customer.email,
+    age: customer.age,
+    notes: customer.notes,
+  }
+}
+/** Calls only the App Host JSON RPC boundary; never imports application code.
+ * @param {AppCall} call */
 export async function behaviour(call) {
+  /** @type {import('../types.js').OracleCheck[]} */
   const checks = []
+  /** @param {string} id @param {()=>Promise<unknown>} action */
   async function check(id, action) {
     try {
       await action()
       checks.push({ id, passed: true })
     } catch (error) {
-      checks.push({ id, passed: false, cause: String(error.message ?? error) })
+      checks.push({
+        id,
+        passed: false,
+        cause: error instanceof Error ? error.message : String(error),
+      })
     }
   }
+  /** @param {unknown} actual @param {unknown} expected */
   function equal(actual, expected) {
     if (!isDeepStrictEqual(actual, expected))
       throw new Error('Unexpected application result')
@@ -41,32 +71,34 @@ export async function behaviour(call) {
   await check('behaviour.legacy-get', async () =>
     equal(await call('get', [legacy.pk]), legacy),
   )
-  for (const [method, value] of [
+  /** @type {[string,unknown][]} */
+  const legacyLookups = [
     ['findEmail', legacy.email],
     ['findEmailLower', legacy.emailLower.toLowerCase()],
     ['findAge', legacy.age],
     ['findBalance', legacy.balance],
     ['findActive', legacy.active],
-  ]) {
+  ]
+  for (const [method, value] of legacyLookups) {
     await check(`behaviour.legacy-${method}`, async () => {
-      const records = await call(method, [value])
-      if (!records.some((record) => isDeepStrictEqual(record, legacy)))
+      const found = records(await call(method, [value]))
+      if (!found.some((record) => isDeepStrictEqual(record, legacy)))
         throw Error('Legacy Data not found')
     })
   }
-  const postgres = Object.fromEntries(
-    ['pk', 'email', 'age', 'notes'].map((key) => [key, legacy[key]]),
-  )
+  const postgres = postgresRecord(legacy)
   await check('behaviour.legacy-postgres-get', async () =>
     equal(await call('getPostgres', [legacy.pk]), postgres),
   )
-  for (const [method, value] of [
+  /** @type {[string,unknown][]} */
+  const postgresLookups = [
     ['findPostgresEmail', legacy.email],
     ['findPostgresAge', legacy.age],
-  ]) {
+  ]
+  for (const [method, value] of postgresLookups) {
     await check(`behaviour.legacy-${method}`, async () => {
       if (
-        !(await call(method, [value])).some((record) =>
+        !records(await call(method, [value])).some((record) =>
           isDeepStrictEqual(record, postgres),
         )
       )
@@ -80,53 +112,67 @@ export async function behaviour(call) {
       await check('behaviour.fresh-write', async () => {
         equal(await call('get', [fresh.pk]), null)
         await call('put', [fresh])
-        equal(await call('get', [fresh.pk]), {
-          ...fresh,
-          emailLower: fresh.emailLower.toLowerCase(),
-        })
+        equal(await call('get', [fresh.pk]), fresh)
       })
       await check('behaviour.downcase-new-write-lookup', async () => {
         if (
-          !(
-            await call('findEmailLower', [fresh.emailLower.toLowerCase()])
-          ).some((record) => record.pk === fresh.pk)
+          !records(
+            await call('findEmailLower', [fresh.emailLower.toLowerCase()]),
+          ).some((item) => record(item).pk === fresh.pk)
         )
           throw Error('New downcase write not found')
       })
-      for (const [method, value] of [
+      /** @type {[string,unknown][]} */
+      const freshLookups = [
         ['findEmail', fresh.email],
         ['findAge', fresh.age],
         ['findBalance', fresh.balance],
         ['findActive', fresh.active],
-      ]) {
+      ]
+      for (const [method, value] of freshLookups) {
         await check(`behaviour.fresh-${method}`, async () => {
           if (
-            !(await call(method, [value])).some(
-              (record) => record.pk === fresh.pk,
+            !records(await call(method, [value])).some(
+              (item) => record(item).pk === fresh.pk,
             )
           )
             throw Error('Fresh write not found')
         })
       }
       await check('behaviour.balance-decimal-string', async () =>
-        equal((await call('get', [fresh.pk])).balance, fresh.balance),
+        equal(record(await call('get', [fresh.pk])).balance, fresh.balance),
       )
       await check('behaviour.set-active', async () => {
         await call('setActive', [mutation.pk, false])
-        equal((await call('get', [mutation.pk])).active, false)
+        equal(record(await call('get', [mutation.pk])).active, false)
       })
+      const copiedMutation = {
+        ...mutation,
+        active: false,
+        email: 'Copied@example.com',
+        notes: 'updated before copying',
+      }
       await check('behaviour.copy-postgres', async () => {
+        await call('put', [copiedMutation])
         await call('copyToPostgres', [mutation.pk])
         equal(
           await call('getPostgres', [mutation.pk]),
-          Object.fromEntries(
-            ['pk', 'email', 'age', 'notes'].map((key) => [key, mutation[key]]),
-          ),
+          postgresRecord(copiedMutation),
         )
       })
       await check('behaviour.copy-dynamo', async () => {
+        await call('put', [
+          {
+            ...mutation,
+            active: false,
+            email: 'Stale@example.com',
+            notes: 'stale destination',
+          },
+        ])
         await call('copyToDynamo', [mutation.pk])
-        equal((await call('get', [mutation.pk])).email, mutation.email)
+        const restored = record(await call('get', [mutation.pk]))
+        equal(restored.email, 'Copied@example.com')
+        equal(restored.notes, 'updated before copying')
       })
       return checks
     },

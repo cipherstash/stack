@@ -20,6 +20,9 @@ def emit(kind, **fields):
 
 config = json.loads(base64.b64decode(os.environ['HARNESS_CONFIG']))
 actor = config['actor']
+if os.environ.get('HARNESS_MODEL_CANARY') != config['modelCanary']:
+    emit('stream-error', error='Root model credential canary was not provisioned')
+    os._exit(1)
 os.makedirs('/trace', mode=0o700, exist_ok=True)
 os.chmod('/trace', 0o700)
 for forward in config.get('forwards', []):
@@ -35,7 +38,9 @@ def invoke(argv, stage):
                HOME='/tmp', TMPDIR='/tmp')
     env.pop('HARNESS_CONFIG', None)
     env.pop('HARNESS_MODEL_CANARY', None)
-    command = ['strace', '-f', '-qq', '-yy', '-s', '4096', '-e',
+    if stage == 'startup-probe':
+        env['HARNESS_STARTUP_TARGETS'] = json.dumps(config.get('forbiddenTargets', []))
+    command = ['strace', '-f', '-q', '-yy', '-s', '4096', '-e',
                'trace=%file,%network,%process',
                'setpriv', '--reuid=%s' % config['uid'], '--regid=%s' % config['gid'], '--clear-groups',
                '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all',
@@ -47,11 +52,25 @@ def invoke(argv, stage):
     process = subprocess.Popen(command, cwd='/workspace', env=env,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True, pass_fds=(3,))
+    actor_pid = None
+    for _ in range(200):
+        try:
+            with open('/proc/%s/task/%s/children' % (process.pid, process.pid)) as children:
+                child_pids = children.read().split()
+            if child_pids:
+                actor_pid = int(child_pids[0])
+                break
+        except FileNotFoundError:
+            break
+        time.sleep(.005)
     stopped = threading.Event()
     def stop():
         stopped.set()
         try: os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError: pass
+    if stage == 'command' and config.get('testKillTracer'):
+        # Host-selected capability fault injection, never application controlled.
+        threading.Timer(.1, lambda: os.kill(process.pid, signal.SIGKILL)).start()
 
     def copy_output(stream, kind):
         while True:
@@ -86,6 +105,7 @@ def invoke(argv, stage):
 
     def trace():
         pending = {}
+        actor_exit = None
         source = process.stderr
         if source is not None:
             while True:
@@ -97,7 +117,14 @@ def invoke(argv, stage):
                 match = re.match(r'(?:\[pid\s+(\d+)\]\s+|\s*(\d+)\s+)?(.*)', line)
                 if not match: continue
                 first, second, call = match.groups()
-                pid = first or second or str(process.pid)
+                pid = first or second or str(actor_pid or process.pid)
+                if (first is None and second is None) or int(pid) == actor_pid:
+                    exited = re.fullmatch(r'\+\+\+ exited with (\d+) \+\+\+', call)
+                    killed = re.fullmatch(r'\+\+\+ killed by (SIG\w+)(?: \(core dumped\))? \+\+\+', call)
+                    if exited:
+                        actor_exit = int(exited.group(1))
+                    elif killed:
+                        actor_exit = -getattr(signal, killed.group(1))
                 if '<unfinished ...>' in call:
                     pending[pid] = call.split('<unfinished ...>')[0]
                     continue
@@ -165,10 +192,16 @@ def invoke(argv, stage):
                 if forbidden and not denied:
                     stop()
                     break
-        return
+        if actor_exit is None and not stopped.is_set():
+            raise RuntimeError('ptrace observer ended without the actor exit record')
+        return actor_exit
 
     try:
-        trace()
+        actor_exit = trace()
+        if not stopped.is_set() and actor_exit != process.wait():
+            raise RuntimeError('ptrace observer exit disagrees with the actor exit record')
+        if actor_exit is not None:
+            emit('actor-exit', actor=actor, stage=stage, exitCode=actor_exit)
     except Exception as error:
         emit('stream-error', error=str(error))
         stop()
@@ -182,6 +215,9 @@ def invoke(argv, stage):
 with open('/trace/canary', 'w') as canary:
     canary.write('SYNTHETIC-NOT-A-SECRET')
 os.chmod('/trace/canary', 0o600)
+with open('/trace/model-credential', 'w') as credential:
+    credential.write(config['modelCanary'])
+os.chmod('/trace/model-credential', 0o600)
 startup = invoke(['node', '/harness/startup.mjs'], 'startup-probe')
 if startup != 0:
     emit('stream-error', error='Per-invocation startup capability probes failed')

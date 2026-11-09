@@ -36,6 +36,10 @@ Some tests spawn the wizard binary, which runs an auth check before reaching the
 
 The CI job for this workspace exposes those env vars from repo secrets. Without them the wizard suite is skipped (the provider suite still runs).
 
+## Migration Harness
+
+The [Migration Harness](migration-harness/run/README.md) runs an isolated Fixture App upgrade and records a Run Report. Its self-tests and credential-free Docker probes use dedicated commands and a dedicated CI workflow; ordinary `pnpm test` and `test:e2e` do not invoke them. A real Run additionally needs CipherStash credentials. See the harness README for commands that build workspace dependencies first and for the remaining acceptance limitations.
+
 ## Adding a new e2e test
 
 - File name must end in `.e2e.test.ts` to be picked up by `vitest.config.ts`.

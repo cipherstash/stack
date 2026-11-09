@@ -4,37 +4,50 @@ import { behaviour, legacy, mutation } from '../run/behaviour.mjs'
 import { run } from '../run/run.mjs'
 
 test('Run observes Legacy Data before new writes and mutation through App Host channel', async () => {
-  const rows = new Map([
+  const rows = new Map<string, Record<string, unknown>>([
     [legacy.pk, legacy],
     [mutation.pk, mutation],
   ])
-  const postgres = new Map([[legacy.pk, legacy]])
-  const methods = []
-  const project = (row) =>
+  const postgres = new Map<string, Record<string, unknown>>([
+    [legacy.pk, legacy],
+  ])
+  const methods: string[] = []
+  const project = (row: Record<string, unknown> | undefined) =>
     row &&
     Object.fromEntries(['pk', 'email', 'age', 'notes'].map((k) => [k, row[k]]))
-  async function call(method, args) {
+  async function call(method: string, args: unknown[]) {
     methods.push(method)
     const [value] = args
-    if (method === 'get') return rows.get(value) ?? null
-    if (method === 'getPostgres') return project(postgres.get(value)) ?? null
+    if (method === 'get') return rows.get(String(value)) ?? null
+    if (method === 'getPostgres')
+      return project(postgres.get(String(value))) ?? null
     if (method === 'put') {
-      rows.set(value.pk, {
-        ...value,
-        emailLower: value.emailLower.toLowerCase(),
-      })
+      if (value === null || typeof value !== 'object')
+        throw Error('Expected customer')
+      const customer: Record<string, unknown> = Object.fromEntries(
+        Object.entries(value),
+      )
+      rows.set(String(customer.pk), customer)
       return
     }
     if (method === 'setActive') {
-      rows.set(value, { ...rows.get(value), active: args[1] })
+      rows.set(String(value), { ...rows.get(String(value)), active: args[1] })
       return
     }
     if (method === 'copyToPostgres') {
-      postgres.set(value, rows.get(value))
+      const row = rows.get(String(value))
+      if (!row) throw Error('Missing source')
+      postgres.set(String(value), row)
       return
     }
-    if (method === 'copyToDynamo') return
-    const fields = {
+    if (method === 'copyToDynamo') {
+      rows.set(String(value), {
+        ...rows.get(String(value)),
+        ...postgres.get(String(value)),
+      })
+      return
+    }
+    const fields: Record<string, string> = {
       findEmail: 'email',
       findEmailLower: 'emailLower',
       findAge: 'age',
@@ -47,7 +60,7 @@ test('Run observes Legacy Data before new writes and mutation through App Host c
     return [...source.values()]
       .filter((row) =>
         method === 'findEmailLower'
-          ? row.emailLower.toLowerCase() === value.toLowerCase()
+          ? String(row.emailLower).toLowerCase() === String(value).toLowerCase()
           : row[fields[method]] === value,
       )
       .map((row) => (method.startsWith('findPostgres') ? project(row) : row))
@@ -58,7 +71,7 @@ test('Run observes Legacy Data before new writes and mutation through App Host c
     driver: {
       provision: async () => {},
       installUnmigrated: async () => {},
-      seed: async () => {},
+      initializeLegacyData: async () => {},
       snapshot: async () => {},
       migrate: async () => ({ exitCode: 0 }),
       friction: async () => [],
@@ -74,7 +87,7 @@ test('Run observes Legacy Data before new writes and mutation through App Host c
   assert.ok(methods.indexOf('put') > methods.indexOf('findPostgresAge'))
 })
 test('fresh-write lookup failure is visible as stable Oracle evidence', async () => {
-  const result = await behaviour(async (method) => {
+  const result = await behaviour(async (method: string) => {
     if (method.startsWith('find')) return []
     if (method === 'get') return null
     return null
