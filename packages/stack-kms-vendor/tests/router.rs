@@ -394,7 +394,7 @@ async fn a_router_with_no_vendor_sends_everything_to_zerokms() {
     let context = nonempty!("users").with("email");
     let sealed = cipher
         .default_keyset()
-        .encrypt("z".to_string(), context)
+        .encrypt_tree("z".to_string(), context)
         .await
         .unwrap();
     assert_eq!(leaf_backend(&sealed), (KeyBackend::ZeroKms, None));
