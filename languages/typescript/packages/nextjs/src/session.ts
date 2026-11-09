@@ -154,8 +154,11 @@ export function ctsTokenOf({ accessToken, expiry }: CtsSession): CtsToken {
 /**
  * Write the session cookie. The value is a bearer token, so it is `httpOnly`
  * (nothing in this package reads it client-side, and page script must not be
- * able to exfiltrate it) and `secure` in production. `secure` is relaxed outside
- * production only so plain-HTTP development servers keep working.
+ * able to exfiltrate it) and always `secure`, whatever `NODE_ENV` says, so a
+ * staging or preview deployment that is not built for production still never
+ * sends it over plain HTTP. Browsers accept a `Secure` cookie from
+ * `http://localhost`, so local development keeps working; a plain-HTTP server
+ * on any other host, such as a LAN address, will not keep the session.
  */
 export function writeCtsSession(
   response: NextResponse,
@@ -180,7 +183,7 @@ export function writeCtsSession(
     value,
     expires: new Date(token.expiry * 1000),
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,
     sameSite: 'lax',
     path: '/',
   })

@@ -2,7 +2,7 @@
  * The CipherStash session cookie is client-controlled input carrying a bearer
  * token. These tests cover three ways it went wrong:
  *
- * 1. the cookie must be written `httpOnly` (and `secure` in production);
+ * 1. the cookie must be written `httpOnly` and `secure`;
  * 2. a session minted for one user must never be handed to another — in the
  *    Clerk middleware and in `getCtsToken(oidcToken)`;
  * 3. a malformed cookie must read as "no session", not throw.
@@ -145,19 +145,15 @@ describe('the session cookie attributes', () => {
     expect(line).toMatch(/;\s*Path=\//i)
   })
 
-  it('is Secure in production', async () => {
-    vi.stubEnv('NODE_ENV', 'production')
-    const res = await setCtsToken(jwtWithSubject('user-1'))
+  it.each(['production', 'development', 'test'])(
+    'is Secure when NODE_ENV is %s',
+    async (nodeEnv) => {
+      vi.stubEnv('NODE_ENV', nodeEnv)
+      const res = await setCtsToken(jwtWithSubject('user-1'))
 
-    expect(sessionSetCookie(res)).toMatch(/;\s*Secure/i)
-  })
-
-  it('is not Secure outside production, so http://localhost works', async () => {
-    vi.stubEnv('NODE_ENV', 'development')
-    const res = await setCtsToken(jwtWithSubject('user-1'))
-
-    expect(sessionSetCookie(res)).not.toMatch(/;\s*Secure/i)
-  })
+      expect(sessionSetCookie(res)).toMatch(/;\s*Secure/i)
+    },
+  )
 })
 
 describe('protectClerkMiddleware: a session is only reused for its own user', () => {
