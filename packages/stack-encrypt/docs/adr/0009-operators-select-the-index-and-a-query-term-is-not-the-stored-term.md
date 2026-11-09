@@ -1240,22 +1240,29 @@ query chain calls it once, when the query is awaited and before any keyset
 is resolved, then keeps the verifier until the term is derived. A match
 query cuts its tokens once. `check_label` and `QueryToken` are unchanged.
 
-**Refusals are written once.** What a query is refused for before any term
-exists lives in `sem::query`, one function per index: match options the
-index cannot use, text that cuts no token, text an equality or order index
-cannot normalize, and block ORE text over its limit. The typed `prepare`
-impls and the dynamic path (`check_query`, `query_term`, `verify`) call the
-same functions, so neither has a copy of a rule. A consequence for the
+**The scalar refusals are written once.** What a scalar query is refused
+for before any term exists lives in `sem::query`, one function per index:
+match options the index cannot use, text that cuts no token, text an
+equality or order index cannot normalize, and block ORE text over its
+limit. The typed `prepare` impls and the dynamic path (`check_query`,
+`query_term`, `verify`) call the same functions, so neither has a copy of
+a rule. The JSON document operators' refusals (a path that does not parse,
+a container at a path, a path the field does not order) are still written
+for the typed index and for the dynamic path separately; they join when
+the dynamic path runs the typed derivation (the plan's step 4). A consequence for the
 typed chain: an equality or order query of text that cannot be normalized
 is refused before the keyset is resolved, as the dynamic path refused it
 already. The equality index reads a copy of the value for that check, so
 its plaintext is `Clone`. The shared conformance profile
 `record-query-refusals-v1` pins both paths at the same stage.
 
-**A field declares at most one index per operator.** `(Equality, Ore)`
-answer different operators and are allowed. `(Ore, Ope)`, `(Ore,
-OreBlock)` and two match indexes are refused when the plan is built, on
-both paths (`PlanError::IndexOverlap`, `overlapping_outputs`). Each index
+**A field of a plan declares at most one index per operator.** `(Equality,
+Ore)` answer different operators and are allowed. `(Ore, Ope)` and `(Ore,
+OreBlock)` are refused when the plan is built, on both paths
+(`PlanError::IndexOverlap`, `overlapping_outputs`); two match indexes were
+already one index twice (`DuplicateIndex`). The rule is a plan's: the
+low-level `indexed(..)` operation and `encrypt_as` run any set of indexes,
+since no plan holds them and no query reads the second term. Each index
 declares the operators it answers once (`Equality::OPERATORS`,
 `Ore::OPERATORS`, …), and the dynamic lookup reads that declaration with
 no priority between indexes, since a plan never holds two that answer one

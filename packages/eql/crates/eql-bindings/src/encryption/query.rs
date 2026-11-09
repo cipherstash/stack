@@ -161,8 +161,6 @@ use super::{bloom_filter, hmac256, EqlMatch};
 use crate::v3::terms::{BloomFilter, Hmac256};
 use crate::Identifier;
 
-/// EQL's match configuration folds case, so its index answers the
-/// case-insensitive [`op::Matches`](struct@op::Matches).
 /// An EQL v4 query twin, assembled from the column it queries and the one
 /// term its type's index derived for the query's value. eql-codegen
 /// implements it for the twin of every type that answers an operator

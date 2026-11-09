@@ -37,7 +37,8 @@
 //! answers once as well (`Equality::OPERATORS`, `Ore::OPERATORS`, …), and
 //! a plan reads that declaration: a field declares at most one index per
 //! operator, so `(Equality, Ore)` is allowed and `(Ore, Ope)` is refused
-//! when the plan is built ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap)).
+//! when the plan is built ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap);
+//! two match indexes are one index twice, [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex)).
 //!
 //! Three traits connect an operator to an index, and ADR-0009 records why:
 //!
@@ -117,8 +118,9 @@ pub trait Operator: Copy + 'static {
     /// operator the dynamic path has no name for: one defined in another
     /// crate, or an accessor over a leaf that has no path form
     /// (`AtPath<Matches>`). Rust is the superset; the dynamic path is a
-    /// named subset.
-    const OP: Option<Op>;
+    /// named subset. `None` unless the operator says otherwise, so an
+    /// operator defined in another crate needs nothing here.
+    const OP: Option<Op> = None;
 }
 
 /// Equality: rows whose value equals the query's.
@@ -218,8 +220,8 @@ impl<L: Leaf> Operator for AtPath<L> {
 pub trait Leaf: Operator<Arity: LeafArity> {
     /// This operator at a path, in the dynamic vocabulary: `Op::EqAt` for
     /// [`Eq`](struct@Eq), or `None` for a leaf the dynamic path has no
-    /// path form of.
-    const AT: Option<Op>;
+    /// path form of, which is the default.
+    const AT: Option<Op> = None;
 }
 
 /// Every operator, declared once: its type, its arity, and the name the
@@ -407,8 +409,9 @@ operators! {
         /// comparison of two kinds of value is decided by the terms where
         /// jsonpath answers unknown, and an ordering or a filter of more
         /// than one condition compares by the ordering terms, as
-        /// `element_match` does. `dynamic::check_query`'s documentation
-        /// has an example.
+        /// `element_match` does. The documentation of `dynamic::check_query`
+        /// (with the `dynamic` feature) shows a predicate accepted and one
+        /// refused at the byte it starts.
         Match = "match",
     }
 }
@@ -854,8 +857,9 @@ where
     fn prepare(&self, value: &S) -> Result<QueryTokens, Error> {
         // Options the index cannot use, then text that cuts no token,
         // which would match every row: the stored side keeps such a value
-        // as the empty filter, the query side refuses it here. The tokens
-        // are cut once, here, and kept as the verifier.
+        // as the empty filter, the query side refuses it here. The query
+        // is prepared once and these tokens are kept as the verifier; the
+        // filter's derivation cuts the text again for its positions.
         Ok(query::match_tokens(value.as_ref(), &O::options())?)
     }
     fn query(tokens: QueryTokens, term: MatchTerms<O>, _: QueryToken) -> MatchQuery<O> {
@@ -1136,6 +1140,56 @@ mod tests {
         }
         assert_eq!(Op::parse("Eq"), None);
         assert_eq!(Op::parse("="), None);
+    }
+
+    /// Every operator an index declares has a `Supports` impl for it, and
+    /// nothing else does: the declaration and the typed impls are one
+    /// table. Each call compiles only with the impl, and the counts hold
+    /// the lists to the calls. The JSON reads (`selector` and the others)
+    /// have no typed operator, so the JSON index's typed subset is checked.
+    #[test]
+    fn an_indexs_declaration_is_its_supports_impls() {
+        fn declared<I, O: Operator, In: Input<O::Arity>>(_: &I, list: &[Op])
+        where
+            I: Supports<O, In>,
+        {
+            let op = O::OP.expect("a typed operator with a wire name");
+            assert!(list.contains(&op), "{op} is not declared");
+        }
+        declared::<_, Eq, String>(&Equality, Equality::OPERATORS);
+        assert_eq!(Equality::OPERATORS.len(), 1);
+        declared::<_, Matches, String>(&Match, Match::<DefaultMatch>::OPERATORS);
+        assert_eq!(Match::<DefaultMatch>::OPERATORS.len(), 1);
+        for list in [Ore::OPERATORS, Ope::OPERATORS, OreBlock::OPERATORS] {
+            assert_eq!(list.len(), 5);
+        }
+        declared::<_, Lt, u32>(&Ore, Ore::OPERATORS);
+        declared::<_, Lte, u32>(&Ore, Ore::OPERATORS);
+        declared::<_, Gt, u32>(&Ore, Ore::OPERATORS);
+        declared::<_, Gte, u32>(&Ore, Ore::OPERATORS);
+        declared::<_, Between, (u32, u32)>(&Ore, Ore::OPERATORS);
+        declared::<_, Lt, u32>(&Ope, Ope::OPERATORS);
+        declared::<_, Lte, u32>(&Ope, Ope::OPERATORS);
+        declared::<_, Gt, u32>(&Ope, Ope::OPERATORS);
+        declared::<_, Gte, u32>(&Ope, Ope::OPERATORS);
+        declared::<_, Between, (u32, u32)>(&Ope, Ope::OPERATORS);
+        declared::<_, Lt, u32>(&OreBlock, OreBlock::OPERATORS);
+        declared::<_, Lte, u32>(&OreBlock, OreBlock::OPERATORS);
+        declared::<_, Gt, u32>(&OreBlock, OreBlock::OPERATORS);
+        declared::<_, Gte, u32>(&OreBlock, OreBlock::OPERATORS);
+        declared::<_, Between, (u32, u32)>(&OreBlock, OreBlock::OPERATORS);
+        use crate::target::Json;
+        use serde_json::Value;
+        declared::<_, Contains, Value>(&Json, Json::OPERATORS);
+        declared::<_, ContainedBy, Value>(&Json, Json::OPERATORS);
+        declared::<_, AtPath<Eq>, (String, Value)>(&Json, Json::OPERATORS);
+        declared::<_, AtPath<Lt>, (String, Value)>(&Json, Json::OPERATORS);
+        declared::<_, AtPath<Lte>, (String, Value)>(&Json, Json::OPERATORS);
+        declared::<_, AtPath<Gt>, (String, Value)>(&Json, Json::OPERATORS);
+        declared::<_, AtPath<Gte>, (String, Value)>(&Json, Json::OPERATORS);
+        declared::<_, AtPath<Between>, (String, (Value, Value))>(&Json, Json::OPERATORS);
+        // The six reads, named by the dynamic path alone.
+        assert_eq!(Json::OPERATORS.len(), 8 + 6);
     }
 
     /// An accessor is held to its leaf's requirement: an exact term

@@ -21,8 +21,7 @@ use eql_bindings::v4::{
 use eql_bindings::Identifier;
 use serde::Serialize;
 use stack_encrypt::dynamic::{
-    self, record, FieldPlan, Op, Operand, TargetDescriptor, TargetError, TargetResolver,
-    ValueFrame,
+    self, record, FieldPlan, Op, Operand, TargetDescriptor, TargetError, TargetResolver, ValueFrame,
 };
 use stack_encrypt::op::{self, Probabilistic, Stats};
 use stack_encrypt::{
@@ -421,8 +420,7 @@ async fn a_typed_match_query_verifies_and_sizes_as_the_data_path_does() {
         let input = frame(needle);
 
         let page = ["Alice Smith", "alicia", "Bob", "malice", "ALICE", "al", ""];
-        let data =
-            dynamic::verify(&plan, "value", Op::Matches, input.clone(), page, &Eql).unwrap();
+        let data = dynamic::verify(&plan, "value", Op::Matches, input.clone(), page, &Eql).unwrap();
         let typed: Vec<bool> = page.iter().map(|v| query.verify(v)).collect();
         assert_eq!(typed, data, "{needle}");
         assert!(query.verify("Alice Smith"), "{needle}");
@@ -440,16 +438,9 @@ async fn a_typed_match_query_verifies_and_sizes_as_the_data_path_does() {
             Stats::declared(1_000_000),
         ] {
             for want in [0, 1, 10, 1_000] {
-                let data = dynamic::target_limit(
-                    &plan,
-                    "value",
-                    Op::Matches,
-                    &term,
-                    want,
-                    &stats,
-                    &Eql,
-                )
-                .unwrap();
+                let data =
+                    dynamic::target_limit(&plan, "value", Op::Matches, &term, want, &stats, &Eql)
+                        .unwrap();
                 assert_eq!(query.target_limit(want, &stats), data, "{needle} {want}");
             }
         }

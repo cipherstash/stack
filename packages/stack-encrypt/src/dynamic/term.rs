@@ -457,25 +457,59 @@ pub async fn term<'c, K, P, D>(
 ) -> Result<Vec<u8>, Error>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
-    P: Encrypt,
+    P: Encrypt + Clone,
     D: IntoPrfContext<'c>,
 {
-    // The query refusals first, as `query_term` makes them: a probe is a
-    // query, so match text that cuts no token is refused here rather than
-    // derived as the empty filter a stored value keeps.
-    let not_taken = || Error::Term {
-        field: None,
-        kind: kind.clone(),
-    };
-    let frame = ValueFrame::of(value).map_err(|_| not_taken())?;
-    if !kind.defines(&frame) {
-        return Err(not_taken());
+    // A value the index does not take is refused as that kind, first.
+    if !kind.defines(value.clone()) {
+        return Err(Error::Term {
+            field: None,
+            kind: kind.clone(),
+        });
     }
-    super::query::prepare_scalar(kind, &frame)?;
-    derive(cipher, &frame, kind, context)?
+    // Then the query refusals, as `query_term` makes them: a probe is a
+    // query, so match text that cuts no token is refused here rather than
+    // derived as the empty filter a stored value keeps. The value is read
+    // as it is, not re-framed, so every scalar `defines` takes is one a
+    // probe takes.
+    prepare_probe(kind, value.clone())?;
+    derive(cipher, value, kind, context)?
         .await
         .map(TermBytes::into_bytes)
         .map_err(Error::Cipher)
+}
+
+/// The query refusals of a probe of `value` through `kind`: the `sem`
+/// module's rules, as `query_term` applies them to a field's input.
+///
+/// # Errors
+///
+/// [`Error::Cipher`] with the term error, as `query_term`.
+fn prepare_probe<P: Encrypt>(kind: &IndexSpec, value: P) -> Result<(), Error> {
+    let refused = |error: TermError| Error::Cipher(error.into());
+    let text_rule = |value: P, rule: &dyn Fn(&str) -> Result<(), TermError>| {
+        value
+            .visit(OneScalar::new(
+                |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                    (None, Physical::Text(text)) => Ok(rule(text)),
+                    _ => Err(None),
+                },
+            ))
+            // Not one text scalar: nothing to refuse here.
+            .unwrap_or(Ok(()))
+            .map_err(refused)
+    };
+    match kind {
+        IndexSpec::Equality => crate::sem::query::equality(value).map_err(refused),
+        IndexSpec::Match(options) => text_rule(value, &|text| {
+            crate::sem::query::match_tokens(text, options).map(drop)
+        }),
+        IndexSpec::Ore | IndexSpec::Ope => {
+            text_rule(value, &|text| crate::sem::query::order_text(text, false))
+        }
+        IndexSpec::OreBlock => text_rule(value, &|text| crate::sem::query::order_text(text, true)),
+        IndexSpec::Json(_) => Ok(()),
+    }
 }
 
 /// An index term in its frozen byte encoding, as a binding stores and

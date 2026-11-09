@@ -3068,6 +3068,33 @@
       }
     },
     {
+      "id": "two-order-indexes",
+      "input": {
+        "json": {
+          "value": {
+            "context": [
+              "users",
+              "value"
+            ],
+            "outputs": [
+              "c",
+              "ore",
+              "ope"
+            ],
+            "type": "uint32"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": {
+          "reason": "overlapping_outputs",
+          "field": "value"
+        }
+      }
+    },
+    {
       "id": "match-invalid-short-standard",
       "input": {
         "json": {

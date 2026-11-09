@@ -18,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Supports::check`, `verifier` and `admit` are one
     `prepare(&self, input) -> Result<Self::Verifier, Error>`, called once
     per query, when the query is awaited and before any keyset is
-    resolved. A match query cuts its tokens once and keeps them. An index
-    outside this crate implements `prepare` in place of the three.
+    resolved. A match query is prepared once and keeps its tokens as the
+    verifier. An index outside this crate implements `prepare` in place of
+    the three. `Operator::OP` and `Leaf::AT` are new, with `None` defaults,
+    so an operator outside this crate needs nothing more.
   - What a query is refused for is written once, in the `sem` module, for
     the typed chain and the dynamic path alike. So the typed chain now
     refuses an equality or order query of text with no normal form, and
@@ -34,10 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `dynamic::term` prepares its probe as `query_term` does, and the
     stored-term derivation no longer carries a query flag.
 - **A field declares at most one index per operator** (#1233).
-  `(Ore, Ope)`, `(Ore, OreBlock)` and two match indexes are refused when
-  the plan is built, as `PlanError::IndexOverlap` on the typed path and
-  `overlapping_outputs` on the dynamic one, before any key is requested.
-  `(Equality, Ore)` answer different operators and are allowed. Each index
+  `(Ore, Ope)` and `(Ore, OreBlock)` are refused when the plan is built,
+  as `PlanError::IndexOverlap` on the typed path and `overlapping_outputs`
+  on the dynamic one, before any key is requested; two match indexes were
+  already one index twice (`DuplicateIndex`). `(Equality, Ore)` answer
+  different operators and are allowed. The rule is a plan's: `indexed(..)`
+  and `encrypt_as` with two order indexes still run, since no plan holds
+  them and no query reads the second term. Each index
   declares the operators it answers once (`Equality::OPERATORS`,
   `Ore::OPERATORS`, …; `IndexSpec::operators` and `IndexSpec::answers`
   read them), and `Op::answered_by` has no priority between order indexes.

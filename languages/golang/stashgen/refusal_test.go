@@ -324,7 +324,7 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"every index on an integer", "\tScore int64 `stash:\"score,encrypt,index=equality;ore\"`\n\tRank int32 `stash:\"rank,index=ope\"`"},
 		{"two order indexes on an integer", "\tScore int64 `stash:\"score,encrypt,index=ore;ope\"`"},
 		{"orders on a decimal, a date and a timestamp", "\tAmount encrypt.Decimal `stash:\"amount,encrypt,index=equality;ore\"`\n\tDay encrypt.Date `stash:\"day,encrypt,index=ope\"`\n\tAt time.Time `stash:\"at,encrypt,index=equality;ore\"`"},
-		{"orders on text, bytes and a float", "\tName string `stash:\"name,encrypt,index=ore;ope;match\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`"},
+		{"orders on text, bytes and a float", "\tName string `stash:\"name,encrypt,index=ope;match\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`"},
 		{"a match query on an index-only field", "\tName string `stash:\"name,index=match\"`"},
 	} {
 		dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})

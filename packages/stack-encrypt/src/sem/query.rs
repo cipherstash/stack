@@ -22,8 +22,9 @@ use vitaminc_aead::Encrypt;
 use super::{normalized, sealed, MatchOptions, Orderable, QueryTokens, TermError};
 
 /// An equality query of `value`: refused when the value has no equality
-/// term, or is text the index cannot normalize. The value is read in
-/// place, so the caller still owns it.
+/// term, or is text the index cannot normalize. The value is consumed as
+/// it is normalized, so a caller that still needs it passes a copy, as the
+/// typed `Equality::prepare` does; vitaminc wipes what it reads.
 ///
 /// # Errors
 ///

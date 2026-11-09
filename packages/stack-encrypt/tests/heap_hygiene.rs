@@ -563,6 +563,30 @@ fn a_query_term_leaves_no_plaintext_on_the_heap() {
     }
 }
 
+/// The typed chain prepares an equality query before any key is requested
+/// by normalizing a copy of the value (`Supports<Eq, S>` is `S: Clone`).
+/// The copy is wiped as it is read, so nothing of the query reaches freed
+/// memory. A typed `Matches` query is not watched here: `matching` views
+/// its owned text and drops it unwiped, which #1593 tracks.
+#[test]
+fn a_typed_query_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::{op, Equality, Plan};
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let plan = Plan::context("users/email")
+        .with::<String, _>(Equality)
+        .build()
+        .unwrap();
+    // The caller's own value stays alive across the watch: the chain works
+    // on its copy, and what the test owns is the test's residue, not the
+    // engine's.
+    let query = marked("query");
+    watched("typed query (Eq)", || {
+        rt.block_on(async { cipher.query(op::Eq, &query).on(&plan).await.unwrap() });
+    });
+    drop(query);
+}
+
 /// An order term takes its plaintext by value, so the engine owns the
 /// `String` or `Vec<u8>` it is handed (a clone of the caller's, on the
 /// target path) and must wipe it. Both paths hand a bare one; the engine

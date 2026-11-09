@@ -147,10 +147,10 @@ func (e Static) check(ctx context.Context, d stashgen.Declaration) error {
 	return nil
 }
 
-// operatorNames are the operators, in the engine's order (OpSpec::ALL).
+// operatorNames are the scalar operators, in the engine's order (Op::ALL).
 var operatorNames = []string{"eq", "lt", "lte", "gt", "gte", "between", "matches"}
 
-// operators applies the engine's table as it stands today: OpSpec::answered_by
+// operators applies the engine's table as it stands today: Op::answered_by
 // for a field with indexes, and for an EQL type the operators of one value
 // its indexes answer (matches included).
 func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[string][]stashgen.Operator, error) {
@@ -196,11 +196,12 @@ func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[stri
 	return out, nil
 }
 
-// answeredBy mirrors OpSpec::answered_by in stack-encrypt: eq through an
+// answeredBy mirrors Op::answered_by in stack-encrypt: eq through an
 // equality index, matches through a match index, and the orderings through
-// ORE, else block ORE, else OPE, over an integer of 16 bits or wider, a
-// float, text, a decimal, a date or a timestamp; each only where the index
-// applies to the type.
+// the one order index the field declares (ORE, block ORE or OPE; check
+// refused a field with two), over an integer of 16 bits or wider, a float,
+// text, a decimal, a date or a timestamp; each only where the index applies
+// to the type.
 func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName) (stashgen.IndexName, bool) {
 	declared := func(want stashgen.IndexName) bool {
 		for _, idx := range indexes {

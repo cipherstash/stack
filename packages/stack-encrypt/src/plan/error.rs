@@ -187,10 +187,11 @@ pub enum PlanError {
     /// A field declares two indexes that answer one operator, so a query
     /// for it would have two terms to choose from and the plan has to
     /// guess. A field declares at most one index per operator:
-    /// `(Equality, Ore)` answer different operators; `(Ore, Ope)`,
-    /// `(Ore, OreBlock)` and two match indexes do not. The second index
-    /// would store a term no query uses, and an order term tells anyone
-    /// who reads the column how its values order.
+    /// `(Equality, Ore)` answer different operators; `(Ore, Ope)` and
+    /// `(Ore, OreBlock)` do not. (Two match indexes are one index twice,
+    /// [`DuplicateIndex`](Self::DuplicateIndex), which is checked first.)
+    /// The second index would store a term no query uses, and an order
+    /// term tells anyone who reads the column how its values order.
     #[error("field {at:?} declares two indexes that answer {operator}: {first} and {second}")]
     #[diagnostic(
         code(stack_encrypt::plan_index_overlap),

@@ -730,16 +730,6 @@ fn prepare_input(index: &IndexSpec, input: &Input) -> Result<Option<QueryTokens>
     Ok(None)
 }
 
-/// [`prepare_input`] for one scalar, for [`term`](super::term): the same
-/// refusals for a query term derived by index.
-///
-/// # Errors
-///
-/// As [`prepare_input`].
-pub(super) fn prepare_scalar(index: &IndexSpec, value: &ValueFrame) -> Result<(), Error> {
-    prepare_input(index, &Input::One(value.clone())).map(drop)
-}
-
 /// Whether `value`, if it is order text, has an order encoding the index
 /// takes ([`crate::sem::query::order_text`]): the fold exists, and under
 /// block ORE (`block`) fits the scheme and does not end in NUL. Anything
@@ -783,6 +773,66 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// Check a query without a cipher: everything [`query_term`] refuses before
 /// it derives anything. A binding calls this at its boundary, so a bad
 /// query is refused before a keyset is resolved.
+///
+/// A document field's `match` operator takes a jsonpath predicate, and
+/// refuses what the index's terms cannot answer at the byte it starts,
+/// by name, never quoting the text:
+///
+/// ```
+/// use serde_json::json;
+/// use stack_encrypt::dynamic::{check_query, frame, record, Op, Reason, ValueFrame};
+/// use stack_encrypt::AsProtectedRef;
+/// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
+/// # use stack_encrypt::target::IndexSpec;
+/// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
+/// # /// A host whose `JsonSearch` names the compiled predicate's domain.
+/// # struct Documents;
+/// # impl TargetResolver for Documents {
+/// #     fn targets(&self) -> Vec<TargetDescriptor> {
+/// #         vec![TargetDescriptor::new(
+/// #             "JsonSearch", "json", "", Some(ValueKind::Json), "public.eql_v4_json_search",
+/// #             vec!["json".to_owned()], Some("JsonSearchQuery".to_owned()),
+/// #             Some("eql_v4.query_json".to_owned()), true, None,
+/// #         )
+/// #         .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
+/// #     }
+/// #     fn encrypt<'a, K: 'static>(&self, _: &str, _: Option<&TargetOptions>,
+/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: ValueFrame,
+/// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
+/// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label, _: &[u8],
+/// #     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> { unreachable!() }
+/// #     fn query<'a, K: 'static>(&self, _: &str, _: &IndexSpec, _: &'a KeysetCipher<'_, K>,
+/// #         _: &Label, _: ValueFrame,
+/// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
+/// # }
+/// // A document field that orders `$.age`.
+/// let declaration = frame::serde::to_vec(&json!({"profile": {
+///     "context": ["users", "profile"], "type": "json", "null": "sql",
+///     "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}
+/// }}))?;
+/// let plan = record::plan_with(declaration.as_protected_ref(), &Documents)?;
+/// // What `jsonb_path_match(col, $1, $2)` takes: the predicate, and its
+/// // variables as the JSON text of one object.
+/// let input = |predicate: &str| -> ValueFrame {
+///     let input = json!({"predicate": predicate, "vars": r#"{"min": 18, "r": "sibling"}"#});
+///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().as_protected_ref()).unwrap()
+/// };
+/// let check = |predicate: &str| {
+///     check_query(&plan, "profile", Op::Match, input(predicate), &Documents)
+/// };
+///
+/// check("$.age >= $min && !(exists($.retired))")?;
+/// check(r#"$.name == "ann" || $."first name" != null"#)?;
+/// check("exists($.contacts[*] ? (@.relationship == $r))")?;
+///
+/// // Refused at the byte the construct starts, by name, never quoting
+/// // the text.
+/// let error = check(r#"$.email like_regex "@""#).unwrap_err();
+/// assert_eq!(error.reason(), Some(Reason::JsonPredicateUnsupported));
+/// let error = check("$.age + 1 > $min").unwrap_err();
+/// assert!(error.to_string().contains("at byte 6"), "{error}");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 ///
 /// # Errors
 ///
