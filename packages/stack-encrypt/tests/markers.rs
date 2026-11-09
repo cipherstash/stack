@@ -13,6 +13,7 @@ mod common;
 use std::sync::atomic::Ordering;
 
 use stack_encrypt::kms::FakeDataKeySource;
+use stack_encrypt::marker::{Nested, Root, Takes, TakesAny};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::{DecryptSource, EncryptTarget, NoScope, Scope};
 use stack_encrypt::testing::{scope, stored_scope};
@@ -95,17 +96,92 @@ struct Account {
 
 #[derive(EncryptTarget)]
 #[stash(struct = Address, scope = "addresses")]
-#[allow(dead_code)]
 struct EncryptedAddress {
     street: Encrypted<EqualityTerm>,
 }
 
 #[derive(EncryptTarget)]
 #[stash(struct = Account, scope = "accounts")]
-#[allow(dead_code)]
 struct EncryptedAccount {
     r#type: Encrypted<EqualityTerm>,
     address: EncryptedAddress,
+}
+
+/// A record whose fields are of several indexes, nullable, and of a
+/// stated query type.
+#[derive(Clone, Zeroize)]
+struct Person {
+    email: String,
+    nick: Option<String>,
+    age: u32,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Person, scope = "people", scope(tenant: u64))]
+struct EncryptedPerson {
+    #[stash(query = String)]
+    email: Encrypted<(EqualityTerm, MatchTerms, OreTerm<String>)>,
+    #[stash(query = String)]
+    nick: Option<Encrypted<EqualityTerm>>,
+    age: Encrypted<(EqualityTerm, OreTerm<u32>)>,
+}
+
+fn person(nick: Option<&str>) -> Person {
+    Person {
+        email: "ada@example.com".into(),
+        nick: nick.map(str::to_owned),
+        age: 36,
+    }
+}
+
+/// A record field under a record with a caller scope.
+#[derive(Clone, Zeroize)]
+struct Branch {
+    name: String,
+    address: Address,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Branch, scope = "branches", scope(tenant: u64))]
+struct EncryptedBranch {
+    name: Encrypted<EqualityTerm>,
+    address: EncryptedAddress,
+}
+
+/// A record three deep, under a caller scope.
+#[derive(Clone, Zeroize)]
+struct Holder {
+    account: Account,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Holder, scope = "holders", scope(tenant: u64))]
+struct EncryptedHolder {
+    account: EncryptedAccount,
+}
+
+/// A record field under a record that stores its scope in the row.
+#[derive(Clone, Zeroize)]
+struct Office {
+    tenant: u64,
+    address: Address,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Office, scope = "offices", scope(field = "tenant"))]
+struct EncryptedOffice {
+    #[stash(passthrough)]
+    tenant: u64,
+    address: EncryptedAddress,
+}
+
+fn account() -> Account {
+    Account {
+        r#type: "savings".into(),
+        address: Address {
+            street: "1 Main St".into(),
+        },
+    }
 }
 
 mod a_marker {
@@ -151,9 +227,11 @@ mod a_marker {
 
     #[test]
     fn carries_the_type_of_the_scope_its_caller_supplies() {
-        let scoped: Marker<Encrypted<EqualityTerm>, Scope<u64>> = EncryptedUser::EMAIL;
-        let stored: Marker<Encrypted<EqualityTerm>, Scope<u64>> = StoredTenant::EMAIL;
-        let unscoped: Marker<Encrypted<EqualityTerm>, NoScope> = Renamed::EMAIL;
+        let scoped: Marker<Root<EncryptedUser>, Encrypted<EqualityTerm>, Scope<u64>> =
+            EncryptedUser::EMAIL;
+        let stored: Marker<Root<StoredTenant>, Encrypted<EqualityTerm>, Scope<u64>> =
+            StoredTenant::EMAIL;
+        let unscoped: Marker<Root<Renamed>, Encrypted<EqualityTerm>, NoScope> = Renamed::EMAIL;
         assert_eq!(scoped.name(), stored.name());
         assert_eq!(unscoped.name(), "email");
     }
@@ -192,6 +270,7 @@ mod a_marker {
             shown.contains("\"email\"") && shown.contains("\"users\""),
             "{shown}"
         );
+        assert!(shown.contains("within: []"), "{shown}");
     }
 }
 
@@ -389,5 +468,301 @@ mod a_marker_query {
         assert!(!shown.contains("secret"), "{shown}");
         // Dropped before it is encrypted: the copy is wiped, not leaked.
         drop(query);
+    }
+}
+
+mod a_marker_of_several_indexes {
+    use super::*;
+
+    #[tokio::test]
+    async fn answers_each_operator_through_the_index_that_answers_it() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedPerson = person(None)
+            .encrypt_into_with_context(&keyset, Scope::new(42u64))
+            .await
+            .unwrap();
+        let (equality, matching, order) = &stored.email.terms;
+
+        let eq = EncryptedPerson::EMAIL
+            .eq("ada@example.com")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(&eq, equality);
+        let text = EncryptedPerson::EMAIL
+            .matches("example")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert!(matching.matches(&text));
+        let at = EncryptedPerson::EMAIL
+            .gte("ada@example.com")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(&at, order);
+    }
+
+    #[tokio::test]
+    async fn answers_an_index_at_any_position() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedPerson = person(None)
+            .encrypt_into_with_context(&keyset, Scope::new(42u64))
+            .await
+            .unwrap();
+        let (equality, order) = &stored.age.terms;
+        let eq = EncryptedPerson::AGE
+            .eq(36u32)
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(&eq, equality);
+        let range = EncryptedPerson::AGE
+            .between(18u32, 36u32)
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(range.hi(), order);
+    }
+}
+
+mod a_nullable_marker {
+    use super::*;
+
+    #[tokio::test]
+    async fn derives_a_present_values_term_as_a_bare_value_is_derived() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedPerson = person(Some("ada"))
+            .encrypt_into_with_context(&keyset, Scope::new(42u64))
+            .await
+            .unwrap();
+        let present = stored.nick.as_ref().expect("a present nick");
+
+        let term = EncryptedPerson::NICK
+            .eq("ada")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, present.terms);
+        let bare: Encrypted<EqualityTerm> = String::from("ada")
+            .encrypt_into_with_context(&keyset, nonempty!("people").with("nick").with(42u64))
+            .await
+            .unwrap();
+        assert_eq!(bare.terms, present.terms);
+    }
+
+    #[tokio::test]
+    async fn queries_a_field_whose_stored_value_is_absent() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedPerson = person(None)
+            .encrypt_into_with_context(&keyset, Scope::new(42u64))
+            .await
+            .unwrap();
+        assert!(stored.nick.is_none(), "a NULL holds no term to match");
+        let term = EncryptedPerson::NICK
+            .eq("ada")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await;
+        assert!(term.is_ok(), "{term:?}");
+    }
+}
+
+mod a_typed_marker {
+    use super::*;
+
+    type Email = Encrypted<(EqualityTerm, MatchTerms, OreTerm<String>)>;
+    type Age = Encrypted<(EqualityTerm, OreTerm<u32>)>;
+
+    #[test]
+    fn carries_the_type_its_record_states() {
+        let email: Marker<Root<EncryptedPerson>, Email, Scope<u64>, Takes<String>> =
+            EncryptedPerson::EMAIL;
+        let nick: Marker<
+            Root<EncryptedPerson>,
+            Option<Encrypted<EqualityTerm>>,
+            Scope<u64>,
+            Takes<String>,
+        > = EncryptedPerson::NICK;
+        let age: Marker<Root<EncryptedPerson>, Age, Scope<u64>, TakesAny> = EncryptedPerson::AGE;
+        assert_eq!(
+            [email.name(), nick.name(), age.name()],
+            ["email", "nick", "age"]
+        );
+    }
+}
+
+mod a_record_field_marker {
+    use super::*;
+
+    #[test]
+    fn reaches_the_inner_field_under_the_outer_fields_context() {
+        let street: Marker<Nested<Root<EncryptedAccount>>, Encrypted<EqualityTerm>> =
+            EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET);
+        assert_eq!(street.name(), "street");
+        assert_eq!(street.label().to_string(), "addresses/street");
+        assert_eq!(
+            street.contexts().to_string(),
+            "context: (addresses / street) / (accounts / address)\n"
+        );
+        assert_eq!(
+            EncryptedAccount::contexts().get("address.street"),
+            street.contexts().single()
+        );
+    }
+
+    #[test]
+    fn shows_the_outer_records_scope_in_its_context() {
+        let street = EncryptedBranch::ADDRESS.field(EncryptedAddress::STREET);
+        assert_eq!(
+            street.contexts().to_string(),
+            "context: (addresses / street) / ((branches / address) / {tenant: u64})\n"
+        );
+        let deep = EncryptedHolder::ACCOUNT
+            .field(EncryptedAccount::ADDRESS)
+            .field(EncryptedAddress::STREET);
+        assert_eq!(
+            deep.contexts().to_string(),
+            "context: (addresses / street) / ((accounts / address) / ((holders / account) / {tenant: u64}))\n"
+        );
+        // A step that lands on a record field lists that record's fields.
+        let address = EncryptedHolder::ACCOUNT.field(EncryptedAccount::ADDRESS);
+        assert_eq!(address.contexts().fields().len(), 1);
+        assert_eq!(address.contexts().fields()[0].name(), Some("street"));
+    }
+
+    #[test]
+    fn is_a_plain_value_that_names_the_fields_holding_it() {
+        let street = EncryptedBranch::ADDRESS.field(EncryptedAddress::STREET);
+        let copy = street;
+        assert_eq!(copy.name(), street.name());
+        let shown = format!("{street:?}");
+        assert!(
+            shown.contains("\"street\"") && shown.contains("[\"branches\", \"address\"]"),
+            "{shown}"
+        );
+        let query = street.eq("a secret");
+        let shown = format!("{query:?}");
+        assert!(
+            shown.contains("addresses") && shown.contains("[\"branches\", \"address\"]"),
+            "{shown}"
+        );
+        assert!(!shown.contains("secret"), "{shown}");
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_term_of_the_inner_field() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedAccount = account().encrypt_into(&keyset).await.unwrap();
+        let term = EncryptedAccount::ADDRESS
+            .field(EncryptedAddress::STREET)
+            .eq("1 Main St")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.address.street.terms);
+        // The inner record's own marker is the inner record alone, under
+        // its own context: another term.
+        let alone = EncryptedAddress::STREET
+            .eq("1 Main St")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_ne!(alone, stored.address.street.terms);
+    }
+
+    #[tokio::test]
+    async fn takes_the_outer_records_scope() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedBranch = Branch {
+            name: "central".into(),
+            address: account().address,
+        }
+        .encrypt_into_with_context(&keyset, Scope::new(42u64))
+        .await
+        .unwrap();
+        let street = EncryptedBranch::ADDRESS.field(EncryptedAddress::STREET);
+        let term = street
+            .eq("1 Main St")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.address.street.terms);
+        let name = EncryptedBranch::NAME
+            .eq("central")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(name, stored.name.terms);
+        let elsewhere = street
+            .eq("1 Main St")
+            .scope(Scope::new(43u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_ne!(elsewhere, stored.address.street.terms);
+    }
+
+    #[tokio::test]
+    async fn reaches_a_record_three_deep() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedHolder = Holder { account: account() }
+            .encrypt_into_with_context(&keyset, Scope::new(42u64))
+            .await
+            .unwrap();
+        let street = EncryptedHolder::ACCOUNT
+            .field(EncryptedAccount::ADDRESS)
+            .field(EncryptedAddress::STREET)
+            .eq("1 Main St")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(street, stored.account.address.street.terms);
+        let kind = EncryptedHolder::ACCOUNT
+            .field(EncryptedAccount::TYPE)
+            .eq("savings")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(kind, stored.account.r#type.terms);
+    }
+
+    #[tokio::test]
+    async fn takes_a_scope_the_outer_record_stores_in_the_row() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedOffice = Office {
+            tenant: 42,
+            address: account().address,
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        assert_eq!(stored.tenant, 42);
+        let term = EncryptedOffice::ADDRESS
+            .field(EncryptedAddress::STREET)
+            .eq("1 Main St")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.address.street.terms);
     }
 }

@@ -1,0 +1,82 @@
+error[E0277]: the terms `(EqualityTerm, MatchTerms)` do not answer the operator through exactly one term
+  --> tests/ui/marker_tuple_operator_not_answered.rs:26:37
+   |
+26 |     let _ = EncryptedUser::EMAIL.gt("ada@example.com");
+   |                                  -- ^^^^^^^^^^^^^^^^^ their answers are `(No, No)`
+   |                                  |
+   |                                  required by a bound introduced by this call
+   |
+   = help: the trait `AnsweredBy<(No, No)>` is not implemented for `(EqualityTerm, MatchTerms)`
+   = note: a tuple of terms answers an operator when exactly one of its terms does: here none does, or several do
+   = help: the following other types implement trait `AnsweredBy<Answers>`:
+             `(A, B)` implements `AnsweredBy<(No, Yes)>`
+             `(A, B)` implements `AnsweredBy<(Yes, No)>`
+             `(A, B, C)` implements `AnsweredBy<(No, No, Yes)>`
+             `(A, B, C)` implements `AnsweredBy<(No, Yes, No)>`
+             `(A, B, C)` implements `AnsweredBy<(Yes, No, No)>`
+             `(A, B, C, D)` implements `AnsweredBy<(No, No, No, Yes)>`
+             `(A, B, C, D)` implements `AnsweredBy<(No, No, Yes, No)>`
+             `(A, B, C, D)` implements `AnsweredBy<(No, Yes, No, No)>`
+           and $N others
+   = note: required for `(EqualityTerm, MatchTerms)` to implement `Answers<stack_encrypt::op::Gt, _>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Encrypted<(EqualityTerm, MatchTerms)>` to implement `Answers<stack_encrypt::op::Gt, _>`
+note: required by a bound in `Marker::<W, T, C, P>::gt`
+  --> src/marker.rs
+   |
+   |                   T: Answers<$op, Q::Value> + LabelledTarget,
+   |                      ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Marker::<W, T, C, P>::gt`
+...
+   | / operator_methods! {
+   | |     /// Rows whose value equals `value` ([`op::Eq`](struct@Eq)).
+   | |     eq => Eq;
+   | |     /// Rows whose value is below `value` ([`op::Lt`](Lt)).
+...  |
+   | |     gt => Gt;
+   | |     -- required by a bound in this associated function
+...  |
+   | |     matches => Matches;
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `operator_methods` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the terms `(OreTerm<u32>, OpeTerm<u32>)` do not answer the operator through exactly one term
+  --> tests/ui/marker_tuple_operator_not_answered.rs:27:35
+   |
+27 |     let _ = EncryptedUser::AGE.lt(36u32);
+   |                                -- ^^^^^ their answers are `(Yes, Yes)`
+   |                                |
+   |                                required by a bound introduced by this call
+   |
+   = help: the trait `AnsweredBy<(Yes, Yes)>` is not implemented for `(OreTerm<u32>, OpeTerm<u32>)`
+   = note: a tuple of terms answers an operator when exactly one of its terms does: here none does, or several do
+   = help: the following other types implement trait `AnsweredBy<Answers>`:
+             `(A, B)` implements `AnsweredBy<(No, Yes)>`
+             `(A, B)` implements `AnsweredBy<(Yes, No)>`
+             `(A, B, C)` implements `AnsweredBy<(No, No, Yes)>`
+             `(A, B, C)` implements `AnsweredBy<(No, Yes, No)>`
+             `(A, B, C)` implements `AnsweredBy<(Yes, No, No)>`
+             `(A, B, C, D)` implements `AnsweredBy<(No, No, No, Yes)>`
+             `(A, B, C, D)` implements `AnsweredBy<(No, No, Yes, No)>`
+             `(A, B, C, D)` implements `AnsweredBy<(No, Yes, No, No)>`
+           and $N others
+   = note: required for `(OreTerm<u32>, OpeTerm<u32>)` to implement `Answers<stack_encrypt::op::Lt, _>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Encrypted<(OreTerm<u32>, OpeTerm<u32>)>` to implement `Answers<stack_encrypt::op::Lt, _>`
+note: required by a bound in `Marker::<W, T, C, P>::lt`
+  --> src/marker.rs
+   |
+   |                   T: Answers<$op, Q::Value> + LabelledTarget,
+   |                      ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Marker::<W, T, C, P>::lt`
+...
+   | / operator_methods! {
+   | |     /// Rows whose value equals `value` ([`op::Eq`](struct@Eq)).
+   | |     eq => Eq;
+   | |     /// Rows whose value is below `value` ([`op::Lt`](Lt)).
+   | |     lt => Lt;
+   | |     -- required by a bound in this associated function
+...  |
+   | |     matches => Matches;
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `operator_methods` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -27,10 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   literal as it is (`QueryInput`). The query's value is wiped when it is
   derived, refused, or dropped. `assert_context!` takes a marker, and
   `Marker::contexts()` is the record's contexts narrowed to the field.
-  Not yet (#1596): a field of several indexes, a nullable field, and a
-  record field have markers with no operator method. An equality marker
-  takes a value of any type its index accepts. A tuple field has no
-  marker.
+  A tuple field has no marker.
+- **Markers for fields of several indexes, nullable fields, and record
+  fields** (#1596). A field of several indexes,
+  `Encrypted<(EqualityTerm, MatchTerms)>`, answers each operator through
+  the one index that answers it. Each term states its answer to each
+  operator with `op::OperatorAnswer`. An operator that no index answers,
+  or that two answer, has no method. An `Option<..>` field answers what a
+  present value answers, and a present value's term is a bare value's.
+  `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)` is the
+  inner field's marker under the outer field's context. It takes the
+  outer record's scope, and only a marker of the record the field holds.
+  `#[stash(query = String)]` states the type a field's queries take, so
+  `EMAIL.eq(42u64)` no longer compiles on a text field. The derive checks
+  the type against the plaintext struct's field. `Marker` now has the
+  parameters `Marker<W, T, C, P>`: `W` is where the field sits
+  (`marker::Root<R>` or `marker::Nested<W>`), and `P` is the query type
+  (`marker::TakesAny` or `marker::Takes<V>`).
 - **`dynamic::Planned`, a value under a plan that is data** (#1486). A
   record under a `Plan`, or a query value under a `QueryPlan`, each a
   `ValueFrame`, is a target in the owned API's sense. `StackCipherText`

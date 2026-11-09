@@ -1,0 +1,31 @@
+error[E0308]: mismatched types
+  --> tests/ui/marker_field_of_another_record.rs:53:45
+   |
+53 |     let _ = EncryptedAccount::ADDRESS.field(EncryptedAccount::EMAIL);
+   |                                       ----- ^^^^^^^^^^^^^^^^^^^^^^^ expected `Marker<Root<...>, _, ..., _>`, found `Marker<Root<EncryptedAccount>, ...>`
+   |                                       |
+   |                                       arguments to this method are incorrect
+   |
+   = note: expected struct `Marker<Root<EncryptedAddress>, _, NoScope, _>`
+              found struct `Marker<Root<EncryptedAccount>, Encrypted<EqualityTerm>, NoScope, TakesAny>`
+note: method defined here
+  --> src/marker.rs
+   |
+   |     pub fn field<U, Q>(self, inner: Marker<Root<T>, U, NoScope, Q>) -> Marker<Nested<W>, U, C, Q> {
+   |            ^^^^^
+
+error[E0308]: mismatched types
+  --> tests/ui/marker_field_of_another_record.rs:55:44
+   |
+55 |     let _ = EncryptedAccount::OFFICE.field(EncryptedOffice::STREET);
+   |                                      ----- ^^^^^^^^^^^^^^^^^^^^^^^ expected `Marker<Root<EncryptedOffice>, _, ..., _>`, found `Marker<Root<EncryptedOffice>, ..., ...>`
+   |                                      |
+   |                                      arguments to this method are incorrect
+   |
+   = note: expected struct `Marker<Root<EncryptedOffice>, _, NoScope, _>`
+              found struct `Marker<Root<EncryptedOffice>, Encrypted<EqualityTerm>, stack_encrypt::target::Scope<u64>, TakesAny>`
+note: method defined here
+  --> src/marker.rs
+   |
+   |     pub fn field<U, Q>(self, inner: Marker<Root<T>, U, NoScope, Q>) -> Marker<Nested<W>, U, C, Q> {
+   |            ^^^^^

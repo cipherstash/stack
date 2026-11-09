@@ -128,10 +128,19 @@
 //! `EncryptedUser::EMAIL` for a field `email` (`EncryptedDoc::TYPE` for
 //! `r#type`). A marker is the value a typed query of the field starts
 //! from. It has one method per operator the field's indexes answer,
-//! checked at compile time, where the field's type is one index
-//! (`Encrypted<EqualityTerm>`, `Encrypted<OreTerm<u32>>`, `MatchTerms`);
-//! a field of several indexes, a nullable field or a record field has a
-//! marker with no operator method yet. A record that lists a caller scope
+//! checked at compile time: one index (`Encrypted<EqualityTerm>`), several
+//! (`Encrypted<(EqualityTerm, MatchTerms)>`, each operator answered by the
+//! one index that answers it), or a nullable field of either
+//! (`Option<Encrypted<EqualityTerm>>`). A record field's marker reaches the
+//! inner record's markers under its own context:
+//! `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)`.
+//!
+//! `#[stash(query = String)]` on a field states the type its queries take,
+//! so each of its marker's methods takes that type alone. The derive checks
+//! it against the plaintext struct's field, which is that type or an
+//! `Option` of it. Without it, an equality marker takes any type its index
+//! accepts, since the derive does not see the plaintext struct's field
+//! types otherwise. A record that lists a caller scope
 //! gives its markers that scope's type, and the query takes it with
 //! `.scope(..)`, once; a record with none gives a query that is ready at
 //! once. No binding can be given. The query ends with `.encrypt(&keyset)`

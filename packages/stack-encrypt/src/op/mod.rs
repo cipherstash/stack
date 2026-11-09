@@ -943,7 +943,9 @@ impl<S: Ordered> DefaultIndex<(S, S)> for Between {
 /// operator chooses the cheaper or the more private, as the indexes in play
 /// dictate, and that choice decides what the query term reveals. A type
 /// that does not answer an operator has no impl, and the query does not
-/// compile.
+/// compile. A tuple of terms, one per index of a field, answers through
+/// the one term that answers the operator ([`OperatorAnswer`]), and an
+/// `Option` answers what a present value answers.
 ///
 /// To be queried on a typed plan (`Plan::value::<S>().encrypt_into::<T>()`),
 /// the type must also implement [`LabelledTarget`], whatever context it is
@@ -951,7 +953,7 @@ impl<S: Ordered> DefaultIndex<(S, S)> for Between {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not answer `{Op}` given `{In}`",
     label = "this target type does not answer the operator",
-    note = "a target answers the operators its type implements `Answers` for; `.via(index)` names an index the target declares"
+    note = "a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers; on a plan's query chain, `.via(index)` names an index the target declares"
 )]
 pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
     /// The index that answers `Op` for this type. An index is a unit type,
@@ -1019,13 +1021,167 @@ impl<Op: Operator, In: Input<Op::Arity>, T: Answers<Op, In>> Answers<Op, In>
     type Via = T::Via;
 }
 
-/// A ciphertext with one term, as [`indexed`](crate::target::indexed)
-/// produces it, answers what its term answers. One with several terms
-/// names the index with `.via(index)`.
+/// A ciphertext with its terms, as [`indexed`](crate::target::indexed)
+/// produces it, answers what its terms answer: one term's operators, or
+/// for a tuple of terms the operators each one answers.
 impl<Op: Operator, In: Input<Op::Arity>, T: Answers<Op, In>> Answers<Op, In>
     for crate::target::Encrypted<T>
 {
     type Via = T::Via;
+}
+
+/// A nullable field answers what a present value answers. A `None` is a
+/// database NULL, with no term, which no query matches; a `Some` holds
+/// the terms a bare value of `T` holds, derived under the same context.
+impl<Op: Operator, In: Input<Op::Arity>, T: Answers<Op, In>> Answers<Op, In> for Option<T> {
+    type Via = T::Via;
+}
+
+/// As a present value is: a `Some` was derived under the label a bare
+/// value would be.
+impl<T: LabelledTarget> LabelledTarget for Option<T> {}
+
+/// Whether a term answers the operator `Op`, for some input: [`Yes`] or
+/// [`No`].
+///
+/// A field with several indexes stores a tuple of terms, one per index,
+/// such as `Encrypted<(EqualityTerm, MatchTerms)>`. The tuple answers `Op`
+/// through the one term whose answer is `Yes`, and that term's [`Answers`]
+/// impl checks the input. Rust has no impl that means "the term that
+/// answers", so each term states its answer to every operator, and the
+/// tuple reads the answers as a type ([`AnsweredBy`]).
+///
+/// When no term of a tuple answers `Op`, the tuple does not answer it.
+/// When two do, it does not either: which one a query used would decide
+/// what the query reveals. A plan refuses such a field
+/// ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap)).
+///
+/// Implemented for this crate's terms and the operators [`Eq`](struct@Eq),
+/// [`Lt`], [`Lte`], [`Gt`], [`Gte`], [`Between`] and
+/// [`Matches`](struct@Matches). A term defined in another crate implements
+/// it for each of those to sit in a tuple.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not say whether it answers `{Op}`",
+    label = "a term in a tuple of terms states its answer to each operator",
+    note = "a tuple of terms answers an operator through the one term that answers it; each term implements `op::OperatorAnswer` for the operator, with `Yes` or `No`"
+)]
+pub trait OperatorAnswer<Op: Operator> {
+    /// [`Yes`] when the term answers `Op`, [`No`] when it does not.
+    type Answer: Answer;
+}
+
+/// A term's answer to an operator, as a type: [`Yes`] or [`No`].
+pub trait Answer: answer_sealed::Sealed {}
+mod answer_sealed {
+    pub trait Sealed {}
+    impl Sealed for super::Yes {}
+    impl Sealed for super::No {}
+}
+
+/// The term answers the operator ([`OperatorAnswer`]).
+#[derive(Debug)]
+pub enum Yes {}
+/// The term does not answer the operator ([`OperatorAnswer`]).
+#[derive(Debug)]
+pub enum No {}
+impl Answer for Yes {}
+impl Answer for No {}
+
+/// The one term of a tuple of terms that answers an operator, given the
+/// tuple of their answers ([`OperatorAnswer`]). Implemented for each tuple
+/// of two to five terms and each list of answers with exactly one
+/// [`Yes`], so a tuple where none answers, or two do, has no impl.
+#[diagnostic::on_unimplemented(
+    message = "the terms `{Self}` do not answer the operator through exactly one term",
+    label = "their answers are `{Answers}`",
+    note = "a tuple of terms answers an operator when exactly one of its terms does: here none does, or several do"
+)]
+pub trait AnsweredBy<Answers> {
+    /// The term whose answer is [`Yes`].
+    type Term;
+}
+
+/// Each term's answer to each operator a field's indexes take.
+macro_rules! operator_answers {
+    ($($generics:tt $term:ty => yes: [$($yes:ident),*], no: [$($no:ident),*];)+) => {$(
+        $(operator_answers!(@one $generics $term, $yes, Yes);)*
+        $(operator_answers!(@one $generics $term, $no, No);)*
+    )+};
+    (@one [$($generics:tt)*] $term:ty, $op:ident, $answer:ident) => {
+        impl<$($generics)*> OperatorAnswer<$op> for $term {
+            type Answer = $answer;
+        }
+    };
+}
+operator_answers! {
+    [] EqualityTerm => yes: [Eq], no: [Lt, Lte, Gt, Gte, Between, Matches];
+    [O] MatchTerms<O> => yes: [Matches], no: [Eq, Lt, Lte, Gt, Gte, Between];
+    [S: Orderable] OreTerm<S> => yes: [Lt, Lte, Gt, Gte, Between], no: [Eq, Matches];
+    [S: Orderable] OpeTerm<S> => yes: [Lt, Lte, Gt, Gte, Between], no: [Eq, Matches];
+    [S: Orderable] OreBlockTerm<S> => yes: [Lt, Lte, Gt, Gte, Between], no: [Eq, Matches];
+}
+
+/// The term at each position of a tuple, for the answers with `Yes` there
+/// alone.
+macro_rules! answered_by {
+    ($($terms:tt: $($answers:tt => $chosen:ident),+;)+) => {$($(
+        answered_by!(@one $terms $answers $chosen);
+    )+)+};
+    (@one ($($term:ident),+) ($($answer:ident),+) $chosen:ident) => {
+        impl<$($term),+> AnsweredBy<($($answer,)+)> for ($($term,)+) {
+            type Term = $chosen;
+        }
+    };
+}
+answered_by! {
+    (A, B): (Yes, No) => A, (No, Yes) => B;
+    (A, B, C): (Yes, No, No) => A, (No, Yes, No) => B, (No, No, Yes) => C;
+    (A, B, C, D):
+        (Yes, No, No, No) => A,
+        (No, Yes, No, No) => B,
+        (No, No, Yes, No) => C,
+        (No, No, No, Yes) => D;
+    (A, B, C, D, E):
+        (Yes, No, No, No, No) => A,
+        (No, Yes, No, No, No) => B,
+        (No, No, Yes, No, No) => C,
+        (No, No, No, Yes, No) => D,
+        (No, No, No, No, Yes) => E;
+}
+
+/// A tuple of terms answers `Op` through the one term that answers it
+/// ([`OperatorAnswer`]), with that term's index. Each term is a
+/// [`LabelledTarget`]: every term of a field is derived under the field's
+/// one context, and a ciphertext beside one term is the impl above.
+macro_rules! tuple_answers {
+    ($(($($term:ident),+);)+) => {$(
+        impl<Op, In, $($term),+> Answers<Op, In> for ($($term,)+)
+        where
+            Op: Operator,
+            In: Input<Op::Arity>,
+            $($term: OperatorAnswer<Op> + LabelledTarget,)+
+            ($($term,)+): AnsweredBy<($(<$term as OperatorAnswer<Op>>::Answer,)+)>,
+            <($($term,)+) as AnsweredBy<($(<$term as OperatorAnswer<Op>>::Answer,)+)>>::Term:
+                Answers<Op, In>,
+        {
+            type Via = <<($($term,)+) as AnsweredBy<(
+                $(<$term as OperatorAnswer<Op>>::Answer,)+
+            )>>::Term as Answers<Op, In>>::Via;
+        }
+
+        /// Every term of a field is derived under the field's one context.
+        impl<$($term: LabelledTarget),+> LabelledTarget for ($($term,)+) {}
+    )+};
+}
+#[allow(non_snake_case)]
+mod term_tuples {
+    use super::*;
+    tuple_answers! {
+        (A, B);
+        (A, B, C);
+        (A, B, C, D);
+        (A, B, C, D, E);
+    }
 }
 
 /// The index a plan that declares its indexes answers an operator with:

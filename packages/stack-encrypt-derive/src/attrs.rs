@@ -337,6 +337,11 @@ pub(crate) struct FieldAttrs {
     /// owned derives. The plaintext field is moved into the record in the
     /// clear, not encrypted, and moved back when the record is decrypted.
     pub(crate) passthrough: bool,
+    /// `#[stash(query = String)]`: with `struct = ..`, the type a query of
+    /// this field takes, so its marker's methods take that type alone. The
+    /// derive checks it against the plaintext field, which is that type or
+    /// an `Option` of it.
+    pub(crate) query: Option<Type>,
 }
 
 impl FieldAttrs {
@@ -417,6 +422,15 @@ impl FieldAttrs {
                     parsed.passthrough = true;
                     return Ok(());
                 }
+                if meta.path.is_ident("query") {
+                    if parsed.query.is_some() {
+                        return Err(
+                            meta.error("`query` is given twice; a field's queries take one type")
+                        );
+                    }
+                    parsed.query = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
                 // Removed rather than unknown, so the message can say what
                 // to write instead.
                 if meta.path.is_ident("nested") {
@@ -432,7 +446,7 @@ impl FieldAttrs {
                 Err(meta.error(
                     "unsupported field attribute; expected `context_field`, \
                      `identity = \"...\"`, `from = field`, `default`, `default = expr`, \
-                     `decrypt` or `passthrough`",
+                     `decrypt`, `passthrough` or `query = Type`",
                 ))
             })?;
         }

@@ -11,11 +11,13 @@ help: the trait `LabelledTarget` is not implemented for `ByTenant`
    | ^^^^^^^^^^^^^^^
    = note: a target type answers queries on its plan when it implements `op::LabelledTarget`: its stored terms were derived under the context the plan's label names
    = help: the following other types implement trait `LabelledTarget`:
+             (A, B)
+             (A, B, C)
+             (A, B, C, D)
+             (A, B, C, D, E)
              (CipherText<SealedValue, PassthroughFrame>, T)
              Encrypted<T>
              EqualityTerm
              JsonDocument
-             MatchTerms<O>
-             OpeTerm<S>
-             OreTerm<S>
+           and $N others
    = note: required for `ValuePlan<std::string::String, Typed<ByTenant>>` to implement `Chooses<stack_encrypt::op::Eq, std::string::String, Whole>`
