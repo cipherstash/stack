@@ -39,7 +39,7 @@ func Contexts(ctx context.Context, d gensupport.Declaration) (string, error) {
 //			"age\n  context: users / age\n")
 func AssertContexts(tb testing.TB, d gensupport.Declaration, want string) {
 	tb.Helper()
-	got, err := Contexts(context.Background(), d)
+	got, err := Contexts(tb.Context(), d)
 	if err != nil {
 		tb.Fatalf("encrypttest: the engine refused the declaration: %v", err)
 	}

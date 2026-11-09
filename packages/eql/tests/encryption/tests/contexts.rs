@@ -91,11 +91,11 @@ fn a_shim_shows_the_column_read_from_the_plaintext() {
     let contexts = <Shim as EncryptTarget<V3Plaintext>>::encryption::<()>().contexts();
     assert_eq!(
         contexts.to_string(),
-        "c\n  context: {context: Identifier, from the plaintext}\nhm\n  context: {context: Identifier, from the plaintext}\n"
+        "c\n  context: {context: NonEmpty<Identifier>, from the plaintext}\nhm\n  context: {context: NonEmpty<Identifier>, from the plaintext}\n"
     );
     assert_context!(
         contexts,
-        c = [from_plaintext::<Identifier>("context")],
-        hm = [from_plaintext::<Identifier>("context")],
+        c = [from_plaintext::<NonEmpty<Identifier>>("context")],
+        hm = [from_plaintext::<NonEmpty<Identifier>>("context")],
     );
 }

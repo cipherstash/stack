@@ -18,9 +18,12 @@
 //!   It lists the exact contexts a prepared call will use, with the caller's
 //!   values filled in. No key has been requested yet.
 //!
-//! Both views are built by the same combinators that build the key
-//! descriptor and the AAD. A placeholder is substituted where the engine
-//! substitutes the caller's context, so the view shows what the engine does.
+//! The declaration view is built beside the engine's closures, by the same
+//! combinator calls: each combinator that changes a subtree's context
+//! records the change, and substitutes a placeholder where the engine
+//! substitutes the caller's context. The call view reads the contexts the
+//! leaves validated. So neither view is written by hand, and each changes
+//! only where the context does.
 //!
 //! The view shows each part with its type: `7u64`, `7i64`, the text `7`,
 //! and the bytes `0x37` are four different contexts. The
@@ -48,10 +51,29 @@
 //! | the unit context | `()` |
 //! | a pre-encoded context | `encoded:0x…` |
 //! | a part the caller supplies | `{context: u64}`; `{extension?: CallerContext}` when optional |
-//! | a part read from the plaintext | `{column: Identifier, from the plaintext}` |
+//! | a part read from the plaintext | `{context: NonEmpty<Identifier>, from the plaintext}` |
 //!
 //! Plain text is text the descriptor renders as it is: no `/`, no brackets,
 //! no control characters, and not starting with a digit, a `-`, or `b64:`.
+//! Text that would read as another form, starting with `{` or `encoded:`,
+//! is quoted too. Quoting escapes `"` and `\` with a backslash, and any
+//! other control or non-printing character as `\u{..}`.
+//!
+//! # What a placeholder stands for
+//!
+//! A placeholder is one node of the tree, but the part it stands for is
+//! not always one part:
+//!
+//! - A placeholder of type `Label` stands for the label's segments, which
+//!   splice into the list around it. `{tenant: Label, from the plaintext} / text`
+//!   with the label `tenants/acme` is the flat list `tenants / acme / text`.
+//! - An optional placeholder, such as the `{extension?: CallerContext}` of
+//!   a plan, stands for no part, one part, or several parts applied in
+//!   order, each nesting to the left of the one before.
+//!
+//! The text is the same once the values are known. The tree is not, so a
+//! test that states such a context with [`assert_context!`](crate::assert_context)
+//! states the placeholder, not the values.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -63,10 +85,11 @@ use crate::target::{
     AeadContext, CallerContext, DeclaredContext, DeclaredScopes, NoCallerContext, OptionalContext,
     RequiredContext,
 };
-use crate::Descriptor;
+use crate::{Descriptor, IntoContext as _, NonEmpty};
 
 /// Where a placeholder's value comes from when the declaration runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Supplier {
     /// The caller passes the value, as an argument of the call.
     Caller,
@@ -165,6 +188,7 @@ impl fmt::Display for Placeholder {
 /// is a [`List`](Self::List), never a `Part`. A [`Placeholder`] stands for a
 /// part that is supplied when the declaration runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ContextTree {
     /// A leaf known when the declaration is written.
     Part(ContextPiece<'static>),
@@ -236,13 +260,7 @@ impl fmt::Display for ContextTree {
 /// Render one leaf with its type. See the [module docs](self).
 fn render_leaf(piece: &ContextPiece<'_>, out: &mut String) {
     match piece {
-        ContextPiece::Text(text) => {
-            if Descriptor::is_plain(text) {
-                out.push_str(text);
-            } else {
-                out.push_str(&format!("{text:?}"));
-            }
-        }
+        ContextPiece::Text(text) => render_text(text, out),
         ContextPiece::Bytes(bytes) => render_hex(bytes, out),
         ContextPiece::Unit => out.push_str("()"),
         ContextPiece::U8(v) => out.push_str(&format!("{v}u8")),
@@ -263,6 +281,40 @@ fn render_leaf(piece: &ContextPiece<'_>, out: &mut String) {
         // here. A part this crate does not know renders by its bytes.
         other => render_hex(other.clone().into_aad().as_bytes(), out),
     }
+}
+
+/// Plain text renders as it is. Text that is not plain, or that would read
+/// as a placeholder or an encoded context, is quoted. The quoting is this
+/// module's own, so it is stable: `"` and `\` take a backslash, and a
+/// control or non-printing character is `\u{..}` with its code point in
+/// hex.
+fn render_text(text: &str, out: &mut String) {
+    let reads_as_another_form = text.starts_with('{') || text.starts_with("encoded:");
+    if Descriptor::is_plain(text) && !reads_as_another_form {
+        out.push_str(text);
+        return;
+    }
+    out.push('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            ch if ch.is_control() || !is_printing(ch) => {
+                out.push_str(&format!("\\u{{{:x}}}", u32::from(ch)));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+}
+
+/// Whether a character shows on its own: not a format character such as a
+/// zero-width or bidirectional mark, which would print as another name.
+fn is_printing(ch: char) -> bool {
+    !matches!(
+        ch,
+        '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}'
+    )
 }
 
 fn render_hex(bytes: &[u8], out: &mut String) {
@@ -392,10 +444,11 @@ impl fmt::Display for Contexts {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallContexts {
     contexts: Vec<ContextTree>,
+    failed: bool,
 }
 
 impl CallContexts {
-    pub(crate) fn from_pieces(pieces: &[ContextPiece<'static>]) -> Self {
+    pub(crate) fn from_pieces(pieces: &[ContextPiece<'static>], failed: bool) -> Self {
         let mut contexts: Vec<ContextTree> = Vec::new();
         for piece in pieces {
             let tree = ContextTree::from_piece(piece);
@@ -403,7 +456,13 @@ impl CallContexts {
                 contexts.push(tree);
             }
         }
-        Self { contexts }
+        Self { contexts, failed }
+    }
+
+    /// Whether the call has already failed, before any key was requested.
+    /// Awaiting it returns the error. A failed call shows no context.
+    pub fn has_failed(&self) -> bool {
+        self.failed
     }
 
     /// The distinct contexts, in order.
@@ -428,6 +487,9 @@ impl CallContexts {
 
 impl fmt::Display for CallContexts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.failed {
+            return writeln!(f, "no context: the call has failed; await it for the error");
+        }
         if self.contexts.is_empty() {
             return writeln!(f, "no context: the call seals and indexes nothing");
         }
@@ -443,8 +505,9 @@ impl fmt::Display for CallContexts {
 /// the caller supplies nothing.
 ///
 /// Implemented for the context inputs of the crate. The derives and the
-/// plan builder use it to render the root of a declaration.
-pub trait SuppliedContext {
+/// plan builder use it to render the root of a declaration. Sealed: a
+/// context input is one of this crate's types.
+pub trait SuppliedContext: sealed::Sealed {
     /// The placeholder for the caller's part, or `None`.
     fn placeholder() -> Option<Placeholder>;
 }
@@ -485,6 +548,21 @@ impl SuppliedContext for AeadContext {
     }
 }
 
+mod sealed {
+    use crate::target::{
+        AeadContext, CallerContext, DeclaredContext, DeclaredScopes, NoCallerContext,
+        OptionalContext, RequiredContext,
+    };
+    pub trait Sealed {}
+    impl Sealed for NoCallerContext {}
+    impl Sealed for DeclaredScopes {}
+    impl Sealed for DeclaredContext {}
+    impl<C> Sealed for RequiredContext<C> {}
+    impl<C> Sealed for OptionalContext<C> {}
+    impl Sealed for CallerContext {}
+    impl Sealed for AeadContext {}
+}
+
 /// The name of `T` without module paths: `NonEmpty<Identifier>`, not
 /// `vitaminc_protected::NonEmpty<eql_bindings::encryption::Identifier>`.
 pub(crate) fn short_type_name<T: ?Sized>() -> String {
@@ -507,6 +585,16 @@ pub(crate) fn short_type_name<T: ?Sized>() -> String {
     }
     flush(&mut segment, &mut out);
     out
+}
+
+/// The parts of a nonempty context, as one owned piece, still proven
+/// nonempty. A context and its parts view are empty together, so the proof
+/// carries over.
+pub(crate) fn piece_of<'c>(
+    context: NonEmpty<impl crate::IntoContext<'c>>,
+) -> NonEmpty<ContextPiece<'static>> {
+    NonEmpty::new(context.into_context().into_owned())
+        .unwrap_or_else(|_| unreachable!("a nonempty context has nonempty parts"))
 }
 
 /// The shape of one leaf's context while a declaration is being built: the
@@ -745,6 +833,34 @@ mod tests {
             ContextTree::from_piece(&"7".into_context()).to_string(),
             "\"7\""
         );
+        // Text that would read as a placeholder or an encoded context is
+        // quoted, with this module's own escapes.
+        assert_eq!(
+            ContextTree::from_piece(&"{context: u64}".into_context()).to_string(),
+            "\"{context: u64}\""
+        );
+        assert_eq!(
+            ContextTree::from_piece(&"encoded:0x01".into_context()).to_string(),
+            "\"encoded:0x01\""
+        );
+        // Plain text with quotes renders as it is. Text that is not plain
+        // is quoted, and its quotes and backslashes are escaped.
+        assert_eq!(
+            ContextTree::from_piece(&"say \"hi\"".into_context()).to_string(),
+            "say \"hi\""
+        );
+        assert_eq!(
+            ContextTree::from_piece(&"a/\"b\"\\".into_context()).to_string(),
+            "\"a/\\\"b\\\"\\\\\""
+        );
+        assert_eq!(
+            ContextTree::from_piece(&"tab\there".into_context()).to_string(),
+            "\"tab\\u{9}here\""
+        );
+        assert_eq!(
+            ContextTree::from_piece(&"a\u{200B}b".into_context()).to_string(),
+            "\"a\\u{200b}b\""
+        );
         assert_eq!(
             ContextTree::from_piece(&b"7".to_vec().into_context()).to_string(),
             "0x37"
@@ -973,19 +1089,19 @@ mod tests {
         use vitaminc_aead::IntoContext;
         let a = "users".into_context().into_owned();
         let b = "orders".into_context().into_owned();
-        let call = CallContexts::from_pieces(&[a.clone(), a.clone(), b]);
+        let call = CallContexts::from_pieces(&[a.clone(), a.clone(), b], false);
         assert_eq!(call.contexts().len(), 2);
         assert_eq!(call.to_string(), "context: users\ncontext: orders\n");
         assert!(call.single().is_none());
         assert!(!call.is_empty());
 
-        let one = CallContexts::from_pieces(&[a]);
+        let one = CallContexts::from_pieces(&[a], false);
         assert_eq!(
             one.single(),
             Some(&ContextTree::Part("users".into_context().into_owned()))
         );
 
-        let none = CallContexts::from_pieces(&[]);
+        let none = CallContexts::from_pieces(&[], false);
         assert!(none.is_empty());
         assert!(none.single().is_none());
         assert_eq!(

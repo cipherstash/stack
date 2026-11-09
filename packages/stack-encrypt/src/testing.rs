@@ -280,6 +280,12 @@ fn first_difference(
 /// [`Placeholder`] from [`required`], [`optional`], [`extension`], or
 /// [`from_plaintext`], or a nested array of parts. The failure names the
 /// first part that differs. See the [module docs](crate::testing).
+///
+/// A field is named by its identifier, or by a string for a name an
+/// identifier cannot spell: a nested record's field, `"owner.email"`, or a
+/// tuple field, `"0"`. The field form checks the fields the test states
+/// and no others, so a new field does not fail an existing test. To pin
+/// every field, compare `contexts().to_string()` with the whole text.
 #[macro_export]
 macro_rules! assert_context {
     ($subject:expr, [$($part:expr),* $(,)?] $(,)?) => {{
@@ -296,6 +302,17 @@ macro_rules! assert_context {
             let __expected: &[$crate::testing::Expect] = &[$($crate::testing::Expect::from($part)),*];
             if let ::core::result::Result::Err(__message) =
                 $crate::testing::check_field(__subject, ::core::stringify!($field), __expected)
+            {
+                ::core::panic!("assert_context! failed: {}", __message);
+            }
+        )+
+    }};
+    ($subject:expr, $($field:literal = [$($part:expr),* $(,)?]),+ $(,)?) => {{
+        let __subject = &$subject;
+        $(
+            let __expected: &[$crate::testing::Expect] = &[$($crate::testing::Expect::from($part)),*];
+            if let ::core::result::Result::Err(__message) =
+                $crate::testing::check_field(__subject, $field, __expected)
             {
                 ::core::panic!("assert_context! failed: {}", __message);
             }
@@ -409,14 +426,16 @@ mod tests {
 
     #[test]
     fn a_subject_without_one_context_says_why() {
-        let none = CallContexts::from_pieces(&[]);
+        let none = CallContexts::from_pieces(&[], false);
         let message = check_single(&none, &[Expect::from("users")]).unwrap_err();
         assert!(
             message.contains("the call seals and indexes nothing"),
             "{message}"
         );
-        let several =
-            CallContexts::from_pieces(&[Expect::from("a").0.piece(), Expect::from("b").0.piece()]);
+        let several = CallContexts::from_pieces(
+            &[Expect::from("a").0.piece(), Expect::from("b").0.piece()],
+            false,
+        );
         let message = check_single(&several, &[Expect::from("a")]).unwrap_err();
         assert!(
             message.starts_with("the call uses several contexts:"),

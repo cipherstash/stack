@@ -363,15 +363,13 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// kind, or a record whose own contexts a caller's extends.
     pub fn under(
         mut self,
-        own: NonEmpty<impl IntoContext<'static> + Clone + MaybeSend + 's>,
+        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
     ) -> Encryption<'s, S, T, K, DeclaredContext, M>
     where
         Ctx: From<CallerContext>,
     {
-        self.shapes = contexts::substitute(
-            self.shapes,
-            &Shape::under(own.clone().into_context().into_owned()),
-        );
+        let own = contexts::piece_of(own);
+        self.shapes = contexts::substitute(self.shapes, &Shape::under(own.get().clone()));
         self.needing(move |cx: DeclaredContext| cx.under(own).into())
     }
     /// Run this whole subtree under `own`, extended by the surrounding
@@ -385,16 +383,14 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// is only whether `()` can satisfy the result.
     pub fn extend<C>(
         mut self,
-        own: NonEmpty<impl IntoContext<'static> + Clone + MaybeSend + 's>,
+        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
     ) -> Encryption<'s, S, T, K, C, M>
     where
         C: Extends + 's,
         Ctx: From<C>,
     {
-        self.shapes = contexts::substitute(
-            self.shapes,
-            &Shape::under(own.clone().into_context().into_owned()),
-        );
+        let own = contexts::piece_of(own);
+        self.shapes = contexts::substitute(self.shapes, &Shape::under(own.get().clone()));
         self.needing(move |cx: C| cx.extend(own).into())
     }
 }
@@ -533,7 +529,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
             shapes,
             &Shape::Placeholder(Placeholder::from_plaintext(
                 "context",
-                contexts::short_type_name::<C>(),
+                contexts::short_type_name::<NonEmpty<C>>(),
             )),
         );
         Encryption {

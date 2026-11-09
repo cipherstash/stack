@@ -1207,6 +1207,7 @@ fn open_document<'a, K>(
     context: AeadContext,
 ) -> Pending<'a, Value, K> {
     let piece = context.into_context();
+    let shown = piece.clone().into_owned();
     let prf_context = piece.clone().into_prf_context().into_owned();
     let (request, aad) = match key_retrieval(&doc.header, piece) {
         Ok(parts) => parts,
@@ -1229,6 +1230,7 @@ fn open_document<'a, K>(
             open_sealed_root(&doc, &aes, &aad)
         }
     })
+    .under_context(shown)
 }
 
 /// The whole document out of its sealed root, which is stored at slot `0`
@@ -1503,6 +1505,7 @@ fn open_subtree<'a, K>(
     if nodes.windows(2).any(|pair| pair[0].slot == pair[1].slot) {
         return Pending::failed(cipher, wrong("rows of distinct entries"));
     }
+    let shown = context.piece().clone();
     let (request, aad) = match key_retrieval(&header, context.into_context()) {
         Ok(parts) => parts,
         Err(error) => return Pending::failed(cipher, error),
@@ -1525,6 +1528,7 @@ fn open_subtree<'a, K>(
         };
         place(rows, &key.reads, &key.selectors, key.bound, &opening)
     })
+    .under_context(shown)
 }
 
 /// The cipher side of opening a document's rows: its header, the AAD its
@@ -1888,6 +1892,7 @@ fn open_fallback<'a, K>(
     let Some(root) = nodes.into_iter().next() else {
         return Pending::failed(cipher, shape("the sealed root"));
     };
+    let shown = context.piece().clone();
     let (request, aad) = match key_retrieval(&root.header, context.into_context()) {
         Ok(parts) => parts,
         Err(error) => return Pending::failed(cipher, error),
@@ -1906,6 +1911,7 @@ fn open_fallback<'a, K>(
         let whole = opened.whole.ok_or_else(|| shape("a sealed root"))?;
         Ok((key, whole))
     })
+    .under_context(shown)
 }
 
 // =============================================================================

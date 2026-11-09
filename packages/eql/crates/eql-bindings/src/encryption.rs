@@ -190,10 +190,7 @@ impl<'a> IntoContext<'a> for Identifier {
 /// and keep the identifier for the next call.
 impl<'a> IntoContext<'a> for &'a Identifier {
     fn into_context(self) -> ContextPiece<'a> {
-        ContextPiece::List(vec![
-            ContextPiece::Text(std::borrow::Cow::Borrowed(self.t.as_str())),
-            ContextPiece::Text(std::borrow::Cow::Borrowed(self.c.as_str())),
-        ])
+        self.to_context()
     }
 }
 

@@ -107,7 +107,7 @@ fn contexts_fn(input: &DeriveInput, record: &Record) -> TokenStream {
     let source = &sources[0];
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let doc = format!(
-        "The contexts this record's fields are sealed and indexed under, with a placeholder for each part the caller supplies. No key is requested. Emitted by `#[derive(EncryptTarget)]`; see [`Contexts`]({}::Contexts).",
+        "The contexts this record's fields are sealed and indexed under, with a placeholder for each part the caller supplies. No key is requested. Emitted by `#[derive(EncryptTarget)]`, so a record cannot define another method named `contexts`; see [`Contexts`]({}::Contexts).",
         quote!(#krate)
     );
     // A record that names no plaintext is generic over it. Then the

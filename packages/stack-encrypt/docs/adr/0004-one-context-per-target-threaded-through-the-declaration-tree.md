@@ -412,11 +412,11 @@ see the context. A test must be able to state it.
   names the first part that differs. The Go module has
   `encrypttest.AssertContexts`.
 
-The views are not a second description of the context. Three combinators
-change the context of a subtree: `under`, `extend`, and `context_from`.
-Each one records the change beside the closure it builds. Each leaf records
-the context it validated. So the same code path builds the view, the key
-descriptor, and the AAD.
+The views are not written by hand. Three combinators change the context
+of a subtree: `under`, `extend`, and `context_from`. Each one records the
+change beside the closure it builds, in the same call. Each leaf records
+the context it validated. So the declaration view changes only where the
+context does, and the call view is the context the engine used.
 
 The view shows each part's type, because `7u64`, `7i64`, the text `7`, and
 the bytes `0x37` are four different contexts. The descriptor that ZeroKMS

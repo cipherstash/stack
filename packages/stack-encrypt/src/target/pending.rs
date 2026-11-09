@@ -258,13 +258,14 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     ///
     /// Each distinct context appears once, in the order the call's leaves
     /// run. No key has been requested: a pending holds its requests until it
-    /// is awaited. A failed pending shows no context.
+    /// is awaited. A pending that has already failed shows no context, and
+    /// says that it failed.
     ///
     /// See [`CallContexts`] for an example, and
     /// [`Encryption::contexts`](super::Encryption::contexts) for the same
     /// view of a declaration, with placeholders for the caller's parts.
     pub fn context(&self) -> CallContexts {
-        CallContexts::from_pieces(&self.contexts)
+        CallContexts::from_pieces(&self.contexts, self.failed.is_some())
     }
 
     /// Record that this pending's leaf runs under `context`. The leaf

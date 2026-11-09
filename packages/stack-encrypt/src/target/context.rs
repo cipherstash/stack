@@ -124,6 +124,10 @@ impl AeadContext {
     pub(super) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         nonempty(self)
     }
+    /// The parts of this context.
+    pub(crate) fn piece(&self) -> &ContextPiece<'static> {
+        &self.0
+    }
     /// [`validated`](Self::validated), and also check that the descriptor
     /// of this context fits in a ZeroKMS request.
     ///

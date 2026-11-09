@@ -9,12 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **The context parameter of the cipher-directed methods is named
-  `context`, not `aad`** (#1568): `KeysetCipher::encrypt_tree`,
-  `KeysetCipher::decrypt_tree`, `StackCipher::decrypt`,
-  `PendingStackCipherText::plan`, `seal`, and `into_pending`. A positional
-  call does not change. The stored format does not change.
-
 - **`OpaqueDecode` no longer requires vitaminc's `Decrypt` trait.** If you
   only name types that implement `OpaqueDecode`, nothing changes, because
   the trait is sealed. If your generic code is bounded on `P: OpaqueDecode`
@@ -365,6 +359,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The context parameter of the cipher-directed methods is named
+  `context`, not `aad`** (#1568): `KeysetCipher::encrypt_tree`,
+  `KeysetCipher::decrypt_tree`, `StackCipher::decrypt`,
+  `PendingStackCipherText::plan`, `seal`, and `into_pending`. A positional
+  call does not change. The stored format does not change.
 - `vitaminc-aead-frame` is now always built, with its `serde` feature.
   Before, it was built only with the `dynamic` feature. The `dynamic`
   feature now adds no dependency.

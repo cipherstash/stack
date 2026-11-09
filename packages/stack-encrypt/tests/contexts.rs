@@ -16,8 +16,8 @@ use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptSource, EncryptTarget, Encryption, RequiredContext};
 use stack_encrypt::testing::{extension, from_plaintext, required, Expect};
 use stack_encrypt::{
-    assert_context, nonempty, ContextTree, DecryptFrom, EncryptInto, Encrypted, Equality, NonEmpty,
-    Ore, Plan, StackCipher, StackCipherText,
+    assert_context, nonempty, ContextTree, DecryptFrom, EncryptInto, Encrypted, Equality,
+    IntoContext as _, NonEmpty, Ore, Plan, StackCipher, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -181,6 +181,16 @@ mod a_nested_record {
         );
     }
 
+    #[test]
+    fn is_pinned_with_assert_context_by_the_joined_names() {
+        assert_context!(
+            EncryptedAccount::contexts(),
+            "owner.theme" = [["settings", "theme"], ["accounts", "owner"]],
+            "owner.notes" = [["settings", "notes"], ["accounts", "owner"]],
+            "label" = ["accounts", "label"],
+        );
+    }
+
     #[tokio::test]
     async fn the_call_agrees() {
         let cipher = cipher().await;
@@ -259,9 +269,13 @@ mod a_collection {
 
     #[test]
     fn has_the_contexts_of_its_element() {
-        assert_eq!(
-            <Vec<EncryptedSettings> as EncryptTarget<Vec<Settings>>>::encryption::<()>().contexts(),
-            EncryptedSettings::contexts()
+        let column =
+            <Vec<EncryptedSettings> as EncryptTarget<Vec<Settings>>>::encryption::<()>().contexts();
+        assert_eq!(column, EncryptedSettings::contexts());
+        assert_context!(
+            column,
+            theme = ["settings", "theme"],
+            notes = ["settings", "notes"],
         );
         assert_eq!(
             <Option<EncryptedSettings> as EncryptTarget<Option<Settings>>>::encryption::<()>()
@@ -349,6 +363,16 @@ mod a_plan {
             plan.contexts().to_string(),
             "email\n  context: ({context: Label} / email) / {extension?: CallerContext}\n"
         );
+        assert_context!(
+            plan.contexts(),
+            email = [
+                [
+                    Expect::from(required::<stack_encrypt::Label>()),
+                    Expect::from("email"),
+                ],
+                extension(),
+            ],
+        );
     }
 
     #[test]
@@ -428,6 +452,164 @@ mod a_data_plan {
             plan.contexts().unwrap().to_string(),
             "email\n  context: users / email\n"
         );
+        assert_context!(plan.contexts().unwrap(), email = ["users", "email"]);
+    }
+}
+
+/// A target extended with `extend` shows its own context, then the caller's
+/// required one, as the call does.
+mod a_target_that_extends_its_own_context {
+    use super::*;
+    use stack_encrypt::target::{indexed, Borrowed, CallerContext};
+
+    #[test]
+    fn shows_its_own_context_then_the_callers() {
+        let description: Encryption<'_, String, Encrypted<EqualityTerm>, (), CallerContext> =
+            indexed::<String, (), Borrowed, _>(Equality).extend(nonempty!("users").with("email"));
+        assert_eq!(
+            description.contexts().to_string(),
+            "context: (users / email) / {context: CallerContext}\n"
+        );
+        assert_context!(
+            description.contexts(),
+            [["users", "email"], required::<CallerContext>()]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_call_fills_the_callers_part_in() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let value = String::from("ada");
+        let call = keyset.run(
+            indexed::<String, FakeDataKeySource, Borrowed, _>(Equality)
+                .extend::<CallerContext>(nonempty!("users").with("email")),
+            &value,
+            CallerContext::from(7u64),
+        );
+        assert_eq!(
+            call.context().to_string(),
+            "context: (users / email) / 7u64\n"
+        );
+        let _ = call.await.unwrap();
+    }
+}
+
+/// The declaration view, with the caller's value put in for its placeholder,
+/// is the call view. So the two never disagree about where a value is
+/// placed.
+mod the_declaration_view_and_the_call_view {
+    use super::*;
+    use stack_encrypt::target::{CallerContext, DeclaredContext};
+
+    /// `tree`, with every placeholder replaced by `value`.
+    fn filled(tree: &ContextTree, value: &ContextTree) -> ContextTree {
+        match tree {
+            ContextTree::Placeholder(_) => value.clone(),
+            ContextTree::List(parts) => {
+                ContextTree::List(parts.iter().map(|part| filled(part, value)).collect())
+            }
+            other => other.clone(),
+        }
+    }
+
+    #[tokio::test]
+    async fn agree_once_the_callers_value_is_known() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let tenant = nonempty!("acme").with(7u64);
+        let value = ContextTree::from_piece(&tenant.into_context());
+
+        // A leaf that takes the caller's whole context.
+        let declared =
+            <Encrypted<EqualityTerm> as EncryptTarget<String>>::encryption::<()>().contexts();
+        let call = String::from("ada")
+            .encrypt_into_with_context::<Encrypted<EqualityTerm>, _>(&keyset, tenant);
+        assert_eq!(
+            filled(declared.single().unwrap(), &value),
+            *call.context().single().unwrap()
+        );
+        let _ = call.await.unwrap();
+
+        // A record whose fields have contexts of their own, run with an
+        // extension. The record declares no caller part, so its view has
+        // no placeholder: the extension nests after each field's own
+        // context.
+        let declared =
+            <EncryptedSettings as EncryptTarget<Settings>>::encryption::<()>().contexts();
+        let settings = Settings {
+            theme: "dark".into(),
+            notes: "none".into(),
+        };
+        let call = keyset.run(
+            <EncryptedSettings as EncryptTarget<Settings>>::encryption::<FakeDataKeySource>()
+                .accepting::<DeclaredContext>(),
+            &settings,
+            DeclaredContext::from(CallerContext::from(tenant)),
+        );
+        let shown: Vec<ContextTree> = declared
+            .fields()
+            .iter()
+            .map(|field| ContextTree::List(vec![field.context().clone(), value.clone()]))
+            .collect();
+        assert_eq!(call.context().contexts(), shown.as_slice());
+        let _ = call.await.unwrap();
+    }
+}
+
+/// A call that has already failed says so, instead of showing no context.
+#[tokio::test]
+async fn a_failed_call_says_it_failed() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: Stored = String::from("ada")
+        .encrypt_into_with_context(&keyset, NonEmpty::new(String::from("users/email")).unwrap())
+        .await
+        .unwrap();
+    // The stored column differs from the expected one: refused before any
+    // key is requested, so the call has failed when it is built.
+    let open = String::decrypt_from_with_context(
+        stored,
+        &keyset,
+        NonEmpty::new(String::from("users/name")).unwrap(),
+    );
+    assert!(open.context().has_failed());
+    assert_eq!(
+        open.context().to_string(),
+        "no context: the call has failed; await it for the error\n"
+    );
+    assert!(open.await.is_err());
+}
+
+/// Opening a JSON document shows the context it opens under, as sealing it
+/// does.
+mod a_json_document {
+    use super::*;
+    use stack_encrypt::json::JsonDocument;
+    use stack_encrypt::target::{CallerContext, DecryptInto, EncryptFrom};
+
+    #[tokio::test]
+    async fn shows_its_context_when_sealed_and_when_opened() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let value = serde_json::json!({"name": "ada", "age": 36});
+        let column = CallerContext::from(nonempty!("users").with("profile"));
+        let sealing = keyset.run(
+            <JsonDocument as EncryptFrom<serde_json::Value>>::encryption::<FakeDataKeySource>(),
+            &value,
+            column.clone(),
+        );
+        assert_eq!(sealing.context().to_string(), "context: users / profile\n");
+        let document = sealing.await.unwrap();
+        let opening = keyset.run_decryption(
+            <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
+                document,
+                column.into(),
+            ),
+        );
+        assert_eq!(opening.context().to_string(), "context: users / profile\n");
+        let opened: serde_json::Value = opening.await.unwrap();
+        assert_eq!(opened["name"], "ada");
     }
 }
 
