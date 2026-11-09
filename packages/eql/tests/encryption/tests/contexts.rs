@@ -46,7 +46,8 @@ async fn a_call_shows_the_table_and_the_column() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let column = Identifier::for_column("users", "email").unwrap();
-    let call = String::from("ada@example.com").encrypt_into_with_context::<TextEq, _>(&keyset, column);
+    let call =
+        String::from("ada@example.com").encrypt_into_with_context::<TextEq, _>(&keyset, column);
     assert_eq!(call.context().to_string(), "context: users / email\n");
     assert_context!(call.context(), ["users", "email"]);
     let stored = call.await.unwrap();
@@ -58,7 +59,9 @@ async fn a_call_shows_the_table_and_the_column() {
 /// API, or build a `NonEmpty<&Identifier>` for a term.
 #[test]
 fn a_borrowed_identifier_is_the_same_context() {
-    let column = Identifier::for_column("users", "email").unwrap().into_inner();
+    let column = Identifier::for_column("users", "email")
+        .unwrap()
+        .into_inner();
     assert_eq!((&column).into_context(), column.clone().into_context());
     assert_eq!((&column).into_context(), column.to_context());
 }

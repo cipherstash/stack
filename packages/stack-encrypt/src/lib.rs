@@ -215,7 +215,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! can show the context it uses, before any key is requested. A derived
 //! record has `contexts()`, a [`Plan`] has [`Plan::contexts`], and a
 //! prepared call has [`Pending::context`](target::Pending::context). The
-//! `testing` feature adds [`assert_context!`], which pins a context in a
+//! `testing` feature adds `assert_context!`, which pins a context in a
 //! test. See [`contexts`] for the rendering.
 //!
 //! ```

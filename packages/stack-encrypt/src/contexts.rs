@@ -30,7 +30,7 @@
 //! [`Descriptor`] that ZeroKMS logs is coarser, and is
 //! not changed by this module.
 //!
-//! The `testing` feature adds [`assert_context!`](crate::assert_context),
+//! The `testing` feature adds `assert_context!`,
 //! which compares a view against the parts a test states and names the
 //! first part that differs.
 //!
@@ -72,7 +72,7 @@
 //!   order, each nesting to the left of the one before.
 //!
 //! The text is the same once the values are known. The tree is not, so a
-//! test that states such a context with [`assert_context!`](crate::assert_context)
+//! test that states such a context with `assert_context!`
 //! states the placeholder, not the values.
 
 use std::borrow::Cow;
@@ -208,8 +208,8 @@ impl ContextTree {
         }
     }
 
-    /// The one known part of a leaf, for tests.
-    #[cfg(test)]
+    /// The one known part of a leaf, for the `testing` module's tests.
+    #[cfg(all(test, feature = "testing"))]
     pub(crate) fn piece(&self) -> ContextPiece<'static> {
         match self {
             Self::Part(piece) => piece.clone(),
