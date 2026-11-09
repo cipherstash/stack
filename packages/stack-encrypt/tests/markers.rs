@@ -2,19 +2,23 @@
 //! field starts from. `#[derive(EncryptTarget)]` on a `struct = ..` record
 //! emits `EncryptedUser::EMAIL` for a field `email`. A query from the
 //! marker derives under the context the derive sealed the field under, so
-//! the query term is the stored term, and the marker's operator methods
-//! exist only where the field's indexes answer the operator.
+//! the query term is the stored term; the marker's operator methods exist
+//! only where the field's indexes answer the operator; and a record that
+//! lists a caller scope gives its markers that scope's type, so the query
+//! cannot run without it.
 #![cfg(feature = "testing")]
 
 mod common;
 
+use std::sync::atomic::Ordering;
+
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
-use stack_encrypt::target::{DeclaredContext, DecryptSource, EncryptTarget, Scope};
-use stack_encrypt::testing::scope;
+use stack_encrypt::target::{DecryptSource, EncryptTarget, NoScope, Scope};
+use stack_encrypt::testing::{scope, stored_scope};
 use stack_encrypt::{
-    assert_context, nonempty, DecryptFrom, EncryptInto, Encrypted, Error, Marker, PlanError,
-    StackCipher, StackCipherText,
+    assert_context, nonempty, DecryptFrom, EncryptInto, Encrypted, Error, Marker, StackCipher,
+    StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -50,7 +54,8 @@ struct EncryptedUser {
     bio: Encrypted<MatchTerms>,
 }
 
-/// A record with no caller part, and a field keyed under another identity.
+/// A record with no caller part, a field keyed under another identity,
+/// and a field that is a ciphertext alone.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = User, scope = "people")]
 struct Renamed {
@@ -58,6 +63,49 @@ struct Renamed {
     email: Encrypted<EqualityTerm>,
     age: Encrypted<OreTerm<u32>>,
     bio: StackCipherText,
+}
+
+/// A record whose scope is stored in the row: the plaintext carries it,
+/// and a query supplies it.
+#[derive(Clone, Zeroize)]
+struct TenantUser {
+    tenant: u64,
+    email: String,
+}
+
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = TenantUser, scope = "users", scope(field = "tenant"))]
+struct StoredTenant {
+    #[stash(passthrough)]
+    tenant: u64,
+    email: Encrypted<EqualityTerm>,
+}
+
+/// A record with a raw-identifier field and a field that is a record.
+#[derive(Clone, Zeroize)]
+struct Address {
+    street: String,
+}
+
+#[derive(Clone, Zeroize)]
+struct Account {
+    r#type: String,
+    address: Address,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Address, scope = "addresses")]
+#[allow(dead_code)]
+struct EncryptedAddress {
+    street: Encrypted<EqualityTerm>,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Account, scope = "accounts")]
+#[allow(dead_code)]
+struct EncryptedAccount {
+    r#type: Encrypted<EqualityTerm>,
+    address: EncryptedAddress,
 }
 
 mod a_marker {
@@ -80,6 +128,10 @@ mod a_marker {
             [["users", "email"], scope::<u64>("tenant")]
         );
         assert_context!(Renamed::EMAIL, ["people", "mail"]);
+        assert_context!(
+            StoredTenant::EMAIL,
+            [["users", "email"], stored_scope::<u64>("tenant")]
+        );
         assert_eq!(
             EncryptedUser::AGE.contexts().to_string(),
             "context: (users / age) / {tenant: u64}\n"
@@ -98,8 +150,41 @@ mod a_marker {
     }
 
     #[test]
+    fn carries_the_type_of_the_scope_its_caller_supplies() {
+        let scoped: Marker<Encrypted<EqualityTerm>, Scope<u64>> = EncryptedUser::EMAIL;
+        let stored: Marker<Encrypted<EqualityTerm>, Scope<u64>> = StoredTenant::EMAIL;
+        let unscoped: Marker<Encrypted<EqualityTerm>, NoScope> = Renamed::EMAIL;
+        assert_eq!(scoped.name(), stored.name());
+        assert_eq!(unscoped.name(), "email");
+    }
+
+    #[test]
+    fn keeps_a_raw_identifiers_name() {
+        // The constant drops the `r#`; the name and the context keep it,
+        // as `contexts()` and the label spell the field.
+        assert_eq!(EncryptedAccount::TYPE.name(), "r#type");
+        assert_eq!(
+            EncryptedAccount::TYPE.label().to_string(),
+            "accounts/r#type"
+        );
+        assert_context!(EncryptedAccount::TYPE, ["accounts", "r#type"]);
+    }
+
+    #[test]
+    fn on_a_record_field_lists_the_inner_fields() {
+        let address = EncryptedAccount::ADDRESS;
+        assert_eq!(address.label().to_string(), "accounts/address");
+        assert_eq!(
+            address.contexts().to_string(),
+            "street\n  context: (addresses / street) / (accounts / address)\n"
+        );
+        assert_eq!(address.contexts().fields().len(), 1);
+        assert!(address.contexts().single().is_none());
+    }
+
+    #[test]
     fn is_a_plain_value() {
-        let marker: Marker<Encrypted<EqualityTerm>> = EncryptedUser::EMAIL;
+        let marker = EncryptedUser::EMAIL;
         let copy = marker;
         assert_eq!(copy.name(), marker.name());
         let shown = format!("{marker:?}");
@@ -224,33 +309,52 @@ mod a_marker_query {
     }
 
     #[tokio::test]
-    async fn refuses_a_binding_before_any_key_is_requested() {
+    async fn supplies_a_scope_the_record_stores_in_the_row() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        // The query type has no `bind` method (`tests/ui/marker_query_has_no_bind.rs`).
-        // A binding smuggled in through a declared context is refused.
-        let bound = DeclaredContext::default().with(Scope::new(42u64).bind(9u128));
-        let refused = EncryptedUser::EMAIL
+        let stored: StoredTenant = TenantUser {
+            tenant: 42,
+            email: "ada@example.com".into(),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        assert_eq!(stored.tenant, 42);
+        let term = StoredTenant::EMAIL
             .eq("ada@example.com")
-            .scope(bound)
+            .scope(Scope::new(42u64))
             .encrypt(&keyset)
-            .await;
-        assert!(
-            matches!(refused, Err(Error::Plan(PlanError::BindInQuery))),
-            "{refused:?}"
-        );
+            .await
+            .unwrap();
+        assert_eq!(term, stored.email.terms);
     }
 
     #[tokio::test]
-    async fn refuses_text_with_no_normal_form_before_any_key_is_requested() {
-        let cipher = cipher().await;
+    async fn refuses_text_with_no_normal_form_and_requests_no_key() {
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
         let keyset = cipher.default_keyset();
         let refused = EncryptedUser::EMAIL
             .eq("ada\u{0378}@example.com")
             .scope(Scope::new(42u64))
             .encrypt(&keyset)
             .await;
-        assert!(refused.is_err());
+        assert!(matches!(refused, Err(Error::Term(_))), "{refused:?}");
+        assert_eq!(generates.load(Ordering::SeqCst), 0);
+        assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn refuses_an_empty_scope_and_requests_no_key() {
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let refused = EncryptedUser::EMAIL
+            .eq("ada@example.com")
+            .scope(Scope::new(0u64))
+            .encrypt(&keyset)
+            .await;
+        assert!(refused.is_ok(), "zero is a value, not an empty part");
+        assert_eq!(generates.load(Ordering::SeqCst), 0);
+        assert_eq!(retrieves.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -272,5 +376,18 @@ mod a_marker_query {
             .await
             .unwrap();
         assert_eq!(back.email, "ada@example.com");
+    }
+
+    #[test]
+    fn prints_its_label_and_not_the_value() {
+        let query = EncryptedUser::EMAIL.eq("a secret");
+        let shown = format!("{query:?}");
+        assert!(
+            shown.contains("users") && shown.contains("email"),
+            "{shown}"
+        );
+        assert!(!shown.contains("secret"), "{shown}");
+        // Dropped before it is encrypted: the copy is wiped, not leaked.
+        drop(query);
     }
 }

@@ -9,7 +9,7 @@
 //! bindings come as the one context argument, built from
 //! [`Scope`](crate::target::Scope) and [`Bind`](crate::target::Bind), and
 //! a query takes scopes only: a binding on a query is refused before any
-//! key is requested ([`Reason::BindInQuery`]).
+//! key is requested ([`PlanError::BindInQuery`]).
 //!
 //! ```
 //! use stack_encrypt::dynamic::{record, Op, Planned, QueryTerm, ValueFrame};
@@ -70,24 +70,29 @@ use super::record::{self, Plan};
 use super::target::{NoTargets, TargetResolver};
 use super::value_frame::ValueFrame;
 use super::{Error, Op, Reason, Scope};
-use crate::contexts::{self, Contexts, LeafContext};
+use crate::contexts::{self, CallerShape, Contexts, LeafContext, Placeholder};
 use crate::target::{
     CallerContext, DeclaredContext, DecryptSource, Decryption, EncryptTarget, Encryption,
     OptionalContext, Owned, Pending,
 };
-use crate::{Encrypt, KeysetCipher, StackCipherText};
+use crate::{Encrypt, KeysetCipher, PlanError, StackCipherText};
+
+/// The resolver of a build without EQL types, for [`Plan::field`].
+static NO_TARGETS: NoTargets = NoTargets;
 
 /// One value under one plan: a record under a [`Plan`], or a query value
-/// under a [`QueryPlan`]. A target in the owned API's sense: the stored row
-/// implements `EncryptTarget<Planned<Plan, V>>`, a query term implements
-/// `EncryptTarget<Planned<QueryPlan, V>>`, and `Planned<Plan,
-/// StackCipherText>` implements `DecryptSource<ValueFrame>`. The resolver
-/// `R` runs the EQL type a field names; [`new`](Self::new) takes none,
-/// [`with_resolver`](Self::with_resolver) one.
+/// under a [`QueryPlan`], each a [`ValueFrame`], the dynamic interface's
+/// value; or a stored row under a [`Plan`]. A target in the owned API's
+/// sense: the stored row implements `EncryptTarget<Planned<Plan,
+/// ValueFrame>>`, a query term implements `EncryptTarget<Planned<QueryPlan,
+/// ValueFrame>>`, and `Planned<Plan, StackCipherText>` implements
+/// `DecryptSource<ValueFrame>`. The resolver `R` runs the EQL type a field
+/// names; [`new`](Self::new) takes none, [`with_resolver`](Self::with_resolver)
+/// one.
 ///
-/// The value is plaintext, so `Planned` wipes it when it is dropped through
-/// the owned entry points, as every source is, and prints neither it nor
-/// the plan.
+/// A `ValueFrame` is plaintext in a protected buffer: the borrowed form
+/// reads it in place, the owned form consumes it, and the buffer is wiped
+/// as it is dropped. `Planned` prints neither the value nor the plan.
 pub struct Planned<'p, P, V, R = NoTargets> {
     plan: &'p P,
     value: V,
@@ -125,24 +130,25 @@ impl<'p, P, V, R> Planned<'p, P, V, R> {
 
 impl<'p, V, R> Planned<'p, Plan, V, R> {
     /// The contexts every field of the plan is sealed and indexed under,
-    /// with a placeholder for the parts the caller supplies, before the
-    /// value is encrypted. No key is requested.
+    /// after the plan's own parts and with a placeholder for the caller's
+    /// scope and for the caller's binding, before the value is encrypted.
+    /// No key is requested.
     ///
     /// # Errors
     ///
     /// As [`Plan::contexts`].
     pub fn contexts(&self) -> Result<Contexts, crate::Error> {
-        let shapes = self.plan.caller_shapes()?;
         Ok(contexts::resolve(
-            shapes,
-            <OptionalContext<CallerContext> as crate::SuppliedContext>::supplies(),
+            self.plan.caller_shapes()?,
+            CallerShape::both(caller_scope(), caller_bind()),
         ))
     }
 }
 
 impl<'p, V, R> Planned<'p, QueryPlan, V, R> {
     /// The query context and the stored context of the field the query
-    /// plan names: [`QueryPlan::contexts`].
+    /// plan names, with a placeholder for the caller's scope:
+    /// [`QueryPlan::contexts`].
     ///
     /// # Errors
     ///
@@ -150,6 +156,17 @@ impl<'p, V, R> Planned<'p, QueryPlan, V, R> {
     pub fn contexts(&self) -> Result<LeafContext, crate::Error> {
         self.plan.contexts()
     }
+}
+
+/// The placeholder for the scope a `Planned` record's or query's caller
+/// may supply.
+fn caller_scope() -> Placeholder {
+    Placeholder::optional("scope", "CallerContext")
+}
+
+/// The placeholder for the binding a `Planned` record's caller may supply.
+fn caller_bind() -> Placeholder {
+    Placeholder::optional("bind", "CallerContext").as_bind()
 }
 
 impl<'p, P, V, R> fmt::Debug for Planned<'p, P, V, R> {
@@ -172,8 +189,20 @@ impl Zeroize for ValueFrame {
     }
 }
 
+/// A dynamic refusal as the owned path reports it. A cipher error is
+/// already the crate's and passes through, so a refused term keeps its
+/// kind. A binding on a query is the crate's own refusal,
+/// [`PlanError::BindInQuery`], as the typed query reports it. Every other
+/// dynamic refusal is boxed as [`crate::Error::Other`], with its message.
 fn wrap(error: Error) -> crate::Error {
-    crate::Error::Other(Box::new(error))
+    match error {
+        Error::Cipher(error) => error,
+        Error::Plan {
+            reason: Reason::BindInQuery,
+            ..
+        } => PlanError::BindInQuery.into(),
+        other => crate::Error::Other(Box::new(other)),
+    }
 }
 
 impl Plan {
@@ -249,16 +278,33 @@ impl Plan {
     }
 
     /// The handle of `field`, whose operator methods are each checked
-    /// against this plan where they are called.
+    /// against this plan where they are called, with no EQL types: a field
+    /// that names one is refused at the operator.
     ///
     /// # Errors
     ///
     /// [`Error::Plan`] with [`Reason::NoSuchField`].
     pub fn field<'p>(&'p self, name: &str) -> Result<FieldHandle<'p>, Error> {
+        self.field_with(name, &NO_TARGETS)
+    }
+
+    /// The handle of `field`, with `resolver` for an EQL type the field
+    /// names: each operator is checked through it, and the query runs the
+    /// type through it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] with [`Reason::NoSuchField`].
+    pub fn field_with<'p, R: TargetResolver + ?Sized>(
+        &'p self,
+        name: &str,
+        resolver: &'p R,
+    ) -> Result<FieldHandle<'p, R>, Error> {
         let _ = find(self, name)?;
         Ok(FieldHandle {
             plan: self,
             name: name.to_owned(),
+            resolver,
         })
     }
 }
@@ -266,25 +312,26 @@ impl Plan {
 /// A record under a plan encrypts to the stored row, as
 /// [`record::encrypt_with`] produces it: every field under its own context,
 /// the caller's scope and then its bindings after the plan's own. The
-/// borrowed form reads a copy of the value; the owned form consumes it.
-impl<'p, V, R> EncryptTarget<Planned<'p, Plan, V, R>> for StackCipherText
+/// borrowed form reads the frame in place; the owned form consumes it.
+impl<'p, R> EncryptTarget<Planned<'p, Plan, ValueFrame, R>> for StackCipherText
 where
-    V: Encrypt + Clone + Zeroize + 'p,
     R: TargetResolver + 'p,
 {
     type ContextInput = OptionalContext<CallerContext>;
     fn encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, Plan, V, R>, Self, K, Self::ContextInput>
+    ) -> Encryption<'s, Planned<'p, Plan, ValueFrame, R>, Self, K, Self::ContextInput>
     where
-        Planned<'p, Plan, V, R>: 's,
+        Planned<'p, Plan, ValueFrame, R>: 's,
     {
         Encryption::from_build(
             contexts::caller_leaf(),
-            move |source: &Planned<'p, Plan, V, R>, cipher, context: Self::ContextInput| {
+            move |source: &Planned<'p, Plan, ValueFrame, R>,
+                  cipher,
+                  context: Self::ContextInput| {
                 encrypt_record(
                     cipher,
                     source.plan,
-                    source.value.clone(),
+                    &source.value,
                     &source.resolver,
                     context,
                 )
@@ -292,13 +339,13 @@ where
         )
     }
     fn owned_encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, Plan, V, R>, Self, K, Self::ContextInput, Owned>
+    ) -> Encryption<'s, Planned<'p, Plan, ValueFrame, R>, Self, K, Self::ContextInput, Owned>
     where
-        Planned<'p, Plan, V, R>: 's,
+        Planned<'p, Plan, ValueFrame, R>: 's,
     {
         Encryption::from_build(
             contexts::caller_leaf(),
-            move |source: Planned<'p, Plan, V, R>, cipher, context: Self::ContextInput| {
+            move |source: Planned<'p, Plan, ValueFrame, R>, cipher, context: Self::ContextInput| {
                 let Planned {
                     plan,
                     value,
@@ -332,7 +379,10 @@ fn encrypt_record<'a, K: 'static>(
 /// A stored row under a plan decrypts to its values, as
 /// [`record::decrypt_with`] opens it, under the caller's scope and
 /// bindings. A row from another keyset than the one the call names is
-/// refused before any key is retrieved.
+/// refused before any key is retrieved. The opening is a closure the
+/// cipher runs later, which owns the plan, the row and the resolver, so
+/// the resolver is `Send + Sync + 'static` here where the encrypt side
+/// borrows it.
 impl<'p, R> DecryptSource<ValueFrame> for Planned<'p, Plan, StackCipherText, R>
 where
     R: TargetResolver + Send + Sync + 'static,
@@ -382,14 +432,18 @@ impl QueryPlan {
         self.operator
     }
 
-    /// The query context and the stored context of the field, before any
-    /// scope the caller adds: the record plan's entry for it.
+    /// The query context and the stored context of the field, after the
+    /// record plan's own parts and with a placeholder for the scope the
+    /// caller adds.
     ///
     /// # Errors
     ///
     /// As [`Plan::contexts`].
     pub fn contexts(&self) -> Result<LeafContext, crate::Error> {
-        let contexts = self.plan.contexts()?;
+        let contexts = contexts::resolve(
+            self.plan.caller_shapes()?,
+            CallerShape::scope(caller_scope()),
+        );
         contexts.get(&self.field).cloned().ok_or_else(|| {
             wrap(Error::Plan {
                 field: Some(self.field.clone()),
@@ -420,39 +474,42 @@ impl QueryPlan {
 /// A query value under a query plan encrypts to the query term, as
 /// [`query_term`] derives it: the operand bytes and the SQL type they bind
 /// as. The caller's context is its scope alone; a binding is refused
-/// before any key is requested ([`Reason::BindInQuery`]).
-impl<'p, V, R> EncryptTarget<Planned<'p, QueryPlan, V, R>> for QueryTerm
+/// before any key is requested ([`PlanError::BindInQuery`]).
+impl<'p, R> EncryptTarget<Planned<'p, QueryPlan, ValueFrame, R>> for QueryTerm
 where
-    V: Encrypt + Clone + Zeroize + 'p,
     R: TargetResolver + 'p,
 {
     type ContextInput = OptionalContext<CallerContext>;
     fn encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, QueryPlan, V, R>, Self, K, Self::ContextInput>
+    ) -> Encryption<'s, Planned<'p, QueryPlan, ValueFrame, R>, Self, K, Self::ContextInput>
     where
-        Planned<'p, QueryPlan, V, R>: 's,
+        Planned<'p, QueryPlan, ValueFrame, R>: 's,
     {
         Encryption::from_build(
             contexts::caller_leaf(),
-            move |source: &Planned<'p, QueryPlan, V, R>, cipher, context: Self::ContextInput| {
+            move |source: &Planned<'p, QueryPlan, ValueFrame, R>,
+                  cipher,
+                  context: Self::ContextInput| {
                 let scopes = context
                     .into_inner()
                     .map(DeclaredContext::from)
                     .unwrap_or_default();
                 source
                     .plan
-                    .term(cipher, source.value.clone(), &scopes, &source.resolver)
+                    .term(cipher, &source.value, &scopes, &source.resolver)
             },
         )
     }
     fn owned_encryption<'s, K: 'static>(
-    ) -> Encryption<'s, Planned<'p, QueryPlan, V, R>, Self, K, Self::ContextInput, Owned>
+    ) -> Encryption<'s, Planned<'p, QueryPlan, ValueFrame, R>, Self, K, Self::ContextInput, Owned>
     where
-        Planned<'p, QueryPlan, V, R>: 's,
+        Planned<'p, QueryPlan, ValueFrame, R>: 's,
     {
         Encryption::from_build(
             contexts::caller_leaf(),
-            move |source: Planned<'p, QueryPlan, V, R>, cipher, context: Self::ContextInput| {
+            move |source: Planned<'p, QueryPlan, ValueFrame, R>,
+                  cipher,
+                  context: Self::ContextInput| {
                 let scopes = context
                     .into_inner()
                     .map(DeclaredContext::from)
@@ -469,31 +526,46 @@ where
 }
 
 /// One field of a plan that is data, for a query: one method per operator,
-/// each checked against the plan where it is called ([`Plan::query`]), so
-/// a field no index of which answers the operator is refused there. The
-/// handle has no `bind` method: a binding is in no query context.
-#[derive(Clone, Debug)]
-pub struct FieldHandle<'p> {
+/// each checked against the plan where it is called ([`Plan::query_with`]),
+/// so a field none of whose indexes answers the operator is refused there.
+/// The handle has no `bind` method: a binding is in no query context. Made
+/// by [`Plan::field`], with no EQL types, or [`Plan::field_with`], with
+/// the resolver that runs the type the field names.
+pub struct FieldHandle<'p, R: ?Sized = NoTargets> {
     plan: &'p Plan,
     name: String,
+    resolver: &'p R,
 }
 
-/// One method per operator, each a [`Plan::query`] with the value.
+impl<'p, R: ?Sized> Clone for FieldHandle<'p, R> {
+    fn clone(&self) -> Self {
+        Self {
+            plan: self.plan,
+            name: self.name.clone(),
+            resolver: self.resolver,
+        }
+    }
+}
+
+impl<'p, R: ?Sized> fmt::Debug for FieldHandle<'p, R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FieldHandle")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One method per scalar operator, each [`op`](FieldHandle::op) with it.
 macro_rules! handle_methods {
     ($($(#[$doc:meta])* $method:ident => $op:ident;)+) => {$(
-        impl<'p> FieldHandle<'p> {
+        impl<'p, R: TargetResolver + ?Sized> FieldHandle<'p, R> {
             $(#[$doc])*
             ///
             /// # Errors
             ///
-            /// As [`Plan::query`].
-            pub fn $method<V>(self, value: V) -> Result<DynamicQuery<V>, Error> {
-                Ok(DynamicQuery {
-                    plan: self.plan.query(&self.name, Op::$op)?,
-                    value,
-                    scopes: DeclaredContext::default(),
-                    resolver: NoTargets,
-                })
+            /// As [`Plan::query_with`].
+            pub fn $method(self, value: ValueFrame) -> Result<DynamicQuery<'p, R>, Error> {
+                self.op(Op::$op, value)
             }
         }
     )+};
@@ -516,7 +588,23 @@ handle_methods! {
     between => Between;
 }
 
-impl<'p> FieldHandle<'p> {
+impl<'p, R: TargetResolver + ?Sized> FieldHandle<'p, R> {
+    /// The query for any operator, the JSON ones included, with `value` as
+    /// [`query_term`] reads the operator's input: what the named methods
+    /// are each one of.
+    ///
+    /// # Errors
+    ///
+    /// As [`Plan::query_with`].
+    pub fn op(self, operator: Op, value: ValueFrame) -> Result<DynamicQuery<'p, R>, Error> {
+        Ok(DynamicQuery {
+            plan: self.plan.query_with(&self.name, operator, self.resolver)?,
+            value,
+            scopes: DeclaredContext::default(),
+            resolver: self.resolver,
+        })
+    }
+
     /// The field's name.
     pub fn name(&self) -> &str {
         &self.name
@@ -529,15 +617,16 @@ impl<'p> FieldHandle<'p> {
 }
 
 /// A query from a [`FieldHandle`], ready for the caller's scopes and the
-/// keyset. It has no `bind` method: a binding is in no query context.
-pub struct DynamicQuery<V, R = NoTargets> {
+/// keyset. It has no `bind` method: a binding is in no query context. The
+/// value is a frame, a protected buffer wiped when the query is dropped.
+pub struct DynamicQuery<'p, R: ?Sized = NoTargets> {
     plan: QueryPlan,
-    value: V,
+    value: ValueFrame,
     scopes: DeclaredContext,
-    resolver: R,
+    resolver: &'p R,
 }
 
-impl<V, R> fmt::Debug for DynamicQuery<V, R> {
+impl<'p, R: ?Sized> fmt::Debug for DynamicQuery<'p, R> {
     /// Names the field and the operator; the value is plaintext.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DynamicQuery")
@@ -547,23 +636,14 @@ impl<V, R> fmt::Debug for DynamicQuery<V, R> {
     }
 }
 
-impl<V, R> DynamicQuery<V, R> {
-    /// Add a scope the stored values were written under. A `Scope` or a
-    /// `NonEmpty` converts; a `Bind` does not, and a context with a binding
-    /// inside it is refused when the query runs ([`Reason::BindInQuery`]).
+impl<'p, R: ?Sized> DynamicQuery<'p, R> {
+    /// Add a scope the stored values were written under. A `Scope`, a
+    /// `NonEmpty` or a bare integer converts; a `Bind` does not, and a
+    /// context with a binding inside it is refused when the query runs
+    /// ([`PlanError::BindInQuery`]).
     pub fn scope(mut self, part: impl Into<DeclaredContext>) -> Self {
         self.scopes.append(part.into());
         self
-    }
-
-    /// Run the EQL type the field names through `resolver`.
-    pub fn with_resolver<R2>(self, resolver: R2) -> DynamicQuery<V, R2> {
-        DynamicQuery {
-            plan: self.plan,
-            value: self.value,
-            scopes: self.scopes,
-            resolver,
-        }
     }
 
     /// The query plan this query runs under.
@@ -572,7 +652,7 @@ impl<V, R> DynamicQuery<V, R> {
     }
 }
 
-impl<V: Encrypt, R: TargetResolver> DynamicQuery<V, R> {
+impl<'p, R: TargetResolver + ?Sized> DynamicQuery<'p, R> {
     /// Derive the query term under `keyset`: [`query_term`] for the plan,
     /// extended by the scopes. Nothing is requested until the pending is
     /// awaited.
@@ -581,6 +661,6 @@ impl<V: Encrypt, R: TargetResolver> DynamicQuery<V, R> {
         keyset: &'a KeysetCipher<'_, K>,
     ) -> Pending<'a, QueryTerm, K> {
         self.plan
-            .term(keyset, self.value, &self.scopes, &self.resolver)
+            .term(keyset, self.value, &self.scopes, self.resolver)
     }
 }

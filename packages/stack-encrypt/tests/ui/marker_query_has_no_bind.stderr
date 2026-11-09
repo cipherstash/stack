@@ -1,4 +1,4 @@
-error[E0599]: no method named `bind` found for struct `MarkedQuery<T, Op, In>` in the current scope
+error[E0599]: no method named `bind` found for struct `MarkedQuery<T, Op, In, S>` in the current scope
   --> tests/ui/marker_query_has_no_bind.rs:24:10
    |
 21 |       let _ = EncryptedUser::EMAIL
@@ -10,27 +10,18 @@ error[E0599]: no method named `bind` found for struct `MarkedQuery<T, Op, In>` i
    | |_________|
    |
 
-error[E0277]: the trait bound `DeclaredContext: From<stack_encrypt::target::Bind<u128>>` is not satisfied
+error[E0308]: mismatched types
   --> tests/ui/marker_query_has_no_bind.rs:27:16
    |
 27 |         .scope(Bind::new(9u128));
-   |          ----- ^^^^^^^^^^^^^^^^ the trait `From<stack_encrypt::target::Bind<u128>>` is not implemented for `DeclaredContext`
+   |          ----- ^^^^^^^^^^^^^^^^ expected `Scope<u64>`, found `Bind<u128>`
    |          |
-   |          required by a bound introduced by this call
+   |          arguments to this method are incorrect
    |
-   = help: the following other types implement trait `From<T>`:
-             `DeclaredContext` implements `From<&NonEmpty<T>>`
-             `DeclaredContext` implements `From<()>`
-             `DeclaredContext` implements `From<CallerContext>`
-             `DeclaredContext` implements `From<DeclaredScopes>`
-             `DeclaredContext` implements `From<NoCallerContext>`
-             `DeclaredContext` implements `From<NonEmpty<T>>`
-             `DeclaredContext` implements `From<RequiredContext<Parts<S, B>>>`
-             `DeclaredContext` implements `From<i128>`
-           and $N others
-   = note: required for `stack_encrypt::target::Bind<u128>` to implement `Into<DeclaredContext>`
-note: required by a bound in `MarkedQuery::<T, Op, In>::scope`
+   = note: expected struct `stack_encrypt::target::Scope<u64>`
+              found struct `stack_encrypt::target::Bind<u128>`
+note: method defined here
   --> src/marker.rs
    |
-   |     pub fn scope(mut self, part: impl Into<DeclaredContext>) -> Self {
-   |                                       ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `MarkedQuery::<T, Op, In>::scope`
+   |     pub fn scope(mut self, scope: C) -> MarkedQuery<T, Op, In, Ready> {
+   |            ^^^^^

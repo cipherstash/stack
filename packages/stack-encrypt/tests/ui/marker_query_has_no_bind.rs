@@ -1,6 +1,6 @@
-//! A query from a field marker takes scopes and no binding: a binding is in
-//! no query context, so the query type has no `bind` method and a bare
-//! `Bind` does not convert into its `scope`.
+//! A query from a field marker takes the record's scope and no binding: a
+//! binding is in no query context, so the query type has no `bind` method,
+//! and `scope` takes the scope's type, which a `Bind` is not.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{Bind, EncryptTarget, Scope};
 use stack_encrypt::Encrypted;

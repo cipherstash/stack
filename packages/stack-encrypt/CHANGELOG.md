@@ -13,35 +13,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `struct = ..` record emits one `Marker` per derived field. It is an
   associated constant named after the field in upper case:
   `EncryptedUser::EMAIL`. A marker names the field, the context the derive
-  sealed it under, and the field's target type. Its methods are one per
-  operator the field's indexes answer, checked at compile time through
-  `Answers`: `eq`, `lt`, `lte`, `gt`, `gte`, `between`, and `matches`. The
-  query takes the caller's scopes with `.scope(..)`, has no `bind` method,
-  and ends with `.encrypt(&keyset)`. The output is the index's query term.
-  A query from a marker derives under the declaration the derive wrote, so
-  it is the stored term. No plan is written by hand beside the record.
-  `assert_context!` takes a marker. `Marker::contexts()` is the record's
-  contexts narrowed to the field. A generic record and a tuple field emit
-  no marker.
+  sealed it under, and the field's target type. It also names the type of
+  the scope the record's caller supplies. Its methods are one per operator the field's
+  index answers, checked at compile time through `Answers`: `eq`, `lt`,
+  `lte`, `gt`, `gte`, `between`, and `matches`. A record that lists a
+  caller scope, `scope(tenant: u64)`, gives a query with no `encrypt`
+  until `.scope(..)` is given once, with a `Scope<u64>`. A record with no
+  caller scope gives a query that is ready at once. The query has no
+  `bind` method, and ends with `.encrypt(&keyset)`. The output is the
+  index's query term. A query from a marker derives under the declaration
+  the derive wrote, so it is the stored term. No plan is written by hand
+  beside the record. The query's copy of the value is wiped when it is
+  derived, refused, or dropped. `assert_context!` takes a marker, and
+  `Marker::contexts()` is the record's contexts narrowed to the field.
+  Not yet (#1596): a field of several indexes, a nullable field, and a
+  record field have markers with no operator method. An equality marker
+  takes a value of any type its index accepts. A tuple field has no
+  marker.
 - **`dynamic::Planned`, a value under a plan that is data** (#1486). A
-  record under a `Plan`, or a query value under a `QueryPlan`, is a target
-  in the owned API's sense. `StackCipherText` implements
-  `EncryptTarget<Planned<Plan, V>>`. `QueryTerm` implements
-  `EncryptTarget<Planned<QueryPlan, V>>`. `Planned<Plan, StackCipherText>`
-  implements `DecryptSource<ValueFrame>`. So `encrypt_into`,
-  `decrypt_from`, and their `_with_context` forms run them. The caller's
-  scope and bindings are the one context argument, after the plan's own. A
-  query takes scopes alone, and refuses a binding before any key is
-  requested. `Planned::contexts()` shows every field's context with the
-  caller's placeholder, before any value is encrypted.
+  record under a `Plan`, or a query value under a `QueryPlan`, each a
+  `ValueFrame`, is a target in the owned API's sense. `StackCipherText`
+  implements `EncryptTarget<Planned<Plan, ValueFrame>>`. `QueryTerm`
+  implements `EncryptTarget<Planned<QueryPlan, ValueFrame>>`.
+  `Planned<Plan, StackCipherText>` implements `DecryptSource<ValueFrame>`.
+  So `encrypt_into`, `decrypt_from`, and their `_with_context` forms run
+  them. The caller's scope and bindings are the one context argument,
+  after the plan's own. A query takes scopes alone, and refuses a binding
+  before any key is requested, as `PlanError::BindInQuery`. A refused
+  term keeps its kind (`Error::Term`); other dynamic refusals are
+  `Error::Other`. `Planned::contexts()` shows every field's context with
+  a placeholder for the caller's scope and one for the caller's binding,
+  before any value is encrypted.
 - **Query plans and the dynamic field handle** (#1486). `Plan::query(field,
-  op)` narrows a record plan to one field and one operator. It is refused
-  where it is made when none of the field's indexes answers the operator
-  (`operator_not_answered`), or when the plan has no such field.
-  `Plan::field(name)` is the handle a program whose plan is data queries
-  through. It has one method per operator, each checked against the plan
-  where it is called, then `.scope(..)` and `.encrypt(&keyset)`. Neither
-  has a `bind` method.
+  op)` and `Plan::query_with(.., &resolver)` narrow a record plan to one
+  field and one operator. They are refused where they are made when none
+  of the field's indexes answers the operator (`operator_not_answered`),
+  or when the plan has no such field. `Plan::field(name)` and
+  `Plan::field_with(name, &resolver)` are the handle a program whose plan
+  is data queries through. It has one method per scalar operator and
+  `op(..)` for any, each checked against the plan where it is called, then
+  `.scope(..)` and `.encrypt(&keyset)`. Neither has a `bind` method.
 - `ValueFrame` implements `Zeroize`. `dynamic::query_term` takes any
   `K: 'static`, as `record::encrypt_with` does. The key source's bounds
   apply when the pending is awaited, not when the term is described.

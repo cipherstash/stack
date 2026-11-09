@@ -9,13 +9,20 @@
 
 mod common;
 
+use std::sync::atomic::Ordering;
+
 use common::frames::{frame, object};
-use stack_encrypt::dynamic::{self, record, Op, Operand, Planned, QueryTerm, ValueFrame};
+use miette::Diagnostic as _;
+use stack_encrypt::dynamic::{
+    self, record, Op, Operand, Planned, QueryTerm, TargetDescriptor, TargetError, TargetResolver,
+    ValueFrame, ValueKind,
+};
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::{DeclaredContext, DecryptSource, EncryptTarget, Scope};
+use stack_encrypt::target::{DeclaredContext, DecryptSource, EncryptTarget, IndexSpec, Scope};
 use stack_encrypt::{
-    AsProtectedRef, DecryptFrom, EncryptInto, Encrypted, Error, StackCipher, StackCipherText,
+    nonempty, AsProtectedRef, DecryptFrom, EncryptInto, Encrypted, Error, KeysetCipher, Label,
+    Pending, PlanError, StackCipher, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -46,15 +53,78 @@ async fn cipher() -> StackCipher<FakeDataKeySource> {
         .unwrap()
 }
 
+/// A data plan read from its JSON declaration, with no EQL types.
+fn plan_of(declaration: serde_json::Value) -> record::Plan {
+    let declaration = vitaminc_aead_frame::serde::to_vec(&declaration).unwrap();
+    record::plan(declaration.as_protected_ref()).unwrap()
+}
+
 /// The data plan of a record with a searchable email and an ordered age,
 /// each field under its own context.
 fn plan() -> record::Plan {
-    let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+    plan_of(serde_json::json!({
         "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
         "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
     }))
+}
+
+/// A resolver holding one EQL type, `Some`, that answers `eq`, whose query
+/// is a fixed JSON value: what a target field's query term carries.
+struct OneType;
+
+impl TargetResolver for OneType {
+    fn targets(&self) -> Vec<TargetDescriptor> {
+        vec![TargetDescriptor::new(
+            "Some",
+            "some",
+            "",
+            Some(ValueKind::String),
+            "public.some",
+            vec!["eq".to_owned()],
+            Some("SomeQuery".to_owned()),
+            Some("eql_v3.query_some".to_owned()),
+            true,
+            None,
+        )]
+    }
+    fn encrypt<'a, K: 'static>(
+        &self,
+        _: &str,
+        _: Option<&dynamic::TargetOptions>,
+        _: &'a KeysetCipher<'_, K>,
+        _: &Label,
+        _: ValueFrame,
+    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+        unreachable!("these tests query, and encrypt nothing")
+    }
+    fn decrypt<'a, K: 'static>(
+        &self,
+        _: &str,
+        _: &'a StackCipher<K>,
+        _: &Label,
+        _: &[u8],
+    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+        unreachable!("these tests query, and decrypt nothing")
+    }
+    fn query<'a, K: 'static>(
+        &self,
+        _: &str,
+        _: &IndexSpec,
+        keyset: &'a KeysetCipher<'_, K>,
+        _: &Label,
+        _: ValueFrame,
+    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+        Ok(Pending::ready(keyset, Ok(br#"{"hm":"00"}"#.to_vec())))
+    }
+}
+
+/// The data plan of a record whose email names the EQL type `Some`.
+fn target_plan() -> record::Plan {
+    let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+        "email": { "context": ["users", "email"], "target": "Some" },
+    }))
     .unwrap();
-    record::plan(declaration.as_protected_ref()).unwrap()
+    record::plan_with(declaration.as_protected_ref(), &OneType).unwrap()
 }
 
 fn ada() -> ValueFrame {
@@ -192,24 +262,105 @@ mod a_record_under_a_plan {
         let contexts = Planned::new(&plan, ada()).contexts().unwrap();
         assert_eq!(
             contexts.to_string(),
-            "age\n  context: (users / age) / {context?: CallerContext}\n\
-             email\n  context: (users / email) / {context?: CallerContext}\n"
+            "age\n  query context:  (users / age) / {scope?: CallerContext}\n  \
+             stored context: ((users / age) / {scope?: CallerContext}) / {bind?: CallerContext}\n\
+             email\n  query context:  (users / email) / {scope?: CallerContext}\n  \
+             stored context: ((users / email) / {scope?: CallerContext}) / {bind?: CallerContext}\n"
         );
     }
 
     #[test]
     fn shows_the_plans_own_parts_before_the_callers() {
-        let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
-            "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
+        let plan = plan_of(serde_json::json!({
+            "email": { "context": [["users", "email"], 5], "outputs": ["c", "eq"], "type": "string" },
             "bind": [7],
-        }))
-        .unwrap();
-        let plan = record::plan(declaration.as_protected_ref()).unwrap();
+        }));
         let contexts = Planned::new(&plan, ada()).contexts().unwrap();
         assert_eq!(
             contexts.to_string(),
-            "email\n  query context:  (users / email) / {context?: CallerContext}\n  \
-             stored context: ((users / email) / {context?: CallerContext}) / 7u64\n"
+            "email\n  query context:  ((users / email) / 5u64) / {scope?: CallerContext}\n  \
+             stored context: ((((users / email) / 5u64) / {scope?: CallerContext}) / 7u64) / {bind?: CallerContext}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn runs_the_plans_own_scope_before_the_callers() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = plan_of(serde_json::json!({
+            "email": { "context": [["users", "email"], 5], "outputs": ["c", "eq"], "type": "string" },
+        }));
+        let by_email = plan.query("email", Op::Eq).unwrap();
+        let term: QueryTerm = Planned::new(&by_email, frame("ada@example.com"))
+            .encrypt_into_with_context(&keyset, Scope::new(42u64))
+            .await
+            .unwrap();
+        // The plan's part, then the caller's: `users/email/5/42`.
+        let direct: Encrypted<EqualityTerm> = String::from("ada@example.com")
+            .encrypt_into_with_context(
+                &keyset,
+                nonempty!("users").with("email").with(5u64).with(42u64),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            term.operand(),
+            &Operand::One(direct.terms.as_bytes().to_vec())
+        );
+        // And a row written with the caller's scope opens under a plan
+        // that spells both parts.
+        let row: StackCipherText =
+            Planned::new(&plan, object(vec![("email", frame("ada@example.com"))]))
+                .encrypt_into_with_context(&keyset, Scope::new(42u64))
+                .await
+                .unwrap();
+        let spelled = plan_of(serde_json::json!({
+            "email": { "context": [[["users", "email"], 5], 42], "outputs": ["c", "eq"], "type": "string" },
+        }));
+        let back = ValueFrame::decrypt_from(Planned::new(&spelled, row), &keyset)
+            .await
+            .unwrap();
+        assert_eq!(
+            vitaminc_aead_frame::serde::from_slice::<serde_json::Value>(back.risky_ref()).unwrap(),
+            serde_json::json!({"email": "ada@example.com"})
+        );
+    }
+
+    #[tokio::test]
+    async fn runs_the_plans_own_binding_before_the_callers() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = plan_of(serde_json::json!({
+            "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
+            "bind": [7],
+        }));
+        let row = || async {
+            let row: StackCipherText =
+                Planned::new(&plan, object(vec![("email", frame("ada@example.com"))]))
+                    .encrypt_into_with_context(&keyset, Scope::new(42u64).bind(9u64))
+                    .await
+                    .unwrap();
+            row
+        };
+        // The row opens under a plan whose bindings are the plan's, then
+        // the caller's, and not the other way round.
+        let in_order = plan_of(serde_json::json!({
+            "email": { "context": [["users", "email"], 42], "outputs": ["c", "eq"], "type": "string" },
+            "bind": [7, 9],
+        }));
+        assert!(
+            ValueFrame::decrypt_from(Planned::new(&in_order, row().await), &keyset)
+                .await
+                .is_ok()
+        );
+        let reversed = plan_of(serde_json::json!({
+            "email": { "context": [["users", "email"], 42], "outputs": ["c", "eq"], "type": "string" },
+            "bind": [9, 7],
+        }));
+        assert!(
+            ValueFrame::decrypt_from(Planned::new(&reversed, row().await), &keyset)
+                .await
+                .is_err()
         );
     }
 
@@ -223,12 +374,17 @@ mod a_record_under_a_plan {
 
     #[test]
     fn wipes_its_value() {
+        // A frame wipes to no bytes; a `Planned` wipes its frame the same
+        // way, and the owned entry points consume or read the frame in
+        // place, so its buffer is wiped as it is dropped.
         let mut value = frame("a secret");
         value.zeroize();
         assert!(value.risky_ref().is_empty());
         let plan = plan();
         let mut planned = Planned::new(&plan, frame("a secret"));
         planned.zeroize();
+        let shown = format!("{planned:?}");
+        assert!(!shown.contains("secret"), "{shown}");
     }
 }
 
@@ -270,7 +426,11 @@ mod a_query_plan {
         assert_eq!(by_email.plan().fields().len(), 2);
         assert_eq!(
             by_email.contexts().unwrap().to_string(),
-            "context: users / email\n"
+            "context: (users / email) / {scope?: CallerContext}\n"
+        );
+        assert_eq!(
+            Planned::new(&by_email, frame("x")).contexts().unwrap(),
+            by_email.contexts().unwrap()
         );
     }
 
@@ -349,7 +509,7 @@ mod a_query_plan {
 
     #[tokio::test]
     async fn refuses_a_binding_before_any_key_is_requested() {
-        let cipher = cipher().await;
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
         let keyset = cipher.default_keyset();
         let plan = plan();
         let by_email = plan.query("email", Op::Eq).unwrap();
@@ -357,15 +517,15 @@ mod a_query_plan {
             .encrypt_into_with_context::<QueryTerm, _>(&keyset, Scope::new(42u64).bind(9u128))
             .await
             .unwrap_err();
+        // The crate's own refusal, with its code, as the typed query
+        // reports it.
         assert!(
-            matches!(
-                dynamic_error(&refused),
-                dynamic::Error::Plan {
-                    reason: dynamic::Reason::BindInQuery,
-                    ..
-                }
-            ),
+            matches!(refused, Error::Plan(PlanError::BindInQuery)),
             "{refused}"
+        );
+        assert_eq!(
+            refused.code().unwrap().to_string(),
+            "stack_encrypt::plan_bind_in_query"
         );
 
         // The handle has no `bind` method; a binding smuggled in through a
@@ -381,12 +541,124 @@ mod a_query_plan {
             .await
             .unwrap_err();
         assert!(
+            matches!(refused, Error::Plan(PlanError::BindInQuery)),
+            "{refused}"
+        );
+        assert_eq!(generates.load(Ordering::SeqCst), 0);
+        assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn keeps_a_refused_terms_kind_and_requests_no_key() {
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = plan();
+        let by_email = plan.query("email", Op::Eq).unwrap();
+        let refused = Planned::new(&by_email, frame("ada\u{0378}@example.com"))
+            .encrypt_into::<QueryTerm, _>(&keyset)
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, Error::Term(_)), "{refused}");
+        let refused = plan
+            .field("email")
+            .unwrap()
+            .eq(frame("ada\u{0378}@example.com"))
+            .unwrap()
+            .encrypt(&keyset)
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, Error::Term(_)), "{refused}");
+        // An empty scope is refused as the typed path refuses it.
+        let refused = Planned::new(&by_email, frame("ada@example.com"))
+            .encrypt_into_with_context::<QueryTerm, _>(&keyset, Scope::new(""))
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, Error::Other(_)), "{refused}");
+        assert_eq!(generates.load(Ordering::SeqCst), 0);
+        assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn derives_a_match_query_the_typed_path_derives() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = plan_of(serde_json::json!({
+            "bio": { "context": ["users", "bio"], "outputs": ["c", "match"], "type": "string" },
+        }));
+        let term: QueryTerm = plan
+            .field("bio")
+            .unwrap()
+            .matches(frame("engines"))
+            .unwrap()
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let typed: Encrypted<stack_encrypt::sem::MatchTerms> = String::from("engines")
+            .encrypt_into_with_context(&keyset, nonempty!("users").with("bio").with(42u64))
+            .await
+            .unwrap();
+        // A match query term is the filter of the query text under the
+        // same context, which is what is stored for that text.
+        assert_eq!(term.operator(), Op::Matches);
+        assert_eq!(term.operand(), &Operand::One(typed.terms.to_bytes()));
+    }
+}
+
+mod a_target_field {
+    use super::*;
+
+    #[tokio::test]
+    async fn queries_through_the_handle_and_through_planned_with_its_resolver() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = target_plan();
+        let through_handle: QueryTerm = plan
+            .field_with("email", &OneType)
+            .unwrap()
+            .eq(frame("a"))
+            .unwrap()
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(
+            through_handle.operand(),
+            &Operand::One(br#"{"hm":"00"}"#.to_vec())
+        );
+        assert_eq!(through_handle.domain(), Some("eql_v3.query_some"));
+        let by_email = plan.query_with("email", Op::Eq, &OneType).unwrap();
+        let through_planned: QueryTerm = Planned::with_resolver(&by_email, frame("a"), OneType)
+            .encrypt_into(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(through_planned, through_handle);
+    }
+
+    #[test]
+    fn is_refused_without_its_resolver() {
+        let plan = target_plan();
+        let refused = plan.field("email").unwrap().eq(frame("a")).unwrap_err();
+        assert!(matches!(refused, dynamic::Error::Target(_)), "{refused}");
+        assert!(matches!(
+            plan.query("email", Op::Eq).unwrap_err(),
+            dynamic::Error::Target(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn refuses_a_scope_it_cannot_be_stored_under() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = target_plan();
+        let by_email = plan.query_with("email", Op::Eq, &OneType).unwrap();
+        let refused = Planned::with_resolver(&by_email, frame("a"), OneType)
+            .encrypt_into_with_context::<QueryTerm, _>(&keyset, Scope::new(1u64))
+            .await
+            .unwrap_err();
+        assert!(
             matches!(
                 dynamic_error(&refused),
-                dynamic::Error::Plan {
-                    reason: dynamic::Reason::BindInQuery,
-                    ..
-                }
+                dynamic::Error::Target(TargetError::Extended { name, .. }) if name == "email"
             ),
             "{refused}"
         );

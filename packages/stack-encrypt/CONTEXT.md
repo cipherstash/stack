@@ -279,26 +279,33 @@ _Avoid_: query type, index (that is what answers the operator), `OpSpec`
 The value a typed query of a derived record's field starts from. The
 derive emits one per field, as an associated constant named after the field
 in upper case (`EncryptedUser::EMAIL`). A marker names the field, the
-context the derive sealed it under, and the field's target type. The target
-type's `Answers` impls give the marker one method per operator the field's
-indexes answer, checked at compile time.
+context the derive sealed it under, and the field's target type. It also
+names the type of the scope the record's caller supplies. The target
+type's `Answers` impls give the marker one method per operator the
+field's index answers, checked at compile time.
 
-A query from a marker takes scopes and no binding. It derives under the
-declaration the derive wrote, so it is the stored term. No plan is
-written by hand beside the record. `Marker::contexts()` is the record's
-contexts narrowed to the field, and `assert_context!` takes a marker.
+A query from a marker takes the record's scope once, by type. It takes no
+binding. It derives under the declaration the derive wrote, so it is the
+stored term. No plan is written by hand beside the record.
+
+`Marker::contexts()` is the record's contexts narrowed to the field, and
+`assert_context!` takes a marker. A field of several indexes, a nullable
+field, and a record field have markers with no operator method yet
+(#1596).
 _Avoid_: field handle (that is the dynamic form), column, accessor
 
 **Planned**:
-A value under a plan that is data, `Planned::new(&plan, value)`: a record
-under a record plan, or a query value under a query plan. A target in the
-owned API's sense, so `encrypt_into`, `decrypt_from`, and their
-`_with_context` forms run it. The caller's scope and bindings are the one
-context argument, after the plan's own. It prints neither its value nor its
-plan, and wipes the value as every source is wiped.
+A value under a plan that is data, `Planned::new(&plan, value)`. The
+value is a `ValueFrame` under a record plan or a query plan, or a stored
+row under a record plan. A target in the owned API's sense, so
+`encrypt_into`, `decrypt_from`, and their `_with_context` forms run it.
+The caller's scope and bindings are the one context argument, after the
+plan's own.
 
-A serialised form, what a binding sends for an operation, is to come
-(#1594). The Go module still sends a plan frame and a value frame.
+It prints neither its value nor its plan. The frame is a protected
+buffer, wiped as it is dropped. A serialised form, what a binding sends
+for an operation, is to come (#1594). The Go module still sends a plan
+frame and a value frame.
 _Avoid_: request, envelope (that is the storage format), record (a
 `Planned` can contain a query value)
 
@@ -311,11 +318,14 @@ term.
 _Avoid_: query, index (that is what answers the operator)
 
 **Field handle**:
-One field of a plan that is data, for a query: `plan.field(name)`. It has
-one method per operator, each checked against the plan where it is
-called, then `.scope(..)` and `.encrypt(&keyset)`. The dynamic
-counterpart of a field marker. Neither has a `bind` method: a binding is
-in no query context.
+One field of a plan that is data, for a query: `plan.field(name)`, or
+`plan.field_with(name, &resolver)` for a field that names an EQL type. It
+has one method per scalar operator and `op(..)` for any operator. Each is
+checked against the plan where it is called, then `.scope(..)` and
+`.encrypt(&keyset)` follow.
+
+The dynamic counterpart of a field marker. Neither has a `bind` method: a
+binding is in no query context.
 _Avoid_: field marker (that is the typed form), column
 
 **Query term**:

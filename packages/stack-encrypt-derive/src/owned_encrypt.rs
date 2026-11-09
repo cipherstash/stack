@@ -36,15 +36,25 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 /// The field markers of a `struct = ..` record: one associated constant
 /// per derived field, named after the field in upper case
 /// (`EncryptedUser::EMAIL`), carrying the field's name, the record's scope,
-/// the field's identity and the record's `contexts`. A generic record
-/// emits none: a marker holds `contexts` as a function pointer, which a
-/// generic function is not. A tuple field has no name, so none either.
+/// the field's identity, the record's `contexts`, and the type of the
+/// scope the caller supplies (`Scope<u64>` for `scope(tenant: u64)` or a
+/// stored `scope(field = ..)` of that type; `NoScope` for none). A tuple
+/// field has no name, so it has no marker.
 fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
-    if !record.by_field || !input.generics.params.is_empty() {
+    if !record.by_field {
         return TokenStream::new();
     }
     let krate = &record.krate;
     let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let scope_ty = match (&record.parts.caller_scope, &record.parts.stored_scope) {
+        (Some((_, ty)), _) => quote!(#krate::target::Scope<#ty>),
+        (None, Some(stored)) => {
+            let ty = &stored.ty;
+            quote!(#krate::target::Scope<#ty>)
+        }
+        (None, None) => quote!(#krate::target::NoScope),
+    };
     let consts = record.fields.iter().filter_map(|field| {
         let Kind::Derived {
             by_field: Some(ByField { context, .. }),
@@ -55,25 +65,30 @@ fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
         let syn::Member::Named(ident) = &field.member else {
             return None;
         };
+        // The marker's name is the field's as `contexts()` and the label
+        // spell it, `r#` included; the constant's name cannot carry it.
         let field_name = ident.to_string();
-        let field_name = field_name.strip_prefix("r#").unwrap_or(&field_name).to_owned();
-        let const_name = Ident::new(&field_name.to_uppercase(), ident.span());
+        let plain = field_name.strip_prefix("r#").unwrap_or(&field_name);
+        let const_name = Ident::new(&plain.to_uppercase(), ident.span());
         let ty = &field.ty;
         let OwnContext { prefix, field: identity } = context;
         let doc = format!(
             "The marker of the field `{field_name}`: what a typed query of it starts from. Emitted by `#[derive(EncryptTarget)]`; see [`Marker`]({}::Marker).",
             quote!(#krate)
         );
+        // A public record may hold a private field type (a nested record);
+        // the constant names that type, which `private_interfaces` would
+        // warn about in the user's crate.
         Some(quote_spanned! {ty.span()=>
             #[doc = #doc]
-            #[allow(dead_code)]
-            pub const #const_name: #krate::Marker<#ty> =
+            #[allow(dead_code, private_interfaces)]
+            pub const #const_name: #krate::Marker<#ty, #scope_ty> =
                 #krate::Marker::new(#field_name, #prefix, #identity, Self::contexts);
         })
     });
     quote! {
         #[automatically_derived]
-        impl #name {
+        impl #impl_generics #name #ty_generics #where_clause {
             #(#consts)*
         }
     }
