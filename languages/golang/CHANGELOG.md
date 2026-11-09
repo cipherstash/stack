@@ -21,8 +21,12 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `gensupport.Declaration.Contexts` asks the same of a generated record's
   declaration.
 - The `encrypttest` package: `encrypttest.AssertContexts` pins a generated
-  record's contexts in a test, and names the first line that differs.
-  `encrypttest.Contexts` returns the text.
+  record's contexts in a test, one `encrypttest.Field(name, parts...)` per
+  field, in order. A part is a string, a fixed-width integer, a `[]byte`, a
+  nested `encrypttest.List`, or a placeholder such as
+  `encrypttest.Extension()`, and renders as the engine prints it, so a Rust
+  test states the same parts. The failure names the first field whose
+  context differs. `encrypttest.Contexts` returns the engine's text.
 
 ## [0.1.0-rc.3] - 2026-11-02
 

@@ -37,29 +37,58 @@ func skipWithoutGuest(t *testing.T) {
 	}
 }
 
-func TestAssertContextsPassesOnTheEnginesText(t *testing.T) {
+func TestAssertContextsPassesOnTheEnginesContexts(t *testing.T) {
 	skipWithoutGuest(t)
 	encrypttest.AssertContexts(t, users(),
-		"email\n  context: users / email\n"+
-			"notes\n  context: users / notes\n")
-	// A trailing newline is optional.
-	encrypttest.AssertContexts(t, users(),
-		"email\n  context: users / email\n"+
-			"notes\n  context: users / notes")
+		encrypttest.Field("email", "users", "email"),
+		encrypttest.Field("notes", "users", "notes"),
+	)
+	// The text itself is still there for a test that wants it whole.
+	text, err := encrypttest.Contexts(context.Background(), users())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "email\n  context: users / email\nnotes\n  context: users / notes\n" {
+		t.Fatalf("text: %q", text)
+	}
 }
 
-func TestAssertContextsNamesTheFirstLineThatDiffers(t *testing.T) {
+func TestAssertContextsNamesTheFirstFieldThatDiffers(t *testing.T) {
 	skipWithoutGuest(t)
 	r := &recorder{TB: t}
 	encrypttest.AssertContexts(r, users(),
-		"email\n  context: users / email\n"+
-			"notes\n  context: users / name\n")
-	if !strings.Contains(r.failed, "differ at line 4") || !strings.Contains(r.failed, `want: "  context: users / name"`) {
+		encrypttest.Field("email", "users", "email"),
+		encrypttest.Field("notes", "users", "name"),
+	)
+	if !strings.Contains(r.failed, `the context of "notes" differs`) ||
+		!strings.Contains(r.failed, "want: users / name") ||
+		!strings.Contains(r.failed, "got:  users / notes") {
 		t.Fatalf("failure text: %q", r.failed)
 	}
+
 	r = &recorder{TB: t}
-	encrypttest.AssertContexts(r, users(), "email\n  context: users / email\n")
-	if !strings.Contains(r.failed, "have 4 lines, and 2 were expected") {
+	encrypttest.AssertContexts(r, users(),
+		encrypttest.Field("email", "users", "email"),
+		encrypttest.Field("memo", "users", "notes"),
+	)
+	if !strings.Contains(r.failed, `field 2 is "notes", and "memo" was stated`) {
+		t.Fatalf("failure text: %q", r.failed)
+	}
+
+	r = &recorder{TB: t}
+	encrypttest.AssertContexts(r, users(), encrypttest.Field("email", "users", "email"))
+	if !strings.Contains(r.failed, "has 2 fields with a context, and 1 were stated") {
+		t.Fatalf("failure text: %q", r.failed)
+	}
+
+	// A context of one part is that part, and a part of another type
+	// differs from the text the engine prints.
+	r = &recorder{TB: t}
+	encrypttest.AssertContexts(r, users(),
+		encrypttest.Field("email", encrypttest.List{"users", "email"}),
+		encrypttest.Field("notes", "users", "notes"),
+	)
+	if !strings.Contains(r.failed, "want: (users / email)") {
 		t.Fatalf("failure text: %q", r.failed)
 	}
 }
@@ -68,7 +97,7 @@ func TestAssertContextsReportsARefusedDeclaration(t *testing.T) {
 	skipWithoutGuest(t)
 	bad := gensupport.Declare("users").EncryptIndex("age", gensupport.Uint32, encrypt.Match())
 	r := &recorder{TB: t}
-	encrypttest.AssertContexts(r, bad, "")
+	encrypttest.AssertContexts(r, bad)
 	if !strings.Contains(r.failed, "the engine refused the declaration") {
 		t.Fatalf("failure text: %q", r.failed)
 	}

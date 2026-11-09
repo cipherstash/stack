@@ -84,8 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The dynamic interface has the same view, `dynamic::record::Plan::contexts`.
 - **The `testing` feature adds `assert_context!`**, which pins the context
   of a declaration or a call in a test. It names the first part that
-  differs. `stack_encrypt::testing` also has `required`, `optional`,
-  `extension`, and `from_plaintext`, which state the caller's parts.
+  differs. `assert_contexts!` pins each context a call uses, in order.
+  `stack_encrypt::testing` also has `required`, `optional`, `extension`,
+  `from_plaintext`, and `list`, which state the caller's parts and a
+  one-part list.
 - **A context can be passed by reference.** `CallerContext`, `AeadContext`,
   and `DeclaredContext` convert from `&NonEmpty<T>`, so
   `value.encrypt_into_with_context(&keyset, &column)` compiles for a target

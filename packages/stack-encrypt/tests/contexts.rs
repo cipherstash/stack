@@ -1,8 +1,10 @@
 //! The contexts a declaration or a call uses, shown before any key is
 //! requested (#1568).
 //!
-//! Each test pins the output of `contexts()` for one shape of declaration,
-//! and states the same context with `assert_context!`. The shapes are the
+//! Each test states the contexts of one shape of declaration with
+//! `assert_context!`, and the contexts of a call that runs it with
+//! `assert_contexts!`. The text the two views print is pinned by the unit
+//! tests of `contexts.rs`, since the Go module compares it. The shapes are the
 //! context scenarios of the Stack Encrypt API plan that exist on `next`:
 //! a static context (scenario 1), a context stored in the row, a nested
 //! record, a target that takes the caller's context, a collection, and a
@@ -16,8 +18,8 @@ use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptSource, EncryptTarget, Encryption, RequiredContext};
 use stack_encrypt::testing::{extension, from_plaintext, required, Expect};
 use stack_encrypt::{
-    assert_context, nonempty, ContextTree, DecryptFrom, EncryptInto, Encrypted, Equality,
-    IntoContext as _, NonEmpty, Ore, Plan, StackCipher, StackCipherText,
+    assert_context, assert_contexts, nonempty, ContextTree, DecryptFrom, EncryptInto, Encrypted,
+    Equality, IntoContext as _, NonEmpty, Ore, Plan, StackCipher, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -49,14 +51,6 @@ mod a_record_with_a_static_context {
 
     #[test]
     fn shows_each_field_under_the_record_name_and_the_field_name() {
-        assert_eq!(
-            EncryptedSettings::contexts().to_string(),
-            "theme\n  context: settings / theme\nnotes\n  context: settings / notes\n"
-        );
-    }
-
-    #[test]
-    fn is_pinned_with_assert_context() {
         assert_context!(
             EncryptedSettings::contexts(),
             theme = ["settings", "theme"],
@@ -90,9 +84,9 @@ mod a_record_with_a_static_context {
             notes: "none".into(),
         };
         let call = settings.encrypt_into::<EncryptedSettings, _>(&keyset);
-        assert_eq!(
-            call.context().to_string(),
-            "context: settings / theme\ncontext: settings / notes\n"
+        assert_contexts!(
+            call.context(),
+            [["settings", "theme"], ["settings", "notes"]]
         );
         let contexts = EncryptedSettings::contexts();
         let shown: Vec<&ContextTree> = contexts.fields().iter().map(|f| f.context()).collect();
@@ -101,9 +95,9 @@ mod a_record_with_a_static_context {
 
         // The read uses the same contexts, with no caller value either.
         let open = Settings::decrypt_from(stored, &keyset);
-        assert_eq!(
-            open.context().to_string(),
-            "context: settings / theme\ncontext: settings / notes\n"
+        assert_contexts!(
+            open.context(),
+            [["settings", "theme"], ["settings", "notes"]]
         );
         let back = open.await.unwrap();
         assert_eq!(back.theme, "dark");
@@ -127,10 +121,6 @@ mod a_record_that_stores_its_context {
 
     #[test]
     fn shows_the_caller_part_as_a_typed_placeholder() {
-        assert_eq!(
-            Stored::contexts().to_string(),
-            "hm\n  context: {context: NonEmpty<String>}\nc\n  context: {context: NonEmpty<String>}\n"
-        );
         assert_context!(
             Stored::contexts(),
             hm = [required::<NonEmpty<String>>()],
@@ -146,8 +136,7 @@ mod a_record_that_stores_its_context {
             &keyset,
             NonEmpty::new("users/email".to_owned()).unwrap(),
         );
-        // One context for both leaves: the text is not plain, so it is quoted.
-        assert_eq!(call.context().to_string(), "context: \"users/email\"\n");
+        // One context for both leaves, of one text part.
         assert_context!(call.context(), ["users/email"]);
         let _stored = call.await.unwrap();
     }
@@ -172,17 +161,7 @@ mod a_nested_record {
     use super::*;
 
     #[test]
-    fn extends_each_inner_context_by_the_outer_field() {
-        assert_eq!(
-            EncryptedAccount::contexts().to_string(),
-            "owner.theme\n  context: (settings / theme) / (accounts / owner)\n\
-             owner.notes\n  context: (settings / notes) / (accounts / owner)\n\
-             label\n  context: accounts / label\n"
-        );
-    }
-
-    #[test]
-    fn is_pinned_with_assert_context_by_the_joined_names() {
+    fn extends_each_inner_context_by_the_outer_field_under_the_joined_names() {
         assert_context!(
             EncryptedAccount::contexts(),
             "owner.theme" = [["settings", "theme"], ["accounts", "owner"]],
@@ -203,11 +182,13 @@ mod a_nested_record {
             label: "main".into(),
         };
         let call = account.encrypt_into::<EncryptedAccount, _>(&keyset);
-        assert_eq!(
-            call.context().to_string(),
-            "context: (settings / theme) / (accounts / owner)\n\
-             context: (settings / notes) / (accounts / owner)\n\
-             context: accounts / label\n"
+        assert_contexts!(
+            call.context(),
+            [
+                [["settings", "theme"], ["accounts", "owner"]],
+                [["settings", "notes"], ["accounts", "owner"]],
+                ["accounts", "label"],
+            ]
         );
         let _stored = call.await.unwrap();
     }
@@ -220,7 +201,6 @@ mod a_target_that_takes_the_callers_context {
     fn shows_the_whole_context_as_the_callers() {
         let contexts =
             <Encrypted<EqualityTerm> as EncryptTarget<String>>::encryption::<()>().contexts();
-        assert_eq!(contexts.to_string(), "context: {context: CallerContext}\n");
         assert_context!(
             contexts,
             [required::<stack_encrypt::target::CallerContext>()]
@@ -234,10 +214,6 @@ mod a_target_that_takes_the_callers_context {
         let column = nonempty!("users").with("email").with(7u64);
         let call = String::from("ada")
             .encrypt_into_with_context::<Encrypted<EqualityTerm>, _>(&keyset, column);
-        assert_eq!(
-            call.context().to_string(),
-            "context: (users / email) / 7u64\n"
-        );
         assert_context!(call.context(), [["users", "email"], 7u64]);
         let _ = call.await.unwrap();
     }
@@ -294,7 +270,6 @@ mod a_collection {
         >()
         .contexts();
         assert!(contexts.is_empty());
-        assert_eq!(contexts.to_string(), "no field is sealed or indexed\n");
     }
 }
 
@@ -341,11 +316,6 @@ mod a_plan {
             .passthrough::<u64>("id")
             .build()
             .unwrap();
-        assert_eq!(
-            plan.contexts().to_string(),
-            "email\n  context: (users / email) / {extension?: CallerContext}\n\
-             age\n  context: (users / age) / {extension?: CallerContext}\n"
-        );
         assert_context!(
             plan.contexts(),
             email = [["users", "email"], extension()],
@@ -359,10 +329,6 @@ mod a_plan {
             .encrypt_index::<String>("email", Equality)
             .build()
             .unwrap();
-        assert_eq!(
-            plan.contexts().to_string(),
-            "email\n  context: ({context: Label} / email) / {extension?: CallerContext}\n"
-        );
         assert_context!(
             plan.contexts(),
             email = [
@@ -382,10 +348,6 @@ mod a_plan {
             .encrypt_index::<String>("email", Equality)
             .build()
             .unwrap();
-        assert_eq!(
-            plan.contexts().to_string(),
-            "email\n  context: ({tenant: Label, from the plaintext} / email) / {extension?: CallerContext}\n"
-        );
         assert_context!(
             plan.contexts(),
             email = [
@@ -424,7 +386,7 @@ mod a_plan {
         let shown = call.context();
         let record = call.await;
         assert!(record.is_ok(), "{record:?}");
-        assert_eq!(shown.to_string(), "context: (users / email) / acme\n");
+        assert_context!(shown, [["users", "email"], "acme"]);
     }
 }
 
@@ -448,10 +410,6 @@ mod a_data_plan {
         .with_type(ValueKind::String)
         .unwrap();
         let plan = DataPlan::new(vec![email]).unwrap();
-        assert_eq!(
-            plan.contexts().unwrap().to_string(),
-            "email\n  context: users / email\n"
-        );
         assert_context!(plan.contexts().unwrap(), email = ["users", "email"]);
     }
 }
@@ -466,10 +424,6 @@ mod a_target_that_extends_its_own_context {
     fn shows_its_own_context_then_the_callers() {
         let description: Encryption<'_, String, Encrypted<EqualityTerm>, (), CallerContext> =
             indexed::<String, (), Borrowed, _>(Equality).extend(nonempty!("users").with("email"));
-        assert_eq!(
-            description.contexts().to_string(),
-            "context: (users / email) / {context: CallerContext}\n"
-        );
         assert_context!(
             description.contexts(),
             [["users", "email"], required::<CallerContext>()]
@@ -487,10 +441,7 @@ mod a_target_that_extends_its_own_context {
             &value,
             CallerContext::from(7u64),
         );
-        assert_eq!(
-            call.context().to_string(),
-            "context: (users / email) / 7u64\n"
-        );
+        assert_context!(call.context(), [["users", "email"], 7u64]);
         let _ = call.await.unwrap();
     }
 }
@@ -574,10 +525,7 @@ async fn a_failed_call_says_it_failed() {
         NonEmpty::new(String::from("users/name")).unwrap(),
     );
     assert!(open.context().has_failed());
-    assert_eq!(
-        open.context().to_string(),
-        "no context: the call has failed; await it for the error\n"
-    );
+    assert!(open.context().contexts().is_empty());
     assert!(open.await.is_err());
 }
 
@@ -599,7 +547,7 @@ mod a_json_document {
             &value,
             column.clone(),
         );
-        assert_eq!(sealing.context().to_string(), "context: users / profile\n");
+        assert_context!(sealing.context(), ["users", "profile"]);
         let document = sealing.await.unwrap();
         let opening = keyset.run_decryption(
             <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
@@ -607,7 +555,7 @@ mod a_json_document {
                 column.into(),
             ),
         );
-        assert_eq!(opening.context().to_string(), "context: users / profile\n");
+        assert_context!(opening.context(), ["users", "profile"]);
         let opened: serde_json::Value = opening.await.unwrap();
         assert_eq!(opened["name"], "ada");
     }
@@ -620,8 +568,8 @@ fn a_mapped_description_keeps_its_contexts() {
     let description: Encryption<'_, String, usize, (), _> =
         <Encrypted<EqualityTerm> as EncryptTarget<String>>::encryption::<()>()
             .map(|encrypted| encrypted.terms.to_bytes().len());
-    assert_eq!(
-        description.contexts().to_string(),
-        "context: {context: CallerContext}\n"
+    assert_context!(
+        description.contexts(),
+        [required::<stack_encrypt::target::CallerContext>()]
     );
 }

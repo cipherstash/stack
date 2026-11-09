@@ -30,6 +30,10 @@
 //! );
 //! ```
 //!
+//! A call that uses several contexts is pinned with
+//! [`assert_contexts!`](crate::assert_contexts), one array per context, in
+//! the order the call's leaves run.
+//!
 //! A part the caller supplies is stated with [`required`], [`optional`], or
 //! [`extension`]. A nested list is stated with a nested array:
 //!
@@ -102,6 +106,21 @@ impl Expect {
 /// A list of exactly these parts, however many: `list(["email"])` states
 /// the one-part list a one-segment label renders as, `(email)`, which an
 /// array literal of one part would state as the bare part `email`.
+///
+/// ```
+/// use stack_encrypt::testing::list;
+/// use stack_encrypt::{assert_context, ContextTree, IntoContext as _};
+///
+/// // A list of one part, as a data plan's one-segment label is.
+/// let one_part = ContextTree::List(vec![ContextTree::from_piece(&"email".into_context())]);
+/// assert_eq!(one_part.to_string(), "(email)");
+/// assert_context!(one_part, [list(["email"])]);
+///
+/// // Inside a longer context, the same list is one part of it.
+/// let part = ContextTree::from_piece(&42u64.into_context());
+/// let extended = ContextTree::List(vec![one_part, part]);
+/// assert_context!(extended, [list(["email"]), 42u64]);
+/// ```
 pub fn list<T: Into<Expect>, const N: usize>(parts: [T; N]) -> Expect {
     Expect(ContextTree::List(
         parts.into_iter().map(|part| part.into().0).collect(),
@@ -220,6 +239,30 @@ pub fn check_field(subject: &Contexts, name: &str, expected: &[Expect]) -> Resul
         .map_err(|message| format!("field `{name}`: {message}"))
 }
 
+/// Check each context of a call, in order, against `expected`: one
+/// [`Expect`] per context.
+///
+/// # Errors
+///
+/// The message `assert_contexts!` panics with: the first context that
+/// differs, with the part that differs in it, or a count of contexts other
+/// than the one stated.
+pub fn check_each(subject: &CallContexts, expected: &[Expect]) -> Result<(), String> {
+    let actual = subject.contexts();
+    for (index, (found, wanted)) in actual.iter().zip(expected).enumerate() {
+        check_tree(found, &wanted.0)
+            .map_err(|message| format!("context {}: {message}", index + 1))?;
+    }
+    if actual.len() != expected.len() {
+        return Err(format!(
+            "the call uses {} contexts, and {} were stated:\n{subject}",
+            actual.len(),
+            expected.len()
+        ));
+    }
+    Ok(())
+}
+
 /// Compare two trees, naming the first part that differs.
 fn check_tree(actual: &ContextTree, expected: &ContextTree) -> Result<(), String> {
     let mut path = Vec::new();
@@ -328,6 +371,53 @@ macro_rules! assert_context {
                 ::core::panic!("assert_context! failed: {}", __message);
             }
         )+
+    }};
+}
+
+/// Pin each context a call uses, in order.
+///
+/// `assert_contexts!(call.context(), [[parts..], [parts..], ..])` states
+/// one context per array, in the order the call's leaves run: the order
+/// [`CallContexts::contexts`] lists them. A context of one part is stated
+/// as that part. The failure names the first context that differs and the
+/// part in it, or the count of contexts when it is not the one stated.
+///
+/// ```
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::sem::EqualityTerm;
+/// use stack_encrypt::target::{DecryptSource, EncryptTarget};
+/// use stack_encrypt::{assert_contexts, EncryptInto, Encrypted, StackCipher, StackCipherText};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Zeroize)]
+/// struct User { email: String, notes: String }
+///
+/// #[derive(EncryptTarget, DecryptSource)]
+/// #[stash(struct = User, scope = "users")]
+/// struct EncryptedUser {
+///     email: Encrypted<EqualityTerm>,
+///     notes: StackCipherText,
+/// }
+///
+/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// let keyset = cipher.default_keyset();
+/// let user = User { email: "ada@example.com".into(), notes: "none".into() };
+/// let call = user.encrypt_into::<EncryptedUser, _>(&keyset);
+/// assert_contexts!(call.context(), [["users", "email"], ["users", "notes"]]);
+/// let _stored = call.await?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # }).unwrap();
+/// ```
+#[macro_export]
+macro_rules! assert_contexts {
+    ($subject:expr, [$($context:expr),* $(,)?] $(,)?) => {{
+        let __expected: &[$crate::testing::Expect] = &[$($crate::testing::Expect::from($context)),*];
+        if let ::core::result::Result::Err(__message) =
+            $crate::testing::check_each(&$subject, __expected)
+        {
+            ::core::panic!("assert_contexts! failed: {}", __message);
+        }
     }};
 }
 
@@ -497,6 +587,54 @@ mod tests {
         let message = check_field(&named, "email", &[Expect::from("users")]).unwrap_err();
         assert!(
             message.starts_with("field `email`: the context differs at the whole context"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn each_context_of_a_call_is_checked_in_order() {
+        let call = CallContexts::from_pieces(
+            &[
+                ContextPiece::List(vec![
+                    Expect::from("users").0.piece(),
+                    Expect::from("email").0.piece(),
+                ]),
+                Expect::from("acme").0.piece(),
+            ],
+            false,
+        );
+        check_each(
+            &call,
+            &[Expect::from(["users", "email"]), Expect::from("acme")],
+        )
+        .unwrap();
+        let message = check_each(
+            &call,
+            &[Expect::from(["users", "name"]), Expect::from("acme")],
+        )
+        .unwrap_err();
+        assert!(
+            message.starts_with(
+                "context 1: the context differs at part 2: expected `name`, found `email`"
+            ),
+            "{message}"
+        );
+        let message = check_each(&call, &[Expect::from(["users", "email"])]).unwrap_err();
+        assert!(
+            message.starts_with("the call uses 2 contexts, and 1 were stated:"),
+            "{message}"
+        );
+        let message = check_each(
+            &call,
+            &[
+                Expect::from(["users", "email"]),
+                Expect::from("acme"),
+                Expect::from(7u64),
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            message.starts_with("the call uses 2 contexts, and 3 were stated:"),
             "{message}"
         );
     }

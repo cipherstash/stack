@@ -19,24 +19,47 @@ async fn cipher() -> StackCipher<FakeDataKeySource> {
         .unwrap()
 }
 
+/// The plaintext of the migration shim of #1586: a value that arrives with
+/// the column it is stored under.
+struct V3Plaintext {
+    i: Identifier,
+    p: String,
+}
+
+impl Zeroize for V3Plaintext {
+    // The column is not secret.
+    fn zeroize(&mut self) {
+        self.p.zeroize();
+    }
+}
+
+/// The shim: `TextEq` over the value, with the column read from the
+/// plaintext rather than supplied by the caller.
+struct Shim(#[allow(dead_code)] TextEq);
+
+impl EncryptTarget<V3Plaintext> for Shim {
+    type ContextInput = NoCallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, V3Plaintext, Self, K, NoCallerContext> {
+        <TextEq as EncryptTarget<String>>::encryption()
+            .project(|source: &V3Plaintext| &source.p)
+            .context_from(|source: &V3Plaintext| &source.i)
+            .map(Shim)
+    }
+}
+
 /// Every stored field of an EQL type is sealed or indexed under the column
-/// the caller supplies, which the type stores in `i`.
+/// the caller supplies, which the type stores in `i`. A query type stores
+/// no column, and its term is derived under the one the caller supplies.
 #[test]
 fn a_stored_type_shows_the_column_as_a_typed_placeholder() {
-    assert_eq!(
-        TextEq::contexts().to_string(),
-        "c\n  context: {context: NonEmpty<Identifier>}\nhm\n  context: {context: NonEmpty<Identifier>}\n"
-    );
     assert_context!(
         TextEq::contexts(),
         c = [required::<NonEmpty<Identifier>>()],
         hm = [required::<NonEmpty<Identifier>>()],
     );
-    // A query type stores no column, and its term is derived under the one
-    // the caller supplies.
-    assert_eq!(
-        TextEqQuery::contexts().to_string(),
-        "hm\n  context: {context: NonEmpty<Identifier>}\n"
+    assert_context!(
+        TextEqQuery::contexts(),
+        hm = [required::<NonEmpty<Identifier>>()],
     );
 }
 
@@ -48,7 +71,6 @@ async fn a_call_shows_the_table_and_the_column() {
     let column = Identifier::for_column("users", "email").unwrap();
     let call =
         String::from("ada@example.com").encrypt_into_with_context::<TextEq, _>(&keyset, column);
-    assert_eq!(call.context().to_string(), "context: users / email\n");
     assert_context!(call.context(), ["users", "email"]);
     let stored = call.await.unwrap();
     assert_eq!(stored.i.t, "users");
@@ -66,38 +88,11 @@ fn a_borrowed_identifier_is_the_same_context() {
     assert_eq!((&column).into_context(), column.to_context());
 }
 
-/// The migration shim of #1586 takes its column from the plaintext, and the
-/// view says so.
-struct V3Plaintext {
-    i: Identifier,
-    p: String,
-}
-impl Zeroize for V3Plaintext {
-    // The column is not secret.
-    fn zeroize(&mut self) {
-        self.p.zeroize();
-    }
-}
-struct Shim(#[allow(dead_code)] TextEq);
-impl EncryptTarget<V3Plaintext> for Shim {
-    type ContextInput = NoCallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, V3Plaintext, Self, K, NoCallerContext> {
-        <TextEq as EncryptTarget<String>>::encryption()
-            .project(|source: &V3Plaintext| &source.p)
-            .context_from(|source: &V3Plaintext| &source.i)
-            .map(Shim)
-    }
-}
-
+/// The shim takes its column from the plaintext, and the view says so.
 #[test]
 fn a_shim_shows_the_column_read_from_the_plaintext() {
-    let contexts = <Shim as EncryptTarget<V3Plaintext>>::encryption::<()>().contexts();
-    assert_eq!(
-        contexts.to_string(),
-        "c\n  context: {context: NonEmpty<Identifier>, from the plaintext}\nhm\n  context: {context: NonEmpty<Identifier>, from the plaintext}\n"
-    );
     assert_context!(
-        contexts,
+        <Shim as EncryptTarget<V3Plaintext>>::encryption::<()>().contexts(),
         c = [from_plaintext::<NonEmpty<Identifier>>("context")],
         hm = [from_plaintext::<NonEmpty<Identifier>>("context")],
     );

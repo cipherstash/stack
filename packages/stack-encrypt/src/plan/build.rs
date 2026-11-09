@@ -1394,9 +1394,13 @@ impl<S: 'static, K: 'static> Plan<S, K> {
     ///     .encrypt_index::<String>("email", Equality)
     ///     .passthrough::<u64>("id")
     ///     .build()?;
-    /// assert_eq!(
-    ///     plan.contexts().to_string(),
-    ///     "email\n  context: (users / email) / {extension?: CallerContext}\n",
+    /// println!("{}", plan.contexts());
+    /// // email
+    /// //   context: (users / email) / {extension?: CallerContext}
+    /// # #[cfg(feature = "testing")]
+    /// stack_encrypt::assert_context!(
+    ///     plan.contexts(),
+    ///     email = [["users", "email"], stack_encrypt::testing::extension()],
     /// );
     /// # Ok::<(), stack_encrypt::Error>(())
     /// ```

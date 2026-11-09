@@ -366,9 +366,16 @@ impl FieldContext {
 ///     notes: StackCipherText,
 /// }
 ///
-/// assert_eq!(
-///     EncryptedUser::contexts().to_string(),
-///     "email\n  context: users / email\nnotes\n  context: users / notes\n",
+/// println!("{}", EncryptedUser::contexts());
+/// // email
+/// //   context: users / email
+/// // notes
+/// //   context: users / notes
+/// # #[cfg(feature = "testing")]
+/// stack_encrypt::assert_context!(
+///     EncryptedUser::contexts(),
+///     email = ["users", "email"],
+///     notes = ["users", "notes"],
 /// );
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -436,7 +443,9 @@ impl fmt::Display for Contexts {
 ///
 /// let call = String::from("ada@example.com")
 ///     .encrypt_into_with_context::<StackCipherText, _>(&keyset, nonempty!("users").with("email"));
-/// assert_eq!(call.context().to_string(), "context: users / email\n");
+/// println!("{}", call.context()); // context: users / email
+/// # #[cfg(feature = "testing")]
+/// stack_encrypt::assert_context!(call.context(), ["users", "email"]);
 /// let _stored = call.await?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
