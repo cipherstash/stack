@@ -325,3 +325,5 @@ pub use value::{
     ValueShape, ValueStart,
 };
 pub use values::{Field, FieldSchema, FieldValues, Fields};
+// Spike: the dynamic `Planned` target fills slots directly.
+pub(crate) use values::Slot;

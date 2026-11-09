@@ -211,7 +211,7 @@ impl Output {
 /// The verb a field's outputs lower to: one of the plan builder's four, or
 /// a target, which the resolver runs beside the lowered plan.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Verb {
+pub(super) enum Verb {
     Encrypt,
     EncryptIndex,
     Index,
@@ -481,11 +481,11 @@ impl FieldPlan {
 
     /// Whether the field comes back from [`decrypt`]: sealed and passthrough
     /// fields do, index-only fields do not.
-    fn opens(&self) -> bool {
+    pub(super) fn opens(&self) -> bool {
         self.verb() != Verb::Index
     }
 
-    fn verb(&self) -> Verb {
+    pub(super) fn verb(&self) -> Verb {
         if self.target.is_some() {
             Verb::Target
         } else if self.outputs.contains(&Output::Passthrough) {
@@ -527,7 +527,7 @@ impl FieldPlan {
 
     /// What the output adapters need of the field: no context, which is the
     /// engine's by then.
-    fn shape(&self) -> FieldShape {
+    pub(super) fn shape(&self) -> FieldShape {
         FieldShape {
             name: self.name.clone(),
             verb: self.verb(),
@@ -563,7 +563,7 @@ impl FieldPlan {
     }
 
     /// Whether the field is run by the resolver rather than the lowered plan.
-    fn is_target(&self) -> bool {
+    pub(super) fn is_target(&self) -> bool {
         self.target.is_some()
     }
 }
@@ -675,7 +675,7 @@ pub struct Plan {
 /// sources. The second, the call, has no data form: a binding names the
 /// context in the declaration it sends.
 #[derive(Clone, Debug)]
-enum Context {
+pub(super) enum Context {
     /// The plan's own label, which every field's label extends.
     Label(Label),
     /// The named field of each record, whose value is the context.
@@ -1031,7 +1031,7 @@ impl Plan {
 
     /// The extension every field's label is run under, as the chain's
     /// `.extend(..)` would carry it.
-    fn declared_context(&self) -> DeclaredContext {
+    pub(super) fn declared_context(&self) -> DeclaredContext {
         self.extension
             .iter()
             .cloned()
@@ -1040,8 +1040,13 @@ impl Plan {
             })
     }
 
-    fn shape(&self) -> Vec<FieldShape> {
+    pub(super) fn shape(&self) -> Vec<FieldShape> {
         self.fields.iter().map(FieldPlan::shape).collect()
+    }
+
+    /// Spike: where this plan takes its context from.
+    pub(super) fn context_source(&self) -> &Context {
+        &self.context
     }
 
     /// The fields that name a target, in plan order: the resolver's.
@@ -2188,26 +2193,26 @@ impl RecordTree for StackCipherText {
 
 /// The rows of a call, as the engine's records: one, or a batch, so the
 /// result takes the shape the input had.
-enum Rows<R> {
+pub(super) enum Rows<R> {
     One(R),
     Batch(Vec<R>),
 }
 
 /// One source row: the lowered plan's values, each target field's value in
 /// plan order, for the resolver, and the fields the row leaves out.
-struct Row {
-    values: FieldValues,
-    targets: Vec<ValueFrame>,
-    absent: Absent,
+pub(super) struct Row {
+    pub(super) values: FieldValues,
+    pub(super) targets: Vec<ValueFrame>,
+    pub(super) absent: Absent,
 }
 
 /// One stored row: the lowered plan's ciphertexts, each target field's EQL
 /// bytes in plan order, for the resolver, and the fields the row leaves
 /// out.
-struct StoredRow {
-    values: FieldValues,
-    targets: Vec<Vec<u8>>,
-    absent: Absent,
+pub(super) struct StoredRow {
+    pub(super) values: FieldValues,
+    pub(super) targets: Vec<Vec<u8>>,
+    pub(super) absent: Absent,
 }
 
 /// The `"null": "sql"` fields a row leaves out: null in a source, or with
@@ -2215,7 +2220,7 @@ struct StoredRow {
 /// opened for them, so a row is run by the plan lowered without them
 /// ([`Plan::lower_without`]), with the other rows that leave out the same
 /// fields.
-type Absent = BTreeSet<String>;
+pub(super) type Absent = BTreeSet<String>;
 
 /// Take the one entry named `name` out of a row, whatever order the row had
 /// it in. `None` if the row has no such entry — or has it twice: the maps
@@ -2299,7 +2304,7 @@ fn check_tree<T: RecordTree>(tree: &T, field: &str) -> Result<(), Error> {
 /// into a [`ValueFrame`] of its own as the walk reaches it, and nothing else
 /// is copied. A value the frame cannot carry, or that holds a repeated key,
 /// is refused naming its field.
-fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>, Error> {
+pub(super) fn source_rows(source: impl Encrypt, plan: &Plan) -> Result<Rows<Row>, Error> {
     let not_an_object = || Error::bad_source(Reason::NotAnObject);
     let row = |row: SourceRow| source_row(row.ok_or_else(not_an_object)?, plan);
     match split_rows(source).map_err(split_refusal)? {
@@ -2452,7 +2457,7 @@ fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
 
 /// What the adapters know of a field once the engine has run.
 #[derive(Clone, Debug)]
-struct FieldShape {
+pub(super) struct FieldShape {
     name: String,
     verb: Verb,
     keys: Vec<&'static str>,
@@ -2514,7 +2519,7 @@ fn passthrough_bytes(payload: &PassthroughFrame) -> Option<Vec<u8>> {
 
 /// The record the plan produced, in the stored shape: per field, in plan
 /// order, its output map.
-fn shape_record(
+pub(super) fn shape_record(
     mut values: FieldValues,
     eql: Vec<Vec<u8>>,
     shape: &[FieldShape],
@@ -2664,7 +2669,7 @@ fn write_record(rows: Rows<Vec<(String, ValueFrame)>>) -> Result<ValueFrame, cra
 /// each passthrough field is present exactly once with exactly one
 /// `"passthrough"` node carrying a value of the field's kind. Terms, and
 /// entries the plan does not open, are ignored: comparands, not ciphertext.
-fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows<StoredRow>, Error> {
+pub(super) fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows<StoredRow>, Error> {
     match tree {
         CipherText::Map(row) => Ok(Rows::One(record_row(row, plan)?)),
         CipherText::Sequence(items) => Ok(Rows::Batch(

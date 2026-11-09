@@ -92,6 +92,7 @@ mod json;
 mod json_predicate;
 mod json_query;
 mod kind;
+pub mod planned;
 mod query;
 pub mod record;
 mod target;
