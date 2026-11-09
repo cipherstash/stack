@@ -13,7 +13,7 @@ use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::conversion::{DecryptSource, EncryptTarget};
 use super::core::{encrypt_native, open_native, Term};
 use super::index::{Index, IndexSpec, Json};
-use super::input::RequiredContext;
+use super::input::{AcceptsContext, NoCallerContext, RequiredContext};
 use super::source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 use super::{CipherScope, Pending};
 use crate::json::{JsonDocument, JsonOptions, JsonTerms};
@@ -118,10 +118,11 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 ///   declaration; that is how a record names its fields' contexts, and the
 ///   tree does not tell a record's fields from a target's halves.
 /// - **A leaf still cannot be reached without a context.** An operation needs
-///   a real one. [`under`](Self::under) and [`extend`](Self::extend) are the
-///   only ways to change the context a subtree runs under, and only `under`
-///   discharges the requirement into a [`DeclaredContext`], which is what
-///   `()` may satisfy.
+///   a real one. [`under`](Self::under) and [`extend`](Self::extend) change
+///   the context a subtree runs under, and `under` discharges the
+///   requirement into a [`DeclaredContext`], which is what `()` may satisfy.
+///   [`context_from`](Self::context_from) discharges it too, into
+///   [`NoCallerContext`], with a context read from the plaintext itself.
 ///
 /// `M` is how the description is handed its plaintext ([`SourceMode`]):
 /// by reference in the default [`Borrowed`] mode, which every
@@ -347,6 +348,91 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     ) -> Encryption<'s, P, T, K, Ctx> {
         Encryption {
             build: Box::new(move |source, cipher, cx| (self.build)(select(source), cipher, cx)),
+        }
+    }
+    /// Take the context from the plaintext itself, for a plaintext that
+    /// carries the context it is stored under. The caller then supplies none.
+    ///
+    /// `select` reads the context out of the borrowed plaintext, as the
+    /// caller would pass it to `encrypt_into_with_context`. If it fails, the
+    /// description fails with that error, and no key is requested.
+    ///
+    /// This is how a value arrives with its context from somewhere else, such
+    /// as a value decrypted from an older format together with the column it
+    /// was stored in. A type that wraps the target declares the mapping once:
+    ///
+    /// ```
+    /// use stack_encrypt::sem::EqualityTerm;
+    /// use stack_encrypt::target::{EncryptTarget, Encryption, NoCallerContext};
+    /// use stack_encrypt::{nonempty, EncryptInto, Error, NonEmpty, StackCipher};
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use zeroize::Zeroize;
+    ///
+    /// /// A value and the column it belongs to.
+    /// struct Placed {
+    ///     column: String,
+    ///     value: String,
+    /// }
+    /// impl Zeroize for Placed {
+    ///     // The column is not secret.
+    ///     fn zeroize(&mut self) {
+    ///         self.value.zeroize();
+    ///     }
+    /// }
+    ///
+    /// /// An equality term, under the column the value carries.
+    /// struct PlacedTerm(EqualityTerm);
+    /// impl EncryptTarget<Placed> for PlacedTerm {
+    ///     type ContextInput = NoCallerContext;
+    ///     fn encryption<'s, K: 'static>() -> Encryption<'s, Placed, Self, K, NoCallerContext> {
+    ///         <EqualityTerm as EncryptTarget<String>>::encryption()
+    ///             .project(|placed: &Placed| &placed.value)
+    ///             .context_from(|placed| {
+    ///                 NonEmpty::new(placed.column.clone())
+    ///                     .map(Into::into)
+    ///                     .map_err(|e| Error::Other(Box::new(e)))
+    ///             })
+    ///             .map(PlacedTerm)
+    ///     }
+    /// }
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let placed = Placed { column: "users/email".into(), value: "ada@example.com".into() };
+    /// // No context argument: it comes from `placed.column`.
+    /// let PlacedTerm(term) = placed.encrypt_into(&keyset).await?;
+    ///
+    /// // The same term as passing the column as the context.
+    /// let direct: EqualityTerm = "ada@example.com"
+    ///     .to_owned()
+    ///     .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+    ///     .await?;
+    /// assert_eq!(term, direct);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// `select` is a plain function pointer, as the selector of
+    /// [`project`](Self::project) is. It captures nothing, so it cannot reach
+    /// a cipher. It reads the plaintext by reference, so this combinator is
+    /// for the [`Borrowed`] mode, which every `EncryptTarget::encryption`
+    /// runs in. The owned form of such a target wraps the plaintext and runs
+    /// the borrowed one, so it needs nothing more.
+    pub fn context_from(
+        self,
+        select: for<'borrow> fn(&'borrow S) -> Result<Ctx::Value, Error>,
+    ) -> Encryption<'s, S, T, K, NoCallerContext>
+    where
+        Ctx: AcceptsContext,
+    {
+        Encryption {
+            build: Box::new(
+                move |source, cipher, _: NoCallerContext| match select(source) {
+                    Ok(context) => (self.build)(source, cipher, Ctx::supplied(context)),
+                    Err(error) => Pending::failed(cipher, error),
+                },
+            ),
         }
     }
     /// [`under`](Encryption::under) for a context read out of the source

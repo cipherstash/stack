@@ -71,6 +71,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A target can take its context from the plaintext:
+  `Encryption::context_from`** (#1586). A value that arrives with the
+  context it is stored under, such as a value decrypted from an older
+  format together with its column, encrypts with no context argument. A
+  type that wraps the target reads the context out of the plaintext once,
+  in its `EncryptTarget` declaration, and declares `NoCallerContext`. If
+  the context cannot be read, the encryption fails and no key is
+  requested. The context is read through a plain function pointer, which
+  cannot reach a cipher.
 - **Optional values through the owned API: `Option<T>`** (#1585). An
   `Option<S>` encrypts into an `Option<T>` for any owned target `T`, and
   decrypts back.
