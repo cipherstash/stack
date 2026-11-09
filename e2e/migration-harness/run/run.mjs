@@ -11,7 +11,7 @@ const precedence = [
 const stages = [
   'provisioning',
   'unmigrated-install',
-  'seeding-snapshot',
+  'initialization-snapshot',
   'migrator',
   'friction-validation',
   'app-host-install',
@@ -19,8 +19,11 @@ const stages = [
   'run-report',
 ]
 
-/** Whole-Run orchestration. Drivers are harness-owned; agent output never supplies verdicts. */
+/** Whole-Run orchestration. Drivers are harness-owned; agent output never supplies verdicts.
+ * @param {{id:string, manifest:import('../types.js').Manifest, driver:import('../types.js').RunDriver, supervision?:import('../types.js').Supervision|null}} options
+ */
 export async function run({ id, manifest, driver, supervision = null }) {
+  /** @type {import('../types.js').RunReport} */
   const report = {
     id,
     manifest,
@@ -30,8 +33,10 @@ export async function run({ id, manifest, driver, supervision = null }) {
     friction: null,
     migratorInvoked: false,
     editorEligible: false,
+    outcome: 'infrastructure',
   }
   const ordinals = new Map()
+  /** @param {string} stage @param {string} kind @param {string} checkId @param {unknown} payload */
   function evidence(stage, kind, checkId, payload, attributionUsable = true) {
     const ordinal = (ordinals.get(kind) ?? 0) + 1
     ordinals.set(kind, ordinal)
@@ -49,6 +54,7 @@ export async function run({ id, manifest, driver, supervision = null }) {
     })
   }
   let stopped = false
+  /** @param {string} name @param {string} category @param {()=>Promise<unknown>} action */
   async function stage(name, category, action, prerequisites = true) {
     if (stopped || !prerequisites) {
       report.stages.push({
@@ -76,14 +82,19 @@ export async function run({ id, manifest, driver, supervision = null }) {
             const secondary = {
               stage: name,
               category,
-              cause: String(actionError.message ?? actionError),
+              cause:
+                actionError instanceof Error
+                  ? actionError.message
+                  : String(actionError),
             }
             report.failures.push(secondary)
             evidence(name, 'stage-error', name, secondary)
           }
-          error.infrastructure = true
           await supervision.stop()
-          throw error
+          throw Object.assign(
+            new Error(error instanceof Error ? error.message : String(error)),
+            { infrastructure: true },
+          )
         }
         for (const event of events) {
           evidence(name, 'isolation-event', event.actor, event, false)
@@ -105,8 +116,13 @@ export async function run({ id, manifest, driver, supervision = null }) {
     } catch (error) {
       const failure = {
         stage: name,
-        category: error.infrastructure ? 'infrastructure' : category,
-        cause: String(error.message ?? error),
+        category:
+          error instanceof Error &&
+          'infrastructure' in error &&
+          error.infrastructure
+            ? 'infrastructure'
+            : category,
+        cause: error instanceof Error ? error.message : String(error),
       }
       report.failures.push(failure)
       evidence(
@@ -129,11 +145,11 @@ export async function run({ id, manifest, driver, supervision = null }) {
     () => driver.installUnmigrated(),
     provisioned,
   )
-  const seeded = await stage(
+  const initialized = await stage(
     stages[2],
     'infrastructure',
     async () => {
-      await driver.seed()
+      await driver.initializeLegacyData()
       await driver.snapshot()
     },
     installed,
@@ -149,7 +165,7 @@ export async function run({ id, manifest, driver, supervision = null }) {
       if (result.exitCode !== 0 || result.limit)
         throw new Error(result.limit ?? `Migrator exited ${result.exitCode}`)
     },
-    seeded,
+    initialized,
   )
   await stage(
     stages[4],
@@ -165,6 +181,7 @@ export async function run({ id, manifest, driver, supervision = null }) {
           !item.section ||
           (manifest.guideSections &&
             !manifest.guideSections.includes(item.section)) ||
+          typeof item.issue !== 'string' ||
           !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.issue) ||
           typeof item.actionable !== 'boolean' ||
           typeof item.description !== 'string' ||
@@ -193,6 +210,8 @@ export async function run({ id, manifest, driver, supervision = null }) {
     'behaviour',
     async () => {
       const checks = await driver.behaviour()
+      if (!Array.isArray(checks) || checks.length === 0)
+        throw new Error('Behaviour checks must not be empty')
       for (const check of checks)
         evidence('behaviour', 'oracle-check', check.id, check)
       if (checks.some((check) => !check.passed))

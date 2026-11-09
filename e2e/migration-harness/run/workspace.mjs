@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 
 const exec = promisify(execFile)
 
+/** @param {{fixture:string,workspace:string,guide:string,frictionPath:string}} options */
 export async function prepareWorkspace({
   fixture,
   workspace,

@@ -7,12 +7,26 @@ on:
       - 'e2e/migration-harness/**'
       - 'e2e/vitest.harness.config.ts'
       - 'e2e/package.json'
+      - 'e2e/tsconfig.json'
+      - 'turbo.json'
+      - 'tsconfig.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'packages/eql/**'
       - '.github/workflows/migration-harness.yml'
   pull_request:
     paths:
       - 'e2e/migration-harness/**'
       - 'e2e/vitest.harness.config.ts'
       - 'e2e/package.json'
+      - 'e2e/tsconfig.json'
+      - 'turbo.json'
+      - 'tsconfig.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'packages/eql/**'
       - '.github/workflows/migration-harness.yml'
   workflow_dispatch:
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { run } from '../run/run.mjs'
+import type { RunDriver } from '../types.js'
 
 const manifest = {
   stack: '1.2.1',
@@ -8,20 +9,48 @@ const manifest = {
   fixtureRevision: 'revision',
   agents: {},
 }
-function driver(overrides = {}) {
+function driver(overrides: Partial<RunDriver> = {}): RunDriver {
   return {
     provision: async () => {},
     installUnmigrated: async () => {},
-    seed: async () => {},
+    initializeLegacyData: async () => {},
     snapshot: async () => {},
     migrate: async () => ({ exitCode: 0 }),
     friction: async () => [],
     installAppHost: async () => {},
-    behaviour: async () => [],
+    behaviour: async () => [{ id: 'behaviour.synthetic', passed: true }],
     ...overrides,
   }
 }
-test('a finished no-op Fake Migrator with empty friction passes behaviour', async () => {
+for (const issue of [undefined, null, ['ab'], 12, {}]) {
+  test(`Friction Log rejects a non-string issue slug: ${JSON.stringify(issue)}`, async () => {
+    const report = await run({
+      id: 'slug-type',
+      manifest,
+      driver: driver({
+        friction: async () => [
+          {
+            section: 'preamble',
+            issue,
+            actionable: true,
+            description: 'missing',
+            workaround: 'guessed',
+          },
+        ],
+      }),
+    })
+    assert.equal(report.outcome, 'invalid-friction-log')
+  })
+}
+test('a Run cannot pass without executing any behaviour checks', async () => {
+  const report = await run({
+    id: 'empty-checks',
+    manifest,
+    driver: driver({ behaviour: async () => [] }),
+  })
+  assert.equal(report.outcome, 'behaviour')
+})
+test('a finished Fake Migrator with passing checks and empty friction passes orchestration', async () => {
   const report = await run({ id: 'noop', manifest, driver: driver() })
   assert.equal(report.outcome, 'pass')
   assert.equal(report.editorEligible, true)
@@ -66,7 +95,7 @@ test('pre-Migrator installation failure skips dependents and excludes Editor', a
   assert.deepEqual(
     report.stages.filter((s) => s.status === 'skipped').map((s) => s.name),
     [
-      'seeding-snapshot',
+      'initialization-snapshot',
       'migrator',
       'friction-validation',
       'app-host-install',
@@ -74,7 +103,7 @@ test('pre-Migrator installation failure skips dependents and excludes Editor', a
     ],
   )
 })
-for (const operation of ['seed', 'snapshot'])
+for (const operation of ['initializeLegacyData', 'snapshot'])
   test(`${operation} exceptions fail setup as infrastructure`, async () => {
     const report = await run({
       id: operation,

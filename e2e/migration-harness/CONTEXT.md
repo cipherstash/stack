@@ -111,3 +111,23 @@ _Avoid_: run metadata
 **Migrator Environment**:
 The execution environment for a Migrator's commands.
 _Avoid_: Migrator sandbox
+
+**Isolation Actor**:
+The policy identity attached to a restricted process and its descendants: Migrator or App Host. This differs from a database role, which grants access to a Store Set.
+_Avoid_: worker, actor without its isolation context
+
+**Runtime Supervisor**:
+The trusted process outside an Isolation Actor that observes filesystem and network access, terminates it after a successful forbidden access and blocks later calls.
+_Avoid_: application monitor
+
+**Isolation Capability Probe**:
+A harness-controlled check that demonstrates an enforced boundary and its trusted event stream before application execution.
+_Avoid_: application-reported isolation check
+
+**Trusted Access Event**:
+A Runtime Supervisor record identifying the Isolation Actor, resource, policy decision and observed access result. Denied access differs from successful forbidden access.
+_Avoid_: agent-reported verdict
+
+**Evidence Record**:
+A harness-assigned record with an immutable Run-scoped ID, producing stage, stable check or tool-call ID, payload digest, guide revision and attribution eligibility.
+_Avoid_: unstructured evidence blob

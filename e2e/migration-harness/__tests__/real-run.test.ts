@@ -15,12 +15,24 @@ test('real Run fails provisioning before application execution when capability p
     agents: { limits: { timeMs: 1000 } },
   }
   const isolation = {
-    prove: async () => ({ verified: false }),
+    prove: async () => ({
+      verified: false,
+      backend: 'test-unverified',
+      policies: {
+        filesystem: 'none',
+        network: 'none',
+        migratorEnvironment: { id: 'none', storeSet: 'none' },
+        appHost: { id: 'none', storeSet: 'none' },
+      },
+    }),
     exec: async () => {
       executions++
       throw Error('Application must not execute')
     },
     stop: async () => {},
+    openAppHost: async () => {
+      throw Error('Application must not execute')
+    },
   }
   const driver = createRealDriver({
     id: 'proof',
@@ -37,7 +49,7 @@ test('real Run fails provisioning before application execution when capability p
     assert.equal(report.editorEligible, false)
     assert.equal(executions, 0)
     assert.equal(
-      report.stages.find((stage) => stage.name === 'migrator').status,
+      report.stages.find((stage) => stage.name === 'migrator')?.status,
       'skipped',
     )
   } finally {
@@ -62,7 +74,18 @@ test('Run rejects a Friction Log symlink without disclosing protected contents',
     root: output,
     output,
     command: 'true',
-    isolation: { stop: async () => {} },
+    isolation: {
+      stop: async () => {},
+      prove: async () => {
+        throw Error('Unused proof')
+      },
+      exec: async () => {
+        throw Error('Unused command')
+      },
+      openAppHost: async () => {
+        throw Error('Unused application')
+      },
+    },
     credentials: {},
     manifest,
   })
@@ -70,7 +93,7 @@ test('Run rejects a Friction Log symlink without disclosing protected contents',
     ...real,
     provision: async () => {},
     installUnmigrated: async () => {},
-    seed: async () => {},
+    initializeLegacyData: async () => {},
     snapshot: async () => {},
     migrate: async () => ({ exitCode: 0 }),
     installAppHost: async () => {},

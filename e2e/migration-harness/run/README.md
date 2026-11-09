@@ -3,10 +3,8 @@
 From the repository root:
 
 ```sh
-pnpm --filter @cipherstash/e2e harness:selftest
-pnpm --filter @cipherstash/e2e harness:typecheck
-pnpm --filter @cipherstash/e2e harness:isolation-probe
-pnpm --filter @cipherstash/e2e harness:store-probe
+pnpm exec turbo run harness:selftest harness:typecheck --filter @cipherstash/e2e
+pnpm exec turbo run harness:isolation-probe harness:store-probe --filter @cipherstash/e2e
 ```
 
 The probes require a Linux Docker daemon. They create disposable containers,
@@ -20,7 +18,7 @@ The `Migration harness` PR workflow runs these four commands without service
 credentials. It verifies the skeleton and backend probes, not the complete
 credentialed Fixture App migration.
 
-Real Runs use `pnpm --filter @cipherstash/e2e harness:run --migrator '<command>'`
+For a real Run, first build workspace dependencies with `pnpm --filter @cipherstash/e2e... build`, then use `pnpm --filter @cipherstash/e2e harness:run --migrator '<command>'`
 and require the CipherStash credentials described in the repository README.
 Reports are written under `.migration-harness-runs/` relative to the package.
 Real application execution is gated on the backend capability proof. The full

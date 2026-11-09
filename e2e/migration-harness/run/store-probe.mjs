@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
 
+/** @type {import('./real-stores.mjs').Resource[]} */
 const resources = []
 try {
   const stores = await createStoreSet({

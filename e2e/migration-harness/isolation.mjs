@@ -8,14 +8,18 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const image = 'cipherstash-migration-isolation:local'
+/** @param {string} message */
 const infrastructure = (message) =>
   Object.assign(Error(message), { infrastructure: true })
+/** @param {import('./types.js').AccessEvent} event */
+const isBreach = (event) =>
+  event.decision === 'forbidden' && event.result === 'success'
 
-function command(args, options = {}) {
+/** @param {string[]} args @returns {Promise<{exitCode:number|null,stdout:string,stderr:string}>} */
+function command(args) {
   return new Promise((resolve, reject) => {
     const child = spawn('docker', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      ...options,
     })
     let stdout = '',
       stderr = ''
@@ -34,11 +38,22 @@ function command(args, options = {}) {
  * produces events on a channel separate from every actor's output. No socket
  * giving access to the Docker daemon is mounted in the actor container.
  */
+/** @param {{onEvent?:(event:import('./types.js').AccessEvent)=>void}} options */
 export function createIsolation({ onEvent = (_event) => {} } = {}) {
+  /** @type {import('./types.js').AccessEvent[]} */
   const events = []
+  /** @type {Set<{stop:()=>Promise<unknown>}>} */
   const active = new Set()
-  let proven = false,
-    fatal = null
+  /** @type {string[]} */
+  const proofContainers = []
+  /** @type {string|null} */
+  let proofNetwork = null
+  /** @type {Array<{host:string,port:number}>} */
+  const forbiddenTargets = []
+  /** @type {Error|null} */
+  let fatal = null
+  let proven = false
+  /** @param {import('./types.js').IsolationOptions} options */
   async function start({
     actor,
     workspace,
@@ -48,6 +63,7 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
     probe = false,
     canary = null,
     timeoutMs = 40 * 60 * 1000,
+    testKillTracer = false,
   }) {
     if ((!proven && !probe) || fatal)
       throw fatal ?? infrastructure('Isolation capability proof has not passed')
@@ -55,6 +71,7 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
     await chmod(dir, 0o755)
     const name = `migration-${randomUUID()}`
     const volume = `${name}-forwards`
+    /** @type {string[]} */
     const relays = []
     const mapped = []
     const created = await command(['volume', 'create', volume])
@@ -72,17 +89,19 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
         const address =
           forward.host === '127.0.0.1' ? '127.0.0.1' : `127.0.0.${index + 2}`
         const relay = `${name}-relay-${index}`
-        const target = ['127.0.0.1', 'localhost'].includes(forward.targetHost)
-          ? 'host.docker.internal'
-          : forward.targetHost
+        const target = forward.targetHost
+        if (['127.0.0.1', 'localhost'].includes(target))
+          throw infrastructure(
+            'Store forwarders require a private Docker network target',
+          )
         const started = await command([
           'run',
           '-d',
           '--rm',
           '--name',
           relay,
-          '--add-host',
-          'host.docker.internal:host-gateway',
+          '--network',
+          forward.network ?? 'bridge',
           '--cap-drop',
           'ALL',
           '--security-opt',
@@ -122,8 +141,11 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
         env,
         command: argv,
         forwards: mapped,
-        uid: process.getuid() || 65534,
-        gid: process.getgid() || 65534,
+        uid: process.getuid?.() || 65534,
+        gid: process.getgid?.() || 65534,
+        testKillTracer,
+        modelCanary: name,
+        forbiddenTargets,
       }),
     ).toString('base64')
     const args = [
@@ -165,6 +187,8 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
       `type=bind,src=${join(here, 'run/app-host.mjs')},dst=/harness/app-host.mjs,readonly`,
       '-e',
       `HARNESS_CONFIG=${config}`,
+      '-e',
+      `HARNESS_MODEL_CANARY=${name}`,
     ]
     for (const forward of mapped)
       if (forward.host !== '127.0.0.1')
@@ -176,11 +200,16 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
       )
     args.push(image)
     const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    /** @type {number|undefined} */
+    let actorExit
+    /** @type {number|undefined} */
+    let exitCode
+    /** @type {Error|undefined} */
+    let failure
     let stdout = '',
       stderr = '',
-      streamEnded = false,
-      exitCode,
-      failure
+      streamEnded = false
+    /** @type {(text:string)=>void} */
     let onOutput = (_text) => {}
     const stop = () => command(['kill', name]).catch(() => {})
     let timedOut = false
@@ -190,6 +219,7 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
     }, timeoutMs)
     const running = { stop }
     active.add(running)
+    /** @type {Promise<import('./types.js').IsolationResult>} */
     const completion = new Promise((resolve, reject) => {
       child.on('error', reject)
       child.stderr.on('data', (data) => {
@@ -201,10 +231,7 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
           if (frame.kind === 'event') {
             events.push(frame.event)
             onEvent(frame.event)
-            if (
-              frame.event.decision === 'forbidden' &&
-              frame.event.result === 'success'
-            ) {
+            if (isBreach(frame.event)) {
               fatal = infrastructure(
                 'Successful forbidden access stopped the isolated actor',
               )
@@ -217,14 +244,18 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
             onOutput(text)
           } else if (frame.kind === 'stderr')
             stderr += Buffer.from(frame.data, 'base64').toString()
-          else if (frame.kind === 'stream-end') streamEnded = true
+          else if (frame.kind === 'actor-exit') {
+            if (frame.actor !== actor || !Number.isInteger(frame.exitCode))
+              throw Error('Invalid actor exit identity')
+            if (frame.stage === 'command') actorExit = frame.exitCode
+          } else if (frame.kind === 'stream-end') streamEnded = true
           else if (frame.kind === 'stream-error')
             failure = infrastructure(frame.error)
           else if (frame.kind === 'exit') exitCode = frame.exitCode
           else throw Error('Unknown supervisor frame')
         } catch (error) {
           failure = infrastructure(
-            `Invalid trusted event stream: ${error.message}`,
+            `Invalid trusted event stream: ${error instanceof Error ? error.message : String(error)}`,
           )
           void stop()
         }
@@ -237,7 +268,14 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
           resolve({ exitCode: 124, stdout, stderr, timedOut })
           return
         }
-        if (!streamEnded || exitCode === undefined)
+        const stoppedForBreach = events.some(
+          (event) => event.actor === actor && isBreach(event),
+        )
+        if (
+          !streamEnded ||
+          exitCode === undefined ||
+          (!stoppedForBreach && actorExit !== exitCode)
+        )
           failure ??= infrastructure(
             `Broken trusted event stream (Docker exit ${code}): ${stderr}`,
           )
@@ -245,13 +283,14 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
           failure.message += `: ${stderr}; last forbidden event: ${JSON.stringify(events.filter((event) => event.decision === 'forbidden').at(-1))}`
           fatal = failure
           reject(failure)
-        } else resolve({ exitCode, stdout, stderr })
+        } else if (exitCode !== undefined) resolve({ exitCode, stdout, stderr })
       })
     })
     return {
       child,
       completion,
       stop,
+      /** @param {(text:string)=>void} callback */
       setOutput(callback) {
         onOutput = callback
       },
@@ -268,6 +307,61 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
       ])
       if (build.exitCode !== 0)
         throw infrastructure(`Isolation image build failed: ${build.stderr}`)
+      proofNetwork = `migration-proof-${randomUUID()}`
+      const network = await command(['network', 'create', proofNetwork])
+      if (network.exitCode)
+        throw infrastructure('Cannot create capability-probe network')
+      for (const role of ['assigned', 'cross-run']) {
+        const listener = `${proofNetwork}-${role}`
+        const started = await command([
+          'run',
+          '-d',
+          '--rm',
+          '--name',
+          listener,
+          '--network',
+          proofNetwork,
+          '--cap-drop',
+          'ALL',
+          '--read-only',
+          '--security-opt',
+          'no-new-privileges',
+          '-p',
+          '127.0.0.1::8080',
+          '--entrypoint',
+          'node',
+          image,
+          '-e',
+          "require('net').createServer(s=>s.end('synthetic-listener-ready')).listen(8080,'0.0.0.0')",
+        ])
+        if (started.exitCode)
+          throw infrastructure(`Cannot create ${role} listener`)
+        proofContainers.push(listener)
+        const ready = await command([
+          'exec',
+          listener,
+          'node',
+          '-e',
+          "const n=require('net'); let tries=0; function check(){const s=n.connect(8080,'127.0.0.1'); s.on('data',d=>{if(d.toString()==='synthetic-listener-ready')process.exit(0)}); s.on('error',()=>{if(++tries>50)process.exit(1);setTimeout(check,100)})};check()",
+        ])
+        if (ready.exitCode)
+          throw infrastructure(`${role} canary listener is not live`)
+        const inspection = await command([
+          'inspect',
+          '--format',
+          '{{json .NetworkSettings.Networks}}',
+          listener,
+        ])
+        const address = JSON.parse(inspection.stdout)[proofNetwork].IPAddress
+        const published = await command(['port', listener, '8080/tcp'])
+        const port = Number(published.stdout.trim().split(':').at(-1))
+        if (!address || !Number.isInteger(port) || port < 1)
+          throw infrastructure('Canary listener identity was not resolved')
+        forbiddenTargets.push(
+          { host: address, port: 8080 },
+          { host: '127.0.0.1', port },
+        )
+      }
       const workspace = await mkdtemp(join(here, '.migration-probe-'))
       await chmod(workspace, 0o777)
       const canary = join(workspace, 'canary')
@@ -339,6 +433,56 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
             'Supervisor permitted a call after a forbidden-access event',
           )
         fatal = null
+        const assigned = await start({
+          actor: 'assigned-network-probe',
+          workspace,
+          probe: true,
+          forwards: [
+            {
+              host: '127.0.0.1',
+              port: 18080,
+              targetHost: proofContainers[0],
+              targetPort: 8080,
+              network: proofNetwork,
+            },
+          ],
+          command: [
+            'node',
+            '-e',
+            "const s=require('net').connect(18080,'127.0.0.1');s.on('data',d=>{if(d.toString()!=='synthetic-listener-ready')process.exit(1);console.log('assigned-forwarder-ready')});s.on('error',()=>process.exit(1))",
+          ],
+        })
+        assigned.child.stdin.end()
+        const assignedResult = await assigned.completion
+        if (
+          assignedResult.exitCode ||
+          !assignedResult.stdout.includes('assigned-forwarder-ready')
+        )
+          throw infrastructure(
+            'Assigned loopback forwarder did not reach its live listener',
+          )
+        const observerLoss = await start({
+          actor: 'observer-loss-probe',
+          workspace,
+          probe: true,
+          testKillTracer: true,
+          command: ['node', '-e', 'setInterval(()=>{},1000)'],
+        })
+        observerLoss.child.stdin.end()
+        let lossDetected = false
+        try {
+          await observerLoss.completion
+        } catch (error) {
+          lossDetected =
+            error instanceof Error &&
+            'infrastructure' in error &&
+            error.infrastructure === true
+        }
+        if (!lossDetected)
+          throw infrastructure(
+            'Observer loss was not an infrastructure failure',
+          )
+        fatal = null
         events.length = 0
         proven = true
         return {
@@ -347,27 +491,46 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
           policies: {
             filesystem: 'workspace-and-runtime-only',
             network: 'namespace-local-forwarders-only',
+            migratorEnvironment: {
+              id: 'migrator-workspace-and-migrator-stores-v1',
+              storeSet: 'migrator',
+            },
+            appHost: {
+              id: 'app-host-workspace-and-oracle-stores-v1',
+              storeSet: 'oracle',
+            },
           },
         }
       } finally {
         await rm(workspace, { recursive: true, force: true })
       }
     },
+    /** @param {import('./types.js').IsolationOptions} options */
     async exec(options) {
-      const process = await start(options)
-      process.child.stdin.end()
-      return process.completion
+      const actorProcess = await start(options)
+      actorProcess.child.stdin.end()
+      return actorProcess.completion
     },
+    /** @param {Omit<import('./types.js').IsolationOptions,'command'|'actor'> & {actor?:string}} options */
     async openAppHost(options) {
-      const process = await start({
+      const actorProcess = await start({
         ...options,
         actor: options.actor ?? 'app-host',
         command: ['node', '/harness/app-host.mjs'],
       })
+      /** @type {Map<number,{resolve:(value:unknown)=>void,reject:(error:unknown)=>void}>} */
       const pending = new Map()
+      /** @type {unknown} */
+      let terminalError = null
+      /** @param {unknown} error */
+      function rejectCalls(error) {
+        terminalError = error
+        for (const request of pending.values()) request.reject(error)
+        pending.clear()
+      }
       let buffer = '',
         serial = 0
-      process.setOutput((text) => {
+      actorProcess.setOutput((text) => {
         buffer += text
         while (buffer.includes('\n')) {
           const end = buffer.indexOf('\n'),
@@ -385,49 +548,42 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
           }
         }
       })
-      process.completion.then(
-        (result) => {
-          for (const request of pending.values())
-            request.reject(
-              Error(`App Host exited ${result.exitCode}: ${result.stderr}`),
-            )
-          pending.clear()
-        },
-        (error) => {
-          for (const request of pending.values()) request.reject(error)
-          pending.clear()
-        },
-      )
+      actorProcess.child.stdin.on('error', rejectCalls)
+      actorProcess.completion.then((result) => {
+        rejectCalls(
+          Error(`App Host exited ${result.exitCode}: ${result.stderr}`),
+        )
+      }, rejectCalls)
       return {
+        /** @param {string} method @param {unknown[]} args @returns {Promise<unknown>} */
         call(method, args = []) {
           if (fatal) return Promise.reject(fatal)
+          if (terminalError) return Promise.reject(terminalError)
           return new Promise((resolve, reject) => {
             const id = ++serial
             pending.set(id, { resolve, reject })
-            process.child.stdin.write(
+            actorProcess.child.stdin.write(
               `${JSON.stringify({ id, method, args })}\n`,
             )
           })
         },
         async close() {
-          process.child.stdin.end()
-          return process.completion
+          actorProcess.child.stdin.end()
+          return actorProcess.completion
         },
       }
     },
     drain() {
-      if (
-        fatal &&
-        !events.some(
-          (event) =>
-            event.decision === 'forbidden' && event.result === 'success',
-        )
-      )
-        throw fatal
+      if (fatal && !events.some(isBreach)) throw fatal
       return events.splice(0)
     },
     async stop() {
       await Promise.all([...active].map((process) => process.stop()))
+      await Promise.all(
+        proofContainers.splice(0).map((name) => command(['rm', '-f', name])),
+      )
+      if (proofNetwork) await command(['network', 'rm', proofNetwork])
+      proofNetwork = null
     },
   }
   return backend
