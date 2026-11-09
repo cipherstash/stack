@@ -59,7 +59,17 @@ for (const [kind, outcome, checkId] of cases) {
           driver,
           supervision: isolation,
         })
-        assert.equal(report.outcome, outcome, JSON.stringify(report))
+        const diagnostics = JSON.stringify({
+          outcome: report.outcome,
+          failures: report.failures,
+          checks: report.evidence
+            .filter(
+              (e) =>
+                e.kind === 'oracle-check' && Object(e.payload).passed === false,
+            )
+            .map((e) => e.payload),
+        })
+        assert.equal(report.outcome, outcome, diagnostics)
         if (kind.startsWith('denied-'))
           assert.ok(
             report.evidence.some(
@@ -74,6 +84,7 @@ for (const [kind, outcome, checkId] of cases) {
             Object(report.evidence.find((e) => e.checkId === checkId)?.payload)
               .passed,
             false,
+            diagnostics,
           )
         if (kind === 'noop')
           assert.ok(
