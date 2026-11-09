@@ -676,3 +676,53 @@ impl<'p, R: TargetResolver + ?Sized> DynamicQuery<'p, R> {
             .term(keyset, self.value, &self.scopes, self.resolver)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dynamic::test_frame::{frame_of, Tree};
+    use vitaminc_protected::AsProtectedRef as _;
+
+    fn s(value: &str) -> Tree {
+        Tree::String(value.into())
+    }
+
+    fn the_plan() -> Plan {
+        let spec = Tree::Object(vec![
+            ("context".into(), Tree::Array(vec![s("users"), s("age")])),
+            ("outputs".into(), Tree::Array(vec![s("c")])),
+            ("type".into(), s("uint32")),
+        ]);
+        let value = Tree::Object(vec![("age".into(), spec)]);
+        record::plan(frame_of(&value).as_protected_ref().as_deref()).expect("parses")
+    }
+
+    fn a_row() -> ValueFrame {
+        let value = Tree::Object(vec![("age".into(), Tree::UInt32(34))]);
+        ValueFrame::from_bytes(frame_of(&value).as_protected_ref().as_deref()).expect("a frame")
+    }
+
+    /// Zeroizing a planned value wipes the value it holds: the frame is
+    /// replaced by the empty one, whose dropped buffer wipes the bytes.
+    #[test]
+    fn zeroizing_a_planned_value_empties_its_frame() {
+        let plan = the_plan();
+        let mut planned = Planned::new(&plan, a_row());
+        assert_ne!(planned.value, ValueFrame::empty());
+        planned.zeroize();
+        assert_eq!(planned.value, ValueFrame::empty());
+    }
+
+    /// `Debug` names the wrapper and the handle's field, and shows no value.
+    #[test]
+    fn debug_names_the_wrapper_and_the_field_but_no_value() {
+        let plan = the_plan();
+        let shown = format!("{:?}", Planned::new(&plan, a_row()));
+        assert!(shown.starts_with("Planned"), "{shown}");
+        assert!(!shown.contains("34"), "{shown}");
+        let handle = plan.field("age").expect("the field");
+        let shown = format!("{handle:?}");
+        assert!(shown.starts_with("FieldHandle"), "{shown}");
+        assert!(shown.contains("age"), "{shown}");
+    }
+}

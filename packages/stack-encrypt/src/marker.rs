@@ -383,3 +383,65 @@ where
             .map(move |terms| T::Via::query(verifier, terms, token))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// A query value that counts how many times it was wiped.
+    struct Spy(Arc<AtomicUsize>);
+
+    impl Zeroize for Spy {
+        fn zeroize(&mut self) {
+            let _ = self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn query<In>(value: In, wipe: fn(In)) -> MarkedQuery<(), (), In> {
+        MarkedQuery {
+            label: Label::parse("users/age").expect("a label"),
+            value: Some(value),
+            wipe,
+            scopes: DeclaredContext::default(),
+            marker: PhantomData,
+        }
+    }
+
+    /// A query dropped before it is derived wipes the value it copied.
+    #[test]
+    fn a_dropped_query_wipes_its_value() {
+        let wipes = Arc::new(AtomicUsize::new(0));
+        let query = query(Spy(Arc::clone(&wipes)), wipe_one::<Spy>);
+        assert_eq!(wipes.load(Ordering::SeqCst), 0, "held, not wiped");
+        drop(query);
+        assert_eq!(wipes.load(Ordering::SeqCst), 1, "wiped once on drop");
+    }
+
+    /// A range query wipes both of its bounds.
+    #[test]
+    fn a_dropped_range_query_wipes_both_bounds() {
+        let lo = Arc::new(AtomicUsize::new(0));
+        let hi = Arc::new(AtomicUsize::new(0));
+        let query = query(
+            (Spy(Arc::clone(&lo)), Spy(Arc::clone(&hi))),
+            wipe_pair::<Spy>,
+        );
+        drop(query);
+        assert_eq!(lo.load(Ordering::SeqCst), 1);
+        assert_eq!(hi.load(Ordering::SeqCst), 1);
+    }
+
+    /// A query whose value was taken, as deriving it does, wipes nothing
+    /// twice: the taken value is the derivation's to wipe.
+    #[test]
+    fn a_taken_value_is_not_wiped_by_the_drop() {
+        let wipes = Arc::new(AtomicUsize::new(0));
+        let mut query = query(Spy(Arc::clone(&wipes)), wipe_one::<Spy>);
+        let taken = query.value.take().expect("the value");
+        drop(query);
+        assert_eq!(wipes.load(Ordering::SeqCst), 0, "nothing left to wipe");
+        drop(taken);
+    }
+}
