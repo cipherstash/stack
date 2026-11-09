@@ -383,20 +383,21 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! seals and moves each passthrough field, so no field is copied. This is
 //! why the plaintext type must implement `Zeroize`.
 //!
-//! **A decrypted plaintext is not wiped when it is dropped.** The derive
-//! moves the fields out of the plaintext struct, and Rust does not allow
-//! that for a type that implements `Drop`. So the plaintext type cannot
-//! derive `ZeroizeOnDrop`.
+//! **Decrypt into a [`Protected`].** The plaintext type cannot wipe itself
+//! when it is dropped. The derive moves the fields out of the plaintext
+//! struct, and Rust does not allow that for a type that implements `Drop`.
+//! So the derive also implements `DecryptSource<Protected<User>>`:
+//! `Protected::<User>::decrypt_from(record, &cipher)` returns the plaintext
+//! inside a `Protected`, which wipes it when it is dropped. A `Vec` of
+//! records decrypts into a `Vec<Protected<User>>`.
 //!
-//! Wrap a decrypted value in a [`Protected`] as soon as it is returned, as
-//! the example does. Or call `zeroize` on it when you no longer need it. Do
-//! not derive these traits on the plaintext
-//! type either:
+//! On the plaintext type:
 //!
-//! - `Debug`, because it prints the plaintext.
-//! - `Clone`, because each clone is another copy to wipe.
-//! - `PartialEq`, because a derived comparison does not run in constant
-//!   time.
+//! - derive `OpaqueDebug` from `vitaminc::protected`, not `Debug`, so that
+//!   printing the value shows its field names with each value hidden;
+//! - derive `TimingSafeEq` from `vitaminc::protected`, not `PartialEq`, so
+//!   that a comparison runs in constant time;
+//! - do not derive `Clone`, because each clone is another copy to wipe.
 //!
 //! Each field is sealed under its own context and nothing else, and the
 //! caller cannot add to it ([`target::DeclaredScopes`]). So two records of
@@ -439,7 +440,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! let stored = serde_json::to_vec(&encrypted)?;
 //!
 //! let loaded: EncryptedUser = serde_json::from_slice(&stored)?;
-//! let restored = Protected::new(User::decrypt_from(loaded, &cipher).await?);
+//! let restored = Protected::<User>::decrypt_from(loaded, &cipher).await?;
 //! assert_eq!(restored.risky_ref().id, id);
 //! // `restored` wipes the plaintext when it is dropped.
 //! # Ok(())

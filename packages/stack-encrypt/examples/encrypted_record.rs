@@ -20,15 +20,18 @@
 //! a row ID declared on the record as a binding. That is not built yet.
 //!
 //! The plaintext type, `User`, follows the rules for a type that contains
-//! secrets. `User` derives `Zeroize` and nothing else:
+//! secrets:
 //!
-//! - No `Debug`, so the plaintext cannot be printed.
-//! - No `Clone`, so there are no copies to wipe.
-//! - No `PartialEq`, because a derived comparison does not run in constant
-//!   time.
+//! - It derives `Zeroize`, so that it can be wiped.
+//! - It derives `OpaqueDebug`, not `Debug`. Printing a `User` shows its
+//!   field names, with each value hidden.
+//! - It derives `TimingSafeEq`, not `PartialEq`, so that a comparison runs in
+//!   constant time.
+//! - It does not derive `Clone`, so there are no copies to wipe.
 //!
-//! Encrypting a `User` consumes it and wipes it. A decrypted `User` goes
-//! straight into a `Protected`. The `Protected` wipes it when it is dropped.
+//! Encrypting a `User` consumes it and wipes it. The matching rows decrypt
+//! straight into `Protected<User>` values, which wipe the plaintext when they
+//! are dropped.
 //!
 //! Run it with:
 //!
@@ -48,6 +51,7 @@ use stack_encrypt::target::{DecryptSource, EncryptTarget};
 use stack_encrypt::{
     nonempty, Ciphertext, Controlled, DecryptFrom, EncryptInto, Protected, StackCipher,
 };
+use vitaminc_protected::{OpaqueDebug, TimingSafeEq};
 use zeroize::Zeroize;
 
 // --- The types -----------------------------------------------------------------
@@ -68,9 +72,8 @@ struct EncryptedAge {
     ord: OreTerm<u32>,
 }
 
-/// The plaintext. `Zeroize` is the only trait it derives. The module
-/// documentation explains why.
-#[derive(Zeroize)]
+/// The plaintext. The module documentation explains its derives.
+#[derive(Zeroize, OpaqueDebug, TimingSafeEq)]
 struct User {
     age: u32,
     email: String,
@@ -169,11 +172,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in over_40.into_iter().rev() {
         matches.push(table.swap_remove(i));
     }
-    // The decrypted users are wrapped as soon as they arrive. The
-    // `Protected` wipes them when it is dropped, and `risky_ref` marks the
-    // one place the plaintext is read.
-    let matched = Protected::new(Vec::<User>::decrypt_from(matches, &decryptor).await?);
-    println!("decrypted {} matching rows", matched.risky_ref().len());
+    // Each user is decrypted straight into a `Protected`, which wipes it
+    // when it is dropped. `risky_ref` marks the place the plaintext is read.
+    let matched = Vec::<Protected<User>>::decrypt_from(matches, &decryptor).await?;
+    println!("decrypted {} matching rows", matched.len());
+    // `OpaqueDebug` prints the field names, with each value hidden.
+    println!(
+        "the first one is {:?}",
+        matched.first().map(Controlled::risky_ref)
+    );
+    // `TimingSafeEq` compares two users in constant time.
+    if let [first, second, ..] = matched.as_slice() {
+        let same = first.risky_ref().ts_eq(second.risky_ref());
+        println!("the first two match: {}", bool::from(same));
+    }
 
     Ok(())
 }

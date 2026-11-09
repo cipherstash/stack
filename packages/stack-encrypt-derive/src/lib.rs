@@ -1,25 +1,28 @@
-//! Derive the declarations of encrypted records. There are two pairs of
-//! derives, and both take the same attributes:
+//! Derive the declarations of encrypted records.
 //!
-//! - `EncryptTarget<P>` and `DecryptSource<P>` declare a record for the owned
-//!   conversions, `value.encrypt_into(&keyset)` and
-//!   `P::decrypt_from(record, &cipher)`. Encrypting consumes the plaintext
-//!   and wipes it. [Owned records](#owned-records) lists what only this pair
-//!   adds.
-//! - `EncryptFrom<P>` and `DecryptInto<P>` declare a record for the
-//!   structural calls, `keyset.encrypt_as` and `cipher.decrypt_as`, over a
-//!   borrowed plaintext.
+//! Derive `EncryptTarget<P>` and `DecryptSource<P>` on the struct that holds
+//! the encrypted form of a plaintext `P`. Then:
 //!
-//! Stack Encrypt runs every declaration, through Vitamin C's plaintext
-//! traits. The generated code is given a context and encrypted outputs. It is
-//! never given a cipher.
+//! - `value.encrypt_into(&keyset)` takes the plaintext by value, encrypts
+//!   it, and wipes it;
+//! - `Protected::<P>::decrypt_from(record, &cipher)` decrypts the record into
+//!   a `Protected`, which wipes the plaintext when it is dropped.
+//!
+//! `EncryptFrom<P>` and `DecryptInto<P>` are an older pair of derives over a
+//! borrowed plaintext. They take the same attributes. Plans and the dynamic
+//! engine still use them, and the API plan removes them once those have
+//! moved to the new pair. See [Owned records](#owned-records).
+//!
+//! The generated code describes the encryption. Stack Encrypt runs it. The
+//! generated code is never given a cipher.
 //!
 //! ```
-//! use stack_encrypt::{EncryptFrom, DecryptInto, StackCipher, StackCipherText, nonempty};
+//! use stack_encrypt::target::{DecryptSource, EncryptTarget};
+//! use stack_encrypt::{nonempty, Controlled, DecryptFrom, EncryptInto, Protected, StackCipher, StackCipherText};
 //! use stack_encrypt::sem::EqualityTerm;
 //! use stack_encrypt::kms::FakeDataKeySource;
 //!
-//! #[derive(EncryptFrom, DecryptInto)]
+//! #[derive(EncryptTarget, DecryptSource)]
 //! #[stash(plaintext = String)]
 //! struct TextEq {
 //!     #[stash(context_field)]
@@ -32,11 +35,13 @@
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let keyset = cipher.default_keyset();
 //! let value = "alice@example.com".to_owned();
-//! // The output type selects ciphertext + equality; the context is NonEmpty<&str>, stored in `identifier`.
-//! let encrypted: TextEq = keyset.encrypt_as(&value, nonempty!("users/email")).await?;
-//! // Naming the destination requires the stored identifier to equal it before any key is retrieved. `ExpectedContext::default()` would check only that it is nonempty and open under it as stored.
-//! let opened: String = cipher.decrypt_as(encrypted, nonempty!("users/email").into()).await?;
-//! assert_eq!(opened, value);
+//! // The output type selects a ciphertext and an equality term. The context
+//! // is stored in `identifier`.
+//! let encrypted: TextEq = value.clone().encrypt_into_with_context(&keyset, nonempty!("users/email")).await?;
+//! // Passing the expected context refuses a value stored under any other
+//! // context, before any key is requested.
+//! let opened = Protected::<String>::decrypt_from_with_context(encrypted, &cipher, nonempty!("users/email")).await?;
+//! assert_eq!(opened.risky_ref(), &value);
 //! # Ok::<(), Box<dyn std::error::Error>> (())
 //! # }).unwrap();
 //! ```
@@ -117,11 +122,12 @@
 //! ```
 //! use stack_encrypt::sem::EqualityTerm;
 //! use stack_encrypt::target::transcode::{Transcode, Visitor};
-//! use stack_encrypt::target::{self, CallerContext};
+//! use stack_encrypt::target::{self, CallerContext, EncryptTarget, RequiredContext};
 //! use stack_encrypt::{
-//!     CipherText, Decryptable, EncryptFrom, Encryption, Error, Encrypt, SealedValue,
+//!     CipherText, Decryptable, EncryptInto, Encryption, Error, Encrypt, SealedValue,
 //!     StackCipher, nonempty,
 //! };
+//! use zeroize::Zeroize;
 //! use stack_encrypt::kms::FakeDataKeySource;
 //!
 //! /// A column that stores one sealed leaf as bytes.
@@ -149,9 +155,9 @@
 //! }
 //! // The declaration: the canonical ciphertext operation, read into this type.
 //! // It seals under the AEAD half of the context the record threads to it.
-//! impl<S: Encrypt + Clone> EncryptFrom<S> for LeafBytes {
-//!     type Context = CallerContext;
-//!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+//! impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for LeafBytes {
+//!     type ContextInput = RequiredContext<CallerContext>;
+//!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
 //!     where
 //!         S: 's,
 //!     {
@@ -160,7 +166,7 @@
 //! }
 //!
 //! // The record uses it like any core field type.
-//! #[derive(EncryptFrom)]
+//! #[derive(EncryptTarget)]
 //! #[stash(plaintext = String)]
 //! struct TextEq {
 //!     #[stash(context_field)]
@@ -174,7 +180,7 @@
 //! let keyset = cipher.default_keyset();
 //! let value = "alice@example.com".to_owned();
 //! let context = nonempty!("users/email");
-//! let encrypted: TextEq = keyset.encrypt_as(&value, context.clone()).await?;
+//! let encrypted: TextEq = value.clone().encrypt_into_with_context(&keyset, context.clone()).await?;
 //!
 //! // What the column holds is the leaf itself: the canonical path opens it.
 //! let leaf = SealedValue::from_bytes(&encrypted.c.0)?;
@@ -184,10 +190,10 @@
 //! # }).unwrap();
 //! ```
 //!
-//! To recover the plaintext through the record rather than the canonical path,
-//! the field type also implements `DecryptInto` and `DecryptField`, and the
-//! record derives `DecryptInto`; the crate's `transcode` integration test shows
-//! the full set. A field of a `struct = ..` record needs `DecryptField` even
+//! To decrypt the plaintext through the record, the field type also
+//! implements `DecryptSource` and `DecryptField`, and the record derives
+//! `DecryptSource`. The crate's `transcode` integration test shows the full
+//! set. A field of a `struct = ..` record needs `DecryptField` even
 //! when the record derives `EncryptFrom` alone, because the record's plan
 //! opens each field (see "The record's plan").
 //!
@@ -265,9 +271,10 @@ pub fn derive_encrypt_target(input: TokenStream) -> TokenStream {
 /// implements the structural `DecryptInto` and `DecryptField`, so the record
 /// works where a structural record is expected.
 ///
-/// A decrypted plaintext is not wiped when it is dropped. Wrap it in
-/// `stack_encrypt::Protected` as soon as it is returned. See
-/// [Owned records](crate#owned-records).
+/// The derive also implements `DecryptSource<Protected<Plaintext>>` for each
+/// listed plaintext, so `Protected::<User>::decrypt_from(record, &cipher)`
+/// returns a value that is wiped when it is dropped. A bare `User` is not.
+/// See [Owned records](crate#owned-records).
 #[doc = include_str!("../docs/attributes.md")]
 #[proc_macro_derive(DecryptSource, attributes(stash))]
 pub fn derive_decrypt_source(input: TokenStream) -> TokenStream {

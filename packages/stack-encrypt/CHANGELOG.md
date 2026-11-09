@@ -106,8 +106,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     every field of its plaintext, as a sealed field or a passthrough field.
     A field it leaves out is a compile error, so no field is dropped without
     being wiped. For the same reason, the plaintext type cannot implement
-    `Drop`, so it cannot derive `ZeroizeOnDrop`. The caller must wipe a
-    decrypted plaintext, for example by wrapping it in `Protected`.
+    `Drop`, so it cannot derive `ZeroizeOnDrop`.
+  - The decrypt derive also implements `DecryptSource<Protected<P>>` for
+    each plaintext type the record names. `Protected::<User>::decrypt_from(
+    record, &cipher)` returns the plaintext inside a `Protected`, which
+    wipes it when it is dropped. A `Vec` of records decrypts into a
+    `Vec<Protected<User>>`. `User::decrypt_from` still returns a bare
+    `User`, which the caller must wipe.
   - If a later field is refused during decryption, the fields already
     decrypted are wiped.
   - Both derives also implement the structural `EncryptFrom`,

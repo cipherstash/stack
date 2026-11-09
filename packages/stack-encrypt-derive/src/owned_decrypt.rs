@@ -101,6 +101,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
             },
         ));
         impls.push(bridge(&input, &record, &plaintext, generic));
+        if !generic {
+            impls.push(protected(&input, &record, &plaintext));
+        }
     }
 
     // `DecryptField`, emitted the same way as the structural derive emits it.
@@ -288,6 +291,32 @@ fn bridge(input: &DeriveInput, record: &Record, plaintext: &Type, generic: bool)
             type Context = #legacy;
             fn decryption<__K: 'static>(self, __context: Self::Context) -> #krate::target::Decryption<#plaintext, __K> {
                 <Self as #krate::target::DecryptSource<#plaintext>>::decryption::<__K>(self, ::core::convert::Into::into(__context))
+            }
+        },
+    )
+}
+
+/// `DecryptSource<Protected<P>>`, so a caller can decrypt straight into a
+/// `Protected` that wipes the plaintext when it is dropped:
+/// `Protected::<User>::decrypt_from(record, &cipher)`. It takes the same
+/// context input as `DecryptSource<P>`. A record generic over its plaintext
+/// gets none, because its generic impl could already cover `Protected<_>`.
+fn protected(input: &DeriveInput, record: &Record, plaintext: &Type) -> TokenStream {
+    let krate = &record.krate;
+    let mut generics = input.generics.clone();
+    generics
+        .make_where_clause()
+        .predicates
+        .push(parse_quote!(Self: #krate::target::DecryptSource<#plaintext>));
+    trait_impl(
+        input,
+        &generics,
+        quote!(#krate::target::DecryptSource<#krate::Protected<#plaintext>>),
+        quote! {
+            type ContextInput = <Self as #krate::target::DecryptSource<#plaintext>>::ContextInput;
+            fn decryption<__K: 'static>(self, __context: Self::ContextInput) -> #krate::target::Decryption<#krate::Protected<#plaintext>, __K> {
+                <Self as #krate::target::DecryptSource<#plaintext>>::decryption::<__K>(self, __context)
+                    .map(#krate::Protected::new)
             }
         },
     )

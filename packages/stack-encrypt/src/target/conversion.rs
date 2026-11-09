@@ -111,12 +111,12 @@ impl<S: Zeroize> EncryptInto for S {}
 
 /// Construct owned plaintext from a declared encrypted source.
 ///
-/// **The caller must wipe the returned plaintext.** A `Zeroize` bound does not
-/// make a returned value wipe itself when it is dropped. The plaintext of a
-/// derived `struct = ..` record cannot implement `ZeroizeOnDrop` at all.
-/// Wrap the value in
-/// [`Protected`] as soon as it is returned, or call `zeroize` on it when you
-/// no longer need it.
+/// **Decrypt a record into a [`Protected`].** A `Zeroize` bound does not make
+/// a returned value wipe itself when it is dropped, and the plaintext of a
+/// derived `struct = ..` record cannot implement `ZeroizeOnDrop` at all. A
+/// derived record implements `DecryptSource<Protected<P>>` as well, so
+/// `Protected::<P>::decrypt_from(record, &cipher)` returns a value that is
+/// wiped when it is dropped. A bare `P` must be wiped by the caller.
 pub trait DecryptFrom: Zeroize + Sized + 'static {
     /// Decrypt with explicitly omitted caller context.
     fn decrypt_from<'a, S, K: 'static>(

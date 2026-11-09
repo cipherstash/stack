@@ -19,7 +19,8 @@ use stack_encrypt::target::{
     ScalarContext,
 };
 use stack_encrypt::{
-    nonempty, Ciphertext, DecryptFrom, EncryptInto, Encrypted, Error, NonEmpty, StackCipherText,
+    nonempty, Ciphertext, Controlled, DecryptFrom, EncryptInto, Encrypted, Error, NonEmpty,
+    Protected, StackCipherText,
 };
 use zeroize::Zeroize;
 mod common;
@@ -225,6 +226,37 @@ async fn the_owned_record_wipes_sealed_fields_and_moves_passthrough_fields() {
     // fails the test.
     let mut opened = opened;
     opened.secret.zeroize();
+}
+
+#[tokio::test]
+async fn a_record_decrypts_straight_into_a_protected_that_wipes_it_on_drop() {
+    let (cipher, _, _) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let tracked = || Tracked {
+        handle: Handle(7),
+        secret: Secret {
+            value: "secret".to_owned(),
+            wiped: Arc::default(),
+        },
+    };
+    let encrypted: EncryptedTracked = tracked().encrypt_into(&keyset).await.unwrap();
+    let opened = Protected::<Tracked>::decrypt_from(encrypted, &keyset)
+        .await
+        .unwrap();
+    assert_eq!(opened.risky_ref().secret.value, "secret");
+    // `Secret::drop` fails the test unless the `Protected` wiped it.
+    drop(opened);
+
+    // A column decrypts into one `Protected` per row.
+    let column: Vec<EncryptedTracked> = vec![tracked(), tracked()]
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+    let rows = Vec::<Protected<Tracked>>::decrypt_from(column, &keyset)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    drop(rows);
 }
 
 /// A record nested under a context too long for a ZeroKMS descriptor. A
