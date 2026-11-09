@@ -113,6 +113,9 @@ literal `"users/age"`. A column is the pair now, which renders the ZeroKMS
 descriptor `users/age`; the joined literal is one part and renders escaped.
 See ADR-0006.)
 
+A third way, `context_from`, reads the context from a field of the plaintext.
+See the amendment of 2026-11-09 below.
+
 Two further combinators change nothing about *which* context reaches a
 subtree, only its type at the root. `accepting` converts the context a record
 declares its caller supplies into the one its operations need, once, at the
@@ -354,3 +357,38 @@ language allows; Go-1). The dynamic-to-static dispatch itself is unchanged.
 Decisions 1 to 4, 7 and 8 do not change. Decision 2's `extend` is what
 `Cipher.Extend` does from Go: a caller's context appends to the declared one,
 and never replaces it.
+
+## Amended 2026-11-09 (#1586)
+
+Decision 2 gains a third way to set the context of a subtree:
+`Encryption::context_from`. `under` and `extend` do not cover one case: a
+value that arrives together with the context it is stored under. For
+example, a value decrypted from EQL v3 comes with its column. Re-encrypting
+it as EQL v4 should read that column, not ask the caller to supply it again.
+
+`context_from(pick)` reads the context from a field of the plaintext.
+`context_from` discharges the requirement into `NoCallerContext`, so the
+caller supplies no context. Three limits keep the reasons for decision 2:
+
+- **The target must store its context.** The context input of the target
+  must be a typed context, `NonEmpty<C>`. A record that stores its context in
+  a `context_field` declares such an input. An EQL type declares one too, and
+  stores its column in `i`. So the context comes from the plaintext on the
+  way in, and from the row on the way out. Opening a value never needs its
+  plaintext.
+- **`pick` returns a reference to a field of the plaintext.** So `pick`
+  cannot compute a context from the plaintext. When the context type differs
+  from the type of the sealed value, the sealed field cannot be picked at
+  all.
+- **The declaration names the field.** `pick` is a plain function pointer,
+  visible at review, like the selector of `project`. A value supplied at the
+  call could reach one side of a target and not the other. A named field
+  cannot.
+
+`context_from` replaces the surrounding context, and does not extend it. A
+target that takes its context this way cannot be a field of a record that
+declares contexts, because its context input is `NoCallerContext`.
+
+Two halves of one target, zipped after two `context_from` calls, could each
+take a different field. Decision 1 already accepts that difference for
+contexts declared per side, because the declaration names each field.

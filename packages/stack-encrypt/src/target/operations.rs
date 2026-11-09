@@ -8,16 +8,18 @@
 //! of [`Encryption`] (ADR-0004): a target cannot route the context it is
 //! handed to one operation and something else to another, because there is
 //! no argument to route. What a subtree may do is take a context of its own,
-//! by name, with [`Encryption::under`] or [`Encryption::extend`].
+//! by name, with [`Encryption::under`] or [`Encryption::extend`]. A subtree
+//! can also read its context from a named field of the plaintext, with
+//! [`Encryption::context_from`].
 use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::conversion::{DecryptSource, EncryptTarget};
 use super::core::{encrypt_native, open_native, Term};
 use super::index::{Index, IndexSpec, Json};
-use super::input::RequiredContext;
+use super::input::{AcceptsContext, NoCallerContext, RequiredContext};
 use super::source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 use super::{CipherScope, Pending};
 use crate::json::{JsonDocument, JsonOptions, JsonTerms};
-use crate::{Error, IntoContext, KeysetCipher, NonEmpty, StackCipher, StackCipherText};
+use crate::{Error, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
 use std::fmt;
 
@@ -114,14 +116,17 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 ///   other. A ciphertext beside a term takes the term's context through
 ///   [`accepting`](Self::accepting): the [`AeadContext`] it seals under is
 ///   the AEAD half of that one value. A side given a context of its own,
-///   with [`under`](Self::under) or [`extend`](Self::extend), says so in the
-///   declaration; that is how a record names its fields' contexts, and the
-///   tree does not tell a record's fields from a target's halves.
+///   with [`under`](Self::under), [`extend`](Self::extend), or
+///   [`context_from`](Self::context_from), says so in the declaration; that
+///   is how a record names its fields' contexts, and the tree does not tell a
+///   record's fields from a target's halves.
 /// - **A leaf still cannot be reached without a context.** An operation needs
-///   a real one. [`under`](Self::under) and [`extend`](Self::extend) are the
-///   only ways to change the context a subtree runs under, and only `under`
-///   discharges the requirement into a [`DeclaredContext`], which is what
-///   `()` may satisfy.
+///   a real one. [`under`](Self::under) and [`extend`](Self::extend) change
+///   the context that a subtree runs under. `under` discharges the
+///   requirement into a [`DeclaredContext`], and `()` may satisfy that.
+///   [`context_from`](Self::context_from) also discharges the requirement,
+///   into [`NoCallerContext`], with the context read from a named field of
+///   the plaintext.
 ///
 /// `M` is how the description is handed its plaintext ([`SourceMode`]):
 /// by reference in the default [`Borrowed`] mode, which every
@@ -347,6 +352,124 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     ) -> Encryption<'s, P, T, K, Ctx> {
         Encryption {
             build: Box::new(move |source, cipher, cx| (self.build)(select(source), cipher, cx)),
+        }
+    }
+    /// Takes the context from a field of the plaintext. The caller then
+    /// supplies no context.
+    ///
+    /// Use it for a value that arrives together with its context. For example,
+    /// a value decrypted from an older format comes with the column it was
+    /// stored in. A type that wraps the target names the field that contains
+    /// the context, once. Callers of that type then encrypt without a context
+    /// argument.
+    ///
+    /// The target must store its context in the row. In the types, its context
+    /// input must be a typed context, `NonEmpty<C>`. A record with a
+    /// `#[stash(context_field)]` has such an input. An EQL type has one too,
+    /// and stores its column in `i`. So the context is read from the plaintext
+    /// on the way in, and from the row on the way out.
+    ///
+    /// Opening a value never needs its plaintext.
+    ///
+    /// `pick` returns a reference to a field of the plaintext. So `pick` can
+    /// only pass on a value that the plaintext contains. It cannot compute a
+    /// context from the plaintext. `pick` is a plain function pointer, like the
+    /// selector of [`project`](Self::project), so it cannot reach a cipher.
+    ///
+    /// The context must not be empty. If it is empty, the description fails.
+    /// No key is requested.
+    ///
+    /// # Security
+    ///
+    /// The picked field is not secret. ZeroKMS receives it as the descriptor
+    /// of the data key. A target that stores its context also writes it in
+    /// the clear.
+    ///
+    /// Pick a field that says where the value belongs, such as its column.
+    /// Never pick a field that is also sealed: its plaintext would then be
+    /// stored outside the ciphertext. The compiler refuses that mistake when
+    /// the context type differs from the type of the sealed value, as
+    /// `Identifier` differs from `String`.
+    ///
+    /// ```
+    /// use stack_encrypt::sem::EqualityTerm;
+    /// use stack_encrypt::target::{EncryptTarget, Encryption, NoCallerContext};
+    /// use stack_encrypt::{EncryptInto, NonEmpty, StackCipher};
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use zeroize::Zeroize;
+    ///
+    /// /// A value and the column it belongs to.
+    /// struct Placed {
+    ///     column: String,
+    ///     value: String,
+    /// }
+    /// impl Zeroize for Placed {
+    ///     // The column is not secret.
+    ///     fn zeroize(&mut self) {
+    ///         self.value.zeroize();
+    ///     }
+    /// }
+    ///
+    /// /// The stored form: the column in the clear, and the term of the value.
+    /// #[derive(EncryptTarget)]
+    /// #[stash(plaintext = String)]
+    /// struct Stored {
+    ///     #[stash(context_field)]
+    ///     column: String,
+    ///     hm: EqualityTerm,
+    /// }
+    ///
+    /// /// `Stored`, encrypted from a `Placed`, under the column in the `Placed`.
+    /// struct FromPlaced(Stored);
+    /// impl EncryptTarget<Placed> for FromPlaced {
+    ///     type ContextInput = NoCallerContext;
+    ///     fn encryption<'s, K: 'static>() -> Encryption<'s, Placed, Self, K, NoCallerContext> {
+    ///         <Stored as EncryptTarget<String>>::encryption()
+    ///             .project(|placed: &Placed| &placed.value)
+    ///             .context_from(|placed: &Placed| &placed.column)
+    ///             .map(FromPlaced)
+    ///     }
+    /// }
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let placed = Placed { column: "users/email".into(), value: "ada@example.com".into() };
+    /// // No context argument: the context comes from `placed.column`.
+    /// let FromPlaced(stored) = placed.encrypt_into(&keyset).await?;
+    /// assert_eq!(stored.column, "users/email");
+    ///
+    /// // The same term as passing the column as the context.
+    /// let direct: Stored = "ada@example.com"
+    ///     .to_owned()
+    ///     .encrypt_into_with_context(&keyset, NonEmpty::new("users/email".to_owned())?)
+    ///     .await?;
+    /// assert_eq!(stored.hm, direct.hm);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// `context_from` works in the [`Borrowed`] mode. Every
+    /// `EncryptTarget::encryption` runs in that mode. The owned form of such a
+    /// target wraps the plaintext and runs the borrowed form, so the owned
+    /// form needs nothing more.
+    pub fn context_from<C>(
+        self,
+        pick: for<'borrow> fn(&'borrow S) -> &'borrow C,
+    ) -> Encryption<'s, S, T, K, NoCallerContext>
+    where
+        Ctx: AcceptsContext<Value = NonEmpty<C>>,
+        C: Clone + MaybeEmpty + 's,
+    {
+        Encryption {
+            build: Box::new(
+                move |source, cipher, _: NoCallerContext| match super::context::nonempty(
+                    pick(source).clone(),
+                ) {
+                    Ok(context) => (self.build)(source, cipher, Ctx::supplied(context)),
+                    Err(error) => Pending::failed(cipher, error),
+                },
+            ),
         }
     }
     /// [`under`](Encryption::under) for a context read out of the source
