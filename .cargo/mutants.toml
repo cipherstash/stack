@@ -86,6 +86,9 @@ exclude_re = [
   # stored context without checking it is pinned by
   # `a_stored_context_opens_as_stored_and_checks_an_expectation`.
   'stack-encrypt/src/target/input\.rs:\d+:\d+: replace <impl AllowsNoContext for ExpectedContext<T>>::omitted -> Self with Default::default\(\)$',
+  # Omitting a struct record's caller context declares no extra scope:
+  # `DeclaredScopes::omitted` returns Self::default().
+  'stack-encrypt/src/target/input\.rs:\d+:\d+: replace <impl AllowsNoContext for DeclaredScopes>::omitted -> Self with Default::default\(\)$',
   # A caller-free declaration adds nothing to the declared context: the
   # conversion returns Self::default().
   'stack-encrypt/src/target/input\.rs:\d+:\d+: replace <impl From<NoCallerContext> for super::DeclaredContext>::from -> Self with Default::default\(\)$',
