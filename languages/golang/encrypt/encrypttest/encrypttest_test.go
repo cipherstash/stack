@@ -81,16 +81,23 @@ func TestAssertContextsNamesTheFirstFieldThatDiffers(t *testing.T) {
 		t.Fatalf("failure text: %q", r.failed)
 	}
 
-	// A context of one part is that part, and a part of another type
-	// differs from the text the engine prints.
+	// A nested list of one part is in parentheses, where the engine's text
+	// is bare, so the shape of a context is checked as well as its parts.
 	r = &recorder{TB: t}
 	encrypttest.AssertContexts(r, users(),
+		encrypttest.Field("email", encrypttest.List{"users"}, "email"),
+		encrypttest.Field("notes", "users", "notes"),
+	)
+	if !strings.Contains(r.failed, "want: (users) / email") {
+		t.Fatalf("failure text: %q", r.failed)
+	}
+
+	// One list at the top of a context is the context: the same as its
+	// parts written out.
+	encrypttest.AssertContexts(t, users(),
 		encrypttest.Field("email", encrypttest.List{"users", "email"}),
 		encrypttest.Field("notes", "users", "notes"),
 	)
-	if !strings.Contains(r.failed, "want: (users / email)") {
-		t.Fatalf("failure text: %q", r.failed)
-	}
 }
 
 func TestAssertContextsReportsARefusedDeclaration(t *testing.T) {
