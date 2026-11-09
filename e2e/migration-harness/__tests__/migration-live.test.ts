@@ -76,7 +76,8 @@ for (const [kind, outcome, checkId] of cases) {
               (e) =>
                 e.kind === 'isolation-event' &&
                 Object(e.payload).result === 'denied' &&
-                Object(e.payload).resource === '/etc/shadow',
+                Object(e.payload).decision === 'forbidden' &&
+                Object(e.payload).resource === '/trace/canary',
             ),
           )
         if (checkId)
