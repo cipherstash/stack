@@ -333,7 +333,8 @@ guest, or module calls the term functions or the seal path directly. The
 plan grammar is wire format.
 
 This amendment was decided after a spike, a throwaway implementation on
-the `spike/planned-combinators` branch, showed that the change works.
+the `spike/planned-combinators` branch (commit `a4da7e931`), showed that
+the change works.
 Two pieces of work are affected. The pull request that adds the record
 derives (#1504) already emits combinators. The work that replaces the
 chain with `Planned` builds `Planned` as described here.
@@ -408,8 +409,13 @@ type's plan. The equivalence suite uses data plans written by hand.
    structural derive's output builds its plan in a `Result`. Its
    `encryption()` has a failure branch for a duplicate index the derive
    cannot see. A record with one field can fail to build. The
-   combinator-emitting derive has no such branch. The type system does
-   those checks.
+   combinator-emitting derive has no such branch. The derive refuses a
+   repeated field name and a shared name scope at compile time. One
+   check moves rather than disappears. A typed index set that repeats an
+   index, `(Equality, Equality)`, is refused by the builder at run time
+   today. Nothing else refuses it, except that no query can select from
+   it. The builder's removal must refuse it at compile time, on the
+   index set or in the derive, so the typed path loses no refusal.
 4. **The spike showed the lowering is small.** `Planned`'s two trait
    impls are about 260 lines. Most of them moved from `Plan::encryption`
    in `plan/build.rs` and `lower_without` in `dynamic::record`. Three
@@ -451,6 +457,14 @@ the first cases of that suite. The record derives' equivalence test in
 
 - Option 3, "one builder, three authors", is now one set of combinators
   and two composers. No Rust caller writes a plan by hand.
+- The second bullet of the decision said the builder lowers every call
+  to a combinator, with three additions. The three additions,
+  `passthrough()`, execution of a description held by value, and
+  `Index<S>` with `Indexes<S>`, are combinators, and they stay. The
+  builder goes.
+- The last bullet of the decision still holds, with one change. A
+  capability a plan cannot express is added to the plan grammar and to
+  `Planned`'s lowering, once, and every author gets it.
 - The third bullet of the decision, the derive emitting the builder, is
   reversed. The attribute grammar's narrowing stands.
 - The fifth bullet, `dynamic::record` driving the builder, now reads:
