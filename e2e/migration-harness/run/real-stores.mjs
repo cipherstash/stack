@@ -24,7 +24,10 @@ async function initializePostgres(actor, eqlBundle) {
   /** @type {import('postgres').Sql|undefined} */
   let admin
   try {
-    await docker(['network', 'create', '--internal', network])
+    // Trusted store servers need a host-loopback admin port. Docker does not
+    // publish ports for containers attached only to an internal bridge.
+    // Actor egress remains restricted by the separate isolation namespace.
+    await docker(['network', 'create', network])
     await docker([
       'run',
       '-d',
@@ -132,7 +135,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
   const dynamoNetwork = `${dynamo}-network`
   resources.push(() => docker(['network', 'rm', dynamoNetwork]))
   resources.push(dynamo)
-  await docker(['network', 'create', '--internal', dynamoNetwork])
+  await docker(['network', 'create', dynamoNetwork])
   await docker([
     'run',
     '-d',
