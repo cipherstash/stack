@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { eqlV4SuiteFilterEntries } from './lib/eql-v4-suite-inputs.mjs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  cargoPathDependencyClosure,
+  eqlV4CodecCrateEntries,
+  eqlV4SuiteFilterEntries,
+} from './lib/eql-v4-suite-inputs.mjs'
 import { filterCovers } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
@@ -57,4 +64,202 @@ describe('the EQL v4 migration suites trigger on their v4 inputs', () => {
       ).toEqual([])
     })
   }
+})
+
+describe('the EQL v4 migration suites trigger on the crates the codec compiles', () => {
+  const { crates, entries } = eqlV4CodecCrateEntries(REPO_ROOT)
+
+  it('walks the whole in-tree dependency graph of the codec', () => {
+    // The two crates that were missed sit two hops out, one behind
+    // `workspace = true` in a target-specific table. A walk that lost either
+    // edge would shrink and pass.
+    expect(crates).toEqual(
+      expect.arrayContaining([
+        'packages/stack-encrypt',
+        'packages/stack-encrypt-derive',
+        'packages/stack-kms',
+        'packages/stack-auth',
+        'packages/stack-profile',
+      ]),
+    )
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        'packages/stack-encrypt-derive/src/**',
+        'packages/stack-profile/src/**',
+      ]),
+    )
+  })
+
+  it('leaves eql-bindings to the finer-grained derivation', () => {
+    // Only part of the crate reaches the codec. A whole-source entry here would
+    // start this suite on files it never compiles.
+    expect(crates).toContain('packages/eql/crates/eql-bindings')
+    expect(entries.filter((e) => e.includes('/eql-bindings/'))).toEqual([])
+  })
+
+  const { on } = readWorkflow(WORKFLOW)
+  for (const event of ['push', 'pull_request']) {
+    it(`${WORKFLOW} (${event}) triggers on every in-tree crate the codec compiles`, () => {
+      const paths = on?.[event]?.paths ?? []
+      const uncovered = entries.filter(
+        (entry) => !filterCovers(paths, entry, entryCovers),
+      )
+      expect(
+        uncovered,
+        `${WORKFLOW} runs the EQL v4 migration suites through a codec that compiles these in-tree crates, but its \`${event}\` \`paths:\` filter does not list them, so a change confined to one starts no suite that runs it. Add each to BOTH copies of the filter.`,
+      ).toEqual([])
+    })
+  }
+})
+
+describe('cargoPathDependencyClosure', () => {
+  const roots = []
+  afterEach(() => {
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  /** A throwaway tree from `{ 'relative/path/Cargo.toml': 'contents' }`. */
+  function tree(files) {
+    const root = mkdtempSync(join(tmpdir(), 'eql-v4-suite-inputs-'))
+    roots.push(root)
+    for (const [path, contents] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true })
+      writeFileSync(join(root, path), contents)
+    }
+    return root
+  }
+  const pkg = (name) => `[package]\nname = "${name}"\nversion = "0.1.0"\n`
+
+  it('follows every spelling of a path dependency, transitively', () => {
+    const root = tree({
+      'start/Cargo.toml': `${pkg('start')}
+[dependencies]
+inline = { path = "../inline", features = [
+  "multi-line",
+] }
+dotted.path = "../dotted"
+registry = "1"
+pinned = { version = "1", optional = true }
+
+[build-dependencies]
+builder = { path = "../builder" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+targeted = { path = "../targeted", optional = true }
+
+[dependencies.tabled]
+path = "../tabled"
+`,
+      'inline/Cargo.toml': `${pkg('inline')}\n[dependencies]\ndeep = { path = "../deep" } # a comment\n`,
+      'deep/Cargo.toml': pkg('deep'),
+      'dotted/Cargo.toml': pkg('dotted'),
+      'builder/Cargo.toml': pkg('builder'),
+      'targeted/Cargo.toml': pkg('targeted'),
+      'tabled/Cargo.toml': pkg('tabled'),
+    })
+    expect(cargoPathDependencyClosure(root, 'start/Cargo.toml')).toEqual([
+      'builder',
+      'deep',
+      'dotted',
+      'inline',
+      'start',
+      'tabled',
+      'targeted',
+    ])
+  })
+
+  it('counts dev-dependencies for the starting crate only', () => {
+    // A dependency's own dev-dependencies are not built for a dependent. The
+    // derive crate's dev-dependency on stack-encrypt is a real instance.
+    const root = tree({
+      'start/Cargo.toml': `${pkg('start')}\n[dev-dependencies]\ndep = { path = "../dep" }\n`,
+      'dep/Cargo.toml': `${pkg('dep')}\n[dev-dependencies]\ntest-only = { path = "../missing" }\n`,
+    })
+    expect(cargoPathDependencyClosure(root, 'start/Cargo.toml')).toEqual([
+      'dep',
+      'start',
+    ])
+  })
+
+  it('terminates on a cycle', () => {
+    const root = tree({
+      'a/Cargo.toml': `${pkg('a')}\n[dependencies]\nb = { path = "../b" }\n`,
+      'b/Cargo.toml': `${pkg('b')}\n[dependencies]\na = { path = "../a" }\n`,
+    })
+    expect(cargoPathDependencyClosure(root, 'a/Cargo.toml')).toEqual(['a', 'b'])
+  })
+
+  it('resolves workspace = true through the workspace owning the crate', () => {
+    // The starting crate's workspace has no entry for `sibling`: the entry
+    // belongs to the outer workspace that owns `outer-member`, as the repo root
+    // owns stack-kms when the EQL workspace builds it.
+    const root = tree({
+      'Cargo.toml': `[workspace]
+members = ["outer-member"]
+
+[workspace.dependencies]
+sibling = { path = "./sibling", version = "1" }
+shared = "1"
+`,
+      'nested/Cargo.toml': '[workspace]\nmembers = ["start"]\n',
+      'nested/start/Cargo.toml': `${pkg('start')}\n[dependencies]\nouter-member = { path = "../../outer-member" }\n`,
+      'outer-member/Cargo.toml': `${pkg('outer-member')}\n[dependencies]\nsibling = { workspace = true }\nshared.workspace = true\n`,
+      'sibling/Cargo.toml': pkg('sibling'),
+    })
+    expect(cargoPathDependencyClosure(root, 'nested/start/Cargo.toml')).toEqual(
+      ['nested/start', 'outer-member', 'sibling'],
+    )
+  })
+
+  describe('throws rather than stopping short', () => {
+    const start = (deps) => `${pkg('start')}\n[dependencies]\n${deps}\n`
+
+    it('on a path with no manifest behind it', () => {
+      const root = tree({
+        'start/Cargo.toml': start('gone = { path = "../gone" }'),
+      })
+      expect(() =>
+        cargoPathDependencyClosure(root, 'start/Cargo.toml'),
+      ).toThrow(/gone resolves to gone, which has no Cargo.toml/)
+    })
+
+    it('on workspace = true with no owning workspace', () => {
+      const root = tree({
+        'start/Cargo.toml': start('orphan = { workspace = true }'),
+      })
+      expect(() =>
+        cargoPathDependencyClosure(root, 'start/Cargo.toml'),
+      ).toThrow(/orphan says workspace = true, but no workspace owns/)
+    })
+
+    it('on workspace = true with no entry in that workspace', () => {
+      const root = tree({
+        'Cargo.toml': '[workspace]\nmembers = ["start"]\n',
+        'start/Cargo.toml': start('absent = { workspace = true }'),
+      })
+      expect(() =>
+        cargoPathDependencyClosure(root, 'start/Cargo.toml'),
+      ).toThrow(/no \[workspace.dependencies\] entry for it/)
+    })
+
+    it('on a spec naming no source', () => {
+      const root = tree({
+        'start/Cargo.toml': start('odd = { features = ["x"] }'),
+      })
+      expect(() =>
+        cargoPathDependencyClosure(root, 'start/Cargo.toml'),
+      ).toThrow(/cannot resolve odd/)
+    })
+
+    it('on a line it cannot read', () => {
+      const root = tree({
+        'start/Cargo.toml': start('what is this'),
+      })
+      expect(() =>
+        cargoPathDependencyClosure(root, 'start/Cargo.toml'),
+      ).toThrow(/cannot read "what is this"/)
+    })
+  })
 })

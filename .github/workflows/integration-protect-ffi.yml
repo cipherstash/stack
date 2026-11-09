@@ -101,8 +101,11 @@ on:
       # re-encrypt through. `eql:v4:install` builds the v4 bundle from the SQL
       # source with `tasks/build.sh` (which runs eql-codegen), and `eql:v4:codec`
       # builds `tests/encryption/examples/v4_codec.rs` over eql-bindings' v4
-      # targets, stack-encrypt and stack-kms. No published package carries any of
-      # it, so these paths are the only inputs that change what those suites run.
+      # targets, stack-encrypt, stack-kms and the in-tree crates they depend on
+      # (stack-encrypt-derive, stack-profile, stack-auth). No published package
+      # carries any of it, so these paths are the only inputs that change what
+      # those suites run. eql-v4-suite-triggers.test.mjs walks the codec's path
+      # dependencies, so a new in-tree crate fails there until it is listed here.
       # The crate entries are the eql-bindings modules the codec compiles and the
       # native binding does not (`v4`, `encryption`, `encoding`), and the
       # eql-codegen / eql-domains sources `tasks/build.sh` renders the v4 bundle
@@ -125,7 +128,10 @@ on:
       - 'packages/eql/tasks/**'
       - 'packages/eql/tests/encryption/**'
       - 'packages/stack-encrypt/**'
+      - 'packages/stack-encrypt-derive/**'
       - 'packages/stack-kms/**'
+      - 'packages/stack-profile/Cargo.toml'
+      - 'packages/stack-profile/src/**'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
       - '.github/actions/build-auth-binding/**'
@@ -189,7 +195,10 @@ on:
       - 'packages/eql/tasks/**'
       - 'packages/eql/tests/encryption/**'
       - 'packages/stack-encrypt/**'
+      - 'packages/stack-encrypt-derive/**'
       - 'packages/stack-kms/**'
+      - 'packages/stack-profile/Cargo.toml'
+      - 'packages/stack-profile/src/**'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
       - '.github/actions/build-auth-binding/**'
