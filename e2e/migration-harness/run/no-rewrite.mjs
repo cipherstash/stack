@@ -47,3 +47,38 @@ export function noRewrite(before, after) {
       : {}),
   }
 }
+
+/** Validate the known Fixture App baseline before any Migrator invocation.
+ * @param {unknown} snapshot */
+export function validateLegacySnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object')
+    throw Error('Missing Legacy Data snapshot')
+  const data = Object.fromEntries(Object.entries(snapshot))
+  const item = data.dynamo?.Item
+  const row = data.postgres?.find(
+    (/** @type {{pk:string}} */ row) => row.pk === 'legacy',
+  )
+  if (item?.pk?.S !== 'legacy' || !row)
+    throw Error('Missing Legacy Data record')
+  for (const column of [
+    'email',
+    'emailLower',
+    'age',
+    'balance',
+    'active',
+    'notes',
+  ]) {
+    if (
+      typeof item[`${column}__source`]?.S !== 'string' ||
+      (column !== 'notes' && typeof item[`${column}__hmac`]?.S !== 'string')
+    )
+      throw Error(`Incomplete Legacy Data DynamoDB column: ${column}`)
+  }
+  for (const column of ['email', 'age', 'notes']) {
+    if (
+      typeof row[column]?.c !== 'string' ||
+      (column !== 'notes' && typeof row[column]?.hm !== 'string')
+    )
+      throw Error(`Incomplete Legacy Data Postgres column: ${column}`)
+  }
+}

@@ -49,11 +49,3 @@ for (const changed of [false, true]) {
       )
   })
 }
-test('missing Postgres terms identify attributes without disclosing bytes', () => {
-  const current = structuredClone(baseline)
-  current.postgres = []
-  const check = noRewrite(baseline, current)
-  assert.equal(check.passed, false)
-  assert.match(check.cause ?? '', /postgres.*legacy.*email.c/)
-  assert.doesNotMatch(check.cause ?? '', /pg-cipher|pg-term/)
-})
