@@ -9,7 +9,9 @@ help: the trait `Answers<stack_encrypt::op::Matches, std::string::String>` is no
       but trait `Answers<stack_encrypt::op::Eq, std::string::String>` is implemented for it
   --> src/op/mod.rs
    |
-   | impl<S: crate::Encrypt + 'static> Answers<Eq, S> for EqualityTerm {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | / impl<S> Answers<Eq, S> for EqualityTerm
+   | | where
+   | |     S: crate::Encrypt + Clone + 'static,
+   | |________________________________________^
    = help: for that trait implementation, expected `stack_encrypt::op::Eq`, found `stack_encrypt::op::Matches`
    = note: required for `ValuePlan<std::string::String, Typed<EqualityTerm>>` to implement `Chooses<stack_encrypt::op::Matches, std::string::String, Whole>`

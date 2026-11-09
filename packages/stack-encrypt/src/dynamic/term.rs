@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
 use crate::json::{JsonOptions, JsonPath};
-use crate::sem::{DefaultMatch, MatchOptions, Orderable, QueryTokens, TermError, Tokenizer};
+use crate::sem::{DefaultMatch, MatchOptions, Orderable, TermError, Tokenizer};
 use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::value::{Date, Decimal, Timestamp};
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
@@ -460,7 +460,19 @@ where
     P: Encrypt,
     D: IntoPrfContext<'c>,
 {
-    derive(cipher, value, kind, context, Use::Query)?
+    // The query refusals first, as `query_term` makes them: a probe is a
+    // query, so match text that cuts no token is refused here rather than
+    // derived as the empty filter a stored value keeps.
+    let not_taken = || Error::Term {
+        field: None,
+        kind: kind.clone(),
+    };
+    let frame = ValueFrame::of(value).map_err(|_| not_taken())?;
+    if !kind.defines(&frame) {
+        return Err(not_taken());
+    }
+    super::query::prepare_scalar(kind, &frame)?;
+    derive(cipher, &frame, kind, context)?
         .await
         .map(TermBytes::into_bytes)
         .map_err(Error::Cipher)
@@ -497,14 +509,6 @@ impl AsRef<[u8]> for TermBytes {
     }
 }
 
-/// What a derived term is for: a query refuses match text that cuts no
-/// token, which a stored value keeps as the empty filter.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Use {
-    Query,
-    Store,
-}
-
 /// Walk `value` to its one scalar and derive `kind`'s term there. Nothing
 /// is requested: a term is derived by the keyset cipher's own PRF, so the
 /// pending is ready when it is built.
@@ -512,14 +516,15 @@ pub(super) enum Use {
 /// # Errors
 ///
 /// [`Error::Term`] if the value is not one scalar `kind` takes, and
-/// [`Error::Cipher`] for a query's match text with no token or text the
-/// index cannot normalize, as for [`term`].
+/// [`Error::Cipher`] for text the index cannot normalize. The query
+/// refusals are not here: a caller that derives a query term has prepared
+/// the input ([`super::query::prepare_scalar`]), and the record path
+/// stores match text with no token as the empty filter.
 pub(super) fn derive<'a, 'c, K: 'static, P, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: P,
     kind: &IndexSpec,
     context: NonEmpty<D>,
-    purpose: Use,
 ) -> Result<Pending<'a, TermBytes, K>, Error>
 where
     P: Encrypt,
@@ -528,7 +533,7 @@ where
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| {
-                scalar_term(cipher, kind, ty, value, context, purpose)
+                scalar_term(cipher, kind, ty, value, context)
             },
         ))
         .map_err(|refused| {
@@ -550,7 +555,6 @@ fn scalar_term<'a, 'c, K: 'static, D>(
     ty: Option<Logical>,
     value: Physical<'_>,
     context: NonEmpty<D>,
-    purpose: Use,
 ) -> Result<Pending<'a, TermBytes, K>, Option<Error>>
 where
     D: IntoPrfContext<'c>,
@@ -570,13 +574,6 @@ where
             let Physical::Text(text) = value else {
                 return Err(None);
             };
-            if purpose == Use::Query {
-                // The query chain's rule, from the same helper: options the
-                // index cannot use, then text the index cannot normalize or
-                // that cuts no token.
-                let _tokens = QueryTokens::of_query(text, options)
-                    .map_err(|error| Some(Error::Cipher(error.into())))?;
-            }
             Ok(cipher
                 .match_terms_under::<DefaultMatch>(text, context, options.clone())
                 .map(|terms| TermBytes(terms.to_bytes())))
@@ -864,7 +861,7 @@ impl Index<ValueFrame> for IndexSpec {
                 Ok(context) => CallerContext::query_nonempty(context),
                 Err(error) => return Pending::failed(cipher, error),
             };
-            match derive(cipher, M::view(&source), &spec, context, Use::Store) {
+            match derive(cipher, M::view(&source), &spec, context) {
                 Ok(pending) => pending.under_context(query, stored),
                 Err(error) => Pending::failed(cipher, lifted(error)),
             }

@@ -21,7 +21,7 @@ use eql_bindings::v4::{
 use eql_bindings::Identifier;
 use serde::Serialize;
 use stack_encrypt::dynamic::{
-    self, record, FieldPlan, OpSpec, Operand, TargetDescriptor, TargetError, TargetResolver,
+    self, record, FieldPlan, Op, Operand, TargetDescriptor, TargetError, TargetResolver,
     ValueFrame,
 };
 use stack_encrypt::op::{self, Probabilistic, Stats};
@@ -117,7 +117,7 @@ async fn data_term(
     cipher: &Cipher,
     name: &str,
     column: &str,
-    operator: OpSpec,
+    operator: Op,
     input: ValueFrame,
 ) -> (Vec<u8>, String) {
     let keyset = cipher.default_keyset();
@@ -300,7 +300,7 @@ fn the_typed_chain_answers_what_the_data_path_answers() {
         let data: Vec<&str> = describe(target)
             .operators()
             .into_iter()
-            .map(OpSpec::name)
+            .map(Op::name)
             .collect();
         let typed: Vec<&str> = ANSWERS
             .iter()
@@ -381,7 +381,7 @@ async fn every_typed_query_is_the_data_paths_query() {
         for operator in *operators {
             let column = "col";
             let (typed, input) = typed_and_input(&cipher, name, operator, column).await;
-            let op = OpSpec::parse(operator).unwrap();
+            let op = Op::parse(operator).unwrap();
             let data = data_term(&cipher, name, column, op, input).await;
             assert_eq!(typed, data, "{name} {operator}");
             let json: serde_json::Value = serde_json::from_slice(&typed.0).unwrap();
@@ -422,13 +422,13 @@ async fn a_typed_match_query_verifies_and_sizes_as_the_data_path_does() {
 
         let page = ["Alice Smith", "alicia", "Bob", "malice", "ALICE", "al", ""];
         let data =
-            dynamic::verify(&plan, "value", OpSpec::Matches, input.clone(), page, &Eql).unwrap();
+            dynamic::verify(&plan, "value", Op::Matches, input.clone(), page, &Eql).unwrap();
         let typed: Vec<bool> = page.iter().map(|v| query.verify(v)).collect();
         assert_eq!(typed, data, "{needle}");
         assert!(query.verify("Alice Smith"), "{needle}");
         assert!(!query.verify("Bob"), "{needle}");
 
-        let (term, _) = data_term(&cipher, "TextMatch", "name", OpSpec::Matches, input).await;
+        let (term, _) = data_term(&cipher, "TextMatch", "name", Op::Matches, input).await;
         assert_eq!(
             serde_json::to_vec(&query).unwrap(),
             term,
@@ -443,7 +443,7 @@ async fn a_typed_match_query_verifies_and_sizes_as_the_data_path_does() {
                 let data = dynamic::target_limit(
                     &plan,
                     "value",
-                    OpSpec::Matches,
+                    Op::Matches,
                     &term,
                     want,
                     &stats,

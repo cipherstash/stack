@@ -236,7 +236,7 @@ async fn binding_conformance() {
             &keyset,
             &bound,
             "text",
-            dynamic::OpSpec::Eq,
+            dynamic::Op::Eq,
             "hello",
             &dynamic::NoTargets,
         );
@@ -249,7 +249,7 @@ async fn binding_conformance() {
             &keyset,
             &unbound,
             "text",
-            dynamic::OpSpec::Eq,
+            dynamic::Op::Eq,
             "hello",
             &dynamic::NoTargets,
         )

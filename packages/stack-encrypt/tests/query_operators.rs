@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use common::frames::{frame, object};
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Value as Json};
-use stack_encrypt::dynamic::{self, record, NoTargets, OpSpec, Operand, QueryTerm, ValueFrame};
+use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, QueryTerm, ValueFrame};
 use stack_encrypt::op::{self, Limit, Probabilistic, Stats};
 use stack_encrypt::{Equality, KeysetCipher, Match, Ore, Plan, StackCipher};
 use vitaminc_aead::plaintext::{Physical, Raw};
@@ -40,19 +40,19 @@ fn plan_json() -> Json {
 }
 
 /// Each query: a field, an operator and its input, as a binding sends them.
-fn queries() -> Vec<(&'static str, OpSpec, Json)> {
+fn queries() -> Vec<(&'static str, Op, Json)> {
     vec![
-        ("email", OpSpec::Eq, json!("bob@example.com")),
-        ("age", OpSpec::Eq, json!(34)),
-        ("age", OpSpec::Lt, json!(40)),
-        ("age", OpSpec::Lte, json!(40)),
-        ("age", OpSpec::Gt, json!(18)),
-        ("age", OpSpec::Gte, json!(18)),
-        ("age", OpSpec::Between, json!([18, 65])),
-        ("name", OpSpec::Matches, json!("alice")),
-        ("name", OpSpec::Matches, json!("ali")),
-        ("score", OpSpec::Lt, json!(1.5)),
-        ("score", OpSpec::Between, json!([-0.5, 2.5])),
+        ("email", Op::Eq, json!("bob@example.com")),
+        ("age", Op::Eq, json!(34)),
+        ("age", Op::Lt, json!(40)),
+        ("age", Op::Lte, json!(40)),
+        ("age", Op::Gt, json!(18)),
+        ("age", Op::Gte, json!(18)),
+        ("age", Op::Between, json!([18, 65])),
+        ("name", Op::Matches, json!("alice")),
+        ("name", Op::Matches, json!("ali")),
+        ("score", Op::Lt, json!(1.5)),
+        ("score", Op::Between, json!([-0.5, 2.5])),
     ]
 }
 
@@ -132,7 +132,7 @@ fn limit_json(limit: Limit) -> Json {
 async fn typed_operand(
     cipher: &StackCipher<DeterministicSource>,
     field: &str,
-    operator: OpSpec,
+    operator: Op,
     input: &Json,
 ) -> Operand {
     let int = |value: &Json| u32::try_from(value.as_u64().expect("an integer")).expect("a u32");
@@ -143,7 +143,7 @@ async fn typed_operand(
         .expect("plan");
     let one = Operand::One;
     match (field, operator) {
-        ("email", OpSpec::Eq) => {
+        ("email", Op::Eq) => {
             let plan = Plan::context("users/email")
                 .with::<String, _>(Equality)
                 .build()
@@ -155,37 +155,37 @@ async fn typed_operand(
                 .expect("eq")
                 .to_bytes())
         }
-        ("age", OpSpec::Eq) => one(cipher
+        ("age", Op::Eq) => one(cipher
             .query(op::Eq, &int(input))
             .on(&age)
             .await
             .expect("eq")
             .to_bytes()),
-        ("age", OpSpec::Lt) => one(cipher
+        ("age", Op::Lt) => one(cipher
             .query(op::Lt, &int(input))
             .on(&age)
             .await
             .expect("lt")
             .to_bytes()),
-        ("age", OpSpec::Lte) => one(cipher
+        ("age", Op::Lte) => one(cipher
             .query(op::Lte, &int(input))
             .on(&age)
             .await
             .expect("lte")
             .to_bytes()),
-        ("age", OpSpec::Gt) => one(cipher
+        ("age", Op::Gt) => one(cipher
             .query(op::Gt, &int(input))
             .on(&age)
             .await
             .expect("gt")
             .to_bytes()),
-        ("age", OpSpec::Gte) => one(cipher
+        ("age", Op::Gte) => one(cipher
             .query(op::Gte, &int(input))
             .on(&age)
             .await
             .expect("gte")
             .to_bytes()),
-        ("age", OpSpec::Between) => {
+        ("age", Op::Between) => {
             let range = cipher
                 .query(op::Between, &(int(&input[0]), int(&input[1])))
                 .on(&age)
@@ -196,7 +196,7 @@ async fn typed_operand(
                 hi: range.hi().to_bytes(),
             }
         }
-        ("name", OpSpec::Matches) => one(typed_match(cipher, &text(input)).await.to_bytes()),
+        ("name", Op::Matches) => one(typed_match(cipher, &text(input)).await.to_bytes()),
         ("score", operator) => {
             let float = |value: &Json| value.as_f64().expect("a number");
             let score = Plan::context("users/score")
@@ -204,13 +204,13 @@ async fn typed_operand(
                 .build()
                 .expect("plan");
             match operator {
-                OpSpec::Lt => one(cipher
+                Op::Lt => one(cipher
                     .query(op::Lt, &float(input))
                     .on(&score)
                     .await
                     .expect("lt")
                     .to_bytes()),
-                OpSpec::Between => {
+                Op::Between => {
                     let range = cipher
                         .query(op::Between, &(float(&input[0]), float(&input[1])))
                         .on(&score)
@@ -247,7 +247,7 @@ async fn data_term(
     keyset: &KeysetCipher<'_, DeterministicSource>,
     plan: &record::Plan,
     field: &str,
-    operator: OpSpec,
+    operator: Op,
     input: &Json,
 ) -> QueryTerm {
     dynamic::query_term(
@@ -297,7 +297,7 @@ async fn derived() -> Json {
     let verified = dynamic::verify(
         &plan,
         "name",
-        OpSpec::Matches,
+        Op::Matches,
         frame_of_value(&json!("alice")),
         &values,
         &NoTargets,
@@ -313,7 +313,7 @@ async fn derived() -> Json {
 
     let mut limits = Vec::new();
     for input in ["ali", "alice"] {
-        let term = data_term(&keyset, &plan, "name", OpSpec::Matches, &json!(input)).await;
+        let term = data_term(&keyset, &plan, "name", Op::Matches, &json!(input)).await;
         let Operand::One(bytes) = term.operand() else {
             panic!("a match term is one term");
         };
@@ -323,7 +323,7 @@ async fn derived() -> Json {
                 .expect("stats read");
             assert_eq!(read, stats, "the wire form reads as the typed stats");
             let limit =
-                dynamic::target_limit(&plan, "name", OpSpec::Matches, bytes, 10, &read, &NoTargets)
+                dynamic::target_limit(&plan, "name", Op::Matches, bytes, 10, &read, &NoTargets)
                     .expect("a limit");
             assert_eq!(
                 limit,

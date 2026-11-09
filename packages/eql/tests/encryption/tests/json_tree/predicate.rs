@@ -10,7 +10,7 @@ use super::elements::{derive, eql_text, frame_of, Eql};
 use super::*;
 use stack_encrypt::AsProtectedRef as _;
 
-use stack_encrypt::dynamic::{self, record, OpSpec, Operand};
+use stack_encrypt::dynamic::{self, record, Op, Operand};
 use stack_encrypt::KeysetCipher;
 
 /// The paths the documents order: what the predicates' ranges ask at.
@@ -262,7 +262,7 @@ fn postgres_a_compiled_predicate_answers_as_its_operators() {
         let error = dynamic::check_query(
             &plan,
             "profile",
-            OpSpec::Match,
+            Op::Match,
             frame_of(&json!({"predicate": text})),
             &Eql,
         )
@@ -274,7 +274,7 @@ fn postgres_a_compiled_predicate_answers_as_its_operators() {
     let error = dynamic::check_query(
         &plan,
         "profile",
-        OpSpec::Match,
+        Op::Match,
         frame_of(&json!({"predicate": "$.height > 1"})),
         &Eql,
     )

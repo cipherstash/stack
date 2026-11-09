@@ -295,6 +295,7 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"ope on a uint8", "Rank", "\tRank uint8 `stash:\"rank,encrypt,index=ope\"`", "the engine refuses the declaration"},
 		{"order on a byte", "Rank", "\tRank byte `stash:\"rank,encrypt,index=equality;ore\"`", "the engine refuses the declaration"},
 		{"match on an integer", "Age", "\tAge int32 `stash:\"age,encrypt,index=match\"`", "the engine refuses the declaration"},
+		{"two order indexes on one field", "Score", "\tScore int64 `stash:\"score,encrypt,index=equality;ore;ope\"`", "the engine refuses the declaration"},
 		{"encrypt_into, no EQL type in this build", "Email", "\tEmail string `stash:\"email,encrypt_into=TextEq\"`", "EQL types are not available yet"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -320,7 +321,8 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"equality on an int8", "\tRank int8 `stash:\"rank,encrypt,index=equality\"`"},
 		{"equality on a float", "\tScore float64 `stash:\"score,encrypt,index=equality\"`"},
 		{"a declaration the engine runs", "\tAge uint32 `stash:\"age,encrypt,index=equality;ore\"`\n\tName string `stash:\"name,encrypt,index=match\"`"},
-		{"every index on an integer", "\tScore int64 `stash:\"score,encrypt,index=equality;ore;ope\"`\n\tRank int32 `stash:\"rank,index=ope\"`"},
+		{"every index on an integer", "\tScore int64 `stash:\"score,encrypt,index=equality;ore\"`\n\tRank int32 `stash:\"rank,index=ope\"`"},
+		{"two order indexes on an integer", "\tScore int64 `stash:\"score,encrypt,index=ore;ope\"`"},
 		{"orders on a decimal, a date and a timestamp", "\tAmount encrypt.Decimal `stash:\"amount,encrypt,index=equality;ore\"`\n\tDay encrypt.Date `stash:\"day,encrypt,index=ope\"`\n\tAt time.Time `stash:\"at,encrypt,index=equality;ore\"`"},
 		{"orders on text, bytes and a float", "\tName string `stash:\"name,encrypt,index=ore;ope;match\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`"},
 		{"a match query on an index-only field", "\tName string `stash:\"name,index=match\"`"},
@@ -366,11 +368,12 @@ func TestTheWholeDeclarationIsCheckedAgainstTheEmbeddedEngine(t *testing.T) {
 }
 
 // An index no generated method queries is stored, and the generator says
-// so, on stderr and in the file: an order index on bytes, and the second
-// of two order indexes on an integer, a float or text. An order index on
-// text or a float answers the orderings, so it gets methods and no notice.
+// so, on stderr and in the file: an order index on bytes. An order index on
+// text, a float or an integer answers the orderings, so it gets methods and
+// no notice. A second order index on one field is no notice: the engine
+// refuses the declaration (`TestRefusalsHoldAgainstTheEmbeddedEngine`).
 func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
-	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tBlob []byte `stash:\"blob,encrypt,index=ope\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`\n\tAge int64 `stash:\"age,encrypt,index=ore;ope\"`\n\tRank int32 `stash:\"rank,encrypt,index=ope\"`")
+	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tBlob []byte `stash:\"blob,encrypt,index=ope\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`\n\tAge int64 `stash:\"age,encrypt,index=ore\"`\n\tRank int32 `stash:\"rank,encrypt,index=ope\"`")
 	file, err := generate(t, src, stashgen.Request{Type: "User"})
 	if err != nil {
 		t.Fatal(err)
@@ -378,13 +381,12 @@ func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
 	notices := strings.Join(file.Notices, "\n")
 	for _, want := range []string{
 		"stashgen: User.Blob: stores ope terms that no generated method queries",
-		"stashgen: User.Age: stores ope terms that no generated method queries: the engine answers no query through the ope index on this field (int64): the ore index already answers",
 	} {
 		if !strings.Contains(notices, want) {
 			t.Errorf("notices lack %q:\n%s", want, notices)
 		}
 	}
-	for _, field := range []string{"User.Name", "User.Rank", "User.Score"} {
+	for _, field := range []string{"User.Name", "User.Rank", "User.Score", "User.Age"} {
 		if strings.Contains(notices, field) {
 			t.Errorf("an order index that answers the orderings got a notice (%s):\n%s", field, notices)
 		}

@@ -160,6 +160,7 @@
 //! place: a binding depends on the transport bytes, so they are frozen even
 //! where no column holds them.
 
+pub(crate) mod query;
 mod tokenize;
 
 pub use tokenize::Tokenizer;
@@ -1118,7 +1119,7 @@ impl<T> RangeQuery<T> {
 /// The query's tokens, as a match index cuts them from the query's value:
 /// a match query's verifier, which a [`MatchQuery`] keeps to verify a row. Plaintext, so it is
 /// zeroized on drop and has no `Debug`.
-/// [`Supports::verifier`](crate::op::Supports::verifier) makes one; only a query
+/// [`Supports::prepare`](crate::op::Supports::prepare) makes one; only a query
 /// chain can join it to a filter
 /// ([`Supports::query`](crate::op::Supports::query) takes a token no caller
 /// can make), so one query's tokens never verify rows for another value's
@@ -1127,16 +1128,6 @@ impl<T> RangeQuery<T> {
 pub struct QueryTokens(Zeroizing<tokenize::Tokens>);
 
 impl QueryTokens {
-    /// The tokens of `text` under `O`'s tokenizer and case folding.
-    ///
-    /// # Errors
-    ///
-    /// [`TermError::Normalize`] for text the index cannot normalize (a code
-    /// point unassigned in Unicode 16).
-    pub(crate) fn of<O: MatchConfig>(text: &str) -> Result<Self, TermError> {
-        Self::under(text, &O::options())
-    }
-
     /// The tokens of `text` under `options`' tokenizer and case folding.
     ///
     /// # Errors
@@ -1416,6 +1407,13 @@ mod sealed {
             &self,
             space: &OrderSpace<'_, S>,
         ) -> Result<S::Term, OrderError<S::Error>>;
+        /// What an order query of this value is refused for before any
+        /// key is requested: nothing, for a value whose order encoding
+        /// always exists. Text overrides it (`query::order`).
+        fn check_query(&self, block: bool) -> Result<(), super::TermError> {
+            let _ = block;
+            Ok(())
+        }
     }
 }
 
@@ -1438,10 +1436,30 @@ orderable!(
     u16 => U16, u32 => U32, u64 => U64, u128 => U128,
     i16 => I16, i32 => I32, i64 => I64, i128 => I128,
     f32 => F64, f64 => F64,
-    String => Text, Vec<u8> => Bytes,
+    Vec<u8> => Bytes,
     crate::value::Date => Date, crate::value::Timestamp => Timestamp,
     crate::value::Decimal => Decimal,
 );
+// Text by hand: its order encoding is the ADR-0002 fold, which refuses a
+// code point Unicode 16 does not assign, and block ORE bounds its length.
+// A query of such text is refused before any key, where every other
+// orderable value has nothing to refuse.
+impl sealed::Sealed for String {
+    fn encrypt_in<S: OrderScheme + vitaminc_ore::Supports<OrderTarget>>(
+        &self,
+        space: &vitaminc_ore::OrderSpace<'_, S>,
+    ) -> Result<S::Term, OrderError<S::Error>> {
+        space
+            .encrypt_checked(self)
+            .map(vitaminc_ore::OrderTerm::into_raw)
+    }
+    fn check_query(&self, block: bool) -> Result<(), TermError> {
+        query::order_text(self, block)
+    }
+}
+impl Orderable for String {
+    const TARGET: OrderTarget = OrderTarget::Text;
+}
 
 /// Why clww-ore produced no order term, as a [`TermError`]: the value's
 /// encoding refused it, or the scheme failed. `clww_ore::Error` carries
@@ -1963,9 +1981,8 @@ fn ore_block<T: Orderable>(
 /// Whether block ORE takes `text` as order text: its order encoding (the
 /// marker byte, then the fold, which a [`OreBlockTerm`] encrypts) must
 /// exist, fit the chained scheme's 1024 bytes, and not end in NUL. These
-/// are the refusals derivation makes, stated without a key, so a binding
-/// can refuse a query at its boundary.
-#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+/// are the refusals derivation makes, stated without a key, so a query is
+/// refused at its boundary on both paths ([`query::order`]).
 pub(crate) fn ore_block_text(text: &str) -> Result<(), TermError> {
     let encoded = vitaminc_ore::text(text)?;
     let encoded = vitaminc_protected::Controlled::risky_ref(&encoded);

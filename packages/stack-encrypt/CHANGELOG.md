@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Every operator is declared once, and `op::Supports` has one method**
+  (#1279, #1318). The `op` module lists each operator with its type, its
+  arity and its wire name; the dynamic enum `Op` (`dynamic::OpSpec` until
+  now, kept as a deprecated alias), each type's `Operator::OP` and
+  `Op::name` are generated from that list, so `op::Eq`, `Op::Eq` and
+  `"eq"` cannot drift apart. `Leaf` gains `AT`, the operator's path form.
+  - `Supports::check`, `verifier` and `admit` are one
+    `prepare(&self, input) -> Result<Self::Verifier, Error>`, called once
+    per query, when the query is awaited and before any keyset is
+    resolved. A match query cuts its tokens once and keeps them. An index
+    outside this crate implements `prepare` in place of the three.
+  - What a query is refused for is written once, in the `sem` module, for
+    the typed chain and the dynamic path alike. So the typed chain now
+    refuses an equality or order query of text with no normal form, and
+    block ORE text over its limit, before the keyset is resolved
+    (#1321); the dynamic path already did. `Supports<Eq, S> for Equality`
+    and `Answers<Eq, S>` need `S: Clone` for that check.
+  - `op::Matches` has no case parameter: `Case`, `CaseInsensitive`,
+    `CaseSensitive`, `op::MatchCase` and `PlanError::MatchCase` are gone.
+    Case is the match index's configuration alone, for the stored filter
+    and the query. Write `op::Matches` where you wrote
+    `op::Matches.case_sensitive()`; a `MatchConfig` needs no `MatchCase`.
+  - `dynamic::term` prepares its probe as `query_term` does, and the
+    stored-term derivation no longer carries a query flag.
+- **A field declares at most one index per operator** (#1233).
+  `(Ore, Ope)`, `(Ore, OreBlock)` and two match indexes are refused when
+  the plan is built, as `PlanError::IndexOverlap` on the typed path and
+  `overlapping_outputs` on the dynamic one, before any key is requested.
+  `(Equality, Ore)` answer different operators and are allowed. Each index
+  declares the operators it answers once (`Equality::OPERATORS`,
+  `Ore::OPERATORS`, …; `IndexSpec::operators` and `IndexSpec::answers`
+  read them), and `Op::answered_by` has no priority between order indexes.
+  A field that stored both order terms wrote the OPE one for nothing, and
+  it told anyone who read the column how its values order.
+
 - **Every part of a context is a scope or a binding** (#1487). Search terms
   derive under the query context, the scopes. The data key and the AAD
   derive under the stored context, the scopes then the bindings. A record

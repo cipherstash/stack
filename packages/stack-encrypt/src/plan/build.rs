@@ -1192,9 +1192,13 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     }
 }
 
-/// No index named twice in one field or one-value plan. Two match indexes
-/// with different options are still one index twice: a field has one term
-/// per index kind.
+/// No index named twice in one field or one-value plan, and no two indexes
+/// that answer one operator. Two match indexes with different options are
+/// still one index twice: a field has one term per index kind. `(Ore,
+/// Ope)` are two indexes that both answer the orderings, so a query for
+/// them would have to choose; the plan refuses them instead
+/// ([`PlanError::IndexOverlap`]), and the dynamic path refuses the same
+/// declaration (`overlapping_outputs`).
 pub(crate) fn check_indexes(at: &str, indexes: &[IndexSpec]) -> Result<(), PlanError> {
     for (i, index) in indexes.iter().enumerate() {
         if indexes[..i]
@@ -1206,6 +1210,14 @@ pub(crate) fn check_indexes(at: &str, indexes: &[IndexSpec]) -> Result<(), PlanE
                 index: index.key(),
             });
         }
+    }
+    if let Some((first, second, operator)) = crate::target::index::overlapping(indexes) {
+        return Err(PlanError::IndexOverlap {
+            at: at.to_owned(),
+            first: first.key(),
+            second: second.key(),
+            operator,
+        });
     }
     Ok(())
 }

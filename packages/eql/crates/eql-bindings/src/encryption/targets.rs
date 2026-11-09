@@ -509,7 +509,7 @@ fn decrypt_document<'a, K: 'static>(
 ///
 /// `index` is the type's index that answers the query's operator, one of
 /// [`Target::indexes`]; Stack Encrypt passes the one its
-/// `OpSpec::answered_by` picks. Most twins carry every term of their type
+/// `Op::answered_by` picks. Most twins carry every term of their type
 /// whatever the index. `TextSearchQuery` carries the index's term alone
 /// (EQL v4's search query terms are optional), so `=` and `<` on text too
 /// short for a match term are answered, and `matches` on it is refused.

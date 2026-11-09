@@ -288,7 +288,7 @@ mod tests {
     #[cfg(feature = "eql")]
     #[test]
     fn a_document_names_the_leaf_element_and_predicate_domains() {
-        use stack_encrypt::dynamic::{self, record, OpSpec};
+        use stack_encrypt::dynamic::{self, record, Op};
         let targets = resolver().targets();
         let document = targets
             .iter()
@@ -307,7 +307,7 @@ mod tests {
             Some("eql_v4.query_json_predicate")
         );
         assert!(
-            document.operators().contains(&OpSpec::Match),
+            document.operators().contains(&Op::Match),
             "the type lists match: {:?}",
             document.operators()
         );
@@ -331,12 +331,12 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let ordered = field_operators(&["$.contacts[*].relationship"]);
-        for present in [OpSpec::ElementMatch, OpSpec::Match] {
+        for present in [Op::ElementMatch, Op::Match] {
             assert!(ordered.contains(&present), "{present:?}: {ordered:?}");
         }
         let unordered = field_operators(&[]);
-        assert!(unordered.contains(&OpSpec::Match), "{unordered:?}");
-        assert!(!unordered.contains(&OpSpec::ElementMatch), "{unordered:?}");
+        assert!(unordered.contains(&Op::Match), "{unordered:?}");
+        assert!(!unordered.contains(&Op::ElementMatch), "{unordered:?}");
     }
 
     #[cfg(feature = "eql")]

@@ -131,6 +131,18 @@ func (e Static) check(ctx context.Context, d stashgen.Declaration) error {
 				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: err.Error()}
 			}
 		}
+		// The engine's rule (overlapping_outputs): a field declares at most
+		// one index per operator, so one order index and one match index.
+		orders := 0
+		for _, idx := range f.Indexes {
+			switch idx.Name {
+			case stashgen.IndexOre, stashgen.IndexOpe, stashgen.IndexOreBlock:
+				orders++
+			}
+		}
+		if orders > 1 {
+			return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: "the engine refuses the declaration: two indexes answer the orderings; a field declares one order index"}
+		}
 	}
 	return nil
 }

@@ -55,7 +55,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use common::frames::{frame, object};
-use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, OpSpec, Scope, ValueFrame};
+use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, Op, Scope, ValueFrame};
 use stack_encrypt::nonempty;
 use vitaminc_aead::plaintext::{Physical, Raw};
 use vitaminc_aead::Frame;
@@ -549,7 +549,7 @@ fn a_query_term_leaves_no_plaintext_on_the_heap() {
     let plan = plan();
     // The order operators answer over integers alone, which carry no
     // marker; equality and match read text.
-    for operator in [OpSpec::Eq, OpSpec::Matches] {
+    for operator in [Op::Eq, Op::Matches] {
         let query = frame(marked("query"));
         watched(&format!("query_term ({operator:?})"), || {
             rt.block_on(async {
@@ -603,7 +603,7 @@ fn verify_leaves_no_plaintext_on_the_heap() {
     let page = frame(vec![frame(marked("page")), null()]);
     watched("verify", || {
         let values = page.elements().unwrap();
-        let matched = verify(&plan, "email", OpSpec::Matches, &query, values, &NoTargets).unwrap();
+        let matched = verify(&plan, "email", Op::Matches, &query, values, &NoTargets).unwrap();
         assert_eq!(matched.len(), 2);
         drop(page);
         drop(query);
@@ -687,19 +687,16 @@ fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
     // Framed by the test's own writer, which leaves no copy behind, so a
     // block the watch sees is the engine's.
     let inputs = [
+        (Op::Contains, object(vec![("json", frame(needle.as_str()))])),
         (
-            OpSpec::Contains,
-            object(vec![("json", frame(needle.as_str()))]),
-        ),
-        (
-            OpSpec::EqAt,
+            Op::EqAt,
             object(vec![
                 ("path", frame("$.name")),
                 ("json", frame(at.as_str())),
             ]),
         ),
         (
-            OpSpec::GtAt,
+            Op::GtAt,
             object(vec![("path", frame("$.age")), ("json", frame(at.as_str()))]),
         ),
     ];
@@ -1226,25 +1223,25 @@ mod json_index {
         let vars = format!(r#"{{"v": {quoted}}}"#);
         let inputs = [
             (
-                OpSpec::Contains,
+                Op::Contains,
                 object(vec![("json", frame(document.as_str()))]),
             ),
             (
-                OpSpec::EqAt,
+                Op::EqAt,
                 object(vec![
                     ("path", frame("$.name")),
                     ("json", frame(quoted.as_str())),
                 ]),
             ),
             (
-                OpSpec::GtAt,
+                Op::GtAt,
                 object(vec![
                     ("path", frame("$.age")),
                     ("json", frame(quoted.as_str())),
                 ]),
             ),
             (
-                OpSpec::BetweenAt,
+                Op::BetweenAt,
                 object(vec![
                     ("path", frame("$.age")),
                     ("low", frame(quoted.as_str())),
@@ -1252,7 +1249,7 @@ mod json_index {
                 ]),
             ),
             (
-                OpSpec::ElementMatch,
+                Op::ElementMatch,
                 object(vec![
                     ("path", frame("$.visits[*]")),
                     (
@@ -1274,7 +1271,7 @@ mod json_index {
                 ]),
             ),
             (
-                OpSpec::Match,
+                Op::Match,
                 object(vec![
                     ("predicate", frame(predicate.as_str())),
                     ("vars", frame(vars.as_str())),
@@ -1313,7 +1310,7 @@ mod json_index {
                     .await
             })
             .unwrap();
-        let operand = |operator: OpSpec, path: &str| {
+        let operand = |operator: Op, path: &str| {
             rt.block_on(async {
                 query_term(
                     &keyset,
@@ -1338,7 +1335,7 @@ mod json_index {
             wire.to_string()
         };
         let stack_encrypt::dynamic::Operand::Text(name) =
-            operand(OpSpec::Selector, "$.name").operand().clone()
+            operand(Op::Selector, "$.name").operand().clone()
         else {
             panic!("a selector is text")
         };
@@ -1349,7 +1346,7 @@ mod json_index {
             .unwrap();
         let selected = vec![vec![row(at, None)]];
         let stack_encrypt::dynamic::Operand::TextList(tokens) =
-            operand(OpSpec::Subtree, "$.visits").operand().clone()
+            operand(Op::Subtree, "$.visits").operand().clone()
         else {
             panic!("a subtree read's tokens are a text array")
         };

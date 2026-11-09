@@ -174,7 +174,7 @@ mod collections;
 mod context;
 mod conversion;
 pub(crate) mod core;
-mod index;
+pub(crate) mod index;
 mod input;
 mod operations;
 mod pending;

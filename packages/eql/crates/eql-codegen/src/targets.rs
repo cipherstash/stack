@@ -80,7 +80,7 @@ pub(crate) enum Answer {
 }
 
 impl Answer {
-    /// The operator's wire name, `stack_encrypt::dynamic::OpSpec::name`.
+    /// The operator's wire name, `stack_encrypt::dynamic::Op::name`.
     pub(crate) fn name(self) -> &'static str {
         match self {
             Answer::Eq => "eq",
@@ -120,7 +120,7 @@ pub(crate) fn typed_gap(indexes: &[&str]) -> Option<&'static str> {
 /// The operators a producible type with a query twin answers, given the
 /// indexes it carries by [`index_key`] name, the same input the engine's
 /// table reads: `Eq` for the `"eq"` index and `Matches` for the `"match"`
-/// index, as `OpSpec::answered_by` answers a field that names the type
+/// index, as `Op::answered_by` answers a field that names the type
 /// (`TargetDescriptor::operators`). Empty for a type the chain has no
 /// answer for yet ([`typed_gap`]). The encryption tests compare the two,
 /// type by type, and hold the gap to exactly those types.
@@ -694,7 +694,7 @@ fn render_answers_from(rows: &[Row]) -> String {
 
         /// The operators each EQL type answers in Stack Encrypt's typed
         /// query chain (`op::Answers`), by the wire names
-        /// `stack_encrypt::dynamic::OpSpec` gives them, in catalog order:
+        /// `stack_encrypt::dynamic::Op` gives them, in catalog order:
         /// one row per type that answers any. Generated from the rule the
         /// impls below are, so the encryption tests can hold the impls to
         /// the operators the data path answers for each type. Not part of

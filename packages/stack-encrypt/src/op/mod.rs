@@ -31,6 +31,14 @@
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
+//! Every operator is declared once, with its type, its arity and its wire
+//! name ([`Op`], the dynamic vocabulary): `op::Eq`, `Op::Eq` and `"eq"`
+//! are three faces of one operator. Every index declares the operators it
+//! answers once as well (`Equality::OPERATORS`, `Ore::OPERATORS`, …), and
+//! a plan reads that declaration: a field declares at most one index per
+//! operator, so `(Equality, Ore)` is allowed and `(Ore, Ope)` is refused
+//! when the plan is built ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap)).
+//!
 //! Three traits connect an operator to an index, and ADR-0009 records why:
 //!
 //! - [`Supports<Op, In>`] is on an index, for each operator it can answer
@@ -40,6 +48,8 @@
 //!   value ([`MatchQuery`]), where it stores a filter over the stored value
 //!   ([`MatchTerms`]), and an ORE index sends one [`RangeQuery`] for
 //!   `Between`, carrying both bounds, where it stores one term per value.
+//!   Its [`prepare`](Supports::prepare) is what a query is refused for
+//!   before any key is requested, and what it keeps to check a row later.
 //! - [`Answers<Op, In>`] is on a target type, a domain type such as an EQL
 //!   type, and names the index that answers `Op` for it. It is written by
 //!   hand per type, because the choice decides what the query term reveals.
@@ -56,18 +66,19 @@
 //!
 //! What the types can see is checked at compile time: a match query on an
 //! integer, an ordering on bytes, an operator a target type does not answer,
-//! and, on a one-value plan, an index the plan does not hold or a
-//! case-sensitive match against a case-folding index. A field of a fields
-//! plan is data, so there an index the field does not declare, or declares
-//! with other options, is refused when the query is awaited, before any
-//! key is requested. So is a match configuration whose [`MatchCase`]
-//! disagrees with its options, and so is the one query value the library
-//! refuses: match text that cuts no token under the index's tokenizer,
-//! whose filter would match every row ([`TermError::EmptyTermText`]). The
-//! stored side has no such refusal: a value with no tokens is stored as
-//! the empty filter, which no query matches. A `Between` whose low bound is
-//! above its high bound is not refused either: as SQL's `BETWEEN`, it
-//! matches nothing.
+//! and, on a one-value plan, an index the plan does not hold. A field of a
+//! fields plan is data, so there an index the field does not declare, or
+//! declares with other options, is refused when the query is awaited,
+//! before any key is requested. So are the values a query refuses, which
+//! the `sem` module states once for the typed chain and the dynamic path:
+//! match text that cuts no token under the index's tokenizer, whose filter
+//! would match every row ([`TermError::EmptyTermText`]), and text an
+//! equality or order index cannot normalize. The stored side has no
+//! token refusal: a value with no tokens is stored as the empty filter,
+//! which no query matches. A `Between` whose low bound is above its high
+//! bound is not refused either: as SQL's `BETWEEN`, it matches nothing.
+//! Case is the match index's alone: its configuration says whether text is
+//! folded, for the stored filter and the query alike.
 //!
 //! [`TermError::EmptyTermText`]: crate::sem::TermError::EmptyTermText
 //! [`RangeQuery`]: crate::sem::RangeQuery
@@ -86,11 +97,11 @@ pub(crate) mod stats;
 pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
 use crate::sem::{
-    DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, Orderable,
-    OreBlockTerm, OreTerm, QueryTokens, RangeQuery,
+    query, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, Orderable, OreBlockTerm,
+    OreTerm, QueryTokens, RangeQuery,
 };
 use crate::target::{DeclaredContext, Equality, Index, Match, Ope, Ore, OreBlock, Owned, Pending};
-use crate::{Error, KeysetCipher, Label, NonEmpty, PlanError};
+use crate::{Error, KeysetCipher, Label, NonEmpty};
 
 /// A query operator: a unit type naming what a query asks of the server,
 /// and how many plaintexts it asks about ([`Arity`]).
@@ -102,15 +113,17 @@ pub trait Operator: Copy + 'static {
     /// [`Pair`] of them as a tuple, or for [`AtPath`] a path and its leaf
     /// operator's input ([`Pathed`]).
     type Arity: Arity;
+    /// This operator in the dynamic vocabulary ([`Op`]), or `None` for an
+    /// operator the dynamic path has no name for: one defined in another
+    /// crate, or an accessor over a leaf that has no path form
+    /// (`AtPath<Matches>`). Rust is the superset; the dynamic path is a
+    /// named subset.
+    const OP: Option<Op>;
 }
 
 /// Equality: rows whose value equals the query's.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Eq;
-
-impl Operator for Eq {
-    type Arity = One;
-}
 
 /// Less than: rows whose value is below the query's.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -138,21 +151,18 @@ pub struct Gte;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Between;
 
-impl Operator for Lt {
-    type Arity = One;
-}
-impl Operator for Lte {
-    type Arity = One;
-}
-impl Operator for Gt {
-    type Arity = One;
-}
-impl Operator for Gte {
-    type Arity = One;
-}
-impl Operator for Between {
-    type Arity = Pair;
-}
+/// Text search: rows whose text holds the query's text, as the match
+/// index's tokenizer cuts both. Probabilistic: the index is a Bloom filter,
+/// so the server's answer can hold rows that do not match, and the query
+/// term ([`MatchQuery`]) keeps the query's tokens to
+/// [`verify`](Probabilistic::verify) each decrypted row.
+///
+/// Case is the index's: a match index folds case when its configuration's
+/// [`downcase`](crate::sem::MatchOptions::downcase) says so, and the query
+/// is cut the same way, so a field and the queries on it agree by the one
+/// configuration. The operator itself has no case.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Matches;
 
 /// JSON containment: rows whose document contains the query's document
 /// (`@>`). Exact, as PostgreSQL's own `jsonb @>` is, across array elements
@@ -187,14 +197,9 @@ pub struct ContainedBy;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct AtPath<Op>(pub Op);
 
-impl Operator for Contains {
-    type Arity = One;
-}
-impl Operator for ContainedBy {
-    type Arity = One;
-}
-impl<Op: Leaf> Operator for AtPath<Op> {
-    type Arity = Pathed<Op::Arity>;
+impl<L: Leaf> Operator for AtPath<L> {
+    type Arity = Pathed<L::Arity>;
+    const OP: Option<Op> = L::AT;
 }
 
 /// An operator that compares one value, or one pair of bounds, and so can
@@ -210,15 +215,217 @@ impl<Op: Leaf> Operator for AtPath<Op> {
     label = "`op::AtPath` takes a leaf operator",
     note = "`op::AtPath` applies `op::Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` or `Matches` at a path; `op::Contains` and `op::ContainedBy` compare whole documents, and an accessor does not nest"
 )]
-pub trait Leaf: Operator<Arity: LeafArity> {}
+pub trait Leaf: Operator<Arity: LeafArity> {
+    /// This operator at a path, in the dynamic vocabulary: `Op::EqAt` for
+    /// [`Eq`](struct@Eq), or `None` for a leaf the dynamic path has no
+    /// path form of.
+    const AT: Option<Op>;
+}
 
-impl Leaf for Eq {}
-impl Leaf for Lt {}
-impl Leaf for Lte {}
-impl Leaf for Gt {}
-impl Leaf for Gte {}
-impl Leaf for Between {}
-impl<C: Case> Leaf for Matches<C> {}
+/// Every operator, declared once: its type, its arity, and the name the
+/// dynamic path and the wire give it. The [`Op`] enum, each type's
+/// [`Operator::OP`] and [`Leaf::AT`], and [`Op::name`] are all generated
+/// from this list, so the three faces of an operator (`op::Eq`, `Op::Eq`
+/// and `"eq"`) cannot drift apart. The leaves come first, then the
+/// document operators, then the leaves at a path, then the reads, which is
+/// the order a catalog lists them in ([`Op::ALL`]).
+macro_rules! operators {
+    (
+        leaves { $( $leaf:ident : $larity:ident {
+            $(#[$lm:meta])* $lv:ident = $lw:literal,
+            $( $(#[$am:meta])* $av:ident = $aw:literal, )?
+        } )+ }
+        documents { $( $doc:ident : $darity:ident { $(#[$dm:meta])* $dv:ident = $dw:literal, } )+ }
+        reads { $( $(#[$rm:meta])* $rv:ident = $rw:literal, )+ }
+    ) => {
+        $(
+            impl Operator for $leaf {
+                type Arity = $larity;
+                const OP: Option<Op> = Some(Op::$lv);
+            }
+            impl Leaf for $leaf {
+                const AT: Option<Op> = operators!(@at $($av)?);
+            }
+        )+
+        $(
+            impl Operator for $doc {
+                type Arity = $darity;
+                const OP: Option<Op> = Some(Op::$dv);
+            }
+        )+
+
+        /// An operator, named at run time: the runtime form of this
+        /// module's operator types, as
+        /// [`IndexSpec`](crate::target::IndexSpec) is of the index types.
+        /// A plan written as data names its operators this way
+        /// (`"eq"`, `"between"`, `"matches"`), and so does a binding.
+        ///
+        /// Generated from the one list of operators, with their types:
+        /// `Op::Eq` is [`op::Eq`](struct@Eq)'s [`Operator::OP`], and
+        /// [`name`](Self::name) is its wire name. Not `#[non_exhaustive]`:
+        /// the names are wire format, and a new operator is one every
+        /// binding has to be taught.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub enum Op {
+            $( $(#[$lm])* $lv, )+
+            $( $(#[$dm])* $dv, )+
+            $( $( $(#[$am])* $av, )? )+
+            $( $(#[$rm])* $rv, )+
+        }
+
+        impl Op {
+            /// Every operator, in declaration order: the leaves, the
+            /// document operators, the leaves at a path, then the reads.
+            /// The order a catalog lists them in.
+            pub const ALL: [Op; Self::COUNT] = [
+                $( Op::$lv, )+
+                $( Op::$dv, )+
+                $( $( Op::$av, )? )+
+                $( Op::$rv, )+
+            ];
+
+            const COUNT: usize = 0 $( + 1 $( + operators!(@one $av) )? )+ $( + operators!(@one $dv) )+ $( + operators!(@one $rv) )+;
+
+            /// The operator's wire name: `"eq"`, `"between"`, `"matches"`.
+            pub fn name(self) -> &'static str {
+                match self {
+                    $( Op::$lv => $lw, )+
+                    $( Op::$dv => $dw, )+
+                    $( $( Op::$av => $aw, )? )+
+                    $( Op::$rv => $rw, )+
+                }
+            }
+        }
+    };
+    (@at $av:ident) => { Some(Op::$av) };
+    (@at) => { None };
+    (@one $x:ident) => { 1 };
+}
+
+operators! {
+    leaves {
+        Eq: One {
+            /// `"eq"`: [`op::Eq`](struct@Eq).
+            Eq = "eq",
+            /// `"eq_at"`: [`op::AtPath`](AtPath)`(op::Eq)`, a scalar at a
+            /// path.
+            EqAt = "eq_at",
+        }
+        Lt: One {
+            /// `"lt"`: [`op::Lt`](Lt).
+            Lt = "lt",
+            /// `"lt_at"`: `op::AtPath(op::Lt)`, at a path the index orders.
+            LtAt = "lt_at",
+        }
+        Lte: One {
+            /// `"lte"`: [`op::Lte`](Lte).
+            Lte = "lte",
+            /// `"lte_at"`: `op::AtPath(op::Lte)`.
+            LteAt = "lte_at",
+        }
+        Gt: One {
+            /// `"gt"`: [`op::Gt`](Gt).
+            Gt = "gt",
+            /// `"gt_at"`: `op::AtPath(op::Gt)`.
+            GtAt = "gt_at",
+        }
+        Gte: One {
+            /// `"gte"`: [`op::Gte`](Gte).
+            Gte = "gte",
+            /// `"gte_at"`: `op::AtPath(op::Gte)`.
+            GteAt = "gte_at",
+        }
+        Between: Pair {
+            /// `"between"`: [`op::Between`](Between), whose input is a
+            /// pair of bounds, low then high, inclusive.
+            Between = "between",
+            /// `"between_at"`: `op::AtPath(op::Between)`, two bounds,
+            /// inclusive.
+            BetweenAt = "between_at",
+        }
+        Matches: One {
+            /// `"matches"`: [`op::Matches`](struct@Matches), in the case
+            /// the field's match index fixes.
+            Matches = "matches",
+        }
+    }
+    documents {
+        Contains: One {
+            /// `"contains"`: [`op::Contains`](Contains), a stored
+            /// document containing a JSON document (`@>`). Answered by the
+            /// JSON index of a field that stores a document. The inputs of
+            /// this and the operators below are named by `Op::input`
+            /// (with the `dynamic` feature); `dynamic::query_term` derives
+            /// their operands and `dynamic::json_open` opens their reads.
+            Contains = "contains",
+        }
+        ContainedBy: One {
+            /// `"contained_by"`: [`op::ContainedBy`](ContainedBy), a
+            /// stored document contained by a JSON document (`<@`).
+            ContainedBy = "contained_by",
+        }
+    }
+    reads {
+        /// `"selector"`: the selector of a path, which `->` and the path
+        /// functions take
+        /// ([`KeysetCipher::json_selector`](crate::KeysetCipher::json_selector)).
+        Selector = "selector",
+        /// `"subtree"`: the tokens of a read of the node at a path,
+        /// wildcards expanded to a bound, which `json_tree_subtree` takes
+        /// ([`KeysetCipher::json_subtree_key_with_bound`](crate::KeysetCipher::json_subtree_key_with_bound)).
+        Subtree = "subtree",
+        /// `"children"`: the token of the node at a path with no wildcard,
+        /// which `json_tree_children` takes.
+        Children = "children",
+        /// `"child_count"`: the same token, which `json_tree_child_count`
+        /// takes.
+        ChildCount = "child_count",
+        /// `"element_match"`: a predicate on one element of an array,
+        /// each member a field of the element at an ordered path with its
+        /// bounds, which `json_tree_element_match` takes. True of a row
+        /// where some one element satisfies every member.
+        ElementMatch = "element_match",
+        /// `"match"`: a jsonpath predicate and its variables, compiled to
+        /// a tree of the other operators' operands, which
+        /// `json_tree_match` and `@@` take: the one-parameter form of
+        /// `jsonb_path_match`. Its input is `{"predicate", "vars"?,
+        /// "wildcard_bound"?}`, `vars` the JSON text of the object
+        /// `jsonb_path_match` takes. It reads the subset of SQL/JSON path
+        /// predicates the index's terms answer: comparisons of a path
+        /// (`$.a.b`, `$.a[*].b`, `$."a b"`) with a variable or a literal,
+        /// `exists(path)`, `exists(path[*] ? (@.x == $v && @.y > $w))`,
+        /// `&&`, `||`, `!` and parentheses; and refuses anything else at
+        /// the byte it starts (`dynamic::Error::Predicate`). The text is
+        /// PostgreSQL's [SQL/JSON path language](https://www.postgresql.org/docs/current/functions-json.html#FUNCTIONS-SQLJSON-PATH).
+        /// It is true of jsonpath's rows, and its answer is jsonpath's,
+        /// three-valued, save that an ordering of a JSON `null` is unknown
+        /// rather than false except under an odd number of `!` (which
+        /// picks the same rows, and keeps a `null` needle out of the
+        /// operand), a path is read as written (lax mode's unwrapping of an
+        /// array the path names no `[*]` for, and its wrapping of a value
+        /// that is not an array where it does, are not applied), a
+        /// comparison of two kinds of value is decided by the terms where
+        /// jsonpath answers unknown, and an ordering or a filter of more
+        /// than one condition compares by the ordering terms, as
+        /// `element_match` does. `dynamic::check_query`'s documentation
+        /// has an example.
+        Match = "match",
+    }
+}
+
+impl Op {
+    /// The operator a name names, or `None` for a name that is not one.
+    /// Names match exactly: `"eq"`, not `"Eq"` or `"="`.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|op| op.name() == name)
+    }
+}
+
+impl fmt::Display for Op {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
 
 /// How many plaintexts a query for an operator takes: [`One`] or a
 /// [`Pair`], or for an accessor a path and its leaf's input ([`Pathed`]).
@@ -403,128 +610,11 @@ ordered!(
     crate::value::Decimal,
 );
 
-/// Text search: rows whose text contains the query's tokens, under the
-/// match index's tokenizer. Not containment: a Bloom match is order- and
-/// multiplicity-insensitive.
-///
-/// `C` is the case the query is asked in, [`CaseInsensitive`] unless named
-/// otherwise. A match index answers only the case its configuration fixes
-/// ([`MatchCase`]), so asking a case-folding index for a case-sensitive
-/// match is a compile error rather than a query that quietly folds case.
-///
-/// The value [`Matches`](constant@Matches) is the case-insensitive operator,
-/// as `PhantomData` is a value of its type; [`case_sensitive`](Matches::case_sensitive)
-/// is the other.
-pub struct Matches<C = CaseInsensitive> {
-    case: PhantomData<fn() -> C>,
-}
-
-/// The case-insensitive text search operator, as a value:
-/// `cipher.query(op::Matches, "ali")`.
-#[allow(non_upper_case_globals)]
-pub const Matches: Matches = Matches::new();
-
-impl<C> Matches<C> {
-    /// The operator in the case `C`: `Matches::<CaseSensitive>::new()`.
-    pub const fn new() -> Self {
-        Self { case: PhantomData }
-    }
-}
-
-impl Matches {
-    /// The case-sensitive text search operator:
-    /// `cipher.query(op::Matches.case_sensitive(), "Ali")`. Only a match
-    /// index whose configuration does not fold case answers it.
-    pub const fn case_sensitive(self) -> Matches<CaseSensitive> {
-        Matches::new()
-    }
-}
-
-// By hand, so `C` (a marker type) need not implement them.
-impl<C> Clone for Matches<C> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<C> Copy for Matches<C> {}
-impl<C> Default for Matches<C> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl<C> PartialEq for Matches<C> {
-    fn eq(&self, _: &Self) -> bool {
-        true
-    }
-}
-impl<C> std::cmp::Eq for Matches<C> {}
-impl<C> std::hash::Hash for Matches<C> {
-    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
-}
-impl<C: Case> fmt::Debug for Matches<C> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Matches<{}>", C::NAME)
-    }
-}
-
-impl<C: Case> Operator for Matches<C> {
-    type Arity = One;
-}
-
 mod sealed {
     pub trait Sealed {}
-    impl Sealed for super::CaseInsensitive {}
-    impl Sealed for super::CaseSensitive {}
     impl Sealed for super::One {}
     impl Sealed for super::Pair {}
     impl<A> Sealed for super::Pathed<A> {}
-}
-
-/// The case a text operator is asked in: [`CaseInsensitive`] or
-/// [`CaseSensitive`]. Sealed: there are exactly two.
-pub trait Case: sealed::Sealed + 'static {
-    /// Whether text is lower-cased before it is tokenised.
-    const FOLDS: bool;
-    /// The case's name, for `Debug`.
-    const NAME: &'static str;
-}
-
-/// Case-insensitive: text is lower-cased before it is tokenised.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct CaseInsensitive;
-
-/// Case-sensitive: text is tokenised as written.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct CaseSensitive;
-
-impl Case for CaseInsensitive {
-    const FOLDS: bool = true;
-    const NAME: &'static str = "CaseInsensitive";
-}
-impl Case for CaseSensitive {
-    const FOLDS: bool = false;
-    const NAME: &'static str = "CaseSensitive";
-}
-
-/// The case a match configuration fixes, as a type, so the operators its
-/// index answers are known at compile time.
-///
-/// `Case::FOLDS` must equal the configuration's
-/// [`MatchOptions::downcase`](crate::sem::MatchOptions::downcase): the type
-/// cannot see the options, so a query through a configuration whose two
-/// disagree is refused when it is awaited, with
-/// [`PlanError::MatchCase`]. A configuration
-/// that does not implement this can still store match terms, but nothing
-/// queries them: [`Matches`](struct@Matches) needs this impl, and there is
-/// no index-level query. Implementing it is one line, `type Case =
-/// CaseSensitive;` or `type Case = CaseInsensitive;`, matching `downcase`.
-pub trait MatchCase: MatchConfig {
-    /// The case the configuration's index answers.
-    type Case: Case;
-}
-
-impl MatchCase for DefaultMatch {
-    type Case = CaseInsensitive;
 }
 
 /// A value a query sends to the server to compare against stored terms.
@@ -609,7 +699,7 @@ impl<T: QueryTerm> TermFor<Gte> for T {}
 impl<T: QueryTerm> TermFor<Between> for T {}
 impl<T: QueryTerm> TermFor<Contains> for T {}
 impl<T: QueryTerm> TermFor<ContainedBy> for T {}
-impl<C: Case, T: Probabilistic> TermFor<Matches<C>> for T {}
+impl<T: Probabilistic> TermFor<Matches> for T {}
 /// An accessor inherits its leaf's requirement: what answers `Op` at a
 /// path is held to what answers `Op`.
 impl<Op: Leaf, T: TermFor<Op>> TermFor<AtPath<Op>> for T {}
@@ -649,32 +739,31 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     /// its own text holds all three. The filter cannot give the tokens back,
     /// so without the verifier a Bloom false positive would reach the caller.
     type Verifier: MaybeSend + 'static;
-    /// Why this index cannot answer `Op` as configured, or for `input`, if
-    /// it cannot: a match index whose [`MatchCase`] disagrees with its
-    /// options ([`PlanError::MatchCase`]), a match query of text that cuts
-    /// no token ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)),
-    /// whose filter would match every row.
-    /// Run when the query is awaited, before any key is requested; an
-    /// index that refuses nothing returns `Ok(())`.
-    fn check(&self, input: &In) -> Result<(), Error>;
-    /// The verifier of the query's `input`.
-    fn verifier(&self, input: &In) -> Self::Verifier;
-    /// [`check`](Self::check), then [`verifier`](Self::verifier): the query's
-    /// verifier of `input`, or why the index refuses it. A query chain
-    /// calls this when it derives the term. An index whose check and verifier
-    /// do the same work overrides it to do that work once: a match index
-    /// tokenises the query's value for both.
-    fn admit(&self, input: &In) -> Result<Self::Verifier, Error> {
-        self.check(input)?;
-        Ok(self.verifier(input))
-    }
+    /// Prepare a query of `input`: what this index refuses, and what the
+    /// query keeps. A refusal is what the index cannot answer as
+    /// configured, or for `input`: a match query of text that cuts no
+    /// token ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)),
+    /// whose filter would match every row; match options the index cannot
+    /// use; text an equality or order index cannot normalize. The verifier
+    /// is what the query keeps of `input` to check a row later, taken
+    /// before the input is consumed; an index that refuses nothing and
+    /// keeps nothing returns `Ok(())`.
+    ///
+    /// A query chain calls this once, when the query is awaited, before any
+    /// keyset is resolved, and keeps the verifier until the term is
+    /// derived. So a verifier exists only for an input the index accepted,
+    /// and a refused query costs no key request. The refusals are the
+    /// `sem` module's, one function per index, which the dynamic path
+    /// calls as well: what a binding refuses at its boundary is what this
+    /// refuses.
+    fn prepare(&self, input: &In) -> Result<Self::Verifier, Error>;
     /// Why this index cannot answer a query whose terms are derived under
     /// `label`, the plan's or the call's, extended by parts the call gave
     /// (`.extend(..)`) when `extended` is true: for an index whose query term
     /// records the context it was derived under, a context it cannot record.
     /// An EQL query value stores the column it queries, so its index refuses
     /// a label that names no column, and any extension, which the column
-    /// cannot hold. Run when the query is awaited, before [`check`](Self::check)
+    /// cannot hold. Run when the query is awaited, before [`prepare`](Self::prepare)
     /// and before any keyset is resolved; every index in this crate takes
     /// any context and returns `Ok(())`.
     fn check_label(&self, _label: &Label, _extended: bool) -> Result<(), Error> {
@@ -730,52 +819,53 @@ impl QueryToken {
     }
 }
 
-impl<S: crate::Encrypt + 'static> Supports<Eq, S> for Equality {
+/// The equality index answers `Eq` over any plaintext with an equality
+/// domain, and refuses text it cannot normalize (a code point unassigned
+/// in Unicode 16) before any keyset is resolved, as the dynamic path does.
+/// The check normalizes a copy of the value, which vitaminc wipes as it
+/// reads it, so the plaintext is `Clone`, as every scalar is.
+impl<S> Supports<Eq, S> for Equality
+where
+    S: crate::Encrypt + Clone + 'static,
+{
     type Query = EqualityTerm;
     type Verifier = ();
-    fn check(&self, _: &S) -> Result<(), Error> {
-        Ok(())
+    fn prepare(&self, value: &S) -> Result<(), Error> {
+        Ok(query::equality(value.clone())?)
     }
-    fn verifier(&self, _: &S) {}
     fn query((): (), term: EqualityTerm, _: QueryToken) -> EqualityTerm {
         term
     }
 }
+impl Equality {
+    /// The operators this index answers: its one declaration, which the
+    /// typed impls above and [`IndexSpec::operators`](crate::target::IndexSpec::operators)
+    /// both read.
+    pub const OPERATORS: &'static [Op] = &[Op::Eq];
+}
 
-impl<S, O> Supports<Matches<O::Case>, S> for Match<O>
+impl<S, O> Supports<Matches, S> for Match<O>
 where
     S: AsRef<str> + 'static,
-    O: MatchCase,
+    O: MatchConfig,
 {
     type Query = MatchQuery<O>;
     type Verifier = QueryTokens;
-    fn check(&self, value: &S) -> Result<(), Error> {
-        self.admit(value).map(drop)
-    }
-    fn verifier(&self, value: &S) -> QueryTokens {
-        // `admit` refuses text the index cannot normalize, so this is the
-        // query's tokens; a query that got here otherwise verifies nothing.
-        QueryTokens::of::<O>(value.as_ref()).unwrap_or_default()
-    }
-    fn admit(&self, value: &S) -> Result<QueryTokens, Error> {
-        let folds = O::options().downcase;
-        if folds != O::Case::FOLDS {
-            return Err(PlanError::MatchCase {
-                declared: O::Case::NAME,
-                folds,
-            }
-            .into());
-        }
-        // Options the index cannot use, checked before the text is
-        // tokenised (an n-gram length of zero would otherwise reach the
-        // tokenizer), then a query with no tokens, which would match every
-        // row: the stored side keeps such a value as the empty filter, the
-        // query side refuses it here, before any term is derived.
-        Ok(QueryTokens::of_query(value.as_ref(), &O::options())?)
+    fn prepare(&self, value: &S) -> Result<QueryTokens, Error> {
+        // Options the index cannot use, then text that cuts no token,
+        // which would match every row: the stored side keeps such a value
+        // as the empty filter, the query side refuses it here. The tokens
+        // are cut once, here, and kept as the verifier.
+        Ok(query::match_tokens(value.as_ref(), &O::options())?)
     }
     fn query(tokens: QueryTokens, term: MatchTerms<O>, _: QueryToken) -> MatchQuery<O> {
         MatchQuery::new(term, tokens)
     }
+}
+impl<O> Match<O> {
+    /// The operators this index answers, under any configuration: its one
+    /// declaration, as [`Equality::OPERATORS`].
+    pub const OPERATORS: &'static [Op] = &[Op::Matches];
 }
 
 /// The ordering operators on the ORE, OPE and block ORE indexes, over the
@@ -787,15 +877,15 @@ where
 /// ORE query is the full ciphertext too. `Between` sends both bounds'
 /// terms as one `RangeQuery`.
 macro_rules! orders {
-    ($($index:ident => $term:ident),+ $(,)?) => {$(
-        orders!(@one $index => $term; Lt, Lte, Gt, Gte);
+    ($($index:ident => $term:ident, block: $block:literal),+ $(,)?) => {$(
+        orders!(@one $index => $term, $block; Lt, Lte, Gt, Gte);
         impl<S: Ordered> Supports<Between, (S, S)> for $index {
             type Query = RangeQuery<$term<S>>;
             type Verifier = ();
-            fn check(&self, _: &(S, S)) -> Result<(), Error> {
-                Ok(())
+            fn prepare(&self, (lo, hi): &(S, S)) -> Result<(), Error> {
+                query::order(lo, $block)?;
+                Ok(query::order(hi, $block)?)
             }
-            fn verifier(&self, _: &(S, S)) {}
             fn query((): (), (lo, hi): ($term<S>, $term<S>), _: QueryToken) -> Self::Query {
                 RangeQuery::new(lo, hi)
             }
@@ -803,15 +893,19 @@ macro_rules! orders {
         impl<S: Ordered> Answers<Between, (S, S)> for $term<S> {
             type Via = $index;
         }
+        impl $index {
+            /// The operators this index answers: its one declaration, as
+            /// [`Equality::OPERATORS`].
+            pub const OPERATORS: &'static [Op] = &[Op::Lt, Op::Lte, Op::Gt, Op::Gte, Op::Between];
+        }
     )+};
-    (@one $index:ident => $term:ident; $($op:ident),+) => {$(
+    (@one $index:ident => $term:ident, $block:literal; $($op:ident),+) => {$(
         impl<S: Ordered> Supports<$op, S> for $index {
             type Query = $term<S>;
             type Verifier = ();
-            fn check(&self, _: &S) -> Result<(), Error> {
-                Ok(())
+            fn prepare(&self, value: &S) -> Result<(), Error> {
+                Ok(query::order(value, $block)?)
             }
-            fn verifier(&self, _: &S) {}
             fn query((): (), term: $term<S>, _: QueryToken) -> $term<S> {
                 term
             }
@@ -821,7 +915,7 @@ macro_rules! orders {
         }
     )+};
 }
-orders!(Ore => OreTerm, Ope => OpeTerm, OreBlock => OreBlockTerm);
+orders!(Ore => OreTerm, block: false, Ope => OpeTerm, block: false, OreBlock => OreBlockTerm, block: true);
 
 /// The ordering operators default to the ORE index; an OPE or block ORE
 /// index is named with `.via(Ope)` or `.via(OreBlock)`.
@@ -898,14 +992,17 @@ impl<T: LabelledTarget> LabelledTarget for (crate::StackCipherText, T) {}
 /// context, so the terms decide whether the label names theirs.
 impl<T: LabelledTarget> LabelledTarget for crate::target::Encrypted<T> {}
 
-impl<S: crate::Encrypt + 'static> Answers<Eq, S> for EqualityTerm {
+impl<S> Answers<Eq, S> for EqualityTerm
+where
+    S: crate::Encrypt + Clone + 'static,
+{
     type Via = Equality;
 }
 
-impl<S, O> Answers<Matches<O::Case>, S> for MatchTerms<O>
+impl<S, O> Answers<Matches, S> for MatchTerms<O>
 where
     S: AsRef<str> + 'static,
-    O: MatchCase,
+    O: MatchConfig,
 {
     type Via = Match<O>;
 }
@@ -946,34 +1043,30 @@ pub trait DefaultIndex<In: Input<Self::Arity>>: Operator {
     type Via: Supports<Self, In> + Default;
 }
 
-impl<S: crate::Encrypt + 'static> DefaultIndex<S> for Eq {
+impl<S> DefaultIndex<S> for Eq
+where
+    S: crate::Encrypt + Clone + 'static,
+{
     type Via = Equality;
 }
 
-impl<S: AsRef<str> + 'static> DefaultIndex<S> for Matches<<DefaultMatch as MatchCase>::Case> {
+impl<S: AsRef<str> + 'static> DefaultIndex<S> for Matches {
     type Via = Match;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_default_match_configuration_folds_case_as_its_type_says() {
-        assert_eq!(
-            <DefaultMatch as MatchCase>::Case::FOLDS,
-            DefaultMatch::options().downcase
-        );
-    }
+    use crate::sem::DefaultMatch;
 
     /// A match index's verifier is the query's tokens: a query built from
     /// it verifies a row that holds them and no other. A query chain takes
-    /// them through `admit`, so this is the one test that calls `verifier`.
+    /// them through `prepare`, once.
     #[test]
     fn a_match_verifier_is_the_query_tokens() {
         let index = Match::<DefaultMatch>::default();
         let verifier =
-            Supports::<Matches<CaseInsensitive>, String>::verifier(&index, &"alice".to_owned());
+            Supports::<Matches, String>::prepare(&index, &"alice".to_owned()).expect("tokens");
         let filter = MatchTerms::<DefaultMatch>::from_positions(vec![1]).expect("in range");
         let query = MatchQuery::new(filter, verifier);
         assert!(Probabilistic::verify(&query, "say hi to Alice"));
@@ -982,20 +1075,67 @@ mod tests {
 
     #[test]
     fn an_operator_is_equal_to_itself() {
-        assert_eq!(Matches::<CaseInsensitive>::new(), Matches);
+        assert_eq!(Matches, Matches);
         assert_eq!(Eq, Eq);
     }
 
     #[test]
-    fn an_operator_debugs_with_its_case() {
-        assert_eq!(
-            format!("{:?}", Matches.case_sensitive()),
-            "Matches<CaseSensitive>"
-        );
+    fn an_operator_debugs_by_its_name() {
+        assert_eq!(format!("{:?}", Matches), "Matches");
         assert_eq!(format!("{:?}", Eq), "Eq");
         assert_eq!(format!("{:?}", Between), "Between");
         assert_eq!(format!("{:?}", AtPath(Gte)), "AtPath(Gte)");
-        assert_eq!(AtPath(Matches.case_sensitive()).0, Matches.case_sensitive());
+        assert_eq!(AtPath(Matches).0, Matches);
+    }
+
+    /// The three faces of an operator name one operator: the type's `OP`
+    /// is the enum's variant, the variant's name is the wire name, and the
+    /// name parses back to the variant. Every variant is in `ALL` once.
+    #[test]
+    fn an_operators_three_faces_agree() {
+        fn face<O: Operator>(op: Op, name: &str) {
+            assert_eq!(O::OP, Some(op));
+            assert_eq!(op.name(), name);
+            assert_eq!(Op::parse(name), Some(op));
+            assert_eq!(op.to_string(), name);
+        }
+        face::<Eq>(Op::Eq, "eq");
+        face::<Lt>(Op::Lt, "lt");
+        face::<Lte>(Op::Lte, "lte");
+        face::<Gt>(Op::Gt, "gt");
+        face::<Gte>(Op::Gte, "gte");
+        face::<Between>(Op::Between, "between");
+        face::<Matches>(Op::Matches, "matches");
+        face::<Contains>(Op::Contains, "contains");
+        face::<ContainedBy>(Op::ContainedBy, "contained_by");
+        face::<AtPath<Eq>>(Op::EqAt, "eq_at");
+        face::<AtPath<Lt>>(Op::LtAt, "lt_at");
+        face::<AtPath<Lte>>(Op::LteAt, "lte_at");
+        face::<AtPath<Gt>>(Op::GtAt, "gt_at");
+        face::<AtPath<Gte>>(Op::GteAt, "gte_at");
+        face::<AtPath<Between>>(Op::BetweenAt, "between_at");
+        // A leaf with no path form in the dynamic vocabulary.
+        assert_eq!(<AtPath<Matches> as Operator>::OP, None);
+        // The reads have no typed operator; they are named all the same.
+        for (op, name) in [
+            (Op::Selector, "selector"),
+            (Op::Subtree, "subtree"),
+            (Op::Children, "children"),
+            (Op::ChildCount, "child_count"),
+            (Op::ElementMatch, "element_match"),
+            (Op::Match, "match"),
+        ] {
+            assert_eq!(op.name(), name);
+            assert_eq!(Op::parse(name), Some(op));
+        }
+        assert_eq!(Op::ALL.len(), 21);
+        let mut seen = std::collections::HashSet::new();
+        for op in Op::ALL {
+            assert!(seen.insert(op.name()), "{op} is listed twice");
+            assert_eq!(Op::parse(op.name()), Some(op));
+        }
+        assert_eq!(Op::parse("Eq"), None);
+        assert_eq!(Op::parse("="), None);
     }
 
     /// An accessor is held to its leaf's requirement: an exact term
@@ -1025,17 +1165,46 @@ mod tests {
         arity::<AtPath<Between>, Pathed<Pair>>();
     }
 
-    /// An ordering refuses no value: a range whose bounds are the wrong way
-    /// round matches nothing, as SQL's `BETWEEN` does.
+    /// An ordering refuses no integer: a range whose bounds are the wrong
+    /// way round matches nothing, as SQL's `BETWEEN` does. Text it cannot
+    /// normalize is refused, before any key, as the dynamic path refuses
+    /// it; block ORE refuses a fold over its limit as well.
     #[test]
-    fn an_ordering_refuses_no_value() {
-        let ok = |pair: (u32, u32)| Supports::<Between, (u32, u32)>::check(&Ore, &pair).is_ok();
+    fn an_ordering_refuses_only_text_it_cannot_encode() {
+        let ok = |pair: (u32, u32)| Supports::<Between, (u32, u32)>::prepare(&Ore, &pair).is_ok();
         assert!(ok((1, 2)));
         assert!(ok((2, 2)));
         assert!(ok((3, 2)));
-        assert!(Supports::<Between, (i64, i64)>::check(&Ope, &(1, -1)).is_ok());
-        assert!(Supports::<Lt, u16>::check(&Ore, &7).is_ok());
-        assert!(Supports::<Gte, i128>::check(&Ope, &-7).is_ok());
+        assert!(Supports::<Between, (i64, i64)>::prepare(&Ope, &(1, -1)).is_ok());
+        assert!(Supports::<Lt, u16>::prepare(&Ore, &7).is_ok());
+        assert!(Supports::<Gte, i128>::prepare(&Ope, &-7).is_ok());
+        let unassigned = String::from("a\u{0378}b");
+        assert!(matches!(
+            Supports::<Lt, String>::prepare(&Ore, &unassigned),
+            Err(Error::Term(crate::sem::TermError::Normalize(_)))
+        ));
+        assert!(matches!(
+            Supports::<Between, (String, String)>::prepare(&Ope, &("a".to_owned(), unassigned)),
+            Err(Error::Term(crate::sem::TermError::Normalize(_)))
+        ));
+        let long = "a".repeat(2000);
+        assert!(Supports::<Lt, String>::prepare(&Ore, &long).is_ok());
+        assert!(matches!(
+            Supports::<Lt, String>::prepare(&OreBlock, &long),
+            Err(Error::Term(crate::sem::TermError::OreBlockTooLong))
+        ));
+    }
+
+    /// An equality query of text that cannot be normalized is refused
+    /// before any key is requested, as the dynamic path refuses it.
+    #[test]
+    fn an_equality_query_refuses_text_with_no_normal_form() {
+        assert!(Supports::<Eq, String>::prepare(&Equality, &"ada".to_owned()).is_ok());
+        assert!(Supports::<Eq, u32>::prepare(&Equality, &7).is_ok());
+        assert!(matches!(
+            Supports::<Eq, String>::prepare(&Equality, &String::from("a\u{0378}b")),
+            Err(Error::Term(crate::sem::TermError::Normalize(_)))
+        ));
     }
 
     /// A date, a timestamp and a decimal are ordered, through every order
@@ -1050,9 +1219,9 @@ mod tests {
         let day = || Date::from_days_since_epoch(19_782).expect("in range");
         let at = || Timestamp::new(1_700_000_000, 5).expect("in range");
         let price = || Decimal::new(150, 2).expect("in range");
-        assert!(Supports::<Lt, Date>::check(&Ore, &day()).is_ok());
-        assert!(Supports::<Lte, Timestamp>::check(&Ope, &at()).is_ok());
-        assert!(Supports::<Gt, Decimal>::check(&OreBlock, &price()).is_ok());
-        assert!(Supports::<Between, (Date, Date)>::check(&Ore, &(day(), day())).is_ok());
+        assert!(Supports::<Lt, Date>::prepare(&Ore, &day()).is_ok());
+        assert!(Supports::<Lte, Timestamp>::prepare(&Ope, &at()).is_ok());
+        assert!(Supports::<Gt, Decimal>::prepare(&OreBlock, &price()).is_ok());
+        assert!(Supports::<Between, (Date, Date)>::prepare(&Ore, &(day(), day())).is_ok());
     }
 }

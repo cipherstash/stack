@@ -254,7 +254,7 @@ async fn shared_context_composition() {
             &keyset,
             &query_plan,
             "text",
-            dynamic::OpSpec::Eq,
+            dynamic::Op::Eq,
             "hello",
             &dynamic::NoTargets,
         )
@@ -271,7 +271,7 @@ async fn shared_context_composition() {
                     &keyset,
                     &plan,
                     "text",
-                    dynamic::OpSpec::Eq,
+                    dynamic::Op::Eq,
                     "hello",
                     &dynamic::NoTargets
                 )

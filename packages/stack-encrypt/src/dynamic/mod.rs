@@ -47,7 +47,7 @@
 //! * [`TermBytes`] — the term a field lowered from data derives, as its
 //!   frozen bytes. Such a field's plaintext is a [`ValueFrame`].
 //! * [`query_term`], [`verify`] and [`target_limit`] — a query named by
-//!   operator ([`OpSpec`]) on a plan field, and a probabilistic term's two
+//!   operator ([`Op`]) on a plan field, and a probabilistic term's two
 //!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats)
 //!   (ADR-0009; ADR-0007, amended 2026-10-16), and [`field_operators`], the
 //!   operators a plan field answers, for a generator to ask before the
@@ -108,9 +108,11 @@ pub use json::{json_frame, read_json, JsonPlaintext, JsonValueError};
 /// kind's names are frozen wire format; see [`admits`] and [`read`] for what
 /// a kind means to this engine.
 pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
+#[allow(deprecated)]
+pub use query::OpSpec;
 pub use query::{
     check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
-    Fidelity, OpSpec, Operand, OperatorEntry, QueryTerm,
+    Fidelity, Op, Operand, OperatorEntry, QueryTerm,
 };
 pub use record::{FieldPlan, NullMode, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetOptions, TargetResolver};
@@ -578,6 +580,10 @@ reasons! {
         NoOutputs => "no_outputs", "no outputs";
         /// A field names one output, or one index, twice.
         DuplicateOutput => "duplicate_output", "an output is named twice";
+        /// Two outputs answer one operator: `ore` beside `ope`, or two match
+        /// indexes. A field declares at most one index per operator, as the
+        /// typed plan does (`PlanError::IndexOverlap`).
+        OverlappingOutputs => "overlapping_outputs", "two outputs answer one operator: a field declares at most one index per operator";
         /// A field names `"passthrough"` beside another output.
         PassthroughWithOutputs => "passthrough_with_outputs", r#""passthrough" beside another output"#;
         /// `"target"` is not a non-empty string, nor an object of a
@@ -651,10 +657,10 @@ reasons! {
         /// The plan carries a binding, which is not in the query context, so
         /// a query cannot take it.
         BindInQuery => "bind_in_query", "a query takes no binding: a binding is in the stored context only";
-        /// An operator name is not one the engine knows ([`OpSpec::parse`]).
+        /// An operator name is not one the engine knows ([`Op::parse`]).
         UnknownOperator => "unknown_operator", "the operator is not one the engine knows";
         /// The field's type does not answer the operator: no index it declares
-        /// answers it, or the EQL type it names does not ([`OpSpec::answered_by`]).
+        /// answers it, or the EQL type it names does not ([`Op::answered_by`]).
         OperatorNotAnswered => "operator_not_answered", "the field's type does not answer the operator";
         /// A range's input is not a list of two values.
         NotARange => "not_a_range", "a range is not a list of two values";
@@ -668,7 +674,7 @@ reasons! {
         NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
         /// A JSON operator's input or a read's request or rows are not the
         /// object the operator takes ([`json_open`], the JSON operators of
-        /// [`OpSpec`]): a missing or unknown key, a value of another kind,
+        /// [`Op`]): a missing or unknown key, a value of another kind,
         /// a row that is not an entry, or more than one entry for a
         /// selector.
         JsonInput => "json_input", "the input is not the object the JSON operator takes";

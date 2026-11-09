@@ -18,7 +18,7 @@ use super::plain::PlainJson;
 use super::{base64, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{
     Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
-    LabelledTarget, Lt, Lte, One, Pair, Pathed, QueryTerm, QueryToken, Supports,
+    LabelledTarget, Lt, Lte, One, Op, Pair, Pathed, QueryTerm, QueryToken, Supports,
 };
 use crate::sem::{RangeQuery, TermError};
 use crate::target::{DeclaredContext, Index, Json, Owned, Pending};
@@ -696,6 +696,30 @@ where
 /// [`json_document`]: crate::target::json_document
 impl LabelledTarget for JsonDocument {}
 
+impl Json {
+    /// The operators this index answers: its one declaration, as
+    /// `Equality::OPERATORS`. The orderings at a path (`lt_at` …
+    /// `between_at`) and `element_match` are answered only by an index
+    /// that orders some path, which [`IndexSpec::answers`](crate::target::IndexSpec::answers)
+    /// reads from the options.
+    pub const OPERATORS: &'static [Op] = &[
+        Op::Contains,
+        Op::ContainedBy,
+        Op::EqAt,
+        Op::LtAt,
+        Op::LteAt,
+        Op::GtAt,
+        Op::GteAt,
+        Op::BetweenAt,
+        Op::Selector,
+        Op::Subtree,
+        Op::Children,
+        Op::ChildCount,
+        Op::ElementMatch,
+        Op::Match,
+    ];
+}
+
 /// Containment, both ways: the query's selector set, which the SQL compares
 /// against the stored set in the direction the operator says.
 macro_rules! containment {
@@ -703,10 +727,9 @@ macro_rules! containment {
         impl Supports<$op, Value> for Json {
             type Query = JsonQuery;
             type Verifier = ();
-            fn check(&self, _: &Value) -> Result<(), Error> {
+            fn prepare(&self, _: &Value) -> Result<(), Error> {
                 Ok(())
             }
-            fn verifier(&self, _: &Value) {}
             fn query((): (), terms: JsonTerms, _: QueryToken) -> JsonQuery {
                 JsonQuery::of_terms(terms)
             }
@@ -735,11 +758,10 @@ where
 {
     type Query = JsonQuery;
     type Verifier = ();
-    fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
+    fn prepare(&self, (path, value): &(P, V)) -> Result<(), Error> {
         let _ = parse_path(path.as_ref())?;
         scalar(&copy_of(value))
     }
-    fn verifier(&self, _: &(P, V)) {}
     fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonQuery {
         JsonQuery::at_path(terms.terms)
     }
@@ -811,12 +833,11 @@ macro_rules! orderings {
         {
             type Query = JsonLeafQuery;
             type Verifier = ();
-            fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
+            fn prepare(&self, (path, value): &(P, V)) -> Result<(), Error> {
                 let path = parse_path(path.as_ref())?;
                 orders(self, &path)?;
                 ordered(&copy_of(value))
             }
-            fn verifier(&self, _: &(P, V)) {}
             fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonLeafQuery {
                 JsonLeafQuery::of_leaf(&terms.terms)
             }
@@ -846,13 +867,12 @@ where
 {
     type Query = RangeQuery<JsonLeafQuery>;
     type Verifier = ();
-    fn check(&self, (path, (lo, hi)): &(P, (V, V))) -> Result<(), Error> {
+    fn prepare(&self, (path, (lo, hi)): &(P, (V, V))) -> Result<(), Error> {
         let path = parse_path(path.as_ref())?;
         orders(self, &path)?;
         ordered(&copy_of(lo))?;
         ordered(&copy_of(hi))
     }
-    fn verifier(&self, _: &(P, (V, V))) {}
     fn query(
         (): (),
         terms: AtPathTerms<(JsonTerms, JsonTerms)>,

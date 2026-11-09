@@ -13,7 +13,7 @@ use common::{counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op;
 use stack_encrypt::plan::{pick, FieldValues};
-use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::target::{
     AeadContext, CallerContext, DeclaredContext, DecryptField, Decryptable, Decryption, Encrypted,
@@ -147,8 +147,8 @@ struct Wide {
     c: StackCipherText,
     hm: EqualityTerm,
     ob: OreTerm<u32>,
-    op: OpeTerm<u32>,
     shadow: StackCipherText,
+    twin: StackCipherText,
 }
 
 #[tokio::test]
@@ -171,18 +171,15 @@ async fn five_outputs_nest_and_each_is_derived_under_the_one_context() {
         .unwrap();
     assert_eq!(wide.hm, hm);
     assert_eq!(wide.ob, ob);
-    let op: OpeTerm<u32> = 9u32
-        .encrypt_into_with_context(&keyset, context())
-        .await
-        .unwrap();
-    assert_eq!(wide.op, op);
     assert_eq!(
         <Wide as EncryptFrom<u32>>::indexes().len(),
-        3,
-        "equality, ORE and OPE"
+        2,
+        "equality and ORE: a record declares one order index"
     );
     let shadow: u32 = wide.shadow.decrypt_into(&cipher, context()).await.unwrap();
     assert_eq!(shadow, 9);
+    let twin: u32 = wide.twin.decrypt_into(&cipher, context()).await.unwrap();
+    assert_eq!(twin, 9);
     let wide: Wide = 9u32
         .encrypt_into_with_context(&keyset, context())
         .await
@@ -686,7 +683,8 @@ struct CiphertextLast {
     hm: EqualityTerm,
     m: MatchTerms,
     ob: OreTerm<String>,
-    op: OpeTerm<String>,
+    shadow: StackCipherText,
+    #[stash(decrypt)]
     c: StackCipherText,
 }
 
