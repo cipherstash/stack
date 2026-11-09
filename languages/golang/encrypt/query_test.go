@@ -319,9 +319,9 @@ func TestAnUnboundedLimitCutsThePageToTheLargestSQLLimit(t *testing.T) {
 // Verify and TargetLimit answer match queries alone: an exact operator is
 // refused by its reason, and half a position is not a query term. The
 // QueryTerm refusals (an operator the field does not answer, an unknown
-// operator, a scalar for between, text for an integer, an inverted range,
-// text that cuts no token) are the shared query-refusal corpus, run by
-// TestQueryRefusalConformance.
+// operator, a scalar for between, text for an integer, text that cuts no
+// token) and the inverted range QueryTerm accepts are the shared
+// query-refusal corpus, run by TestQueryRefusalConformance.
 func TestVerifyAndTargetLimitRefuseWhatIsNotAMatchQuery(t *testing.T) {
 	f := readQueryFixture(t)
 	c := queryFixtureClient(t, f)
