@@ -13,7 +13,7 @@ struct User {
 }
 
 #[derive(EncryptTarget)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     email: Ciphertext,
 }

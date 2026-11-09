@@ -442,7 +442,7 @@ impl<'a> IntoContext<'a> for Description {
 /// `documents/v2/body` is never read as a scoped column.
 ///
 /// A two-segment `Label` binds the same context a
-/// `#[stash(struct = .., context = "<table>")]` derive gives a field, which
+/// `#[stash(struct = .., scope = "<table>")]` derive gives a field, which
 /// the derive spells `nonempty!("users").with("email")`. That is what lets a
 /// label open a row a derive wrote, and a probe built from the label match
 /// the terms the derive produced.
@@ -460,7 +460,7 @@ impl<'a> IntoContext<'a> for Description {
 /// let tenant_7 = NonEmpty::from(email.clone()).with(7u64);
 /// assert_eq!(Descriptor::of(tenant_7).as_str(), "(users/email)/7u64");
 ///
-/// // What a `struct = .., context = "users"` derive binds its `email` field under.
+/// // What a `struct = .., scope = "users"` derive binds its `email` field under.
 /// assert_eq!(Descriptor::of(&email), Descriptor::of(nonempty!("users").with("email")));
 ///
 /// // Not a label: the separator inside a segment, and an empty segment.

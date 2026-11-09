@@ -5,7 +5,7 @@
 //! | [`NoCallerContext`] | Allowed | Refused | The declaration builds every context itself. |
 //! | [`RequiredContext<C>`] | Refused | `C` | The caller supplies the context, or the part of it that the declaration selects. |
 //! | [`OptionalContext<C>`] | Allowed | `C` | For an opaque scalar. A context left out is the empty context. |
-//! | [`ContextExtension<C>`] | Allowed | `C` | A context left out keeps the declared contexts. A context passed extends each of them. |
+//! | [`DeclaredScopes`] | Allowed | Refused | A derived `struct = ..` record. Each field has its own context. A record that contains it, or a plan, passes that field's context. |
 //! | [`ExpectedContext<T>`](super::ExpectedContext) | Allowed | `NonEmpty<T>` | A context left out opens under the stored context, unchecked. A context passed is checked against the stored one. |
 //!
 //! A trait bound decides whether a method is available ([`AllowsNoContext`]
@@ -89,64 +89,50 @@ impl<C> AcceptsContext for OptionalContext<C> {
     }
 }
 
-/// A caller context that can extend the contexts a declaration builds itself.
+/// The input of a derived `struct = ..` record: the caller passes no context.
 ///
-/// A derived record whose fields each have their own context, such as
-/// `("users", "name")`, takes this input.
+/// Each field of the record has its own context, such as `("users", "name")`.
+/// The record's name is the first scope, and the field's name is the next.
+/// So the caller has nothing to add, and `encrypt_into_with_context` does not
+/// compile for the record. A part that the caller supplies, such as a tenant
+/// scope or a row binding, must be declared on the record first. The
+/// declaration attributes for those parts are not built yet.
 ///
-/// - If the caller leaves the context out, the declared contexts stay as they
-///   are. Nothing is appended, not even an empty part.
-/// - If the caller passes a context, it extends every declared context. For
-///   example, `7u64` makes the field's context `(("users", "name"), 7u64)`.
+/// Only the library passes this input a value:
 ///
-/// A record sealed under an extension needs the same extension to decrypt. The
-/// method that leaves the context out is available, but that does not mean it
-/// opens every stored record of the type.
-#[derive(Clone, Debug)]
-pub struct ContextExtension<C>(Option<C>);
-impl<C> ContextExtension<C> {
-    /// Inspect presence when interpreting a declaration.
-    pub fn into_inner(self) -> Option<C> {
-        self.0
-    }
-}
-impl<C> sealed::Sealed for ContextExtension<C> {}
-impl<C> ContextInput for ContextExtension<C> {}
-impl<C> AllowsNoContext for ContextExtension<C> {
+/// - A record that is a field of another record is given that field's
+///   context, which then extends each of its own fields' contexts.
+/// - A plan or a structural record passes its declared context the same
+///   way.
+#[derive(Clone, Debug, Default)]
+pub struct DeclaredScopes(DeclaredContext);
+impl sealed::Sealed for DeclaredScopes {}
+impl ContextInput for DeclaredScopes {}
+impl AllowsNoContext for DeclaredScopes {
     fn omitted() -> Self {
-        Self(None)
-    }
-}
-impl<C> AcceptsContext for ContextExtension<C> {
-    type Value = C;
-    fn supplied(value: C) -> Self {
-        Self(Some(value))
+        Self::default()
     }
 }
 // The context a record's declaration tree runs under: each field's own
-// context, extended by the caller's context if there is one.
-impl<C: Into<DeclaredContext>> From<ContextExtension<C>> for DeclaredContext {
-    fn from(extension: ContextExtension<C>) -> Self {
-        extension.0.map_or_else(Self::default, Into::into)
+// context, extended by the context of the record that contains it, if any.
+impl From<DeclaredScopes> for DeclaredContext {
+    fn from(scopes: DeclaredScopes) -> Self {
+        scopes.0
     }
 }
 // A structural caller with a `DeclaredContext`, such as a plan or a `struct =
-// ..` derive, passes its extension to an owned record field through this
-// conversion.
-impl From<DeclaredContext> for ContextExtension<DeclaredContext> {
-    fn from(extension: DeclaredContext) -> Self {
-        if extension.is_extended() {
-            Self::supplied(extension)
-        } else {
-            Self::omitted()
-        }
+// ..` structural derive, passes its context to an owned record field through
+// this conversion.
+impl From<DeclaredContext> for DeclaredScopes {
+    fn from(context: DeclaredContext) -> Self {
+        Self(context)
     }
 }
-// A record field is given its own context, extended by the caller's context
-// (`Encryption::under`). A nested record takes that as its extension.
-impl<C: From<CallerContext>> From<CallerContext> for ContextExtension<C> {
+// A record field is given its own context (`Encryption::under`). A nested
+// record takes that context as the one its own fields extend.
+impl From<CallerContext> for DeclaredScopes {
     fn from(context: CallerContext) -> Self {
-        Self::supplied(C::from(context))
+        Self(context.into())
     }
 }
 // A field whose target requires a caller context is given the record's context

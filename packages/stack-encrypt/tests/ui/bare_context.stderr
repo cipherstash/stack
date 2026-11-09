@@ -37,7 +37,7 @@ error[E0277]: the trait bound `DeclaredContext: From<&str>` is not satisfied
    = help: the following other types implement trait `From<T>`:
              `DeclaredContext` implements `From<()>`
              `DeclaredContext` implements `From<CallerContext>`
-             `DeclaredContext` implements `From<ContextExtension<C>>`
+             `DeclaredContext` implements `From<DeclaredScopes>`
              `DeclaredContext` implements `From<NoCallerContext>`
              `DeclaredContext` implements `From<NonEmpty<T>>`
              `DeclaredContext` implements `From<i128>`
@@ -93,7 +93,7 @@ error[E0277]: the trait bound `DeclaredContext: From<&str>` is not satisfied
    = help: the following other types implement trait `From<T>`:
              `DeclaredContext` implements `From<()>`
              `DeclaredContext` implements `From<CallerContext>`
-             `DeclaredContext` implements `From<ContextExtension<C>>`
+             `DeclaredContext` implements `From<DeclaredScopes>`
              `DeclaredContext` implements `From<NoCallerContext>`
              `DeclaredContext` implements `From<NonEmpty<T>>`
              `DeclaredContext` implements `From<i128>`

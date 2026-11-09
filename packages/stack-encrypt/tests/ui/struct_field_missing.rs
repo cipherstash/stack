@@ -7,7 +7,7 @@ struct User {
 }
 
 #[derive(EncryptFrom)]
-#[stash(struct = User, context = "user")]
+#[stash(struct = User, scope = "user")]
 struct EncryptedUser {
     email: StackCipherText,
     nickname: StackCipherText,

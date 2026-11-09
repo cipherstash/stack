@@ -46,7 +46,7 @@
 //! made only of ciphertexts can declare `context_type = AeadContext` and
 //! accept a context type that implements `IntoAad` alone, as the ciphertext
 //! leaf itself does.
-//! `struct = User, context = "users"` selects plaintext fields
+//! `struct = User, scope = "users"` selects plaintext fields
 //! and binds each under the pair `("users", "<field>")`, which renders
 //! `users/<field>` as its ZeroKMS descriptor; `identity = ".."` on a field keys
 //! it under `users/<identity>` instead. The storage envelope itself adds no
@@ -66,7 +66,7 @@
 //! cannot drift apart (see `stack_encrypt::plan`, "The derive emits a plan",
 //! for a worked example):
 //!
-//! - a `struct = User, context = "users"` record emits
+//! - a `struct = User, scope = "users"` record emits
 //!   `Plan::context("users").fields()` with
 //!   `.encrypt_into::<FieldType, _>(pick("field", |u: &User| &u.field))` per
 //!   derived field, and `.identity("..")` where one is pinned;
@@ -98,7 +98,7 @@
 //! On the decrypt side, `DecryptInto` opens a `plaintext = T` record through
 //! its one decryptable output (or the one `#[stash(decrypt)]` names) under
 //! the record's context, and a `struct` record opens each field through its
-//! own `DecryptField` under `<context>/<identity>`, extended by the caller's
+//! own `DecryptField` under `<scope>/<identity>`, extended by the caller's
 //! context. Neither goes through the plan: each is written out by the
 //! derive, and the crate's tests open what one writes through the other.
 //!

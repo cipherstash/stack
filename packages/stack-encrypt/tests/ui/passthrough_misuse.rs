@@ -12,7 +12,7 @@ struct User {
 
 /// The structural derive cannot move a field, because it runs over a borrow.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct Structural {
     #[stash(passthrough)]
     id: u64,
@@ -31,7 +31,7 @@ struct WholeValue {
 
 /// A passthrough field is moved as it is, so it cannot also be derived.
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct Marked {
     #[stash(passthrough, decrypt)]
     id: u64,
@@ -40,7 +40,7 @@ struct Marked {
 
 /// One plaintext field has one output.
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct Twice {
     #[stash(passthrough, from = email)]
     plain_email: String,

@@ -37,13 +37,15 @@
 //! `#[derive(EncryptTarget, DecryptSource)]` composes the declarations of
 //! the fields.
 //!
-//! A `struct = User, context = "users"` record gives each field its context,
-//! `("users", "<field>")`, through [`Encryption::under`]. If the caller
-//! passes a [`ContextExtension`], it extends each field's context. So the
-//! field target's `ContextInput` must implement `From<CallerContext>`:
+//! A `struct = User, scope = "users"` record gives each field its context,
+//! `("users", "<field>")`, through [`Encryption::under`]. The record's name
+//! is the first scope, and the field's name is the next. The record's input
+//! is [`DeclaredScopes`]: the caller passes no context. When the record is
+//! a field of another record, that field's context extends each of its own.
+//! So the field target's `ContextInput` must implement `From<CallerContext>`:
 //!
 //! - These inputs implement it: [`OptionalContext`], a [`RequiredContext`]
-//!   of a core context, and the [`ContextExtension`] of a nested record.
+//!   of a core context, and the [`DeclaredScopes`] of a nested record.
 //! - These inputs do not: [`NoCallerContext`] and `RequiredContext<u64>`. A
 //!   field whose target takes one of them is a compile error at that field.
 //!
@@ -211,7 +213,7 @@ pub mod legacy {
 }
 pub use conversion::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
 pub use input::{
-    AcceptsContext, AllowsNoContext, ContextExtension, ContextInput, NoCallerContext,
+    AcceptsContext, AllowsNoContext, ContextInput, DeclaredScopes, NoCallerContext,
     OptionalContext, RequiredContext, ScalarContext,
 };
 pub use stack_encrypt_derive::{DecryptSource, EncryptTarget};

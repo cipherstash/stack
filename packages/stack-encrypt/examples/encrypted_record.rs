@@ -14,6 +14,11 @@
 //! batched `generate_keys` call. Decrypting the matching rows makes one
 //! batched `retrieve_keys` call.
 //!
+//! Each field's context is the record's name, `users`, then the field's
+//! name. The caller adds nothing to it. So two rows of the table can swap a
+//! sealed field and both still decrypt. Binding each value to its row needs
+//! a row ID declared on the record as a binding. That is not built yet.
+//!
 //! The plaintext type, `User`, follows the rules for a type that contains
 //! secrets. `User` derives `Zeroize` and nothing else:
 //!
@@ -41,7 +46,7 @@
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
 use stack_encrypt::target::{DecryptSource, EncryptTarget};
 use stack_encrypt::{
-    nonempty, Ciphertext, Controlled, DecryptFrom, EncryptInto, Error, Protected, StackCipher,
+    nonempty, Ciphertext, Controlled, DecryptFrom, EncryptInto, Protected, StackCipher,
 };
 use zeroize::Zeroize;
 
@@ -79,19 +84,10 @@ struct User {
 /// written here once. It is part of what identifies the stored data, so the
 /// derive never takes it from the name of a Rust type.
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     age: EncryptedAge,
     email: Ciphertext,
-}
-
-/// A user for the row-binding section. A function, not a cloned value, so
-/// that each call builds its own plaintext.
-fn alice() -> User {
-    User {
-        age: 34,
-        email: "alice@example.com".to_owned(),
-    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -178,56 +174,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // one place the plaintext is read.
     let matched = Protected::new(Vec::<User>::decrypt_from(matches, &decryptor).await?);
     println!("decrypted {} matching rows", matched.risky_ref().len());
-
-    // --- Bind a value to its row --------------------------------------------
-
-    // A context that the caller passes extends the context of every field.
-    // Under the row id 42, `age` is sealed under `(("users", "age"), 42)`. It
-    // opens only under that context. So a ciphertext cannot be moved to
-    // another row of the table.
-    //
-    // The terms are bound to the row too. A probe built under `("users",
-    // "age")` alone does not match them. So extend the context for a value you
-    // read by its row id, not for a value you search for across rows.
-    let id = 42u64;
-    let record: EncryptedUser = alice().encrypt_into_with_context(&keyset, id).await?;
-    println!(
-        "row-bound terms match the table probe: {}",
-        record.age.eq == probe
-    );
-    let scoped: EqualityTerm = 34u32
-        .encrypt_into_with_context(&keyset, nonempty!("users").with("age").with(id))
-        .await?;
-    println!(
-        "row-bound terms match a probe built under the same id: {}",
-        record.age.eq == scoped
-    );
-
-    let opened = Protected::new(User::decrypt_from_with_context(record, &decryptor, id).await?);
-    println!("opened the row under its own id");
-    drop(opened);
-
-    // The row id is part of every field's context. The context is also the
-    // ZeroKMS descriptor of every data key. So opening the row under another
-    // id fails at ZeroKMS, before any key material is sent.
-    //
-    // Some key sources do not check descriptors, such as the in-memory source
-    // the tests use. Such a source lets the request through, and the AEAD
-    // refuses the ciphertext instead.
-    let record: EncryptedUser = alice().encrypt_into_with_context(&keyset, id).await?;
-    let wrong_id = User::decrypt_from_with_context(record, &decryptor, 43u64).await;
-    println!(
-        "opening under another id: {}",
-        match wrong_id {
-            Err(Error::Kms(e)) => format!("refused by ZeroKMS ({e})"),
-            Err(Error::Aead) => "refused by the AEAD".to_owned(),
-            Ok(mut user) => {
-                user.zeroize();
-                "opened, which is a bug".to_owned()
-            }
-            Err(_) => "refused with an unexpected error".to_owned(),
-        }
-    );
 
     Ok(())
 }

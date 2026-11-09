@@ -640,7 +640,7 @@ struct Rows {
 /// A column as a field. The structural `Vec<T>: DecryptField<Vec<P>, _>` impl
 /// decrypts `items`.
 #[derive(stack_encrypt::DecryptInto)]
-#[stash(struct = Rows, context = "rows")]
+#[stash(struct = Rows, scope = "rows")]
 struct StoredRows {
     items: Vec<TrackedCiphertext>,
 }

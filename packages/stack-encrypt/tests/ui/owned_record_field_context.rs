@@ -49,7 +49,7 @@ struct Reading {
 }
 
 #[derive(EncryptTarget)]
-#[stash(struct = Reading, context = "readings")]
+#[stash(struct = Reading, scope = "readings")]
 struct EncryptedReading {
     fixed: Fixed,
     bound: Bound,

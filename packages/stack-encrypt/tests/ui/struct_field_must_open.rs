@@ -40,7 +40,7 @@ impl Decryptable for Opaque {
 }
 
 #[derive(EncryptFrom)]
-#[stash(struct = Profile, context = "profiles")]
+#[stash(struct = Profile, scope = "profiles")]
 struct EncryptedProfile {
     name: StackCipherText,
     bio: Opaque,

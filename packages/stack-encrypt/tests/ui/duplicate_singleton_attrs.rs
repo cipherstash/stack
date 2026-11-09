@@ -6,14 +6,14 @@ struct User {
 }
 
 #[derive(EncryptFrom)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct DupFrom {
     #[stash(from = expected, from = other)]
     c: StackCipherText,
 }
 
 #[derive(EncryptFrom)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct DupIdentity {
     #[stash(identity = "email", identity = "name")]
     expected: StackCipherText,

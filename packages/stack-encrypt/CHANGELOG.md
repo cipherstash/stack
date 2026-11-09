@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound. The change lets `OpaqueBlob<T>` implement `OpaqueDecode`: a blob
   opens as a bytes leaf and is decoded afterwards, so it cannot implement
   `Decrypt`.
+- **The record attribute `context = ".."` is now `scope = ".."`**, on the
+  `EncryptFrom` and `DecryptInto` derives as on the owned ones. The value is
+  the record's name, the first scope of each field's context, and the
+  stored data does not change. Write `#[stash(struct = User, scope =
+  "users")]`. The old spelling is a compile error that names the new one.
+  The plan builder's `Plan::context(..)` and the Go `context=` tag are not
+  renamed yet.
 - **The structural `Vec<T>: DecryptInto<Vec<P>>` and `DecryptField<Vec<P>, _>`
   impls require `P: Zeroize`** (#1483). These impls used to decrypt through
   `Decryption::all`. When an element failed late, the elements recovered
@@ -69,8 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own layout. The crate docs' "Records" section and the derive crate's
   "Owned records" section show each form. The `tests/ui` cases pin the
   forms that are refused, with the error at the field.
-  - With `#[stash(struct = User, context = "users")]`, each field's target
-    is given the context `("users", "<field>")`. `#[stash(from = ..)]`
+  - With `#[stash(struct = User, scope = "users")]`, each field's target
+    is given the context `("users", "<field>")`: the record's name, then the
+    field's name. `#[stash(from = ..)]`
     names another source field, and `identity = ".."` sets the second part
     of the context, as on the structural derive.
   - A `#[stash(passthrough)]` field is moved from the plaintext into the
@@ -81,9 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it seals, and moves the passthrough fields. `User::decrypt_from(record,
     &cipher)` decrypts each field under its context, and moves the
     passthrough fields back.
-  - `encrypt_into_with_context(&keyset, 7u64)` extends every field's
-    context with the row id. The record then decrypts only with the same
-    extension.
+  - A `struct` record takes no context from the caller. Its input is
+    `DeclaredScopes`, so `encrypt_into_with_context` does not compile for
+    it. A caller's scope or row binding will be declared on the record, with
+    attributes that are not built yet.
   - Records nest. The outer field's context extends the contexts of the
     inner record's fields.
   - A `#[stash(plaintext = String)]` record can be searched, for example a
@@ -138,14 +147,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     implement `EncryptTarget` alone.
   - `Ciphertext` implements `Decryptable` and `DecryptField`, so it can be a
     record field.
-- **`ContextExtension<C>`** is the caller input of a record whose fields
-  have their own contexts. If the caller leaves the context out, the fields'
-  contexts stay as they are. If the caller passes a context, it extends
-  each of them.
+- **`DeclaredScopes`** is the input of a `struct` record, whose fields have
+  their own contexts. The caller passes no context. A record that contains
+  the record, or a plan, passes the field's context, which extends each of
+  the inner record's contexts.
 - **`ExpectedContext<T>` is a `ContextInput`.** If the caller leaves the
   context out, the record decrypts under the context it stores, unchecked.
   If the caller passes a `NonEmpty<T>`, the stored context must equal it.
-  - `ContextExtension` and `ExpectedContext` convert from the structural
+  - `DeclaredScopes` and `ExpectedContext` convert from the structural
     contexts, `DeclaredContext` and `CallerContext`. So do the
     `RequiredContext` wrappers of the core contexts. This is how a record
     field is given its context.
@@ -1504,7 +1513,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/`). A data key minted through 0.1.0 was bound to the old rendering of the
   same context and cannot be retrieved under this one. 0.1.0 had one known
   consumer, aware of this; see ADR-0006.
-- `#[derive(EncryptFrom)]` with `struct = User, context = "users"` binds each
+- `#[derive(EncryptFrom)]` with `struct = User, scope = "users"` binds each
   field under the pair `("users", "<field>")`, the same context EQL's
   `Identifier` is. A `#[stash(context = "…")]` literal on a field stays one
   text part, exactly as written.

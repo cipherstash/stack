@@ -24,7 +24,7 @@ struct Address {
     street: String,
 }
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Address, context = "addresses")]
+#[stash(struct = Address, scope = "addresses")]
 struct EncryptedAddress {
     street: Ciphertext,
 }
@@ -38,7 +38,7 @@ struct User {
     created: i64,
 }
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     #[stash(passthrough)]
     id: u64,
@@ -94,7 +94,7 @@ struct Profile {
     age: u32,
 }
 #[derive(EncryptFrom)]
-#[stash(struct = Profile, context = "profiles")]
+#[stash(struct = Profile, scope = "profiles")]
 struct EncryptedProfile {
     user: EncryptedUser,
     age: EncryptedAge,
@@ -106,11 +106,9 @@ async fn records(
     user: User,
     profile: Profile,
 ) -> Result<(), stack_encrypt::Error> {
-    // A struct record, with and without an extension, and as a column.
+    // A struct record, alone and as a column. It takes no caller context.
     let encrypted: EncryptedUser = user.clone().encrypt_into(keyset).await?;
     let _: User = User::decrypt_from(encrypted, cipher).await?;
-    let encrypted: EncryptedUser = user.clone().encrypt_into_with_context(keyset, 7u64).await?;
-    let _: User = User::decrypt_from_with_context(encrypted, keyset, 7u64).await?;
     let column: Vec<EncryptedUser> = vec![user.clone()].encrypt_into(keyset).await?;
     let _: Vec<User> = Vec::decrypt_from(column, cipher).await?;
 

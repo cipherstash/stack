@@ -13,9 +13,6 @@ help: the following other types implement trait `AcceptsContext`
    | impl<C> AcceptsContext for OptionalContext<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
 ...
-   | impl<C> AcceptsContext for ContextExtension<C> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ContextExtension<C>`
-...
    | impl<T> AcceptsContext for ExpectedContext<T> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
 
@@ -35,9 +32,6 @@ help: the following other types implement trait `AcceptsContext`
 ...
    | impl<C> AcceptsContext for OptionalContext<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
-...
-   | impl<C> AcceptsContext for ContextExtension<C> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ContextExtension<C>`
 ...
    | impl<T> AcceptsContext for ExpectedContext<T> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`

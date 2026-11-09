@@ -20,7 +20,7 @@ use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{Scope, ValueFrame};
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{
-    passthrough, Borrowed, ContextExtension, DeclaredContext, DecryptSource, Decryption,
+    passthrough, Borrowed, DeclaredContext, DeclaredScopes, DecryptSource, Decryption,
     EncryptTarget, Encryption,
 };
 use stack_encrypt::{
@@ -53,7 +53,7 @@ struct TypedUser {
     email_eq: EqualityTerm,
 }
 impl EncryptTarget<User> for TypedUser {
-    type ContextInput = ContextExtension<DeclaredContext>;
+    type ContextInput = DeclaredScopes;
     fn encryption<'s, K: 'static>() -> Encryption<'s, User, Self, K, Self::ContextInput> {
         passthrough::<u32, K, Borrowed, DeclaredContext>()
             .project(|user: &User| &user.id)
@@ -82,7 +82,7 @@ impl EncryptTarget<User> for TypedUser {
     }
 }
 impl DecryptSource<User> for TypedUser {
-    type ContextInput = ContextExtension<DeclaredContext>;
+    type ContextInput = DeclaredScopes;
     fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<User, K> {
         let extension: DeclaredContext = context.into();
         let name = <Ciphertext as DecryptSource<String>>::decryption::<K>(
@@ -111,7 +111,7 @@ struct SearchableEmail {
     equality: EqualityTerm,
 }
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct GeneratedUser {
     #[stash(passthrough)]
     id: u32,

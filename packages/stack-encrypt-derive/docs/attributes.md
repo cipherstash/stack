@@ -18,8 +18,8 @@ Derive one pair on a record, not both.
 | Attribute | Effect |
 |---|---|
 | `plaintext = Type` | The record is an encrypted form of `Type`, every field derived from the whole value. Repeatable: one impl per listed type. Omit it for an impl generic over the plaintext (see below). |
-| `struct = Type` | The record encrypts the struct `Type` field by field: every derived field is derived from the plaintext field of its own name, under the pair `("<context>", "<field>")` (see [Structs, field by field](#structs-field-by-field)). Exclusive with `plaintext`; requires `context`. |
-| `context = "..."` | With `struct` only: the first half of every field's inferred context — the stored data's name. Required, never inferred from the type's name, and must not be empty. |
+| `struct = Type` | The record encrypts the struct `Type` field by field: every derived field is derived from the plaintext field of its own name, under the pair `("<scope>", "<field>")` (see [Structs, field by field](#structs-field-by-field)). Exclusive with `plaintext`; requires `scope`. |
+| `scope = "..."` | With `struct` only: the record's name, which is the first scope of every field's context. The field's name is the next scope. Required, never inferred from the type's name, and must not be empty. |
 | `context_type = Type` | The record's associated `Context`, for a record whose fields take the caller's context: what the caller passes. Defaults to `CallerContext`; `AeadContext` for a record made only of ciphertexts, so an `IntoAad`-only context type is accepted (see [Which context a record takes](#which-context-a-record-takes)). Not with `context_field` or `struct`. |
 | `crate = "path"` | Where to find `stack_encrypt` in the generated code (default `::stack_encrypt`), for use through a re-export. |
 
@@ -40,7 +40,7 @@ literal.
 | Attribute | Effect |
 |---|---|
 | `context_field` | Store the caller’s typed context here and recover it on decryption. Exactly one per record; excludes the other field attributes. |
-| `identity = "..."` | With `struct` only: key this field under the segment `identity` instead of the plaintext field's name, so it is derived under `("<context>", "<identity>")`. One plain segment. The plan builder's `.identity(segment)`. |
+| `identity = "..."` | With `struct` only: key this field under the segment `identity` instead of the plaintext field's name, so it is derived under `("<scope>", "<identity>")`. One plain segment. The plan builder's `.identity(segment)`. |
 | `from = field` / `from = 0` | With `struct` only: derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) when its name differs from its plaintext field's. A plaintext field has one output: two fields `from` one plaintext field are refused (a ciphertext with its terms is one `Encrypted<Terms>` field). |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` / `DecryptSource` only). Needed only when the field types cannot decide it — see below. |
@@ -90,7 +90,7 @@ which context the caller must pass:
 
 | Record | Encrypt input | Decrypt input | Example call |
 |---|---|---|---|
-| `struct = User, context = "users"` | `ContextExtension<DeclaredContext>` | The same as for encryption | `user.encrypt_into(&keyset)`, or `user.encrypt_into_with_context(&keyset, 7u64)` to extend every field's context with the row id `7` |
+| `struct = User, scope = "users"` | `DeclaredScopes`, which takes no context from the caller | The same as for encryption | `user.encrypt_into(&keyset)` |
 | `plaintext = T` | `RequiredContext<CallerContext>`, or `RequiredContext<AeadContext>` with `context_type = AeadContext` | The same as for encryption | `value.encrypt_into_with_context(&keyset, nonempty!("users/email"))` |
 | With a `context_field` of type `C` | `RequiredContext<NonEmpty<C>>` | `ExpectedContext<C>` | `T::decrypt_from_with_context(record, &cipher, nonempty!(..))`, which checks the stored context before it decrypts |
 
@@ -103,9 +103,16 @@ you have checked the record's place some other way.
 
 ### Fields of a `struct` record
 
-Each field of a `struct` record is given its context, `("users", "<field>")`,
-extended by the caller's context if there is one. So the field's target must
-accept a context from the record. These targets accept one:
+Each field of a `struct` record is given its context, `("users", "<field>")`.
+The record's name, `users`, is the first scope, and the field's name is the
+next. A caller cannot add to it: `encrypt_into_with_context` does not
+compile for a `struct` record. A part that the caller supplies, such as a
+tenant scope or a row binding, must be declared on the record. The
+attributes that declare one are not built yet.
+
+When the record is a field of another record, the outer field's context
+extends each of its fields' contexts. So the field's target must accept a
+context from the record. These targets accept one:
 
 - `Ciphertext`, whose input is `OptionalContext`.
 - A term, or an `Encrypted<Terms>`, whose input is
@@ -137,8 +144,8 @@ remove it, and every sealed field beside it still decrypts.
 - Treat the value you read back as untrusted input. Never let it decide
   authorisation, tenancy, or which record to trust.
 - Do not use a passthrough field for a value that must be readable and
-  also tamper-evident. Pass that value as the caller's context instead, as
-  the row id is passed above. A changed context makes decryption fail.
+  also tamper-evident. Such a value belongs in the context, where a changed
+  value makes decryption fail. A `struct` record cannot take it there yet.
 
 The owned conversion never copies a passthrough field. The field's type
 must still implement `Clone`, because the structural form of the record
@@ -207,7 +214,7 @@ struct User { id: u64, name: String, email: String }
 struct SearchableEmail { ciphertext: Ciphertext, equality: EqualityTerm }
 
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct SearchableUser {
     // Not encrypted and not authenticated.
     #[stash(passthrough)]
@@ -293,7 +300,7 @@ but each listed type only once).
 ## Structs, field by field
 
 A `struct = ..` derive needs no attribute on its fields. With
-`#[stash(struct = User, context = "users")]`, a field `age` is derived from
+`#[stash(struct = User, scope = "users")]`, a field `age` is derived from
 `user.age` under the **pair** `("users", "age")` — two context parts, which
 render the ZeroKMS descriptor `users/age`; a field `email` from `user.email`
 under `("users", "email")`. The first part is the container's `context` and
@@ -317,13 +324,13 @@ field whose type is itself a record (a `struct` derive, say)
 is an ordinary field: it is handed its pair, and the inner record's own
 fields sit under it, their contexts extended by it.
 
-A context passed by the caller extends every field's: under
-`user.encrypt_into_with_context(&keyset, 7u64)` the `age` field is derived
+On the structural path, a context passed by the caller extends every
+field's: under `keyset.encrypt_as(&user, 7u64)` the `age` field is derived
 under `(("users", "age"), 7u64)`, and a query site probes it under
-`nonempty!("users").with("age").with(7u64)`. This is how a field is bound to its
-record as well as its name — a record id, say — without the type having to
-know the id. Decryption takes the same extension. The extension may be borrowed at the call site: its Vitamin C encodings are
-owned by the declaration before execution.
+`nonempty!("users").with("age").with(7u64)`. Decryption takes the same
+extension. The extension may be borrowed at the call site: its Vitamin C
+encodings are owned by the declaration before execution. An owned record
+takes no caller context (see [What the caller passes](#what-the-caller-passes)).
 
 The context is part of the stored data's identity: it is the AAD of every
 ciphertext in the column and the domain of every term. That is why the prefix
@@ -340,7 +347,7 @@ the key retrieval under the changed descriptor before the AEAD runs, and
 one in tests — silently at the call site, with no compile-time signal.
 Before such a rename, pin the old name as the field's segment with
 `#[stash(identity = "old_name")]`, which keeps the pair
-`("<context>", "old_name")` while the plaintext field moves.
+`("<scope>", "old_name")` while the plaintext field moves.
 
 A `struct` derive has no field derived from the whole plaintext, and a
 `plaintext` record has none derived from a field of it: `from` and

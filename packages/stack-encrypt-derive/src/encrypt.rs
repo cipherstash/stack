@@ -53,7 +53,7 @@ fn plan_name(from: &Member) -> LitStr {
     LitStr::new(&name, from.span())
 }
 
-/// `#[stash(struct = User, context = "users")]`: a fields plan under the
+/// `#[stash(struct = User, scope = "users")]`: a fields plan under the
 /// record's context, one typed field per derived field, each read by a
 /// picker and laid out by its own type (`encrypt_into`).
 fn struct_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> TokenStream {

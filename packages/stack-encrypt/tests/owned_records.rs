@@ -14,8 +14,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::{
-    AcceptsContext, AeadContext, ContextExtension, DecryptField, DecryptSource, Decryptable,
-    Decryption, EncryptTarget, Encryption, NoCallerContext, OptionalContext, RequiredContext,
+    AcceptsContext, AeadContext, DecryptField, DecryptSource, Decryptable, Decryption,
+    EncryptTarget, Encryption, NoCallerContext, OptionalContext, Owned, RequiredContext,
     ScalarContext,
 };
 use stack_encrypt::{
@@ -37,7 +37,7 @@ struct User {
 /// `id` and `created_at` are stored in the clear. `name` and `email` are each
 /// sealed on their own, under `("users", "name")` and `("users", "email")`.
 #[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     #[stash(passthrough)]
     id: u64,
@@ -120,57 +120,6 @@ async fn each_sealed_field_is_an_ordinary_ciphertext_under_its_pair() {
     ));
 }
 
-#[tokio::test]
-async fn a_caller_extension_binds_every_sealed_field_to_the_row() {
-    let (cipher, sent) = common::recording_cipher().await;
-    let keyset = cipher.default_keyset();
-    let user = alice();
-    let encrypted: EncryptedUser = user
-        .clone()
-        .encrypt_into_with_context(&keyset, 42u64)
-        .await
-        .unwrap();
-    assert_eq!(
-        sent.lock().unwrap().generated(),
-        vec!["(users/name)/42u64", "(users/email)/42u64"]
-    );
-    // The same extension decrypts the record. Another row's id does not. No
-    // extension does not either.
-    assert!(matches!(
-        User::decrypt_from(
-            EncryptedUser {
-                id: encrypted.id,
-                name: encrypted.name.clone(),
-                email: encrypted.email.clone(),
-                created_at: encrypted.created_at
-            },
-            &keyset
-        )
-        .await,
-        Err(Error::Aead)
-    ));
-    assert!(matches!(
-        User::decrypt_from_with_context(
-            EncryptedUser {
-                id: encrypted.id,
-                name: encrypted.name.clone(),
-                email: encrypted.email.clone(),
-                created_at: encrypted.created_at
-            },
-            &keyset,
-            43u64
-        )
-        .await,
-        Err(Error::Aead)
-    ));
-    assert_eq!(
-        User::decrypt_from_with_context(encrypted, &keyset, 42u64)
-            .await
-            .unwrap(),
-        user
-    );
-}
-
 // --- Ownership: sealed fields wiped, passthrough fields moved -------------
 
 /// A passthrough field type whose `Clone` fails the test. The borrowed form of
@@ -238,7 +187,7 @@ struct Tracked {
     secret: Secret,
 }
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Tracked, context = "tracked")]
+#[stash(struct = Tracked, scope = "tracked")]
 struct EncryptedTracked {
     #[stash(passthrough)]
     handle: Handle,
@@ -278,6 +227,25 @@ async fn the_owned_record_wipes_sealed_fields_and_moves_passthrough_fields() {
     opened.secret.zeroize();
 }
 
+/// A record nested under a context too long for a ZeroKMS descriptor. A
+/// record that contains another passes it its field's context through
+/// `Encryption::under`, as this target does. The key request is refused.
+struct Oversized;
+impl EncryptTarget<Tracked> for Oversized {
+    type ContextInput = NoCallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, Tracked, Self, K, Self::ContextInput> {
+        unreachable!("the test runs the owned form only")
+    }
+    fn owned_encryption<'s, K: 'static>(
+    ) -> Encryption<'s, Tracked, Self, K, Self::ContextInput, Owned> {
+        // Longer than the 512-byte limit of a ZeroKMS descriptor.
+        <EncryptedTracked as EncryptTarget<Tracked>>::owned_encryption()
+            .under(NonEmpty::new("x".repeat(65536)).unwrap())
+            .map(|_: EncryptedTracked| Self)
+            .accepting()
+    }
+}
+
 #[tokio::test]
 async fn the_owned_record_wipes_sealed_fields_when_the_context_is_refused() {
     let (cipher, generates, _) = common::counting_cipher().await;
@@ -290,10 +258,7 @@ async fn the_owned_record_wipes_sealed_fields_when_the_context_is_refused() {
             wiped: wiped.clone(),
         },
     };
-    let pending = tracked.encrypt_into_with_context::<EncryptedTracked, _>(
-        &keyset,
-        NonEmpty::new("x".repeat(65536)).unwrap(),
-    );
+    let pending = tracked.encrypt_into::<Oversized, _>(&keyset);
     assert!(wiped.load(Ordering::SeqCst));
     assert!(pending.await.is_err());
     assert_eq!(generates.load(Ordering::SeqCst), 0);
@@ -305,7 +270,7 @@ struct Pair {
     second: Secret,
 }
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Pair, context = "pairs")]
+#[stash(struct = Pair, scope = "pairs")]
 struct EncryptedPair {
     first: SecretCiphertext,
     second: SecretCiphertext,
@@ -394,7 +359,7 @@ struct Trio {
 // fields are never read.
 #[allow(dead_code)]
 #[derive(EncryptTarget)]
-#[stash(struct = Trio, context = "trios")]
+#[stash(struct = Trio, scope = "trios")]
 struct EncryptedTrio {
     first: FlaggedCiphertext,
     #[stash(passthrough)]
@@ -496,7 +461,7 @@ struct SearchableEmail {
 }
 
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct SearchableUser {
     #[stash(passthrough)]
     id: u64,
@@ -567,19 +532,6 @@ fn each_owned_term_target_names_its_index() {
     );
 }
 
-#[test]
-fn a_context_extension_is_inspected_as_supplied_or_omitted() {
-    use stack_encrypt::target::AllowsNoContext;
-    assert_eq!(
-        <ContextExtension<u64> as AcceptsContext>::supplied(7).into_inner(),
-        Some(7)
-    );
-    assert_eq!(
-        <ContextExtension<u64> as AllowsNoContext>::omitted().into_inner(),
-        None
-    );
-}
-
 #[tokio::test]
 async fn a_searchable_email_standalone_requires_its_context() {
     let cipher = common::stack_cipher().await;
@@ -610,7 +562,7 @@ struct Address {
     city: String,
 }
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Address, context = "addresses")]
+#[stash(struct = Address, scope = "addresses")]
 struct EncryptedAddress {
     street: Ciphertext,
     city: Ciphertext,
@@ -624,7 +576,7 @@ struct Account {
     opened: i64,
 }
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Account, context = "accounts")]
+#[stash(struct = Account, scope = "accounts")]
 struct EncryptedAccount {
     /// A passthrough field with another name.
     #[stash(passthrough, from = account_id)]
@@ -881,7 +833,7 @@ async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
     /// A structural record with an owned record as a field. The owned derive
     /// also implements `EncryptFrom` with a `DeclaredContext`, so this works.
     #[derive(EncryptFrom)]
-    #[stash(struct = Profile, context = "profiles")]
+    #[stash(struct = Profile, scope = "profiles")]
     struct EncryptedProfile {
         user: EncryptedUser,
         #[allow(dead_code)]
@@ -932,6 +884,4 @@ async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
         FixedInteger::encryption::<common::CountingSource>,
         RequiredContext::<u64>::into_inner,
     );
-    let _: ContextExtension<u64> =
-        <ContextExtension<u64> as stack_encrypt::target::AllowsNoContext>::omitted();
 }

@@ -116,10 +116,11 @@ field, and a test with a `Clone` that panics checks that.
 Two inputs join `NoCallerContext`, `RequiredContext<C>`, and
 `OptionalContext<C>`:
 
-- **`ContextExtension<C>`.** If the caller leaves the context out, the
-  declared contexts stay as they are. If the caller passes a context, it
-  extends each of them. A `struct` record takes this input, to encrypt and
-  to decrypt.
+- **`DeclaredScopes`.** The caller passes no context. Each field's context
+  is the record's name, then the field's name. A record that contains this
+  record passes it the field's context. A plan does the same. That context
+  extends each of the inner record's contexts. A `struct` record takes this
+  input, to encrypt and to decrypt.
 - **`ExpectedContext<T>`**, an existing type that is now a `ContextInput`.
   If the caller leaves the context out, the record opens under the context
   it stores. If the caller passes a `NonEmpty<T>`, the stored context must
@@ -132,13 +133,13 @@ take the same wrappers around the context their operation needs. So a term
 implements `EncryptTarget` alone, and no context is inferred from
 `Default`.
 
-A record field is given its own context, extended by the caller's context,
-through `Encryption::under` (ADR-0004). `under` requires the field's input
+A record field is given its own context, extended by the context of the
+record that contains it, through `Encryption::under` (ADR-0004). `under` requires the field's input
 to implement `From<CallerContext>`. That one bound produces the error at the
 field:
 
 - These inputs implement it: `OptionalContext`, a `RequiredContext` of a
-  core context, and a nested record's `ContextExtension`.
+  core context, and a nested record's `DeclaredScopes`.
 - These inputs do not: `NoCallerContext`, and `RequiredContext<u64>`. A
   field whose target takes one of them is a compile error at that field.
 
@@ -146,6 +147,16 @@ Every field of a `plaintext` record is given the one context the record
 requires. So a term in a record with `context_type = AeadContext` is a
 compile error at the term. A call that leaves out a required context is a
 compile error at the call.
+
+A record does not accept a caller's scope or row binding yet. The API plan
+(`docs/plans/2026-10-24-stack-encrypt-api-plan.md`) decides three things:
+
+- A caller supplies such parts as `Scope::new(..)` and `Bind::new(..)`.
+- A record declares each part it accepts.
+- The search terms leave out a binding.
+
+That work is tracked separately. Until it lands, a caller's row ID would
+also scope the search terms. The plan rejects that.
 
 ### 4. The structural traits are a bridge, not a second declaration
 
@@ -192,6 +203,11 @@ a struct plaintext must derive it.
   type implement `Drop`, and so derive `ZeroizeOnDrop`. It was rejected
   because a field that the record does not name would then be dropped
   without being wiped. Nothing would report that field.
+- **An optional caller extension (`ContextExtension<C>`).** An earlier
+  version of this change let the caller extend every field's context. It
+  was removed after the naming review of 8 November 2026. A row ID passed
+  that way also scoped the search terms, so a query had to know the row.
+  The plan replaces it with declared scopes and bindings.
 - **A second declaration for the structural traits.** This was rejected.
   Two declarations of one record could disagree about contexts. The
   equivalence test shows that one declaration, bridged, gives the same

@@ -18,7 +18,7 @@ struct User<'a> {
 }
 
 #[derive(EncryptFrom)]
-#[stash(struct = User<'a>, context = "users")]
+#[stash(struct = User<'a>, scope = "users")]
 struct EncryptedUser<'a> {
     email: Encrypted<EqualityTerm>,
     age: StackCipherText,

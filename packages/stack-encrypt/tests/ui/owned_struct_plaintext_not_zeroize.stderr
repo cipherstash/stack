@@ -59,7 +59,7 @@ note: required by a bound in `EncryptTarget`
 error[E0277]: the trait bound `User: Zeroize` is not satisfied
   --> tests/ui/owned_struct_plaintext_not_zeroize.rs:12:18
    |
-12 | #[stash(struct = User, context = "users")]
+12 | #[stash(struct = User, scope = "users")]
    |                  ^^^^ unsatisfied trait bound
    |
 help: the trait `zeroize::DefaultIsZeroes` is not implemented for `User`
@@ -90,7 +90,7 @@ note: required by a bound in `stack_encrypt::EncryptTarget::encryption`
 error[E0277]: the trait bound `User: Zeroize` is not satisfied
   --> tests/ui/owned_struct_plaintext_not_zeroize.rs:12:18
    |
-12 | #[stash(struct = User, context = "users")]
+12 | #[stash(struct = User, scope = "users")]
    |                  ^^^^ unsatisfied trait bound
    |
 help: the trait `zeroize::DefaultIsZeroes` is not implemented for `User`

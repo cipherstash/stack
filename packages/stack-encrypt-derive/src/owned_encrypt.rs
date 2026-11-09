@@ -41,7 +41,7 @@ pub(crate) fn encrypt_input(record: &Record) -> Type {
         let ty = &field.ty;
         parse_quote!(#krate::target::RequiredContext<#krate::NonEmpty<#ty>>)
     } else if record.by_field {
-        parse_quote!(#krate::target::ContextExtension<#krate::target::DeclaredContext>)
+        parse_quote!(#krate::target::DeclaredScopes)
     } else {
         let caller = caller_context(record);
         parse_quote!(#krate::target::RequiredContext<#caller>)
@@ -123,7 +123,7 @@ fn literal(record: &Record, stored: Option<TokenStream>) -> TokenStream {
     quote!(Self { #(#assignments),* })
 }
 
-/// `#[stash(struct = User, context = "users")]`. Each field is taken out of
+/// `#[stash(struct = User, scope = "users")]`. Each field is taken out of
 /// the plaintext and run by its own target, under the field's context. A
 /// passthrough field is passed through.
 ///
@@ -250,7 +250,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         &generics,
         quote!(#krate::target::EncryptTarget<#source>),
         quote! {
-            type ContextInput = #krate::target::ContextExtension<#krate::target::DeclaredContext>;
+            type ContextInput = #krate::target::DeclaredScopes;
             fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::ContextInput> where #source: #lifetime {
                 #borrowed_body
             }

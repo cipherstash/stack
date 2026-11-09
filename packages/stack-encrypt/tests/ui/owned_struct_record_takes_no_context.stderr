@@ -1,0 +1,45 @@
+error[E0277]: the trait bound `DeclaredScopes: AcceptsContext` is not satisfied
+  --> tests/ui/owned_struct_record_takes_no_context.rs:24:18
+   |
+24 |     let _ = user.encrypt_into_with_context::<EncryptedUser, _>(keyset, 42u64);
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `AcceptsContext` is not implemented for `DeclaredScopes`
+   |
+help: the following other types implement trait `AcceptsContext`
+  --> src/target/input.rs
+   |
+   | impl<C> AcceptsContext for RequiredContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RequiredContext<C>`
+...
+   | impl<C> AcceptsContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+...
+   | impl<T> AcceptsContext for ExpectedContext<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
+
+error[E0277]: the trait bound `DeclaredScopes: AcceptsContext` is not satisfied
+  --> tests/ui/owned_struct_record_takes_no_context.rs:25:45
+   |
+25 |     let _ = User::decrypt_from_with_context(stored, keyset, 42u64);
+   |             ------------------------------- ^^^^^^ the trait `AcceptsContext` is not implemented for `DeclaredScopes`
+   |             |
+   |             required by a bound introduced by this call
+   |
+help: the following other types implement trait `AcceptsContext`
+  --> src/target/input.rs
+   |
+   | impl<C> AcceptsContext for RequiredContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RequiredContext<C>`
+...
+   | impl<C> AcceptsContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+...
+   | impl<T> AcceptsContext for ExpectedContext<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
+note: required by a bound in `stack_encrypt::DecryptFrom::decrypt_from_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn decrypt_from_with_context<'a, S, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         S::ContextInput: AcceptsContext,
+   |                          ^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from_with_context`

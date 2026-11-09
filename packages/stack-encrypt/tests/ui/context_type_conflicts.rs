@@ -4,7 +4,7 @@
 use stack_encrypt::{EncryptFrom, StackCipherText};
 
 #[derive(EncryptFrom)]
-#[stash(struct = User, context = "users", context_type = stack_encrypt::target::AeadContext)]
+#[stash(struct = User, scope = "users", context_type = stack_encrypt::target::AeadContext)]
 struct ByField {
     name: StackCipherText,
 }

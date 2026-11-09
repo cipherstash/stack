@@ -13,8 +13,8 @@ help: the following other types implement trait `AllowsNoContext`
    | impl<C> AllowsNoContext for OptionalContext<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
 ...
-   | impl<C> AllowsNoContext for ContextExtension<C> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ContextExtension<C>`
+   | impl AllowsNoContext for DeclaredScopes {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
 ...
    | impl<T> AllowsNoContext for ExpectedContext<T> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
@@ -44,8 +44,8 @@ help: the following other types implement trait `AllowsNoContext`
    | impl<C> AllowsNoContext for OptionalContext<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
 ...
-   | impl<C> AllowsNoContext for ContextExtension<C> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ContextExtension<C>`
+   | impl AllowsNoContext for DeclaredScopes {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
 ...
    | impl<T> AllowsNoContext for ExpectedContext<T> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`

@@ -1,8 +1,8 @@
-error: a container `context` is the first segment of every field's ZeroKMS descriptor, so it must be plain: no `/`, `(`, `)`, control or invisible character, and not beginning with `b64:`, a digit or `-`; otherwise it would render escaped and the log would not name the table. For the table `public.users` write `context = "users"`
-  --> tests/ui/non_plain_inferred_context.rs:10:34
+error: a container `scope` is the first segment of every field's ZeroKMS descriptor, so it must be plain: no `/`, `(`, `)`, control or invisible character, and not beginning with `b64:`, a digit or `-`; otherwise it would render escaped and the log would not name the table. For the table `public.users` write `scope = "users"`
+  --> tests/ui/non_plain_inferred_context.rs:10:32
    |
-10 | #[stash(struct = User, context = "public/users")]
-   |                                  ^^^^^^^^^^^^^^
+10 | #[stash(struct = User, scope = "public/users")]
+   |                                ^^^^^^^^^^^^^^
 
 error: a tuple field has no name to infer a context from: its index `0` begins with a digit, which a descriptor reserves, so `("readings", "0")` would render escaped; give the field `#[stash(identity = "..")]`
   --> tests/ui/non_plain_inferred_context.rs:18:10

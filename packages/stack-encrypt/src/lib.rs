@@ -357,8 +357,9 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! A record is a struct that is encrypted field by field. You declare the
 //! stored form of a plaintext struct as a second struct, and derive
 //! `EncryptTarget` and `DecryptSource` on it. In
-//! `#[stash(struct = User, context = "users")]`, `User` is the plaintext
-//! type. The string `"users"` is the first part of every field's context.
+//! `#[stash(struct = User, scope = "users")]`, `User` is the plaintext
+//! type. The string `"users"` is the record's name. It is the first scope of
+//! every field's context, and the field's name is the next.
 //!
 //! Each field of the record is one of these:
 //!
@@ -373,8 +374,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!   still decrypt. Use it only for values that are not secret. Treat the
 //!   value you read back as untrusted input. Never let it decide
 //!   authorisation, tenancy, or which record to trust. A value that must be
-//!   readable and also tamper-evident belongs in the context instead, as the
-//!   row id below does.
+//!   readable and also tamper-evident belongs in the context instead.
 //!
 //! The record must name every field of the plaintext, as a sealed or a
 //! passthrough field. A plaintext field it leaves out is a compile error.
@@ -398,11 +398,12 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! - `PartialEq`, because a derived comparison does not run in constant
 //!   time.
 //!
-//! By default, each field is sealed under its own context and nothing else.
-//! Two records of the same type can then exchange a sealed field, and both
-//! still decrypt. To prevent that, pass a context that names the row, such
-//! as its id. That context extends every field's context
-//! ([`ContextExtension`]), and the same context is needed to decrypt.
+//! Each field is sealed under its own context and nothing else, and the
+//! caller cannot add to it ([`target::DeclaredScopes`]). So two records of
+//! the same type can exchange a sealed field, and both still decrypt.
+//! Binding each field to its row needs the row ID declared on the record as
+//! a binding. The attributes that declare a caller's scope or binding are
+//! not built yet.
 //!
 //! ```
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -414,7 +415,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! struct User { id: u64, name: String, email: String }
 //!
 //! #[derive(EncryptTarget, DecryptSource, serde::Serialize, serde::Deserialize)]
-//! #[stash(struct = User, context = "users")]
+//! #[stash(struct = User, scope = "users")]
 //! struct EncryptedUser {
 //!     // Not encrypted and not authenticated.
 //!     #[stash(passthrough)]
@@ -433,13 +434,12 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! let id = 42u64;
 //! let user = User { id, name: "Alice".into(), email: "alice@example.com".into() };
 //!
-//! // One call, and one batched key request for both sealed fields. The row
-//! // id extends every field's context, so the record opens only as row 42.
-//! let encrypted: EncryptedUser = user.encrypt_into_with_context(&keyset, id).await?;
+//! // One call, and one batched key request for both sealed fields.
+//! let encrypted: EncryptedUser = user.encrypt_into(&keyset).await?;
 //! let stored = serde_json::to_vec(&encrypted)?;
 //!
 //! let loaded: EncryptedUser = serde_json::from_slice(&stored)?;
-//! let restored = Protected::new(User::decrypt_from_with_context(loaded, &cipher, id).await?);
+//! let restored = Protected::new(User::decrypt_from(loaded, &cipher).await?);
 //! assert_eq!(restored.risky_ref().id, id);
 //! // `restored` wipes the plaintext when it is dropped.
 //! # Ok(())
@@ -558,10 +558,10 @@ pub use stack_kms as kms;
 /// crate, so a binding encodes an error from any of them the same way.
 pub use stack_kms::{diagnostic, ErrorPayload};
 pub use target::{
-    CallerContext, CipherScope, ContextExtension, DecryptField, DecryptFrom, DecryptInto,
-    DecryptSource, Decryptable, Decryption, EncryptFrom, EncryptInto, EncryptTarget, Encrypted,
-    Encryption, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock, Pending,
-    PendingFuture, Request, Responses, TermSet,
+    CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, DecryptSource, Decryptable,
+    Decryption, EncryptFrom, EncryptInto, EncryptTarget, Encrypted, Encryption, Equality, Index,
+    IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request,
+    Responses, TermSet,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
