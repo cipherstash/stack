@@ -843,21 +843,21 @@ mod opaque_blob {
                 .unwrap()
         });
         watched_for_leaks("OpaqueBlob decrypt", || {
-            let mut opened = rt.block_on(async {
+            let opened = rt.block_on(async {
                 keyset
                     .decrypt_with_context::<OpaqueBlob<Doc>>(sealed, "docs/body")
                     .await
                     .unwrap()
             });
-            // The opened value is an ordinary owned value, holding the
-            // plaintext until the caller wipes it.
+            // The opened blob holds the plaintext in its `Zeroizing` guard
+            // until it is dropped. Dropping it, with no explicit wipe, must
+            // leave no plaintext on the heap.
             assert!(opened
                 .get()
                 .title
                 .as_bytes()
                 .windows(MARK.len())
                 .any(|w| w == MARK));
-            opened.zeroize();
             drop(opened);
         });
     }

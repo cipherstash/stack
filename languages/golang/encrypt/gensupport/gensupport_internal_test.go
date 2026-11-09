@@ -614,6 +614,11 @@ func TestOpaqueReadsARustWrittenBlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Pin Go's own bytes as well, so a change in the Go writer fails here
+	// and not only in the Rust suite (GO_BLOB_SOME in tests/opaque_blob.rs).
+	if goHex := hex.EncodeToString(ours); goHex != "56435301f104000000040000006e616d650a0c000000416461204c6f76656c6163650300000061676506240000000400000074616773f0020000000a050000006d617468730a07000000656e67696e6573080000006e69636b6e616d650a03000000616461" {
+		t.Fatalf("Go wrote %s; it no longer matches GO_BLOB_SOME", goHex)
+	}
 	if len(ours)+1 != len(rust) {
 		t.Fatalf("Go wrote %d bytes, Rust %d; expected to differ by the one Some marker", len(ours), len(rust))
 	}
