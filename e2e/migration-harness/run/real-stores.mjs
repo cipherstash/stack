@@ -19,60 +19,62 @@ async function initializePostgres(actor, eqlBundle) {
   const pg = `mh-pg-${randomBytes(8).toString('hex')}-${actor}`
   let admin
   try {
-  await docker([
-    'run',
-    '-d',
-    '--name',
-    pg,
-    '-e',
-    `POSTGRES_PASSWORD=${password}`,
-    '--tmpfs',
-    '/var/lib/postgresql/data:rw,nosuid,nodev,size=512m',
-    '-p',
-    '127.0.0.1::5432',
-    'postgres:17-alpine',
-  ])
-  const pgPort = Number(
-    (await docker(['port', pg, '5432/tcp'])).split(':').at(-1),
-  )
-  admin = postgres({
-    host: '127.0.0.1',
-    port: pgPort,
-    username: 'postgres',
-    password,
-    database: 'postgres',
-    connect_timeout: 2,
-    max: 1,
-  })
-  let ready = false
-  let readinessError
-  for (let attempt = 0; attempt < 60; attempt++) {
-    try {
-      await admin`SELECT 1`
-      ready = true
-      break
-    } catch (error) {
-      readinessError = error.code ?? error.message
-      await new Promise((resolve) => setTimeout(resolve, 500))
+    await docker([
+      'run',
+      '-d',
+      '--name',
+      pg,
+      '-e',
+      `POSTGRES_PASSWORD=${password}`,
+      '--tmpfs',
+      '/var/lib/postgresql/data:rw,nosuid,nodev,size=512m',
+      '-p',
+      '127.0.0.1::5432',
+      'postgres:17-alpine',
+    ])
+    const pgPort = Number(
+      (await docker(['port', pg, '5432/tcp'])).split(':').at(-1),
+    )
+    admin = postgres({
+      host: '127.0.0.1',
+      port: pgPort,
+      username: 'postgres',
+      password,
+      database: 'postgres',
+      connect_timeout: 2,
+      max: 1,
+    })
+    let ready = false
+    let readinessError
+    for (let attempt = 0; attempt < 60; attempt++) {
+      try {
+        await admin`SELECT 1`
+        ready = true
+        break
+      } catch (error) {
+        readinessError = error.code ?? error.message
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
     }
-  }
-  if (!ready) throw Error(`Postgres readiness timed out (${readinessError})`)
-  await admin.unsafe('CREATE DATABASE mh_template')
-  const template = postgres({
-    host: '127.0.0.1',
-    port: pgPort,
-    username: 'postgres',
-    password,
-    database: 'mh_template',
-    max: 1,
-  })
-  try {
-    await template.unsafe(await readFile(eqlBundle, 'utf8'))
-    await template.unsafe('REVOKE CONNECT ON DATABASE mh_template FROM PUBLIC')
-  } finally {
-    await template.end()
-  }
-  return { pg, pgPort, password, admin, leases: 0 }
+    if (!ready) throw Error(`Postgres readiness timed out (${readinessError})`)
+    await admin.unsafe('CREATE DATABASE mh_template')
+    const template = postgres({
+      host: '127.0.0.1',
+      port: pgPort,
+      username: 'postgres',
+      password,
+      database: 'mh_template',
+      max: 1,
+    })
+    try {
+      await template.unsafe(await readFile(eqlBundle, 'utf8'))
+      await template.unsafe(
+        'REVOKE CONNECT ON DATABASE mh_template FROM PUBLIC',
+      )
+    } finally {
+      await template.end()
+    }
+    return { pg, pgPort, password, admin, leases: 0 }
   } catch (error) {
     if (admin) await admin.end({ timeout: 1 }).catch(() => {})
     await docker(['rm', '-f', '-v', pg]).catch(() => {})

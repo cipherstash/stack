@@ -1,6 +1,13 @@
 name: Migration harness
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'e2e/migration-harness/**'
+      - 'e2e/vitest.harness.config.ts'
+      - 'e2e/package.json'
+      - '.github/workflows/migration-harness.yml'
   pull_request:
     paths:
       - 'e2e/migration-harness/**'
@@ -28,7 +35,4 @@ jobs:
           cache: pnpm
       - run: npm install -g node-gyp
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @cipherstash/e2e harness:selftest
-      - run: pnpm --filter @cipherstash/e2e harness:typecheck
-      - run: pnpm --filter @cipherstash/e2e harness:isolation-probe
-      - run: pnpm --filter @cipherstash/e2e harness:store-probe
+      - run: pnpm exec turbo run harness:selftest harness:typecheck harness:isolation-probe harness:store-probe --filter @cipherstash/e2e
