@@ -185,21 +185,21 @@ export function createRealDriver({
       if (!stackSource) throw Error('Stack source not resolved')
       if (stackSource.tarball)
         await cp(stackSource.tarball, resolve(workspace, 'resolved-stack.tgz'))
-      if (fakeMigration)
-        return fakeMigrate({
-          root,
-          workspace,
-          kind: fakeMigration,
-          stack: stackSource.install,
-        })
-      const result = await isolation.exec({
-        actor: 'migrator',
-        workspace,
-        env: env(migratorStores),
-        command: ['/bin/sh', '-lc', command],
-        forwards: forwards(migratorStores),
-        timeoutMs: manifest.agents?.limits?.timeMs,
-      })
+      const result = fakeMigration
+        ? await fakeMigrate({
+            root,
+            workspace,
+            kind: fakeMigration,
+            stack: stackSource.install,
+          })
+        : await isolation.exec({
+            actor: 'migrator',
+            workspace,
+            env: env(migratorStores),
+            command: ['/bin/sh', '-lc', command],
+            forwards: forwards(migratorStores),
+            timeoutMs: manifest.agents?.limits?.timeMs,
+          })
       await writeFile(
         resolve(output, 'migrator-transcript.log'),
         `${result.stdout ?? ''}\n${result.stderr ?? ''}`,

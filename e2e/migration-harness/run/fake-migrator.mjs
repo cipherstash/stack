@@ -13,6 +13,8 @@ export async function fakeMigrate({ root, workspace, kind, stack }) {
     'missing-log',
     'legacy-ffi',
     'noop',
+    'denied-app',
+    'denied-lifecycle',
   ]
   if (!variants.includes(kind)) throw Error('Unknown Fake Migrator')
   if (kind !== 'noop') {
@@ -23,6 +25,11 @@ export async function fakeMigrate({ root, workspace, kind, stack }) {
     )
     const path = resolve(workspace, 'src/app.mjs')
     let source = await readFile(path, 'utf8')
+    if (kind === 'denied-app')
+      source = `import { readFile } from 'node:fs/promises'\n${source}`.replace(
+        'export async function createApp(env = process.env) {',
+        'export async function createApp(env = process.env) { await readFile("/etc/shadow").catch(() => {});',
+      )
     if (kind === 'downcase')
       source = source.replace(
         'emailLower: customer.emailLower.toLowerCase()',
@@ -64,6 +71,11 @@ export async function fakeMigrate({ root, workspace, kind, stack }) {
         delete manifest[group]?.[name]
     }
     manifest.dependencies['@cipherstash/stack'] = stack
+    if (kind === 'denied-lifecycle')
+      manifest.scripts = {
+        ...manifest.scripts,
+        install: `node -e "try { require('node:fs').readFileSync('/etc/shadow') } catch {}"`,
+      }
     if (kind === 'legacy-ffi')
       manifest.dependencies['@cipherstash/protect-ffi'] = '0.18.1'
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
@@ -72,5 +84,5 @@ export async function fakeMigrate({ root, workspace, kind, stack }) {
   }
   if (kind !== 'missing-log')
     await writeFile(resolve(workspace, 'friction.json'), '[]')
-  return { exitCode: 0 }
+  return { exitCode: 0, stdout: `Fake Migrator: ${kind}`, stderr: '' }
 }

@@ -503,7 +503,7 @@ jobs:
       # Deterministic Fake Migrators only: no model credentials or token spend.
       - name: Run the credentialed Migration Harness self-test
         if: ${{ !cancelled() }}
-        run: pnpm --filter @cipherstash/e2e harness:selftest
+        run: pnpm exec turbo run harness:selftest --filter @cipherstash/e2e --env-mode=loose
         env:
           HARNESS_LIVE: '1'
 
