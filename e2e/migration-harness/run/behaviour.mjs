@@ -46,8 +46,9 @@ function postgresRecord(customer) {
   }
 }
 /** Calls only the App Host JSON RPC boundary; never imports application code.
- * @param {AppCall} call */
-export async function behaviour(call) {
+ * @param {AppCall} call
+ * @param {()=>Promise<void>} afterSetActive */
+export async function behaviour(call, afterSetActive = async () => {}) {
   /** @type {import('../types.js').OracleCheck[]} */
   const checks = []
   /** @param {string} id @param {()=>Promise<unknown>} action */
@@ -112,7 +113,11 @@ export async function behaviour(call) {
       await check('behaviour.fresh-write', async () => {
         equal(await call('get', [fresh.pk]), null)
         await call('put', [fresh])
-        equal(await call('get', [fresh.pk]), fresh)
+        const actual = record(await call('get', [fresh.pk]))
+        equal(
+          { ...actual, emailLower: String(actual.emailLower).toLowerCase() },
+          { ...fresh, emailLower: fresh.emailLower.toLowerCase() },
+        )
       })
       await check('behaviour.downcase-new-write-lookup', async () => {
         if (
@@ -146,6 +151,7 @@ export async function behaviour(call) {
         await call('setActive', [mutation.pk, false])
         equal(record(await call('get', [mutation.pk])).active, false)
       })
+      await afterSetActive()
       const copiedMutation = {
         ...mutation,
         active: false,

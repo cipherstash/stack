@@ -9,8 +9,13 @@ import { run } from './run.mjs'
 
 const args = process.argv.slice(2)
 const command = args[args.indexOf('--migrator') + 1]
-if (!args.includes('--migrator') || !command)
-  throw Error('Usage: harness:run --migrator <command>')
+const fakeMigration = args.includes('--fake')
+  ? args[args.indexOf('--fake') + 1]
+  : undefined
+if ((!args.includes('--migrator') || !command) && !fakeMigration)
+  throw Error(
+    'Usage: harness:run --migrator <command> | --fake <variant> [--stack <range|tree|tarball>]',
+  )
 const id = randomUUID()
 const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const output = resolve(
@@ -57,6 +62,7 @@ try {
     root,
     output,
     command,
+    fakeMigration,
     isolation,
     credentials,
     manifest,

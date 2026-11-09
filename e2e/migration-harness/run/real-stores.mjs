@@ -24,7 +24,9 @@ async function initializePostgres(actor, eqlBundle) {
   /** @type {import('postgres').Sql|undefined} */
   let admin
   try {
-    await docker(['network', 'create', '--internal', network])
+    // Trusted stores need host-loopback administration; actor egress is
+    // enforced separately by the isolation namespace.
+    await docker(['network', 'create', network])
     await docker([
       'run',
       '-d',
@@ -132,7 +134,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
   const dynamoNetwork = `${dynamo}-network`
   resources.push(() => docker(['network', 'rm', dynamoNetwork]))
   resources.push(dynamo)
-  await docker(['network', 'create', '--internal', dynamoNetwork])
+  await docker(['network', 'create', dynamoNetwork])
   await docker([
     'run',
     '-d',
@@ -258,7 +260,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
         network: dynamoNetwork,
       },
     ],
-    async snapshot() {
+    async snapshot(pk = 'legacy') {
       const response = await fetch(`http://127.0.0.1:${dynamoPort}`, {
         method: 'POST',
         headers: {
@@ -270,7 +272,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
         },
         body: JSON.stringify({
           TableName: 'customers',
-          Key: { pk: { S: 'legacy' } },
+          Key: { pk: { S: pk } },
           ConsistentRead: true,
         }),
       })
@@ -279,7 +281,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
       return {
         dynamo: await response.json(),
         postgres:
-          await snapshotSql`SELECT pk, email::jsonb, age::jsonb, notes::jsonb FROM customers WHERE pk = 'legacy'`,
+          await snapshotSql`SELECT pk, email::jsonb, age::jsonb, notes::jsonb FROM customers WHERE pk = ${pk}`,
       }
     },
   }

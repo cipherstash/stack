@@ -1,23 +1,25 @@
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
-import { promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
+import { fakeMigrate } from './fake-migrator.mjs'
+import { migrationChecks } from './migration.mjs'
 import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
+import { resolveStack } from './stack-source.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
 /** @typedef {Awaited<ReturnType<typeof createStoreSet>>} StoreSet
  * @typedef {Pick<ReturnType<typeof import('../isolation.mjs').createIsolation>, 'prove'|'exec'|'openAppHost'|'stop'>} Isolation */
 /** Real application execution has exactly one route: the proven isolation host.
- * @param {{id:string,root:string,output:string,command:string,isolation:Isolation,credentials:Record<string,string>,manifest:import('../types.js').Manifest & {stack:string}}} options */
+ * @param {{id:string,root:string,output:string,command:string,fakeMigration?:string,isolation:Isolation,credentials:Record<string,string>,manifest:import('../types.js').Manifest & {stack:string}}} options */
 export function createRealDriver({
   id,
   root,
   output,
   command,
+  fakeMigration,
   isolation,
   credentials,
   manifest,
@@ -34,6 +36,8 @@ export function createRealDriver({
   let host = null
   /** @type {unknown} */
   let legacySnapshot
+  /** @type {Awaited<ReturnType<typeof resolveStack>>|undefined} */
+  let stackSource
   /** @param {StoreSet|null} stores */
   function assigned(stores) {
     if (!stores) throw Error('Run Store Set has not been provisioned')
@@ -92,22 +96,9 @@ export function createRealDriver({
       if (proof?.verified !== true)
         throw Error('Isolation capability proof failed')
       manifest.isolation = proof
-      const resolved = JSON.parse(
-        (
-          await promisify(execFile)('npm', [
-            'view',
-            `@cipherstash/stack@${manifest.stack}`,
-            'version',
-            '--json',
-          ])
-        ).stdout,
-      )
-      manifest.stack = Array.isArray(resolved) ? resolved.at(-1) : resolved
-      if (
-        typeof manifest.stack !== 'string' ||
-        !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(manifest.stack)
-      )
-        throw Error('Could not resolve exact Stack version')
+      stackSource = await resolveStack({ source: manifest.stack, root, output })
+      manifest.stack = stackSource.version
+      manifest.stackSource = stackSource
       const guide = resolve(root, 'docs/migration/protect-dynamodb-to-stack.md')
       const content = await readFile(guide, 'utf8')
       manifest.guideHash = createHash('sha256').update(content).digest('hex')
@@ -191,6 +182,16 @@ export function createRealDriver({
       )
     },
     async migrate() {
+      if (!stackSource) throw Error('Stack source not resolved')
+      if (stackSource.tarball)
+        await cp(stackSource.tarball, resolve(workspace, 'resolved-stack.tgz'))
+      if (fakeMigration)
+        return fakeMigrate({
+          root,
+          workspace,
+          kind: fakeMigration,
+          stack: stackSource.install,
+        })
       const result = await isolation.exec({
         actor: 'migrator',
         workspace,
@@ -275,7 +276,9 @@ export function createRealDriver({
         'npm',
         'install',
         '--save-exact',
-        `@cipherstash/stack@${manifest.stack}`,
+        stackSource?.tarball
+          ? 'file:./resolved-stack.tgz'
+          : `@cipherstash/stack@${manifest.stack}`,
       ])
       host = await isolation.openAppHost({
         actor: 'app-host',
@@ -288,8 +291,20 @@ export function createRealDriver({
       const application = host
       if (!application) throw Error('App Host has not started')
       try {
-        const result = await behaviour((method, args) =>
-          application.call(method, args),
+        let activeItem
+        const result = await behaviour(
+          (method, args) => application.call(method, args),
+          async () => {
+            try {
+              activeItem = (await assigned(oracleStores).snapshot('mutation'))
+                .dynamo.Item
+            } catch (error) {
+              throw Object.assign(
+                new Error('Mutation Data inspection failed', { cause: error }),
+                { infrastructure: true },
+              )
+            }
+          },
         )
         let current
         try {
@@ -301,7 +316,15 @@ export function createRealDriver({
           )
         }
         result.checks.push(noRewrite(legacySnapshot, current))
-        return await result.mutate()
+        const checks = await result.mutate()
+        checks.push(
+          ...(await migrationChecks({
+            workspace: oracleWorkspace,
+            activeItem,
+            stackVersion: manifest.stack,
+          })),
+        )
+        return checks
       } finally {
         await application.close()
         host = null
