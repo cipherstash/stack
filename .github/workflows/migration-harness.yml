@@ -1,0 +1,34 @@
+name: Migration harness
+
+on:
+  pull_request:
+    paths:
+      - 'e2e/migration-harness/**'
+      - 'e2e/vitest.harness.config.ts'
+      - 'e2e/package.json'
+      - '.github/workflows/migration-harness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probes:
+    name: Run skeleton and isolation probes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          run_install: false
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: npm install -g node-gyp
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cipherstash/e2e harness:selftest
+      - run: pnpm --filter @cipherstash/e2e harness:typecheck
+      - run: pnpm --filter @cipherstash/e2e harness:isolation-probe
+      - run: pnpm --filter @cipherstash/e2e harness:store-probe
