@@ -168,7 +168,8 @@
         "collections": [
           "a_late_element_failure_wipes_the_plaintext_recovered_before_it",
           "a_panicking_element_conversion_wipes_the_plaintext_recovered_before_it",
-          "a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix"
+          "a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix",
+          "a_late_element_failure_wipes_the_recovered_prefix_on_the_structural_path_too"
         ],
         "owned-records": [
           "a_field_opened_before_a_later_field_is_refused_is_wiped"

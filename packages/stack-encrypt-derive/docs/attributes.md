@@ -415,9 +415,10 @@ A field whose type is another `struct` record is an ordinary field. It is
 given its own context, and that context extends the contexts of the inner
 record's fields.
 
-An owned record takes no context from the caller. See [The context a call
-takes](#the-context-a-call-takes). A plan that contains the record can still
-extend each field's context. Under a plan extension `7u64`, the `age` field
+A `struct = ..` record takes no context from the caller. A `plaintext = ..`
+record and a record with a `context_field` do take one. See [The context a
+call takes](#the-context-a-call-takes). A plan that contains a `struct = ..`
+record can still extend each field's context. Under a plan extension `7u64`, the `age` field
 is derived under `(("users", "age"), 7u64)`.
 
 ### Why the scope is required

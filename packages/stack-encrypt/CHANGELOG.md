@@ -141,9 +141,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     over two parts of one value, under one context. `split` also takes a
     `wipe` function for the part that waits while the first description
     runs. If that description panics, `wipe` wipes the waiting part.
-  - `Encryption::project_owned` is also new. It drops the other fields of
-    the struct without wiping them. Use it only when those fields contain
-    nothing secret.
+  - `Encryption::project_owned` is also new, for generated code. The method is
+    hidden from the docs. It drops the other fields of the struct without
+    wiping them. The derive calls it only when the plaintext has one field.
   - `EncryptInto` guards the plaintext until the declaration and its context
     have been built. So a declaration that panics while it is being built
     wipes the plaintext.

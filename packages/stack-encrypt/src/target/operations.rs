@@ -397,6 +397,11 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
     /// description of one field into a description of the struct that contains
     /// the field. `select` moves that field out of the struct.
     ///
+    /// **This method is for generated code.** It is public because the derive
+    /// emits it, and it is hidden from the docs. The derive calls it only when
+    /// the plaintext has one field. Its pattern names every field of the
+    /// plaintext, so no other field is left to drop.
+    ///
     /// **The other fields of the struct are dropped without being wiped.** Use
     /// `project_owned` only for a struct whose other fields contain nothing
     /// secret. To encrypt a struct with more than one field, divide it with
@@ -405,6 +410,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
     /// `select` is a plain function pointer, as the selector of `project` is.
     /// The function captures nothing, so it cannot reach a cipher. It can only
     /// move values.
+    #[doc(hidden)]
     pub fn project_owned<P: 's>(self, select: fn(P) -> S) -> Encryption<'s, P, T, K, Ctx, Owned> {
         Encryption {
             build: Box::new(move |source, cipher, cx| (self.build)(select(source), cipher, cx)),
