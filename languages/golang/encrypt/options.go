@@ -22,6 +22,12 @@ type clientOptions struct {
 	transport           http.RoundTripper
 	guest               []byte
 	requireLockedMemory bool
+	// keyVendor is WithKeyVendor's backend; supersededVendors every earlier
+	// one a later WithKeyVendor replaced, whose StaticKey NewClient still
+	// wipes.
+	keyVendor         KeyVendor
+	supersededVendors []KeyVendor
+	keysetRecords     []string
 }
 
 // WithCredentials supplies the client id, the client key and the auth

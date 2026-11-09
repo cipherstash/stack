@@ -1,12 +1,13 @@
-//! The guest's [`VendorTransport`]: a key vendor backend's HTTP requests
-//! sent through the `transport_send` host import (ADR-0011).
+//! The guest's [`VendorTransport`]: a key vendor backend's HTTP requests,
+//! and its backoff waits, handed to the host through the step loop
+//! (ADR-0011, [`crate::step`]).
 //!
 //! The vendor client signs each request inside the guest and the host only
-//! carries the bytes, as for ZeroKMS. The conversions between the import's
+//! carries the bytes, as for ZeroKMS. The conversions between the step's
 //! form (a status that is negative for a transport failure, headers in the
 //! [`crate::headers`] line format) and [`VendorResponse`] are pure, and are
-//! tested on the native target. [`HostVendorTransport`] itself calls the
-//! import and so exists on wasm32 only.
+//! tested on the native target. [`StepVendorTransport`] itself pauses the
+//! operation, whose future is not `Send`, and so exists on wasm32 only.
 //!
 //! Only the transport is here. Which vendor the guest builds, and where its
 //! credentials come from, is the guest's own wiring.
@@ -14,7 +15,7 @@
 use stack_kms_vendor::{TransportError, VendorResponse};
 use zeroize::Zeroizing;
 
-/// Encode request headers in the import's line format.
+/// Encode request headers in the step's line format.
 ///
 /// A header name or value with a line break cannot be carried: it would
 /// split into two lines (or inject a header). It is refused.
@@ -38,7 +39,7 @@ pub fn encode_request_headers(
     Ok(Zeroizing::new(crate::headers::encode_headers(&pairs)))
 }
 
-/// Decode response headers from the import's line format. Malformed lines
+/// Decode response headers from the step's line format. Malformed lines
 /// are skipped, as [`crate::headers::header_value`] does.
 pub fn decode_response_headers(buffer: &[u8]) -> Vec<(String, String)> {
     buffer
@@ -51,7 +52,7 @@ pub fn decode_response_headers(buffer: &[u8]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Turn what the import returned into a [`VendorResponse`].
+/// Turn the host's response to a step request into a [`VendorResponse`].
 ///
 /// A negative status is a transport failure, and the body is then the
 /// host's error text. A status above 999 cannot be an HTTP status and is a
@@ -78,45 +79,52 @@ pub fn response_from_host(
     })
 }
 
-#[cfg(target_arch = "wasm32")]
-pub use host::HostVendorTransport;
+/// The method of `request` as the step loop carries it: one of the HTTP
+/// methods a vendor client sends. Any other is refused, not sent.
+pub fn step_method(method: &str) -> Result<&'static str, TransportError> {
+    const METHODS: [&str; 6] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
+    METHODS
+        .into_iter()
+        .find(|known| *known == method)
+        .ok_or_else(|| TransportError(format!("the HTTP method {method:?} cannot be sent")))
+}
 
 #[cfg(target_arch = "wasm32")]
-mod host {
+pub use step_transport::StepVendorTransport;
+
+#[cfg(target_arch = "wasm32")]
+mod step_transport {
     use std::time::Duration;
 
     use stack_kms_vendor::{TransportError, VendorRequest, VendorResponse, VendorTransport};
 
-    use super::{encode_request_headers, response_from_host};
-    use crate::transport;
+    use super::{encode_request_headers, response_from_host, step_method};
+    use crate::step;
 
     /// A [`VendorTransport`] whose HTTP client is the host's, through the
-    /// `transport_send` import.
-    ///
-    /// The import is synchronous from the guest's side, so `send` resolves
-    /// at once. `sleep` blocks the instance with `std::thread::sleep`, which
-    /// wasm32-wasip1 implements with a `poll_oneoff` clock subscription.
-    /// That is correct here: the guest runs one call at a time and has
-    /// nothing else to do while it backs off.
+    /// step loop: `send` pauses the operation with the request, and `sleep`
+    /// pauses it with a wait, so the guest blocks on neither and the host
+    /// sits out a backoff with the instance free for other calls.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct HostVendorTransport;
+    pub struct StepVendorTransport;
 
-    impl VendorTransport for HostVendorTransport {
+    impl VendorTransport for StepVendorTransport {
         async fn send(&self, request: VendorRequest) -> Result<VendorResponse, TransportError> {
+            let method = step_method(&request.method)?;
             let headers = encode_request_headers(&request.headers)?;
-            let response = transport::send(&request.method, &request.url, &headers, &request.body)
+            let VendorRequest { url, body, .. } = request;
+            let response = step::request(step::Request::new(method, url, headers, body))
+                .await
                 .map_err(|error| TransportError(error.to_string()))?;
-            let transport::Response {
-                status,
-                headers,
-                body,
-                ..
-            } = response;
-            response_from_host(status, &headers, body)
+            response_from_host(response.status, &response.headers, response.body)
         }
 
         async fn sleep(&self, duration: Duration) {
-            std::thread::sleep(duration);
+            // The host answers a wait once it has passed. An operation that
+            // is not in a step (never the case for a vendor call) or a host
+            // that could not wait goes on at once: the retry still happens,
+            // only sooner.
+            let _ = step::request(step::Request::wait(duration)).await;
         }
     }
 }
@@ -187,5 +195,15 @@ mod tests {
         assert!(response_from_host(1000, b"", Zeroizing::new(vec![])).is_err());
         assert!(response_from_host(100, b"", Zeroizing::new(vec![])).is_ok());
         assert!(response_from_host(999, b"", Zeroizing::new(vec![])).is_ok());
+    }
+
+    #[test]
+    fn only_the_http_methods_a_vendor_client_sends_are_carried() {
+        for method in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] {
+            assert_eq!(step_method(method).unwrap(), method);
+        }
+        for method in ["post", "CONNECT", "", "POST\n"] {
+            assert!(step_method(method).is_err(), "{method:?}");
+        }
     }
 }

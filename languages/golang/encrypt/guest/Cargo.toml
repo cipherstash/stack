@@ -53,8 +53,20 @@ stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features 
 # buffer registry (and with them the `se_alloc`/`se_dealloc` exports), the
 # packed-result helpers, the status table and the step loop.
 # This crate defines only the exports that are its own.
-stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
+stack-guest-abi = { path = "../../../../packages/stack-guest-abi", features = ["vendor"] }
 stack-kms = { path = "../../../../packages/stack-kms", default-features = false }
+# The key vendor backends (ADR-0009, ADR-0011, CIP-5311): the seam, the
+# keyset records and the static key backend, and one hand-written client for
+# each vendor. Default features off: no reqwest and no native credential
+# chains. HTTP goes through `transport_send` (`HostVendorTransport`) and the
+# short-lived credentials come from the host's `vendor_credential_get`
+# import. `stack-kms-gcp` without `service-account` has no RSA code and no
+# `rsa` dependency: the guest never signs with a service account key.
+stack-kms-vendor = { path = "../../../../packages/stack-kms-vendor", default-features = false }
+stack-kms-aws = { path = "../../../../packages/stack-kms-aws", default-features = false }
+stack-kms-vault = { path = "../../../../packages/stack-kms-vault", default-features = false }
+stack-kms-gcp = { path = "../../../../packages/stack-kms-gcp", default-features = false }
+stack-kms-azure = { path = "../../../../packages/stack-kms-azure", default-features = false }
 # The EQL types, for the `eql` build only. By path, like every other
 # eql-bindings dependency in the repository: the SQL that stores a payload
 # and the Rust that emits it must agree (scripts/lint-no-eql-registry-pins.mjs).

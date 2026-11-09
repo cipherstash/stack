@@ -11,6 +11,28 @@
 //! | `zerokms_url` | no       | pins the ZeroKMS endpoint at init; when absent the endpoint is resolved from the access token's `services` claim on first use |
 //! | `keyset_cache_size` | no | how many keysets beyond the default the cipher keeps loaded (a positive decimal integer; the crate default, 1024, when absent). See `StackCipherBuilder::keyset_cache_size` |
 //!
+//! A key vendor backend (ADR-0009, CIP-5311) is configured with the keys
+//! below. They are all absent for a ZeroKMS-only client, which is then
+//! unchanged.
+//!
+//! | key               | when | meaning |
+//! |-------------------|------|---------|
+//! | `key_vendor`      | with any key below | the backend: `aws-kms`, `vault-transit`, `gcp-kms`, `azure-key-vault` or `static` (`KeyVendor::name`) |
+//! | `keyset_records`  | with `key_vendor`, required | an array of one or more keyset record texts (`stack-keyset:…`), all of that backend |
+//! | `aws_region`      | `aws-kms`, required | the AWS region |
+//! | `aws_endpoint`    | `aws-kms` | overrides the regional AWS KMS endpoint |
+//! | `vault_address`   | `vault-transit`, required | the Vault address |
+//! | `vault_namespace` | `vault-transit` | the Vault namespace |
+//! | `vault_mount`     | `vault-transit` | the Transit mount (default `transit`) |
+//! | `gcp_endpoint`    | `gcp-kms` | overrides the Cloud KMS endpoint |
+//! | `static_key_ref`  | `static`, required | the static key's reference, as the records name it |
+//! | `static_key`      | `static`, required | the static key: 32 bytes (a bytes value, not a string) |
+//!
+//! A vendor key for another backend than `key_vendor`, or with no
+//! `key_vendor`, is refused. The vendor's credentials are never in the
+//! config: the guest asks the host for them, through the step loop, before
+//! each vendor request (see [`crate::vendor`]).
+//!
 //! There is no config key for a keyset. `{"default"}` means the default a
 //! ZeroKMS administrator set for this client, and a client does not get to
 //! redefine it — the same reason `StackCipherBuilder::keyset` was removed.
@@ -35,14 +57,43 @@ use std::num::NonZeroUsize;
 use serde::{Deserialize, Deserializer};
 use stack_encrypt::dynamic::frame::serde::from_slice;
 use stack_guest_abi::last_error::malformed;
-use stack_kms::{ClientKey, ZeroKmsEndpoint};
+use stack_kms::{ClientKey, KeyVendor, ZeroKmsEndpoint};
+use stack_kms_vendor::KeyBytes;
 use uuid::Uuid;
+use zeroize::Zeroize;
+
+use crate::vendor::{VendorConfig, VendorSettings};
+
+/// The [`VendorWire`] of a wire struct that declares the key vendor
+/// backend keys inline (the config's, the deterministic build's seed
+/// object). A macro because the two structs are distinct types.
+macro_rules! vendor_wire {
+    ($wire:expr) => {
+        $crate::config::VendorWire {
+            key_vendor: $wire.key_vendor,
+            keyset_records: $wire.keyset_records,
+            aws_region: $wire.aws_region,
+            aws_endpoint: $wire.aws_endpoint,
+            vault_address: $wire.vault_address,
+            vault_namespace: $wire.vault_namespace,
+            vault_mount: $wire.vault_mount,
+            gcp_endpoint: $wire.gcp_endpoint,
+            static_key_ref: $wire.static_key_ref,
+            static_key: $wire.static_key,
+        }
+    };
+}
+// The deterministic build reads the same keys beside its seed.
+#[cfg(feature = "deterministic-kms")]
+pub(crate) use vendor_wire;
 
 /// Everything `se_cipher_init` needs to build the cipher.
 pub struct CipherConfig {
     pub client_key: ClientKey,
     pub endpoint: Option<ZeroKmsEndpoint>,
     pub keyset_cache_size: Option<NonZeroUsize>,
+    /// The key vendor backend, when one is configured.
+    pub vendor: Option<VendorConfig>,
 }
 
 /// Parse the config frame a host sent. See the [module docs](self).
@@ -53,6 +104,9 @@ pub fn parse_config(bytes: &[u8]) -> Result<CipherConfig, u32> {
 /// [`parse_config`], with the refusal's message.
 fn read(bytes: &[u8]) -> Result<CipherConfig, String> {
     let wire: Wire<'_> = from_slice(bytes).map_err(|e| format!("the config: {e}"))?;
+    let vendor = vendor_wire!(wire)
+        .config()
+        .map_err(|e| format!("the config: {e}"))?;
     // `from_encoded_v1` is lenient by design: hex in either case *or* the
     // base64 `secretkey.json` holds, matching every native loader.
     let client_key = ClientKey::from_encoded_v1(wire.client_id.0, wire.client_key)
@@ -61,6 +115,7 @@ fn read(bytes: &[u8]) -> Result<CipherConfig, String> {
         client_key,
         endpoint: wire.zerokms_url.map(|url| url.0),
         keyset_cache_size: wire.keyset_cache_size.map(|size| size.0),
+        vendor,
     })
 }
 
@@ -78,6 +133,28 @@ struct Wire<'a> {
     zerokms_url: Option<Url>,
     #[serde(default, deserialize_with = "present")]
     keyset_cache_size: Option<CacheSize>,
+    // The key vendor backend keys, read into a `VendorWire`. Not a
+    // flattened field: serde does not deny unknown keys through a flatten.
+    #[serde(default, borrow, deserialize_with = "present")]
+    key_vendor: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    keyset_records: Option<Vec<&'a str>>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    aws_region: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    aws_endpoint: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    vault_address: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    vault_namespace: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    vault_mount: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    gcp_endpoint: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    static_key_ref: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    static_key: Option<&'a [u8]>,
 }
 
 /// Absent is `None`. Present, a value must be a string: a null is refused.
@@ -125,6 +202,123 @@ impl TryFrom<&str> for CacheSize {
         text.parse()
             .map(CacheSize)
             .map_err(|_| "a size that is not a positive decimal integer")
+    }
+}
+
+/// The key vendor backend keys of a config, as a host writes them. Read
+/// beside the ZeroKMS keys here, and beside the seed in the deterministic
+/// build ([`crate::deterministic`]).
+#[derive(Default)]
+pub struct VendorWire<'a> {
+    pub(crate) key_vendor: Option<&'a str>,
+    pub(crate) keyset_records: Option<Vec<&'a str>>,
+    pub(crate) aws_region: Option<&'a str>,
+    pub(crate) aws_endpoint: Option<&'a str>,
+    pub(crate) vault_address: Option<&'a str>,
+    pub(crate) vault_namespace: Option<&'a str>,
+    pub(crate) vault_mount: Option<&'a str>,
+    pub(crate) gcp_endpoint: Option<&'a str>,
+    pub(crate) static_key_ref: Option<&'a str>,
+    pub(crate) static_key: Option<&'a [u8]>,
+}
+
+impl VendorWire<'_> {
+    /// The key vendor backend these keys configure, or `None` when none is
+    /// given. A refusal names the key at fault and never its value.
+    pub fn config(self) -> Result<Option<VendorConfig>, String> {
+        let given: Vec<&'static str> = [
+            ("key_vendor", self.key_vendor.is_some()),
+            ("keyset_records", self.keyset_records.is_some()),
+            ("aws_region", self.aws_region.is_some()),
+            ("aws_endpoint", self.aws_endpoint.is_some()),
+            ("vault_address", self.vault_address.is_some()),
+            ("vault_namespace", self.vault_namespace.is_some()),
+            ("vault_mount", self.vault_mount.is_some()),
+            ("gcp_endpoint", self.gcp_endpoint.is_some()),
+            ("static_key_ref", self.static_key_ref.is_some()),
+            ("static_key", self.static_key.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(key, present)| present.then_some(key))
+        .collect();
+        if given.is_empty() {
+            return Ok(None);
+        }
+        let missing = |key: &str| format!("missing field `{key}`");
+        let invalid = |key: &str| format!("{key}: a value its type does not accept");
+        let name = self.key_vendor.ok_or_else(|| missing("key_vendor"))?;
+        let vendor = KeyVendor::ALL
+            .into_iter()
+            .find(|v| v.name() == name)
+            .ok_or_else(|| invalid("key_vendor"))?;
+        let records = self
+            .keyset_records
+            .ok_or_else(|| missing("keyset_records"))?;
+        if records.is_empty() {
+            return Err(invalid("keyset_records"));
+        }
+        let required = |key: &'static str, value: Option<&str>| {
+            let value = value.ok_or_else(|| missing(key))?;
+            if value.is_empty() {
+                return Err(invalid(key));
+            }
+            Ok(value.to_owned())
+        };
+        let (settings, used): (VendorSettings, &[&str]) = match vendor {
+            KeyVendor::Aws => (
+                VendorSettings::Aws {
+                    region: required("aws_region", self.aws_region)?,
+                    endpoint: self.aws_endpoint.map(str::to_owned),
+                },
+                &["aws_region", "aws_endpoint"],
+            ),
+            KeyVendor::Vault => (
+                VendorSettings::Vault {
+                    address: required("vault_address", self.vault_address)?,
+                    namespace: self.vault_namespace.map(str::to_owned),
+                    mount: self.vault_mount.map(str::to_owned),
+                },
+                &["vault_address", "vault_namespace", "vault_mount"],
+            ),
+            KeyVendor::Gcp => (
+                VendorSettings::Gcp {
+                    endpoint: self.gcp_endpoint.map(str::to_owned),
+                },
+                &["gcp_endpoint"],
+            ),
+            KeyVendor::Azure => (VendorSettings::Azure, &[]),
+            KeyVendor::Static => {
+                let key = self.static_key.ok_or_else(|| missing("static_key"))?;
+                let mut bytes: [u8; 32] = key.try_into().map_err(|_| invalid("static_key"))?;
+                // `KeyBytes` wipes its own copy; the stack copy is wiped
+                // here. The config buffer is the ABI layer's to wipe.
+                let key = KeyBytes::new(bytes);
+                bytes.zeroize();
+                (
+                    VendorSettings::Static {
+                        key_ref: required("static_key_ref", self.static_key_ref)?,
+                        key,
+                    },
+                    &["static_key_ref", "static_key"],
+                )
+            }
+            // `KeyVendor` is `#[non_exhaustive]`: a vendor this guest has no
+            // client for is not one it can configure.
+            _ => return Err(invalid("key_vendor")),
+        };
+        // Whatever else was given is for another backend.
+        if let Some(key) = given
+            .iter()
+            .find(|key| !["key_vendor", "keyset_records"].contains(key) && !used.contains(key))
+        {
+            return Err(format!(
+                "{key}: a key that does not apply to its key_vendor"
+            ));
+        }
+        Ok(Some(VendorConfig {
+            settings,
+            records: records.into_iter().map(str::to_owned).collect(),
+        }))
     }
 }
 
@@ -351,5 +545,165 @@ mod tests {
             &[&hex],
         );
         assert!(message.starts_with("the config: "), "{message}");
+    }
+
+    fn with_vendor(extra: Vec<(&'static str, V)>) -> Result<CipherConfig, String> {
+        let (id, hex) = client_key_hex();
+        let mut entries = vec![("client_id", s(&id.to_string())), ("client_key", s(&hex))];
+        entries.extend(extra);
+        config(entries)
+    }
+
+    fn records() -> V {
+        V::Arr(vec![s("stack-keyset:AQ")])
+    }
+
+    #[test]
+    fn no_vendor_key_is_no_vendor() {
+        let cfg = with_vendor(vec![]).expect("config parses");
+        assert!(cfg.vendor.is_none());
+    }
+
+    #[test]
+    fn parses_each_vendor() {
+        let aws = with_vendor(vec![
+            ("key_vendor", s("aws-kms")),
+            ("keyset_records", records()),
+            ("aws_region", s("us-east-1")),
+            ("aws_endpoint", s("http://localhost:4566")),
+        ])
+        .unwrap()
+        .vendor
+        .unwrap();
+        assert!(matches!(
+            aws.settings,
+            VendorSettings::Aws { ref region, endpoint: Some(_) } if region == "us-east-1"
+        ));
+        assert_eq!(aws.records, vec!["stack-keyset:AQ".to_owned()]);
+
+        let vault = with_vendor(vec![
+            ("key_vendor", s("vault-transit")),
+            ("keyset_records", records()),
+            ("vault_address", s("https://vault.example.com")),
+            ("vault_mount", s("kms")),
+        ])
+        .unwrap()
+        .vendor
+        .unwrap();
+        assert!(matches!(
+            vault.settings,
+            VendorSettings::Vault {
+                namespace: None,
+                mount: Some(_),
+                ..
+            }
+        ));
+
+        for (name, expected) in [
+            ("gcp-kms", KeyVendor::Gcp),
+            ("azure-key-vault", KeyVendor::Azure),
+        ] {
+            let vendor = with_vendor(vec![("key_vendor", s(name)), ("keyset_records", records())])
+                .unwrap()
+                .vendor
+                .unwrap();
+            assert_eq!(vendor.settings.vendor(), expected);
+        }
+
+        let static_key = with_vendor(vec![
+            ("key_vendor", s("static")),
+            ("keyset_records", records()),
+            ("static_key_ref", s("local")),
+            ("static_key", V::Bytes(vec![7u8; 32])),
+        ])
+        .unwrap()
+        .vendor
+        .unwrap();
+        assert_eq!(static_key.settings.vendor(), KeyVendor::Static);
+        // The static key never prints.
+        assert!(!format!("{static_key:?}").contains('7'));
+    }
+
+    /// Every refusal names the key at fault, never a value.
+    #[test]
+    fn refuses_bad_vendor_configs() {
+        let cases: Vec<(Vec<(&'static str, V)>, &str)> = vec![
+            (
+                vec![("keyset_records", records())],
+                "the config: missing field `key_vendor`",
+            ),
+            (
+                vec![("key_vendor", s("zerokms")), ("keyset_records", records())],
+                "the config: key_vendor: a value its type does not accept",
+            ),
+            (
+                vec![("key_vendor", s("azure-key-vault"))],
+                "the config: missing field `keyset_records`",
+            ),
+            (
+                vec![
+                    ("key_vendor", s("azure-key-vault")),
+                    ("keyset_records", V::Arr(vec![])),
+                ],
+                "the config: keyset_records: a value its type does not accept",
+            ),
+            (
+                vec![
+                    ("key_vendor", s("azure-key-vault")),
+                    ("keyset_records", s("stack-keyset:AQ")),
+                ],
+                "the config: keyset_records: ",
+            ),
+            (
+                vec![("key_vendor", s("aws-kms")), ("keyset_records", records())],
+                "the config: missing field `aws_region`",
+            ),
+            (
+                vec![
+                    ("key_vendor", s("aws-kms")),
+                    ("keyset_records", records()),
+                    ("aws_region", s("")),
+                ],
+                "the config: aws_region: a value its type does not accept",
+            ),
+            (
+                vec![
+                    ("key_vendor", s("aws-kms")),
+                    ("keyset_records", records()),
+                    ("aws_region", s("us-east-1")),
+                    ("vault_address", s("https://vault.example.com")),
+                ],
+                "the config: vault_address: a key that does not apply to its key_vendor",
+            ),
+            (
+                vec![
+                    ("key_vendor", s("static")),
+                    ("keyset_records", records()),
+                    ("static_key_ref", s("local")),
+                    ("static_key", s("not bytes")),
+                ],
+                "the config: static_key: ",
+            ),
+            (
+                vec![
+                    ("key_vendor", s("static")),
+                    ("keyset_records", records()),
+                    ("static_key_ref", s("local")),
+                    ("static_key", V::Bytes(vec![7u8; 31])),
+                ],
+                "the config: static_key: a value its type does not accept",
+            ),
+        ];
+        let (_, hex) = client_key_hex();
+        for (entries, expected) in cases {
+            let message = with_vendor(entries).err().expect("refused");
+            assert!(
+                message.starts_with(expected),
+                "{message:?} is not {expected:?}"
+            );
+            for secret in [hex.as_str(), "us-east-1", "vault.example.com", "not bytes"] {
+                assert!(!message.contains(secret), "{message:?} echoes {secret:?}");
+            }
+        }
     }
 }

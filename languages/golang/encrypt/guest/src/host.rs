@@ -1,7 +1,10 @@
-//! The guest's two connections to its host: [`WasiHostConnection`] (a
+//! The guest's connections to its host: [`WasiHostConnection`] (a
 //! [`ZeroKMSConnection`] whose requests the host performs, through the step
-//! loop) and [`HostTokenStrategy`] (an [`AuthStrategy`] that asks the host
-//! for the bearer token). wasm32-only — the token is an imported function.
+//! loop), [`HostTokenStrategy`] (an [`AuthStrategy`] that asks the host for
+//! the bearer token) and [`StepCredentialImport`] (a key vendor backend's
+//! short-lived credentials, asked for through the step loop, see
+//! [`crate::vendor`]). wasm32-only — the token is an imported function, and
+//! a step's future is not `Send`.
 //!
 //! # Requests
 //!
@@ -10,7 +13,10 @@
 //! returns to the host with it, paused; the host performs it and resumes the
 //! operation with the response ([`crate::io`] has the wire form). So a host
 //! whose HTTP client cannot block — `fetch` on the edge — can run the guest,
-//! and the guest is never running while a request is in flight.
+//! and the guest is never running while a request is in flight. A key
+//! vendor backend's requests, its credentials and its backoff waits pause
+//! the operation the same way (`stack_guest_abi::vendor_transport`,
+//! [`StepCredentialImport`]).
 //!
 //! # Import contract (module `cipherstash_transport`)
 //!
@@ -31,6 +37,17 @@
 //! bytes. Key material derived from a response never crosses back — the
 //! derivation runs inside the guest ([`stack_kms`]'s client, unmodified).
 //!
+//! The same holds for a key vendor backend. A vendor request crosses as
+//! the signed HTTP request the vendor would receive over TLS: a wrapped key
+//! out, and, in the response, a key the vendor unwrapped. That response is
+//! read only inside the guest, and the host wipes its own copy once it is
+//! in guest memory (as for a ZeroKMS response). Root keys, index keys and
+//! data keys are derived or unwrapped in the guest and never cross back to
+//! the host. What crosses *in* for a credential step is a short-lived
+//! credential (temporary AWS credentials, an access token, a Vault token),
+//! never a long-lived signing key, which the guest uses to sign and then
+//! drops.
+//!
 //! Request bodies and response bodies can carry key-material contexts and
 //! wrapped keys, so both are wiped on drop here; the buffers the host wrote
 //! are reclaimed via the registry (which the ABI's `se_dealloc` also wipes).
@@ -42,12 +59,14 @@ use stack_auth::{AuthError, AuthStrategy, CustomError, SecretToken, ServiceToken
 use stack_guest_abi::buffers;
 use stack_guest_abi::headers::header_value;
 use stack_guest_abi::step;
+use stack_kms::{BackendErrorKind, KeyVendor};
 use stack_kms::{BaseUrlUnresolved, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint};
 use zeroize::Zeroizing;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
 use crate::headers::request_headers;
 use crate::response::map_response;
+use crate::vendor::{CredentialError, CredentialImport};
 
 #[link(wasm_import_module = "cipherstash_transport")]
 extern "C" {
@@ -201,5 +220,39 @@ impl AuthStrategy for &HostTokenStrategy {
         // `SecretToken` wipes on drop; `bytes` (the only other copy) wipes
         // via its `Zeroizing` wrapper above.
         Ok(ServiceToken::new(SecretToken::new(text)))
+    }
+}
+
+/// A key vendor backend's [`CredentialImport`] through the step loop: the
+/// operation pauses with a credential request for the vendor and scope, and
+/// the host answers it from its credential source between steps, outside
+/// the client's lock, where a source may wait on the network. The guest asks
+/// before each vendor request and keeps nothing, so the host decides when a
+/// credential is refreshed.
+pub struct StepCredentialImport;
+
+impl CredentialImport for StepCredentialImport {
+    async fn credential(
+        &self,
+        vendor: KeyVendor,
+        scope: &str,
+    ) -> Result<Zeroizing<Vec<u8>>, CredentialError> {
+        let failed = |message: String| CredentialError {
+            kind: BackendErrorKind::Unavailable,
+            message,
+        };
+        let response = step::request(step::Request::credential(vendor.byte(), scope))
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+        if response.status != 0 {
+            // The body is the host's error text: the credential source's
+            // reason, never a credential.
+            return Err(failed(format!(
+                "the host has no {} credential: {}",
+                vendor.name(),
+                String::from_utf8_lossy(&response.body)
+            )));
+        }
+        Ok(response.body)
     }
 }
