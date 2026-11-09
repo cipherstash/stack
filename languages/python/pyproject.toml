@@ -16,8 +16,9 @@ classifiers = ["Private :: Do Not Upload"]
 # and no upper bounds on purpose. They are the libraries users build their
 # classes with, so the tests meet each new release soon after users do. A new
 # release that fails a test is a finding about users' classes. uv.lock fixes
-# the versions the tests install. Dependabot proposes each new release in its
-# own pull request, after a 7-day cooldown.
+# the versions the tests install. Each month, Dependabot proposes new minor
+# and patch releases together in one pull request, after a 7-day cooldown.
+# Major releases are updated by hand.
 #
 # psycopg for the live tests, which insert an encrypted row (#1389). The
 # binary extra ships libpq, so the tests need no system Postgres client.
