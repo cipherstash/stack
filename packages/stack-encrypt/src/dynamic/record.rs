@@ -668,6 +668,10 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
 pub struct Plan {
     context: Context,
     extension: Vec<ContextPiece<'static>>,
+    /// The caller's bindings, in order: in the stored context of every
+    /// field, after the scopes, and in no query context. The plan-level
+    /// `"bind"` key.
+    bindings: Vec<ContextPiece<'static>>,
     fields: Vec<FieldPlan>,
 }
 
@@ -942,6 +946,7 @@ impl Plan {
         let plan = Self {
             context,
             extension,
+            bindings: Vec::new(),
             fields,
         };
         // The whole-plan rules the builder holds (names once, labels plain,
@@ -998,7 +1003,10 @@ impl Plan {
     ///
     /// The plan does not lower: the same errors as running it.
     pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
-        Ok(crate::contexts::resolve(self.caller_shapes()?, None))
+        Ok(crate::contexts::resolve(
+            self.caller_shapes()?,
+            crate::contexts::CallerShape::none(),
+        ))
     }
 
     /// The shape of every field's context, in plan order, with the plan's
@@ -1072,15 +1080,47 @@ impl Plan {
         builder.build()
     }
 
-    /// The extension every field's label is run under, as the chain's
-    /// `.extend(..)` would carry it.
+    /// This plan with the caller's bindings `parts`, each in the stored
+    /// context of every field after the scopes, and in no query context.
+    /// What a binding's `"bind"` key carries.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Target`] if a field names an EQL type: an EQL value is
+    /// stored under its table and column alone, so a binding cannot extend
+    /// it, as an extension cannot ([`TargetError::Extended`]).
+    pub fn with_bindings(mut self, parts: Vec<ContextPiece<'static>>) -> Result<Self, Error> {
+        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
+            if !parts.is_empty() {
+                return Err(TargetError::Extended {
+                    name: target.name.clone(),
+                    label: target.label.to_string(),
+                }
+                .into());
+            }
+        }
+        self.bindings = parts;
+        Ok(self)
+    }
+
+    /// The caller's bindings, in order. Empty for a plan with none.
+    pub fn bindings(&self) -> &[ContextPiece<'static>] {
+        &self.bindings
+    }
+
+    /// The context every field's label is run under: the extension, as the
+    /// chain's `.extend(..)` would carry it, then the bindings.
     fn declared_context(&self) -> DeclaredContext {
-        self.extension
+        let scopes = self
+            .extension
             .iter()
             .cloned()
             .fold(DeclaredContext::default(), |context, part| {
                 context.with(CallerContext::from_piece(part))
-            })
+            });
+        self.bindings.iter().cloned().fold(scopes, |context, part| {
+            context.with(CallerContext::bind_piece(part))
+        })
     }
 
     fn shape(&self) -> Vec<FieldShape> {
@@ -1309,10 +1349,11 @@ pub fn plan_with(
     }
     // The whole-plan rules are the constructors', so a parsed plan and a
     // hand-built one are refused alike.
-    match wire.context_field {
+    let plan = match wire.context_field {
         Some(name) => Plan::with_context_field(name, fields),
         None => Plan::new_with(fields, resolver),
-    }
+    }?;
+    plan.with_bindings(wire.bindings)
 }
 
 /// A plan as a binding writes it: an object of field specs, in order, with
@@ -1320,6 +1361,7 @@ pub fn plan_with(
 /// that key from a field's name; every value below it is derived.
 struct PlanWire {
     context_field: Option<String>,
+    bindings: Vec<ContextPiece<'static>>,
     fields: Vec<(String, FieldSpecWire)>,
 }
 
@@ -1334,11 +1376,15 @@ impl<'de> Deserialize<'de> for PlanWire {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<PlanWire, A::Error> {
                 let mut plan = PlanWire {
                     context_field: None,
+                    bindings: Vec::new(),
                     fields: Vec::with_capacity(super::context::reserved(map.size_hint())),
                 };
                 while let Some(name) = map.next_key::<&'de str>()? {
                     if name == CONTEXT_FIELD {
                         plan.context_field = Some(map.next_value()?);
+                    } else if name == BIND {
+                        let parts: Vec<super::context::Context> = map.next_value()?;
+                        plan.bindings = parts.into_iter().map(|part| part.0).collect();
                     } else {
                         plan.fields.push((name.to_owned(), map.next_value()?));
                     }
@@ -1404,6 +1450,9 @@ fn spec_keys(frame: &[u8], field: &str) -> Option<Vec<String>> {
 
 /// The plan-level key naming the field a plan takes its context from.
 const CONTEXT_FIELD: &str = "context_field";
+/// The plan-level key listing the caller's bindings: a list of parts, each
+/// a context as [`context`](super::context()) reads one.
+const BIND: &str = "bind";
 
 /// One field's spec: a context, and exactly one of `"outputs"` and
 /// `"target"` (checked in `TryFrom`, once the field's name is known, so the

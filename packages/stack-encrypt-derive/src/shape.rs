@@ -177,7 +177,85 @@ pub(crate) struct Record {
     /// `CallerContext` a record whose fields take the caller's context
     /// declares by default.
     pub(crate) context_type: Option<Type>,
+    /// The scope and the binding a `struct = ..` record lists beside its
+    /// name, each supplied by the caller or stored in the row.
+    pub(crate) parts: Parts,
     pub(crate) fields: Vec<Field>,
+}
+
+/// The parts a record lists with `scope(..)` and `bind(..)`.
+#[derive(Default)]
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct Parts {
+    /// `scope(tenant: u64)`: the caller's scope, by name and type.
+    pub(crate) caller_scope: Option<(Ident, Type)>,
+    /// `scope(field = "tenant")`: the stored scope, as the record field
+    /// that stores it and the plaintext field it comes from.
+    pub(crate) stored_scope: Option<StoredPart>,
+    /// `bind(row: u128)`: the caller's binding, by name and type.
+    pub(crate) caller_bind: Option<(Ident, Type)>,
+    /// `bind(field = "id")`: the stored binding.
+    pub(crate) stored_bind: Option<StoredPart>,
+}
+
+/// A part stored in the row: the `passthrough` field of the record that
+/// holds it, the plaintext field it is read from, and its type.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct StoredPart {
+    /// The record field.
+    pub(crate) member: Member,
+    /// The plaintext field.
+    pub(crate) from: Member,
+    /// The name shown in `contexts()`: the plaintext field's name.
+    pub(crate) name: String,
+    pub(crate) ty: Type,
+}
+
+impl Parts {
+    /// Whether the record lists any part.
+    pub(crate) fn any(&self) -> bool {
+        self.caller_scope.is_some()
+            || self.stored_scope.is_some()
+            || self.caller_bind.is_some()
+            || self.stored_bind.is_some()
+    }
+    /// Whether the caller supplies a part on every call.
+    pub(crate) fn caller_any(&self) -> bool {
+        self.caller_scope.is_some() || self.caller_bind.is_some()
+    }
+    /// Whether a part is stored in the row.
+    pub(crate) fn stored_any(&self) -> bool {
+        self.stored_scope.is_some() || self.stored_bind.is_some()
+    }
+}
+
+/// Resolve `scope(field = "..")` or `bind(field = "..")` to the record's
+/// `passthrough` field derived from that plaintext field.
+fn stored_part(kind: &str, field: &LitStr, fields: &[Field]) -> Result<StoredPart> {
+    let wanted = field.value();
+    let found = fields.iter().find(|f| {
+        f.is_passthrough()
+            && f.from()
+                .is_some_and(|from| from.to_token_stream().to_string() == wanted)
+    });
+    match found {
+        Some(f) => Ok(StoredPart {
+            member: f.member.clone(),
+            from: f
+                .from()
+                .cloned()
+                .unwrap_or_else(|| unreachable!("a passthrough has a `from`")),
+            name: wanted,
+            ty: f.ty.clone(),
+        }),
+        None => Err(syn::Error::new(
+            field.span(),
+            format!(
+                "`{kind}(field = \"{wanted}\")` names a part stored in the row, so the record \
+                 needs a `#[stash(passthrough)]` field derived from the plaintext field `{wanted}`"
+            ),
+        )),
+    }
 }
 
 impl Record {
@@ -256,11 +334,39 @@ impl Record {
             ));
         }
 
+        if flavor == Flavor::Structural
+            && (attrs.caller_scope.is_some()
+                || attrs.stored_scope.is_some()
+                || attrs.caller_bind.is_some()
+                || attrs.stored_bind.is_some())
+        {
+            return Err(syn::Error::new_spanned(
+                &input.ident,
+                "`scope(..)` and `bind(..)` are parts of an owned record's context: derive \
+                 `EncryptTarget` and `DecryptSource`. The structural `EncryptFrom` / \
+                 `DecryptInto` derives have no form for them",
+            ));
+        }
+        let parts = Parts {
+            stored_scope: attrs
+                .stored_scope
+                .as_ref()
+                .map(|field| stored_part("scope", field, &fields))
+                .transpose()?,
+            stored_bind: attrs
+                .stored_bind
+                .as_ref()
+                .map(|field| stored_part("bind", field, &fields))
+                .transpose()?,
+            caller_scope: attrs.caller_scope,
+            caller_bind: attrs.caller_bind,
+        };
         let record = Self {
             krate: attrs.krate,
             plaintexts,
             by_field,
             context_type: attrs.context_type,
+            parts,
             fields,
         };
         // `ContainerAttrs::parse` has refused `context_type` beside `struct`;
@@ -529,6 +635,12 @@ impl Record {
     }
     pub(crate) fn context_type(&self, decrypt: bool) -> Type {
         let krate = &self.krate;
+        // On the encrypt side a record whose parts are all stored in the row
+        // takes nothing from the caller, so it keeps the declared context.
+        // On the decrypt side the caller may pass a stored part to check it.
+        if self.parts.any() && (decrypt || self.parts.caller_any()) {
+            return self.parts_type(decrypt);
+        }
         if let Some(field) = self.context_field() {
             let ty = &field.ty;
             if decrypt {
@@ -544,6 +656,31 @@ impl Record {
             parse_quote!(#krate::target::CallerContext)
         }
     }
+    /// The `Parts<S, B>` a record with `scope(..)` or `bind(..)` takes from
+    /// its caller. On the encrypt side a stored part is read from the
+    /// plaintext, so its slot is empty. On the decrypt side a stored part
+    /// may be passed to check it, so its slot is an `Option`.
+    pub(crate) fn parts_type(&self, decrypt: bool) -> Type {
+        let krate = &self.krate;
+        let scope: Type = match (&self.parts.caller_scope, &self.parts.stored_scope) {
+            (Some((_, ty)), _) => parse_quote!(#krate::target::Scope<#ty>),
+            (None, Some(stored)) if decrypt => {
+                let ty = &stored.ty;
+                parse_quote!(::core::option::Option<#krate::target::Scope<#ty>>)
+            }
+            (None, _) => parse_quote!(#krate::target::NoScope),
+        };
+        let bind: Type = match (&self.parts.caller_bind, &self.parts.stored_bind) {
+            (Some((_, ty)), _) => parse_quote!(#krate::target::Bind<#ty>),
+            (None, Some(stored)) if decrypt => {
+                let ty = &stored.ty;
+                parse_quote!(::core::option::Option<#krate::target::Bind<#ty>>)
+            }
+            (None, _) => parse_quote!(#krate::target::NoBind),
+        };
+        parse_quote!(#krate::target::Parts<#scope, #bind>)
+    }
+
     /// The context a field is handed on the decrypt side: the caller's as it
     /// is, or — for a field with a context of its own, which only a `struct`
     /// derive has — the `CallerContext` that `context_expr` builds from the

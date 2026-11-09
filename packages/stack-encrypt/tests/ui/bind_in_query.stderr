@@ -1,0 +1,34 @@
+error[E0277]: the trait bound `DeclaredContext: From<stack_encrypt::target::Bind<u128>>` is not satisfied
+  --> tests/ui/bind_in_query.rs:22:17
+   |
+22 |         .extend(Bind::new(9u128))
+   |          ------ ^^^^^^^^^^^^^^^^ the trait `From<stack_encrypt::target::Bind<u128>>` is not implemented for `DeclaredContext`
+   |          |
+   |          required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `From<T>`:
+             `DeclaredContext` implements `From<&NonEmpty<T>>`
+             `DeclaredContext` implements `From<()>`
+             `DeclaredContext` implements `From<CallerContext>`
+             `DeclaredContext` implements `From<DeclaredScopes>`
+             `DeclaredContext` implements `From<NoCallerContext>`
+             `DeclaredContext` implements `From<NonEmpty<T>>`
+             `DeclaredContext` implements `From<RequiredContext<Parts<S, B>>>`
+             `DeclaredContext` implements `From<i128>`
+           and $N others
+   = note: required for `stack_encrypt::target::Bind<u128>` to implement `Into<DeclaredContext>`
+note: required by a bound in `QueryBuilder::<'a, Op, F, K>::extend`
+  --> src/plan/chain.rs
+   |
+   |               pub fn extend(mut self, parts: impl Into<DeclaredContext>) -> Self {
+   |                                                   ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `QueryBuilder::<'a, Op, F, K>::extend`
+...
+   | / chain_options! {
+   | |     ['a, S: ?Sized, K: 'static] EncryptBuilder<'a, S, K>;
+   | |     ['a, S: ?Sized, K: 'static] EncryptWithContext<'a, S, K>;
+   | |     ['a, S, X, K: 'static] EncryptIndexed<'a, S, X, K>;
+...  |
+   | |     ['a, R, P, K: 'static] OpenUsing<'a, R, P, K>;
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `chain_options` (in Nightly builds, run with -Z macro-backtrace for more info)

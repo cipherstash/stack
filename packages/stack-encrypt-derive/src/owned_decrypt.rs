@@ -131,6 +131,14 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 /// other record takes the caller context the encrypt side required.
 fn decrypt_input(record: &Record) -> Type {
     let krate = &record.krate;
+    if record.parts.any() {
+        let parts = record.parts_type(true);
+        return if record.parts.caller_any() {
+            parse_quote!(#krate::target::RequiredContext<#parts>)
+        } else {
+            parse_quote!(#krate::target::OptionalContext<#parts>)
+        };
+    }
     if let Some(field) = record.context_field() {
         let ty = &field.ty;
         parse_quote!(#krate::target::ExpectedContext<#ty>)
@@ -188,8 +196,32 @@ fn struct_body(
     // A field opened before a later field is refused is wiped, not dropped as
     // it is.
     let zipped = zip_wiping(operations, output);
+    let context = if record.parts.any() {
+        // The stored parts are read from the row, and the caller's parts
+        // are checked against them. A part the row stores and the caller
+        // passes must agree. A part the caller alone supplies follows the
+        // stored ones, as on encrypt.
+        let mut stored = quote!(#krate::target::StoredParts::none());
+        if let Some(part) = &record.parts.stored_scope {
+            let member = &part.member;
+            stored = quote!(#stored.scope(::core::clone::Clone::clone(&self.#member)));
+        }
+        if let Some(part) = &record.parts.stored_bind {
+            let member = &part.member;
+            stored = quote!(#stored.bind(::core::clone::Clone::clone(&self.#member)));
+        }
+        quote! {
+            let __context: #krate::target::DeclaredContext =
+                match #krate::target::CheckedInput::checked(__context, #stored) {
+                    ::core::result::Result::Ok(context) => context,
+                    ::core::result::Result::Err(error) => return #krate::target::Decryption::failed(error),
+                };
+        }
+    } else {
+        quote!(let __context: #krate::target::DeclaredContext = ::core::convert::Into::into(__context);)
+    };
     Ok(quote! {
-        let __context: #krate::target::DeclaredContext = ::core::convert::Into::into(__context);
+        #context
         #zipped
     })
 }

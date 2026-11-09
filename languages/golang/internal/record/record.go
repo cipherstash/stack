@@ -253,9 +253,14 @@ type Plan struct {
 	// crosses the binding as a passthrough, and is not in Fields. Each
 	// field's label is then its identity alone, under that value.
 	ContextField string
-	// Extension is the caller's parts, nested to the left of every field's
-	// label, in order: a tenant, a region.
+	// Extension is the caller's scopes, nested to the left of every field's
+	// label, in order: a tenant, a region. In the query context and the
+	// stored context.
 	Extension []any
+	// Bind is the caller's bindings, in order, after the scopes: a row ID.
+	// In the stored context of every field, and in no query context, so a
+	// query takes none.
+	Bind []any
 	// Fields are the sealed fields, in declared order.
 	Fields []Field
 }
@@ -350,6 +355,11 @@ func (p *Plan) Validate() error {
 			return fmt.Errorf("record: context extension: %v", err)
 		}
 	}
+	for _, part := range p.Bind {
+		if err := CheckPart(part); err != nil {
+			return fmt.Errorf("record: context binding: %v", err)
+		}
+	}
 	if len(p.Fields) == 0 {
 		return errors.New("record: the plan has no sealed field")
 	}
@@ -403,6 +413,9 @@ func (p *Plan) Validate() error {
 			}
 			if len(p.Extension) != 0 {
 				return fmt.Errorf("record: field %q names the EQL type %s, and an EQL column is a table and a column: an extended context has no column", f.Name, f.Target)
+			}
+			if len(p.Bind) != 0 {
+				return fmt.Errorf("record: field %q names the EQL type %s, and an EQL column is a table and a column: a bound context has no column", f.Name, f.Target)
 			}
 			continue
 		}
@@ -462,7 +475,14 @@ func (p *Plan) Field(name string) *Field {
 // context field, the plan-level "context_field" key and that field's own
 // entry, a passthrough of type string. Validate first.
 func (p *Plan) Wire() vcvalue.Object {
-	out := make(vcvalue.Object, 0, len(p.Fields)+2)
+	out := make(vcvalue.Object, 0, len(p.Fields)+3)
+	if len(p.Bind) != 0 {
+		parts := make([]any, len(p.Bind))
+		for i, part := range p.Bind {
+			parts[i] = ownPart(part)
+		}
+		out = append(out, vcvalue.Field{Key: "bind", Value: parts})
+	}
 	if p.ContextField != "" {
 		out = append(out,
 			vcvalue.Field{Key: "context_field", Value: p.ContextField},

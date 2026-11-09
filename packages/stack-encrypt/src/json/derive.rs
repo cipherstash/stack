@@ -33,7 +33,8 @@ use super::shuffle;
 use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
 use crate::keyset::KeysetState;
 use crate::sem::TermError;
-use crate::target::{AeadContext, CallerContext, Decryption, Pending, Request};
+use crate::target::{AeadContext, Decryption, Pending, Request};
+use crate::ContextPiece;
 use crate::{DecryptInto, Descriptor, Error, KeysetCipher, NonEmpty, StackCipher};
 
 /// PAE domain of the path selector `s`.
@@ -753,7 +754,7 @@ pub(crate) fn terms_pending<'a, K>(
     value: &Value,
     options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
-    context: NonEmpty<CallerContext>,
+    context: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonTerms, K> {
     let context = context.into_prf_context().into_owned();
     let terms = cipher
@@ -780,7 +781,7 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     value: Value,
     options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
-    context: NonEmpty<CallerContext>,
+    context: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonDocument, K> {
     // The caller's document, owned here: wiped when this returns, also when
     // the context is refused below.
@@ -1230,7 +1231,7 @@ fn open_document<'a, K>(
             open_sealed_root(&doc, &aes, &aad)
         }
     })
-    .under_context(shown)
+    .under_context(shown.clone(), shown)
 }
 
 /// The whole document out of its sealed root, which is stored at slot `0`
@@ -1528,7 +1529,7 @@ fn open_subtree<'a, K>(
         };
         place(rows, &key.reads, &key.selectors, key.bound, &opening)
     })
-    .under_context(shown)
+    .under_context(shown.clone(), shown)
 }
 
 /// The cipher side of opening a document's rows: its header, the AAD its
@@ -1911,7 +1912,7 @@ fn open_fallback<'a, K>(
         let whole = opened.whole.ok_or_else(|| shape("a sealed root"))?;
         Ok((key, whole))
     })
-    .under_context(shown)
+    .under_context(shown.clone(), shown)
 }
 
 // =============================================================================

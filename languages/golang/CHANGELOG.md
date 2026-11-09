@@ -10,6 +10,21 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+### Breaking
+
+- **`Cipher.Extend` is now `Cipher.Scope`, and `Cipher.Bind` is new**
+  (#1487). A scope narrows the data and the queries over it. A binding ties
+  a ciphertext to its row: it is in the stored context, after every scope,
+  and in no query context. So `cipher.Scope(tenant).Bind(rowID)` seals a
+  row that a query through `cipher.Scope(tenant)` still finds, and that
+  opens only through a cipher with the same binding. A query through a
+  cipher with a binding is refused as `ErrEncoding`. `Extend` and
+  `Extension` stay as deprecated aliases of `Scope` and `Scopes` until
+  0.1.0. The stored bytes of a cipher with no binding do not change.
+- The plan wire form has a plan-level `bind` key, a list of parts, beside
+  the field specs. `record.Plan` has a `Bind` field. An EQL type refuses a
+  binding, as it refuses an extension.
+
 ### Added
 
 - `Checker.Contexts` and `Cipher.Contexts` show the contexts a plan's

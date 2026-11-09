@@ -1,0 +1,102 @@
+package encrypt_test
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"testing"
+
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/record"
+)
+
+func emailPlan() *record.Plan {
+	return &record.Plan{
+		Context: []string{"users"},
+		Fields: []record.Field{
+			{Name: "email", Kind: record.String, Outputs: []record.Output{record.Ciphertext, record.Equality}},
+		},
+	}
+}
+
+// A binding ties each field to its row. It is in the stored context, after
+// the scopes, so the row opens only through a cipher with the same binding.
+// It is in no query context, so a query by the scopes alone derives the
+// stored term, and a query through a cipher with a binding is refused.
+func TestABindingIsInTheStoredContextOnly(t *testing.T) {
+	ctx := context.Background()
+	client, err := encrypt.NewDeterministicClient(ctx, [32]byte{})
+	skipMissingConformanceGuest(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	plan := emailPlan()
+	rows := []record.Source{{"email": "ada@example.com"}}
+	bound := client.DefaultKeyset().Scope(uint64(42)).Bind(uint64(9))
+	sealed, err := bound.Seal(ctx, plan, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The contexts the cipher shows: the binding after the scope, in the
+	// stored context only.
+	shown, err := bound.Contexts(ctx, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "email\n  query context:  (users / email) / 42u64\n  stored context: ((users / email) / 42u64) / 9u64\n"
+	if shown != want {
+		t.Fatalf("contexts:\n%s\nwant:\n%s", shown, want)
+	}
+
+	// The same scope with no binding derives the stored term: the binding
+	// is not in the query context.
+	query, err := client.DefaultKeyset().Scope(uint64(42)).QueryTerm(ctx, plan, "email", "eq", "ada@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(query.Terms) != 1 || !reflect.DeepEqual(query.Terms[0], sealed[0]["email"].Terms[record.Equality]) {
+		t.Fatal("a query by the scope alone does not derive the stored term")
+	}
+
+	// A query through a cipher with a binding is refused before any key is
+	// requested.
+	if _, err := bound.QueryTerm(ctx, plan, "email", "eq", "ada@example.com"); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a query with a binding: %v", err)
+	}
+
+	// The row opens under the same binding, and under no other.
+	opened, err := bound.Open(ctx, plan, sealed)
+	if err != nil || !reflect.DeepEqual(opened, rows) {
+		t.Fatalf("open: %v %v", err, opened)
+	}
+	if _, err := client.DefaultKeyset().Scope(uint64(42)).Bind(uint64(10)).Open(ctx, plan, sealed); err == nil {
+		t.Fatal("a row opened under another binding")
+	}
+	if _, err := client.DefaultKeyset().Scope(uint64(42)).Open(ctx, plan, sealed); err == nil {
+		t.Fatal("a row opened with its binding left out")
+	}
+
+	// Extend is Scope under its former name.
+	if !reflect.DeepEqual(client.DefaultKeyset().Extend(uint64(42)).Scopes(), []any{uint64(42)}) {
+		t.Fatal("Extend is not Scope")
+	}
+	if !reflect.DeepEqual(bound.Bindings(), []any{uint64(9)}) {
+		t.Fatalf("bindings: %v", bound.Bindings())
+	}
+}
+
+// An EQL type stores its column alone, so a binding has no column to sit
+// under: the plan is refused, as an extended one is.
+func TestABindingIsRefusedOnAnEQLType(t *testing.T) {
+	p := &record.Plan{
+		Context: []string{"users"},
+		Bind:    []any{uint64(9)},
+		Fields:  []record.Field{{Name: "email", Kind: record.String, Target: "TextEq"}},
+	}
+	if err := p.Validate(); err == nil {
+		t.Fatal("a bound EQL plan validated")
+	}
+}

@@ -1575,7 +1575,7 @@ impl PendingStackCipherText {
     ) -> crate::target::Pending<'a, StackCipherText, K> {
         let context = context.into_context();
         crate::target::seal_pending(cipher, self, Descriptor::from_piece(&context))
-            .under_context(context.into_owned())
+            .under_context(context.clone().into_owned(), context.into_owned())
     }
 
     /// Seal under `keyset_id`, drawing one key per leaf from `keys` in

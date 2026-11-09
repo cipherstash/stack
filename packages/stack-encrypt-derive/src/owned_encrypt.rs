@@ -38,6 +38,10 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 /// or the type `context_type` names.
 pub(crate) fn encrypt_input(record: &Record) -> Type {
     let krate = &record.krate;
+    if record.parts.caller_any() {
+        let parts = record.parts_type(false);
+        return parse_quote!(#krate::target::RequiredContext<#parts>);
+    }
     if let Some(field) = record.context_field() {
         let ty = &field.ty;
         parse_quote!(#krate::target::RequiredContext<#krate::NonEmpty<#ty>>)
@@ -136,6 +140,56 @@ fn contexts_fn(input: &DeriveInput, record: &Record) -> TokenStream {
     }
 }
 
+/// The root of a `struct = ..` record's description: the conversion from the
+/// record's context input to the declared context its fields run under.
+///
+/// A record with no parts converts with `accepting`. A record with a part
+/// stored in the row reads it from the plaintext with `parts_from`, then
+/// the caller's parts follow. A record with caller parts names them, so
+/// `contexts()` shows `{tenant: u64}` rather than `{scope: u64}`.
+fn root_context(record: &Record, source: &Type) -> TokenStream {
+    let krate = &record.krate;
+    let parts = &record.parts;
+    let mut root = if parts.stored_any() {
+        let mut stored = quote!(#krate::target::StoredParts::none());
+        let mut scope_name = quote!(::core::option::Option::None);
+        let mut bind_name = quote!(::core::option::Option::None);
+        if let Some(part) = &parts.stored_scope {
+            let (from, ty, name) = (&part.from, &part.ty, &part.name);
+            stored = quote!(#stored.scope(::core::clone::Clone::clone(&__source.#from)));
+            scope_name =
+                quote!(::core::option::Option::Some((#name, #krate::contexts::type_name::<#ty>())));
+        }
+        if let Some(part) = &parts.stored_bind {
+            let (from, ty, name) = (&part.from, &part.ty, &part.name);
+            stored = quote!(#stored.bind(::core::clone::Clone::clone(&__source.#from)));
+            bind_name =
+                quote!(::core::option::Option::Some((#name, #krate::contexts::type_name::<#ty>())));
+        }
+        quote!(.parts_from::<Self::ContextInput>(|__source: &#source| #stored, #scope_name, #bind_name))
+    } else {
+        quote!(.accepting::<Self::ContextInput>())
+    };
+    if parts.caller_any() {
+        let scope = match &parts.caller_scope {
+            Some((name, _)) => {
+                let name = name.to_string();
+                quote!(::core::option::Option::Some(#name))
+            }
+            None => quote!(::core::option::Option::None),
+        };
+        let bind = match &parts.caller_bind {
+            Some((name, _)) => {
+                let name = name.to_string();
+                quote!(::core::option::Option::Some(#name))
+            }
+            None => quote!(::core::option::Option::None),
+        };
+        root = quote!(#root.caller_names(#scope, #bind));
+    }
+    root
+}
+
 /// `a.zip(b).zip(c)` over the local variables, and the pattern that binds each
 /// one back.
 fn zip_chain(locals: &[&Ident]) -> (TokenStream, TokenStream) {
@@ -183,6 +237,7 @@ fn literal(record: &Record, stored: Option<TokenStream>) -> TokenStream {
 fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
     let krate = &record.krate;
     let source = &record.plaintexts[0];
+    let struct_input = encrypt_input(record);
     let fields = participating(record);
     let locals: Vec<&Ident> = fields.iter().map(|field| &field.local).collect();
 
@@ -215,9 +270,10 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         .collect();
     let (zipped, zip_pattern) = zip_chain(&locals);
     let value = literal(record, None);
+    let root = root_context(record, source);
     let borrowed_body = quote! {
         #(#borrowed)*
-        #zipped.map(move |#zip_pattern| #value).accepting()
+        #zipped.map(move |#zip_pattern| #value)#root
     };
 
     // The owned form: each field's own owned description, with the struct
@@ -295,7 +351,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
     };
     let owned_body = quote! {
         #(#owned)*
-        #split.map(move |#nested| #value).accepting()
+        #split.map(move |#nested| #value)#root
     };
 
     let lifetime = fresh_lifetime(&input.generics, "__source");
@@ -309,7 +365,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         &generics,
         quote!(#krate::target::EncryptTarget<#source>),
         quote! {
-            type ContextInput = #krate::target::DeclaredScopes;
+            type ContextInput = #struct_input;
             fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::ContextInput> where #source: #lifetime {
                 #borrowed_body
             }
@@ -318,13 +374,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
             }
         },
     );
-    let bridge = bridge(
-        input,
-        record,
-        source,
-        parse_quote!(#krate::target::DeclaredContext),
-        false,
-    );
+    let bridge = bridge(input, record, source, record.context_type(false), false);
     quote!(#encrypt_target #bridge)
 }
 

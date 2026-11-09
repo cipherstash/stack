@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "profile": "record-bindings-v1",
+  "required_capabilities": [
+    "composition",
+    "typed-extensions",
+    "bindings",
+    "frozen-open"
+  ],
+  "cases": [
+    {
+      "id": "bind-row",
+      "label": "users",
+      "scopes": [],
+      "bind": [
+        {
+          "type": "uint64",
+          "text": "9"
+        }
+      ]
+    },
+    {
+      "id": "scope-then-bind",
+      "label": "users",
+      "scopes": [
+        {
+          "type": "uint64",
+          "text": "42"
+        }
+      ],
+      "bind": [
+        {
+          "type": "uint64",
+          "text": "9"
+        }
+      ]
+    },
+    {
+      "id": "two-scopes-then-bind",
+      "label": "users",
+      "scopes": [
+        {
+          "type": "uint64",
+          "text": "42"
+        },
+        {
+          "type": "string",
+          "text": "eu"
+        }
+      ],
+      "bind": [
+        {
+          "type": "bytes",
+          "text": "0102"
+        }
+      ]
+    },
+    {
+      "id": "scope-then-two-binds",
+      "label": "tenants/acme",
+      "scopes": [
+        {
+          "type": "int64",
+          "text": "-3"
+        }
+      ],
+      "bind": [
+        {
+          "type": "uint64",
+          "text": "9"
+        },
+        {
+          "type": "string",
+          "text": "row-a"
+        }
+      ]
+    }
+  ]
+}

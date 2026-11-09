@@ -79,10 +79,11 @@ pub struct Pending<'a, T, K> {
     /// with one misconfigured field never mints data keys it will throw away.
     /// When set, `fulfil` is never called.
     failed: Option<Error>,
-    /// The context of every leaf this pending seals or indexes, in the
-    /// order the leaves ran. What [`context`](Self::context) shows. A
-    /// failed pending carries none, as it carries no requests.
-    contexts: Vec<ContextPiece<'static>>,
+    /// The query context and the stored context of every leaf this pending
+    /// seals or indexes, in the order the leaves ran. What
+    /// [`context`](Self::context) shows. A failed pending carries none, as
+    /// it carries no requests.
+    contexts: Vec<(ContextPiece<'static>, ContextPiece<'static>)>,
     fulfil: FulfilBox<'a, T>,
 }
 
@@ -268,11 +269,17 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         CallContexts::from_pieces(&self.contexts, self.failed.is_some())
     }
 
-    /// Record that this pending's leaf runs under `context`. The leaf
-    /// operations call it once each, with the context they validated.
-    pub(crate) fn under_context(mut self, context: ContextPiece<'static>) -> Self {
+    /// Record that this pending's leaf derives its terms under `query` and
+    /// its key and AAD under `stored`. The leaf operations call it once
+    /// each, with the contexts they validated. A ciphertext alone has one
+    /// context, passed twice.
+    pub(crate) fn under_context(
+        mut self,
+        query: ContextPiece<'static>,
+        stored: ContextPiece<'static>,
+    ) -> Self {
         if self.failed.is_none() {
-            self.contexts.push(context);
+            self.contexts.push((query, stored));
         }
         self
     }

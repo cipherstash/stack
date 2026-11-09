@@ -640,6 +640,9 @@ reasons! {
         /// it has no context: the caller names the context, and sends the plan
         /// under it.
         QueryContextField => "query_context_field", "the plan takes its context from a field of each record, so a query has none";
+        /// The plan carries a binding, which is not in the query context, so
+        /// a query cannot take it.
+        BindInQuery => "bind_in_query", "a query takes no binding: a binding is in the stored context only";
         /// An operator name is not one the engine knows ([`OpSpec::parse`]).
         UnknownOperator => "unknown_operator", "the operator is not one the engine knows";
         /// The field's type does not answer the operator: no index it declares

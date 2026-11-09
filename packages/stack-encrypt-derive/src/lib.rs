@@ -54,7 +54,62 @@
 //! `struct = User, scope = "users"` selects plaintext fields
 //! and binds each under the pair `("users", "<field>")`, which renders
 //! `users/<field>` as its ZeroKMS descriptor; `identity = ".."` on a field keys
-//! it under `users/<identity>` instead. The storage envelope itself adds no
+//! it under `users/<identity>` instead.
+//!
+//! # Scopes and bindings
+//!
+//! A `struct` record lists the parts of its context that are not declared,
+//! each a scope or a binding. A scope is a part a query supplies too, such
+//! as a tenant. A binding ties a ciphertext to one row, such as a row ID. A
+//! query does not know it, so a bound row is still found by a query under
+//! the scopes.
+//!
+//! - `scope(tenant: u64)`: the caller passes the scope on every call, as
+//!   `Scope::new(tenant)`.
+//! - `bind(row: u128)`: the caller passes the binding on every call, as
+//!   `Bind::new(row)`, or `Scope::new(tenant).bind(row)` with a scope.
+//! - `scope(field = "tenant")` and `bind(field = "id")`: the part is stored
+//!   in the row, in the `#[stash(passthrough)]` field derived from that
+//!   plaintext field. Encrypt reads it from the plaintext. Decrypt reads it
+//!   from the row, and checks it against a part the reader passes.
+//!
+//! A part the record does not list does not compile. The record's
+//! `ContextInput` is `RequiredContext<Parts<..>>` when the caller supplies
+//! a part, and the caller's value converts into it.
+//!
+//! ```
+//! use stack_encrypt::sem::EqualityTerm;
+//! use stack_encrypt::target::{Bind, DecryptSource, EncryptTarget, Scope};
+//! use stack_encrypt::{DecryptFrom, EncryptInto, Encrypted, StackCipher};
+//! use stack_encrypt::kms::FakeDataKeySource;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User { tenant: u64, email: String }
+//!
+//! #[derive(EncryptTarget, DecryptSource)]
+//! #[stash(struct = User, scope = "users", scope(field = "tenant"), bind(row: u128))]
+//! struct EncryptedUser {
+//!     #[stash(passthrough)]
+//!     tenant: u64,
+//!     email: Encrypted<EqualityTerm>,
+//! }
+//!
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let keyset = cipher.default_keyset();
+//! let user = User { tenant: 42, email: "ada@example.com".into() };
+//! // The tenant comes from the plaintext. The row ID comes from the caller.
+//! let stored: EncryptedUser = user.encrypt_into_with_context(&keyset, Bind::new(9u128)).await?;
+//! assert_eq!(stored.tenant, 42);
+//! // The row ID must be passed. The tenant may be passed, to check it.
+//! let back = User::decrypt_from_with_context(stored, &keyset, Scope::new(42u64).bind(9u128)).await?;
+//! assert_eq!(back.email, "ada@example.com");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # }).unwrap();
+//! ```
+//!
+//! The storage envelope itself adds no
 //! cryptographic map-entry context. Vitamin C still binds keys inside plaintext
 //! maps and preserves authenticated absence and empty-container markers.
 //!

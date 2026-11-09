@@ -182,6 +182,9 @@ func (cph *Cipher) queryPlan(plan *record.Plan, field string) (*record.Plan, err
 	if err != nil {
 		return nil, err
 	}
+	if len(p.Bind) != 0 {
+		return nil, fmt.Errorf("%w: field %q: a query takes no binding; a binding is in the stored context only, so a query by the scopes alone finds the row", ErrEncoding, field)
+	}
 	if p.ContextField == "" {
 		return p, nil
 	}
@@ -230,6 +233,7 @@ func (cph *Cipher) plan(plan *record.Plan) (*record.Plan, error) {
 	}
 	p := *plan
 	p.Extension = append(append([]any(nil), plan.Extension...), cph.extension...)
+	p.Bind = append(append([]any(nil), plan.Bind...), cph.bindings...)
 	if err := p.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}

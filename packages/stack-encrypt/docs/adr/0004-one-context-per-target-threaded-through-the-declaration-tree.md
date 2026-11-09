@@ -432,3 +432,43 @@ A stored EQL type still takes its `NonEmpty<Identifier>` by value. Rust's
 orphan rule keeps `From<&NonEmpty<T>>` for `NonEmpty<T>` out of this
 repository, so that impl belongs in Vitamin C.
 
+## Amended 2026-11-10 (#1487)
+
+Every part of a context is now a **scope** or a **binding**. The API plan
+decided this on 7 November 2026.
+
+- The **query context** is the scopes: the declared ones, then the
+  caller's. Search terms derive under it.
+- The **stored context** is the query context followed by the bindings.
+  The data key and the AAD derive under it.
+
+The kind of a part is not in any derivation. Only the values and their
+order are. So a record with no binding stores exactly the bytes it stored
+before. The frozen vectors do not change.
+
+A binding ties a ciphertext to one row, such as a row ID. A query does not
+know it. So a value bound to its row is still found by a column or tenant
+query, and fails to open in another row. Before this change every part was
+in both contexts, and a developer had to choose between the two.
+
+Decision 1 holds. One context input still reaches every operation of a
+target. The input now carries the caller's scopes and bindings apart:
+`Scope::new(..)`, `Bind::new(..)`, or `Scope::new(..).bind(..)`. A term
+reads the query context from it. A ciphertext reads the stored context. A
+record lists the parts its caller supplies, with kind and type, as
+`scope(tenant: u64)` and `bind(row: u128)`. A part the record does not
+list does not compile. A part stored in the row is listed as
+`scope(field = "tenant")` or `bind(field = "id")`, in a `passthrough`
+field. The engine reads it from the plaintext on encrypt, and from the row
+on decrypt. A reader may pass it as well, to check it.
+
+Decision 2 holds, with the words changed. `under` and `extend` compose the
+scopes as before. The bindings follow the scopes, in order, in the stored
+context alone. The Rust chain's `.extend(..)` takes a `Scope` and no
+`Bind`, so a query cannot carry a binding. The dynamic grammar has a
+plan-level `bind` key. Go has `Scope` and `Bind`, and `Extend` stays as a
+deprecated alias of `Scope` until 0.1.0.
+
+An EQL type refuses a binding, as it refuses an extension: its stored
+context is its table and column, and nothing else.
+

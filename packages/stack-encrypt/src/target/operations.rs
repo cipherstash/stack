@@ -11,7 +11,7 @@
 //! by name, with [`Encryption::under`] or [`Encryption::extend`]. A subtree
 //! can also read its context from a named field of the plaintext, with
 //! [`Encryption::context_from`].
-use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
+use super::context::{AeadContext, CallerContext, DeclaredContext, Extends, StoredParts};
 use super::conversion::{DecryptSource, EncryptTarget};
 use super::core::{encrypt_native, open_native, Term};
 use super::index::{Index, IndexSpec, Json};
@@ -212,7 +212,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     where
         Ctx: SuppliedContext,
     {
-        contexts::resolve(self.shapes.clone(), Ctx::placeholder())
+        contexts::resolve(self.shapes.clone(), Ctx::supplies())
     }
     /// Name every leaf after the field of a record the leaves belong to. A
     /// leaf a nested record already named becomes `<name>.<its name>`. The
@@ -364,7 +364,61 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     {
         let own = contexts::piece_of(own);
         self.shapes = contexts::substitute(self.shapes, &Shape::under(own.get().clone()));
-        self.needing(move |cx: DeclaredContext| cx.under(own).into())
+        let Self { build, shapes } = self;
+        Encryption {
+            build: Box::new(move |source, cipher, cx: DeclaredContext| {
+                match cx.checked_under(own) {
+                    Ok(context) => build(source, cipher, context.into()),
+                    Err(error) => Pending::failed(cipher, error),
+                }
+            }),
+            shapes,
+        }
+    }
+    /// Run this whole subtree under the parts the plaintext stores, then the
+    /// caller's parts. `read` reads the stored scope and binding out of the
+    /// plaintext. `scope` and `bind` name them, for
+    /// [`contexts`](Self::contexts). The caller's input `C` is the parts the
+    /// record lists, converted into the declared context the subtree runs
+    /// under.
+    ///
+    /// **This method is for generated code.** A `struct = ..` record with a
+    /// `scope(field = ..)` or `bind(field = ..)` attribute emits it at its
+    /// root, in place of [`accepting`](Self::accepting). `read` is a plain
+    /// function pointer: it captures nothing, so it cannot reach a cipher,
+    /// and it only copies the fields it names.
+    #[doc(hidden)]
+    pub fn parts_from<C>(
+        self,
+        read: for<'b> fn(&'b S) -> StoredParts,
+        scope: Option<(&'static str, String)>,
+        bind: Option<(&'static str, String)>,
+    ) -> Encryption<'s, S, T, K, C, M>
+    where
+        Ctx: From<DeclaredContext>,
+        C: Into<DeclaredContext> + 's,
+    {
+        let Self { build, shapes } = self;
+        let shapes = contexts::substitute(shapes, &Shape::stored_parts(scope, bind));
+        Encryption {
+            build: Box::new(move |source, cipher, caller: C| {
+                let stored = read(M::view(&source));
+                let mut context = DeclaredContext::from(CallerContext::from_stored(stored));
+                context.append(caller.into());
+                build(source, cipher, context.into())
+            }),
+            shapes,
+        }
+    }
+    /// Name the caller's parts, for [`contexts`](Self::contexts): the
+    /// `scope(tenant: u64)` and `bind(row: u128)` a record lists. The types
+    /// come from the record's context input; this adds the names.
+    ///
+    /// **This method is for generated code.**
+    #[doc(hidden)]
+    pub fn caller_names(mut self, scope: Option<&'static str>, bind: Option<&'static str>) -> Self {
+        self.shapes = contexts::substitute(self.shapes, &Shape::named_caller(scope, bind));
+        self
     }
     /// Run this whole subtree under `own`, extended by the surrounding
     /// context `C` — which is still required.
@@ -869,7 +923,7 @@ pub fn scalar_ciphertext<'s, S: crate::OpaqueEncode, K: 'static>(
             move |source, cipher, context: super::OptionalContext<super::ScalarContext>| {
                 let piece = context.piece();
                 crate::scalar::sealed::Encode::seal(source, cipher, piece.clone())
-                    .under_context(piece)
+                    .under_context(piece.clone(), piece)
             },
         ),
         shapes: contexts::caller_leaf(),
@@ -924,10 +978,14 @@ macro_rules! term_operation {
         {
             Encryption {
                 build: Box::new(move |source, cipher, cx: CallerContext| {
-                    let piece = cx.piece().clone();
+                    let (query, stored) = (cx.query(), cx.stored());
                     match cx.validated() {
-                        Ok(ctx) => <$output as Term<S, K, _>>::encrypt_from(M::take(source), cipher, ctx)
-                            .under_context(piece),
+                        Ok(ctx) => <$output as Term<S, K, _>>::encrypt_from(
+                            M::take(source),
+                            cipher,
+                            CallerContext::query_nonempty(ctx),
+                        )
+                        .under_context(query, stored),
                         Err(e) => Pending::failed(cipher, e),
                     }
                 }),
@@ -948,10 +1006,14 @@ macro_rules! term_operation {
         {
             Encryption {
                 build: Box::new(move |source, cipher, cx: CallerContext| {
-                    let piece = cx.piece().clone();
+                    let (query, stored) = (cx.query(), cx.stored());
                     match cx.validated() {
-                        Ok(ctx) => <$output as Term<&S, K, _>>::encrypt_from(M::view(&source), cipher, ctx)
-                            .under_context(piece),
+                        Ok(ctx) => <$output as Term<&S, K, _>>::encrypt_from(
+                            M::view(&source),
+                            cipher,
+                            CallerContext::query_nonempty(ctx),
+                        )
+                        .under_context(query, stored),
                         Err(e) => Pending::failed(cipher, e),
                     }
                 }),
@@ -1002,10 +1064,15 @@ pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
     Encryption {
         shapes: contexts::caller_leaf(),
         build: Box::new(move |source, cipher, cx: CallerContext| {
-            let piece = cx.piece().clone();
+            let (query, stored) = (cx.query(), cx.stored());
             let pending = match cx.validated() {
-                Ok(ctx) => crate::json::terms_pending(M::view(&source), &options, cipher, ctx)
-                    .under_context(piece),
+                Ok(ctx) => crate::json::terms_pending(
+                    M::view(&source),
+                    &options,
+                    cipher,
+                    CallerContext::query_nonempty(ctx),
+                )
+                .under_context(query, stored),
                 Err(e) => Pending::failed(cipher, e),
             };
             // The terms are derived by now; a document this description
@@ -1027,10 +1094,15 @@ pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
 ) -> Encryption<'s, serde_json::Value, JsonDocument, K, CallerContext, M> {
     Encryption {
         build: Box::new(move |source, cipher, cx: CallerContext| {
-            let piece = cx.piece().clone();
+            let (query, stored) = (cx.query(), cx.stored());
             match cx.validated() {
-                Ok(ctx) => crate::json::seal_pending(M::take(source), &options, cipher, ctx)
-                    .under_context(piece),
+                Ok(ctx) => crate::json::seal_pending(
+                    M::take(source),
+                    &options,
+                    cipher,
+                    CallerContext::stored_nonempty(ctx),
+                )
+                .under_context(query, stored),
                 Err(e) => Pending::failed(cipher, e),
             }
         }),
