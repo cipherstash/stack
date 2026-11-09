@@ -32,6 +32,7 @@ type contextVector struct {
 	PRF              string `json:"prf"`
 	Ciphertext       string `json:"ciphertext"`
 	Equality         string `json:"equality"`
+	Contexts         string `json:"contexts"`
 }
 
 func TestContextConformance(t *testing.T) {
@@ -122,6 +123,14 @@ func TestContextConformance(t *testing.T) {
 				}
 				parts = append(parts, v)
 				cipher = cipher.Extend(v)
+			}
+			// The contexts the cipher shows for this plan are the ones Rust
+			// pinned for the same declaration: the field, under the label,
+			// extended by each part in order.
+			if shown, e := cipher.Contexts(ctx, p); e != nil {
+				t.Fatal(e)
+			} else if shown != want.Contexts {
+				t.Fatalf("contexts differ from Rust's:\n%s\nwant:\n%s", shown, want.Contexts)
 			}
 			// Inspect the bytes actually passed to se_encrypt_record, not a
 			// separately reconstructed copy of the host's plan.

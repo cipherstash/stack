@@ -987,6 +987,21 @@ impl Plan {
         &self.extension
     }
 
+    /// The contexts this plan's fields are sealed and indexed under, with
+    /// the plan's extension applied and a placeholder for a context read
+    /// from a field of each record. No key is requested. The same view as
+    /// [`Plan::contexts`](crate::Plan::contexts) for a typed plan, so a
+    /// binding can show a record's contexts, and a test in that language
+    /// can pin them.
+    ///
+    /// # Errors
+    ///
+    /// The plan does not lower: the same errors as running it.
+    pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
+        let plan = self.lower::<()>()?;
+        Ok(plan.contexts_under(&self.declared_context()))
+    }
+
     /// The fields plan this declaration lowers to, for a cipher over `K`.
     ///
     /// Built afresh per call: a built plan is bound to its key source type,

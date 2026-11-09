@@ -186,6 +186,16 @@ impl<'a> IntoContext<'a> for Identifier {
         self.to_context()
     }
 }
+/// A borrowed identifier is the same context, so a call can pass `&column`
+/// and keep the identifier for the next call.
+impl<'a> IntoContext<'a> for &'a Identifier {
+    fn into_context(self) -> ContextPiece<'a> {
+        ContextPiece::List(vec![
+            ContextPiece::Text(std::borrow::Cow::Borrowed(self.t.as_str())),
+            ContextPiece::Text(std::borrow::Cow::Borrowed(self.c.as_str())),
+        ])
+    }
+}
 
 /// Builds the final EQL ciphertext string from a native sealed leaf.
 #[doc(hidden)]

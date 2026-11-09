@@ -18,6 +18,7 @@ use super::index::{Index, IndexSpec, Json};
 use super::input::{AcceptsContext, NoCallerContext, RequiredContext};
 use super::source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 use super::{CipherScope, Pending};
+use crate::contexts::{self, Contexts, Placeholder, Shape, Shapes, SuppliedContext};
 use crate::json::{JsonDocument, JsonOptions, JsonTerms};
 use crate::{Error, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
@@ -137,6 +138,10 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 #[must_use = "an encryption description does nothing until a keyset cipher executes it"]
 pub struct Encryption<'s, S: 's, T, K, Ctx, M: SourceMode<'s, S> = Borrowed> {
     build: Build<'s, S, T, K, Ctx, M>,
+    /// The context of each leaf, in terms of the context this description
+    /// is handed. Kept beside the closure by every combinator, so
+    /// [`contexts`](Self::contexts) shows what the closure will do.
+    shapes: Shapes,
 }
 /// A composable description of how `T` is recovered from a stored target.
 ///
@@ -177,7 +182,11 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// together, and the public constructors never do that. The collection
     /// declarations use it to run an element's description once for each
     /// element.
-    pub(crate) fn from_build<F>(build: F) -> Self
+    ///
+    /// `shapes` is the context of each leaf the closure will run, in terms
+    /// of the context it is handed. A closure that runs another
+    /// description passes that description's [`shapes`](Self::shapes).
+    pub(crate) fn from_build<F>(shapes: Shapes, build: F) -> Self
     where
         F: for<'a, 'k> FnOnce(M::Source, &'a KeysetCipher<'k, K>, Ctx) -> Pending<'a, T, K>
             + MaybeSend
@@ -185,7 +194,40 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     {
         Self {
             build: Box::new(build),
+            shapes,
         }
+    }
+    /// The shapes of this description's leaves, for a description that runs
+    /// this one inside its closure.
+    pub(crate) fn shapes(&self) -> Shapes {
+        self.shapes.clone()
+    }
+    /// The contexts this description uses, one for each field that is
+    /// sealed or indexed, with a [`Placeholder`] for every part the caller
+    /// supplies. No key is requested.
+    ///
+    /// The derives emit `contexts()` on every record, which calls this.
+    /// See [`Contexts`].
+    pub fn contexts(&self) -> Contexts
+    where
+        Ctx: SuppliedContext,
+    {
+        contexts::resolve(self.shapes.clone(), Ctx::placeholder())
+    }
+    /// Name every leaf after the field of a record the leaves belong to. A
+    /// leaf a nested record already named becomes `<name>.<its name>`. The
+    /// derives emit it after each field's [`under`](Self::under). Hidden:
+    /// generated code calls it.
+    #[doc(hidden)]
+    pub fn named(mut self, name: &str) -> Self {
+        self.shapes = contexts::name(self.shapes, name);
+        self
+    }
+    /// [`contexts`](Self::contexts) with the caller's extension known: what
+    /// a data plan carries. Crate-internal: the dynamic plan is its caller.
+    #[cfg(feature = "dynamic")]
+    pub(crate) fn contexts_under(&self, extension: &DeclaredContext) -> Contexts {
+        contexts::resolve_under(self.shapes.clone(), extension.pieces())
     }
     /// A description whose output is already known — metadata a record
     /// carries, or a declaration rejected before any key request.
@@ -195,6 +237,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     {
         Self {
             build: Box::new(move |_, cipher, _| Pending::ready(cipher, result)),
+            shapes: Vec::new(),
         }
     }
     /// Reject the declaration: execution yields `error` without I/O, and any
@@ -202,6 +245,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     pub fn failed(error: Error) -> Self {
         Self {
             build: Box::new(move |_, cipher, _| Pending::failed(cipher, error)),
+            shapes: Vec::new(),
         }
     }
     /// Build the destination from the completed output. `f` sees ciphertext
@@ -210,8 +254,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     where
         F: FnOnce(T) -> U + MaybeSend + 'static,
     {
+        let Self { build, shapes } = self;
         Encryption {
-            build: Box::new(move |source, cipher, cx| (self.build)(source, cipher, cx).map(f)),
+            build: Box::new(move |source, cipher, cx| build(source, cipher, cx).map(f)),
+            shapes,
         }
     }
     /// [`map`](Self::map) for a conversion that can fail, such as reading
@@ -220,8 +266,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     where
         F: FnOnce(T) -> Result<U, Error> + MaybeSend + 'static,
     {
+        let Self { build, shapes } = self;
         Encryption {
-            build: Box::new(move |source, cipher, cx| (self.build)(source, cipher, cx).try_map(f)),
+            build: Box::new(move |source, cipher, cx| build(source, cipher, cx).try_map(f)),
+            shapes,
         }
     }
     /// Drive the destination's [`Visitor`](super::transcode::Visitor) from
@@ -260,11 +308,18 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
         Ctx: Clone,
         M: ShareSource<'s, S>,
     {
+        let Self { build, mut shapes } = self;
+        let Encryption {
+            build: other_build,
+            shapes: other_shapes,
+        } = other;
+        shapes.extend(other_shapes);
         Encryption {
             build: Box::new(move |source, cipher, cx| {
                 let (mine, theirs) = M::share(source);
-                (self.build)(mine, cipher, cx.clone()).zip((other.build)(theirs, cipher, cx))
+                build(mine, cipher, cx.clone()).zip(other_build(theirs, cipher, cx))
             }),
+            shapes,
         }
     }
     /// Take a different context type, converting on the way in.
@@ -291,8 +346,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
         C2: 's,
         F: FnOnce(C2) -> Ctx + MaybeSend + 's,
     {
+        let Self { build, shapes } = self;
         Encryption {
-            build: Box::new(move |source, cipher, cx| (self.build)(source, cipher, derive(cx))),
+            build: Box::new(move |source, cipher, cx| build(source, cipher, derive(cx))),
+            shapes,
         }
     }
     /// Run this whole subtree under `own`, extended by the surrounding
@@ -305,12 +362,16 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// [`CallerContext`] can become what the subtree needs: a leaf of either
     /// kind, or a record whose own contexts a caller's extends.
     pub fn under(
-        self,
-        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+        mut self,
+        own: NonEmpty<impl IntoContext<'static> + Clone + MaybeSend + 's>,
     ) -> Encryption<'s, S, T, K, DeclaredContext, M>
     where
         Ctx: From<CallerContext>,
     {
+        self.shapes = contexts::substitute(
+            self.shapes,
+            &Shape::under(own.clone().into_context().into_owned()),
+        );
         self.needing(move |cx: DeclaredContext| cx.under(own).into())
     }
     /// Run this whole subtree under `own`, extended by the surrounding
@@ -323,13 +384,17 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// context reaches every operation beneath; the difference from `under`
     /// is only whether `()` can satisfy the result.
     pub fn extend<C>(
-        self,
-        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+        mut self,
+        own: NonEmpty<impl IntoContext<'static> + Clone + MaybeSend + 's>,
     ) -> Encryption<'s, S, T, K, C, M>
     where
         C: Extends + 's,
         Ctx: From<C>,
     {
+        self.shapes = contexts::substitute(
+            self.shapes,
+            &Shape::under(own.clone().into_context().into_owned()),
+        );
         self.needing(move |cx: C| cx.extend(own).into())
     }
 }
@@ -350,8 +415,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
         self,
         select: for<'borrow> fn(&'borrow P) -> &'borrow S,
     ) -> Encryption<'s, P, T, K, Ctx> {
+        let Self { build, shapes } = self;
         Encryption {
-            build: Box::new(move |source, cipher, cx| (self.build)(select(source), cipher, cx)),
+            build: Box::new(move |source, cipher, cx| build(select(source), cipher, cx)),
+            shapes,
         }
     }
     /// Takes the context from a field of the plaintext. The caller then
@@ -461,15 +528,24 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
         Ctx: AcceptsContext<Value = NonEmpty<C>>,
         C: Clone + MaybeEmpty + 's,
     {
+        let Self { build, shapes } = self;
+        let shapes = contexts::substitute(
+            shapes,
+            &Shape::Placeholder(Placeholder::from_plaintext(
+                "context",
+                contexts::short_type_name::<C>(),
+            )),
+        );
         Encryption {
             build: Box::new(
                 move |source, cipher, _: NoCallerContext| match super::context::nonempty(
                     pick(source).clone(),
                 ) {
-                    Ok(context) => (self.build)(source, cipher, Ctx::supplied(context)),
+                    Ok(context) => build(source, cipher, Ctx::supplied(context)),
                     Err(error) => Pending::failed(cipher, error),
                 },
             ),
+            shapes,
         }
     }
     /// [`under`](Encryption::under) for a context read out of the source
@@ -478,20 +554,59 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// description yields that error without I/O.
     ///
     /// Crate-internal: the plan builder is its one caller.
-    pub(crate) fn under_by<G>(self, own: G) -> Encryption<'s, S, T, K, DeclaredContext>
+    ///
+    /// `field` names the field of the source the label is read from, and
+    /// `identity` the segment `own` joins to it, for
+    /// [`contexts`](Self::contexts).
+    pub(crate) fn under_by<G>(
+        self,
+        field: &str,
+        identity: Option<&str>,
+        own: G,
+    ) -> Encryption<'s, S, T, K, DeclaredContext>
     where
         Ctx: From<CallerContext>,
         G: for<'b> FnOnce(&'b S) -> Result<crate::Label, Error> + MaybeSend + 's,
     {
+        let Self { build, shapes } = self;
+        let shapes = contexts::substitute(
+            shapes,
+            &Shape::under_label(
+                Placeholder::from_plaintext(field.to_owned(), "Label"),
+                identity,
+            ),
+        );
         Encryption {
             build: Box::new(
                 move |source, cipher, cx: DeclaredContext| match own(source) {
-                    Ok(label) => {
-                        (self.build)(source, cipher, cx.under(NonEmpty::from(label)).into())
-                    }
+                    Ok(label) => build(source, cipher, cx.under(NonEmpty::from(label)).into()),
                     Err(error) => Pending::failed(cipher, error),
                 },
             ),
+            shapes,
+        }
+    }
+    /// [`under`](Encryption::under) for a context the call names, which a
+    /// plan built without one takes. The description fails with `error`
+    /// if it runs, and shows the call's context as a placeholder.
+    ///
+    /// Crate-internal: the plan builder is its one caller, for
+    /// [`contexts`](Self::contexts) on such a plan.
+    pub(crate) fn under_call(
+        self,
+        identity: Option<&str>,
+        error: Error,
+    ) -> Encryption<'s, S, T, K, DeclaredContext>
+    where
+        Ctx: From<CallerContext>,
+    {
+        let shapes = contexts::substitute(
+            self.shapes,
+            &Shape::under_label(Placeholder::required("context", "Label"), identity),
+        );
+        Encryption {
+            build: Box::new(move |_, cipher, _: DeclaredContext| Pending::failed(cipher, error)),
+            shapes,
         }
     }
     /// [`project`](Self::project) for a field picked by name at run time, as
@@ -506,11 +621,13 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     where
         G: for<'b> FnOnce(&'b P) -> Result<&'b S, Error> + MaybeSend + 's,
     {
+        let Self { build, shapes } = self;
         Encryption {
             build: Box::new(move |source, cipher, cx| match select(source) {
-                Ok(field) => (self.build)(field, cipher, cx),
+                Ok(field) => build(field, cipher, cx),
                 Err(error) => Pending::failed(cipher, error),
             }),
+            shapes,
         }
     }
 }
@@ -535,8 +652,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
     /// move values.
     #[doc(hidden)]
     pub fn project_owned<P: 's>(self, select: fn(P) -> S) -> Encryption<'s, P, T, K, Ctx, Owned> {
+        let Self { build, shapes } = self;
         Encryption {
-            build: Box::new(move |source, cipher, cx| (self.build)(select(source), cipher, cx)),
+            build: Box::new(move |source, cipher, cx| build(select(source), cipher, cx)),
+            shapes,
         }
     }
     /// Divide a plaintext passed by value between two descriptions, under the
@@ -574,6 +693,12 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
     where
         Ctx: Clone,
     {
+        let Self { build, mut shapes } = self;
+        let Encryption {
+            build: other_build,
+            shapes: other_shapes,
+        } = other;
+        shapes.extend(other_shapes);
         Encryption {
             build: Box::new(move |source, cipher, cx: Ctx| {
                 let first_cx = cx.clone();
@@ -582,9 +707,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
                     part: Some(theirs),
                     wipe,
                 };
-                let first = (self.build)(mine, cipher, first_cx);
-                first.zip((other.build)(waiting.hand_over(), cipher, cx))
+                let first = build(mine, cipher, first_cx);
+                first.zip(other_build(waiting.hand_over(), cipher, cx))
             }),
+            shapes,
         }
     }
 }
@@ -637,7 +763,7 @@ where
         + MaybeSend
         + 's,
 {
-    Encryption::from_build(choose)
+    Encryption::from_build(contexts::caller_leaf(), choose)
 }
 
 /// A description that only checks the borrowed source, yielding `()` or the
@@ -650,6 +776,7 @@ where
 {
     Encryption {
         build: Box::new(move |source, cipher, _| Pending::ready(cipher, check(source))),
+        shapes: Vec::new(),
     }
 }
 
@@ -668,11 +795,13 @@ where
     where
         F: FnOnce(T, Ctx) -> U + MaybeSend + 'static,
     {
+        let Self { build, shapes } = self;
         Encryption {
             build: Box::new(move |source, cipher, cx: Ctx| {
                 let carried = cx.clone();
-                (self.build)(source, cipher, cx).map(move |value| f(value, carried))
+                build(source, cipher, cx).map(move |value| f(value, carried))
             }),
+            shapes,
         }
     }
 }
@@ -727,6 +856,7 @@ fn sealing<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S>>(
                 Pending::failed(cipher, e)
             }
         }),
+        shapes: contexts::caller_leaf(),
     }
 }
 /// Encrypt a supported scalar, or an [`OpaqueBlob`](crate::OpaqueBlob), as
@@ -747,9 +877,12 @@ pub fn scalar_ciphertext<'s, S: crate::OpaqueEncode, K: 'static>(
     Encryption {
         build: Box::new(
             move |source, cipher, context: super::OptionalContext<super::ScalarContext>| {
-                crate::scalar::sealed::Encode::seal(source, cipher, context.piece())
+                let piece = context.piece();
+                crate::scalar::sealed::Encode::seal(source, cipher, piece.clone())
+                    .under_context(piece)
             },
         ),
+        shapes: contexts::caller_leaf(),
     }
 }
 
@@ -777,6 +910,7 @@ where
 {
     Encryption {
         build: Box::new(move |source, cipher, _| Pending::ready(cipher, Ok(M::take(source)))),
+        shapes: Vec::new(),
     }
 }
 /// A term operation: `$function` produces `$output` from any `S` satisfying
@@ -799,10 +933,15 @@ macro_rules! term_operation {
             $($bounds)*
         {
             Encryption {
-                build: Box::new(move |source, cipher, cx: CallerContext| match cx.validated() {
-                    Ok(ctx) => <$output as Term<S, K, _>>::encrypt_from(M::take(source), cipher, ctx),
-                    Err(e) => Pending::failed(cipher, e),
+                build: Box::new(move |source, cipher, cx: CallerContext| {
+                    let piece = cx.piece().clone();
+                    match cx.validated() {
+                        Ok(ctx) => <$output as Term<S, K, _>>::encrypt_from(M::take(source), cipher, ctx)
+                            .under_context(piece),
+                        Err(e) => Pending::failed(cipher, e),
+                    }
                 }),
+                shapes: contexts::caller_leaf(),
             }
         }
     };
@@ -818,10 +957,15 @@ macro_rules! term_operation {
             $($bounds)*
         {
             Encryption {
-                build: Box::new(move |source, cipher, cx: CallerContext| match cx.validated() {
-                    Ok(ctx) => <$output as Term<&S, K, _>>::encrypt_from(M::view(&source), cipher, ctx),
-                    Err(e) => Pending::failed(cipher, e),
+                build: Box::new(move |source, cipher, cx: CallerContext| {
+                    let piece = cx.piece().clone();
+                    match cx.validated() {
+                        Ok(ctx) => <$output as Term<&S, K, _>>::encrypt_from(M::view(&source), cipher, ctx)
+                            .under_context(piece),
+                        Err(e) => Pending::failed(cipher, e),
+                    }
                 }),
+                shapes: contexts::caller_leaf(),
             }
         }
     };
@@ -866,9 +1010,12 @@ pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
     options: JsonOptions,
 ) -> Encryption<'s, serde_json::Value, JsonTerms, K, CallerContext, M> {
     Encryption {
+        shapes: contexts::caller_leaf(),
         build: Box::new(move |source, cipher, cx: CallerContext| {
+            let piece = cx.piece().clone();
             let pending = match cx.validated() {
-                Ok(ctx) => crate::json::terms_pending(M::view(&source), &options, cipher, ctx),
+                Ok(ctx) => crate::json::terms_pending(M::view(&source), &options, cipher, ctx)
+                    .under_context(piece),
                 Err(e) => Pending::failed(cipher, e),
             };
             // The terms are derived by now; a document this description
@@ -889,12 +1036,15 @@ pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
     options: JsonOptions,
 ) -> Encryption<'s, serde_json::Value, JsonDocument, K, CallerContext, M> {
     Encryption {
-        build: Box::new(
-            move |source, cipher, cx: CallerContext| match cx.validated() {
-                Ok(ctx) => crate::json::seal_pending(M::take(source), &options, cipher, ctx),
+        build: Box::new(move |source, cipher, cx: CallerContext| {
+            let piece = cx.piece().clone();
+            match cx.validated() {
+                Ok(ctx) => crate::json::seal_pending(M::take(source), &options, cipher, ctx)
+                    .under_context(piece),
                 Err(e) => Pending::failed(cipher, e),
-            },
-        ),
+            }
+        }),
+        shapes: contexts::caller_leaf(),
     }
 }
 
@@ -1576,6 +1726,7 @@ where
         S: 's,
     {
         Encryption {
+            shapes: T::encryption::<K>().shapes(),
             build: Box::new(move |source, cipher, cx: T::Context| {
                 Pending::collect(
                     cipher,
@@ -1597,6 +1748,7 @@ where
         S: 's,
     {
         Encryption {
+            shapes: T::encryption::<K>().shapes(),
             build: Box::new(move |source, cipher, cx: T::Context| match source {
                 Some(item) => cipher.encrypt_as(item, cx).map(Some),
                 None => Pending::ready(cipher, Ok(None)),

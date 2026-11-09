@@ -35,6 +35,16 @@ where
         Self(context.into_context().into_owned())
     }
 }
+/// A borrowed context. The call then needs no clone of a context that a
+/// write and a query share: the parts are copied into the description.
+impl<'c, T> From<&NonEmpty<T>> for CallerContext
+where
+    T: Clone + IntoContext<'c>,
+{
+    fn from(context: &NonEmpty<T>) -> Self {
+        Self::from(context.clone())
+    }
+}
 impl MaybeEmpty for CallerContext {
     fn is_empty(&self) -> bool {
         false
@@ -48,6 +58,10 @@ impl<'a> IntoContext<'a> for CallerContext {
 impl CallerContext {
     pub(crate) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         nonempty(self)
+    }
+    /// The parts of this context.
+    pub(crate) fn piece(&self) -> &ContextPiece<'static> {
+        &self.0
     }
     /// A caller context from a context part as a binding spelled it, with
     /// no emptiness proof: what a plan lowered from data extends a field's
@@ -83,6 +97,12 @@ pub struct AeadContext(ContextPiece<'static>);
 impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for AeadContext {
     fn from(value: NonEmpty<T>) -> Self {
         Self(value.into_context().into_owned())
+    }
+}
+/// A borrowed context, as for [`CallerContext`].
+impl<'a, T: Clone + IntoContext<'a>> From<&NonEmpty<T>> for AeadContext {
+    fn from(value: &NonEmpty<T>) -> Self {
+        Self::from(value.clone())
     }
 }
 impl From<CallerContext> for AeadContext {
@@ -181,10 +201,22 @@ impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for DeclaredContext {
         Self(vec![value.into()])
     }
 }
+/// A borrowed context, as for [`CallerContext`].
+impl<'a, T: Clone + IntoContext<'a>> From<&NonEmpty<T>> for DeclaredContext {
+    fn from(value: &NonEmpty<T>) -> Self {
+        Self(vec![value.into()])
+    }
+}
 impl DeclaredContext {
     /// Whether any part extends the field's own context.
     pub(crate) fn is_extended(&self) -> bool {
         !self.0.is_empty()
+    }
+
+    /// The parts, in order, for [`Contexts`](crate::Contexts).
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn pieces(&self) -> Vec<ContextPiece<'static>> {
+        self.0.iter().map(|part| part.0.clone()).collect()
     }
 
     /// Extend by one more part, after any already given: the field's own

@@ -30,6 +30,19 @@ type Decrypter interface {
 // Seal encrypts rows under the plan, through this cipher's keyset and with
 // its extension: the sealed fields of every row, in order, with one ZeroKMS
 // request for each 500 sealed values. For generated code.
+// Contexts shows the contexts this cipher seals and indexes the plan's
+// fields under, with the cipher's extension applied, before any key is
+// requested: what [Cipher.Seal] will use for every row. The text is
+// [Checker.Contexts]'s, one line per field and one indented line with its
+// context. A plan the engine refuses is [ErrEncoding].
+func (cph *Cipher) Contexts(ctx context.Context, plan *record.Plan) (string, error) {
+	p, err := cph.plan(plan)
+	if err != nil {
+		return "", err
+	}
+	return contextsOf(ctx, cph.client, p)
+}
+
 func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.Source) ([]record.Sealed, error) {
 	p, err := cph.plan(plan)
 	if err != nil {

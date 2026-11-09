@@ -44,12 +44,15 @@ pub trait EncryptTarget<S: Zeroize>: Sized + 'static {
     where
         S: 's,
     {
-        Encryption::from_build(move |source: S, cipher, context| {
-            let guarded = Protected::new(source);
-            let pending = cipher.run(Self::encryption(), guarded.risky_ref(), context);
-            drop(guarded);
-            pending
-        })
+        Encryption::from_build(
+            Self::encryption::<K>().shapes(),
+            move |source: S, cipher, context| {
+                let guarded = Protected::new(source);
+                let pending = cipher.run(Self::encryption(), guarded.risky_ref(), context);
+                drop(guarded);
+                pending
+            },
+        )
     }
     /// The indexes that this target's terms support, as data. A plan field
     /// typed with this target lets a query use these indexes. The default is

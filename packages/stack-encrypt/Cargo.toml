@@ -125,6 +125,10 @@ rust_decimal = ["dep:rust_decimal", "vitaminc-aead/rust_decimal"]
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.
 test-support = ["stack-kms/test-support"]
+# `stack_encrypt::testing`: `assert_context!`, which pins the context of a
+# declaration or a call in a test. No dependency; a dev-dependency on this
+# crate with the feature on is enough.
+testing = []
 
 [dev-dependencies]
 # Preserve JSON number spellings for the shared declaration projection.

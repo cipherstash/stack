@@ -392,3 +392,43 @@ declares contexts, because its context input is `NoCallerContext`.
 Two halves of one target, zipped after two `context_from` calls, could each
 take a different field. Decision 1 already accepts that difference for
 contexts declared per side, because the declaration names each field.
+
+## Amended 2026-11-10 (#1568)
+
+A declaration and a call can now show the context they use, before any key
+is requested. A wrong context loses data silently: a query under the wrong
+context matches nothing, and gives no error. So a developer must be able to
+see the context. A test must be able to state it.
+
+- `Encryption::contexts()` lists the context of each field that is sealed
+  or indexed. A part the caller supplies appears as a typed placeholder,
+  such as `{context: u64}`. The derives emit `contexts()` on every record,
+  and a `Plan` has it too. The dynamic interface has the same view, so a
+  Go program can print a record's contexts.
+- `Pending::context()` lists the exact contexts a prepared call will use,
+  with the caller's values filled in.
+- The `testing` feature adds `assert_context!`. The macro compares either
+  view against the parts a test states, with their types. The failure
+  names the first part that differs. The Go module has
+  `encrypttest.AssertContexts`.
+
+The views are not a second description of the context. Three combinators
+change the context of a subtree: `under`, `extend`, and `context_from`.
+Each one records the change beside the closure it builds. Each leaf records
+the context it validated. So the same code path builds the view, the key
+descriptor, and the AAD.
+
+The view shows each part's type, because `7u64`, `7i64`, the text `7`, and
+the bytes `0x37` are four different contexts. The descriptor that ZeroKMS
+logs is coarser. The descriptor does not change.
+
+Two smaller changes land with the views. The six public methods that took
+a context through a parameter named `aad` now name it `context`. A caller
+can also pass a context by reference. `CallerContext`, `AeadContext`, and
+`DeclaredContext` convert from `&NonEmpty<T>`. EQL's `&Identifier` is a
+context.
+
+A stored EQL type still takes its `NonEmpty<Identifier>` by value. Rust's
+orphan rule keeps `From<&NonEmpty<T>>` for `NonEmpty<T>` out of this
+repository, so that impl belongs in Vitamin C.
+

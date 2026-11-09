@@ -10,6 +10,20 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+### Added
+
+- `Checker.Contexts` and `Cipher.Contexts` show the contexts a plan's
+  fields are sealed and indexed under, before any key is requested: one
+  line per field, then one indented line with its context, such as
+  `email\n  context: users / email\n`. A cipher shows its extension
+  applied. The text is the engine's, and the same text a Rust record's
+  `contexts()` prints for the same declaration, so the two SDKs agree.
+  `gensupport.Declaration.Contexts` asks the same of a generated record's
+  declaration.
+- The `encrypttest` package: `encrypttest.AssertContexts` pins a generated
+  record's contexts in a test, and names the first line that differs.
+  `encrypttest.Contexts` returns the text.
+
 ## [0.1.0-rc.3] - 2026-11-02
 
 ### Upgrading from rc.2

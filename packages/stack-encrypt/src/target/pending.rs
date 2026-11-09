@@ -22,8 +22,10 @@ use stack_kms::{
 use uuid::Uuid;
 
 use super::request::{tally, KeysetAnswer, Request, RequestKind, Responses};
+use crate::contexts::CallContexts;
 use crate::keyset::KeysetState;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
+use vitaminc_aead::ContextPiece;
 
 /// The boxed fulfilment: consumes this pending's slice of the responses and
 /// produces the output. The `Send` split mirrors [`kms::MaybeSend`](crate::kms::MaybeSend) —
@@ -77,6 +79,10 @@ pub struct Pending<'a, T, K> {
     /// with one misconfigured field never mints data keys it will throw away.
     /// When set, `fulfil` is never called.
     failed: Option<Error>,
+    /// The context of every leaf this pending seals or indexes, in the
+    /// order the leaves ran. What [`context`](Self::context) shows. A
+    /// failed pending carries none, as it carries no requests.
+    contexts: Vec<ContextPiece<'static>>,
     fulfil: FulfilBox<'a, T>,
 }
 
@@ -138,6 +144,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 keyset: scope.keyset(),
                 requests: Vec::new(),
                 failed: None,
+                contexts: Vec::new(),
                 fulfil: Box::new(move |_| Ok(value)),
             },
             Err(error) => Self::failed(scope, error),
@@ -164,6 +171,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset: scope.keyset(),
             requests: Vec::new(),
             failed: Some(error),
+            contexts: Vec::new(),
             // Unreachable: `settle` returns the stored error before any
             // fulfilment runs. Kept honest rather than panicking.
             fulfil: Box::new(|_| {
@@ -202,6 +210,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset: scope.keyset(),
             requests,
             failed: None,
+            contexts: Vec::new(),
             fulfil: Box::new(move |responses| {
                 let mut own = responses.split_front(generated, retrieved, keysets)?;
                 let value = fulfil(&mut own)?;
@@ -224,6 +233,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset: self.keyset,
             requests: self.requests,
             failed: self.failed,
+            contexts: self.contexts,
             fulfil: Box::new(move |responses| fulfil(responses).map(f)),
         }
     }
@@ -239,8 +249,31 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset: self.keyset,
             requests: self.requests,
             failed: self.failed,
+            contexts: self.contexts,
             fulfil: Box::new(move |responses| fulfil(responses).and_then(f)),
         }
+    }
+
+    /// The contexts this call will use, with the caller's values filled in.
+    ///
+    /// Each distinct context appears once, in the order the call's leaves
+    /// run. No key has been requested: a pending holds its requests until it
+    /// is awaited. A failed pending shows no context.
+    ///
+    /// See [`CallContexts`] for an example, and
+    /// [`Encryption::contexts`](super::Encryption::contexts) for the same
+    /// view of a declaration, with placeholders for the caller's parts.
+    pub fn context(&self) -> CallContexts {
+        CallContexts::from_pieces(&self.contexts)
+    }
+
+    /// Record that this pending's leaf runs under `context`. The leaf
+    /// operations call it once each, with the context they validated.
+    pub(crate) fn under_context(mut self, context: ContextPiece<'static>) -> Self {
+        if self.failed.is_none() {
+            self.contexts.push(context);
+        }
+        self
     }
 
     /// Scope this pending to `keyset`: what a [`KeysetCipher`]'s decrypt
@@ -335,6 +368,8 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         if let Err(error) = check_scope(keyset, &requests) {
             return Pending::failed(self.cipher, error);
         }
+        let mut contexts = self.contexts;
+        contexts.extend(other.contexts);
         let first = self.fulfil;
         let second = other.fulfil;
         Pending {
@@ -342,6 +377,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset,
             requests,
             failed: None,
+            contexts,
             fulfil: Box::new(move |responses| {
                 // The left side's output is held in a guard. So if the right
                 // side fails or panics, the guard releases the left side's
@@ -412,6 +448,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         let cipher = scope.cipher();
         let mut keyset = scope.keyset();
         let mut requests = Vec::new();
+        let mut contexts = Vec::new();
         let mut fulfils = Vec::with_capacity(items.size_hint().0);
         for item in items {
             keyset = match merge_scopes(keyset, item.keyset) {
@@ -422,6 +459,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 return Pending::failed(cipher, error);
             }
             requests.extend(item.requests);
+            contexts.extend(item.contexts);
             fulfils.push(item.fulfil);
         }
         if let Err(error) = check_scope(keyset, &requests) {
@@ -432,6 +470,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset,
             requests,
             failed: None,
+            contexts,
             fulfil: Box::new(move |responses| {
                 // Held in a guard so that an item whose fulfilment panics
                 // releases the prefix during the unwind, as an error does.

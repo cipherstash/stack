@@ -5,6 +5,7 @@ error[E0277]: the trait bound `CallerContext: From<AeadContext>` is not satisfie
   |          ^^^^^^^^^^^ the trait `From<AeadContext>` is not implemented for `CallerContext`
   |
   = help: the following other types implement trait `From<T>`:
+            `CallerContext` implements `From<&NonEmpty<T>>`
             `CallerContext` implements `From<NonEmpty<T>>`
             `CallerContext` implements `From<RequiredContext<C>>`
             `CallerContext` implements `From<i128>`
@@ -12,7 +13,6 @@ error[E0277]: the trait bound `CallerContext: From<AeadContext>` is not satisfie
             `CallerContext` implements `From<i32>`
             `CallerContext` implements `From<i64>`
             `CallerContext` implements `From<i8>`
-            `CallerContext` implements `From<u128>`
           and $N others
   = note: required for `AeadContext` to implement `Into<CallerContext>`
   = help: see issue #48214
