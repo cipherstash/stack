@@ -61,22 +61,27 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! # }).unwrap();
 //! ```
+use std::any::type_name;
 use std::borrow::Cow;
 use std::fmt;
+use std::sync::Arc;
 
 use zeroize::Zeroize;
 
 use super::query::{field_operators, find, query_term, QueryTerm};
-use super::record::{self, Plan};
+use super::record::{self, Absent, Context, FieldPlan, Plan, Verb};
 use super::target::{NoTargets, TargetResolver};
 use super::value_frame::ValueFrame;
-use super::{Error, Op, Reason, Scope};
+use super::{Error, Op, Reason, Scope, TermBytes};
 use crate::contexts::{self, CallerShape, Contexts, LeafContext, Placeholder};
+use crate::descriptor::LabelError;
+use crate::plan::{FieldValues, IntoLabel, Slot};
 use crate::target::{
-    CallerContext, DeclaredContext, DecryptSource, Decryption, EncryptTarget, Encryption,
-    OptionalContext, Owned, Pending,
+    ciphertext, indexed, inspect, open, passthrough, AeadContext, Borrowed, CallerContext,
+    DeclaredContext, DecryptSource, Decryption, EncryptTarget, Encrypted, Encryption,
+    ExpectedContext, IndexSpec, Indexes, OptionalContext, Owned, Pending,
 };
-use crate::{Encrypt, KeysetCipher, PlanError, StackCipherText};
+use crate::{Encrypt, KeysetCipher, Label, NonEmpty, PlanError, StackCipherText};
 
 /// The resolver of a build without EQL types, for [`Plan::field`].
 static NO_TARGETS: NoTargets = NoTargets;
@@ -675,6 +680,397 @@ impl<'p, R: TargetResolver + ?Sized> DynamicQuery<'p, R> {
         self.plan
             .term(keyset, self.value, &self.scopes, self.resolver)
     }
+}
+
+// =============================================================================
+// The lowering: a data plan composed from the combinators
+// =============================================================================
+
+/// The description one run of `plan` executes over a record's values,
+/// without the fields in `absent`: a check that the values' fields are the
+/// plan's, then each field's verb as its combinator, read out of the
+/// record by name, under the field's label, zipped so every key request
+/// settles in one batch, and the record assembled. This is the one
+/// lowering of a data plan, as the derive's generated code is of a typed
+/// record (ADR-0007, amended): `encrypt_with`, `contexts()` and the
+/// checks all read it.
+///
+/// # Errors
+///
+/// A field's label that is not plain ([`PlanError::FieldLabel`]), which the
+/// plan's parser refuses first, so a parsed plan never fails here.
+pub(super) fn compose<'s, K: 'static>(
+    plan: &Plan,
+    absent: &Absent,
+) -> Result<Encryption<'s, FieldValues, FieldValues, K, DeclaredContext>, crate::Error> {
+    let names: Vec<String> = lowered_fields(plan, absent)
+        .map(|field| field.name().to_owned())
+        .collect();
+    let checked_names = names.clone();
+    let mut record: Encryption<'s, FieldValues, Vec<(Arc<str>, Slot)>, K, DeclaredContext> =
+        inspect::<FieldValues, K, DeclaredContext, _>(move |values| {
+            check_names(values, &checked_names)
+        })
+        .map(|()| Vec::new());
+    let context_field = plan.context_field().map(str::to_owned);
+    for field in lowered_fields(plan, absent) {
+        let name: Arc<str> = Arc::from(field.name());
+        let identity = field.identity().to_owned();
+        let indexes = field.indexes();
+        let operation = match field.verb() {
+            Verb::Encrypt => lift(
+                ciphertext::<ValueFrame, K, Borrowed>().accepting::<CallerContext>(),
+                &name,
+            ),
+            Verb::EncryptIndex => lift(
+                indexed::<ValueFrame, K, Borrowed, Vec<IndexSpec>>(indexes),
+                &name,
+            ),
+            Verb::Index => lift(indexes.operations::<K, Borrowed>(), &name),
+            Verb::Passthrough => lift(
+                passthrough::<ValueFrame, K, Borrowed, CallerContext>(),
+                &name,
+            ),
+            Verb::Target => unreachable!("a target field is the resolver's, not the lowering's"),
+        };
+        // A passthrough and the context field carry no label of their own:
+        // they ignore the context, so they are handed the base one.
+        let keys_nothing =
+            field.verb() == Verb::Passthrough || context_field.as_deref() == Some(field.name());
+        let operation = match plan.context_source() {
+            Context::Label(context) if keys_nothing => {
+                operation.under(NonEmpty::from(context.clone()))
+            }
+            Context::Label(context) => match join(context, &identity) {
+                Ok(label) => operation.under(NonEmpty::from(label)),
+                Err(source) => return Err(field_label(field.name(), source)),
+            },
+            Context::Field(of) => {
+                let of = of.clone();
+                let field_name = field.name().to_owned();
+                let joined = (!keys_nothing).then(|| identity.clone());
+                operation.under_by(
+                    &of.clone(),
+                    joined.as_deref(),
+                    move |values: &FieldValues| {
+                        let context = context_of(values, &of)?;
+                        if keys_nothing {
+                            Ok(context)
+                        } else {
+                            join(&context, &identity)
+                                .map_err(|source| field_label(&field_name, source))
+                        }
+                    },
+                )
+            }
+        }
+        .named(&name);
+        record =
+            record
+                .zip(operation)
+                .map(move |(mut slots, slot): (Vec<(Arc<str>, Slot)>, Slot)| {
+                    slots.push((name, slot));
+                    slots
+                });
+    }
+    Ok(record.map(FieldValues::from_slots))
+}
+
+/// The opening of a stored record's values under `plan`, without the
+/// fields in `absent`: each sealed field opened under the context it was
+/// sealed under (its label, extended by `extend`), passthrough fields
+/// carried back, fields that are terms alone left out. `expected` is the
+/// context the caller expects a context field to hold, checked before any
+/// key is requested; a plan with a context of its own refuses one.
+pub(super) fn opening<K: 'static>(
+    plan: &Plan,
+    mut values: FieldValues,
+    expected: Option<Label>,
+    extend: DeclaredContext,
+    absent: &Absent,
+) -> Decryption<FieldValues, K> {
+    if let Err(error) = check_stored(plan, &values, absent) {
+        return Decryption::failed(error);
+    }
+    let base = match opening_base(plan, &values, expected) {
+        Ok(base) => base,
+        Err(error) => return Decryption::failed(error),
+    };
+    let context_field = plan.context_field().map(str::to_owned);
+    let mut opened: Decryption<Vec<(Arc<str>, Slot)>, K> = Decryption::ready(Vec::new());
+    for field in lowered_fields(plan, absent).filter(|field| field.opens()) {
+        let name: Arc<str> = Arc::from(field.name());
+        let Some(slot) = values.take_slot(field.name()) else {
+            return Decryption::failed(not_in_value(field.name()));
+        };
+        let keys_nothing =
+            field.verb() == Verb::Passthrough || context_field.as_deref() == Some(field.name());
+        let opening: Decryption<Slot, K> = if keys_nothing {
+            Decryption::ready(slot)
+        } else {
+            let label = match join(&base, field.identity()) {
+                Ok(label) => label,
+                Err(source) => return Decryption::failed(field_label(field.name(), source)),
+            };
+            let ciphertext = match sealed_of(slot) {
+                Ok(ciphertext) => ciphertext,
+                Err(()) => {
+                    return Decryption::failed(field_type(
+                        field.name(),
+                        type_name::<StackCipherText>(),
+                    ))
+                }
+            };
+            let sealed_under = extend.clone().under(NonEmpty::from(label));
+            open::<ValueFrame, K>(ciphertext, AeadContext::from(sealed_under)).map(Slot::new)
+        };
+        opened =
+            opened
+                .zip(opening)
+                .map(move |(mut slots, slot): (Vec<(Arc<str>, Slot)>, Slot)| {
+                    slots.push((name, slot));
+                    slots
+                });
+    }
+    opened.map(FieldValues::from_slots)
+}
+
+/// The whole-plan rules the lowering relies on, checked where a plan is
+/// built so a plan in hand lowers: a field is named once, two fields that
+/// key something do not share an identity, and every label a field is
+/// sealed under is plain. The parser refuses a label that is not plain
+/// first; this is the lowering's own statement of it.
+///
+/// # Errors
+///
+/// [`PlanError::DuplicateField`], [`PlanError::SharedIdentity`] and
+/// [`PlanError::FieldLabel`].
+pub(super) fn validate(plan: &Plan) -> Result<(), crate::Error> {
+    let context_field = plan.context_field();
+    let keys_nothing = |field: &FieldPlan| {
+        field.verb() == Verb::Passthrough || context_field == Some(field.name())
+    };
+    for (at, field) in plan.fields().iter().enumerate() {
+        for earlier in &plan.fields()[..at] {
+            if earlier.name() == field.name() {
+                return Err(PlanError::DuplicateField {
+                    field: field.name().to_owned(),
+                }
+                .into());
+            }
+            if !keys_nothing(earlier)
+                && !keys_nothing(field)
+                && earlier.identity() == field.identity()
+            {
+                return Err(PlanError::SharedIdentity {
+                    identity: field.identity().to_owned(),
+                    first: earlier.name().to_owned(),
+                    second: field.name().to_owned(),
+                }
+                .into());
+            }
+        }
+        if field.is_target() || keys_nothing(field) {
+            continue;
+        }
+        match plan.context_source() {
+            Context::Label(context) => {
+                let _ =
+                    join(context, field.identity()).map_err(|e| field_label(field.name(), e))?;
+            }
+            Context::Field(_) => {
+                let _ = Label::new([field.identity()]).map_err(|e| field_label(field.name(), e))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The fields the lowering runs: every field but a target's, which the
+/// resolver runs, and the ones the row leaves out.
+fn lowered_fields<'p>(plan: &'p Plan, absent: &'p Absent) -> impl Iterator<Item = &'p FieldPlan> {
+    plan.fields()
+        .iter()
+        .filter(move |field| !field.is_target() && !absent.contains(field.name()))
+}
+
+/// A description over one field's value, lifted to read that field out of
+/// the record by name and to hold its output in a slot.
+fn lift<'s, T, K>(
+    operation: Encryption<'s, ValueFrame, T, K, CallerContext>,
+    name: &Arc<str>,
+) -> Encryption<'s, FieldValues, Slot, K, CallerContext>
+where
+    T: std::any::Any + Send + 'static,
+    K: 'static,
+{
+    let name = Arc::clone(name);
+    operation
+        .project_by(move |values: &FieldValues| {
+            values
+                .get::<ValueFrame>(&name)
+                .ok_or_else(|| field_type(&name, type_name::<ValueFrame>()))
+        })
+        .map(Slot::new)
+}
+
+/// The values' fields against the plan's, both ways, and each at the type
+/// the plan reads: what running the plan checks before any key is
+/// requested, and what [`check_source`](super::record::check_source) asks
+/// without a cipher.
+pub(super) fn check_values(
+    plan: &Plan,
+    values: &FieldValues,
+    absent: &Absent,
+) -> Result<(), crate::Error> {
+    let names: Vec<String> = lowered_fields(plan, absent)
+        .map(|field| field.name().to_owned())
+        .collect();
+    check_names(values, &names)?;
+    for field in lowered_fields(plan, absent) {
+        if values.get::<ValueFrame>(field.name()).is_none() {
+            return Err(field_type(field.name(), type_name::<ValueFrame>()));
+        }
+    }
+    if let Context::Field(of) = plan.context_source() {
+        let _ = context_of(values, of)?;
+    }
+    Ok(())
+}
+
+/// A stored record's values against the plan, as opening checks them:
+/// every field of the record is one the plan names, and every field the
+/// plan can return is in it, of a type its opening reads.
+pub(super) fn check_stored(
+    plan: &Plan,
+    values: &FieldValues,
+    absent: &Absent,
+) -> Result<(), crate::Error> {
+    if let Some(extra) = values
+        .names()
+        .find(|name| !plan.fields().iter().any(|field| field.name() == *name))
+    {
+        return Err(PlanError::NotInPlan {
+            field: extra.to_owned(),
+        }
+        .into());
+    }
+    let context_field = plan.context_field().map(str::to_owned);
+    for field in lowered_fields(plan, absent).filter(|field| field.opens()) {
+        let Some(slot) = values.slot(field.name()) else {
+            return Err(not_in_value(field.name()));
+        };
+        let keys_nothing =
+            field.verb() == Verb::Passthrough || context_field.as_deref() == Some(field.name());
+        let holds = if keys_nothing {
+            slot.is::<ValueFrame>()
+        } else {
+            slot.is::<StackCipherText>() || slot.is::<Encrypted<Vec<TermBytes>>>()
+        };
+        if !holds {
+            let expected = if keys_nothing {
+                type_name::<ValueFrame>()
+            } else {
+                type_name::<StackCipherText>()
+            };
+            return Err(field_type(field.name(), expected));
+        }
+    }
+    Ok(())
+}
+
+/// The context a stored record opens under: the plan's own label, which
+/// an `expected` context contradicts, or the record's context field,
+/// checked against `expected` before any key is requested.
+pub(super) fn opening_base(
+    plan: &Plan,
+    values: &FieldValues,
+    expected: Option<Label>,
+) -> Result<Label, crate::Error> {
+    match (plan.context_source(), expected) {
+        (Context::Label(label), None) => Ok(label.clone()),
+        (Context::Label(_), Some(_)) => Err(PlanError::TwoContextSources {
+            first: "the plan",
+            second: "the call",
+        }
+        .into()),
+        (Context::Field(of), expected) => {
+            let stored = context_of(values, of)?;
+            let expected = match expected {
+                Some(expected) => ExpectedContext::from(NonEmpty::from(expected)),
+                None => ExpectedContext::default(),
+            };
+            expected.validate(stored).map(NonEmpty::into_inner)
+        }
+    }
+}
+
+/// The values' fields against the plan's, both ways.
+fn check_names(values: &FieldValues, names: &[String]) -> Result<(), crate::Error> {
+    if let Some(extra) = values
+        .names()
+        .find(|have| !names.iter().any(|name| name == have))
+    {
+        return Err(PlanError::NotInPlan {
+            field: extra.to_owned(),
+        }
+        .into());
+    }
+    if let Some(missing) = names.iter().find(|name| !values.contains(name)) {
+        return Err(not_in_value(missing));
+    }
+    Ok(())
+}
+
+/// The context a record's context field holds.
+fn context_of(values: &FieldValues, field: &str) -> Result<Label, crate::Error> {
+    values
+        .get::<ValueFrame>(field)
+        .ok_or_else(|| field_type(field, type_name::<ValueFrame>()))?
+        .clone()
+        .into_label()
+        .map_err(|error| PlanError::ContextLabel(error).into())
+}
+
+/// A stored sealed field: its ciphertext, whether the slot holds the
+/// ciphertext alone or with the terms beside it.
+fn sealed_of(slot: Slot) -> Result<StackCipherText, ()> {
+    let slot = match slot.downcast::<StackCipherText>() {
+        Ok(ciphertext) => return Ok(ciphertext),
+        Err(slot) => slot,
+    };
+    match slot.downcast::<Encrypted<Vec<TermBytes>>>() {
+        Ok(encrypted) => Ok(encrypted.ciphertext),
+        Err(_) => Err(()),
+    }
+}
+
+/// The label a field is sealed under: the context, then its identity.
+fn join(context: &Label, identity: &str) -> Result<Label, LabelError> {
+    Label::new(context.segments().chain([identity]))
+}
+
+fn field_label(field: &str, source: LabelError) -> crate::Error {
+    PlanError::FieldLabel {
+        field: field.to_owned(),
+        source,
+    }
+    .into()
+}
+
+fn field_type(field: &str, expected: &'static str) -> crate::Error {
+    PlanError::FieldType {
+        field: field.to_owned(),
+        expected,
+    }
+    .into()
+}
+
+fn not_in_value(field: &str) -> crate::Error {
+    PlanError::NotInValue {
+        field: field.to_owned(),
+    }
+    .into()
 }
 
 #[cfg(test)]

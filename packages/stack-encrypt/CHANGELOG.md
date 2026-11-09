@@ -58,6 +58,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `K: 'static`, as `record::encrypt_with` does. The key source's bounds
   apply when the pending is awaited, not when the term is described.
 
+### Changed
+
+- **A data plan lowers to the combinators directly** (#1488, first part).
+  `dynamic::planned::compose` and `opening` build each field's combinator
+  from the parsed plan. The dynamic entry points run them: `encrypt_with`,
+  `decrypt_with`, `check_source`, `check_record`, and `Plan::contexts`.
+  The plan builder is no longer in the dynamic path. No stored byte
+  changes: the record shape, the terms, and the contexts are the ones the
+  builder's lowering produced, and the conformance vectors pin them.
+
 ### Breaking
 
 - **Every operator is declared once, and `op::Supports` has one method**

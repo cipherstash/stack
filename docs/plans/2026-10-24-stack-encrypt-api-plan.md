@@ -1993,9 +1993,15 @@ table.
   The removal of `Label` is also listed in [Apply the naming
   review](#apply-the-naming-review); it happens once, here.
 - **Why.** Two APIs for the same job make the right one hard to find.
-- **Done already.** The new API exists beside the old one. Issue #1488
-  tracks the removal.
-- **Tracked in.** Issue #1488 is open.
+- **Done already.** The new API exists beside the old one. The first
+  pull request for #1488 makes `Planned` the one lowering of a data plan:
+  `dynamic::planned::compose` and `opening` build each field's combinator
+  from the parsed plan, and `encrypt_with`, `decrypt_with`, `contexts()`
+  and the checks read them. The dynamic path no longer uses the plan
+  builder. The builder, the chain, the old traits and `Label` are still
+  to be removed.
+- **Tracked in.** Issue #1488 is open. Its first pull request is the
+  lowering; the removals follow it.
 - **Finished when** the old API is gone, and every consumer uses the new
   API.
 

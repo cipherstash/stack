@@ -324,4 +324,6 @@ pub use value::{
     ContextFieldStart, Indexed, Laid, Stored, Typed, ValueLayout, ValuePlan, ValuePlanBuilder,
     ValueShape, ValueStart,
 };
+#[cfg(feature = "dynamic")]
+pub(crate) use values::Slot;
 pub use values::{Field, FieldSchema, FieldValues, Fields};

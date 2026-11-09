@@ -378,6 +378,10 @@ The data side stays: the parsed `Plan` and its parser in
 `dynamic::record`, `FieldValues`, `ValueFrame`, the target resolver, and
 the field index list. The functions in `dynamic::record` that the guest
 calls become thin wrappers. Each parses a frame and builds a `Planned`.
+The first pull request for #1488 did the lowering: `compose` and
+`opening` in `dynamic::planned` build the combinators from the parsed
+plan, and `encrypt_with`, `decrypt_with`, `check_source`, `check_record`
+and `contexts()` run them. The builder is no longer in the dynamic path.
 
 **The derive emits no plan.** `encryption_plan()` is not added. A typed
 query starts from a field marker. The marker has the field's context and
