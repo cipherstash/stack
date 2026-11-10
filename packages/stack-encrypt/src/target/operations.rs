@@ -20,7 +20,7 @@ use super::core::{encrypt_native, open_native, Term};
 use super::index::{Index, IndexSpec, Json};
 use super::input::{AcceptsContext, NoCallerContext, RequiredContext};
 use super::source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
-use super::{CipherScope, Pending};
+use super::{CipherRef, Pending};
 use crate::contexts::{self, Contexts, Placeholder, Shape, Shapes, SuppliedContext};
 use crate::json::{JsonDocument, JsonOptions, JsonTerms};
 use crate::{Error, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipher, StackCipherText};
@@ -1366,7 +1366,8 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     }
     /// Execute under a scope. A [`KeysetCipher`] scope refuses a leaf from any
     /// other keyset; a [`StackCipher`] scope opens leaves from any.
-    pub(super) fn open_in<'a>(self, scope: impl CipherScope<'a, K>) -> Pending<'a, T, K> {
+    pub(super) fn open_in<'a>(self, scope: impl Into<CipherRef<'a, K>>) -> Pending<'a, T, K> {
+        let scope: CipherRef<'a, K> = scope.into();
         let pending = match self.inner {
             Opening::Failed(error) => return Pending::failed(scope, error),
             Opening::Open(open) => open(scope.cipher()),
@@ -1569,12 +1570,13 @@ pub trait LegacyDecryptFrom: Sized + 'static {
     /// foreign leaves) or a [`StackCipher`] (opening any).
     fn decrypt_into<'a, P: 'static, K: 'static>(
         self,
-        cipher: impl CipherScope<'a, K>,
+        cipher: impl Into<CipherRef<'a, K>>,
         context: impl Into<<Self as DecryptInto<P>>::Context>,
     ) -> Pending<'a, P, K>
     where
         Self: DecryptInto<P>,
     {
+        let cipher: CipherRef<'a, K> = cipher.into();
         self.decryption(context.into()).open_in(cipher)
     }
     /// Recover `Self` from `source` with its default context — the plain
@@ -1582,23 +1584,25 @@ pub trait LegacyDecryptFrom: Sized + 'static {
     /// one.
     fn decrypt_from<'a, S, K: 'static>(
         source: S,
-        cipher: impl CipherScope<'a, K>,
+        cipher: impl Into<CipherRef<'a, K>>,
     ) -> Pending<'a, Self, K>
     where
         S: DecryptInto<Self> + 'static,
         S::Context: Default,
     {
+        let cipher: CipherRef<'a, K> = cipher.into();
         source.decrypt_into(cipher, S::Context::default())
     }
     /// Recover `Self` from `source` under `context`.
     fn decrypt_from_with_context<'a, S, K: 'static>(
         source: S,
-        cipher: impl CipherScope<'a, K>,
+        cipher: impl Into<CipherRef<'a, K>>,
         context: impl Into<S::Context>,
     ) -> Pending<'a, Self, K>
     where
         S: DecryptInto<Self> + 'static,
     {
+        let cipher: CipherRef<'a, K> = cipher.into();
         source.decrypt_into(cipher, context.into())
     }
 }

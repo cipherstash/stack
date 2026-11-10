@@ -89,6 +89,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`CipherRef` replaces `target::CipherScope` and `dynamic::Scope`**
+  (#1488). A `CipherRef` is one borrowed value: a connection, and the
+  keyset it is confined to, if any. It is built from `&StackCipher`,
+  `&KeysetCipher`, or an owned `KeysetCipher`, and in no other way.
+  - Every entry point that took `impl CipherScope` takes
+    `impl Into<CipherRef>`. A call that passes `&cipher` or `&keyset`
+    compiles unchanged: `decrypt_from`, `Pending::ready`, `Pending::failed`,
+    `Pending::request`, and `Pending::all`.
+  - `dynamic::record::decrypt` and `decrypt_with` take
+    `impl Into<CipherRef>` too. Write `&cipher` in place of
+    `Scope::Client(&cipher)`, and `&keyset` or `keyset` in place of
+    `Scope::Keyset(keyset)`.
+  - The rules do not change. A reference to a `StackCipher` opens a leaf
+    from any keyset the client can use. A reference to a `KeysetCipher`
+    refuses a leaf from another keyset with `ForeignKeyset`, before any key
+    is retrieved.
+  - `CipherRef::keyset_id()` returns the keyset the reference is confined
+    to. `CipherRef` is re-exported from the crate root.
+
 - **Every operator is declared once, and `op::Supports` has one method**
   (#1279, #1318). The `op` module lists each operator with its type, its
   arity and its wire name; the dynamic enum `Op` (`dynamic::OpSpec` until

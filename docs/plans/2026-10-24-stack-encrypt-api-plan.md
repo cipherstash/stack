@@ -1757,6 +1757,7 @@ records only the work.
   and `From<&Keyset>`. The entry points take `impl Into<CipherRef>`, and
   the Go guest builds one from its keyset selector. A `Keyset` reference
   refuses a foreign leaf with `ForeignKeyset`. A `Cipher` reference opens leaves from any keyset the client has.
+  Done, in the second pull request for #1488.
 - **Tracked in.** Issue #1488 is open. It is the chain removal. Issue #1120 is open. Pull request #1504 is open and adds the record pairs.
 - **Finished when** these are all true:
   - the examples in [Target state](#target-state) compile;
@@ -1956,7 +1957,7 @@ table.
   - In Go, `Client` becomes `Cipher`, with `NewCipher`, and the
     keyset-bound `Cipher` becomes `Keyset`. Generated files are
     regenerated, and the generator's output changes for every input.
-  - `CipherScope` and `dynamic::Scope` are replaced by one `CipherRef`.
+  - `CipherScope` and `dynamic::Scope` are replaced by one `CipherRef`. Done.
   - The old context path type `Label` is removed, with `IntoLabel` and
     Go's `ContextLabel()`. A plan's context is its declared `Scope`
     parts, so `Label` is free for the key tag fact.
@@ -2005,7 +2006,8 @@ table.
   lowering themselves. That inversion, the builder, the chain, the old
   traits and `Label` are still to be removed.
 - **Tracked in.** Issue #1488 is open. Its first pull request is the
-  lowering; the removals follow it.
+  lowering. Its second replaces `CipherScope` and `dynamic::Scope` with
+  `CipherRef`. The removals follow.
 - **Finished when** the old API is gone, and every consumer uses the new
   API.
 

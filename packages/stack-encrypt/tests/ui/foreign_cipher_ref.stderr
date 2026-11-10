@@ -1,0 +1,9 @@
+error[E0451]: fields `cipher` and `keyset` of struct `CipherRef` are private
+  --> tests/ui/foreign_cipher_ref.rs:10:9
+   |
+ 9 |     CipherRef {
+   |     --------- in this type
+10 |         cipher,
+   |         ^^^^^^ private field
+11 |         keyset: Some(id),
+   |         ^^^^^^ private field

@@ -16,7 +16,7 @@ use common::{hex, unhex};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, ValueFrame};
 use stack_encrypt::{
     AsProtectedRef as _, CipherText, Ciphertext, KeysetCipher, Label, OpaqueBlob, PassthroughFrame,
     SealedValue, StackCipherText,
@@ -662,7 +662,7 @@ async fn consume(
                 sealed_node(stored, &corpus.values.field),
             )])
         };
-        let opened = record::decrypt(Scope::Keyset(keyset.clone()), tree, &plan, None)
+        let opened = record::decrypt(keyset.clone(), tree, &plan, None)
             .unwrap()
             .await
             .unwrap();
@@ -737,15 +737,10 @@ async fn consume(
                 .collect(),
             "{what}: sealed fields"
         );
-        let opened = record::decrypt(
-            Scope::Keyset(keyset.clone()),
-            CipherText::Map(tree),
-            &plan,
-            None,
-        )
-        .unwrap()
-        .await
-        .unwrap();
+        let opened = record::decrypt(keyset.clone(), CipherText::Map(tree), &plan, None)
+            .unwrap()
+            .await
+            .unwrap();
         assert_eq!(
             opened.risky_ref(),
             object(expected).risky_ref(),

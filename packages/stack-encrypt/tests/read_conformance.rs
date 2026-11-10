@@ -8,7 +8,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use stack_encrypt::dynamic::{record, Scope, ValueFrame};
+use stack_encrypt::dynamic::{record, ValueFrame};
 use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{CipherText, ErrorPayload, Label, StackCipherText};
 use std::{
@@ -291,7 +291,7 @@ async fn check_case(case: Case) {
     } else {
         checked.unwrap();
     }
-    let result = record::decrypt(Scope::Keyset(keyset), stored, &read, expected);
+    let result = record::decrypt(keyset, stored, &read, expected);
     match case.expected.stage {
         Stage::Shape => {
             assert!(case.expected.rows.is_none());

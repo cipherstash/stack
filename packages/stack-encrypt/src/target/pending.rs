@@ -87,58 +87,112 @@ pub struct Pending<'a, T, K> {
     fulfil: FulfilBox<'a, T>,
 }
 
-/// What a [`Pending`] is built through: a [`StackCipher`] (no keyset
-/// scope) or a [`KeysetCipher`] (scoped to its keyset). Implemented for
-/// references to both, so the constructors take either.
+/// What a [`Pending`] is built through: a borrowed connection, and the
+/// keyset it is confined to, if any.
 ///
-/// Sealed: the two scopes are the two shapes, and a scope is how the target
-/// layer asks a cipher what it is bound to — not an extension point. An
-/// outside implementation could name any keyset id without holding the
-/// keyset, which would make [`Pending`]'s scope rules
-/// ([`Error::NoKeyset`], [`Error::ForeignKeyset`]) say less than they do:
-/// a scope's id is one the cipher loaded from ZeroKMS. Downstream code
-/// uses the cipher to execute [`EncryptFrom`](super::EncryptFrom); it never
-/// implements a scope of its own.
-pub trait CipherScope<'a, K>: sealed::Sealed {
-    /// The client-scoped cipher the pending settles through.
-    fn cipher(&self) -> &'a StackCipher<K>;
-    /// The keyset the pending is scoped to, if any.
-    fn keyset(&self) -> Option<Uuid>;
+/// Build one from a reference to a [`StackCipher`] or to a
+/// [`KeysetCipher`]. Every entry point that runs through a cipher takes
+/// `impl Into<CipherRef>`, so a caller passes `&cipher` or `&keyset` and
+/// never names this type.
+///
+/// - A reference to a [`StackCipher`] is confined to no keyset. It opens a
+///   leaf sealed under any keyset the client can use. It cannot generate a
+///   key ([`Error::NoKeyset`]).
+/// - A reference to a [`KeysetCipher`] is confined to that keyset. It
+///   refuses a leaf from another keyset before any key is retrieved
+///   ([`Error::ForeignKeyset`]).
+///
+/// There is no other way to build one. So the keyset a `CipherRef` names
+/// is one the cipher loaded from ZeroKMS, and the two refusals above hold
+/// for every pending.
+///
+/// ```
+/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::{CipherRef, StackCipher};
+///
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// let keyset = cipher.default_keyset();
+///
+/// let any = CipherRef::from(&cipher);
+/// assert_eq!(any.keyset_id(), None);
+/// let one = CipherRef::from(&keyset);
+/// assert_eq!(one.keyset_id(), Some(keyset.keyset_id()));
+/// # Ok::<(), stack_encrypt::Error>(())
+/// # }).unwrap();
+/// ```
+pub struct CipherRef<'c, K> {
+    cipher: &'c StackCipher<K>,
+    keyset: Option<Uuid>,
 }
 
-mod sealed {
-    pub trait Sealed {}
-    impl<K> Sealed for &crate::StackCipher<K> {}
-    impl<K> Sealed for &crate::KeysetCipher<'_, K> {}
+impl<'c, K> CipherRef<'c, K> {
+    /// The connection the pending settles through.
+    pub(crate) fn cipher(&self) -> &'c StackCipher<K> {
+        self.cipher
+    }
+
+    /// The keyset the pending is confined to, if any.
+    pub(crate) fn keyset(&self) -> Option<Uuid> {
+        self.keyset
+    }
+
+    /// The ID of the keyset this reference is confined to. `None` for a
+    /// reference to a [`StackCipher`], which is confined to no keyset.
+    pub fn keyset_id(&self) -> Option<Uuid> {
+        self.keyset
+    }
 }
 
-impl<'a, K> CipherScope<'a, K> for &'a StackCipher<K> {
-    fn cipher(&self) -> &'a StackCipher<K> {
-        self
+impl<K> Clone for CipherRef<'_, K> {
+    fn clone(&self) -> Self {
+        *self
     }
+}
+impl<K> Copy for CipherRef<'_, K> {}
 
-    fn keyset(&self) -> Option<Uuid> {
-        None
+// Written by hand, so that `K: Debug` is not needed. A data-key source
+// rarely implements `Debug`.
+impl<K> std::fmt::Debug for CipherRef<'_, K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CipherRef")
+            .field("keyset", &self.keyset)
+            .finish_non_exhaustive()
     }
 }
 
-impl<'a, K> CipherScope<'a, K> for &'a KeysetCipher<'_, K> {
-    fn cipher(&self) -> &'a StackCipher<K> {
-        KeysetCipher::cipher(self)
+impl<'c, K> From<&'c StackCipher<K>> for CipherRef<'c, K> {
+    fn from(cipher: &'c StackCipher<K>) -> Self {
+        Self {
+            cipher,
+            keyset: None,
+        }
     }
+}
 
-    fn keyset(&self) -> Option<Uuid> {
-        Some(self.keyset_id())
+impl<'c, K> From<&KeysetCipher<'c, K>> for CipherRef<'c, K> {
+    fn from(keyset: &KeysetCipher<'c, K>) -> Self {
+        Self {
+            cipher: keyset.cipher(),
+            keyset: Some(keyset.keyset_id()),
+        }
+    }
+}
+
+impl<'c, K> From<KeysetCipher<'c, K>> for CipherRef<'c, K> {
+    fn from(keyset: KeysetCipher<'c, K>) -> Self {
+        Self::from(&keyset)
     }
 }
 
 impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// A pending with no requests: `result` was fully derived during the
     /// synchronous build. Awaiting it does no I/O.
-    pub fn ready(scope: impl CipherScope<'a, K>, result: Result<T, Error>) -> Self
+    pub fn ready(scope: impl Into<CipherRef<'a, K>>, result: Result<T, Error>) -> Self
     where
         T: MaybeSend,
     {
+        let scope: CipherRef<'a, K> = scope.into();
         match result {
             Ok(value) => Self {
                 cipher: scope.cipher(),
@@ -166,7 +220,8 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     ///
     /// [`Encryption::failed`]: super::Encryption::failed
     /// [`Decryption::failed`]: super::Decryption::failed
-    pub fn failed(scope: impl CipherScope<'a, K>, error: Error) -> Self {
+    pub fn failed(scope: impl Into<CipherRef<'a, K>>, error: Error) -> Self {
+        let scope: CipherRef<'a, K> = scope.into();
         Self {
             cipher: scope.cipher(),
             keyset: scope.keyset(),
@@ -198,10 +253,11 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// request through a [`StackCipher`] scope is [`Error::NoKeyset`], and
     /// a retrieve request naming another keyset than a [`KeysetCipher`]
     /// scope's is [`Error::ForeignKeyset`].
-    pub fn request<F>(scope: impl CipherScope<'a, K>, requests: Vec<Request>, fulfil: F) -> Self
+    pub fn request<F>(scope: impl Into<CipherRef<'a, K>>, requests: Vec<Request>, fulfil: F) -> Self
     where
         F: FnOnce(&mut Responses) -> Result<T, Error> + MaybeSend + 'a,
     {
+        let scope: CipherRef<'a, K> = scope.into();
         let (generated, retrieved, keysets) = tally(&requests);
         if let Err(error) = check_scope(scope.keyset(), &requests) {
             return Self::failed(scope, error);
@@ -407,18 +463,20 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// value each was built through does not matter, for the reason `zip`
     /// gives — and the first failed item fails the whole column with no I/O.
     pub fn all(
-        scope: impl CipherScope<'a, K>,
+        scope: impl Into<CipherRef<'a, K>>,
         items: Vec<Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K> {
+        let scope: CipherRef<'a, K> = scope.into();
         Self::collect(scope, items)
     }
 
     /// Build a collection lazily, stopping at the first local failure so a bad
     /// context does not repeat work for every remaining row.
     pub(crate) fn collect(
-        scope: impl CipherScope<'a, K>,
+        scope: impl Into<CipherRef<'a, K>>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K> {
+        let scope: CipherRef<'a, K> = scope.into();
         Self::collect_releasing(scope, items, drop)
     }
 
@@ -433,12 +491,13 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// unwinds. A failure before fulfilment recovers nothing, so there is
     /// nothing to wipe.
     pub(crate) fn collect_wiping(
-        scope: impl CipherScope<'a, K>,
+        scope: impl Into<CipherRef<'a, K>>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K>
     where
         T: zeroize::Zeroize,
     {
+        let scope: CipherRef<'a, K> = scope.into();
         Self::collect_releasing(scope, items, |mut recovered| {
             zeroize::Zeroize::zeroize(&mut recovered)
         })
@@ -448,10 +507,11 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// When an item fails or panics, `release` receives the items fulfilled
     /// before it. When every item succeeds, `release` is not called.
     fn collect_releasing(
-        scope: impl CipherScope<'a, K>,
+        scope: impl Into<CipherRef<'a, K>>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
         release: impl FnOnce(Vec<T>) + MaybeSend + 'a,
     ) -> Pending<'a, Vec<T>, K> {
+        let scope: CipherRef<'a, K> = scope.into();
         let items = items.into_iter();
         let cipher = scope.cipher();
         let mut keyset = scope.keyset();
@@ -837,6 +897,40 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+
+    /// A reference to the client names no keyset. A reference to a keyset,
+    /// borrowed or owned, names that keyset, and settles through the same
+    /// client.
+    #[tokio::test]
+    async fn a_cipher_ref_names_the_keyset_it_was_built_from() {
+        let cipher = StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .unwrap();
+        let keyset = cipher.default_keyset();
+        let any = CipherRef::from(&cipher);
+        assert_eq!(any.keyset_id(), None);
+        assert!(std::ptr::eq(any.cipher(), &cipher));
+        let borrowed = CipherRef::from(&keyset);
+        let owned = CipherRef::from(keyset.clone());
+        for one in [borrowed, owned] {
+            assert_eq!(one.keyset_id(), Some(keyset.keyset_id()));
+            assert_eq!(one.keyset(), one.keyset_id());
+            assert!(std::ptr::eq(one.cipher(), &cipher));
+        }
+        // A pending keeps the keyset of the reference it was built through.
+        let pending = Pending::ready(&keyset, Ok(()));
+        assert_eq!(pending.keyset, Some(keyset.keyset_id()));
+        let pending = Pending::ready(&cipher, Ok(()));
+        assert_eq!(pending.keyset, None);
+        let shown = format!("{any:?} {borrowed:?}");
+        assert!(shown.contains("keyset: None"), "{shown}");
+        assert!(
+            shown.contains(&format!("{:?}", keyset.keyset_id())),
+            "{shown}"
+        );
+    }
 
     /// Counts ZeroKMS *calls* (not keys) so the batching claim — one call per
     /// request kind however many pendings were merged — is testable. Delegates

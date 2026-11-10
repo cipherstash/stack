@@ -30,7 +30,7 @@ use std::path::PathBuf;
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{admits, Scope, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{admits, ValueFrame, ValueKind};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::StackCipherText as Node;
 use stack_encrypt::{
@@ -246,7 +246,7 @@ async fn open(
     plan: &DataPlan,
     expected: Option<Label>,
 ) -> Vec<u8> {
-    record::decrypt(Scope::Client(cipher), stored, plan, expected)
+    record::decrypt(cipher, stored, plan, expected)
         .expect("the stored record fits the plan")
         .await
         .expect("the stored record opens")

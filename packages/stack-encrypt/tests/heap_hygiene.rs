@@ -55,7 +55,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use common::frames::{frame, object};
-use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, Op, Scope, ValueFrame};
+use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, Op, ValueFrame};
 use stack_encrypt::nonempty;
 use vitaminc_aead::plaintext::{Physical, Raw};
 use vitaminc_aead::Frame;
@@ -448,7 +448,7 @@ fn a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap() {
     });
     watched("record::decrypt", || {
         let opened = rt.block_on(async {
-            record::decrypt(Scope::Client(&cipher), sealed, &plan, None)
+            record::decrypt(&cipher, sealed, &plan, None)
                 .unwrap()
                 .await
                 .unwrap()
@@ -482,7 +482,7 @@ fn a_late_read_type_failure_leaves_no_plaintext_on_the_heap() {
     let sealed = sealed.unwrap();
     watched("late authenticated read type failure", || {
         let result = rt.block_on(async {
-            record::decrypt(Scope::Client(&cipher), sealed, &reader, None)
+            record::decrypt(&cipher, sealed, &reader, None)
                 .unwrap()
                 .await
         });

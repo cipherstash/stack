@@ -11,7 +11,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, ValueFrame};
 use stack_encrypt::{AsProtectedRef as _, CipherText, StackCipherText};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -314,7 +314,7 @@ async fn shared_record_value_profile() {
             0,
             "queries retrieve nothing"
         );
-        let opened = record::decrypt(Scope::Keyset(keyset.clone()), sealed, &plan, None)
+        let opened = record::decrypt(keyset.clone(), sealed, &plan, None)
             .unwrap()
             .await
             .unwrap();

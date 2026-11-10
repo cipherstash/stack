@@ -13,7 +13,7 @@ use common::conformance::{value, Input};
 use common::frames::{frame, object};
 use common::{hex, unhex};
 use serde::{Deserialize, Serialize};
-use stack_encrypt::dynamic::{self, record, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, record, ValueFrame};
 use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{CipherText, Descriptor, Label, SealedValue, StackCipherText};
 use std::collections::{BTreeMap, BTreeSet};
@@ -273,15 +273,10 @@ async fn binding_conformance() {
         assert_eq!(vector.contexts, expected.contexts);
 
         // The frozen record opens under its binding, and under no other.
-        let opened = record::decrypt(
-            Scope::Keyset(keyset.clone()),
-            stored(expected),
-            &bound,
-            None,
-        )
-        .unwrap()
-        .await
-        .unwrap();
+        let opened = record::decrypt(keyset.clone(), stored(expected), &bound, None)
+            .unwrap()
+            .await
+            .unwrap();
         assert_eq!(opened.risky_ref(), source().risky_ref());
         let other = {
             let tampered = vec![
@@ -306,27 +301,17 @@ async fn binding_conformance() {
             record::plan(object(tampered).as_protected_ref()).unwrap()
         };
         assert!(
-            record::decrypt(
-                Scope::Keyset(keyset.clone()),
-                stored(expected),
-                &other,
-                None
-            )
-            .unwrap()
-            .await
-            .is_err(),
+            record::decrypt(keyset.clone(), stored(expected), &other, None)
+                .unwrap()
+                .await
+                .is_err(),
             "a tampered binding opens nothing"
         );
         assert!(
-            record::decrypt(
-                Scope::Keyset(keyset.clone()),
-                stored(expected),
-                &unbound,
-                None
-            )
-            .unwrap()
-            .await
-            .is_err(),
+            record::decrypt(keyset.clone(), stored(expected), &unbound, None)
+                .unwrap()
+                .await
+                .is_err(),
             "a binding left out opens nothing"
         );
         vectors.insert(case.id, vector);

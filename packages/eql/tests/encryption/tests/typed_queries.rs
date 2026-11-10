@@ -502,7 +502,7 @@ async fn an_extended_typed_query_is_refused_before_any_keyset() {
 /// value's, and `"sql"` stores nothing for the field. Both open as a null.
 #[tokio::test]
 async fn a_record_stores_a_null_in_an_eql_field_as_its_plan_says() {
-    use dynamic::{NullMode, Scope};
+    use dynamic::NullMode;
     use stack_encrypt::CipherText;
     use std::collections::BTreeMap;
 
@@ -563,7 +563,7 @@ async fn a_record_stores_a_null_in_an_eql_field_as_its_plan_says() {
         "a sql null stores nothing"
     );
 
-    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &EqlTargets)
+    let opened = record::decrypt_with(&cipher, sealed, &plan, None, &EqlTargets)
         .unwrap()
         .await
         .unwrap();

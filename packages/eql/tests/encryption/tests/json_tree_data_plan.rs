@@ -26,7 +26,7 @@ use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument};
 use eql_bindings::Identifier;
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::{self, record, Scope, TargetError, ValueFrame};
+use stack_encrypt::dynamic::{self, record, TargetError, ValueFrame};
 use stack_encrypt::json::{JsonDocument, JsonOptions, JsonQuery};
 use stack_encrypt::target::{ExpectedContext, Layout};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty};
@@ -175,7 +175,7 @@ async fn a_batch_of_documents_round_trips_in_one_request() {
         1,
         "every document's key in one request"
     );
-    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &EqlTargets)
+    let opened = record::decrypt_with(&cipher, sealed, &plan, None, &EqlTargets)
         .unwrap()
         .await
         .unwrap();
@@ -249,7 +249,7 @@ async fn the_data_plan_and_the_typed_layout_agree() {
                 )),
             )]),
         )]);
-        let opened = record::decrypt_with(Scope::Client(&cipher), record, &plan, None, &EqlTargets)
+        let opened = record::decrypt_with(&cipher, record, &plan, None, &EqlTargets)
             .unwrap()
             .await
             .unwrap();
@@ -293,7 +293,7 @@ async fn a_sql_null_stores_no_document() {
         })
         .collect();
     assert_eq!(stores_profile, [true, false, false, true]);
-    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &EqlTargets)
+    let opened = record::decrypt_with(&cipher, sealed, &plan, None, &EqlTargets)
         .unwrap()
         .await
         .unwrap();
@@ -353,7 +353,7 @@ async fn a_document_does_not_open_under_another_column() {
     )
     .unwrap();
     calls.lock().unwrap().retrieve.clear();
-    let refused = record::decrypt_with(Scope::Client(&cipher), sealed, &other, None, &EqlTargets)
+    let refused = record::decrypt_with(&cipher, sealed, &other, None, &EqlTargets)
         .unwrap()
         .await;
     assert!(

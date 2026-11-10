@@ -7,7 +7,7 @@ use common::frames::{frame, object};
 use common::{hex, unhex};
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
-use stack_encrypt::dynamic::{self, record, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, record, ValueFrame};
 use stack_encrypt::plan::pick;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DeclaredContext, Encrypted};
@@ -287,15 +287,10 @@ async fn shared_context_composition() {
         assert_eq!(vector.prf, expected.prf);
         assert_eq!(vector.equality, expected.equality);
         assert_eq!(vector.contexts, expected.contexts);
-        let opened = record::decrypt(
-            Scope::Keyset(keyset.clone()),
-            stored(&case, expected),
-            &plan,
-            None,
-        )
-        .unwrap()
-        .await
-        .unwrap();
+        let opened = record::decrypt(keyset.clone(), stored(&case, expected), &plan, None)
+            .unwrap()
+            .await
+            .unwrap();
         assert_eq!(opened.risky_ref(), source(&case).risky_ref());
         let plain: String = cipher
             .decrypt(
@@ -579,7 +574,7 @@ async fn shared_context_boundaries() {
         } else {
             Some(Label::parse(&case.expected).unwrap())
         };
-        let result = match record::decrypt(Scope::Keyset(keyset.clone()), stored, &plan, expected) {
+        let result = match record::decrypt(keyset.clone(), stored, &plan, expected) {
             Ok(pending) => pending.await.map_err(|e| e.code().unwrap().to_string()),
             Err(error) => Err(error.code().unwrap().to_string()),
         };

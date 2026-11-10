@@ -1,5 +1,5 @@
 //! Canonical execution shared by the cipher-directed and declaration APIs.
-use super::{CipherScope, Pending, Request, Responses};
+use super::{CipherRef, Pending, Request, Responses};
 use crate::cipher::{bind_keys, open_keyed, KeyedCipherText, PendingStackCipherText};
 use crate::{Descriptor, Error, KeysetCipher, StackCipher, StackCipherText};
 use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad, IntoContext};
@@ -110,10 +110,11 @@ pub(crate) fn seal_pending<'a, K>(
 /// Retrieve every leaf's data key and bind it onto its leaf, ready for
 /// [`open_keyed`](crate::cipher::open_keyed).
 pub(crate) fn bind_pending<'a, K>(
-    scope: impl CipherScope<'a, K>,
+    scope: impl Into<CipherRef<'a, K>>,
     ciphertext: StackCipherText,
     descriptor: Descriptor,
 ) -> Pending<'a, KeyedCipherText, K> {
+    let scope: CipherRef<'a, K> = scope.into();
     // Fast path, as in `seal_pending`; `dispatch` is the gate.
     if let Err(e) = descriptor.check() {
         return Pending::ready(scope, Err(e));
