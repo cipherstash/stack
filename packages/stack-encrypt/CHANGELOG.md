@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Field markers** (#1486, #1590, #1596). `#[derive(EncryptTarget)]` on
+- **Field markers** (#1486, #1590, #1596, #1600). `#[derive(EncryptTarget)]` on
   a `struct = ..` record emits one `Marker` per derived field. It is an
   associated constant named after the field in upper case:
   `EncryptedUser::EMAIL`. A marker is `Marker<W, T, C, P>`. `W` is where
@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)` is the
     inner field's marker under the outer field's context. It takes the
     outer record's scope. `field` accepts only a marker of the inner record.
+  - A nullable record field, `Option<EncryptedAddress>`, has the same
+    `field` (`marker::Holds`). A row whose field is `None` stores nothing
+    to match.
+  - An inner record may list a scope of its own, such as
+    `scope(field = "tenant")`. The query then takes one scope for each
+    record that lists one, together and outermost first:
+    `.scope((Scope::new(outer), Scope::new(inner)))` (`marker::JoinScope`).
+    Where one record lists a scope, `scope` takes that scope alone. A
+    query takes at most three scopes.
   - `#[stash(query = String)]` states the type a field's queries take. The
     derive checks it against the plaintext struct's field.
   - A record that lists a caller scope, `scope(tenant: u64)`, gives a

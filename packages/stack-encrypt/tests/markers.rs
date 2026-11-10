@@ -232,6 +232,110 @@ fn shelf() -> Shelf {
     }
 }
 
+/// A record that stores its scope in the row, as a field of other records.
+#[derive(Clone, Zeroize)]
+struct Desk {
+    tenant: u64,
+    label: String,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Desk, scope = "desks", scope(field = "tenant"))]
+#[allow(dead_code)]
+struct EncryptedDesk {
+    #[stash(passthrough)]
+    tenant: u64,
+    label: Encrypted<EqualityTerm>,
+}
+
+/// A record with no scope that holds a record with one, a nullable record
+/// with one, and a nullable record with none.
+#[derive(Clone, Zeroize)]
+struct Floor {
+    desk: Desk,
+    hot: Option<Desk>,
+    lobby: Option<Address>,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Floor, scope = "floors")]
+struct EncryptedFloor {
+    desk: EncryptedDesk,
+    hot: Option<EncryptedDesk>,
+    lobby: Option<EncryptedAddress>,
+}
+
+/// A record with a caller scope that holds a record with a stored one.
+#[derive(Clone, Zeroize)]
+struct Tower {
+    desk: Desk,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Tower, scope = "towers", scope(region: String))]
+struct EncryptedTower {
+    desk: EncryptedDesk,
+}
+
+/// A record that stores its scope, and holds a record with none that
+/// holds a record with one: two scopes, with a record between them.
+#[derive(Clone, Zeroize)]
+struct Campus {
+    owner: u32,
+    floor: Floor,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Campus, scope = "campuses", scope(field = "owner"))]
+#[allow(dead_code)]
+struct EncryptedCampus {
+    #[stash(passthrough)]
+    owner: u32,
+    floor: EncryptedFloor,
+}
+
+/// Three records deep, each with a scope of its own.
+#[derive(Clone, Zeroize)]
+struct Wing {
+    owner: u32,
+    desk: Desk,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Wing, scope = "wings", scope(field = "owner"))]
+#[allow(dead_code)]
+struct EncryptedWing {
+    #[stash(passthrough)]
+    owner: u32,
+    desk: EncryptedDesk,
+}
+
+#[derive(Clone, Zeroize)]
+struct Park {
+    wing: Wing,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Park, scope = "parks", scope(region: String))]
+struct EncryptedPark {
+    wing: EncryptedWing,
+}
+
+fn desk(tenant: u64) -> Desk {
+    Desk {
+        tenant,
+        label: "D-7".into(),
+    }
+}
+
+fn floor() -> Floor {
+    Floor {
+        desk: desk(42),
+        hot: Some(desk(43)),
+        lobby: Some(account().address),
+    }
+}
+
 /// A record with block ORE fields, alone and beside an equality index.
 #[derive(Clone, Zeroize)]
 struct Reading {
@@ -994,5 +1098,291 @@ mod a_block_ore_marker {
             .await
             .unwrap();
         assert_eq!(&lt, order);
+    }
+}
+
+mod a_marker_of_a_record_with_its_own_scope {
+    use super::*;
+
+    #[test]
+    fn takes_the_inner_records_scope_alone_under_a_record_with_none() {
+        let label: Marker<Nested<Root<EncryptedFloor>>, Encrypted<EqualityTerm>, Scope<u64>> =
+            EncryptedFloor::DESK.field(EncryptedDesk::LABEL);
+        assert_eq!(label.label().to_string(), "desks/label");
+        assert_eq!(
+            EncryptedFloor::contexts().get("desk.label"),
+            label.contexts().single()
+        );
+    }
+
+    /// An equality field's marker that takes the scopes `C`.
+    type Scoped<W, C> = Marker<W, Encrypted<EqualityTerm>, C>;
+
+    #[test]
+    fn takes_both_scopes_outermost_first() {
+        let label: Scoped<_, (Scope<String>, Scope<u64>)> =
+            EncryptedTower::DESK.field(EncryptedDesk::LABEL);
+        assert_eq!(
+            EncryptedTower::contexts().get("desk.label"),
+            label.contexts().single()
+        );
+        // A record between the two that lists none adds no scope.
+        let _: Scoped<_, (Scope<u32>, Scope<u64>)> = EncryptedCampus::FLOOR
+            .field(EncryptedFloor::DESK)
+            .field(EncryptedDesk::LABEL);
+        // Three records with a scope each.
+        let _: Scoped<_, (Scope<String>, Scope<u32>, Scope<u64>)> = EncryptedPark::WING
+            .field(EncryptedWing::DESK)
+            .field(EncryptedDesk::LABEL);
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_term_under_the_inner_scope_alone() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedFloor = floor().encrypt_into(&keyset).await.unwrap();
+        let label = EncryptedFloor::DESK.field(EncryptedDesk::LABEL);
+        let term = label
+            .eq("D-7")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.desk.label.terms);
+        let elsewhere = label
+            .eq("D-7")
+            .scope(Scope::new(43u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_ne!(elsewhere, stored.desk.label.terms);
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_term_under_both_scopes() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedTower = Tower { desk: desk(42) }
+            .encrypt_into_with_context(&keyset, Scope::new(String::from("eu")))
+            .await
+            .unwrap();
+        let label = EncryptedTower::DESK.field(EncryptedDesk::LABEL);
+        let term = label
+            .eq("D-7")
+            .scope((Scope::new(String::from("eu")), Scope::new(42u64)))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.desk.label.terms);
+        // Each scope is its own record's: another value of either is
+        // another term.
+        for (region, tenant) in [("us", 42u64), ("eu", 43)] {
+            let other = label
+                .eq("D-7")
+                .scope((Scope::new(String::from(region)), Scope::new(tenant)))
+                .encrypt(&keyset)
+                .await
+                .unwrap();
+            assert_ne!(other, stored.desk.label.terms, "{region} {tenant}");
+        }
+    }
+
+    /// Two scopes of one type, so that the order they are given in is not
+    /// checked by the compiler: the first is the outer record's.
+    #[tokio::test]
+    async fn gives_the_first_scope_to_the_outer_record() {
+        #[derive(Clone, Zeroize)]
+        struct Room {
+            tenant: u64,
+            desk: Desk,
+        }
+        #[derive(EncryptTarget)]
+        #[stash(struct = Room, scope = "rooms", scope(field = "tenant"))]
+        #[allow(dead_code)]
+        struct EncryptedRoom {
+            #[stash(passthrough)]
+            tenant: u64,
+            desk: EncryptedDesk,
+        }
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedRoom = Room {
+            tenant: 1,
+            desk: desk(2),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        let label = EncryptedRoom::DESK.field(EncryptedDesk::LABEL);
+        let term = label
+            .eq("D-7")
+            .scope((Scope::new(1u64), Scope::new(2u64)))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.desk.label.terms);
+        let swapped = label
+            .eq("D-7")
+            .scope((Scope::new(2u64), Scope::new(1u64)))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_ne!(swapped, stored.desk.label.terms);
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_term_past_a_record_with_no_scope() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedCampus = Campus {
+            owner: 7,
+            floor: floor(),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        let term = EncryptedCampus::FLOOR
+            .field(EncryptedFloor::DESK)
+            .field(EncryptedDesk::LABEL)
+            .eq("D-7")
+            .scope((Scope::new(7u32), Scope::new(42u64)))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.floor.desk.label.terms);
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_term_under_three_scopes() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedPark = Park {
+            wing: Wing {
+                owner: 7,
+                desk: desk(42),
+            },
+        }
+        .encrypt_into_with_context(&keyset, Scope::new(String::from("eu")))
+        .await
+        .unwrap();
+        let term = EncryptedPark::WING
+            .field(EncryptedWing::DESK)
+            .field(EncryptedDesk::LABEL)
+            .eq("D-7")
+            .scope((
+                Scope::new(String::from("eu")),
+                Scope::new(7u32),
+                Scope::new(42u64),
+            ))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.wing.desk.label.terms);
+    }
+
+    #[tokio::test]
+    async fn refuses_an_empty_scope_of_either_record_and_requests_no_key() {
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let label = EncryptedTower::DESK.field(EncryptedDesk::LABEL);
+        let refused = label
+            .eq("D-7")
+            .scope((Scope::new(String::new()), Scope::new(42u64)))
+            .encrypt(&keyset)
+            .await;
+        assert!(refused.is_err(), "an empty outer scope is refused");
+        // The inner record's scope, where it is the one that can be empty.
+        #[derive(Clone, Zeroize)]
+        struct Stall {
+            region: String,
+            name: String,
+        }
+        #[derive(EncryptTarget)]
+        #[stash(struct = Stall, scope = "stalls", scope(field = "region"))]
+        #[allow(dead_code)]
+        struct EncryptedStall {
+            #[stash(passthrough)]
+            region: String,
+            name: Encrypted<EqualityTerm>,
+        }
+        #[derive(Clone, Zeroize)]
+        struct Market {
+            stall: Stall,
+        }
+        #[derive(EncryptTarget)]
+        #[stash(struct = Market, scope = "markets", scope(tenant: u64))]
+        #[allow(dead_code)]
+        struct EncryptedMarket {
+            stall: EncryptedStall,
+        }
+        let refused = EncryptedMarket::STALL
+            .field(EncryptedStall::NAME)
+            .eq("fruit")
+            .scope((Scope::new(42u64), Scope::new(String::new())))
+            .encrypt(&keyset)
+            .await;
+        assert!(refused.is_err(), "an empty inner scope is refused");
+        assert_eq!(generates.load(Ordering::SeqCst), 0);
+        assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    }
+}
+
+mod a_marker_of_a_nullable_record {
+    use super::*;
+
+    #[test]
+    fn reaches_the_inner_field_as_a_present_record_does() {
+        let street: Marker<Nested<Root<EncryptedFloor>>, Encrypted<EqualityTerm>> =
+            EncryptedFloor::LOBBY.field(EncryptedAddress::STREET);
+        assert_eq!(street.label().to_string(), "addresses/street");
+        assert_eq!(
+            EncryptedFloor::contexts().get("lobby.street"),
+            street.contexts().single()
+        );
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_term_of_a_present_record() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedFloor = floor().encrypt_into(&keyset).await.unwrap();
+        let term = EncryptedFloor::LOBBY
+            .field(EncryptedAddress::STREET)
+            .eq("1 Main St")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.lobby.as_ref().unwrap().street.terms);
+        // A nullable record with a scope of its own takes that scope.
+        let hot = EncryptedFloor::HOT
+            .field(EncryptedDesk::LABEL)
+            .eq("D-7")
+            .scope(Scope::new(43u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(hot, stored.hot.as_ref().unwrap().label.terms);
+    }
+
+    #[tokio::test]
+    async fn queries_a_field_whose_stored_record_is_absent() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedFloor = Floor {
+            hot: None,
+            lobby: None,
+            ..floor()
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        assert!(stored.hot.is_none() && stored.lobby.is_none());
+        // The query derives; the row stores nothing for it to match.
+        let _ = EncryptedFloor::LOBBY
+            .field(EncryptedAddress::STREET)
+            .eq("1 Main St")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
     }
 }
