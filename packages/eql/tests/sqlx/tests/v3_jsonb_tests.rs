@@ -1406,9 +1406,7 @@ async fn v3_jsonb_root_array_flag_must_be_boolean(pool: PgPool) -> anyhow::Resul
         ("\"true\"", false),
         ("1", false),
     ] {
-        let doc = format!(
-            r#"{{"v":3,"k":"sv","i":{{"t":"t","c":"c"}},"h":"kh","a":{a},"sv":[]}}"#
-        );
+        let doc = format!(r#"{{"v":3,"k":"sv","i":{{"t":"t","c":"c"}},"h":"kh","a":{a},"sv":[]}}"#);
         let accepted: bool = sqlx::query_scalar(&format!(
             "SELECT public.eql_v3_is_valid_ste_vec_document_payload('{doc}'::jsonb)"
         ))
