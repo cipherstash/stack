@@ -1359,6 +1359,18 @@ where
 /// its value by ownership (the visitor carries it), so pass a `String` or
 /// a `Vec<u8>`.
 ///
+/// This trait says only which types have an order term. An order index
+/// ([`Ore`](crate::Ore), [`Ope`](crate::Ope), [`OreBlock`](crate::OreBlock))
+/// asks for more: [`op::Ordered`](crate::op::Ordered), the types an
+/// ordering operator is answered over. `Vec<u8>` is `Orderable` and not
+/// `Ordered`. The keyset's [`ore_term`](KeysetCipher::ore_term),
+/// [`ope_term`](KeysetCipher::ope_term) and
+/// [`ore_block_term`](KeysetCipher::ore_block_term) derive a term of bytes,
+/// but no plan, record or target can store one: it would reveal the order
+/// of the rows and answer no query. A record that only opens can still
+/// name `Encrypted<OreTerm<Vec<u8>>>`, so rows stored before this rule stay
+/// readable.
+///
 /// A `bool`, a `u8` and an `i8` have no target. An order term over a
 /// domain that small tells anyone holding the column too much: with two
 /// values it says which rows are `true`, and with 256 it puts every row in

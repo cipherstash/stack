@@ -1,8 +1,8 @@
 error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
-  --> tests/ui/op_order_on_bytes.rs:11:26
+  --> tests/ui/op_order_on_bytes.rs:14:14
    |
-11 |         .with::<Vec<u8>, _>(Ore)
-   |          ----            ^ no ordering operator over this type
+14 |         .via(Ore);
+   |          --- ^^^ no ordering operator over this type
    |          |
    |          required by a bound introduced by this call
    |
@@ -18,35 +18,9 @@ error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over
              stack_encrypt::value::Date
              stack_encrypt::value::Decimal
            and $N others
-   = note: required for `stack_encrypt::Ore` to implement `stack_encrypt::Index<Vec<u8>>`
-   = note: required for `stack_encrypt::Ore` to implement `Indexes<Vec<u8>>`
-note: required by a bound in `plan::value::<impl PlanContext>::with`
-  --> src/plan/value.rs
+   = note: required for `stack_encrypt::Ore` to implement `Supports<stack_encrypt::op::Lt, Vec<u8>>`
+note: required by a bound in `QueryBuilder::<'a, Op, F, K>::via`
+  --> src/plan/chain.rs
    |
-   |     pub fn with<S, X: Indexes<S>>(self, indexes: X) -> ValuePlanBuilder<S, Indexed<X>> {
-   |                       ^^^^^^^^^^ required by this bound in `plan::value::<impl PlanContext>::with`
-
-error[E0599]: the method `build` exists for struct `ValuePlanBuilder<Vec<u8>, Indexed<stack_encrypt::Ore>>`, but its trait bounds were not satisfied
-  --> tests/ui/op_order_on_bytes.rs:12:10
-   |
-10 |       let blob_plan = Plan::context("users/blob")
-   |  _____________________-
-11 | |         .with::<Vec<u8>, _>(Ore)
-12 | |         .build()
-   | |         -^^^^^ method cannot be called due to unsatisfied trait bounds
-   | |_________|
-   |
-   |
-  ::: src/plan/value.rs
-   |
-   |   pub struct Indexed<X>(X);
-   |   --------------------- doesn't satisfy `Indexed<stack_encrypt::Ore>: ValueLayout<Vec<u8>>`
-   |
-  ::: $RUST/alloc/src/vec/mod.rs
-   |
-   |   pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global> {
-   |   ------------------------------------------------------------------------------------------------ doesn't satisfy `Vec<u8>: Ordered`
-   |
-   = note: the following trait bounds were not satisfied:
-           `Vec<u8>: Ordered`
-           which is required by `Indexed<stack_encrypt::Ore>: ValueLayout<Vec<u8>>`
+   |     pub fn via<I: Supports<Op, F>>(self, index: I) -> QueryVia<'a, Op, F, I, K> {
+   |                   ^^^^^^^^^^^^^^^ required by this bound in `QueryBuilder::<'a, Op, F, K>::via`
