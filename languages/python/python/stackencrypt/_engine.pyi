@@ -35,10 +35,16 @@ def decrypt(plan: Plan, cls: type, rows: Sequence[Any]) -> List[Any]:
     keyword arguments. Raises ``DecryptError`` or ``InvalidValueError``
     before any request for what the rows themselves can answer."""
 
-def query(plan: Plan, field: str, value: Any) -> str:
-    """The equality query term for ``value`` on the sealed field ``field``.
+def query(plan: Plan, field: str, operator: str, value: Any) -> str:
+    """The query term for the operator named ``operator``, such as
+    ``"eq"`` or ``"gte"``, and ``value`` on the sealed field ``field``.
     Raises ``InvalidValueError`` before any request for a value that does
     not fit the field."""
+
+def operators(plan: Plan, field: str) -> List[str]:
+    """The names of the operators the engine supports on the field
+    ``field``, from the plan, with no request. A passthrough field has
+    none."""
 
 def client_builds() -> int:
     """How many times the shared engine client has been built. For tests."""

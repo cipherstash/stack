@@ -114,7 +114,7 @@ def add_customer(body: CustomerBody) -> CustomerBody:
 @app.post("/customers/search", response_model=CustomerBody)
 def find_customer(search: Search) -> Customer:
     # The email is in the body so that it stays out of URLs and access logs.
-    term = sa.literal(cipher.query("email", search.email), sa.Text)
+    term = sa.literal(cipher.eq("email", search.email), sa.Text)
     query = sa.select(*COLUMNS).where(
         Customer.email == sa.cast(term, EqlType("eql_v4.query_text_eq"))
     )

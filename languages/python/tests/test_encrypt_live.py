@@ -1,4 +1,4 @@
-"""``Cipher.encrypt``, ``Cipher.decrypt`` and ``Cipher.query`` against ZeroKMS
+"""``Cipher.encrypt``, ``Cipher.decrypt`` and the query methods against ZeroKMS
 and a PostgreSQL with the EQL v4 bundle.
 
 These tests need CipherStash credentials (``CS_CLIENT_ACCESS_KEY``,
@@ -24,7 +24,7 @@ from sqlalchemy import ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 import stackencrypt
-from stackencrypt import Cipher, DecryptError, Ignore, Passthrough, TextEq
+from stackencrypt import Cipher, DecryptError, Ignore, IntegerOrd, Passthrough, TextEq
 from stackencrypt import _engine, _eql
 
 pytestmark = LIVE
@@ -264,7 +264,7 @@ def test_a_query_term_finds_the_one_matching_row():
         # The README's query: the term cast to the marker's query domain.
         cur.execute(
             f"SELECT * FROM users WHERE email = %s::{TextEq.query_sql_domain}",
-            (cipher.query("email", "a@example.com"),),
+            (cipher.eq("email", "a@example.com"),),
         )
         found = cipher.decrypt(cur.fetchall())
 
@@ -289,21 +289,53 @@ def test_a_query_uses_the_eq_term_index():
         cur.execute("SET LOCAL enable_seqscan = off")
         cur.execute(
             "EXPLAIN SELECT * FROM users WHERE email = %s::eql_v4.query_text_eq",
-            (cipher.query("email", "user7@example.com"),),
+            (cipher.eq("email", "user7@example.com"),),
         )
         plan = "\n".join(line for (line,) in cur.fetchall())
 
     assert "users_email_eq" in plan, plan
 
 
+@stackencrypt.model("levels")
+@dataclasses.dataclass
+class Level:
+    n: Annotated[int, IntegerOrd]
+
+
+ORDER_SQL = {"lt": "<", "lte": "<=", "gt": ">", "gte": ">="}
+# The rows each operator finds against 3, among 1 to 5.
+ORDER_FOUND = {"lt": [1, 2], "lte": [1, 2, 3], "gt": [4, 5], "gte": [3, 4, 5]}
+
+
+@needs_database
+@pytest.mark.parametrize("op", sorted(ORDER_SQL))
+def test_an_order_term_finds_the_rows_on_its_side(op):
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg.rows import dict_row
+
+    cipher = Cipher(Level)
+    rows = cipher.encrypt([Level(n=n) for n in [5, 1, 4, 2, 3]])
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("CREATE TEMPORARY TABLE levels (n public.eql_v4_integer_ord)")
+        for row in rows:
+            cur.execute("INSERT INTO levels (n) VALUES (%s)", (row["n"],))
+        cur.execute(
+            f"SELECT n FROM levels WHERE n {ORDER_SQL[op]} %s::{IntegerOrd.query_sql_domain}",
+            (getattr(cipher, op)("n", 3),),
+        )
+        found = sorted(level.n for level in cipher.decrypt(cur.fetchall()))
+
+    assert found == ORDER_FOUND[op]
+
+
 def test_100_queries_make_no_request():
     cipher = Cipher(User)
     # The first call in the process may build the client and load the
     # keyset. Warm it up first, so the count below is the queries alone.
-    cipher.query("email", "warm@example.com")
+    cipher.eq("email", "warm@example.com")
     before = _engine.request_count()
 
-    terms = {cipher.query("email", f"user{i}@example.com") for i in range(100)}
+    terms = {cipher.eq("email", f"user{i}@example.com") for i in range(100)}
 
     assert _engine.request_count() == before
     assert len(terms) == 100

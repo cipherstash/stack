@@ -1,7 +1,8 @@
-"""``Cipher.query`` before any request: the field checks and the value checks.
+"""The query methods before any request: the field checks and the value checks.
 
-A name that is not a declared field, a field that answers no query, and a
-value that does not fit are all refused before the shared client is built.
+``eq``, ``lt``, ``lte``, ``gt`` and ``gte`` (ADR-0003). A name that is not a
+declared field, a field that does not support the operator, and a value that
+does not fit are all refused before the shared client is built.
 So these tests need fake credentials only, and make no request. The live
 search, the index, and the request count are in ``test_encrypt_live.py``.
 """
@@ -39,10 +40,19 @@ class User:
     notes: Annotated[str, TextMatch]
 
 
-def refused(field, value, error=QueryError):
+ORDER = ["lt", "lte", "gt", "gte"]
+
+
+def refused(field, value, error=QueryError, op="eq"):
     with pytest.raises(error) as raised:
-        Cipher(User).query(field, value)
+        getattr(Cipher(User), op)(field, value)
     return raised.value
+
+
+def test_query_is_gone():
+    # ADR-0003: one method for each operator, and no second way to make an
+    # equality term.
+    assert not hasattr(Cipher, "query")
 
 
 def test_a_query_error_is_a_stash_error():
@@ -54,13 +64,19 @@ def test_an_unknown_name_lists_the_fields_with_a_query(untouched):
     assert error.code == "query_unknown_field"
     assert error.field == "emial"
     assert "'emial'" in error.message
-    assert "Fields with an equality query: 'email', 'rank'." in error.message
+    assert "Fields that support eq: 'email', 'rank'." in error.message
 
 
 def test_a_field_that_is_not_a_str_is_an_unknown_name(untouched):
     error = refused(None, "a@example.com")
     assert error.code == "query_unknown_field"
     assert error.field is None
+
+
+def test_an_unknown_name_lists_the_fields_with_the_operator(untouched):
+    error = refused("lvl", 3, op="gte")
+    assert error.code == "query_unknown_field"
+    assert "Fields that support gte: 'level'." in error.message
 
 
 def test_a_text_field_answers_no_query(untouched):
@@ -81,15 +97,45 @@ def test_a_passthrough_field_answers_no_query(untouched):
     ("field", "value", "marker"),
     [("level", 3, "IntegerOrd"), ("notes", "hello", "TextMatch")],
 )
-def test_a_field_with_a_query_type_but_no_eq_index_answers_no_query(
+def test_a_field_with_a_query_type_but_no_eq_index_answers_no_eq(
     untouched, field, value, marker
 ):
-    # The marker has a query type, for order or match. `query` answers
-    # equality only, which the engine answers through the eq index alone.
+    # The marker has a query type, for order or match. The engine answers
+    # eq through the eq index alone.
     error = refused(field, value)
     assert error.code == "query_unsupported"
     assert error.field == field
     assert error.reason == marker
+    assert "does not support eq" in error.message
+
+
+@pytest.mark.parametrize("op", ORDER)
+@pytest.mark.parametrize(
+    ("field", "value", "marker"),
+    [("email", "a@example.com", "TextEq"), ("notes", "hello", "TextMatch")],
+)
+def test_a_field_with_no_order_index_answers_no_order_operator(
+    untouched, op, field, value, marker
+):
+    error = refused(field, value, op=op)
+    assert error.code == "query_unsupported"
+    assert error.field == field
+    assert error.reason == marker
+    assert f"does not support {op}" in error.message
+
+
+@pytest.mark.parametrize("op", ORDER)
+def test_a_passthrough_field_answers_no_order_operator(untouched, op):
+    error = refused("age", 3, op=op)
+    assert error.code == "query_unsupported"
+    assert error.reason == "Passthrough"
+
+
+@pytest.mark.parametrize("op", ORDER)
+def test_an_order_value_of_another_type_is_the_wrong_type(untouched, op):
+    error = refused("level", "3", InvalidValueError, op=op)
+    assert error.code == "value_wrong_type"
+    assert error.field == "level"
 
 
 def test_a_class_with_no_queryable_field_says_so(untouched):
@@ -99,8 +145,8 @@ def test_a_class_with_no_queryable_field_says_so(untouched):
         body: Annotated[str, Text]
 
     with pytest.raises(QueryError) as raised:
-        Cipher(Note).query("body", "x")
-    assert "The class has no field with an equality query." in raised.value.message
+        Cipher(Note).eq("body", "x")
+    assert "The class has no field that supports eq." in raised.value.message
 
 
 def test_a_value_of_another_type_is_the_wrong_type(untouched):
@@ -132,9 +178,13 @@ def test_the_message_never_contains_the_value(untouched):
     assert "123456789" not in str(error)
 
 
-def test_a_query_that_passes_every_check_reaches_the_engine():
+@pytest.mark.parametrize(
+    ("op", "field", "value"),
+    [("eq", "email", "a@example.com")] + [(op, "level", 3) for op in ORDER],
+)
+def test_a_query_that_passes_every_check_reaches_the_engine(op, field, value):
     # Refused later by the engine for want of a client key, not by the
     # checks: they passed.
     with pytest.raises(StashError) as raised:
-        Cipher(User).query("email", "a@example.com")
+        getattr(Cipher(User), op)(field, value)
     assert not isinstance(raised.value, (QueryError, InvalidValueError))

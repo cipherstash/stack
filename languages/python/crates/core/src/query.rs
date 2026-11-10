@@ -1,12 +1,15 @@
-//! `query`: the engine's equality query term for one field and one value.
+//! `query`: the engine's query term for one field, one operator, and one
+//! value.
 //!
 //! The term is the EQL query value the engine derives through the field's
 //! EQL type, as JSON text. The SQL casts it to the type's query domain, such
-//! as `eql_v4.query_text_eq`, and EQL's `=` compares it with the stored
-//! values' `eq_term`. A term is derived from the index key in the loaded
-//! keyset, so no ZeroKMS request is made once the shared client is built.
+//! as `eql_v4.query_text_eq`, and EQL's operator compares it with the stored
+//! values' term for that index. A term is derived from the index key in the
+//! loaded keyset, so no ZeroKMS request is made once the shared client is
+//! built.
 
-use stack_encrypt::dynamic::{self, OpSpec, Operand};
+pub use stack_encrypt::dynamic::OpSpec;
+use stack_encrypt::dynamic::{self, Operand};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
 use stack_encrypt::KeysetCipher;
 
@@ -17,25 +20,26 @@ use crate::refusal::Refusal;
 use crate::targets;
 use crate::values::{Kind, Typed, Value};
 
-/// The equality query term for `value` on the sealed field `field` of
+/// The query term for `op` and `value` on the sealed field `field` of
 /// `plan`, as JSON text.
 ///
-/// Checks first, with no I/O, that the field answers equality. Then builds
-/// the shared client on the first call in the process. The caller has
-/// released the GIL, and has checked that `value` fits the field's kind.
+/// Checks first, with no I/O, that the field answers `op`. Then builds the
+/// shared client on the first call in the process. The caller has released
+/// the GIL, and has checked that `value` fits the field's kind.
 ///
 /// # Errors
 ///
-/// `query_unsupported` for a field that answers no equality query, before
-/// any request. Then the client's refusal, or the engine's for the query.
+/// `query_unsupported` for a field that does not answer `op`, before any
+/// request. Then the client's refusal, or the engine's for the query.
 pub fn query(
     plan: &ModelPlan,
     field: &str,
+    op: OpSpec,
     kind: Kind,
     value: Value<'_>,
 ) -> Result<String, Refusal> {
-    answers_equality(plan, field)?;
-    client::run!(|cipher| query_with(&cipher.default_keyset(), plan, field, kind, value))
+    answers(plan, field, op)?;
+    client::run!(|cipher| query_with(&cipher.default_keyset(), plan, field, op, kind, value))
 }
 
 /// [`query`] under `keyset`.
@@ -47,6 +51,7 @@ pub async fn query_with<K>(
     keyset: &KeysetCipher<'_, K>,
     plan: &ModelPlan,
     field: &str,
+    op: OpSpec,
     kind: Kind,
     value: Value<'_>,
 ) -> Result<String, Refusal>
@@ -57,7 +62,7 @@ where
         keyset,
         plan.plan(),
         field,
-        OpSpec::Eq,
+        op,
         Typed(Some(kind), value),
         &targets::resolver(),
     )
@@ -65,33 +70,42 @@ where
     .await
     .map_err(|error| Refusal::of(&error))?;
     let Operand::One(json) = term.operand() else {
-        return Err(engine_fault("the equality term is not one operand"));
+        return Err(engine_fault("the query term is not one operand"));
     };
     // A copy of the term's bytes, about a hundred: `QueryTerm` has no
     // accessor that gives up its operand.
-    String::from_utf8(json.clone()).map_err(|_| engine_fault("the equality term is not UTF-8"))
+    String::from_utf8(json.clone()).map_err(|_| engine_fault("the query term is not UTF-8"))
 }
 
-/// Whether `field` answers an equality query, from the plan alone: the
-/// engine answers one through the field's `eq` index only, and a type with
-/// only an order or match index answers none. `Cipher.query` checks the
-/// marker's indexes the same way. This check is for a caller that did not.
+/// The operators `field` answers, by their engine names, from the plan
+/// alone. A passthrough field answers none.
+///
+/// # Errors
+///
+/// The engine's refusal of the field.
+pub fn operators(plan: &ModelPlan, field: &str) -> Result<Vec<&'static str>, Refusal> {
+    let operators = dynamic::field_operators(plan.plan(), field, &targets::resolver())
+        .map_err(|error| plan::refusal(&error))?;
+    Ok(operators
+        .iter()
+        .map(|(operator, _)| operator.name())
+        .collect())
+}
+
+/// Whether `field` answers `op`, from the plan alone: the engine answers an
+/// operator through one of the field's indexes. `Cipher` checks the same
+/// list first. This check is for a caller that did not.
 ///
 /// # Errors
 ///
 /// `query_unsupported`, or the engine's refusal of the field.
-pub fn answers_equality(plan: &ModelPlan, field: &str) -> Result<(), Refusal> {
-    let operators = dynamic::field_operators(plan.plan(), field, &targets::resolver())
-        .map_err(|error| plan::refusal(&error))?;
-    if operators
-        .iter()
-        .any(|(operator, _)| *operator == OpSpec::Eq)
-    {
+pub fn answers(plan: &ModelPlan, field: &str, op: OpSpec) -> Result<(), Refusal> {
+    if operators(plan, field)?.contains(&op.name()) {
         return Ok(());
     }
     Err(Refusal {
         code: "query_unsupported".to_owned(),
-        message: format!("field {field:?} has no eq index, so it answers no equality query."),
+        message: format!("field {field:?} has no index that answers {:?}.", op.name()),
         field: Some(field.to_owned()),
         reason: None,
     })
@@ -111,6 +125,7 @@ mod tests {
             &cipher.default_keyset(),
             &users(),
             "email",
+            OpSpec::Eq,
             Kind::String,
             Value::Text(email),
         ))
@@ -148,6 +163,57 @@ mod tests {
         );
     }
 
+    fn levels() -> ModelPlan {
+        ModelPlan::new(
+            "users",
+            vec![Field {
+                name: "level".to_owned(),
+                eql: Some(("IntegerOrd".to_owned(), Kind::Int32)),
+            }],
+        )
+        .unwrap()
+    }
+
+    const ORDER: [OpSpec; 4] = [OpSpec::Lt, OpSpec::Lte, OpSpec::Gt, OpSpec::Gte];
+
+    #[test]
+    fn an_order_field_answers_every_order_operator() {
+        for op in ORDER {
+            answers(&levels(), "level", op).unwrap();
+        }
+    }
+
+    #[test]
+    fn an_equality_field_answers_no_order_operator() {
+        for op in ORDER {
+            let refused = answers(&users(), "email", op).unwrap_err();
+            assert_eq!(refused.code, "query_unsupported", "{op:?}");
+            assert_eq!(refused.field.as_deref(), Some("email"));
+            assert!(refused.message.contains(op.name()), "{}", refused.message);
+        }
+    }
+
+    #[test]
+    fn an_order_term_is_derived_for_the_operator_asked() {
+        let cipher = cipher();
+        for op in ORDER {
+            let json = run(query_with(
+                &cipher.default_keyset(),
+                &levels(),
+                "level",
+                op,
+                Kind::Int32,
+                Value::Int(3),
+            ))
+            .unwrap();
+            let term: serde_json::Value = serde_json::from_str(&json).unwrap();
+            // `op` is the order term EQL's `<` and `>` compare. The query
+            // carries no ciphertext.
+            assert!(term.get("op").is_some(), "{op:?}: {term}");
+            assert!(term.get("c").is_none(), "{op:?}: {term}");
+        }
+    }
+
     #[test]
     fn a_field_with_only_an_order_or_match_index_answers_no_equality() {
         for eql in ["IntegerOrd", "IntegerOrdOre", "TextMatch"] {
@@ -165,7 +231,7 @@ mod tests {
             )
             .unwrap();
 
-            let refused = answers_equality(&plan, "rank").unwrap_err();
+            let refused = answers(&plan, "rank", OpSpec::Eq).unwrap_err();
 
             assert_eq!(refused.code, "query_unsupported", "{eql}");
             assert_eq!(refused.field.as_deref(), Some("rank"));
@@ -174,13 +240,13 @@ mod tests {
 
     #[test]
     fn a_field_with_an_eq_index_answers_equality() {
-        answers_equality(&users(), "email").unwrap();
+        answers(&users(), "email", OpSpec::Eq).unwrap();
     }
 
     #[test]
     fn a_passthrough_field_answers_no_equality() {
         assert_eq!(
-            answers_equality(&users(), "age").unwrap_err().code,
+            answers(&users(), "age", OpSpec::Eq).unwrap_err().code,
             "query_unsupported"
         );
     }
@@ -193,6 +259,7 @@ mod tests {
             &cipher.default_keyset(),
             &users(),
             "age",
+            OpSpec::Eq,
             Kind::Int64,
             Value::Int(1),
         ))

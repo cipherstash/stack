@@ -39,7 +39,7 @@ use stack_kms::FakeDataKeySource;
 
 use stackencrypt_core::decrypt::{decrypt_with, Row, Rows};
 use stackencrypt_core::encrypt::{encrypt_with, Column};
-use stackencrypt_core::query::query_with;
+use stackencrypt_core::query::{query_with, OpSpec};
 
 use crate::encrypt::{build_plan, field_value, input_frame, Plan};
 use crate::values::to_python;
@@ -329,6 +329,7 @@ fn query_frees_no_copy_of_the_plaintext_unwiped() {
                         &cipher.default_keyset(),
                         &plan.plan,
                         &field.name,
+                        OpSpec::Eq,
                         engine_kind,
                         read.value(),
                     ))
