@@ -342,13 +342,12 @@
       "id": "bytes-binary",
       "kind": "bytes",
       "null": "",
-      "outputs": ["c", "eq", "ore"],
+      "outputs": ["c", "eq"],
       "input": {
         "type": "bytes",
         "text": "00ff10"
       },
-      "frame": "0b0300000000ff10",
-      "unanswered": ["ore"]
+      "frame": "0b0300000000ff10"
     },
     {
       "id": "string-nul",
