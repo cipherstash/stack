@@ -409,8 +409,8 @@ impl JsonSelector {
     /// as `->` returns the first one. It does not cover the row: the same
     /// path's entry from another row of the column, returned with that
     /// row's header, opens. A value is bound to its row only when its
-    /// context names the row. Its selectors and terms are then that row's
-    /// alone.
+    /// context names the row. A row binding protects the ciphertext; selectors
+    /// and terms still derive under the query scopes alone.
     pub fn open(&self, node: JsonNode) -> JsonExtracted {
         JsonExtracted::keyed(node, self.0)
     }
