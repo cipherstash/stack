@@ -47,27 +47,25 @@ eql = ["dep:eql-bindings"]
 # HTTP comes from the host (see `wasm:wasi-check` in the suite root).
 stack-auth = { path = "../../../../packages/stack-auth", default-features = false }
 # `dynamic`: the runtime value model this guest speaks — contexts, index
-# terms and record plans over `FfiValue`, shared with every other binding.
+# terms and record plans read from frames, shared with every other binding.
 stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
 # The guest ABI every guest under bindings/go shares: the allocator and
 # buffer registry (and with them the `se_alloc`/`se_dealloc` exports), the
-# packed-result helpers, the status table and the `transport_send` import.
+# packed-result helpers, the status table and the step loop.
 # This crate defines only the exports that are its own.
 stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
 stack-kms = { path = "../../../../packages/stack-kms", default-features = false }
 # The EQL types, for the `eql` build only. By path, like every other
 # eql-bindings dependency in the repository: the SQL that stores a payload
 # and the Rust that emits it must agree (scripts/lint-no-eql-registry-pins.mjs).
-eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["stack-encrypt"], optional = true }
+eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["targets"], optional = true }
 zerokms-protocol = "=0.12.31"
 
-# The FFI codec + `FfiValue` tree, shared with vitaminc's own guest — one
-# codec, not a fork. Same vitaminc version stack-encrypt builds against
-# (see the comment in packages/stack-encrypt/Cargo.toml). A different
-# version here fails at the `FfiValue: Decrypt` bound, since the aead crate
-# would be duplicated.
-vitaminc-aead-value = "0.5.1"
-vitaminc-protected = "0.5.1"
+# No vitaminc dependency of its own: the transport frame and ciphertext
+# codec (`stack_encrypt::dynamic::frame`, vitaminc's own, shared with its
+# guest), the value model and `Protected` all come through stack-encrypt's
+# re-exports, so the guest cannot build against another vitaminc. Two
+# versions would fail only at the `ValueFrame: Decrypt` bound.
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 serde = "1"

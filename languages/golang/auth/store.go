@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
@@ -53,6 +53,15 @@ func RequireLockedMemory() Option {
 // stores from one root share one guest instance over the one mounted
 // directory; Close on any of them releases it. It is safe for concurrent
 // use; calls are serialised, because a wasm instance is single-threaded.
+//
+// A call whose context ends fails with the context's error, and only that
+// call: a request cancelled while its token is fetched or refreshed never
+// closes the profile, or the strategies and encrypt clients that read
+// tokens from it. A device session's refresh already sent finishes in the
+// background, for up to 10 seconds, so a rotated refresh token is never
+// lost (see refreshGrace). The profile closes itself, and every later call is
+// [ErrState], only when the guest's state is unknown: it trapped, or it
+// went on running long after its caller gave up, which is a bug.
 type ProfileStore struct {
 	root *root
 	// dir is the store's directory as the guest sees it: guestRoot, or a
@@ -62,13 +71,17 @@ type ProfileStore struct {
 
 // root is the guest instance the stores of one profile share.
 type root struct {
-	mu      sync.Mutex
+	mu      guest.Lock
 	inst    *instance
 	hostDir string
-	closed  bool
-	// released is the runtime's own state, apart from closed: an
-	// interrupted call closes the module, and so the stores, while the
-	// runtime is still allocated. Close frees it even then.
+	// stuck is how long a call may run on after its context ends before
+	// the guest is treated as stuck and closed. guest.StuckAfter; tests
+	// shorten it.
+	stuck  time.Duration
+	closed bool
+	// released is the runtime's own state, apart from closed: a stuck
+	// call closes the module, and so the stores, while the runtime is
+	// still allocated. Close frees it even then.
 	released bool
 	cleanup  runtime.Cleanup
 }
@@ -135,7 +148,7 @@ func open(ctx context.Context, hostDir string, opts []Option) (*ProfileStore, er
 	if err != nil {
 		return nil, err
 	}
-	r := &root{inst: inst, hostDir: hostDir}
+	r := &root{inst: inst, hostDir: hostDir, stuck: guest.StuckAfter}
 	// The cleanup takes the instance, not the root: a cleanup whose
 	// argument reaches its object keeps that object alive forever.
 	r.cleanup = runtime.AddCleanup(r, func(inst *instance) { _ = inst.release() }, inst)
@@ -204,7 +217,7 @@ func (s *ProfileStore) Close() error {
 type export func(*instance) api.Function
 
 // call runs one export under the profile's lock, closing the profile if
-// the guest trapped or an interrupted call took the module down.
+// the guest trapped or a stuck call took the module down.
 func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]byte, error) {
 	// Every profile export works on the mount; without one the guest would
 	// report an I/O error that says less than this does.
@@ -221,23 +234,32 @@ func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]b
 
 // callArgs is the shared checked call path for profile exports and auth
 // exports. The latter pass secret-bearing byte buffers and wipe host copies.
+//
+// The caller's context bounds the wait for the lock, as encrypt's
+// Client.call does, and the guest runs under guest.Detach, so a caller
+// that gives up never closes the profile. A refresh request runs on for
+// refreshGrace, so the guest keeps the rotated token the service sends.
 func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Arg) ([]byte, error) {
 	r := s.root
-	r.mu.Lock()
+	if err := r.mu.Acquire(ctx); err != nil {
+		return nil, err
+	}
 	defer r.mu.Unlock()
 	if r.closed || r.inst.module.IsClosed() {
 		r.closed = true
 		return nil, ErrState
 	}
 	growth := r.inst.mem.GrowthRefusal()
-	out, err := guest.Call(ctx, r.inst.mem, r.inst.module, r.inst.exports, fn(r.inst), args...)
+	run, done := guest.Detach(ctx, r.stuck)
+	out, err := guest.Call(run, r.inst.mem, r.inst.module, r.inst.exports, fn(r.inst), args...)
+	done()
 	switch {
 	case r.inst.module.IsClosed():
 		r.closed = true
 		if err == nil {
 			err = ErrState
 		}
-		err = fmt.Errorf("%w: interrupted call closed the profile", err)
+		err = fmt.Errorf("%w: the guest ran on after its caller's context ended, and the profile is closed", err)
 	case errors.Is(err, guest.ErrTrap):
 		r.closed = true
 		_ = r.inst.module.Close(context.Background())
@@ -253,7 +275,18 @@ func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Ar
 		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", guest.MemoryLockError(g.Reason), err)
 	}
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+			err = fmt.Errorf("%w: %w", ctxErr, err)
+		}
 		return nil, err
+	}
+	// A call that succeeded after its context ended fails too, as in
+	// encrypt's Client.call, and its output (a token, say) is wiped. What
+	// the guest wrote stays written: a refresh that ran on keeps the
+	// rotated token, and the next call reads it.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		guest.Wipe(out)
+		return nil, ctxErr
 	}
 	return out, nil
 }

@@ -5,9 +5,9 @@
 //! The expectations are recorded with every feature on, as `test:unit` and
 //! CI run them (`--all-features`), and this test is only built with the
 //! `dynamic` feature (`required-features` in `Cargo.toml`): rustc lists a
-//! trait's other implementors in its help, so that feature's `FfiValue`
-//! joins one list and pushes another entry off it, and one recording cannot
-//! hold under both feature sets.
+//! trait's other implementors in its help, that feature adds implementors
+//! (`ValueFrame`) that can join such a list, and one recording cannot be
+//! relied on to hold under both feature sets.
 
 #[test]
 fn derive_diagnostics() {

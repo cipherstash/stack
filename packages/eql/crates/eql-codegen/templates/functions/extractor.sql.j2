@@ -1,7 +1,21 @@
 --! @brief Index extractor for {{ dom }}.
 --! @param a {{ dom }}
 --! @return {{ e.ret }}
+{%- if e.required %}
+{{ v4_only }}
+--! @throws When the operand carries no `{{ e.required.key }}` term, the term {{ e.required.operators }} compare.
+{{ v4_end }}
+{%- endif %}
 CREATE FUNCTION {{ schema }}.{{ e.extractor }}(a {{ dom }})
 RETURNS {{ e.ret }}
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+{%- if e.required %}
+{{ v3_only }}
 AS $$ SELECT {{ internal_schema }}.{{ e.ctor }}(a::jsonb) $$;
+{{ v3_end }}
+{{ v4_only }}
+AS $$ SELECT {{ internal_schema }}.{{ e.ctor }}({{ internal_schema }}.require_query_term(a::jsonb, '{{ e.required.domain }}', '{{ e.required.key }}', '{{ e.required.operators }}')) $$;
+{{ v4_end }}
+{%- else %}
+AS $$ SELECT {{ internal_schema }}.{{ e.ctor }}(a::jsonb) $$;
+{%- endif %}

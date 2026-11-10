@@ -2,7 +2,7 @@
 //
 // A program never imports this package: it calls the functions the generated
 // file writes into its own package (users.Encrypt, users.Decrypt,
-// users.Fields). The generated file names [GeneratedVersion1], builds a
+// users.Fields). The generated file names [GeneratedVersion2], builds a
 // [Declaration] from the struct's tags, hands the library its conversions in
 // a [Generated] value, and prints through [Redacted] and [RedactedLog]. The
 // library lowers the declaration to the data plan the engine reads, sends a
@@ -25,9 +25,14 @@ import (
 // file names, so a file from another version does not compile.
 type generatedVersion uint8
 
-// GeneratedVersion1 is the layout of files that stashgen writes today. Every
-// generated file holds `const _ = gensupport.GeneratedVersion1`.
-const GeneratedVersion1 generatedVersion = 1
+// GeneratedVersion2 is the layout of files that stashgen writes today. Every
+// generated file holds `const _ = gensupport.GeneratedVersion2`.
+//
+// Version 2 seals an opaque struct as a storage blob keyed by its declared
+// field names (the shape struct's `vc` tags). A version 1 file has no such
+// tags, so it would write blobs keyed by Go field names that a regenerated
+// file cannot read; it does not compile against this library.
+const GeneratedVersion2 generatedVersion = 2
 
 // sealed is what a hidden field prints as.
 const sealed = "[sealed]"

@@ -1,4 +1,5 @@
 //! Why a plan was refused.
+use crate::op::Op;
 use crate::target::IndexSpec;
 use crate::LabelError;
 
@@ -123,7 +124,7 @@ pub enum PlanError {
     },
     /// A field is not of the type the plan declares for it, so the plan
     /// cannot resolve how to seal, index or read it.
-    #[error("field {field:?} is not a {expected}")]
+    #[error("field {field:?} is not {article} {expected}", article = article(expected))]
     #[diagnostic(
         code(stack_encrypt::plan_field_type),
         help("Give the field a value of the type the plan declares. A row stored as another type opens only after it is re-encrypted as the declared one.")
@@ -183,6 +184,29 @@ pub enum PlanError {
         /// The index as the query asked for it.
         asked: IndexSpec,
     },
+    /// A field declares two indexes that answer one operator, so a query
+    /// for it would have two terms to choose from and the plan has to
+    /// guess. A field declares at most one index per operator:
+    /// `(Equality, Ore)` answer different operators; `(Ore, Ope)` and
+    /// `(Ore, OreBlock)` do not. (Two match indexes are one index twice,
+    /// [`DuplicateIndex`](Self::DuplicateIndex), which is checked first.)
+    /// The second index would store a term no query uses, and an order
+    /// term tells anyone who reads the column how its values order.
+    #[error("field {at:?} declares two indexes that answer {operator}: {first} and {second}")]
+    #[diagnostic(
+        code(stack_encrypt::plan_index_overlap),
+        help("Declare one index per operator on the field: drop one of the two.")
+    )]
+    IndexOverlap {
+        /// The field, or `the value` for a one-value plan.
+        at: String,
+        /// The first index, as its key.
+        first: &'static str,
+        /// The second index, as its key.
+        second: &'static str,
+        /// An operator both answer.
+        operator: Op,
+    },
     /// The plan's context was given twice. A plan takes its context from
     /// exactly one place: the plan, the call that runs it, or a context
     /// field.
@@ -207,6 +231,26 @@ pub enum PlanError {
     )]
     #[diagnostic(code(stack_encrypt::plan_no_context))]
     NoContext,
+    /// A query was extended by a binding. A binding is in the stored
+    /// context alone, so a query cannot carry one: the row is found by its
+    /// scopes, and the binding is checked when the row is opened.
+    #[error("a query takes no binding: a binding is in the stored context only")]
+    #[diagnostic(
+        code(stack_encrypt::plan_bind_in_query),
+        help(
+            "Extend the query by its scopes alone. The binding is checked when the row is opened."
+        )
+    )]
+    BindInQuery,
+    /// A scope or binding the caller passed is empty: an empty text or byte
+    /// string. A part names a tenant or a row, and an empty one would put
+    /// every row under one context. Refused before any key is requested.
+    #[error("a scope or binding is empty")]
+    #[diagnostic(
+        code(stack_encrypt::plan_empty_part),
+        help("Give the scope or binding a value. An empty part would put every row under one context.")
+    )]
+    EmptyPart,
     /// A field was declared both as a typed target (`encrypt_into`) and with
     /// a data verb. A field is one or the other: the target's type decides
     /// its layout and its queries.
@@ -263,22 +307,38 @@ impl crate::ErrorPayload for PlanError {
                 ("declared", index_value(declared)),
                 ("asked", index_value(asked)),
             ]),
+            Self::IndexOverlap {
+                at,
+                first,
+                second,
+                operator,
+            } => payload([
+                ("field", at.as_str().into()),
+                ("first", (*first).into()),
+                ("second", (*second).into()),
+                ("operator", operator.name().into()),
+            ]),
             Self::TwoContextSources { first, second } => {
                 payload([("first", (*first).into()), ("second", (*second).into())])
             }
             Self::IdentityWithoutField
             | Self::EmptyIndexes
             | Self::MixedCiphers
-            | Self::NoContext => serde_json::Map::new(),
+            | Self::NoContext
+            | Self::BindInQuery
+            | Self::EmptyPart => serde_json::Map::new(),
         }
     }
 }
 
 /// An index as a plan writes it: its key, or for a match index the object of
-/// all four options (`{"match": {"tokenizer": "standard", "downcase": true,
-/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`). A caller in
-/// another language can read it, and it does not move when a field is added
-/// to the Rust type, as `Debug` text would.
+/// its options (`{"match": {"tokenizer": "standard", "downcase": true,
+/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`, and
+/// `"short_words": true` only when that option is on), and for a
+/// JSON index the object of its options (`{"json": {"sealed_root":
+/// true, "ordered": ["$.age"]}}`). A caller in another language can read
+/// it, and it does not move when a field is added to the Rust type, as
+/// `Debug` text would.
 fn index_value(index: &IndexSpec) -> serde_json::Value {
     use crate::sem::Tokenizer;
     match index {
@@ -287,15 +347,59 @@ fn index_value(index: &IndexSpec) -> serde_json::Value {
                 Tokenizer::Standard => serde_json::Value::from("standard"),
                 Tokenizer::Ngram { length } => serde_json::json!({ "ngram": length }),
             };
-            serde_json::json!({
-                "match": {
-                    "tokenizer": tokenizer,
-                    "downcase": options.downcase,
-                    "k": options.k,
-                    "m": options.m,
-                }
-            })
+            let mut value = serde_json::json!({
+                "tokenizer": tokenizer,
+                "downcase": options.downcase,
+                "k": options.k,
+                "m": options.m,
+            });
+            if options.short_words {
+                value["short_words"] = true.into();
+            }
+            serde_json::json!({ "match": value })
         }
-        IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope => index.key().into(),
+        IndexSpec::Json(options) => serde_json::json!({
+            "json": {
+                "sealed_root": options.sealed_root,
+                "ordered": options.ordered,
+            }
+        }),
+        IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => {
+            index.key().into()
+        }
+    }
+}
+
+/// The indefinite article for a type's name, as it is read aloud: "an" before
+/// a vowel sound (`an int8`, `an i64`, `an object`), and "a" otherwise. A name
+/// starting with `u` is read as "you" (`a uint8`, `a u32`), so it takes "a".
+fn article(name: &str) -> &'static str {
+    match name.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('a' | 'e' | 'i' | 'o') => "an",
+        _ => "a",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_field_type_refusal_reads_with_the_right_article() {
+        let message = |expected| {
+            PlanError::FieldType {
+                field: "f".to_owned(),
+                expected,
+            }
+            .to_string()
+        };
+        assert_eq!(message("int8"), r#"field "f" is not an int8"#);
+        assert_eq!(message("object"), r#"field "f" is not an object"#);
+        assert_eq!(message("i64"), r#"field "f" is not an i64"#);
+        assert_eq!(message("uint8"), r#"field "f" is not a uint8"#);
+        assert_eq!(message("u32"), r#"field "f" is not a u32"#);
+        assert_eq!(message("string"), r#"field "f" is not a string"#);
+        assert_eq!(message("decimal"), r#"field "f" is not a decimal"#);
+        assert_eq!(message(""), r#"field "f" is not a "#);
     }
 }

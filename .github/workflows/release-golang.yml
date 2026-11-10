@@ -20,7 +20,8 @@ name: Release (Go)
 # The ref must carry the EQL v4 bundle (packages/eql's v4 build), or the
 # build job stops at "Build the EQL SQL bundles". A version with a pre-release
 # suffix may be cut from any branch and is published as a GitHub pre-release;
-# a final version is cut from main only (scripts/go-release-version.mjs).
+# a final version is cut from main only, and not while go.mod pins vitaminc's
+# Go bindings at a pseudo-version (scripts/go-release-version.mjs).
 #
 # Three jobs, split by what they may touch:
 #

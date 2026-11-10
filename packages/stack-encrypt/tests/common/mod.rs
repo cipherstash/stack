@@ -19,6 +19,61 @@ use stack_kms::{
 };
 use uuid::Uuid;
 
+/// Fixture regeneration is an explicit maintenance operation, never evidence
+/// for a required conformance run. Check before deriving or writing any fixture.
+///
+/// # Panics
+/// Panics if updates are requested while `STACK_CONFORMANCE_REQUIRED=1`.
+pub fn fixture_updates_requested_or_panic() -> bool {
+    let update = std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some();
+    assert!(
+        !update || std::env::var("STACK_CONFORMANCE_REQUIRED").as_deref() != Ok("1"),
+        "conformance checks must not update frozen fixtures"
+    );
+    update
+}
+
+/// Check the compiled libtest inventory, including ignored tests, rather than
+/// trusting source declarations that may be disabled by `cfg`.
+pub fn assert_fixture_tests_registered(binary: &str) {
+    let index: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../conformance/stack-encrypt/v1/fixture-enrollment.json"
+    ))
+    .expect("fixture enrollment index");
+    let profile = index["profiles"]
+        .as_array()
+        .expect("profiles")
+        .iter()
+        .find(|profile| profile["rust_binary"] == binary)
+        .expect("binary is enrolled");
+    let inventory = |ignored: bool| {
+        let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+        command.arg("--list").arg("--format=terse");
+        if ignored {
+            command.arg("--ignored");
+        }
+        let output = command.output().expect("list compiled tests");
+        assert!(output.status.success(), "listing failed: {output:?}");
+        String::from_utf8(output.stdout)
+            .expect("UTF-8 inventory")
+            .lines()
+            .filter_map(|line| line.strip_suffix(": test").map(str::to_owned))
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let registered = inventory(false);
+    let ignored = inventory(true);
+    for requirement in profile["requirements"].as_array().expect("requirements") {
+        for test in requirement["rust_tests"].as_array().expect("Rust tests") {
+            let name = test.as_str().expect("test name");
+            assert!(
+                registered.contains(name),
+                "{binary}::{name} is not compiled"
+            );
+            assert!(!ignored.contains(name), "{binary}::{name} is ignored");
+        }
+    }
+}
+
 /// A cipher over the deterministic fake source. The fake index key is
 /// deterministic per keyset, so two separately built ciphers stand in for the
 /// write path and a query path in another process.
@@ -30,8 +85,10 @@ pub async fn stack_cipher() -> StackCipher<FakeDataKeySource> {
         .expect("build cipher")
 }
 
-pub struct CountingSource {
-    inner: FakeDataKeySource,
+/// Over the fake source by default; [`CountingSource::over`] counts the
+/// calls another source answers, such as a seeded deterministic one.
+pub struct CountingSource<S = FakeDataKeySource> {
+    inner: S,
     generate_calls: Arc<AtomicUsize>,
     retrieve_calls: Arc<AtomicUsize>,
     load_calls: Arc<AtomicUsize>,
@@ -39,8 +96,14 @@ pub struct CountingSource {
 
 impl CountingSource {
     pub fn new() -> Self {
+        Self::over(FakeDataKeySource::new())
+    }
+}
+
+impl<S> CountingSource<S> {
+    pub fn over(inner: S) -> Self {
         Self {
-            inner: FakeDataKeySource::new(),
+            inner,
             generate_calls: Arc::new(AtomicUsize::new(0)),
             retrieve_calls: Arc::new(AtomicUsize::new(0)),
             load_calls: Arc::new(AtomicUsize::new(0)),
@@ -58,7 +121,7 @@ impl CountingSource {
     }
 }
 
-impl DataKeySource for CountingSource {
+impl<S: DataKeySource + Sync> DataKeySource for CountingSource<S> {
     async fn generate_keys(
         &self,
         payloads: Vec<GenerateKeyPayload<'_>>,
@@ -84,7 +147,7 @@ impl DataKeySource for CountingSource {
     }
 }
 
-impl IndexKeySource for CountingSource {
+impl<S: IndexKeySource + Sync> IndexKeySource for CountingSource<S> {
     async fn load_index_key(
         &self,
         keyset_id: Option<IdentifiedBy>,
@@ -225,11 +288,87 @@ pub async fn recording_cipher() -> (StackCipher<RecordingSource>, Arc<Mutex<Sent
 /// `deterministic-kms` test build all read, so they cannot drift apart.
 pub use stack_kms::DeterministicSource;
 
-/// A cipher over [`DeterministicSource`] with `seed`.
+/// A cipher over [`DeterministicSource`] with `seed`. With the crate's
+/// `test-support` feature, the JSON index's permutations (a document's
+/// stored order, its member ordinals, the order a query's selectors are
+/// sent in) are drawn from a
+/// generator started at the same seed, so they repeat between runs too;
+/// without it they are random per document, as in production.
 pub async fn deterministic_cipher(seed: [u8; 32]) -> StackCipher<DeterministicSource> {
-    StackCipher::builder()
-        .kms(DeterministicSource::new(seed))
-        .init()
-        .await
-        .expect("build cipher")
+    let builder = StackCipher::builder().kms(DeterministicSource::new(seed));
+    #[cfg(feature = "test-support")]
+    let builder = builder.json_seed(seed);
+    builder.init().await.expect("build cipher")
 }
+
+/// A passthrough payload: the frame of `value`, in the clear.
+pub fn passthrough<P: stack_encrypt::Encrypt>(value: P) -> stack_encrypt::PassthroughFrame {
+    use vitaminc_protected::Controlled;
+    stack_encrypt::PassthroughFrame(
+        vitaminc_aead::to_frame(value)
+            .expect("a passthrough value frames")
+            .risky_unwrap(),
+    )
+}
+
+/// The `u32` a passthrough payload carries.
+pub fn passthrough_u32(payload: &stack_encrypt::PassthroughFrame) -> u32 {
+    use vitaminc_aead::Decrypt;
+    let frame = payload.parse().expect("one frame");
+    vitaminc_aead::Encrypt::visit(frame, u32::sink()).expect("a u32")
+}
+
+/// Values as a binding sends them: Rust values written as frames, and an
+/// object of them in the order a test writes it.
+#[cfg(feature = "dynamic")]
+pub mod frames {
+    use stack_encrypt::dynamic::ValueFrame;
+    use stack_encrypt::Encrypt;
+    use vitaminc_aead::plaintext::{visit_map, Sink};
+    use vitaminc_protected::Controlled;
+
+    /// A Rust value as its frame.
+    pub fn frame<T: Encrypt>(value: T) -> ValueFrame {
+        ValueFrame::of(value).expect("a value in the model")
+    }
+
+    /// An object of `entries`, in order.
+    pub fn object<K: AsRef<str>>(entries: Vec<(K, ValueFrame)>) -> ValueFrame {
+        frame(Object(entries))
+    }
+
+    /// A value as a passthrough node's payload: its frame, in the clear.
+    pub fn payload<T: Encrypt>(value: T) -> Vec<u8> {
+        frame(value).into_inner().risky_unwrap()
+    }
+
+    struct Object<K>(Vec<(K, ValueFrame)>);
+
+    impl<K: AsRef<str>> Encrypt for Object<K> {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let len = Some(self.0.len());
+            visit_map(
+                sink,
+                len,
+                self.0.iter().map(|(key, value)| (key.as_ref(), value)),
+            )
+        }
+    }
+}
+
+/// Canonical hex helpers for shared conformance artifacts.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+pub fn unhex(text: &str) -> Vec<u8> {
+    assert!(
+        text.is_ascii() && text.len().is_multiple_of(2),
+        "invalid hex"
+    );
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex byte"))
+        .collect()
+}
+#[cfg(feature = "dynamic")]
+pub mod conformance;

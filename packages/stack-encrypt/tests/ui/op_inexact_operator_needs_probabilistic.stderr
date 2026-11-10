@@ -1,0 +1,19 @@
+error[E0277]: `EqualityTerm` cannot answer `stack_encrypt::op::Matches`
+  --> tests/ui/op_inexact_operator_needs_probabilistic.rs:24:18
+   |
+24 |     type Query = EqualityTerm;
+   |                  ^^^^^^^^^^^^ this query term does not meet the operator's requirement
+   |
+   = help: the trait `stack_encrypt::op::Probabilistic` is not implemented for `EqualityTerm`
+   = note: a term that answers `op::Matches` must implement `op::Probabilistic`
+help: the trait `stack_encrypt::op::Probabilistic` is implemented for `MatchQuery<O>`
+  --> src/sem/mod.rs
+   |
+   | impl<O: MatchConfig> crate::op::Probabilistic for MatchQuery<O> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `EqualityTerm` to implement `TermFor<stack_encrypt::op::Matches>`
+note: required by a bound in `stack_encrypt::op::Supports::Query`
+  --> src/op/mod.rs
+   |
+   |     type Query: TermFor<Op>;
+   |                 ^^^^^^^^^^^ required by this bound in `Supports::Query`

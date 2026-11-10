@@ -8,10 +8,11 @@ mod common;
 
 use std::sync::atomic::Ordering as AtomicOrdering;
 
-use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, recording_cipher, stack_cipher};
-use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
-use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto, Encrypted};
+use stack_encrypt::sem::Orderable;
+use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OreTerm, TermError};
+use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
+use stack_encrypt::target::{AeadContext, Encrypted};
 use stack_encrypt::{
     nonempty, ContextPiece, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error,
     IntoContext, MaybeEmpty, NonEmpty, StackCipherText,
@@ -105,7 +106,7 @@ struct BorrowedSource<'__source, '__source_> {
 /// by its source. A generic record's one-ciphertext check runs when the
 /// record is first used rather than where it is defined.
 #[derive(EncryptFrom, DecryptInto)]
-struct Tagged<T: CllwOreEncrypt> {
+struct Tagged<T: Orderable> {
     c: StackCipherText,
     ob: OreTerm<T>,
 }
@@ -318,7 +319,7 @@ struct Held {
 }
 
 #[derive(DecryptInto)]
-#[stash(struct = Held, context = "held")]
+#[stash(struct = Held, scope = "held")]
 struct LyingHeld {
     value: Lying,
 }
@@ -419,7 +420,7 @@ async fn a_ciphertext_only_record_accepts_an_aead_only_context_like_the_leaf_doe
     let opened: String = cipher.decrypt(record.c, tenant()).await.unwrap();
     assert_eq!(opened, name);
 
-    let leaf = keyset.encrypt(name.clone(), tenant()).await.unwrap();
+    let leaf = keyset.encrypt_tree(name.clone(), tenant()).await.unwrap();
     let opened: String = SealedName { c: leaf }
         .decrypt_into(&cipher, tenant())
         .await
@@ -436,25 +437,57 @@ async fn a_ciphertext_only_record_accepts_an_aead_only_context_like_the_leaf_doe
     assert!(matches!(result, Err(Error::Aead)), "{result:?}");
 }
 
+/// A match configuration whose options fail the scheme's bounds, so its
+/// leaf fails during the synchronous build.
+struct TooManyHashes;
+impl MatchConfig for TooManyHashes {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            k: 17,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(EncryptFrom, DecryptInto)]
+struct BadlyIndexedText {
+    c: StackCipherText,
+    m: MatchTerms<TooManyHashes>,
+}
+
 #[tokio::test]
 async fn a_failed_field_fails_the_derived_record_before_any_io() {
     let (cipher, generates, _) = counting_cipher().await;
     let keyset = cipher.default_keyset();
 
-    // Text that yields no match tokens fails that leaf during the
-    // synchronous build; the derived record is the zip of its fields, so it
-    // fails the same way and never mints the data key its ciphertext field
-    // would have wanted.
-    let result: Result<SearchableText, _> = String::new()
+    // Invalid match options fail that leaf during the synchronous build;
+    // the derived record is the zip of its fields, so it fails the same way
+    // and never mints the data key its ciphertext field would have wanted.
+    let result: Result<BadlyIndexedText, _> = "alice"
+        .to_string()
         .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await;
-    assert!(matches!(result, Err(Error::Term(_))));
+    assert!(matches!(
+        result,
+        Err(Error::Term(TermError::InvalidOptions(_)))
+    ));
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+
+    // Text with no match tokens is not a failure: the leaf is the empty
+    // filter, and the record seals as any other.
+    let stored: SearchableText = String::new()
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
+        .await
+        .unwrap();
+    assert!(stored.m.positions().is_empty());
+    assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
 }
 
 // --- Structs: each field from one field of the plaintext, under its own context
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Zeroize` is required: a column of these decrypts through the wiping
+// collection path. That path wipes the rows recovered before a late failure.
+#[derive(Debug, Clone, PartialEq, Eq, zeroize::Zeroize)]
 struct User {
     age: u32,
     email: String,
@@ -467,7 +500,7 @@ struct User {
 /// it is never inferred from the type's name. `from` is the override for a
 /// field name that differs; the context then follows the plaintext field.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = User, context = "user")]
+#[stash(struct = User, scope = "user")]
 struct EncryptedUser {
     /// A record inside a struct: recursion, not a second mechanism.
     age: EncryptedAge,
@@ -642,7 +675,7 @@ struct Account {
 /// and the inner struct's own fields sit under that: their contexts are
 /// extended by it, as by any context the inner struct is handed.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = Account, context = "accounts")]
+#[stash(struct = Account, scope = "accounts")]
 struct EncryptedAccount {
     user: EncryptedUser,
     plan: StackCipherText,
@@ -747,7 +780,7 @@ async fn a_struct_nests_in_a_struct_as_an_ordinary_field() {
 struct Reading(u32, String);
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = Reading, context = "reading")]
+#[stash(struct = Reading, scope = "reading")]
 struct EncryptedReading(
     #[stash(identity = "value")] EncryptedAge,
     #[stash(identity = "unit")] StackCipherText,
@@ -755,7 +788,7 @@ struct EncryptedReading(
 
 /// The same with named fields: `from` by index, and the segment given.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = Reading, context = "reading")]
+#[stash(struct = Reading, scope = "reading")]
 struct NamedReading {
     #[stash(from = 0, identity = "value")]
     value: EncryptedAge,

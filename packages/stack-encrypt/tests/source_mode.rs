@@ -1,6 +1,6 @@
 //! How a description receives its plaintext (`target::{Borrowed, Owned}`).
 //!
-//! Vitamin C's `Encrypt` and `PrfValue` consume their input. A description
+//! Vitamin C's by-value `Encrypt` walk and `PrfValue` consume their input. A description
 //! handed a borrow (the default, and what every `EncryptFrom` declaration
 //! runs in) clones before an operation consumes; one handed the value
 //! (`Owned`) gives it to the operation. These tests hold the two claims that
@@ -23,7 +23,7 @@ use stack_encrypt::target::{
 };
 use stack_encrypt::{nonempty, Encrypt, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
-use vitaminc_aead::{Cipher, IntoAad};
+use vitaminc_aead::plaintext::Sink;
 use vitaminc_prf::{IntoPrfContext, Prf, PrfValue, PrfVisitor};
 use vitaminc_protected::{Controlled, Protected};
 
@@ -53,12 +53,8 @@ impl Secret {
     }
 }
 impl Encrypt for Secret {
-    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-    where
-        C: Cipher,
-        A: IntoAad<'a>,
-    {
-        self.0.encrypt_with_aad(cipher, aad)
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.0.visit(sink)
     }
 }
 impl PrfValue for Secret {
@@ -104,12 +100,8 @@ impl Clone for Counted {
     }
 }
 impl Encrypt for Counted {
-    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-    where
-        C: Cipher,
-        A: IntoAad<'a>,
-    {
-        self.text.encrypt_with_aad(cipher, aad)
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.text.visit(sink)
     }
 }
 impl PrfValue for Counted {
@@ -181,12 +173,12 @@ async fn a_plaintext_that_is_not_clone_derives_a_match_term_alone() {
     );
 }
 
-/// The case the owned mode exists for: the dynamic value an FFI binding
-/// decodes is zeroized on drop and is not `Clone`.
+/// The dynamic value an FFI binding decodes, its frame, is wiped on drop:
+/// owned, it seals by value through a ciphertext alone.
 #[cfg(feature = "dynamic")]
 #[tokio::test]
-async fn a_zeroizing_ffi_value_seals_through_ciphertext_alone() {
-    use vitaminc_aead_value::FfiValue;
+async fn a_value_frame_seals_by_value_through_ciphertext_alone() {
+    use stack_encrypt::dynamic::ValueFrame;
 
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
@@ -194,20 +186,16 @@ async fn a_zeroizing_ffi_value_seals_through_ciphertext_alone() {
     let sealed: StackCipherText = keyset
         .run(
             ciphertext::<_, _, Owned>(),
-            FfiValue::String(NUMBER.into()),
+            ValueFrame::of(NUMBER).unwrap(),
             aead(),
         )
         .await
         .unwrap();
 
-    let opened: FfiValue = cipher.decrypt_as(sealed, aead()).await.unwrap();
-    let FfiValue::String(text) = opened else {
-        panic!("an FfiValue string should open to a string");
-    };
+    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
     assert_eq!(
-        text.risky_ref(),
-        NUMBER.as_bytes(),
-        "an FfiValue should seal by value and open to the same text"
+        opened, NUMBER,
+        "a value frame should seal by value and open to the same text"
     );
 }
 
@@ -351,12 +339,8 @@ impl Drop for Dropped {
     }
 }
 impl Encrypt for Dropped {
-    fn encrypt_with_aad<'a, C, A>(mut self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-    where
-        C: Cipher,
-        A: IntoAad<'a>,
-    {
-        std::mem::take(&mut self.text).encrypt_with_aad(cipher, aad)
+    fn visit<S: Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
+        std::mem::take(&mut self.text).visit(sink)
     }
 }
 impl PrfValue for Dropped {

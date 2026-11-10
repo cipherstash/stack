@@ -1,0 +1,25 @@
+error[E0277]: the trait bound `RequiredContext<CallerContext>: From<RequiredContext<AeadContext>>` is not satisfied
+  --> tests/ui/owned_aead_record_with_term.rs:8:10
+   |
+ 8 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^ the trait `From<RequiredContext<AeadContext>>` is not implemented for `RequiredContext<CallerContext>`
+...
+12 |     hm: EqualityTerm,
+   |         ------------ required by a bound introduced by this call
+   |
+help: the trait `From<RequiredContext<AeadContext>>` is not implemented for `RequiredContext<CallerContext>`
+      but trait `From<RequiredContext<NonEmpty<_>>>` is implemented for it
+  --> src/target/input.rs
+   |
+   | impl<'c, T: IntoContext<'c>> From<RequiredContext<NonEmpty<T>>> for RequiredContext<CallerContext> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `NonEmpty<_>`, found `AeadContext`
+   = note: required for `RequiredContext<AeadContext>` to implement `Into<RequiredContext<CallerContext>>`
+note: required by a bound in `Encryption::<'s, S, T, K, Ctx, M>::accepting`
+  --> src/target/operations.rs
+   |
+   |     pub fn accepting<C2>(self) -> Encryption<'s, S, T, K, C2, M>
+   |            --------- required by a bound in this associated function
+   |     where
+   |         C2: Into<Ctx> + 's,
+   |             ^^^^^^^^^ required by this bound in `Encryption::<'s, S, T, K, Ctx, M>::accepting`

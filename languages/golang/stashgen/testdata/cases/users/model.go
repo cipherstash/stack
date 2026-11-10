@@ -8,6 +8,6 @@ type User struct {
 	_        struct{} `stash:"context=users"`
 	ID       int64    `stash:"id,passthrough" db:"id" gorm:"primaryKey"`
 	Email    string   `stash:"email,encrypt_into=TextEq" db:"email"`
-	Name     string   `stash:"name,encrypt_into=TextEq" db:"name"`
+	Name     string   `stash:"name,encrypt_into=TextMatch" db:"name"`
 	Internal string   `stash:"-"`
 }

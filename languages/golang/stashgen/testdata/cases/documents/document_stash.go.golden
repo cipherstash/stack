@@ -11,7 +11,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // Document prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
@@ -38,12 +38,14 @@ type documentShape struct {
 	Tags  []string
 }
 
-// The opaque value as it crosses the binding: one JSON document of the
-// struct's fields, by their declared names.
+// The opaque value as it crosses the binding: one storage blob of the
+// struct's fields, by their declared names. A field a blob lacks (one
+// added since it was sealed) reads as its zero value. The json names read
+// a value an earlier release sealed as a JSON document.
 type documentOpaque struct {
-	Title string   `json:"title"`
-	Body  string   `json:"body"`
-	Tags  []string `json:"tags"`
+	Title string   `vc:"title,default" json:"title"`
+	Body  string   `vc:"body,default" json:"body"`
+	Tags  []string `vc:"tags,default" json:"tags"`
 }
 
 var declaration = gensupport.DeclareOpaque("documents/v2/body")

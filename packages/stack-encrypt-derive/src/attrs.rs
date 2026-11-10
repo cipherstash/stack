@@ -1,6 +1,6 @@
 //! Parsing of the `#[stash(...)]` container and field attributes.
 
-use syn::{Attribute, Expr, LitStr, Member, Path, Result, Type};
+use syn::{Attribute, Expr, Ident, LitStr, Member, Path, Result, Type};
 
 /// Container-level options, from `#[stash(...)]` on the struct itself.
 pub(crate) struct ContainerAttrs {
@@ -15,15 +15,27 @@ pub(crate) struct ContainerAttrs {
     /// `#[stash(struct = Type)]`: the record encrypts the struct `Type`
     /// field by field. Every derived field is derived from the plaintext
     /// field of its own name (`from`), under a context made of the
-    /// container's `context` and the plaintext field's name, unless the
-    /// field says otherwise. Exclusive with `plaintext`; requires `context`.
+    /// container's `scope` and the plaintext field's name, unless the
+    /// field says otherwise. Exclusive with `plaintext`; requires `scope`.
     pub(crate) by_field: Option<Type>,
-    /// `#[stash(context = "...")]` on the container: the first half of every
-    /// field's inferred context, the pair `("<context>", "<field>")`. Names the stored
-    /// data, not the Rust type: it is part of the stored data's identity, so
-    /// it is given explicitly rather than inferred from a name a refactor
-    /// can change. Only meaningful with `struct`.
-    pub(crate) context: Option<LitStr>,
+    /// `#[stash(scope = "...")]` on the container: the record's name and the
+    /// first scope of every field's context, the pair `("<scope>", "<field>")`.
+    /// Names the stored data, not the Rust type: it is part of the stored
+    /// data's identity, so it is given explicitly rather than inferred from a
+    /// name a refactor can change. Only meaningful with `struct`.
+    pub(crate) scope: Option<LitStr>,
+    /// `#[stash(scope(tenant: u64))]`: a scope the caller supplies on every
+    /// call, with its name and type. In the query context and the stored
+    /// context.
+    pub(crate) caller_scope: Option<(Ident, Type)>,
+    /// `#[stash(scope(field = "tenant"))]`: a scope stored in the row, in
+    /// the `passthrough` field derived from the named plaintext field.
+    pub(crate) stored_scope: Option<LitStr>,
+    /// `#[stash(bind(row: u128))]`: a binding the caller supplies on every
+    /// call. In the stored context only.
+    pub(crate) caller_bind: Option<(Ident, Type)>,
+    /// `#[stash(bind(field = "id"))]`: a binding stored in the row.
+    pub(crate) stored_bind: Option<LitStr>,
     /// `#[stash(context_type = Type)]`: the record's associated `Context`,
     /// when its fields take the caller's context. The default,
     /// `CallerContext`, derives ciphertext and terms alike and so needs both
@@ -35,15 +47,58 @@ pub(crate) struct ContainerAttrs {
 }
 
 const CONTAINER_KEYS: &str = "unsupported container attribute; expected `plaintext = Type`, \
-     `struct = Type`, `context = \"...\"` (with `struct`), `context_type = Type` or \
-     `crate = \"...\"`";
+     `struct = Type`, `scope = \"...\"` (with `struct`), `scope(name: Type)`, \
+     `scope(field = \"...\")`, `bind(name: Type)`, `bind(field = \"...\")`, `context_type = Type` \
+     or `crate = \"...\"`";
+
+/// One `scope(..)` or `bind(..)` part: a caller part with its name and type,
+/// or a stored part naming the plaintext field.
+enum Part {
+    Caller(Ident, Box<Type>),
+    Stored(LitStr),
+}
+
+/// Parse the parentheses of `scope(..)` or `bind(..)`: `name: Type` or
+/// `field = "name"`.
+fn parse_part(input: syn::parse::ParseStream<'_>, kind: &str) -> Result<Part> {
+    let content;
+    syn::parenthesized!(content in input);
+    let name: Ident = content.call(syn::ext::IdentExt::parse_any)?;
+    if content.peek(syn::Token![=]) {
+        if name != "field" {
+            return Err(syn::Error::new(
+                name.span(),
+                format!(
+                    "`{kind}(..)` takes `name: Type` for a part the caller supplies, or \
+                     `field = \"..\"` for a part stored in the row"
+                ),
+            ));
+        }
+        let _: syn::Token![=] = content.parse()?;
+        return Ok(Part::Stored(content.parse()?));
+    }
+    let _: syn::Token![:] = content.parse().map_err(|_| {
+        syn::Error::new(
+            name.span(),
+            format!(
+                "`{kind}(..)` takes `name: Type` for a part the caller supplies, or \
+                 `field = \"..\"` for a part stored in the row"
+            ),
+        )
+    })?;
+    Ok(Part::Caller(name, Box::new(content.parse()?)))
+}
 
 impl ContainerAttrs {
     pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut krate: Option<Path> = None;
         let mut plaintexts: Vec<Type> = Vec::new();
         let mut by_field: Option<Type> = None;
-        let mut context: Option<LitStr> = None;
+        let mut scope: Option<LitStr> = None;
+        let mut caller_scope: Option<(Ident, Type)> = None;
+        let mut stored_scope: Option<LitStr> = None;
+        let mut caller_bind: Option<(Ident, Type)> = None;
+        let mut stored_bind: Option<LitStr> = None;
         let mut context_type: Option<Type> = None;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
@@ -59,12 +114,47 @@ impl ContainerAttrs {
                     krate = Some(lit.parse()?);
                     return Ok(());
                 }
-                if meta.path.is_ident("context") {
-                    if context.is_some() {
-                        return Err(meta.error("`context` is given twice; a struct has one prefix"));
+                if meta.path.is_ident("scope") && meta.input.peek(syn::token::Paren) {
+                    if caller_scope.is_some() || stored_scope.is_some() {
+                        return Err(meta.error(
+                            "`scope(..)` is given twice; a record lists one scope beside its name",
+                        ));
                     }
-                    context = Some(meta.value()?.parse()?);
+                    match parse_part(meta.input, "scope")? {
+                        Part::Caller(name, ty) => caller_scope = Some((name, *ty)),
+                        Part::Stored(field) => stored_scope = Some(field),
+                    }
                     return Ok(());
+                }
+                if meta.path.is_ident("bind") && meta.input.peek(syn::token::Paren) {
+                    if caller_bind.is_some() || stored_bind.is_some() {
+                        return Err(
+                            meta.error("`bind(..)` is given twice; a record lists one binding")
+                        );
+                    }
+                    match parse_part(meta.input, "bind")? {
+                        Part::Caller(name, ty) => caller_bind = Some((name, *ty)),
+                        Part::Stored(field) => stored_bind = Some(field),
+                    }
+                    return Ok(());
+                }
+                if meta.path.is_ident("scope") {
+                    if scope.is_some() {
+                        return Err(meta.error(
+                            "`scope` is given twice; a record has one name, its first scope",
+                        ));
+                    }
+                    scope = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
+                // Renamed rather than unknown, so the message can say what to
+                // write instead.
+                if meta.path.is_ident("context") {
+                    return Err(meta.error(
+                        "the record's name is now `scope = \"..\"` (`context = \"..\"` before): \
+                         it is the record's first scope, and each field's name is the next. \
+                         The stored data does not change",
+                    ));
                 }
                 if meta.path.is_ident("context_type") {
                     if context_type.is_some() {
@@ -143,43 +233,43 @@ impl ContainerAttrs {
         // `Account` in different modules would silently share every field
         // context, making ciphertexts transplantable between them and index
         // terms comparable across them.
-        match (&by_field, &context) {
+        match (&by_field, &scope) {
             (Some(by_field), None) => {
                 return Err(syn::Error::new_spanned(
                     by_field,
-                    "`struct = ..` needs a `context = \"..\"` beside it naming the stored data \
-                     (e.g. `#[stash(struct = User, context = \"users\")]`): each field is derived \
-                     under the pair `(\"<context>\", \"<field>\")`, and the prefix is part of the stored data's \
+                    "`struct = ..` needs a `scope = \"..\"` beside it naming the stored data \
+                     (e.g. `#[stash(struct = User, scope = \"users\")]`): each field is derived \
+                     under the pair `(\"<scope>\", \"<field>\")`, and the record's name is part of the stored data's \
                      identity, so it is given explicitly rather than inferred from the Rust \
                      type's name",
                 ));
             }
-            (None, Some(context)) => {
+            (None, Some(scope)) => {
                 return Err(syn::Error::new(
-                    context.span(),
-                    "a container `context` is the prefix of the per-field contexts and applies \
-                     only with `struct = ..`; a `plaintext` record's fields take the caller's \
-                     context",
+                    scope.span(),
+                    "a container `scope` is the record's name, the first scope of each field's \
+                     context, and applies only with `struct = ..`; a `plaintext` record's fields \
+                     take the caller's context",
                 ));
             }
             _ => {}
         }
-        if let Some(context) = &context {
-            if context.value().is_empty() {
+        if let Some(scope) = &scope {
+            if scope.value().is_empty() {
                 return Err(syn::Error::new(
-                    context.span(),
-                    "an empty `context` is rejected when a value is encrypted: name the stored \
+                    scope.span(),
+                    "an empty `scope` is rejected when a value is encrypted: name the stored \
                      data (e.g. \"users\")",
                 ));
             }
-            if !is_plain_segment(&context.value()) {
+            if !is_plain_segment(&scope.value()) {
                 return Err(syn::Error::new(
-                    context.span(),
-                    "a container `context` is the first segment of every field's ZeroKMS \
+                    scope.span(),
+                    "a container `scope` is the first segment of every field's ZeroKMS \
                      descriptor, so it must be plain: no `/`, `(`, `)`, control or invisible \
                      character, and not beginning with `b64:`, a digit or `-`; otherwise it \
                      would render escaped and the log would not name the table. For the table \
-                     `public.users` write `context = \"users\"`",
+                     `public.users` write `scope = \"users\"`",
                 ));
             }
         }
@@ -188,18 +278,38 @@ impl ContainerAttrs {
             let mut err = syn::Error::new_spanned(
                 context_type,
                 "`context_type` names what the caller passes to a record whose fields take the \
-                 caller's context; a `struct` derive's fields carry their own, so the record \
-                 takes `DeclaredContext` and a caller's context extends them",
+                 caller's context; a `struct` derive's fields carry their own contexts, so it does \
+                 not apply",
             );
             err.combine(syn::Error::new_spanned(by_field, "`struct` given here"));
             return Err(err);
+        }
+
+        if by_field.is_none() {
+            let part = caller_scope
+                .as_ref()
+                .map(|(name, _)| name.span())
+                .or_else(|| stored_scope.as_ref().map(|field| field.span()))
+                .or_else(|| caller_bind.as_ref().map(|(name, _)| name.span()))
+                .or_else(|| stored_bind.as_ref().map(|field| field.span()));
+            if let Some(span) = part {
+                return Err(syn::Error::new(
+                    span,
+                    "`scope(..)` and `bind(..)` list the parts of a `struct = ..` record's \
+                     context: a `plaintext` record takes the whole context from its caller",
+                ));
+            }
         }
 
         Ok(Self {
             krate: krate.unwrap_or_else(|| syn::parse_quote!(::stack_encrypt)),
             plaintexts,
             by_field,
-            context,
+            scope,
+            caller_scope,
+            stored_scope,
+            caller_bind,
+            stored_bind,
             context_type,
         })
     }
@@ -211,7 +321,7 @@ pub(crate) struct FieldAttrs {
     pub(crate) context_field: bool,
     /// `#[stash(identity = "...")]`: with `struct = ..`, the label segment
     /// this field is keyed under, in place of the plaintext field's name:
-    /// the field is derived under `("<context>", "<identity>")`. The plan
+    /// the field is derived under `("<scope>", "<identity>")`. The plan
     /// builder's `.identity(segment)`.
     pub(crate) identity: Option<LitStr>,
     /// `#[stash(from = field)]` / `#[stash(from = 0)]`: with `struct = ..`,
@@ -223,6 +333,16 @@ pub(crate) struct FieldAttrs {
     pub(crate) default: Option<Option<Expr>>,
     /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
+    /// `#[stash(passthrough)]`, on a field of a `struct = ..` record with the
+    /// owned derives. The plaintext field is moved into the record in the
+    /// clear, not encrypted, and moved back when the record is decrypted.
+    pub(crate) passthrough: bool,
+    /// `#[stash(query = String)]`: with `struct = ..`, the type a query of
+    /// this field takes, so its marker's methods take that type alone. The
+    /// derive checks it against the plaintext field, which is that type or
+    /// an `Option` of it. On a field whose marker has no operator method
+    /// (a record field, a ciphertext alone), only the check applies.
+    pub(crate) query: Option<Type>,
 }
 
 impl FieldAttrs {
@@ -296,13 +416,29 @@ impl FieldAttrs {
                     parsed.decrypt = true;
                     return Ok(());
                 }
+                if meta.path.is_ident("passthrough") {
+                    if parsed.passthrough {
+                        return Err(meta.error("`passthrough` is given twice"));
+                    }
+                    parsed.passthrough = true;
+                    return Ok(());
+                }
+                if meta.path.is_ident("query") {
+                    if parsed.query.is_some() {
+                        return Err(
+                            meta.error("`query` is given twice; a field's queries take one type")
+                        );
+                    }
+                    parsed.query = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
                 // Removed rather than unknown, so the message can say what
                 // to write instead.
                 if meta.path.is_ident("nested") {
                     return Err(meta.error(
                         "`nested` is no longer accepted (0.2.0 accepted it): a field whose type \
                          is a record is an ordinary field, derived under \
-                         `(\"<context>\", \"<field>\")` like any other, and its own fields sit \
+                         `(\"<scope>\", \"<field>\")` like any other, and its own fields sit \
                          under that. Omit `nested`. That is a different context from the one \
                          `nested` gave the inner fields: data written with `nested` does not \
                          decrypt without it and its terms do not match, so re-encrypt that data",
@@ -310,8 +446,8 @@ impl FieldAttrs {
                 }
                 Err(meta.error(
                     "unsupported field attribute; expected `context_field`, \
-                     `identity = \"...\"`, `from = field`, `default`, `default = expr` or \
-                     `decrypt`",
+                     `identity = \"...\"`, `from = field`, `default`, `default = expr`, \
+                     `decrypt`, `passthrough` or `query = Type`",
                 ))
             })?;
         }

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/tetratelabs/wazero"
@@ -70,7 +71,10 @@ func (s *authHTTPStatus) wrap(err error) error {
 }
 
 type authTransport struct {
-	rt           http.RoundTripper
+	rt http.RoundTripper
+	// grace is how long a refresh request runs on after its caller gives
+	// up: refreshGrace, shortened by tests.
+	grace        time.Duration
 	mu           sync.Mutex
 	providers    map[uint32]OIDCProvider
 	nextProvider uint32
@@ -80,7 +84,7 @@ func newAuthTransport(rt http.RoundTripper) *authTransport {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
-	return &authTransport{rt: rt, providers: make(map[uint32]OIDCProvider)}
+	return &authTransport{rt: rt, grace: refreshGrace, providers: make(map[uint32]OIDCProvider)}
 }
 
 func (t *authTransport) register(provider OIDCProvider) uint32 {
@@ -99,6 +103,40 @@ func (t *authTransport) unregister(id uint32) {
 	t.mu.Lock()
 	delete(t.providers, id)
 	t.mu.Unlock()
+}
+
+// refreshGrace is how long a device session's refresh request runs on after
+// its caller's context ends. The token service rotates the refresh token
+// when it answers a refresh, so a refresh abandoned after the service
+// answered would lose the new token, and the next refresh would send one
+// the service has retired. So a refresh is not cancelled with its caller:
+// the caller returns at once (Strategy.Token), the request finishes, and
+// the guest saves what came back. A refresh still running this long after
+// its caller gave up fails as a transport failure, well inside
+// guest.StuckAfter, so the profile stays open.
+//
+// Every other request to the token service (an access-key exchange, an
+// OIDC exchange) rotates nothing, and is cancelled with its caller.
+const refreshGrace = 10 * time.Second
+
+// refreshKey marks the context of a device session's refresh call
+// (withRefresh), whose requests get refreshGrace.
+type refreshKey struct{}
+
+// withRefresh marks ctx as a refresh call's.
+func withRefresh(ctx context.Context) context.Context {
+	return context.WithValue(ctx, refreshKey{}, true)
+}
+
+// requestContext is the context a request to the token service runs under:
+// the caller's, so a caller that gives up cancels it, except for a refresh,
+// which runs on for the grace (see refreshGrace). done must be called when
+// the request is finished with.
+func (t *authTransport) requestContext(ctx context.Context) (context.Context, func()) {
+	if refresh, _ := ctx.Value(refreshKey{}).(bool); refresh {
+		return guest.Detach(guest.Caller(ctx), t.grace)
+	}
+	return guest.Caller(ctx), func() {}
 }
 
 func (t *authTransport) instantiate(ctx context.Context, r wazero.Runtime) error {
@@ -124,7 +162,9 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte("request buffer out of range"))
 	}
 	requestBody := newAuthRequestBody(body)
-	req, err := http.NewRequestWithContext(ctx, string(method), string(url), requestBody)
+	reqCtx, done := t.requestContext(ctx)
+	defer done()
+	req, err := http.NewRequestWithContext(reqCtx, string(method), string(url), requestBody)
 	if err != nil {
 		_ = requestBody.Close()
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte(err.Error()))
@@ -174,7 +214,7 @@ func (t *authTransport) oidcTokenGet(ctx context.Context, m api.Module, provider
 	if source == nil {
 		return 1
 	}
-	token, err := source.Token(ctx)
+	token, err := source.Token(guest.Caller(ctx))
 	if err != nil || token == "" || strings.ContainsAny(token, "\r\n\x00") {
 		return 1
 	}

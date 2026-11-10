@@ -10,8 +10,18 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 
-# Prepares SQL for Doxygen's C++ parser. Four transforms:
+# Prepares SQL for Doxygen's C++ parser. Five transforms:
 #
+#  0. Read the RENDERED source. The SQL source names its schemas by
+#     placeholder ({{prefix}}, {{eql_version}}; ADR-0002), and `mise run build`
+#     renders it as EQL v3 into build/render/eql_v3/ with `eql-codegen render`,
+#     keeping relative paths. A file under src/ or tasks/ is read from there
+#     (or, for a file confined to one version, from that version's tree),
+#     so the reference names `eql_v3.eq_term`, and the renderer stays the one
+#     place placeholders are substituted. `docs:generate` and this filter's
+#     other callers depend on `build`; a missing rendered copy is an error, not
+#     a fallback. Any other file (a test fixture) is read as given, and any
+#     `{{` in what is read is refused.
 #  1. Omit blocks marked `@cond deprecated_compatibility`. These functions
 #     remain callable for backwards compatibility but must not appear in the
 #     generated function reference or source browser.
@@ -41,7 +51,34 @@ fi
 #
 #     Reducing each to a single `CREATE AGGREGATE name(argtype);` declaration
 #     recovers the name in both cases and leaves a clean argument list.
-awk '
+
+EQL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Doxygen passes absolute paths, docs_v3_grep.sh a relative one. Resolving the
+# directory also fails the filter (set -e) on a path that does not exist, and
+# docs_v3_grep.sh relies on that status.
+abs="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+rel="${abs#"$EQL_ROOT/"}"
+input="$1"
+case "$rel" in
+  src/* | tasks/*)
+    # A file confined to one EQL version (`-- ONLY EQL VERSION: N`, e.g. the
+    # v4-only range surface) is rendered for that version alone, so read that
+    # version's copy; it documents names that exist (eql_v4.between), not v3
+    # names that do not.
+    only=$(sed -n 's/^-- ONLY EQL VERSION: \([0-9][0-9]*\)[[:space:]]*$/\1/p' "$abs" | head -n 1)
+    input="$EQL_ROOT/build/render/eql_v${only:-3}/$rel"
+    if [[ ! -f "$input" ]]; then
+      echo "$1: no rendered copy at $input; run 'mise run build' first" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+awk -v src="$1" '
+  index($0, "{{") {
+    printf "%s:%d: unrendered placeholder (expected {{prefix}} or {{eql_version}})\n", src, NR > "/dev/stderr"
+    exit 1
+  }
   /^--![[:space:]]+@cond[[:space:]]+deprecated_compatibility[[:space:]]*$/ {
     inhidden = 1
     print ""
@@ -102,4 +139,4 @@ awk '
     gsub(/--/, "//", out)
     print out
   }
-' "$1"
+' "$input"

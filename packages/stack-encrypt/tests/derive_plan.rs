@@ -11,11 +11,13 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 
 use common::{counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
+use stack_encrypt::op;
 use stack_encrypt::plan::{pick, FieldValues};
-use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
+use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::target::{
-    AeadContext, CallerContext, DeclaredContext, DecryptField, DecryptFrom, Decryptable,
-    Decryption, EncryptInto, Encrypted, Encryption, ExpectedContext, IndexSpec,
+    AeadContext, CallerContext, DeclaredContext, DecryptField, Decryptable, Decryption, Encrypted,
+    Encryption, ExpectedContext, IndexSpec,
 };
 use stack_encrypt::{
     nonempty, DecryptInto, EncryptFrom, Error, NonEmpty, Plan, PlanError, StackCipherText,
@@ -129,9 +131,8 @@ async fn a_derived_record_as_a_typed_field_answers_its_queries() {
     let mut record = cipher.encrypt(&user).using(&users_plan).await.unwrap();
     let email: Email = record.take("email").unwrap();
     let query_value = cipher
-        .query("bob@example.com")
-        .using(&users_plan.field("email").unwrap())
-        .equality()
+        .query(op::Eq, "bob@example.com")
+        .on(&users_plan.field("email").unwrap())
         .await
         .unwrap();
     assert_eq!(query_value, email.hm);
@@ -146,8 +147,8 @@ struct Wide {
     c: StackCipherText,
     hm: EqualityTerm,
     ob: OreTerm<u32>,
-    op: OpeTerm<u32>,
     shadow: StackCipherText,
+    twin: StackCipherText,
 }
 
 #[tokio::test]
@@ -170,18 +171,15 @@ async fn five_outputs_nest_and_each_is_derived_under_the_one_context() {
         .unwrap();
     assert_eq!(wide.hm, hm);
     assert_eq!(wide.ob, ob);
-    let op: OpeTerm<u32> = 9u32
-        .encrypt_into_with_context(&keyset, context())
-        .await
-        .unwrap();
-    assert_eq!(wide.op, op);
     assert_eq!(
         <Wide as EncryptFrom<u32>>::indexes().len(),
-        3,
-        "equality, ORE and OPE"
+        2,
+        "equality and ORE: a record declares one order index"
     );
     let shadow: u32 = wide.shadow.decrypt_into(&cipher, context()).await.unwrap();
     assert_eq!(shadow, 9);
+    let twin: u32 = wide.twin.decrypt_into(&cipher, context()).await.unwrap();
+    assert_eq!(twin, 9);
     let wide: Wide = 9u32
         .encrypt_into_with_context(&keyset, context())
         .await
@@ -432,7 +430,7 @@ struct Age {
 }
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     email: Encrypted<EqualityTerm>,
     #[stash(identity = "nickname")]
@@ -551,7 +549,7 @@ fn a_struct_record_plan_is_the_hand_written_chain() {
 /// plan refusal the derive cannot see at compile time.
 #[allow(dead_code)] // never built: refusing it is the point
 #[derive(EncryptFrom)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct TwoEqualitiesInAField {
     email: Encrypted<(EqualityTerm, EqualityTerm)>,
 }
@@ -685,7 +683,8 @@ struct CiphertextLast {
     hm: EqualityTerm,
     m: MatchTerms,
     ob: OreTerm<String>,
-    op: OpeTerm<String>,
+    shadow: StackCipherText,
+    #[stash(decrypt)]
     c: StackCipherText,
 }
 

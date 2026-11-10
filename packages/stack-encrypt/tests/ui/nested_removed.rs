@@ -12,13 +12,13 @@ struct Account {
 }
 
 #[derive(EncryptFrom)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     email: StackCipherText,
 }
 
 #[derive(EncryptFrom)]
-#[stash(struct = Account, context = "accounts")]
+#[stash(struct = Account, scope = "accounts")]
 struct EncryptedAccount {
     #[stash(nested)]
     user: EncryptedUser,

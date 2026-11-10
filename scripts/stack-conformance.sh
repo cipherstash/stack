@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Credential-free shared cases plus fresh artifact exchange in both directions.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if [[ -n "${STACK_CONFORMANCE_UPDATE+x}" || -n "${STACK_ENCRYPT_UPDATE_FIXTURES+x}" ]]; then
+  echo 'Conformance checks must not update frozen artifacts.' >&2
+  exit 1
+fi
+unset STACK_CONFORMANCE_INPUT STACK_CONFORMANCE_OUTPUT
+export STACK_CONFORMANCE_REQUIRED=1
+
+if [[ ! -s languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm ]]; then
+  echo 'Build the test guest first: mise run wasm:guest:build:deterministic' >&2
+  exit 1
+fi
+
+go_tests=$(node scripts/stack-conformance-selection.mjs)
+artifacts=$(mktemp -d)
+trap 'rm -rf "$artifacts"' EXIT
+
+mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations --test runtime_conformance --test read_conformance --test context_conformance --test record_lowering --test plan_grammar --test value_kinds --test query_operators --test fixture_safety --test value_conformance --test query_refusal_conformance --test raw_frame_conformance --test exchange_conformance --test binding_conformance
+(
+  cd languages/golang
+  STACK_CONFORMANCE_OUTPUT="$artifacts/go.json" CGO_ENABLED=0 \
+    go test -count=1 -v -run "$go_tests" ./encrypt
+)
+test -s "$artifacts/go.json"
+STACK_CONFORMANCE_INPUT="$artifacts/go.json" mise x --env test -- \
+  cargo nextest run --locked -p stack-encrypt --all-features --test conformance
+# Both directions, every kind the exchange profile enrolls, in a fresh directory.
+node scripts/stack-exchange-conformance.mjs

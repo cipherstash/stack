@@ -1,4 +1,39 @@
 
+## [0.44.0] - 2026-10-27
+
+### ⚠ Breaking changes
+
+- `OidcFederationStrategy` keeps one CTS token per provider JWT. It asks the
+  `OidcProvider` for the caller's JWT on every `get_token` and keeps one
+  refresh engine per distinct JWT in a bounded least-recently-used cache
+  (1024 entries by default, `cache_capacity` on the builder). It used to
+  serve one cached token to every caller until it expired, so on a server
+  serving many users one user's requests could go out under another's token.
+- Requires stack-profile 0.44.
+
+### Features
+
+- `OidcFederationStrategy::get_token_for_jwt`, the exchange for a JWT the
+  caller already holds. `get_token` is the provider fetch followed by it, and
+  both share one cache.
+- Every error carries a path-style miette code (`stack_auth::invalid_crn`)
+  beside its unchanged frozen code, and implements stack-profile's
+  `ErrorPayload`. `ERROR_CODES` lists every code. Re-exports `diagnostic` and
+  `ErrorPayload`.
+- `tls::client_config`, the rustls client configuration the crate's HTTP
+  clients use.
+
+### Fixes
+
+- TLS chains carrying the compromised eMudhra intermediate CA keys are
+  refused as revoked, including their Sectigo cross-signs. The bundled client
+  fails closed when that configuration cannot be built.
+- A refused exchange's `ServerError` names the status and, for the auth
+  server's JSON error, its `error_description`, never the response body.
+- `AuthError::Store` keeps its cause as its `source()`, and a build without
+  `http` whose strategy has no transport says so
+  (`stack_auth::no_transport`).
+
 ## [0.43.0] - 2026-10-02
 
 

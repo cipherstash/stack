@@ -37,6 +37,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.44.0] - 2026-10-27
+
+### Features
+
+- `ErrorPayload`, a `miette::Diagnostic` that gives an error's structured
+  fields, and the `diagnostic` module with the rule for what an error may
+  contain (no plaintext, key material, tokens or ciphertext). stack-auth,
+  stack-kms and stack-encrypt share them.
+- `ProfileError` carries a `stack_profile::*` miette code and help on every
+  variant.
+
+### Fixes
+
+- `NoCurrentWorkspace` and `WorkspaceNotFound` name `stash auth login` in
+  their help; the message named commands the CLI does not have.
+
 ## [0.43.0] - 2026-10-02
 
 

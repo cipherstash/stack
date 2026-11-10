@@ -1,0 +1,71 @@
+error[E0277]: `EqualityTerm` does not answer `stack_encrypt::op::Gt` given `_`
+  --> tests/ui/marker_operator_not_answered.rs:24:37
+   |
+24 |     let _ = EncryptedUser::EMAIL.gt("ada@example.com");
+   |                                  -- ^^^^^^^^^^^^^^^^^ this target type does not answer the operator
+   |                                  |
+   |                                  required by a bound introduced by this call
+   |
+   = note: a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers; on a plan's query chain, `.via(index)` names an index the target declares
+help: the trait `Answers<stack_encrypt::op::Gt, _>` is not implemented for `EqualityTerm`
+      but trait `Answers<stack_encrypt::op::Eq, _>` is implemented for it
+  --> src/op/mod.rs
+   |
+   | / impl<S> Answers<Eq, S> for EqualityTerm
+   | | where
+   | |     S: crate::Encrypt + Clone + 'static,
+   | |________________________________________^
+   = help: for that trait implementation, expected `stack_encrypt::op::Eq`, found `stack_encrypt::op::Gt`
+   = note: required for `Encrypted<EqualityTerm>` to implement `Answers<stack_encrypt::op::Gt, _>`
+note: required by a bound in `Marker::<W, T, C, P>::gt`
+  --> src/marker.rs
+   |
+   |                   T: Answers<$op, Q::Value> + LabelledTarget,
+   |                      ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Marker::<W, T, C, P>::gt`
+...
+   | / operator_methods! {
+   | |     /// Rows whose value equals `value` ([`op::Eq`](struct@Eq)).
+   | |     eq => Eq;
+   | |     /// Rows whose value is below `value` ([`op::Lt`](Lt)).
+...  |
+   | |     gt => Gt;
+   | |     -- required by a bound in this associated function
+...  |
+   | |     matches => Matches;
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `operator_methods` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `OreTerm<u32>` does not answer `stack_encrypt::op::Matches` given `_`
+  --> tests/ui/marker_operator_not_answered.rs:26:40
+   |
+26 |     let _ = EncryptedUser::AGE.matches("36");
+   |                                ------- ^^^^ this target type does not answer the operator
+   |                                |
+   |                                required by a bound introduced by this call
+   |
+   = help: the trait `Answers<stack_encrypt::op::Matches, _>` is not implemented for `OreTerm<u32>`
+   = note: a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers; on a plan's query chain, `.via(index)` names an index the target declares
+   = help: the following other types implement trait `Answers<Op, In>`:
+             `OreTerm<S>` implements `Answers<stack_encrypt::op::Between, (S, S)>`
+             `OreTerm<S>` implements `Answers<stack_encrypt::op::Gt, S>`
+             `OreTerm<S>` implements `Answers<stack_encrypt::op::Gte, S>`
+             `OreTerm<S>` implements `Answers<stack_encrypt::op::Lt, S>`
+             `OreTerm<S>` implements `Answers<stack_encrypt::op::Lte, S>`
+   = note: required for `Encrypted<OreTerm<u32>>` to implement `Answers<stack_encrypt::op::Matches, _>`
+note: required by a bound in `Marker::<W, T, C, P>::matches`
+  --> src/marker.rs
+   |
+   |                   T: Answers<$op, Q::Value> + LabelledTarget,
+   |                      ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Marker::<W, T, C, P>::matches`
+...
+   | / operator_methods! {
+   | |     /// Rows whose value equals `value` ([`op::Eq`](struct@Eq)).
+   | |     eq => Eq;
+   | |     /// Rows whose value is below `value` ([`op::Lt`](Lt)).
+...  |
+   | |     matches => Matches;
+   | |     ------- required by a bound in this associated function
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `operator_methods` (in Nightly builds, run with -Z macro-backtrace for more info)

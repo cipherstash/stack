@@ -25,13 +25,15 @@
 //! A [`StackCipher`] is scoped to one ZeroKMS client, and a [`KeysetCipher`] —
 //! the cipher bound to one of that client's keysets, from
 //! [`default_keyset`](StackCipher::default_keyset) or
-//! [`keyset`](StackCipher::keyset) — encrypts any value that implements
-//! [`Encrypt`] (`String`, `Vec<T>`, `HashMap<K, V>`, `Option<T>`,
-//! `Protected<T>`, your own types, and any nesting of them). Either cipher
-//! decrypts back into any [`Decrypt`] type. Every scalar inside the value is
-//! sealed under its **own** ZeroKMS data key, so each value access is an
-//! individually auditable key retrieval — there is no long-lived key in your
-//! process.
+//! [`keyset`](StackCipher::keyset) — consumes a scalar with
+//! [`KeysetCipher::encrypt`] and returns one opaque [`Ciphertext`]. Use
+//! [`KeysetCipher::decrypt`] to open it under the same keyset. Each ciphertext
+//! has its own ZeroKMS data key and independently auditable retrieval.
+//!
+//! Structural encryption, searchable targets and derives use the existing
+//! plan/target engine. Its [`StackCipherText`] nodes and Vitamin C
+//! [`Encrypt`]/[`Decrypt`] visitors remain available through the low-level
+//! API while the owned Rust interface is extended beyond scalars.
 //!
 //! # Quick start
 //!
@@ -51,10 +53,9 @@ use stack_encrypt::StackCipher;
 let cipher = StackCipher::new().await?;
 let keyset = cipher.default_keyset();
 
-// A `&str` encrypts as it is; decryption is owned, so it comes back a
-// `String` — nothing borrows from a ciphertext.
-let ciphertext = keyset.encrypt("secret message", ()).await?;
-let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
+// Encryption consumes and wipes the owned plaintext.
+let ciphertext = keyset.encrypt("secret message".to_owned()).await?;
+let plaintext: String = keyset.decrypt(ciphertext).await?;
 assert_eq!(plaintext, "secret message");
 # Ok(())
 # }
@@ -70,25 +71,29 @@ assert_eq!(plaintext, "secret message");
 //!
 //! Encrypting binds to a keyset (every data key is minted under one); decrypting
 //! does not (every sealed leaf carries the id of the keyset it was sealed
-//! under), so it goes through the client-scoped `cipher` — or through the
-//! `keyset`, which then refuses leaves from any other keyset.
+//! under). Open an owned scalar through the client with
+//! `String::decrypt_from(ciphertext, &cipher)` (import [`DecryptFrom`]), or
+//! through [`KeysetCipher::decrypt`] to refuse leaves from any other keyset.
+//! [`StackCipher::decrypt`] still opens structural [`StackCipherText`] values;
+//! its keyset-constrained counterpart is [`KeysetCipher::decrypt_tree`].
 //! [`default_keyset`](StackCipher::default_keyset) is the client's own —
 //! the keyset a ZeroKMS administrator set for it — and is always that one.
 //! A client may use many others, one per tenant say; [`StackCipher::keyset`]
 //! selects any of them by id or name, loading it on first use. The [`keyset`](crate::keyset)
 //! module docs lay out the model.
 //!
-//! The second argument is the *associated data* (AAD): anything that implements
-//! [`IntoAad`] — `()`, `&[u8]`, `&str`, a tuple, or a derived [`Context`]. It is
+//! Use `encrypt_with_context` and `decrypt_with_context` for *associated data*
+//! (AAD): anything implementing [`IntoContext`] — `()`, `&[u8]`, `&str`, a tuple,
+//! or a derived [`Context`]. It is
 //! authenticated, not encrypted, and must be supplied identically on decrypt.
 //! Use it to bind a ciphertext to its context (a table name, a tenant, a record
 //! id) so it cannot be replayed elsewhere:
 //!
 //! ```no_run
-//! # async fn example<K: stack_encrypt::kms::DataKeySource>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
+//! # async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync + 'static>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
-//! let ct = keyset.encrypt("4111 1111 1111 1111", "users/42/card").await?;
-//! let card: String = cipher.decrypt(ct, "users/42/card").await?; // ok
+//! let ct = keyset.encrypt_with_context("4111 1111 1111 1111".to_owned(), "users/42/card").await?;
+//! let card: String = keyset.decrypt_with_context(ct, "users/42/card").await?; // ok
 //! # Ok(())
 //! # }
 //! ```
@@ -196,37 +201,320 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!     .init()
 //!     .await?;
 //! let keyset = cipher.default_keyset();
-//! let ct = keyset.encrypt(vec!["a".to_string(), "b".to_string()], ()).await?;
-//! let pt: Vec<String> = cipher.decrypt(ct, ()).await?;
-//! assert_eq!(pt, vec!["a", "b"]);
+//! let ct = keyset.encrypt(42i32).await?;
+//! let pt: i32 = keyset.decrypt(ct).await?;
+//! assert_eq!(pt, 42);
 //! # Ok::<(), stack_encrypt::Error>(())
 //! # }).unwrap();
 //! ```
 //!
+//! # Seeing the context
+//!
+//! A wrong context loses data silently: a query under the wrong context
+//! matches nothing, and gives no error. So every declaration and every call
+//! can show the context it uses, before any key is requested. A derived
+//! record has `contexts()`, a [`Plan`] has [`Plan::contexts`], and a
+//! prepared call has [`Pending::context`](target::Pending::context). The
+//! `testing` feature adds `assert_context!`, which pins a context in a
+//! test. See [`contexts`] for the rendering. A field with a binding shows
+//! its query context and its stored context; see
+//! [`CallerContext`] for the two.
+//!
+//! ```
+//! use stack_encrypt::sem::EqualityTerm;
+//! use stack_encrypt::target::{DecryptSource, EncryptTarget};
+//! use stack_encrypt::{Encrypted, StackCipherText};
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User { email: String, notes: String }
+//!
+//! #[derive(EncryptTarget, DecryptSource)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     email: Encrypted<EqualityTerm>,
+//!     notes: StackCipherText,
+//! }
+//!
+//! println!("{}", EncryptedUser::contexts());
+//! // email
+//! //   context: users / email
+//! // notes
+//! //   context: users / notes
+//! ```
+//!
 //! # Storing ciphertext
 //!
-//! [`encrypt`](KeysetCipher::encrypt) returns a [`StackCipherText`]: a tree whose
-//! shape mirrors the value (a scalar is a single leaf, a `Vec` a sequence of
-//! leaves, a map a set of named leaves) and whose leaves are [`SealedValue`]s.
-//! A `SealedValue` is the persistable unit: its canonical, frozen byte
-//! encoding is [`to_bytes`](SealedValue::to_bytes) /
-//! [`from_bytes`](SealedValue::from_bytes) — the format a database column
-//! holds and every language binding reads. Each leaf carries the id of the
-//! keyset it was sealed under, which is what lets a column be opened with no
-//! keyset named. For callers that manage their own
-//! storage format it also implements `serde` `Serialize`/`Deserialize` and
-//! offers [`into_parts`](SealedValue::into_parts) /
-//! [`from_parts`](SealedValue::from_parts). Map keys are stored in the clear
-//! (and authenticated); nothing else about a value is visible without its
-//! data keys. Index terms have their own frozen encodings — see
-//! [`sem`](crate::sem#byte-encodings).
+//! [`KeysetCipher::encrypt`] returns one opaque [`Ciphertext`]. Persist it with
+//! [`Ciphertext::to_bytes`] and restore it with [`Ciphertext::from_bytes`].
+//! These bytes are exactly the existing [`SealedValue`] v1 envelope, with no
+//! extra wrapper. Its Serde form is those bytes: padded standard Base64 in a
+//! human-readable format such as JSON, raw bytes in a binary one. Parsing
+//! does not authenticate a value; decryption does.
+//!
+//! The scalar API accepts owned [`OpaqueEncode`] values. It wipes the owned source
+//! before returning the pending request, including on planning failure. A
+//! successful decrypt returns an ordinary owned value: the caller is then
+//! responsible for its cleanup. A whole value decrypted as an
+//! [`OpaqueBlob<T>`](crate::OpaqueBlob) is wiped on drop. Copy types may still have copies held by the
+//! caller, and this is not a guarantee about every compiler-generated copy.
+//!
+//! For target-directed conversion, import [`EncryptInto`] and [`DecryptFrom`]:
+//!
+//! ```
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use stack_encrypt::{Ciphertext, EncryptInto, DecryptFrom, StackCipher};
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
+//! let keyset = cipher.default_keyset();
+//! let encrypted: Ciphertext = 42i32.encrypt_into(&keyset).await?;
+//! let plain = i32::decrypt_from(encrypted, &keyset).await?;
+//! assert_eq!(plain, 42);
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
+//! # Collections
+//!
+//! [`EncryptInto`] encrypts a `Vec` of owned plaintexts into a `Vec` of any
+//! owned target, and [`DecryptFrom`] decrypts it back. A caller context is
+//! optional, as it is for a single value.
+//!
+//! Each element is encrypted under its own data key and authenticated on its
+//! own, so [`KeysetCipher::decrypt`] can decrypt any one element alone. An
+//! element's position in the `Vec`, and the number of elements, are not part
+//! of what is authenticated. So you can decrypt the elements in a different
+//! order, or decrypt only some of them.
+//!
+//! This suits a very common case: storing each element in its own database
+//! row. A database can return rows in any order. A query can also return only
+//! some of them. If your application needs the order or the length of a
+//! `Vec` to be authenticated, this API does not provide that.
+//!
+//! A collection makes one logical batch of key requests, with the requests
+//! in element order:
+//!
+//! - Encrypting a collection makes one `generate_keys` call.
+//! - Decrypting a collection makes one `retrieve_keys` call for each keyset.
+//! - An empty collection makes no call.
+//!
+//! The key source can still split one logical batch into several requests to
+//! its provider.
+//!
+//! The plaintext `Vec` is wiped before the pending request is returned, as a
+//! single value is. Sometimes an element fails to decrypt after earlier
+//! elements succeeded. The earlier plaintexts are then wiped before the error
+//! is returned. If an element's conversion panics, they are wiped before the
+//! panic unwinds.
+//!
+//! ```
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, StackCipher};
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
+//! let keyset = cipher.default_keyset();
+//!
+//! // Without a caller context, each element is encrypted under the empty context.
+//! let ages: Vec<Ciphertext> = vec![29i32, 34, 41].encrypt_into(&keyset).await?;
+//! assert_eq!(Vec::<i32>::decrypt_from(ages.clone(), &keyset).await?, [29, 34, 41]);
+//! // Each element is an ordinary ciphertext, which decrypts on its own.
+//! assert_eq!(keyset.decrypt::<i32>(ages[1].clone()).await?, 34);
+//!
+//! // With a caller context, the context is bound to every element.
+//! let names: Vec<Ciphertext> = vec!["ada".to_owned(), "grace".to_owned()]
+//!     .encrypt_into_with_context(&keyset, ("users", "name"))
+//!     .await?;
+//! let names = Vec::<String>::decrypt_from_with_context(names, &keyset, ("users", "name")).await?;
+//! assert_eq!(names, ["ada", "grace"]);
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
+//! A collection follows its element target's rules for a caller context. If
+//! the element target requires a context, the collection requires one. If
+//! the element target accepts no context, the collection cannot be given
+//! one.
+//!
+//! A `Vec<u8>` is one byte string, not a collection of bytes. Vitamin C
+//! encrypts a `Vec<u8>` as a single value, and `u8` is not an
+//! [`OpaqueEncode`] type. So a `Vec<u8>` encrypts into one `Ciphertext`, and
+//! a `Vec<Vec<u8>>` is a collection of byte strings.
+//!
+//! # Whole values as one ciphertext
+//!
+//! `encrypt` refuses a struct, a map, or any `Vec` other than the byte
+//! string `Vec<u8>`, because none of them is a scalar. The crate has no
+//! `Serialize` fallback. To encrypt a whole value as **one** ciphertext,
+//! wrap it in [`OpaqueBlob`].
+//!
+//! `OpaqueBlob` encodes the value with Vitamin C's versioned storage
+//! profile. The Go SDK's opaque structs use the same profile. `OpaqueBlob`
+//! then seals the encoded bytes as one leaf, in the same way as a scalar.
+//! The [`blob`] module docs cover the format, the errors, what the
+//! ciphertext's length reveals, and what is wiped.
+//!
+//! ```
+//! # use serde::{Deserialize, Serialize};
+//! # use zeroize::Zeroize;
+//! # #[derive(Serialize, Deserialize, Zeroize)]
+//! # struct Card { number: String, expiry: (u8, u16) }
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use stack_encrypt::{OpaqueBlob, StackCipher};
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
+//! let keyset = cipher.default_keyset();
+//! let card = Card { number: "4111 1111 1111 1111".into(), expiry: (12, 2031) };
+//! let ct = keyset.encrypt_with_context(OpaqueBlob::new(card), "users/42/card").await?;
+//! let card: OpaqueBlob<Card> = keyset.decrypt_with_context(ct, "users/42/card").await?;
+//! assert_eq!(card.get().expiry, (12, 2031));
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
+//! # Records
+//!
+//! A record is a struct that is encrypted field by field. You declare the
+//! stored form of a plaintext struct as a second struct, and derive
+//! `EncryptTarget` and `DecryptSource` on it. In
+//! `#[stash(struct = User, scope = "users")]`, `User` is the plaintext
+//! type. The string `"users"` is the record's name. It is the first scope of
+//! every field's context, and the field's name is the next.
+//!
+//! Each field of the record is one of these:
+//!
+//! - **A sealed field.** Its type is a target, such as a [`Ciphertext`], a
+//!   term or another record. It is derived from the plaintext field of the
+//!   same name, under the context `("users", "<field>")`. Use
+//!   `#[stash(from = ..)]` when the plaintext field has another name.
+//! - **A passthrough field,** marked `#[stash(passthrough)]`. The plaintext
+//!   field is moved into the record as it is. A passthrough field is **not
+//!   encrypted and not authenticated**. Anyone with access to the stored
+//!   record can read it, change it, or remove it, and the sealed fields
+//!   still decrypt. Use it only for values that are not secret. Treat the
+//!   value you read back as untrusted input. Never let it decide
+//!   authorisation, tenancy, or which record to trust. A value that must be
+//!   readable and also tamper-evident belongs in the context instead.
+//!
+//! The record must name every field of the plaintext, as a sealed or a
+//! passthrough field. A plaintext field it leaves out is a compile error.
+//!
+//! Encrypting a plaintext consumes it. The conversion wipes each field it
+//! seals and moves each passthrough field, so no field is copied. This is
+//! why the plaintext type must implement `Zeroize`.
+//!
+//! **Decrypt into a [`Protected`].** The plaintext type cannot wipe itself
+//! when it is dropped. The derive moves the fields out of the plaintext
+//! struct, and Rust does not allow that for a type that implements `Drop`.
+//! So the derive also implements `DecryptSource<Protected<User>>`:
+//! `Protected::<User>::decrypt_from(record, &cipher)` returns the plaintext
+//! inside a `Protected`, which wipes it when it is dropped. A `Vec` of
+//! records decrypts into a `Vec<Protected<User>>`.
+//!
+//! On the plaintext type:
+//!
+//! - derive `OpaqueDebug` from `vitaminc::protected`, not `Debug`, so that
+//!   printing the value shows its field names with each value hidden;
+//! - derive `TimingSafeEq` from `vitaminc::protected`, not `PartialEq`, so
+//!   that a comparison runs in constant time;
+//! - do not derive `Clone`, because each clone is another copy to wipe.
+//!
+//! Each field is sealed under its own context and nothing else, and the
+//! caller cannot add to it ([`target::DeclaredScopes`]). So two records of
+//! the same type can exchange a sealed field, and both still decrypt.
+//! Binding each field to its row needs the row ID declared on the record as
+//! a binding. The attributes that declare a caller's scope or binding are
+//! not built yet.
+//!
+//! ```
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use stack_encrypt::target::{DecryptSource, EncryptTarget};
+//! use stack_encrypt::{Ciphertext, Controlled, DecryptFrom, EncryptInto, Protected, StackCipher};
+//!
+//! // The plaintext derives `Zeroize` and nothing else.
+//! #[derive(zeroize::Zeroize)]
+//! struct User { id: u64, name: String, email: String }
+//!
+//! #[derive(EncryptTarget, DecryptSource, serde::Serialize, serde::Deserialize)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     // Not encrypted and not authenticated.
+//!     #[stash(passthrough)]
+//!     id: u64,
+//!     name: Ciphertext,   // sealed under ("users", "name")
+//!     email: Ciphertext,  // sealed under ("users", "email")
+//! }
+//!
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
+//! let keyset = cipher.default_keyset();
+//! let id = 42u64;
+//! let user = User { id, name: "Alice".into(), email: "alice@example.com".into() };
+//!
+//! // One call, and one batched key request for both sealed fields.
+//! let encrypted: EncryptedUser = user.encrypt_into(&keyset).await?;
+//! let stored = serde_json::to_vec(&encrypted)?;
+//!
+//! let loaded: EncryptedUser = serde_json::from_slice(&stored)?;
+//! let restored = Protected::<User>::decrypt_from(loaded, &cipher).await?;
+//! # assert_eq!(restored.risky_ref().id, id);
+//! // `restored` wipes the plaintext when it is dropped.
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
+//! A record can also be derived from one whole value, with
+//! `#[stash(plaintext = String)]`. Every field is then derived from that
+//! value, under one context that the caller must supply
+//! ([`target::RequiredContext`]). For example, a [`Ciphertext`] field and an
+//! [`sem::EqualityTerm`] field make a value you can search for. A record of
+//! this kind can be a field of a `struct` record, like any target.
+//!
+//! A `Vec` of plaintext structs encrypts into a `Vec` of records with one
+//! batched key request. The derive crate's documentation lists every
+//! attribute. The [`target`] module describes the traits a hand-written
+//! target implements, and how the context of a record field is built.
+//!
+//! The older structural plans and derives (`#[derive(EncryptFrom,
+//! DecryptInto)]`) encrypt a borrowed plaintext into a [`StackCipherText`].
+//! A `StackCipherText` is a tree of sealed leaves. The low-level entry
+//! points of the structural API are [`KeysetCipher::encrypt_tree`] and
+//! [`KeysetCipher::decrypt_tree`]. Its conversion helpers are in
+//! [`target::legacy`]. The structural API is separate from the owned scalar
+//! API.
+//!
+//! The owned derives also implement the structural traits. So an owned
+//! record can be a field of a structural record, or a typed field of a plan.
+//!
+//! A struct sealed through the structural API, or as an owned record, is one
+//! ciphertext per field. A struct in an [`OpaqueBlob`] is one ciphertext.
 //!
 //! # What is authenticated
 //!
 //! Besides your AAD, the *shape* of a value is authenticated: an element cannot
 //! be spliced out of a sequence and passed off as a scalar, a map value cannot
-//! be moved under a different key, and "absent" / "empty" are themselves
-//! sealed markers rather than inferable from structure. A tampered or
+//! be moved under a different key, "empty" is itself a sealed marker rather
+//! than inferable from structure, and "absent" is a sealed null leaf. Every
+//! leaf records its own type, so a leaf cannot be read back as another. A tampered or
 //! re-homed ciphertext fails with [`Error::Aead`]; a failed or denied key
 //! retrieval surfaces as [`Error::Kms`]. A ciphertext opened under the
 //! *wrong context* is refused by ZeroKMS first: every data key is bound to
@@ -236,18 +524,14 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! source that ignores descriptors (`FakeDataKeySource`, in tests) lets a
 //! wrong context reach the AEAD, where it is [`Error::Aead`].
 //!
-//! For one-row reads of a batch-encrypted collection, decrypt as
-//! [`Element<T>`](Element) under the same AAD used for the whole collection:
-//! the derivation that binds an element to its position is applied by the
-//! type, not by the caller. That is the general rule here — every leaf's AAD
-//! is derived from the context its key was minted under, and there is no
-//! entry point that lets a caller supply one of its own.
+//! Every leaf's AAD is derived from the context its key was minted under,
+//! and there is no entry point that lets a caller supply one of its own.
 //!
 //! # Relationship to vitaminc
 //!
-//! A `KeysetCipher` is a vitaminc [`Cipher`]; everything a vitaminc cipher can
-//! encrypt, it can encrypt, and the AEAD, AAD derivations and leaf wire format
-//! are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
+//! A `KeysetCipher` seals through a vitaminc `Cipher`; everything vitaminc
+//! can encrypt remains available through the structural engine. Its data model, AAD derivations and
+//! the leaf wire format are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
 //! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
 //! carries is *not* that nonce: it identifies the data key, and is sent back to
 //! ZeroKMS with the key `tag` to re-derive it — under the same [`Descriptor`]
@@ -270,23 +554,39 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 /// makes its requests.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod blob;
 pub mod cipher;
+pub mod contexts;
+mod scalar;
+pub use blob::{BlobError, OpaqueBlob};
+pub use scalar::{Ciphertext, OpaqueDecode, OpaqueEncode};
 #[cfg(test)]
 mod codes;
 pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
+pub mod json;
 pub mod keyset;
+pub mod marker;
+pub mod op;
 pub mod plan;
 pub mod sem;
 pub mod target;
+#[cfg(feature = "testing")]
+pub mod testing;
+pub mod value;
 
 pub use cipher::{
-    BoxedPassthrough, Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue,
-    StackCipher, StackCipherBuilder, StackCipherText, StackDecipher,
+    Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,
+    StackCipherBuilder, StackCipherText,
+};
+pub use contexts::{
+    CallContexts, CallerShape, ContextTree, Contexts, FieldContext, Kind, LeafContext, Placeholder,
+    SuppliedContext,
 };
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;
+pub use marker::{BetweenQuery, MarkedQuery, Marker, Needs, QueryInput, Ready, ScopeInput};
 pub use plan::{all, Plan, PlanError};
 // stack-kms is a public dependency: `StackCipher` is generic over its
 // `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is
@@ -300,19 +600,21 @@ pub use stack_kms as kms;
 /// crate, so a binding encodes an error from any of them the same way.
 pub use stack_kms::{diagnostic, ErrorPayload};
 pub use target::{
-    CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption,
-    EncryptFrom, EncryptInto, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Match,
-    Ope, Ore, Pending, PendingFuture, Request, Responses, TermSet,
+    CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, DecryptSource, Decryptable,
+    Decryption, EncryptFrom, EncryptInto, EncryptTarget, Encrypted, Encryption, Equality, Index,
+    IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request,
+    Responses, TermSet,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
-// don't have to depend on `vitaminc-aead` directly for the common path. A
-// context type of your own implements `IntoContext` once; `IntoAad` and
-// `IntoPrfContext` are vitaminc's blankets over it, so both derivations see
-// the same bytes.
+// don't have to depend on `vitaminc-aead` directly for the common path: a
+// value describes itself once (`Encrypt`) and names the sink that reads it
+// back (`Decrypt`). A context type of your own implements `IntoContext` once;
+// `IntoAad` and `IntoPrfContext` are vitaminc's blankets over it, so both
+// derivations see the same bytes.
 pub use vitaminc_aead::{
-    Cipher, CipherText, Context, ContextPiece, ContextTag, Decipher, Decrypt, Element, Encrypt,
-    IntoAad, IntoContext, Unspecified,
+    CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, IntoAad,
+    IntoContext, Node, PassthroughFrame, Unspecified,
 };
 // The vitaminc 0.4 names, deprecated there; re-exported for one transition so
 // a caller that spelled them keeps compiling with a warning.
@@ -325,9 +627,16 @@ pub use vitaminc_prf::IntoPrfContext;
 #[allow(deprecated)]
 pub use vitaminc_prf::PrfContext;
 
-// And the proof every target-directed leaf asks for: a `NonEmpty<T>` is what
-// `encrypt_into_with_context` / `decrypt_into` take, built with `nonempty!`
+// The nonempty proof used by searchable targets and legacy declarations,
+// built with `nonempty!`
 // (a literal, checked at compile time) or `NonEmpty::new` (a runtime value,
 // checked once); `MaybeEmpty` is what a context type of your own implements
 // to be wrapped. `#[derive(EncryptFrom)]` names these through this crate.
 pub use vitaminc_protected::{nonempty, nonempty_bytes, EmptyError, MaybeEmpty, NonEmpty};
+
+// And the wrapper plaintext comes back in (`ValueFrame::into_inner`, a
+// decrypted `Protected<T>`), with the trait that reads it, and the wiping
+// buffer the re-exported frame writer writes into (`dynamic::frame`). The
+// frame readers take a `ProtectedRef` of bytes, which that buffer lends
+// through `AsProtectedRef`.
+pub use vitaminc_protected::{AsProtectedRef, Buffer, Controlled, Protected, ProtectedRef};

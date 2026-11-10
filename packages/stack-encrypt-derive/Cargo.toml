@@ -1,7 +1,7 @@
 [package]
 name = "stack-encrypt-derive"
 description = "Derive macros for stack-encrypt's target-directed encryption"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -24,7 +24,7 @@ syn = { version = "3", features = ["full", "extra-traits"] }
 # The dev-dependencies below are used only by the crate-level doctests.
 # `cargo-udeps` cannot see into rustdoc, so it reports them as unused.
 [package.metadata.cargo-udeps.ignore]
-development = ["stack-encrypt", "tokio"]
+development = ["stack-encrypt", "tokio", "zeroize"]
 
 [dev-dependencies]
 # The plain-segment rule is copied from stack-encrypt (a proc-macro crate cannot
@@ -37,3 +37,5 @@ serde_json = { workspace = true }
 # these doctests are what exercises that forwarding.
 stack-encrypt = { path = "../stack-encrypt", features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
+# The owned-record doctest derives `Zeroize` on its plaintext, as a user does.
+zeroize = { workspace = true }

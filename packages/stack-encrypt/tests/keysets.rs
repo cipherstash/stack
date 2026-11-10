@@ -1,7 +1,7 @@
 //! Keysets: one client, many keysets. Selection, caching, and the
 //! keyset-scoped versus client-scoped decrypt paths.
 
-use stack_encrypt::DecryptFrom;
+use stack_encrypt::target::legacy::DecryptFrom;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use stack_encrypt::target::EncryptInto;
+use stack_encrypt::target::legacy::EncryptInto;
 use stack_encrypt::{nonempty, CipherText, Error, SealedValue, StackCipher, StackCipherText};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
@@ -537,7 +537,7 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
     let tenant = cipher.keyset(name("acme")).await.expect("select");
 
     let sealed = tenant
-        .encrypt("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
     assert_eq!(
@@ -548,7 +548,7 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
 
     let sealed = cipher
         .default_keyset()
-        .encrypt("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
     assert_eq!(
@@ -567,7 +567,7 @@ async fn the_client_opens_a_leaf_from_any_keyset() {
     let cipher = cipher().await;
     let tenant = cipher.keyset(name("acme")).await.expect("select");
     let sealed = tenant
-        .encrypt("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
 
@@ -585,11 +585,11 @@ async fn a_keyset_handle_opens_its_own_leaves() {
     let cipher = cipher().await;
     let tenant = cipher.keyset(name("acme")).await.expect("select");
     let sealed = tenant
-        .encrypt("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
 
-    let opened: String = tenant.decrypt(sealed, "greeting").await.expect("open");
+    let opened: String = tenant.decrypt_tree(sealed, "greeting").await.expect("open");
     assert_eq!(opened, "hello", "a keyset handle opens its own leaf");
 }
 
@@ -599,11 +599,11 @@ async fn a_keyset_handle_refuses_another_keysets_leaf_before_any_retrieve() {
     let acme = cipher.keyset(name("acme")).await.expect("acme");
     let globex = cipher.keyset(name("globex")).await.expect("globex");
     let sealed = acme
-        .encrypt("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
 
-    let result: Result<String, _> = globex.decrypt(sealed, "greeting").await;
+    let result: Result<String, _> = globex.decrypt_tree(sealed, "greeting").await;
     assert!(
         matches!(
             result,
@@ -711,4 +711,137 @@ async fn a_mixed_keyset_column_does_not_open_through_a_keyset_handle() {
         cipher.kms().retrieve_keysets().is_empty(),
         "refused before any key was retrieved"
     );
+}
+
+// =============================================================================
+// A JSON document with its root open
+// =============================================================================
+
+/// The deterministic source, which re-derives a data key in any process,
+/// with a count of keyset loads: what a reader in another process holds.
+struct Reader {
+    inner: stack_kms::DeterministicSource,
+    loads: AtomicUsize,
+}
+
+impl Reader {
+    fn new() -> Self {
+        Self {
+            inner: stack_kms::DeterministicSource::new([7; 32]),
+            loads: AtomicUsize::new(0),
+        }
+    }
+
+    fn loads(&self) -> usize {
+        self.loads.load(Ordering::Relaxed)
+    }
+}
+
+impl DataKeySource for Reader {
+    async fn generate_keys(
+        &self,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
+        self.inner
+            .generate_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn retrieve_keys(
+        &self,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, stack_kms::Error> {
+        self.inner
+            .retrieve_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+}
+
+impl IndexKeySource for Reader {
+    async fn load_index_key(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+        let _ = self.loads.fetch_add(1, Ordering::Relaxed);
+        self.inner.load_index_key(keyset_id).await
+    }
+}
+
+async fn reader() -> StackCipher<Reader> {
+    StackCipher::builder()
+        .kms(Reader::new())
+        .init()
+        .await
+        .expect("build cipher")
+}
+
+/// Opening a JSON document whose root is open walks its chain from the
+/// root's token, which takes the index key of the keyset it was sealed
+/// under. A cipher that has not loaded that keyset loads it, once, as
+/// selecting it would, and opens the document; after that it is a lookup.
+/// A document with its root sealed opens from its root alone and loads
+/// nothing.
+#[tokio::test]
+async fn opening_an_open_root_json_document_loads_its_keyset_once() {
+    use serde_json::json;
+    use stack_encrypt::json::{JsonDocument, JsonOptions};
+    use stack_encrypt::target::{json_document, AeadContext, Borrowed, CallerContext};
+
+    let value = json!({"a": [1, {"b": "two"}], "c": null});
+    let seal = |sealed_root: bool| {
+        let value = value.clone();
+        async move {
+            let writer = reader().await;
+            let tenant = writer.keyset(name("acme")).await.expect("select");
+            tenant
+                .run(
+                    json_document::<_, Borrowed>(JsonOptions {
+                        sealed_root,
+                        ..JsonOptions::new()
+                    }),
+                    &value,
+                    CallerContext::from(nonempty!("users").with("profile")),
+                )
+                .await
+                .expect("seals")
+        }
+    };
+    let aead = || AeadContext::from(nonempty!("users").with("profile"));
+
+    let reader = reader().await;
+    assert_eq!(reader.kms().loads(), 1, "the reader has its default only");
+    let sealed: JsonDocument = seal(true).await;
+    let opened: serde_json::Value = sealed
+        .decrypt_into(&reader, aead())
+        .await
+        .expect("a sealed root opens");
+    assert_eq!(opened, value);
+    assert_eq!(reader.kms().loads(), 1, "a sealed root needs no index key");
+
+    let open: JsonDocument = seal(false).await;
+    for _ in 0..2 {
+        let opened: serde_json::Value = open
+            .clone()
+            .decrypt_into(&reader, aead())
+            .await
+            .expect("an open root opens through a cipher that had not loaded its keyset");
+        assert_eq!(opened, value);
+    }
+    assert_eq!(
+        reader.kms().loads(),
+        2,
+        "the document's keyset loads on the first open and is cached after"
+    );
+    let acme = reader.keyset(name("acme")).await.expect("select");
+    assert_eq!(acme.keyset_id(), open.header().keyset_id());
+    let opened: serde_json::Value = open
+        .clone()
+        .decrypt_into(&acme, aead())
+        .await
+        .expect("and through the keyset's own cipher");
+    assert_eq!(opened, value);
 }

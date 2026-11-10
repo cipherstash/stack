@@ -1,0 +1,16 @@
+{
+  "_comment": "The DateEq, TimestampEq and NumericEq query operands eql-bindings derives for each plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+  "amount": {
+    "plaintext": "1.50",
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"amount\"},\"hm\":\"ff787d4a33e41d24d30fb95098c57bdffeef072fb9e0907a2dd7fa621a5eda03\"}"
+  },
+  "due": {
+    "plaintext": "2024-02-29",
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"due\"},\"hm\":\"decc03613957c47004860bc9bc70770aed4c6ba3f0da2aaea3da9fe7367af6a9\"}"
+  },
+  "posted": {
+    "plaintext": "2024-02-29T12:34:56.123456Z",
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"posted\"},\"hm\":\"b3a2b5c8d5ea562f472a55eb57f3b49aec3d6cc3731dad16c4f8999394a95c55\"}"
+  },
+  "table": "profiles"
+}

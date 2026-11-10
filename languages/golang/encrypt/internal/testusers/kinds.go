@@ -3,6 +3,8 @@ package testusers
 import (
 	"database/sql"
 	"time"
+
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 )
 
 // Defined types over scalars: the engine returns the underlying type and the
@@ -17,8 +19,7 @@ type (
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Account -name Account
 
 // Account is the shape of the plan's accounts example: passthrough fields
-// whose types the FFI codec cannot carry (a time.Time, a driver.Valuer), kept
-// on the host and returned as they are.
+// (a time.Time, a driver.Valuer) kept on the host and returned as they are.
 type Account struct {
 	_         struct{}     `stash:"context=accounts"`
 	ID        uint         `stash:"id,passthrough"`
@@ -44,7 +45,7 @@ type Kinds struct {
 	S   string        `stash:"s,encrypt,index=equality;match"`
 	E   Email         `stash:"e,encrypt,index=equality;match;ore"`
 	Bo  bool          `stash:"bo,encrypt"`
-	I8  int8          `stash:"i8,encrypt,index=equality;ore"`
+	I8  int8          `stash:"i8,encrypt,index=equality"`
 	I16 int16         `stash:"i16,encrypt,index=ope"`
 	I32 int32         `stash:"i32,encrypt,index=equality"`
 	I   int           `stash:"i,encrypt,index=ore"`
@@ -72,6 +73,27 @@ type Kinds struct {
 	Er error             `stash:"er,passthrough"`
 }
 
+//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type ValueKinds -name ValueKinds
+
+// ValueKinds has one sealed field of each kind added in #1144, with the
+// context, identities and indexes of the plan in
+// packages/stack-encrypt/tests/fixtures/value_kinds.json, so the generated
+// code opens the record Rust sealed there and derives the same terms. Every
+// integer seals at its own width, and an 8-bit integer has no order term,
+// so those two carry equality alone.
+type ValueKinds struct {
+	_      struct{}        `stash:"context=value_kinds"`
+	I8     int8            `stash:"i8,encrypt,index=equality"`
+	I16    int16           `stash:"i16,encrypt,index=equality;ore"`
+	U8     uint8           `stash:"u8,encrypt,index=equality"`
+	U16    uint16          `stash:"u16,encrypt,index=equality;ope"`
+	I128   encrypt.Int128  `stash:"i128,encrypt,index=equality;ore"`
+	U128   encrypt.Uint128 `stash:"u128,encrypt,index=equality;ope"`
+	Date   encrypt.Date    `stash:"date,encrypt,index=equality;ore"`
+	At     time.Time       `stash:"at,encrypt,index=equality;ope"`
+	Amount encrypt.Decimal `stash:"amount,encrypt,index=equality;ore"`
+}
+
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Lookup -name Lookup
 
 // Lookup has index-only fields: each stores its terms and no ciphertext, so
@@ -86,8 +108,9 @@ type Lookup struct {
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Everything -name Everything
 
-// Everything is an opaque struct with a field of every type JSON carries
-// both ways. It crosses as one document and comes back as it was.
+// Everything is an opaque struct with a field of every type the storage
+// profile and JSON carry both ways. It crosses as one storage blob and comes
+// back as it was, save that a nil slice or map comes back empty.
 type Everything struct {
 	_      struct{} `stash:"context=everything,opaque"`
 	S      string

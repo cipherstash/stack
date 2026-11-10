@@ -15,8 +15,8 @@
 //! run this call against. Codes 5–10 are the outcomes of a request to
 //! ZeroKMS, so a host can distinguish a refused credential from a tampered
 //! ciphertext without parsing strings; 11 and 12 were appended by the
-//! crypto guest, 13–27 by the credential guest, and 28 by the crypto guest
-//! again.
+//! crypto guest, 13–27 by the credential guest, and 28 and 29 by the
+//! crypto guest again. 29 is not a failure: see [`STATUS_NEEDS_IO`].
 //!
 //! Each code is documented here as the *verdict* it carries to a host — the
 //! thing the host can act on. Which of a library's errors reach which code,
@@ -122,10 +122,16 @@ pub const STATUS_AUTH_REFRESH_REQUIRED: u32 = 27;
 /// and only that — never a verdict on the record's integrity.
 pub const STATUS_CONTEXT_MISMATCH: u32 = 28;
 
+/// Not a failure: the operation is paused, waiting for the host to perform
+/// HTTP requests on its behalf (the step loop, [`crate::step`]). The host
+/// takes the requests and the operation's handle from the guest, performs
+/// them, and resumes it with the responses. No error is recorded.
+pub const STATUS_NEEDS_IO: u32 = 29;
+
 /// The last code in the table. A guest appending a code of its own starts
 /// at `LAST_STATUS + 1` and moves this constant with it, so two guests can
 /// never claim one number.
-pub const LAST_STATUS: u32 = STATUS_CONTEXT_MISMATCH;
+pub const LAST_STATUS: u32 = STATUS_NEEDS_IO;
 
 #[cfg(test)]
 mod tests {
@@ -164,6 +170,7 @@ mod tests {
             STATUS_AUTH_OTHER,
             STATUS_AUTH_REFRESH_REQUIRED,
             STATUS_CONTEXT_MISMATCH,
+            STATUS_NEEDS_IO,
         ];
         for (i, code) in codes.iter().enumerate() {
             assert_eq!(*code, i as u32 + 1, "code {i} is out of sequence");

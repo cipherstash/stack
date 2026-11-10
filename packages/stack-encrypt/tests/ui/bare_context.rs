@@ -6,7 +6,8 @@
 //! plaintext-derived record, a leaf opened directly — so the proof cannot be
 //! skipped by passing the raw value.
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::{DecryptFrom, EncryptInto};
+
+use stack_encrypt::target::legacy::{EncryptInto, DecryptFrom};
 use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
@@ -15,7 +16,7 @@ struct User {
 }
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     email: StackCipherText,
 }

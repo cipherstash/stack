@@ -1,0 +1,344 @@
+{
+  "version": 1,
+  "profile": "lifecycle-v1",
+  "suites": {
+    "pending": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "lib": true
+    },
+    "lifecycle": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "lifecycle_conformance"
+    },
+    "heap": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "heap_hygiene",
+      "success_output": "immediate"
+    },
+    "collections": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "collections"
+    },
+    "owned-records": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "owned_records"
+    },
+    "runtime": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "runtime_conformance"
+    },
+    "reads": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "read_conformance"
+    },
+    "contexts": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "context_conformance"
+    },
+    "guest-abi": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-guest-abi",
+      "features": ["--all-features"],
+      "lib": true
+    },
+    "kms": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-kms",
+      "features": ["--all-features"],
+      "lib": true
+    },
+    "go": {
+      "language": "go",
+      "lane": "fast",
+      "package": "./encrypt"
+    },
+    "go-memory": {
+      "language": "go",
+      "lane": "fast",
+      "package": "./internal/guest"
+    },
+    "go-sdk": {
+      "language": "go",
+      "lane": "fast",
+      "package": "./encrypt/gensupport"
+    },
+    "opaque": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "opaque_blob"
+    }
+  },
+  "requirements": [
+    {
+      "id": "lifecycle-ownership-v1",
+      "evidence": {
+        "lifecycle": [
+          "dropping_unpolled_work_releases_captures_without_key_io",
+          "dropping_unpolled_decrypt_releases_captures_without_key_io",
+          "success_and_provider_failure_release_captures_once",
+          "dropping_an_unpolled_owned_column_releases_captures_without_key_io",
+          "an_owned_column_is_one_logical_batch_and_releases_captures_once"
+        ],
+        "pending": [
+          "target::pending::tests::zipped_fulfilments_never_share_key_material"
+        ],
+        "go": [
+          "TestClientKeyIsConsumedAndNeverPrinted",
+          "TestCloseStopsTheCleanup",
+          "TestUnreachableClientIsReleased",
+          "TestClosedClientIsState"
+        ],
+        "opaque": [
+          "given_an_owned_source::is_wiped_before_a_pending_is_dropped_unpolled",
+          "given_an_owned_source::is_wiped_before_a_pending_is_awaited",
+          "given_an_owned_source::is_wiped_when_encoding_fails_and_no_key_is_requested",
+          "given_a_decrypted_blob::is_wiped_on_drop_and_into_inner_keeps_it_guarded"
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-cancellation-v1",
+      "evidence": {
+        "lifecycle": [
+          "cancelling_in_flight_work_drops_provider_and_captures",
+          "cancelling_in_flight_decrypt_drops_provider_and_captures",
+          "cancelling_an_owned_column_in_flight_drops_provider_and_captures"
+        ],
+        "guest-abi": [
+          "step::tests::an_aborted_operation_is_dropped_and_its_handle_spent",
+          "step::tests::the_wrong_number_of_responses_is_refused_and_drops_the_operation"
+        ],
+        "go": [
+          "TestACallerThatGivesUpBetweenStepsAbortsTheOperation",
+          "TestACallWhoseContextHasEndedNeverStarts",
+          "TestACallCancelledDuringATokenFetchFailsOnlyItself",
+          "TestAStepThatRunsOnAfterItsContextEndsClosesTheClient",
+          "TestACallThatSucceedsAfterItsContextEndsFailsWithIt",
+          "TestAnAbortedInitLeavesNoKeyInGuestMemory"
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-partial-output-v1",
+      "evidence": {
+        "heap": [
+          "a_late_read_type_failure_leaves_no_plaintext_on_the_heap",
+          "a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::an_opaque_blob_of_another_shape_leaves_no_plaintext_on_the_heap"
+        ],
+        "collections": [
+          "a_late_element_failure_wipes_the_plaintext_recovered_before_it",
+          "a_panicking_element_conversion_wipes_the_plaintext_recovered_before_it",
+          "a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix",
+          "a_late_element_failure_wipes_the_recovered_prefix_on_the_structural_path_too"
+        ],
+        "owned-records": [
+          "a_field_opened_before_a_later_field_is_refused_is_wiped"
+        ],
+        "contexts": ["shared_context_boundaries"],
+        "go": [
+          "TestContextBoundaries",
+          "TestInterruptedResponseBodyIsTransport",
+          "TestACallThatSucceedsAfterItsContextEndsFailsWithIt"
+        ],
+        "go-sdk": ["TestDecryptErrorsHoldNoPlaintext"]
+      }
+    },
+    {
+      "id": "lifecycle-buffer-cleanup-v1",
+      "evidence": {
+        "heap": [
+          "a_record_encrypted_from_a_value_frame_leaves_no_plaintext_on_the_heap",
+          "an_owned_column_encrypted_leaves_no_plaintext_on_the_heap",
+          "a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap",
+          "a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap",
+          "the_spy_sees_an_unwiped_free",
+          "the_spy_sees_a_leaked_block",
+          "opaque_blob::an_opaque_blob_encrypted_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::an_opaque_blob_decrypted_leaves_no_plaintext_on_the_heap"
+        ],
+        "collections": [
+          "owned_elements_are_wiped_before_the_pending_is_returned",
+          "owned_elements_are_wiped_when_the_context_is_refused",
+          "owned_elements_are_guarded_during_context_conversion",
+          "a_panicking_element_declaration_wipes_the_elements_after_it"
+        ],
+        "owned-records": [
+          "the_owned_record_wipes_sealed_fields_and_moves_passthrough_fields",
+          "the_owned_record_wipes_sealed_fields_when_the_context_is_refused",
+          "a_panicking_field_declaration_wipes_the_sealed_fields_after_it",
+          "a_declaration_that_panics_while_constructed_wipes_the_plaintext",
+          "a_record_decrypts_straight_into_a_protected_that_wipes_it_on_drop",
+          "a_sealed_field_is_not_leaked_when_the_scope_is_refused",
+          "a_nested_sealed_field_is_not_leaked_when_the_outer_scope_is_refused",
+          "a_plaintext_record_is_not_leaked_when_the_caller_context_is_refused",
+          "a_plaintext_record_is_not_leaked_when_the_stored_context_is_refused",
+          "a_sealed_column_is_not_leaked_when_the_scope_is_refused",
+          "a_stack_ciphertext_is_not_leaked_when_the_context_is_refused",
+          "a_vec_of_stack_ciphertext_is_not_leaked_when_the_context_is_refused",
+          "a_searchable_ciphertext_is_not_leaked_when_the_context_is_refused"
+        ],
+        "guest-abi": [
+          "buffers::tests::wipe_all_leaves_no_live_buffer",
+          "last_error::tests::clearing_wipes_and_frees_the_registered_buffer",
+          "step::tests::pending_requests_are_handed_over_once_and_replaced_wiped",
+          "value::tests::text_is_wiped_on_drop"
+        ],
+        "go": [
+          "TestRequestBodyWipesOnClose",
+          "TestRequestBodyOutlivesTheRoundTrip",
+          "TestARefusedRequestIsWiped",
+          "TestPlaintextDoesNotRemainInGuestMemory"
+        ],
+        "go-memory": [
+          "TestHeapMemoryWipesWhatItAbandons",
+          "TestGuestMemoryIsFreedOnRuntimeClose",
+          "TestClientKeyIsOpaqueAndWipes",
+          "TestMemoryOutlivesACallClosedDuringAHostImport"
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-diagnostics-v1",
+      "evidence": {
+        "guest-abi": [
+          "last_error::tests::a_foreign_cause_nobody_vouches_for_gives_no_message",
+          "call::tests::a_failure_never_reports_an_earlier_calls_error",
+          "call::tests::a_failure_then_a_success_leaves_nothing_to_hand_over"
+        ],
+        "go-sdk": [
+          "TestDecryptErrorsHoldNoPlaintext",
+          "TestRedactedHidesSealedFieldsAndSortsShown",
+          "TestRedactedLogHidesSealedFields"
+        ],
+        "go-memory": [
+          "TestAFailureCarriesItsDiagnostic",
+          "TestATrapFetchingTheDetailIsATrap"
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-validation-before-io-v1",
+      "evidence": {
+        "runtime": ["shared_record_runtime_profile"],
+        "reads": ["shared_record_read_profile"],
+        "pending": [
+          "target::pending::tests::an_over_long_descriptor_is_refused_before_any_call",
+          "target::pending::tests::a_lazy_column_stops_building_after_a_local_failure"
+        ],
+        "go": [
+          "TestRuntimeConformance",
+          "TestReadConformance",
+          "TestMismatchedPlanIsRefusedBeforeTheGuest"
+        ],
+        "opaque": [
+          "given_an_owned_source::is_wiped_when_encoding_fails_and_no_key_is_requested",
+          "given_an_owned_source::is_wiped_when_the_context_is_refused",
+          "given_an_owned_source::the_context_is_refused_before_the_value_is_encoded",
+          "given_a_ciphertext_that_is_not_this_blob::a_tampered_ciphertext_fails_the_aead",
+          "given_a_ciphertext_that_is_not_this_blob::the_wrong_context_fails_the_aead",
+          "given_a_ciphertext_that_is_not_this_blob::a_blob_opened_as_a_string_is_the_wrong_type",
+          "given_a_ciphertext_that_is_not_this_blob::a_string_opened_as_a_blob_is_the_wrong_type",
+          "given_a_ciphertext_that_is_not_this_blob::bytes_that_are_not_a_profile_are_refused_by_class"
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-logical-batching-v1",
+      "evidence": {
+        "runtime": ["shared_record_runtime_profile"],
+        "lifecycle": [
+          "an_owned_column_is_one_logical_batch_and_releases_captures_once",
+          "an_empty_owned_column_makes_no_provider_call"
+        ],
+        "pending": [
+          "target::pending::tests::one_pending_asking_for_many_keys_is_one_call",
+          "target::pending::tests::all_merges_a_column_into_one_call_preserving_order",
+          "target::pending::tests::generate_and_retrieve_are_one_call_each",
+          "target::pending::tests::retrieves_group_by_keyset_and_return_in_request_order",
+          "target::pending::tests::all_of_nothing_resolves_empty_without_io",
+          "target::pending::tests::dispatch_forwards_each_requests_descriptor_in_order"
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-provider-chunks-v1",
+      "evidence": {
+        "kms": [
+          "futures::tests::test_keeps_the_same_order",
+          "futures::tests::test_a_failing_chunk_fails_the_whole_call",
+          "futures::tests::test_works_when_chunks_dont_divide_nicely",
+          "futures::tests::concurrency_limit_bounds_chunks_and_drop_releases_them"
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    {
+      "id": "go-post-decrypt-shadow-stack",
+      "status": "known-gap",
+      "evidence": "languages/golang/encrypt/roundtrip_test.go::TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt"
+    },
+    {
+      "id": "native-heap-observer-exclusions",
+      "status": "limited-observation",
+      "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs"
+    },
+    {
+      "id": "native-partial-decode-fields",
+      "status": "known-gap",
+      "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs::opaque_blob::a_partial_decode_drops_the_fields_it_built_unwiped"
+    },
+    {
+      "id": "caller-owned-host-values",
+      "status": "outside-guarantee"
+    },
+    {
+      "id": "live-provider-http-chunking",
+      "status": "not-observed"
+    },
+    {
+      "id": "python-typescript-lifecycle",
+      "status": "not-enrolled"
+    }
+  ]
+}

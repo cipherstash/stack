@@ -143,9 +143,16 @@ A `Term` answers every question the generators need, via exhaustive `impl` metho
 | `extractor()` | `eq_term` | `ord_term_ore` | `match_term` | `ord_term` |
 | `ctor()` | `hmac_256` | `ore_block_256` | `bloom_filter` | `ope_cllw` |
 | `binding_newtype()` | `Hmac256` | `OreBlock256` | `BloomFilter` | `OpeCllw` |
+| `v4_format()` | none | `OreBlockTerm`, `0202`/`0203` | none | `OpeTerm`, `00`/`01` |
 | `role()` | `Eq` | `Ord` | `Match` | `Ord` |
 | `operators()` | `= <>` | `= <> < <= > >=` | `@@` | `= <> < <= > >=` |
 | `provides_ordering()` | `false` | `true` | `false` | `true` |
+
+`binding_newtype()` names the EQL v3 type. `v4_format()` is how EQL v4 stores an order
+term instead: as one hex string of Stack Encrypt's own term (`OreBlockTerm<T>`,
+`OpeTerm<T>`, over the type's plaintext), which must start with one of the listed
+prefixes. Codegen writes the v4 Rust field, its JSON Schema pattern and the v4 domain
+CHECKs from that one entry.
 
 `Ope` is the CLLW-OPE term: a hex-encoded ciphertext that is natively `bytea`-sortable after
 hex-decode (no custom comparison protocol), so — like `Hm` — its extractor is the whole SEM

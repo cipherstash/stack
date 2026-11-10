@@ -29,7 +29,7 @@ mod sealed {
 /// How a description receives its plaintext: the `M` parameter of
 /// [`Encryption`](super::Encryption).
 ///
-/// Vitamin C's `Encrypt`, `PrfValue` and `CllwOreEncrypt` consume the value
+/// Vitamin C's `Encrypt` and `PrfValue`, and the order terms, consume the value
 /// they are given, so an operation needs the plaintext by value. A
 /// description can be handed it two ways, and because the mode is a type
 /// parameter the difference is settled at compile time:
@@ -57,6 +57,10 @@ pub trait SourceMode<'s, S: 's>: sealed::Sealed + 's {
     /// Read the plaintext in place, for an operation that does not consume
     /// it (a match term reads text through `AsRef<str>`).
     fn view(source: &Self::Source) -> &S;
+    /// Let go of the plaintext after reading it in place: in [`Owned`]
+    /// mode the description owns it, and hands it to `wipe`; in
+    /// [`Borrowed`] mode it is the caller's, and nothing is done.
+    fn release(source: Self::Source, wipe: impl FnOnce(S));
 }
 
 /// A mode in which an operation can take the plaintext by value: always for
@@ -79,6 +83,7 @@ impl<'s, S: 's> SourceMode<'s, S> for Borrowed {
     fn view(source: &Self::Source) -> &S {
         source
     }
+    fn release(_: Self::Source, _: impl FnOnce(S)) {}
 }
 impl<'s, S: Clone + 's> ConsumeSource<'s, S> for Borrowed {
     fn take(source: Self::Source) -> S {
@@ -95,6 +100,9 @@ impl<'s, S: 's> SourceMode<'s, S> for Owned {
     type Source = S;
     fn view(source: &Self::Source) -> &S {
         source
+    }
+    fn release(source: Self::Source, wipe: impl FnOnce(S)) {
+        wipe(source);
     }
 }
 impl<'s, S: 's> ConsumeSource<'s, S> for Owned {

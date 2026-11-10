@@ -25,7 +25,7 @@ use stack_auth::AuthError;
 use stack_auth_guest::ops;
 use stack_auth_guest::status::fail_auth;
 use stack_guest_abi::call;
-use vitaminc_aead_value::{transport as codec, FfiValue};
+use stack_guest_abi::value::HostValue;
 
 const ACCESS_TOKEN: &str = "leak-marker-access-token";
 const ACCESS_KEY: &str = "leak-marker-access-key";
@@ -43,18 +43,18 @@ fn failure<T: std::fmt::Debug>(
     what: &str,
     expect: &[&str],
     step: impl FnOnce() -> Result<T, u32>,
-) -> FfiValue {
+) -> HostValue {
     let _ = call::run(step).expect_err(what);
     let bytes = call::take_last_error().unwrap_or_else(|| panic!("{what}: no error recorded"));
-    let error = codec::decode_value(&mut codec::Reader::new(&bytes)).expect("an error decodes");
+    let error = HostValue::decode(&bytes).expect("an error decodes");
     assert_eq!(codes(&error), expect, "{what}: the codes it reaches");
     error
 }
 
 /// An error's code, then its causes' codes, in order.
-fn codes(value: &FfiValue) -> Vec<String> {
+fn codes(value: &HostValue) -> Vec<String> {
     let mut out: Vec<String> = text(get(value, "code")).into_iter().collect();
-    if let Some(FfiValue::Array(causes)) = get(value, "causes") {
+    if let Some(HostValue::List(causes)) = get(value, "causes") {
         out.extend(causes.iter().filter_map(|cause| text(get(cause, "code"))));
     }
     out
@@ -71,19 +71,19 @@ fn check(text: &[u8], at: &str, found: &mut Vec<String>) {
     }
 }
 
-fn leaks(value: &FfiValue, path: &str, found: &mut Vec<String>) {
+fn leaks(value: &HostValue, path: &str, found: &mut Vec<String>) {
     match value {
-        FfiValue::String(text) => check(text.risky_ref(), path, found),
-        FfiValue::Bytes(bytes) => {
+        HostValue::Text(text) => check(text.as_bytes(), path, found),
+        HostValue::Bytes(bytes) => {
             use vitaminc_protected::Controlled;
             check(bytes.risky_ref(), path, found);
         }
-        FfiValue::Array(items) => {
+        HostValue::List(items) => {
             for (at, item) in items.iter().enumerate() {
                 leaks(item, &format!("{path}[{at}]"), found);
             }
         }
-        FfiValue::Object(entries) => {
+        HostValue::Map(entries) => {
             for (key, item) in entries {
                 check(key.as_bytes(), &format!("{path} key"), found);
                 leaks(item, &format!("{path}.{key}"), found);
@@ -93,16 +93,16 @@ fn leaks(value: &FfiValue, path: &str, found: &mut Vec<String>) {
     }
 }
 
-fn get<'a>(value: &'a FfiValue, key: &str) -> Option<&'a FfiValue> {
+fn get<'a>(value: &'a HostValue, key: &str) -> Option<&'a HostValue> {
     match value {
-        FfiValue::Object(entries) => entries.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+        HostValue::Map(entries) => entries.iter().find(|(k, _)| k == key).map(|(_, v)| v),
         _ => None,
     }
 }
 
-fn text(value: Option<&FfiValue>) -> Option<String> {
+fn text(value: Option<&HostValue>) -> Option<String> {
     match value? {
-        FfiValue::String(s) => String::from_utf8(s.risky_ref().to_vec()).ok(),
+        HostValue::Text(s) => Some(s.to_string()),
         _ => None,
     }
 }
@@ -111,7 +111,7 @@ fn dir(path: &Path) -> Vec<u8> {
     path.to_str().expect("utf8 temp dir").as_bytes().to_vec()
 }
 
-fn scenarios() -> Vec<(&'static str, FfiValue)> {
+fn scenarios() -> Vec<(&'static str, HostValue)> {
     let root = tempfile::tempdir().expect("temp dir");
     let store = dir(root.path());
     let workspace = root.path().join("workspaces").join("AAAAAAAAAAAAAAAA");
@@ -268,7 +268,7 @@ fn a_profile_json_error_points_at_the_line() {
         Some("stack_profile::json")
     );
     let fields = get(&error, "fields").expect("fields");
-    assert!(matches!(get(fields, "line"), Some(FfiValue::UInt64(2))));
+    assert!(matches!(get(fields, "line"), Some(HostValue::UInt(2))));
     assert!(
         text(get(&error, "help")).is_some(),
         "the help says how to fix it"

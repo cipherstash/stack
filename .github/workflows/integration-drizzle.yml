@@ -104,8 +104,22 @@ on:
       # `.github/actions/build-ffi-binding` hash them, so an edit here misses
       # that cache and rebuilds the bundle the `integration/wasm/**` suites
       # load. Same argument as the two entries above, same guard.
-      - 'packages/eql/crates/**'
+      # Only the eql-bindings files cargo compiles into the binding, as
+      # the cache key lists them: not its tests, docs or generated
+      # bindings, not the `v4` / `encryption` modules behind a feature
+      # protect-ffi never enables, and not the other EQL crates.
+      # ffi-binding-action.test.mjs derives the list from the manifests.
+      - 'packages/eql/crates/eql-bindings/Cargo.toml'
+      - 'packages/eql/crates/eql-bindings/src/lib.rs'
+      - 'packages/eql/crates/eql-bindings/src/sql.rs'
+      - 'packages/eql/crates/eql-bindings/src/from_v2/**'
+      - 'packages/eql/crates/eql-bindings/src/v3/**'
+      - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
+      # The SQL this suite installs. `stash eql install` and the Prisma
+      # Next baseline migration read the bundle from `@cipherstash/eql`, a
+      # workspace package, so an EQL release bump edits only this directory.
+      - 'packages/eql/packages/eql/**'
   pull_request:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
@@ -198,8 +212,22 @@ on:
       # `.github/actions/build-ffi-binding` hash them, so an edit here misses
       # that cache and rebuilds the bundle the `integration/wasm/**` suites
       # load. Same argument as the two entries above, same guard.
-      - 'packages/eql/crates/**'
+      # Only the eql-bindings files cargo compiles into the binding, as
+      # the cache key lists them: not its tests, docs or generated
+      # bindings, not the `v4` / `encryption` modules behind a feature
+      # protect-ffi never enables, and not the other EQL crates.
+      # ffi-binding-action.test.mjs derives the list from the manifests.
+      - 'packages/eql/crates/eql-bindings/Cargo.toml'
+      - 'packages/eql/crates/eql-bindings/src/lib.rs'
+      - 'packages/eql/crates/eql-bindings/src/sql.rs'
+      - 'packages/eql/crates/eql-bindings/src/from_v2/**'
+      - 'packages/eql/crates/eql-bindings/src/v3/**'
+      - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
+      # The SQL this suite installs. `stash eql install` and the Prisma
+      # Next baseline migration read the bundle from `@cipherstash/eql`, a
+      # workspace package, so an EQL release bump edits only this directory.
+      - 'packages/eql/packages/eql/**'
 
 jobs:
   integration:

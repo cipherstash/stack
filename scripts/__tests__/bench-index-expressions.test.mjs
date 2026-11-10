@@ -162,17 +162,24 @@ describe('bench index expressions match the EQL v3 operator lowering', () => {
  * build HAS run, the shipped copy must be byte-identical to the file the rest of
  * this suite reasons about.
  *
- * It is conditional on `dist/` existing, which is the one shape of skip worth
- * accepting here — every assertion above runs unconditionally against the
- * committed bundle, so this adds a check on built trees rather than replacing
- * one. What it catches is `copy-assets.mjs` growing a transform, at which point
- * "same bytes" stops being true and this suite would otherwise be silently
- * describing a file nobody installs.
+ * Locally it is conditional on `dist/` existing, which is the one shape of
+ * skip worth accepting here — every assertion above runs unconditionally
+ * against the committed bundle, so this adds a check on built trees rather
+ * than replacing one. What it catches is `copy-assets.mjs` growing a
+ * transform, at which point "same bytes" stops being true and this suite
+ * would otherwise be silently describing a file nobody installs.
+ *
+ * `tests.yml` builds `@cipherstash/eql` before this suite and sets
+ * `EQL_DIST_REQUIRED`, so there it always runs: a missing `dist/` fails the
+ * check instead of skipping it.
  */
 describe('the shipped bundle is a verbatim copy of the committed one', () => {
   const shipped = resolve(eqlPackageRoot(), 'dist/sql/cipherstash-encrypt.sql')
 
-  it.runIf(existsSync(shipped))('dist/sql matches sql', () => {
-    expect(readFileSync(shipped, 'utf8')).toBe(bundleSql())
-  })
+  it.runIf(existsSync(shipped) || process.env.EQL_DIST_REQUIRED === '1')(
+    'dist/sql matches sql',
+    () => {
+      expect(readFileSync(shipped, 'utf8')).toBe(bundleSql())
+    },
+  )
 })

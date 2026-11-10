@@ -1,0 +1,1616 @@
+{
+  "_comment": "FROZEN. Records the next build stored, under a deterministic key source. Every later build must open each one to `opened` and seal its `source` to the same shape, terms and passthroughs. Read by tests/stored_rows.rs; the schema is in README.md beside this file. Never regenerate this file, and edit it only as README.md allows for order terms: a change to the stored format adds stored_rows_v2.json beside it.",
+  "cases": [
+    {
+      "about": "one field per value kind with every index it admits, composites, an untyped field, a renamed field and a passthrough",
+      "expected_context": null,
+      "name": "every_kind",
+      "opened": "f11800000006000000616d6f756e7414000004800061bc000000000000000000020000006174130bc9d26a0000000015cd5b070300000062696f0a21000000456e6372797074656420736561726368206f7665722073686f7274206e6f74657304000000626c6f620b040000000001feff030000006461791281460b0005000000656d61696c0a17000000416c6963652e536d697468406578616d706c652e636f6d0300000066333208000000800300000066363409000000000000024004000000666c61670304000000693132381000000000000000000000000000000080030000006931360ed4fe030000006933320490eefeff0300000069363405000efad5feffffff0200000069380cf8020000006964062a000000050000006c6f6f73650a1400000061206669656c642077697468206e6f2074797065040000006d61696c0a0f000000626f62406578616d706c652e636f6d050000007072656673f103000000040000006461726b03040000006e6f6e650005000000656d707479f1000000000400000074616773f0030000000a01000000610401000000f000000000040000007531323811ffffffffffffffffffffffffffffffff030000007531360f60ea030000007533320600286bee0300000075363407ffffffffffffffff0200000075380dc8",
+      "plan": {
+        "amount": {
+          "context": [
+            "kinds",
+            "amount"
+          ],
+          "outputs": [
+            "c",
+            "eq"
+          ],
+          "type": "decimal"
+        },
+        "at": {
+          "context": [
+            "kinds",
+            "at"
+          ],
+          "outputs": [
+            "c",
+            "eq"
+          ],
+          "type": "timestamp"
+        },
+        "bio": {
+          "context": [
+            "kinds",
+            "bio"
+          ],
+          "outputs": [
+            "c",
+            {
+              "match": {
+                "downcase": false,
+                "k": 6,
+                "m": 1024,
+                "tokenizer": "standard"
+              }
+            }
+          ],
+          "type": "string"
+        },
+        "blob": {
+          "context": [
+            "kinds",
+            "blob"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "bytes"
+        },
+        "blob_ope": {
+          "context": [
+            "kinds",
+            "blob_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "bytes"
+        },
+        "day": {
+          "context": [
+            "kinds",
+            "day"
+          ],
+          "outputs": [
+            "c",
+            "eq"
+          ],
+          "type": "date"
+        },
+        "email": {
+          "context": [
+            "kinds",
+            "email"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "match",
+            "ore"
+          ],
+          "type": "string"
+        },
+        "email_ope": {
+          "context": [
+            "kinds",
+            "email_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "string"
+        },
+        "f32": {
+          "context": [
+            "kinds",
+            "f32"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "float32"
+        },
+        "f32_ope": {
+          "context": [
+            "kinds",
+            "f32_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "float32"
+        },
+        "f64": {
+          "context": [
+            "kinds",
+            "f64"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "float64"
+        },
+        "f64_ope": {
+          "context": [
+            "kinds",
+            "f64_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "float64"
+        },
+        "flag": {
+          "context": [
+            "kinds",
+            "flag"
+          ],
+          "outputs": [
+            "c"
+          ],
+          "type": "bool"
+        },
+        "i128": {
+          "context": [
+            "kinds",
+            "i128"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "int128"
+        },
+        "i128_ope": {
+          "context": [
+            "kinds",
+            "i128_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "int128"
+        },
+        "i16": {
+          "context": [
+            "kinds",
+            "i16"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "int16"
+        },
+        "i16_ope": {
+          "context": [
+            "kinds",
+            "i16_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "int16"
+        },
+        "i32": {
+          "context": [
+            "kinds",
+            "i32"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "int32"
+        },
+        "i32_ope": {
+          "context": [
+            "kinds",
+            "i32_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "int32"
+        },
+        "i64": {
+          "context": [
+            "kinds",
+            "i64"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "int64"
+        },
+        "i64_ope": {
+          "context": [
+            "kinds",
+            "i64_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "int64"
+        },
+        "i8": {
+          "context": [
+            "kinds",
+            "i8"
+          ],
+          "outputs": [
+            "c",
+            "eq"
+          ],
+          "type": "int8"
+        },
+        "id": {
+          "context": [
+            "kinds",
+            "id"
+          ],
+          "outputs": [
+            "passthrough"
+          ],
+          "type": "uint32"
+        },
+        "loose": {
+          "context": [
+            "kinds",
+            "loose"
+          ],
+          "outputs": [
+            "c"
+          ]
+        },
+        "mail": {
+          "context": [
+            "kinds",
+            "email_address"
+          ],
+          "outputs": [
+            "c",
+            "eq"
+          ],
+          "type": "string"
+        },
+        "prefs": {
+          "context": [
+            "kinds",
+            "prefs"
+          ],
+          "outputs": [
+            "c"
+          ],
+          "type": "object"
+        },
+        "tags": {
+          "context": [
+            "kinds",
+            "tags"
+          ],
+          "outputs": [
+            "c"
+          ],
+          "type": "array"
+        },
+        "u128": {
+          "context": [
+            "kinds",
+            "u128"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "uint128"
+        },
+        "u128_ope": {
+          "context": [
+            "kinds",
+            "u128_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "uint128"
+        },
+        "u16": {
+          "context": [
+            "kinds",
+            "u16"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "uint16"
+        },
+        "u16_ope": {
+          "context": [
+            "kinds",
+            "u16_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "uint16"
+        },
+        "u32": {
+          "context": [
+            "kinds",
+            "u32"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "uint32"
+        },
+        "u32_ope": {
+          "context": [
+            "kinds",
+            "u32_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "uint32"
+        },
+        "u64": {
+          "context": [
+            "kinds",
+            "u64"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "uint64"
+        },
+        "u64_ope": {
+          "context": [
+            "kinds",
+            "u64_ope"
+          ],
+          "outputs": [
+            "ope"
+          ],
+          "type": "uint64"
+        },
+        "u8": {
+          "context": [
+            "kinds",
+            "u8"
+          ],
+          "outputs": [
+            "c",
+            "eq"
+          ],
+          "type": "uint8"
+        }
+      },
+      "source": "f12400000004000000666c6167030200000069380cf8030000006931360ed4fe070000006931365f6f70650ed4fe030000006933320490eefeff070000006933325f6f70650490eefeff0300000069363405000efad5feffffff070000006936345f6f706505000efad5feffffff0400000069313238100000000000000000000000000000008008000000693132385f6f706510000000000000000000000000000000800200000075380dc8030000007531360f60ea070000007531365f6f70650f60ea030000007533320600286bee070000007533325f6f70650600286bee0300000075363407ffffffffffffffff070000007536345f6f706507ffffffffffffffff040000007531323811ffffffffffffffffffffffffffffffff08000000753132385f6f706511ffffffffffffffffffffffffffffffff030000006633320800000080070000006633325f6f7065080000008003000000663634090000000000000240070000006636345f6f706509000000000000024006000000616d6f756e7414000004800061bc000000000000000000030000006461791281460b00020000006174130bc9d26a0000000015cd5b0705000000656d61696c0a17000000416c6963652e536d697468406578616d706c652e636f6d09000000656d61696c5f6f70650a17000000416c6963652e536d697468406578616d706c652e636f6d0300000062696f0a21000000456e6372797074656420736561726368206f7665722073686f7274206e6f74657304000000626c6f620b040000000001feff08000000626c6f625f6f70650b040000000001feff0400000074616773f0030000000a01000000610401000000f000000000050000007072656673f103000000040000006461726b03040000006e6f6e650005000000656d707479f100000000050000006c6f6f73650a1400000061206669656c642077697468206e6f2074797065040000006d61696c0a0f000000626f62406578616d706c652e636f6d020000006964062a000000",
+      "stored": {
+        "map": [
+          [
+            "amount",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000003c789880b03f4c265880e4acfca9214f200006f6effd98a8a7eaf09f9cbf3496d953f1db1107128e28453fde000f818e55e9025f7976f550d57ec8fe5621e6262e12dad34068a02e105d05497be7fb67a4b3e2b289b5111f91013bdb00f1e6f6"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000a805813c605557a7defc98ee4ca3030b001d0d8bf4b00436bd82dcc50277a162"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "at",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000004146c2504b717aa2e858cdcf9f7adc5520003f88a6d03dc92e8dc4c8ea807f9a1a82c7733b23b6210ea5039704ca5c34a65f02dd4474be374c2f3b6d710ac2bf8b3fa405fa35f7b2756e4103a17bbbdeb485967674216e2dc7b4e8bb"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b200000005cce6a9f616efca5cd1af50a99c1536a5b6ea54d09ca413e9bbf199da16efaf1"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "bio",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "010000000000000000000000000000000068f4364702d956b2af145cc5815b4e142000c8d141062ad1d5fccaeb5ee5610f4112f8b887cf6999c5ce8674754330b0e34a020e451aace4c06b82d658f832c6b1e36395e3317c5ff04173900bafa5f9c7c4798ef3f90c688e777a34dd92e7cf2c55dc163bb49bf64e3094d302e020a563"
+                  }
+                ],
+                [
+                  "match",
+                  {
+                    "passthrough": "0b3c000000760081009700a600cd00d300d500d6004d014f01560172019f01a4011f024a026d0276027b027e02b502100315034f03590362037f03a603c203d303"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "blob",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "010000000000000000000000000000000078e00c04868a5215c0ee6d224cbb23a62000003237396811d1c74d9e8de9cd7b57eb23e9ef768af5d08d4d9de027c693b1a5022db9a653b0f3c0b1ae002f84ee77c48c2a3e5b171449014878215ac5066167ff33"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000ccad5773969fdfa901fc27b449c91fd911bba0969204735da5bfb9c8d2f537f6"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b280000009a8ad7f813cc32d1fb89fe1c14a45d57655c0e52d6c3677801a1c80abffcff0e2ce64d6622f740e0"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "blob_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b29000000000bbe8e366aaefdf2ba27bdef9176db2d23f7f50a22d6b39d0b5fa83a5e369f80f3af1d31cc294f62"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "day",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000001ad8b98c8dd5abfd2c89c1c1d50da03120002f91767738c693da328ad5275b80b1ba639f95df0ccec8f383d52d13e3c5c790029ab1de47d3dfc70f5eb8d12c1bc44d91b704fd8e9ad7ed770ff139d88ecd177f0e"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b2000000092b562f25aaa5291fe1e7248bc785178c833819dddae33742a442564f5aaa129"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "email",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "010000000000000000000000000000000089b6231ed4a2c340ca76731fd843286b20009e26adc45f5dc465ca4b5c6293d623c551b0ef59e9a1da4aff0c2566d5e48a2c02fe3949aea60d4f7507d8eb4c68f47cc0203c3b57cf1dad5c7a15e6e292bd95efaf005a0da0aa4d50561ae505079ae1c80658d6ce"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000729495e2a16d4a125e4cc8cd1becc4bbf90b6971388dbf379129f2ba1c841365"
+                  }
+                ],
+                [
+                  "match",
+                  {
+                    "passthrough": "0b780000000000040005000f0010001400150016001a001d00200025002d002f00370038003a003b003d004000450046004d00500056005b005f006300680069006a006b00790084008d0095009700a600aa00b200b500ba00c000c600c700ca00cb00d200dd00df00e300e500e600e800f200f300f500fc00fe00ff00"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0bc00000000cdf4b4c993712153fe8007ccd5f4f3e495a9041d31bc68604f2b73aad04160d7924ce0cd737ca11ce3cb781c035b03a666e8f3972ed867fdd41a2b79eab6a9879e9e54ea22c0e2c25f6bd508e5d145d41d23470a4285bccfbaf2d48f024dd5888038175cd65324640f080b9c45bed2e95f08d9033707b88fb45b41014b7ec9196a05aa7ac3376b9d85b0577f8cac62e26d259dfa55d1a471c69ee454be8dc9007cdecae62f2b4995a353d6d7a36aceba19c2d1987309633cad0c39ea9c8c095"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "email_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0bc100000000b68f3ecc27ba3c18dd2b9443ac9ef6738ee9f0a8cf0ac940da750e708206b2deece11785edc533afed8c3933402115be70afedb2e8c9a63c9b73dff7df85eca922db44e52832a73634b9bcc8bd25090695e540f3acf5902fd064fa246a3b868e126dd2b56e34898b9c22131e2d3e80cc5f2dcb066ba67ff3f1cb9a00e14d41c9930105ae716b1edb449b0891f08eabd6e0aac2ec58fe59067b1e619214f7355df280b5ff2b9f091a465a765805d31714cb25b3ddcc4c43f55166f0f2782d48b8"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "f32",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000008c2f1dd683c5222ffdbc6eba46a07af72000fef1bb3ee06c027f4369d638572c5ebb3df2e5b2a45a4200d93fa17697e392a302763a365e336c2432c2d29700be5684ed780c8f1a00b73d2bcbcd329b2be51ef780"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b2000000002ba8a813077e3e355b729964a623ad6330ac9afbacde85367ceb805d3d1a431"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b40000000ae483a7f5defe9fd696a1ebd1d1a927e94f16542b2434eaacd81aa389bb5993f09c4a56fb21c9d6d2cb598cd11fea4ccd646dbb596543126f79840afd62bcdd5"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "f32_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b4100000000f7c004b44504216d9907bf9e1e72cab855bded9848a49430427b1b93c88b0400728c4d67a9a4455c66a37e0915fc2b49690481e6208534f01b6df0ec04eaf71a"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "f64",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000002432346c4600d599dcd0a0e272993caf2000733299dac72a1cac52958ee7b09ca899f8b2f5e934cc78908bf65c361069d40802245c4f25285cf65466c73efb7db3e2ff025ca0410b2af003d28819587ffcd0182237be5627"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000c92d8d376272f6cefe2bf85898f6874bd3c2cd2c7bbfb888f837c140bc70c19c"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b40000000f0420be99f95a537de3161a6cee6c390c7d3ba87d8bd9af602e9a31135d914f3d9f3206d80f44d040631d6971f05975683fd01f783be096a2c9bb29d40c0ba6c"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "f64_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b410000000152284d4a6f5a77d5c623651887ba617a05a6b5e9dda3224c244fcde2f6aa1c07261a406a66225484333e23559ab2c36a2f689f8757f484687efcf5932ff80c0b"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "flag",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000004605b532eae8f258aba3f0db9a8ce40420004ef9e59a45a7a49f59cb0bbe652830d03f17f32c5c1c3e990f2eac284b958dfd0234f50d751a900084e191ffdf722e577782f8e1165b9bc8ec195241a8e0"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "i128",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000e1dbb5de784a72133eeae10844badbdd2000f6ef24b94eb0c002c7aaf5cda2449b5bfaf0365eebb68a84901c0cd2996139f3021f2331a6b8b04b2dbe2c58b1a76933b058934eeb4fb69622663ce4df29982c86263554a7c9d490a1e767733254"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b200000008d158b8a8353c00624d74d6fac10e1f7e37ff31772a0e73f2855fd0ce7a12379"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b80000000d07b956b59e55e4fe46de19da96a9f46342bf2c8c5185632579fc09c35927f7de262f0c0dd2811add117fb73e752e4310c1012c9e1ce9d0263491bd43e78b3d8ac8f9130626327d49bcd341a061ac24d3fb540542b7527d5427b57cdd6038b125f7aaa23fb62d8ee34b91118a06262cc2a32cc102da823f0a3d49927bc04037e"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "i128_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b8100000000fcd75a25f22a0f976fb0691700c111679d9ae5807b7bdd69be6c5154437190b9f327efaeaf95b6f7279c3fc1a5f71fa4298984bddfcec1eeb3ce7f10bed6a459089d5de948fc9e236e4f179cdc5bebd22590ee097df0c1eb16de6acc85181f42e5c6d005b2ab1f97d2b8d5861804815b22b9d2da17ee7c428c6208ed12ac05b3"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "i16",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000483301aad7e1e7e66290533a1c25c4ba2000d705c4a354db0fca46ef9fbf25e70cb0ef24b4a14565985480b7f7e59499ff6e02b26f14da1ccbedbfc682fcc4e750545dca84dfc7651471368b23a21251c189"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000984372049503f0b4546828c16b52695c32f459342a618804fd552a1f0f5ec4c1"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b1000000076beb2c335e8d902eceac35139e55eda"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "i16_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b11000000003abd4e8ece83ec95aafd466a98d30fa4"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "i32",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000d91009af22793d9551d49ef1badaef2f2000ee573857f4ccb8044b99b4da2b7f98c04f32b7a85bf47c47b5705d1e4daaac22027f84526800032734fcfd183832a827c6d6caf483794cbda6c7c8ee8f7851986eec"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b200000001047ac532cedfd8eda8997310a5b6b980f743cd13d88ae779ddca7a06039c8b7"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b20000000a3183396975476acc1d0f11df0d5de324f4feb8d9a5f8ed00d963732a9ef418f"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "i32_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b2100000000c0b07e08ab5a32002b85c4b5f6f7772c14f653452f186ea13c371815983a7a75"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "i64",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000529a5e10ff573937393d348810e2cf1f2000089f69cf1ac9014ec8f513c71d9d72351e0ea99a9c73f4a0a6c10c106641b69802b4345831eebef8e107fbfd5f0b5f324ae231aa7032eb54ad743d6cc97e4a3d12352b43c781"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b2000000057b22ce89ff829ceb694379b51df3df4d2b12cb39cd48170c1267f4e574eb884"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b40000000cdf3883765bac44a78dab78be97cac096c219645e64b4718a0efc8ec12740eca2523b7e68d14878b35d2f084845025d94eb5c033fe97f0be5fe410f755e6d29c"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "i64_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b4100000000925deb04bf2246c26ca7fa3deac9a51bfe24b1d37730225d73dba7169aa6845c486aa397714c58e9954a39ca4bf6532be6b0af020b7f936b9a679856ea0ca7d5"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "i8",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000ad9f25c744be196f3ae01569081dbe282000e7f7469682c691d7b5a2c4ad768578dd968a97912283b56b05c48a73e0ba06b3021ab0c39e32d92599264bfab4e367d563670721ed408e96458287398ccbc5"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b200000009f80423babd798ac93d1f90db4c766dfbe9259da381a6e88fbdb441e42331603"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "id",
+            {
+              "map": [
+                [
+                  "passthrough",
+                  {
+                    "passthrough": "062a000000"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "loose",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000f708dc5af80df2fbad3440966528918e200008d8e16872121d006b9473087d02871421b579fa419a2b4a0e4907423391b3d10246369b1103bfe702e1ecf7ff37454ebfa830575f81a747b79ded90a1a475caa60c6a7712ee420c510d696c5c1587e110e5"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "mail",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000e15beb74f27adb51c55f9dde82bd406220006c1dec7e1a8917b5afafa0f1b7c9cba5edd267e2e561a6eab24543a1bafe601902570499aaa09298cbc067c376240209b6ec5d7aaec91f1dc7de9da3d6d5f62626e834e458d4cdb79d9647251a"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000a8164e210028ce838803019c0bec2c5a8c4c8817d9916186308f6a45aa6fd10a"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "prefs",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "map": [
+                      [
+                        "dark",
+                        {
+                          "leaf": "0100000000000000000000000000000000ad085b14c59fec78b887c47b18e497bf20007f09036cae4e9dce220def8b9465b0ba216b6ff453ce27de078213d1f144327f0236109e3480c2a5afac8b7c74d2d88839a7ec1eeef44abdf73615dde583"
+                        }
+                      ],
+                      [
+                        "none",
+                        {
+                          "leaf": "01000000000000000000000000000000002a4f406333bb5a1fd2ebc102f20495812000640505064151c4edab754284343c126d7c0f75728b84516aa1cfc2b5fa7757da02edf4f9c3b6b8e03c4a7497b0f0d689553f5d38ada5e347d64a83bf4069"
+                        }
+                      ],
+                      [
+                        "empty",
+                        {
+                          "empty_map": "0100000000000000000000000000000000a0b43a3c2b0ef2b9f0b1f7a3f1721f902000e5ca08421a3e281abc855cdc4f2a47022a407f9f62e5572c8db52d85577b776402caf39632a618b4aca38963a31763465a52328ce4c0b1bfaaed45b427"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "tags",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "seq": [
+                      {
+                        "leaf": "010000000000000000000000000000000054747df3875ec71acead1c5064d5f1a620002c064e9e638c8aa9119e06e60d21c9b6bbaa9715d4fc64531e5f7f77ef70d3ca0251073279bc66c152f833f249bf2e0b226e32d1a5582cfc89368ddc80760f"
+                      },
+                      {
+                        "leaf": "0100000000000000000000000000000000319ccdba22f993fe2cf4a18ac95e6fcc2000aab6e154f5a8aacd91d5803b0c21ef3697c6ee1875211012565c4bda8a86100c02202e2dbc1abf7b455506b7a867e591d7871efaab75c1840e51e02292d52441e0af"
+                      },
+                      {
+                        "empty_seq": "01000000000000000000000000000000006666f0cbde3e1d8cb835512a84424974200042baab7957532a89134d3b46638cf505e435878716032c621192524e1f16c40a02496ce9abb7197be2c570a0fc4e706433b306efaa1511e825b644ef62"
+                      }
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "u128",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "010000000000000000000000000000000014b176af7497a164acb08d0de2b6c47120008bbc737ddfa763593ed6169920b3c72ab41f964ea135cd840a0c91cc84629ba502cabec91a1fc983f63919bbf17f61ec0a6ad0c88fcea8bd1a231caebfe90a39ba1137030a9614654ad5a7b83552"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b200000007bebdb474e3b5cc433fd12484824ef8355ea7691c2d0774e4f8f8741d9872c8a"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b800000004b813a291f8e04f8567e18a4e2aaeef57902dde07827bf115844d18d36de06d172697e0c0163517e0b421e2730667039de012175f31b111e50f084c480b8ea8e3a3b0833e12e7a5488f9ec0d73b22ac23998aaf05e7644e55f6acff6d9d19ae8c1cad515177bc1448a7d05d2d3e51894107085b3f09976e8f306e8072f6efcef"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "u128_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b8100000000a824e89c4282c329a4d96069f158cdbef67de3e449b01363b50f1ceb166703a2c58decef5c3a765c3b7508049feb63adff64b36b739cd22143f4eee6c8aa5f173c8075b94ea8644174106a29608bd60655df143b36c7a20012beddce41d7fbb8954ee66d4bcc42000456cbaa168b2ccb788bdb29714a31f74566999989506d15"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "u16",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000c0429c8ac00db4302d312b97d30bac5a2000e90e576e4fd8622d4520d85a411fab48e4450db042a249555da2bc8a2933025002564b19ad245945c348225fbbdad92fc341dfbe9dd23f86bf6efa1e71af267b"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000cbb52cc6ecb7d3ae2fc331282698b70658ca801755e95ab0434301a07de01aaa"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b1000000049cf67d1f40428bf49576be3e3df43ce"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "u16_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b110000000149691c6a3367ee8478c871c9f4cf4c15"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "u32",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000009d1d0b3bf4ab44815e837f8a408fe36f2000743bd66c84518e5a96bcdb23f5018d5daed382faa234ab8fcaea70014ae24a1402f784be01dd08cb9d70e65ababba4c4fbad3d11274ed1c80ec1cf0511fafeaa807a"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000c6d2aa2a25d45c1de30c7d0318caa67bf572830a45e14c4580a52f086b893b5d"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b20000000fb88f2e243b1334a797a06ebea79b15a820dc5ae1668344bfa58d758f880fd17"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "u32_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b21000000014d0e72ec6d02fc43651247bd9ca84c5323bc1813a4c68bc69aa8d1acef496c71"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "u64",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "010000000000000000000000000000000083447ad20c01ffa9af5bdc10f54f09d62000e44e3721877c8fae1f02f1ebc4ecb526dd7b45f2984ea4e0aa40aa8603f54e4802988687101da1bed56b9607bdab5896b39fa9040449e98868333a39ef34a05b4081943ab3ab"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000d0ccae86cb0ab69f5c21c8b94c7c12efca180d51a2f905a2098863bb013ef823"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b40000000da9451a858c81d33242f92cd4b71b93d35661645e793298ae127defe2648db050e0b9bb3509a018f84f4266bc0020f26813c76fc764953da64e734c40659ae9d"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "u64_ope",
+            {
+              "map": [
+                [
+                  "ope",
+                  {
+                    "passthrough": "0b410000000137677c48013326e34edee99462e9927217b3b2c63029db38ce33034fd6ed28e9687f1726a49a2a046638f88b9998c62a689a5334b5d198a72a6523aa1053522b"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "u8",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "010000000000000000000000000000000066b704200b197135a43b2c6327fd3cf92000cb70d7adaed3fd6e746e2e53ace43bc2d58d1a786c6ccc62fa0d5473900f020402a03836a94bc7911e4cbeab9a5d5885cc34bbdc85715ebb071c29f76b625a"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b2000000079e2262e4913dcaecfb93743265ace2f57b8223c63d20e52d300c8a30ae80996"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "about": "labels of three segments: the plan's context is the first two",
+      "expected_context": null,
+      "name": "three_segment_label",
+      "opened": "f10200000004000000626f64790a1c000000526576656e7565206772657720696e20657665727920726567696f6e050000007469746c650a10000000517561727465726c79207265706f7274",
+      "plan": {
+        "body": {
+          "context": [
+            "documents",
+            "v2",
+            "body"
+          ],
+          "outputs": [
+            "c",
+            "match"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "context": [
+            "documents",
+            "v2",
+            "title"
+          ],
+          "outputs": [
+            "c",
+            "eq"
+          ],
+          "type": "string"
+        }
+      },
+      "source": "f102000000050000007469746c650a10000000517561727465726c79207265706f727404000000626f64790a1c000000526576656e7565206772657720696e20657665727920726567696f6e",
+      "stored": {
+        "map": [
+          [
+            "body",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000df5ce861175c26d1a3840b35964cd62d2000352e8e65fb5a068c417bb8d5ba287b7040b86babea7220fc36724c81b6452c7802671d3688c49d64ef9f0ee3b31beef34ef2fe2864e2dc769d5d85971b09c96311fb8693ba75aac9c64a4b8fe6c9bcc632e424d33f9398707855"
+                  }
+                ],
+                [
+                  "match",
+                  {
+                    "passthrough": "0b8600000001000400080009000a000d000e000f001400180019001a001b001d001f0022002300240027002a002b0033003f00400041004400450046005c005e0062006400650068006f007a00820087008c00900095009d009f00a100a200a300aa00b400c100c800cd00ce00d300d400d500d800d900db00dd00e100e200ea00f100f200f900fc00fd00"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "title",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "010000000000000000000000000000000060c86f42fdfd81d3a998ecc5b2f788462000e25430a2c1e9d6dce08f6ead348be444a7ea2a6fe6e3da794469426c05967ef1023a21de1e1e7efe487a7646b576698378030778ccae92cad2b9d39b387417984d2b07ea5ea376bd84de5fbb94c6"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b2000000086d52d9b48e11b1eab455fe23d5864b87f1e4fac8be97c666be2eb755cbd096b"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "about": "every label extended by one integer part, as a tenant id",
+      "expected_context": null,
+      "name": "one_extension_part",
+      "opened": "f10200000003000000616765062200000005000000656d61696c0a110000006361726f6c406578616d706c652e636f6d",
+      "plan": {
+        "age": {
+          "context": [
+            [
+              "users",
+              "age"
+            ],
+            7
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "uint32"
+        },
+        "email": {
+          "context": [
+            [
+              "users",
+              "email"
+            ],
+            7
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "match"
+          ],
+          "type": "string"
+        }
+      },
+      "source": "f10200000003000000616765062200000005000000656d61696c0a110000006361726f6c406578616d706c652e636f6d",
+      "stored": {
+        "map": [
+          [
+            "age",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000bacc393316ee6f4a4313df881ca7957d20007a15616d964666e09b6490ef7f6bac1b917e8e430664b14a9ccd53647bf8e97b0202d1ef3bb09976f41fe0f88011cada996c8a92a700a068af9399c4e84606beee1d"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b2000000002888fdba7c9f668583e99961d61818d41c2a0d38f91646971848763240f3178"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b20000000beca9415e2d54831e6daf42acef5bed3bdcd8b5b669061bccab1491a70954fd3"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "email",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000805416a0774309e4db705ad69bf3aea72000d659507d5135932e3b17919daf820631fe078dd7d96bfcc2846ebc5c296c250e029edb0f38f0764959e99c34e5d9f517676a5a1c89a5b1fbf391e2f1124af661bfdeabfd7fe1048b422b76863b11a0"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b2000000083ae446cefcfaa136a0a2178af152e7e5a6e8ef92346002a1a11e49dcd4bd464"
+                  }
+                ],
+                [
+                  "match",
+                  {
+                    "passthrough": "0b520000000800090018001d0023002600280030003200370041005000520053005a006b0071007700780079007e008100830087009d009e00ac00bb00c000c200c700ce00d000de00e900ed00f400f700f900fd00ff00"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "about": "every label extended by an integer part and then a text part",
+      "expected_context": null,
+      "name": "two_extension_parts",
+      "opened": "f10200000003000000616765062300000005000000656d61696c0a1000000064617665406578616d706c652e636f6d",
+      "plan": {
+        "age": {
+          "context": [
+            [
+              [
+                "users",
+                "age"
+              ],
+              7
+            ],
+            "eu"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "uint32"
+        },
+        "email": {
+          "context": [
+            [
+              [
+                "users",
+                "email"
+              ],
+              7
+            ],
+            "eu"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "match"
+          ],
+          "type": "string"
+        }
+      },
+      "source": "f10200000003000000616765062300000005000000656d61696c0a1000000064617665406578616d706c652e636f6d",
+      "stored": {
+        "map": [
+          [
+            "age",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000009b1bb6fea8f3c34326fe40d7c33d4c2b20001c2e8428ddff1daac744fd6419cd1a2bcffa4c472e8f6c3398aa04b593676a1f022273df865bcaaf92a4a0fc91a4b56e3368155a29ed0d12b0df7e6842295106d857"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000a3085719672fccd9837b4a18ba6489f45d5e83b3eb6cf55b1bce2ccd045c5889"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b200000003c0639c42b4bc6198d8c0f6d0c1020cc257af118db43564bcefd87d3440ea180"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "email",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "0100000000000000000000000000000000570015495a46ec318f476aaa64c4a68d2000da5b9ea16f7bc1a3637eef1ae1fa9742ff3a5efb3696e820aee2a6eb11ce7c9e02d050cf70e46d9397123803d70b483cf5ef5441af85872e67c0c7d2cf2ba1a1dc585e555865885f0e34507c499d"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b2000000042235d3e754699bafe868e3ab8d896cd3763179306f291f0c2fe74cc100fe124"
+                  }
+                ],
+                [
+                  "match",
+                  {
+                    "passthrough": "0b500000000200040009000f001100120015001b001d0020002d0043004c00520069006e007100770085008c0098009a009b009e00a000b300b600b700be00c600d000d200d900e300e800ec00ee00f200fa00fb00"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "about": "a plan whose context is the record's tenant field, opened expecting that tenant",
+      "expected_context": "tenants/acme",
+      "name": "context_field",
+      "opened": "f10300000003000000616765062900000005000000656d61696c0a110000006572696e4061636d652e6578616d706c650600000074656e616e740a0c00000074656e616e74732f61636d65",
+      "plan": {
+        "age": {
+          "context": [
+            "age"
+          ],
+          "outputs": [
+            "c",
+            "ore"
+          ],
+          "type": "uint32"
+        },
+        "context_field": "tenant",
+        "email": {
+          "context": [
+            "email"
+          ],
+          "outputs": [
+            "c",
+            "eq"
+          ],
+          "type": "string"
+        },
+        "tenant": {
+          "context": [
+            "tenant"
+          ],
+          "outputs": [
+            "passthrough"
+          ],
+          "type": "string"
+        }
+      },
+      "source": "f1030000000600000074656e616e740a0c00000074656e616e74732f61636d6505000000656d61696c0a110000006572696e4061636d652e6578616d706c65030000006167650629000000",
+      "stored": {
+        "map": [
+          [
+            "age",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000005596fbd530e431a317215ab4256e7cb2200052f797516a56e11e4ba5828836073ba2cc42d73bb27b382aaff298bcda54c09e028023da0b2b1d6bdece1a3b521b0a233f6c00cfeffbe0a68439d80d4a684053136c"
+                  }
+                ],
+                [
+                  "ore",
+                  {
+                    "passthrough": "0b20000000e35fc7559e7ae9856a8e6438987a9fc176e5b14000eef0bbdca5332b138689e7"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "email",
+            {
+              "map": [
+                [
+                  "c",
+                  {
+                    "leaf": "01000000000000000000000000000000001b7a04c4d1944c876a49cda36eb46407200022f464f89fb798f460c522e7ab9b96f3a7a2630e68a622295c0582037732981402b636714ff3657091402abab0d3088aa5d036679175993ba5d2c0affa47f8bab1b0f249d6b7376a72ce0f5c31db05"
+                  }
+                ],
+                [
+                  "eq",
+                  {
+                    "passthrough": "0b20000000d552a6cdd50766be616327a2f3a501f93db67255f367dc8200f7bf3ad5a2b620"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "tenant",
+            {
+              "map": [
+                [
+                  "passthrough",
+                  {
+                    "passthrough": "0a0c00000074656e616e74732f61636d65"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "about": "a batch of two records under one plan",
+      "expected_context": null,
+      "name": "batch",
+      "opened": "f002000000f10200000003000000616765061d00000005000000656d61696c0a110000006672616e6b406578616d706c652e636f6df10200000003000000616765063400000005000000656d61696c0a110000006772616365406578616d706c652e636f6d",
+      "plan": {
+        "age": {
+          "context": [
+            "users",
+            "age"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "ore"
+          ],
+          "type": "uint32"
+        },
+        "email": {
+          "context": [
+            "users",
+            "email"
+          ],
+          "outputs": [
+            "c",
+            "eq",
+            "match"
+          ],
+          "type": "string"
+        }
+      },
+      "source": "f002000000f10200000003000000616765061d00000005000000656d61696c0a110000006672616e6b406578616d706c652e636f6df10200000003000000616765063400000005000000656d61696c0a110000006772616365406578616d706c652e636f6d",
+      "stored": {
+        "seq": [
+          {
+            "map": [
+              [
+                "age",
+                {
+                  "map": [
+                    [
+                      "c",
+                      {
+                        "leaf": "01000000000000000000000000000000003c0ddbde23c4f33454cc9a55bd61db232000cf115c46a206edce16a2390801360e94ee17c7115b52f95d90a751b19fd121b402ee823b279fa85feba54c2ea43ff80c18b5cf9e9d21c1a89448d14bbb923c68280e"
+                      }
+                    ],
+                    [
+                      "eq",
+                      {
+                        "passthrough": "0b200000002067ce1340b5e588ae7537f6f10c8b8ee03e6ecc6a57e3ec7a1de29df43961a9"
+                      }
+                    ],
+                    [
+                      "ore",
+                      {
+                        "passthrough": "0b20000000f18256adef15adefb7ed6dea76d0de5418257a7406b06cb9b73fbcbb967139c2"
+                      }
+                    ]
+                  ]
+                }
+              ],
+              [
+                "email",
+                {
+                  "map": [
+                    [
+                      "c",
+                      {
+                        "leaf": "01000000000000000000000000000000001bf8c14cab97f3d7043f1906c14f75242000c0dd8d747502d288bec2d32887f05ccb0117cd5c4f23cd26aabf8a4205885b1c0288eec7c934dbeb5d68b636bcc0db3e07cfd93e4178ff1cd7998b2000c7de141e6ac16158da60ce0aa89948511041"
+                      }
+                    ],
+                    [
+                      "eq",
+                      {
+                        "passthrough": "0b20000000c29174d85a22f6803289f6e7d4f220622d8289d9c9341a4bc24723cd9cecdaa5"
+                      }
+                    ],
+                    [
+                      "match",
+                      {
+                        "passthrough": "0b50000000030005000900100012001a001c001d001e002a002e00300034003a003c0056006d00710074007500780092009300a800b200b400b700ba00c200c400c500d400d500dc00dd00e500ea00ef00f900fe00"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          },
+          {
+            "map": [
+              [
+                "age",
+                {
+                  "map": [
+                    [
+                      "c",
+                      {
+                        "leaf": "01000000000000000000000000000000009d53c5cb4855ccf2194410562617ee242000d847ad7bbcfd3c4beec642cb02f9808fac5e4b3a61cfb42ca2b26bdeab53cc15028eb9c8eb97c38a17aa86e36d2c103bedaba851960ee44ae376d2c5e874a2f3031f"
+                      }
+                    ],
+                    [
+                      "eq",
+                      {
+                        "passthrough": "0b2000000005a6a623cecc71cd02cb87cc030e7ac25350560d952293b661a7c73b6c9f278d"
+                      }
+                    ],
+                    [
+                      "ore",
+                      {
+                        "passthrough": "0b20000000f18256adef15adefb7ed6dea76d0de5418257a7406b06cb9b73fbd5c5b36f775"
+                      }
+                    ]
+                  ]
+                }
+              ],
+              [
+                "email",
+                {
+                  "map": [
+                    [
+                      "c",
+                      {
+                        "leaf": "0100000000000000000000000000000000505d24e7d427a40c371cec2adc951b552000141097316fb808ff63d1d544d905b8223a0084ef239339c9a3e04f6445ab7710027d42030efb6658cb5c5be956b72572328c1d3ecb454f86d47adaa8f73408efdce743296cf6828b4536865b72272a"
+                      }
+                    ],
+                    [
+                      "eq",
+                      {
+                        "passthrough": "0b200000008f69a9f61ba7b854d6cf4bc9df305d12be9f50b65732b0369068045125ca4602"
+                      }
+                    ],
+                    [
+                      "match",
+                      {
+                        "passthrough": "0b50000000030005000900100012001a001c00220024002a002e003000310034003d004b00550058006d00710075008f0092009700a400a500a800b200b400b700ba00c200c500db00dc00e400e500ea00f900fe00"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "key_source": {
+    "kind": "deterministic-sha256",
+    "seed": "737461636b2d656e63727970742073746f72656420726f777320763120202020"
+  },
+  "keyset_id": "00000000-0000-0000-0000-000000000000"
+}

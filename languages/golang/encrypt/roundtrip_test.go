@@ -93,15 +93,15 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	if !one.Equality.Equal(encrypted[1].Email.Equality) || !bytes.Equal(one.Match, encrypted[1].Email.Match) {
 		t.Error("a field's own Encrypt derives other terms than the record's")
 	}
-	probe, err := testusers.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+	probe, err := testusers.Fields.Email.Eq(ctx, cipher, "bob@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !probe.Equal(encrypted[1].Email.Equality) || probe.Equal(encrypted[0].Email.Equality) {
 		t.Error("the probe does not single out its row")
 	}
-	match, err := testusers.Fields.Email.Match(ctx, cipher, "bob@example.com")
-	if err != nil || !bytes.Equal(match, encrypted[1].Email.Match) {
+	match, err := testusers.Fields.Email.Matches(ctx, cipher, "bob@example.com")
+	if err != nil || !bytes.Equal(match.Term(), encrypted[1].Email.Match) {
 		t.Errorf("match probe: %v", err)
 	}
 	// A column update: one field's ciphertext opens in a row.
@@ -156,7 +156,7 @@ func TestExtendIsPartOfTheIdentity(t *testing.T) {
 		t.Fatalf("with its extension: %v %+v", err, back)
 	}
 	// The probe takes the same cipher.
-	probe, err := testusers.Fields.Email.Equality(ctx, tenant7, "bob@example.com")
+	probe, err := testusers.Fields.Email.Eq(ctx, tenant7, "bob@example.com")
 	if err != nil || !probe.Equal(ext[1].Email.Equality) || probe.Equal(plain[1].Email.Equality) {
 		t.Fatalf("tenant probe: %v", err)
 	}
@@ -260,37 +260,56 @@ func TestATamperedRecordDoesNotOpen(t *testing.T) {
 	}
 }
 
-// A match index needs text that yields a token: the engine defines no match
-// term for an empty or separator-only string, because an empty term would
-// match every row, and the typed Rust path refuses it the same way. The Go
-// error names the row, the field and the index. Every other zero value
-// seals: a zero integer under ore and equality, an empty string with no
-// match index.
-func TestAMatchIndexNeedsText(t *testing.T) {
+// A match index stores text that yields no token as the empty filter: an
+// empty or separator-only string, or one shorter than the n-gram, is a valid
+// value that no query matches, and it seals and opens like any other. Only a
+// match *query* of such text is refused, because an empty filter as a query
+// would match every row. Every other zero value seals too: a zero integer
+// under ore and equality, an empty string with no match index.
+func TestAMatchIndexStoresShortText(t *testing.T) {
 	c := deterministicClient(t)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
 	for name, u := range map[string]testusers.User{
-		"the zero value":    {},
-		"an empty email":    {ID: 1, Age: 34, Notes: "x"},
-		"a separator email": {ID: 1, Age: 34, Email: " \t", Notes: "x"},
+		"the zero value":     {},
+		"an empty email":     {ID: 1, Age: 34, Notes: "x"},
+		"a separator email":  {ID: 1, Age: 34, Email: " \t", Notes: "x"},
+		"a two-letter email": {ID: 1, Age: 34, Email: "ab", Notes: "x"},
 	} {
-		_, err := testusers.Encrypt(ctx, cipher, []testusers.User{{ID: 9, Age: 1, Email: "ok@example.com", Notes: "x"}, u})
-		if !errors.Is(err, encrypt.ErrTerm) {
-			t.Fatalf("%s: %v, want ErrTerm", name, err)
+		rows := []testusers.User{{ID: 9, Age: 1, Email: "ok@example.com", Notes: "x"}, u}
+		encrypted, err := testusers.Encrypt(ctx, cipher, rows)
+		if err != nil {
+			t.Fatalf("%s: %v, want the row to seal", name, err)
 		}
-		for _, want := range []string{`value 1`, `field "email"`, "no match term"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: error %q does not name %s", name, err, want)
-			}
+		if positions, err := encrypted[1].Email.Match.Positions(); err != nil || len(positions) != 0 {
+			t.Errorf("%s: the stored match term is %v %v, want the empty filter", name, positions, err)
+		}
+		back, err := testusers.Decrypt(ctx, cipher, encrypted)
+		if err != nil {
+			t.Fatalf("%s: decrypt: %v", name, err)
+		}
+		if back[1].Email != u.Email {
+			t.Errorf("%s: email opened as %q, want %q", name, back[1].Email, u.Email)
+		}
+		// No query matches the empty filter: a query has at least one
+		// position, and the empty filter holds none of them.
+		q, err := testusers.Fields.Email.Matches(ctx, cipher, "example")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if positions, _ := q.Term().Positions(); len(positions) == 0 {
+			t.Fatalf("%s: a query with a token sets no bit", name)
 		}
 	}
-	// The field entry says the same for one value.
-	if _, err := testusers.Fields.Email.Encrypt(ctx, cipher, ""); !errors.Is(err, encrypt.ErrTerm) || !strings.Contains(err.Error(), `field "email"`) {
+	// The field entry stores one such value the same way.
+	if _, err := testusers.Fields.Email.Encrypt(ctx, cipher, ""); err != nil {
 		t.Fatalf("Fields.Email.Encrypt(\"\"): %v", err)
 	}
-	if _, err := testusers.Fields.Email.Match(ctx, cipher, ""); !errors.Is(err, encrypt.ErrTerm) {
-		t.Fatalf("Fields.Email.Match(\"\"): %v", err)
+	// A match query with no token is the one value the engine refuses.
+	for _, text := range []string{"", " \t", "ab"} {
+		if _, err := testusers.Fields.Email.Matches(ctx, cipher, text); !errors.Is(err, encrypt.ErrTerm) {
+			t.Fatalf("Fields.Email.Matches(%q): %v, want ErrTerm", text, err)
+		}
 	}
 	// Zero values the engine does seal.
 	encrypted, err := testusers.Encrypt(ctx, cipher, []testusers.User{{Email: "zero@example.com"}})
@@ -304,9 +323,11 @@ func TestAMatchIndexNeedsText(t *testing.T) {
 }
 
 // Per-call hygiene, on every pull request: once Encrypt has returned, the
-// plaintext it carried is nowhere in guest memory — every buffer staged for a
-// call is wiped before its result comes back — so between calls the guest
-// holds the keyset cache and nothing of the program's data.
+// plaintext it carried is not found in guest memory, so between calls the
+// guest holds the keyset cache and nothing of the program's data that this
+// read can see. A freed heap chunk is mostly overwritten by allocator
+// metadata and reuse before the read, so this is not the heap guard; that
+// is stack-encrypt's tests/heap_hygiene.rs.
 func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
@@ -323,15 +344,29 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 }
 
 // The same check after Decrypt, which is the call that puts plaintext back
-// into the guest. It fails today: exactly one copy of each opened string
-// stays in the guest's freed heap. The host's copy is wiped (the output
-// buffer goes through se_dealloc) and the FfiValue's Protected payloads are
-// wiped on drop, so the copy is made on vitaminc's decrypt path before the
-// plaintext is wrapped in Protected; which line makes it is not yet known.
-// That is vitaminc's to fix; the skip records it, and the test runs again
-// once it is.
+// into the guest. It fails today, and the copy it finds is not the engine's.
+//
+// The copies that stay are stack copies, not heap ones: they sit just below
+// 1 MiB, in the wasm shadow stack, at the same addresses on every run. Each
+// is the decrypted leaf (vitaminc's STRING tag 0x0a, then the text) directly
+// after a 16-byte AES-GCM counter block (the leaf's own nonce, then the
+// big-endian block counter): the plaintext that AES-256-GCM's keystream XOR
+// produces (GCM encrypts by XORing an AES counter-mode keystream), held in
+// the stack temporaries of the RustCrypto cipher crates (cipher, inout) that
+// vitaminc-encrypt's wasm32 backend (aes-gcm 0.10) decrypts through, which
+// nothing wipes. How many survive depends on the leaf's length and on how
+// later calls reuse those frames: a reviewer saw 0, 1 and 2 copies for
+// leaves of 46, 31 and 11 characters. So the fix is in the cipher's stack
+// hygiene, in vitaminc or below it (cipherstash/vitaminc#370), not here; the
+// skip records it, and the test runs again once it is fixed there.
+//
+// This test cannot speak for the heap: allocator metadata and reuse
+// overwrite most freed chunks before it reads memory. The heap guard is
+// stack-encrypt's tests/heap_hygiene.rs (and eql-encryption-tests' of the
+// same name), whose allocator fails a test on any freed block that still
+// holds plaintext.
 func TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt(t *testing.T) {
-	t.Skip("known: one unwiped copy of each opened string remains after Decrypt, made on vitaminc's decrypt path; run this test again when vitaminc wipes it")
+	t.Skip("known: copies of an opened string can remain in the guest's shadow stack after Decrypt, as the plaintext output of AES-256-GCM's keystream XOR, in the unwiped stack temporaries of the RustCrypto crates behind vitaminc-encrypt's wasm32 backend (cipherstash/vitaminc#370); the count varies with the leaf's length; run this test again when that is wiped")
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
 	const plaintext = "residency-probe-4111-b1c2d3e4f5"

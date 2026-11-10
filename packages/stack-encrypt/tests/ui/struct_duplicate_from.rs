@@ -9,7 +9,7 @@ struct User {
 }
 
 #[derive(EncryptFrom)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     email: StackCipherText,
     #[stash(from = email)]
@@ -17,7 +17,7 @@ struct EncryptedUser {
 }
 
 #[derive(DecryptInto)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct Opened {
     email: StackCipherText,
     #[stash(from = email)]

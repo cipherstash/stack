@@ -8,8 +8,8 @@ use super::values::{Field, FieldSchema, Fields};
 /// A field verb's field argument: a name, or a picker.
 ///
 /// - `"email"`: the field is read through the value's [`Field<F>`] impl,
-///   looked up by name, which is what a dynamic value (a binding's
-///   `FfiValue`) provides. The value names its fields
+///   looked up by name, which is what a dynamic value (a binding's record)
+///   provides. The value names its fields
 ///   ([`Fields::field_names`]), so a fields plan checks them against its own
 ///   in both directions every time it runs.
 /// - `("email", accessor)`: a **picker**. The accessor reads the field out

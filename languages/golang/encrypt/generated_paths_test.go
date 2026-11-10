@@ -117,19 +117,19 @@ func TestGeneratedCodeFromForAndFromAPolicyRunsAgainstTheGuest(t *testing.T) {
 	}
 
 	// A term derived through each path's Fields is the tag path's.
-	probe, err := testusers.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+	probe, err := testusers.Fields.Email.Eq(ctx, cipher, "bob@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	forProbe, err := testusers.MemberFields.Email.Equality(ctx, cipher, "bob@example.com")
+	forProbe, err := testusers.MemberFields.Email.Eq(ctx, cipher, "bob@example.com")
 	if err != nil || !forProbe.Equal(probe) {
 		t.Fatalf("the -for path's probe: %v, equal=%v", err, forProbe.Equal(probe))
 	}
-	policyProbe, err := testpolicy.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+	policyProbe, err := testpolicy.Fields.Email.Eq(ctx, cipher, "bob@example.com")
 	if err != nil || !policyProbe.Equal(probe) {
 		t.Fatalf("the policy path's probe: %v, equal=%v", err, policyProbe.Equal(probe))
 	}
-	ore, err := testpolicy.Fields.Age.Ore(ctx, cipher, 29)
+	ore, err := testpolicy.Fields.Age.Lt(ctx, cipher, 29)
 	if err != nil || !bytes.Equal(ore, tagged[1].Age.Ore) {
 		t.Fatalf("the policy path's ORE probe: %v", err)
 	}

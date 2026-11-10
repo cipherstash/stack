@@ -4,7 +4,7 @@
 //! (no `ord` domain).
 //! Definitions for [`DomainFamily`] and [`Domain`] live in `lib.rs`.
 
-use crate::{Domain, DomainFamily};
+use crate::{Domain, DomainFamily, Term};
 
 impl Domain {
     /// The full (unqualified) domain name for this domain under `family_name`:
@@ -166,6 +166,79 @@ impl DomainFamily {
     pub fn is_scalar(&self) -> bool {
         self.domains.iter().all(|d| d.is_scalar())
     }
+
+    /// The ordering terms this family stores, each once, in catalog order:
+    /// one range query domain per entry (ADR-0009 decision 8, one query
+    /// domain per (family, term)). `[Ore, Ope]` for every ordered family
+    /// today (`_ord_ore` precedes `_ord`), empty for a family with no
+    /// ordering domain (`boolean`, `json`).
+    ///
+    /// Range domains are an EQL v4 surface: `eql-codegen` renders them into
+    /// the v4 bundle only. The catalog names them; it does not decide which
+    /// bundle carries them.
+    pub fn range_terms(&self) -> Vec<Term> {
+        let mut out: Vec<Term> = Vec::new();
+        for d in self.domains.iter().filter(|d| d.is_scalar()) {
+            for &t in d.terms {
+                if t.range_suffix().is_some() && !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+        }
+        out
+    }
+
+    /// The unqualified name of this family's range query domain for the
+    /// ordering term `term`: `query_integer_range_ore`. Lives beside the
+    /// family's single-bound query domains (`query_integer_ord_ore`), in the
+    /// versioned schema.
+    ///
+    /// # Panics
+    ///
+    /// For a term with no ordering ([`Term::range_suffix`] is `None`): no
+    /// range domain carries it.
+    pub fn range_query_name(&self, term: Term) -> String {
+        format!("query_{}_{}", self.name, range_suffix(term))
+    }
+
+    /// The PascalCase binding identifier of the range query domain for
+    /// `term`: `IntegerRangeOreQuery`, the query-twin convention
+    /// (`IntegerOrdOreQuery`) applied to the range domain.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::range_query_name`].
+    pub fn range_struct_ident(&self, term: Term) -> String {
+        let stem: String = format!("{}_{}", self.name, range_suffix(term))
+            .split('_')
+            .filter(|s| !s.is_empty())
+            .map(capitalize)
+            .collect();
+        format!("{stem}Query")
+    }
+
+    /// The stored scalar domains a range over `term` applies to, in catalog
+    /// order: every one that carries the term. `between(column, range)` has
+    /// one overload per domain listed. For `integer` and `Ope`, both `_ord`
+    /// and `_ord_ope`; for `text` and `Ore`, `_ord_ore` and `_search_ore`.
+    ///
+    /// Scalar domains only, deliberately for now: a JSON document's entry
+    /// (`json_entry`) carries the OPE term and compares against
+    /// `query_<T>_ord` with `<` and `>`, but has no `between` overload, so a
+    /// range over a JSON path is still two predicates. It waits for EQL v4's
+    /// SteVec bindings, since nothing produces a v4 document yet.
+    pub fn range_columns(&self, term: Term) -> Vec<&'static Domain> {
+        self.domains
+            .iter()
+            .filter(|d| d.is_scalar() && d.terms.contains(&term))
+            .collect()
+    }
+}
+
+/// [`Term::range_suffix`], refusing a term that has none.
+fn range_suffix(term: Term) -> &'static str {
+    term.range_suffix()
+        .unwrap_or_else(|| panic!("{term:?} has no ordering, so no range query domain"))
 }
 
 #[cfg(test)]
@@ -264,6 +337,73 @@ mod tests {
         assert_eq!(JSON.domains[2].rust_struct_name(JSON.name), "SteVecQuery");
         // The bare storage domain's struct is the flat scalar `Json`.
         assert_eq!(JSON.domains[3].rust_struct_name(JSON.name), "Json");
+    }
+
+    #[test]
+    fn every_ordered_family_has_one_range_domain_per_ordering_term() {
+        use crate::{BOOLEAN, CATALOG, JSON, TEXT};
+        let integer = CATALOG.iter().find(|f| f.name == "integer").unwrap();
+        assert_eq!(integer.range_terms(), [Term::Ore, Term::Ope]);
+        assert_eq!(TEXT.range_terms(), [Term::Ore, Term::Ope]);
+        assert!(BOOLEAN.range_terms().is_empty());
+        assert!(JSON.range_terms().is_empty());
+        // Every family with an ordering domain has both, and no family has
+        // a range term it does not store.
+        for f in CATALOG {
+            let stored: Vec<Term> = f
+                .domains
+                .iter()
+                .flat_map(|d| d.terms.iter().copied())
+                .filter(|t| t.provides_ordering())
+                .collect();
+            for t in f.range_terms() {
+                assert!(stored.contains(&t), "{}: {t:?}", f.name);
+                assert!(!f.range_columns(t).is_empty(), "{}: {t:?}", f.name);
+            }
+            assert_eq!(f.range_terms().is_empty(), stored.is_empty(), "{}", f.name);
+        }
+    }
+
+    #[test]
+    fn range_domains_follow_the_query_twin_naming() {
+        use crate::TEXT;
+        let integer = crate::CATALOG.iter().find(|f| f.name == "integer").unwrap();
+        assert_eq!(
+            integer.range_query_name(Term::Ore),
+            "query_integer_range_ore"
+        );
+        assert_eq!(
+            integer.range_query_name(Term::Ope),
+            "query_integer_range_ope"
+        );
+        assert_eq!(
+            integer.range_struct_ident(Term::Ore),
+            "IntegerRangeOreQuery"
+        );
+        assert_eq!(TEXT.range_struct_ident(Term::Ope), "TextRangeOpeQuery");
+    }
+
+    #[test]
+    fn a_range_applies_to_every_stored_domain_carrying_its_term() {
+        use crate::TEXT;
+        let names = |terms: Vec<&Domain>| terms.iter().map(|d| d.name).collect::<Vec<_>>();
+        let integer = crate::CATALOG.iter().find(|f| f.name == "integer").unwrap();
+        assert_eq!(names(integer.range_columns(Term::Ore)), ["ord_ore"]);
+        assert_eq!(names(integer.range_columns(Term::Ope)), ["ord", "ord_ope"]);
+        assert_eq!(
+            names(TEXT.range_columns(Term::Ore)),
+            ["ord_ore", "search_ore"]
+        );
+        assert_eq!(
+            names(TEXT.range_columns(Term::Ope)),
+            ["ord", "ord_ope", "search"]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "has no ordering")]
+    fn a_term_with_no_ordering_has_no_range_domain() {
+        crate::TEXT.range_query_name(Term::Hm);
     }
 
     #[test]

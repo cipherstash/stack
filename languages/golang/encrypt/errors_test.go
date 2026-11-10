@@ -46,7 +46,7 @@ func TestEachKindCarriesItsDiagnostic(t *testing.T) {
 			return err
 		}, encrypt.ErrAuthentication, "stack_encrypt::aead"},
 		{"match text with no token", func() error {
-			_, err := testusers.Fields.Email.Match(ctx, cipher, "")
+			_, err := testusers.Fields.Email.Matches(ctx, cipher, "")
 			return err
 		}, encrypt.ErrTerm, "stack_encrypt::empty_term_text"},
 		{"a ciphertext that is not a sealed value", func() error {
