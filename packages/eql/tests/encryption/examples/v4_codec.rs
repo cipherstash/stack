@@ -53,7 +53,9 @@ use eql_bindings::v4::double::{DoubleOrdOre, DoubleOrdOreQuery};
 use eql_bindings::v4::integer::{
     IntegerOrdOpe, IntegerOrdOpeQuery, IntegerOrdOre, IntegerOrdOreQuery,
 };
-use eql_bindings::v4::text::{TextEq, TextEqQuery, TextMatch, TextMatchQuery};
+use eql_bindings::v4::text::{
+    TextEq, TextEqQuery, TextMatch, TextMatchQuery, TextOrdOre, TextOrdOreQuery,
+};
 use eql_bindings::Identifier;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -143,6 +145,7 @@ struct Stored<T> {
 enum Encrypt {
     TextEq(Legacy<String>),
     TextMatch(Legacy<String>),
+    TextOrdOre(Legacy<String>),
     IntegerOrdOre(Legacy<i32>),
     IntegerOrdOpe(Legacy<i32>),
     DoubleOrdOre(Legacy<f64>),
@@ -154,6 +157,7 @@ enum Encrypt {
 enum Decrypt {
     TextEq(Stored<TextEq>),
     TextMatch(Stored<TextMatch>),
+    TextOrdOre(Stored<TextOrdOre>),
     IntegerOrdOre(Stored<IntegerOrdOre>),
     IntegerOrdOpe(Stored<IntegerOrdOpe>),
     DoubleOrdOre(Stored<DoubleOrdOre>),
@@ -167,6 +171,7 @@ enum Decrypt {
 enum Query {
     TextEq(Legacy<String>),
     TextMatch(Legacy<String>),
+    TextOrdOre(Legacy<String>),
     IntegerOrdOre(Legacy<i32>),
     IntegerOrdOpe(Legacy<i32>),
     DoubleOrdOre(Legacy<f64>),
@@ -274,6 +279,7 @@ fn encrypt_one<'a, K: 'static>(
     match item {
         Encrypt::TextEq(v) => seal::<_, TextEq, _>(v, keyset),
         Encrypt::TextMatch(v) => seal::<_, TextMatch, _>(v, keyset),
+        Encrypt::TextOrdOre(v) => seal::<_, TextOrdOre, _>(v, keyset),
         Encrypt::IntegerOrdOre(v) => seal::<_, IntegerOrdOre, _>(v, keyset),
         Encrypt::IntegerOrdOpe(v) => seal::<_, IntegerOrdOpe, _>(v, keyset),
         Encrypt::DoubleOrdOre(v) => seal::<_, DoubleOrdOre, _>(v, keyset),
@@ -288,6 +294,7 @@ fn query_one<'a, K: 'static>(
     match item {
         Query::TextEq(v) => seal::<_, TextEqQuery, _>(v, keyset),
         Query::TextMatch(v) => seal::<_, TextMatchQuery, _>(v, keyset),
+        Query::TextOrdOre(v) => seal::<_, TextOrdOreQuery, _>(v, keyset),
         Query::IntegerOrdOre(v) => seal::<_, IntegerOrdOreQuery, _>(v, keyset),
         Query::IntegerOrdOpe(v) => seal::<_, IntegerOrdOpeQuery, _>(v, keyset),
         Query::DoubleOrdOre(v) => seal::<_, DoubleOrdOreQuery, _>(v, keyset),
@@ -301,6 +308,7 @@ fn decrypt_one<'a, K: 'static>(
     match item {
         Decrypt::TextEq(s) => open::<String, _, _>(s, keyset),
         Decrypt::TextMatch(s) => open::<String, _, _>(s, keyset),
+        Decrypt::TextOrdOre(s) => open::<String, _, _>(s, keyset),
         Decrypt::IntegerOrdOre(s) => open::<i32, _, _>(s, keyset),
         Decrypt::IntegerOrdOpe(s) => open::<i32, _, _>(s, keyset),
         Decrypt::DoubleOrdOre(s) => open::<f64, _, _>(s, keyset),
@@ -477,7 +485,7 @@ mod tests {
 
         fn mixed() -> Vec<(&'static str, Value)> {
             (0..25)
-                .map(|n| match n % 6 {
+                .map(|n| match n % 7 {
                     0 => ("TextEq", json!(format!("value-{n}"))),
                     1 => ("TextMatch", json!(format!("some words {n}"))),
                     2 => ("IntegerOrdOre", json!(n)),
@@ -485,7 +493,8 @@ mod tests {
                     // A JSON integer reads as a double, as protect-ffi hands
                     // an integral number back.
                     4 => ("DoubleOrdOre", json!(n)),
-                    _ => ("Boolean", json!(n % 2 == 0)),
+                    5 => ("Boolean", json!(n % 2 == 0)),
+                    _ => ("TextOrdOre", json!(format!("name-{n}"))),
                 })
                 .collect()
         }
@@ -509,7 +518,7 @@ mod tests {
             assert_eq!(
                 calls.lock().unwrap().generate.len(),
                 1,
-                "25 values of six types should be one generate call"
+                "25 values of seven types should be one generate call"
             );
 
             let decrypt: Vec<Value> = response["encrypt"]
@@ -528,7 +537,7 @@ mod tests {
             assert_eq!(
                 calls.lock().unwrap().retrieve.len(),
                 1,
-                "25 values of six types should be one retrieve call"
+                "25 values of seven types should be one retrieve call"
             );
 
             let decrypted = response["decrypt"].as_array().unwrap();

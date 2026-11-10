@@ -37,10 +37,12 @@ export const codecPath = codecPathFor(process.env)
  */
 export type V4Type =
   | 'Boolean'
+  | 'DoubleOrdOre'
   | 'IntegerOrdOpe'
   | 'IntegerOrdOre'
   | 'TextEq'
   | 'TextMatch'
+  | 'TextOrdOre'
 
 export type Plaintext = string | number | boolean
 

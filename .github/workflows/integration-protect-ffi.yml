@@ -1,8 +1,9 @@
 name: Integration — protect-ffi (native + WASM)
 
-# The `languages/typescript/packages/protect-ffi/integration-tests/` suite: 21 files of live
+# The `languages/typescript/packages/protect-ffi/integration-tests/` suite: 22 files of live
 # encrypt / decrypt / lock-context / keyset / JSON-SteVec / Postgres /
-# WASM-round-trip coverage against real ZeroKMS and a real Postgres.
+# EQL v2 -> v4 and v3 -> v4 migration / WASM-round-trip coverage against real
+# ZeroKMS and a real Postgres.
 #
 # WHY THIS EXISTS: upstream (`cipherstash/protectjs-ffi`) ran this suite on
 # EVERY pull request from `.github/workflows/test.yml` — `mise setup`, then
