@@ -1293,13 +1293,13 @@ async fn a_one_value_typed_plan_is_the_plaintext_records_bytes() {
     assert_eq!(hm, derived.hm, "the same equality term");
 
     // Each ciphertext opens through the other's reader.
-    let opened: String = stack_encrypt::target::legacy::DecryptFrom::decrypt_from_with_context(
-        DerivedEmail { c, hm: hm.clone() },
-        &cipher,
-        CallerContext::from(nonempty!("users").with("email")),
-    )
-    .await
-    .unwrap();
+    let opened: String = cipher
+        .decrypt_as(
+            DerivedEmail { c, hm: hm.clone() },
+            CallerContext::from(nonempty!("users").with("email")),
+        )
+        .await
+        .unwrap();
     assert_eq!(opened, email);
     let back = cipher
         .open((derived.c, derived.hm))

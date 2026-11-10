@@ -5,7 +5,6 @@
 //! accepts. `tests/ui/aead_context_with_term.rs` pins the record such a
 //! context cannot declare.
 use stack_encrypt::target::{AeadContext};
-use stack_encrypt::target::legacy::{EncryptInto, DecryptFrom};
 use stack_encrypt::{ContextPiece, DecryptInto, EncryptFrom, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
@@ -45,17 +44,17 @@ fn tenant() -> NonEmpty<Tenant> {
 }
 
 async fn canonical(cipher: &KeysetCipher<'_, FakeDataKeySource>, value: &String) {
-    let leaf: StackCipherText = value.encrypt_into_with_context(cipher, tenant()).await.unwrap();
-    let _: String = leaf.decrypt_into(cipher, tenant()).await.unwrap();
+    let leaf: StackCipherText = cipher.encrypt_as(value, tenant().into()).await.unwrap();
+    let _: String = cipher.decrypt_as(leaf, tenant().into()).await.unwrap();
 }
 
 async fn derived(cipher: &KeysetCipher<'_, FakeDataKeySource>, value: &String) {
-    let record: Sealed = value.encrypt_into_with_context(cipher, tenant()).await.unwrap();
-    let _: String = record.decrypt_into(cipher, tenant()).await.unwrap();
-    let record: Shadowed = value.encrypt_into_with_context(cipher, tenant()).await.unwrap();
-    let _ = String::decrypt_from_with_context(record, cipher, tenant()).await.unwrap();
-    let column: Vec<Sealed> = vec![value.clone()].encrypt_into_with_context(cipher, tenant()).await.unwrap();
-    let _: Vec<String> = column.decrypt_into(cipher, tenant()).await.unwrap();
+    let record: Sealed = cipher.encrypt_as(value, tenant().into()).await.unwrap();
+    let _: String = cipher.decrypt_as(record, tenant().into()).await.unwrap();
+    let record: Shadowed = cipher.encrypt_as(value, tenant().into()).await.unwrap();
+    let _ = cipher.decrypt_as::<String, _>(record, tenant().into()).await.unwrap();
+    let column: Vec<Sealed> = cipher.encrypt_as(&vec![value.clone()], tenant().into()).await.unwrap();
+    let _: Vec<String> = cipher.decrypt_as(column, tenant().into()).await.unwrap();
 }
 
 fn main() {

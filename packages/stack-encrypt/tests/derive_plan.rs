@@ -14,7 +14,6 @@ use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op;
 use stack_encrypt::plan::{pick, FieldValues};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
-use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::target::{
     AeadContext, CallerContext, DeclaredContext, DecryptField, Decryptable, Decryption, Encrypted,
     Encryption, IndexSpec,
@@ -88,10 +87,7 @@ async fn a_plaintext_record_writes_what_the_old_chain_wrote() {
             c: legacy.c,
             hm: legacy.hm,
         };
-        let opened: String = crossed
-            .decrypt_into(&cipher, context.clone())
-            .await
-            .unwrap();
+        let opened: String = cipher.decrypt_as(crossed, context.clone()).await.unwrap();
         assert_eq!(opened, value);
         let opened: String = keyset
             .decrypt_as(derived.c, AeadContext::from(context))
@@ -158,18 +154,9 @@ async fn five_outputs_nest_and_each_is_derived_under_the_one_context() {
     let keyset = cipher.default_keyset();
     let context = || nonempty!("readings");
 
-    let wide: Wide = 9u32
-        .encrypt_into_with_context(&keyset, context())
-        .await
-        .unwrap();
-    let hm: EqualityTerm = 9u32
-        .encrypt_into_with_context(&keyset, context())
-        .await
-        .unwrap();
-    let ob: OreTerm<u32> = 9u32
-        .encrypt_into_with_context(&keyset, context())
-        .await
-        .unwrap();
+    let wide: Wide = keyset.encrypt_as(&9u32, context().into()).await.unwrap();
+    let hm: EqualityTerm = keyset.encrypt_as(&9u32, context().into()).await.unwrap();
+    let ob: OreTerm<u32> = keyset.encrypt_as(&9u32, context().into()).await.unwrap();
     assert_eq!(wide.hm, hm);
     assert_eq!(wide.ob, ob);
     assert_eq!(
@@ -177,15 +164,18 @@ async fn five_outputs_nest_and_each_is_derived_under_the_one_context() {
         2,
         "equality and ORE: a record declares one order index"
     );
-    let shadow: u32 = wide.shadow.decrypt_into(&cipher, context()).await.unwrap();
-    assert_eq!(shadow, 9);
-    let twin: u32 = wide.twin.decrypt_into(&cipher, context()).await.unwrap();
-    assert_eq!(twin, 9);
-    let wide: Wide = 9u32
-        .encrypt_into_with_context(&keyset, context())
+    let shadow: u32 = cipher
+        .decrypt_as(wide.shadow, context().into())
         .await
         .unwrap();
-    let opened: u32 = wide.decrypt_into(&cipher, context()).await.unwrap();
+    assert_eq!(shadow, 9);
+    let twin: u32 = cipher
+        .decrypt_as(wide.twin, context().into())
+        .await
+        .unwrap();
+    assert_eq!(twin, 9);
+    let wide: Wide = keyset.encrypt_as(&9u32, context().into()).await.unwrap();
+    let opened: u32 = cipher.decrypt_as(wide, context().into()).await.unwrap();
     assert_eq!(opened, 9);
 }
 
@@ -206,9 +196,8 @@ struct TwoEqualities {
 async fn two_outputs_declaring_one_index_are_refused_before_any_request() {
     let (cipher, generates, _) = counting_cipher().await;
     let keyset = cipher.default_keyset();
-    let result: Result<TwoEqualities, _> = "x"
-        .to_string()
-        .encrypt_into_with_context(&keyset, nonempty!("x"))
+    let result: Result<TwoEqualities, _> = keyset
+        .encrypt_as(&"x".to_string(), nonempty!("x").into())
         .await;
     assert!(
         matches!(result, Err(Error::Plan(PlanError::DuplicateIndex { .. }))),
@@ -506,9 +495,7 @@ async fn a_struct_record_writes_what_the_old_chain_wrote() {
             age: legacy.age,
             v: 3,
         };
-        let opened = User::decrypt_from_with_context(crossed, &cipher, extend)
-            .await
-            .unwrap();
+        let opened = cipher.decrypt_as::<User, _>(crossed, extend).await.unwrap();
         assert_eq!(opened, user());
     }
 }
@@ -649,7 +636,8 @@ async fn a_struct_record_and_its_plan_written_by_hand_open_each_other() {
             age: written.take("age").unwrap(),
             v: 3,
         };
-        let opened = User::decrypt_from_with_context(crossed, &cipher, extend.clone())
+        let opened = cipher
+            .decrypt_as::<User, _>(crossed, extend.clone())
             .await
             .unwrap();
         assert_eq!(opened, user());
@@ -697,16 +685,10 @@ async fn the_one_decryptable_output_opens_from_the_nested_tail() {
     let value = "alice".to_string();
 
     // Through the derived record.
-    let record: CiphertextLast = value
-        .encrypt_into_with_context(&keyset, context())
-        .await
-        .unwrap();
-    let hm: EqualityTerm = value
-        .encrypt_into_with_context(&keyset, context())
-        .await
-        .unwrap();
+    let record: CiphertextLast = keyset.encrypt_as(&value, context().into()).await.unwrap();
+    let hm: EqualityTerm = keyset.encrypt_as(&value, context().into()).await.unwrap();
     assert_eq!(record.hm, hm);
-    let opened: String = record.decrypt_into(&cipher, context()).await.unwrap();
+    let opened: String = cipher.decrypt_as(record, context().into()).await.unwrap();
     assert_eq!(opened, value);
 
     // Through the plan, whose output is the nested tuple and which opens it

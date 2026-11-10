@@ -1071,7 +1071,6 @@ impl DecryptSource<i32> for FixedInteger {
 #[tokio::test]
 async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
     use stack_encrypt::plan::pick;
-    use stack_encrypt::target::legacy::EncryptInto as _;
     use stack_encrypt::{EncryptFrom, Plan};
 
     #[derive(Clone)]
@@ -1095,7 +1094,10 @@ async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
         user: alice(),
         age: 34,
     };
-    let encrypted: EncryptedProfile = profile.encrypt_into(&keyset).await.unwrap();
+    let encrypted: EncryptedProfile = keyset
+        .encrypt_as(&profile, Default::default())
+        .await
+        .unwrap();
     assert_eq!(encrypted.user.id, 42);
     assert_eq!(
         sent.lock().unwrap().generated(),

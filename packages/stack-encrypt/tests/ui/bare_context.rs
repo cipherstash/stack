@@ -7,7 +7,6 @@
 //! skipped by passing the raw value.
 use stack_encrypt::sem::EqualityTerm;
 
-use stack_encrypt::target::legacy::{EncryptInto, DecryptFrom};
 use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
@@ -29,16 +28,13 @@ struct EncryptedAge {
 }
 
 async fn encrypt(cipher: &KeysetCipher<'_, FakeDataKeySource>, user: User) {
-    let _term: EqualityTerm = "alice"
-        .encrypt_into_with_context(cipher, "users/email")
+    let _term: EqualityTerm = cipher.encrypt_as(&"alice", "users/email".into())
         .await
         .unwrap();
-    let _row: EncryptedUser = user
-        .encrypt_into_with_context(cipher, "tenant/acme")
+    let _row: EncryptedUser = cipher.encrypt_as(&user, "tenant/acme".into())
         .await
         .unwrap();
-    let _record: EncryptedAge = 42u32
-        .encrypt_into_with_context(cipher, "users/age")
+    let _record: EncryptedAge = cipher.encrypt_as(&42u32, "users/age".into())
         .await
         .unwrap();
 }
@@ -48,10 +44,10 @@ async fn decrypt(
     row: EncryptedUser,
     sealed: StackCipherText,
 ) {
-    let _user = User::decrypt_from_with_context(row, cipher, "tenant/acme")
+    let _user = cipher.decrypt_as::<User, _>(row, "tenant/acme".into())
         .await
         .unwrap();
-    let _age: u32 = sealed.decrypt_into(cipher, "users/age").await.unwrap();
+    let _age: u32 = cipher.decrypt_as(sealed, "users/age".into()).await.unwrap();
 }
 
 fn main() {}

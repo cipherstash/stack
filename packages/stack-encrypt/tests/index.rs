@@ -15,7 +15,6 @@ use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{
     DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm, Tokenizer,
 };
-use stack_encrypt::target::legacy::DecryptFrom;
 use stack_encrypt::target::{
     ciphertext, equality, indexed, matching, ope, ore, passthrough, AeadContext, Borrowed,
     CallerContext, Decryption, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Match,
@@ -163,18 +162,21 @@ mod given_equality_and_ore_over_a_string {
             hm: eq,
             ob: ore,
         };
-        let opened: String = as_derived
-            .decrypt_into(&cipher, caller())
+        let opened: String = cipher
+            .decrypt_as(as_derived, caller())
             .await
             .expect("the derive's reader opens indexed's ciphertext");
         assert_eq!(opened, email);
-        let opened: String = Encrypted {
-            ciphertext: derived.c,
-            terms: (),
-        }
-        .decrypt_into(&cipher, aead())
-        .await
-        .expect("Encrypted's reader opens the derive's ciphertext");
+        let opened: String = cipher
+            .decrypt_as(
+                Encrypted {
+                    ciphertext: derived.c,
+                    terms: (),
+                },
+                aead(),
+            )
+            .await
+            .expect("Encrypted's reader opens the derive's ciphertext");
         assert_eq!(opened, email);
         let opened: String = keyset
             .decrypt_as(hand_c, aead())
@@ -211,7 +213,7 @@ mod given_equality_and_ore_over_a_string {
             owned.terms, borrowed.terms,
             "the mode does not change a term"
         );
-        let opened: String = owned.decrypt_into(&cipher, aead()).await.expect("open");
+        let opened: String = cipher.decrypt_as(owned, aead()).await.expect("open");
         assert_eq!(opened, email);
     }
 }
@@ -388,7 +390,7 @@ mod given_a_set_of_indexes {
             .unwrap();
         let (m, o, p, e) = four.terms;
         assert_eq!((m, o, p, e), (words, ore_t, ope_t, eq));
-        let opened: String = four.ciphertext.decrypt_into(&cipher, aead()).await.unwrap();
+        let opened: String = cipher.decrypt_as(four.ciphertext, aead()).await.unwrap();
         assert_eq!(opened, text);
     }
 
@@ -648,18 +650,18 @@ mod given_encrypted_terms_as_a_target {
             "the typed and data spellings agree"
         );
 
-        let opened: S = Encrypted {
-            ciphertext: typed.ciphertext,
-            terms: (),
-        }
-        .decrypt_into(&cipher, aead())
-        .await
-        .expect("the typed ciphertext opens");
-        assert_eq!(opened, value);
-        let opened: S = data
-            .decrypt_into(&cipher, aead())
+        let opened: S = cipher
+            .decrypt_as(
+                Encrypted {
+                    ciphertext: typed.ciphertext,
+                    terms: (),
+                },
+                aead(),
+            )
             .await
-            .expect("data opens");
+            .expect("the typed ciphertext opens");
+        assert_eq!(opened, value);
+        let opened: S = cipher.decrypt_as(data, aead()).await.expect("data opens");
         assert_eq!(opened, value);
     }
 
@@ -728,10 +730,7 @@ mod given_encrypted_terms_as_a_target {
         assert_eq!(typed.terms, (hand_eq, hand_match));
         let opened: String = keyset.decrypt_as(hand_c, aead()).await.expect("hand opens");
         assert_eq!(opened, email);
-        let opened: String = typed
-            .decrypt_into(&cipher, aead())
-            .await
-            .expect("typed opens");
+        let opened: String = cipher.decrypt_as(typed, aead()).await.expect("typed opens");
         assert_eq!(opened, email);
     }
 
@@ -765,12 +764,10 @@ mod given_encrypted_terms_as_a_target {
 async fn a_boolean_has_no_equality_term() {
     use stack_encrypt::sem::TermError;
 
-    use stack_encrypt::target::legacy::EncryptInto;
-
     let (cipher, generates, _) = counting_cipher().await;
     let keyset = cipher.default_keyset();
-    let equality_term: Result<EqualityTerm, _> = true
-        .encrypt_into_with_context(&keyset, nonempty!("users/flag"))
+    let equality_term: Result<EqualityTerm, _> = keyset
+        .encrypt_as(&true, nonempty!("users/flag").into())
         .await;
     assert!(matches!(
         equality_term,

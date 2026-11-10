@@ -306,11 +306,10 @@ impl<P: stack_encrypt::Decrypt + Send + 'static> DecryptInto<P> for FixedLeaf {
 
 #[tokio::test]
 async fn unit_context_target_supplies_its_own_context() {
-    use stack_encrypt::target::legacy::EncryptInto;
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();
     let text = String::from("fixed");
-    let stored: FixedLeaf = text.encrypt_into(&keyset).await.unwrap();
+    let stored: FixedLeaf = keyset.encrypt_as(&text, ()).await.unwrap();
     let opened: String = cipher
         .decrypt(
             CipherText::Single(SealedValue::from_bytes(&stored.0 .0).unwrap()),

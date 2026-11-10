@@ -1605,7 +1605,6 @@ mod json_index {
     use stack_encrypt::json::{
         JsonDocument, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree,
     };
-    use stack_encrypt::target::legacy::DecryptFrom;
     use stack_encrypt::target::{json_document, AeadContext, Borrowed, CallerContext};
     use stack_encrypt::{op, Plan, StackCipher};
     use stack_kms::{
@@ -1740,7 +1739,7 @@ mod json_index {
         for sealed_root in [true, false] {
             let doc = sealed(&rt, &cipher, &value, sealed_root);
             let opened: Value = watched(&format!("open (sealed_root: {sealed_root})"), || {
-                rt.block_on(async { doc.clone().decrypt_into(&cipher, aead()).await.unwrap() })
+                rt.block_on(async { cipher.decrypt_as(doc.clone(), aead()).await.unwrap() })
             });
             assert_eq!(opened, value);
         }

@@ -3,7 +3,6 @@
 //! `tests/ui/bare_context.rs` pin the lines that must not.
 use stack_encrypt::sem::EqualityTerm;
 
-use stack_encrypt::target::legacy::{EncryptInto, DecryptFrom};
 use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, KeysetCipher, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
@@ -22,16 +21,14 @@ struct Foo {
 
 async fn foo(cipher: &Cipher<'_>, column: String) -> Result<(), stack_encrypt::Error> {
     // A literal, a runtime value, a bare integer.
-    let f: Foo = 42u32.encrypt_into_with_context(cipher, nonempty!("users/age")).await?;
-    let _: u32 = f.decrypt_into(cipher, nonempty!("users/age")).await?;
-    let f: Foo = 42u32
-        .encrypt_into_with_context(cipher, NonEmpty::new(column.clone()).expect("non-empty"))
+    let f: Foo = cipher.encrypt_as(&42u32, nonempty!("users/age").into()).await?;
+    let _: u32 = cipher.decrypt_as(f, nonempty!("users/age").into()).await?;
+    let f: Foo = cipher.encrypt_as(&42u32, NonEmpty::new(column.clone()).expect("non-empty").into())
         .await?;
-    let _: u32 = f
-        .decrypt_into(cipher, NonEmpty::new(column).expect("non-empty"))
+    let _: u32 = cipher.decrypt_as(f, NonEmpty::new(column).expect("non-empty").into())
         .await?;
-    let f: Foo = 42u32.encrypt_into_with_context(cipher, 7u64).await?;
-    let _: u32 = f.decrypt_into(cipher, NonEmpty::from(7u64)).await?;
+    let f: Foo = cipher.encrypt_as(&42u32, 7u64.into()).await?;
+    let _: u32 = cipher.decrypt_as(f, NonEmpty::from(7u64).into()).await?;
     Ok(())
 }
 
@@ -51,14 +48,13 @@ struct EncryptedUser {
 
 async fn user(cipher: &Cipher<'_>, user: User, id: u64) -> Result<(), stack_encrypt::Error> {
     // "users/age", "users/email".
-    let r: EncryptedUser = user.encrypt_into(cipher).await?;
-    let user = User::decrypt_from(r, cipher).await?;
+    let r: EncryptedUser = cipher.encrypt_as(&user, Default::default()).await?;
+    let user = cipher.decrypt_as::<User, _>(r, Default::default()).await?;
     // ("users/age", id), ("users/email", id).
-    let r: EncryptedUser = user.encrypt_into_with_context(cipher, id).await?;
-    let _: EqualityTerm = 42u32
-        .encrypt_into_with_context(cipher, nonempty!("users/age").with(id))
+    let r: EncryptedUser = cipher.encrypt_as(&user, id.into()).await?;
+    let _: EqualityTerm = cipher.encrypt_as(&42u32, nonempty!("users/age").with(id).into())
         .await?;
-    let _ = User::decrypt_from_with_context(r, cipher, id).await?;
+    let _ = cipher.decrypt_as::<User, _>(r, id.into()).await?;
     Ok(())
 }
 
