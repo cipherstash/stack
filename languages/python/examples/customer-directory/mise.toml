@@ -27,6 +27,10 @@ MATURIN_PEP517_ARGS="--profile dev" uv sync --locked --reinstall-package stacken
 description = "Run the service on http://127.0.0.1:8000"
 run = "uv run --locked --no-sync uvicorn app:app --reload"
 
+[tasks."dev:sqlalchemy"]
+description = "Run the SQLAlchemy version of the service on http://127.0.0.1:8001"
+run = "uv run --locked --no-sync uvicorn app_sqlalchemy:app --reload --port 8001"
+
 [tasks.test]
 description = "Run the live tests. They need real credentials and `mise run setup` first"
 run = "uv run --locked --no-sync pytest"

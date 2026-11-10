@@ -44,9 +44,19 @@ curl 'http://127.0.0.1:8000/customers?limit=10'
 
 The search is a `POST` so that the email stays out of URLs and access logs.
 
+## The SQLAlchemy version
+
+`app_sqlalchemy.py` is the same service with the model declared in SQLAlchemy. It uses the same table, so the two apps share rows. You can run both at the same time.
+
+```sh
+mise run dev:sqlalchemy   # http://127.0.0.1:8001
+```
+
+A SQLAlchemy object contains plaintext, and the columns must receive ciphertext. So the app calls `encrypt` before an `INSERT` and `decrypt` after a `SELECT`. It does not use `Session`.
+
 ## Run the tests
 
-The tests use the real ZeroKMS service and the example's PostgreSQL. They empty the `customers` table. CI does not run them.
+The tests use the real ZeroKMS service and the example's PostgreSQL. They run against both apps. They empty the `customers` table. CI does not run them.
 
 ```sh
 mise run test
