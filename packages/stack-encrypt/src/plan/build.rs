@@ -1425,31 +1425,6 @@ impl<S: 'static, K: 'static> Plan<S, K> {
         self.lowering(base).contexts()
     }
 
-    /// The shapes behind [`contexts_under`](Self::contexts_under), with the
-    /// extension known, for a caller that places more leaves among them.
-    #[cfg(feature = "dynamic")]
-    pub(crate) fn shapes_under(&self, extension: &DeclaredContext) -> crate::contexts::Shapes {
-        let base = match &self.inner.source {
-            Source::Plan(label) => Base::Label(label.clone()),
-            Source::Field(field) => Base::Field(Arc::clone(&field.of_value)),
-            Source::Call => Base::Call,
-        };
-        crate::contexts::under_declared(self.lowering(base).shapes(), extension)
-    }
-
-    /// The shapes of this plan's leaves, in terms of the extension a run
-    /// adds. Crate-internal: a data plan's record target runs them under
-    /// the plan's own context and then the caller's.
-    #[cfg(feature = "dynamic")]
-    pub(crate) fn shapes(&self) -> crate::contexts::Shapes {
-        let base = match &self.inner.source {
-            Source::Plan(label) => Base::Label(label.clone()),
-            Source::Field(field) => Base::Field(Arc::clone(&field.of_value)),
-            Source::Call => Base::Call,
-        };
-        self.lowering(base).shapes()
-    }
-
     /// [`encryption`](Self::encryption), once the base context is known.
     fn lowering<'s>(&self, base: Base<S>) -> Encryption<'s, S, FieldValues, K, DeclaredContext> {
         let names = Arc::clone(&self.inner.names);
@@ -1673,7 +1648,7 @@ fn keys_nothing(kind: FieldKind) -> bool {
     matches!(kind, FieldKind::Passthrough | FieldKind::ContextField)
 }
 
-fn field_label(field: &str, source: LabelError) -> Error {
+pub(crate) fn field_label(field: &str, source: LabelError) -> Error {
     PlanError::FieldLabel {
         field: field.to_owned(),
         source,

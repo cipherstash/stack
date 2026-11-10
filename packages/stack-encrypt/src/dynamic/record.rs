@@ -1,17 +1,19 @@
-//! Records from data: a plan spelled as a value, lowered into the plan
-//! builder.
+//! Records from data: a plan spelled as a value, lowered to the
+//! combinators.
 //!
 //! A binding has no types to name, so it declares a record as data: per
 //! field, a context, what to produce and, optionally, what type the values
-//! are. This module reads that declaration ([`plan`]) and *lowers* it into
-//! the same [`Plan`](crate::Plan) a Rust chain writes and the derive emits:
-//! `Plan::context(c).fields()`, then `encrypt`, `encrypt_index`, `index` or
-//! `passthrough` per field. Encrypting runs that plan's description through
+//! are. This module reads that declaration ([`plan`]) and *lowers* it to
+//! the combinators the derive's generated code is made of
+//! (`super::planned::compose`): `ciphertext`, `indexed`, the indexes'
+//! `operations` or `passthrough` per field, each under the field's label.
+//! Encrypting runs that description through
 //! [`KeysetCipher::run`](crate::KeysetCipher::run); decrypting runs its
-//! opener. There is no second executor here: every field's context, every
-//! key request and the one batch they settle in are the engine's, so a
-//! record written from Go and one written from Rust under the same
-//! declaration are the same bytes because they ran the same code (ADR-0007).
+//! opening (`super::planned::opening`). There is no second executor here:
+//! every field's context, every key request and the one batch they settle
+//! in are the engine's, so a record written from Go and one written from
+//! Rust under the same declaration are the same bytes because they ran the
+//! same code.
 //!
 //! What stays dynamic is one step: a field whose type is known only when its
 //! value arrives dispatches to the typed term operation then, through
@@ -34,8 +36,8 @@
 //!
 //! # A plan whose context is a field of the record
 //!
-//! The plan builder's third context source, `context_field`, has a data
-//! form too: a plan-level key, `"context_field": "<field name>"`, beside
+//! The typed plan builder's third context source, `context_field`, has a
+//! data form too: a plan-level key, `"context_field": "<field name>"`, beside
 //! the field specs. The named field's value in each record is then the
 //! context every other field is sealed under — a tenant label such as
 //! `"tenants/acme"`, which must parse as a plain [`Label`] — and the field
@@ -153,11 +155,12 @@ use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{DecodeError, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
 
+use super::planned::{check_stored, check_values, compose, opening, opening_base};
 use super::{
     not_admitted, Error, NoTargets, Reason, Scope, TargetError, TargetResolver, TermBytes,
 };
-use crate::plan::{FieldValues, FieldsBuilder, Opens, Runs};
-use crate::target::{CallerContext, DeclaredContext, Encrypted, IndexSpec};
+use crate::plan::FieldValues;
+use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
 use crate::{
     CipherText, ContextPiece, KeysetCipher, Label, NonEmpty, PassthroughFrame, Pending,
     StackCipherText,
@@ -209,10 +212,10 @@ impl Output {
     }
 }
 
-/// The verb a field's outputs lower to: one of the plan builder's four, or
-/// a target, which the resolver runs beside the lowered plan.
+/// The verb a field's outputs lower to: one of the four combinators, or a
+/// target, which the resolver runs beside the lowered fields.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Verb {
+pub(super) enum Verb {
     Encrypt,
     EncryptIndex,
     Index,
@@ -495,11 +498,11 @@ impl FieldPlan {
 
     /// Whether the field comes back from [`decrypt`]: sealed and passthrough
     /// fields do, index-only fields do not.
-    fn opens(&self) -> bool {
+    pub(super) fn opens(&self) -> bool {
         self.verb() != Verb::Index
     }
 
-    fn verb(&self) -> Verb {
+    pub(super) fn verb(&self) -> Verb {
         if self.target.is_some() {
             Verb::Target
         } else if self.outputs.contains(&Output::Passthrough) {
@@ -577,7 +580,7 @@ impl FieldPlan {
     }
 
     /// Whether the field is run by the resolver rather than the lowered plan.
-    fn is_target(&self) -> bool {
+    pub(super) fn is_target(&self) -> bool {
         self.target.is_some()
     }
 
@@ -644,7 +647,7 @@ fn field_context(
     })
 }
 
-/// A refusal of the plan builder or the engine's own check, as the field it
+/// A refusal of the lowering or the engine's own check, as the field it
 /// names and the nearest [`Reason`]. Matched exhaustively, so a new
 /// [`PlanError`](crate::PlanError) says here which reason it reads as; an
 /// engine failure that is not a plan refusal is [`Reason::Refused`].
@@ -685,8 +688,8 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
 /// whole that no single [`FieldPlan`] can carry: there is at least one
 /// field, no two fields share a name, every field's label sits under the
 /// one plan context (or, under a context field, is its identity alone) and
-/// carries the one extension, and the whole lowers to a
-/// [`Plan`](crate::Plan) that builds. Both the parser ([`plan`]) and the
+/// carries the one extension, and no two keyed fields share an identity,
+/// so the whole composes. Both the parser ([`plan`]) and the
 /// manual constructors ([`Plan::new`], [`Plan::with_context_field`]) go
 /// through the one check, so a plan in hand is a plan that holds them,
 /// whichever way it was built.
@@ -705,7 +708,7 @@ pub struct Plan {
 /// sources. The second, the call, has no data form: a binding names the
 /// context in the declaration it sends.
 #[derive(Clone, Debug)]
-enum Context {
+pub(super) enum Context {
     /// The plan's own label, which every field's label extends.
     Label(Label),
     /// The named field of each record, whose value is the context.
@@ -841,7 +844,7 @@ impl Plan {
 
     /// A plan over `fields` that takes its context from the field named
     /// `context_field`: the plan builder's
-    /// [`context_field`](FieldsBuilder::context_field), as data. That
+    /// [`context_field`](crate::plan::FieldsBuilder::context_field), as data. That
     /// field's value in each record is the context every other field is
     /// sealed under, and the field is carried as a passthrough of type
     /// string. Each field's label is its identity alone, a one-segment
@@ -915,7 +918,8 @@ impl Plan {
     }
 
     /// The rules both constructors share: fields named once, one extension,
-    /// every field with a term output typed, and a whole the builder accepts.
+    /// every field with a term output typed, no two keyed fields under one
+    /// identity.
     fn build(context: Context, fields: Vec<FieldPlan>) -> Result<Self, Error> {
         let Some(first) = fields.first() else {
             return Err(Error::bad_plan(Reason::NoFields));
@@ -951,21 +955,16 @@ impl Plan {
                     field: field.name.clone(),
                 });
             }
-            // A target field is keyed under its identity like a sealed one;
-            // the builder checks that rule for the fields it lowers, so the
-            // target fields are checked against every field here.
-            if field.is_target()
-                && fields[..at]
-                    .iter()
-                    .any(|prior| prior.identity() == field.identity())
-            {
-                return Err(refuse(Reason::SharedIdentity));
-            }
-            if !field.is_target()
-                && fields[..at]
-                    .iter()
-                    .any(|prior| prior.is_target() && prior.identity() == field.identity())
-            {
+            // Two fields that key something, sealed or indexed or a target,
+            // cannot share one identity: their data would share one
+            // descriptor. A passthrough keys nothing (the context field is
+            // one), so two may share a label, and one may share a sealed
+            // field's. A target shares with nothing.
+            let keys = |f: &FieldPlan| f.verb() != Verb::Passthrough;
+            if fields[..at].iter().any(|prior| {
+                prior.identity() == field.identity()
+                    && (prior.is_target() || field.is_target() || (keys(prior) && keys(field)))
+            }) {
                 return Err(refuse(Reason::SharedIdentity));
             }
         }
@@ -975,14 +974,6 @@ impl Plan {
             bindings: Vec::new(),
             fields,
         };
-        // The whole-plan rules the builder holds (names once, labels plain,
-        // no shared identity) are checked by building, so a plan in hand
-        // lowers. `()` stands in for the key source: the check does not
-        // depend on it.
-        let _ = plan.lower::<()>().map_err(|error| {
-            let (field, reason) = refusal(error);
-            Error::Plan { field, reason }
-        })?;
         Ok(plan)
     }
 
@@ -1027,9 +1018,13 @@ impl Plan {
     ///
     /// # Errors
     ///
-    /// The plan does not lower: the same errors as running it.
+    /// Unreachable for a plan from [`plan`], [`Plan::new`] or
+    /// [`Plan::with_context_field`]: a parsed plan always composes.
     pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
-        let lowered = self.lower::<()>()?.shapes_under(&self.declared_context());
+        let lowered = crate::contexts::under_declared(
+            compose::<()>(self, &Absent::new())?.shapes(),
+            &self.declared_context(),
+        );
         Ok(crate::contexts::resolve(
             self.placed(lowered),
             crate::contexts::CallerShape::none(),
@@ -1063,46 +1058,9 @@ impl Plan {
         shapes
     }
 
-    /// The fields plan this declaration lowers to, for a cipher over `K`.
-    ///
-    /// Built afresh per call: a built plan is bound to its key source type,
-    /// and a declaration is not. Every field is declared by name, as a
-    /// [`ValueFrame`], read out of the [`FieldValues`] the source is split
-    /// into. A context field is declared through the builder's own
-    /// `context_field`, which carries it as a passthrough and reads it as
-    /// the context; the loop then skips it.
-    fn lower<K: 'static>(&self) -> Result<crate::Plan<FieldValues, K>, crate::Error> {
-        self.lower_without(&Absent::new())
-    }
-
-    /// The fields plan this declaration lowers to without the fields in
-    /// `absent`: what runs a row that leaves them out (a `"null": "sql"`
-    /// field that is null or not there). Their names are the plan's own.
-    fn lower_without<K: 'static>(
-        &self,
-        absent: &Absent,
-    ) -> Result<crate::Plan<FieldValues, K>, crate::Error> {
-        let mut builder = match &self.context {
-            Context::Label(label) => crate::Plan::context(label.clone()).fields::<FieldValues, K>(),
-            Context::Field(name) => {
-                crate::Plan::fields::<FieldValues, K>().context_field::<ValueFrame>(name.as_str())
-            }
-        };
-        for field in &self.fields {
-            // The context field is declared by `context_field` above; a
-            // target field is the resolver's.
-            if self.context_field() == Some(field.name.as_str())
-                || field.is_target()
-                || absent.contains(&field.name)
-            {
-                continue;
-            }
-            builder = declare(builder, field);
-            if field.identity() != field.name {
-                builder = builder.identity(field.identity());
-            }
-        }
-        builder.build()
+    /// Where this plan takes its context from.
+    pub(super) fn context_source(&self) -> &Context {
+        &self.context
     }
 
     /// This plan with the caller's bindings `parts`, each in the stored
@@ -1214,9 +1172,8 @@ impl Plan {
     /// then the context the caller hands a [`Planned`](super::Planned)
     /// record.
     pub(super) fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
-        let plan = self.lower::<()>()?;
         Ok(self.placed(crate::contexts::under_declared_then_caller(
-            plan.shapes(),
+            compose::<()>(self, &Absent::new())?.shapes(),
             &self.declared_context(),
         )))
     }
@@ -1243,24 +1200,6 @@ impl Plan {
     /// The fields that name a target, in plan order: the resolver's.
     fn target_fields(&self) -> impl Iterator<Item = &FieldPlan> + '_ {
         self.fields.iter().filter(|field| field.is_target())
-    }
-}
-
-/// One field's verb, over a [`ValueFrame`]; its indexes are the
-/// [`IndexSpec`]s the plan named, each an [`Index`](crate::target::Index) of
-/// a `ValueFrame`.
-fn declare<K: 'static>(
-    builder: FieldsBuilder<FieldValues, K>,
-    field: &FieldPlan,
-) -> FieldsBuilder<FieldValues, K> {
-    let name = field.name.as_str();
-    match field.verb() {
-        Verb::Encrypt => builder.encrypt::<ValueFrame>(name),
-        Verb::EncryptIndex => builder.encrypt_index::<ValueFrame>(name, field.indexes()),
-        Verb::Index => builder.index::<ValueFrame>(name, field.indexes()),
-        Verb::Passthrough => builder.passthrough::<ValueFrame>(name),
-        // `lower` never hands a target field here: the resolver runs it.
-        Verb::Target => builder,
     }
 }
 
@@ -1422,7 +1361,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// not a string naming a [`ValueKind`], a type that does not admit one of
 /// the field's index outputs, a context that is not a label of at least two
 /// segments (optionally extended), fields under different contexts or
-/// extensions, or a plan the builder refuses ([`Plan::new`]); with
+/// extensions, or a plan [`Plan::new`] refuses; with
 /// `"context_field"`, a value that is not a string, naming no field of the
 /// plan, or a plan [`Plan::with_context_field`] refuses.
 /// [`Error::UntypedIndex`], naming the field, for a field with a term output
@@ -1887,7 +1826,6 @@ pub fn encrypt_with<'a, K: 'static>(
     let rows = source_rows(source, plan)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
-    let lower = |absent: &Absent| plan.lower_without::<K>(absent).map_err(|_| Error::Internal);
     // Every target field of every row, in row-major order, run by the
     // resolver; `all` merges their requests with the lowered plan's below.
     // A row runs the target fields it does not leave out, so each row's
@@ -1912,9 +1850,10 @@ pub fn encrypt_with<'a, K: 'static>(
     Ok(match rows {
         Rows::One(row) => {
             let (absent, values, _) = targets(row)?;
-            let lowered = lower(&absent)?;
+            let description = compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
             let eql = Pending::all(cipher, pendings);
-            Runs::<FieldValues, K>::pending(&lowered, cipher, &values, None, extend)
+            cipher
+                .run(description, &values, extend)
                 .zip(eql)
                 .try_map(move |(values, eql)| shape_record(values, eql, &shape, &absent))
         }
@@ -1938,14 +1877,12 @@ pub fn encrypt_with<'a, K: 'static>(
             let mut runs = Vec::with_capacity(groups.len());
             let mut positions = Vec::with_capacity(groups.len());
             for (absent, at, values) in groups {
-                let lowered = lower(&absent)?;
-                runs.push(Runs::<[FieldValues], K>::pending(
-                    &lowered,
-                    cipher,
-                    &values,
-                    None,
-                    extend.clone(),
-                ));
+                let mut rows = Vec::with_capacity(values.len());
+                for values in &values {
+                    let description = compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
+                    rows.push(cipher.run(description, values, extend.clone()));
+                }
+                runs.push(Pending::all(cipher, rows));
                 positions.push(at);
             }
             let eql = Pending::all(cipher, pendings);
@@ -1969,8 +1906,8 @@ pub fn encrypt_with<'a, K: 'static>(
 
 /// The rows of a batch grouped by the fields they leave out, each group
 /// with the positions of its rows in the batch, in the order each group
-/// first appears: one lowered plan runs each group
-/// ([`Plan::lower_without`]). A batch with no `"null": "sql"` field is one
+/// first appears: one composed description runs each group
+/// (`super::planned::compose`). A batch with no `"null": "sql"` field is one
 /// group, as it was one plan before.
 fn by_absent<R>(rows: Vec<(Absent, R)>) -> Vec<(Absent, Vec<usize>, Vec<R>)> {
     let mut groups: Vec<(Absent, Vec<usize>, Vec<R>)> = Vec::new();
@@ -2181,7 +2118,6 @@ pub fn decrypt_with<'a, K: 'static>(
     let rows = record_rows(record, plan)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
-    let lower = |absent: &Absent| plan.lower_without::<K>(absent).map_err(|_| Error::Internal);
     let (cipher, keyset) = match &scope {
         Scope::Client(cipher) => (*cipher, None),
         Scope::Keyset(keyset) => (keyset.cipher(), Some(keyset.keyset_id())),
@@ -2210,12 +2146,9 @@ pub fn decrypt_with<'a, K: 'static>(
     Ok(match rows {
         Rows::One(row) => {
             let (absent, values, _) = targets(row)?;
-            let lowered = lower(&absent)?;
             let eql = Pending::all(cipher, pendings);
             confine(
-                cipher.run_decryption(Opens::<FieldValues, K>::decryption(
-                    &lowered, values, expected, extend,
-                )),
+                cipher.run_decryption(opening::<K>(plan, values, expected, extend, &absent)),
                 keyset,
             )
             .zip(eql)
@@ -2241,14 +2174,11 @@ pub fn decrypt_with<'a, K: 'static>(
             let mut opens = Vec::with_capacity(groups.len());
             let mut positions = Vec::with_capacity(groups.len());
             for (absent, at, values) in groups {
-                let lowered = lower(&absent)?;
+                let rows = values.into_iter().map(|values| {
+                    opening::<K>(plan, values, expected.clone(), extend.clone(), &absent)
+                });
                 opens.push(confine(
-                    cipher.run_decryption(Opens::<Vec<FieldValues>, K>::decryption(
-                        &lowered,
-                        values,
-                        expected.clone(),
-                        extend.clone(),
-                    )),
+                    cipher.run_decryption(Decryption::all(rows)),
                     keyset,
                 ));
                 positions.push(at);
@@ -2301,10 +2231,7 @@ fn confine<'a, T: 'a, K>(
 pub fn check_source(source: impl Encrypt, plan: &Plan) -> Result<(), Error> {
     let rows = source_rows(source, plan)?;
     let check = |row: &Row| {
-        let lowered = plan
-            .lower_without::<()>(&row.absent)
-            .map_err(|_| Error::Internal)?;
-        Runs::<FieldValues, ()>::check(&lowered, &row.values, None).map_err(|error| {
+        check_values(plan, &row.values, &row.absent).map_err(|error| {
             let (field, reason) = refusal(error);
             Error::Source { field, reason }
         })
@@ -2340,18 +2267,15 @@ pub fn check_record(
 ) -> Result<(), Error> {
     let rows = record_rows(record, plan)?;
     let check = |row: &StoredRow| {
-        let lowered = plan
-            .lower_without::<()>(&row.absent)
-            .map_err(|_| Error::Internal)?;
-        Opens::<FieldValues, ()>::check(&lowered, &row.values, expected).map_err(
-            |error| match error {
+        check_stored(plan, &row.values, &row.absent)
+            .and_then(|()| opening_base(plan, &row.values, expected.cloned()).map(drop))
+            .map_err(|error| match error {
                 mismatch @ crate::Error::ContextMismatch { .. } => Error::Cipher(mismatch),
                 error => {
                     let (field, reason) = refusal(error);
                     Error::Record { field, reason }
                 }
-            },
-        )
+            })
     };
     match &rows {
         Rows::One(row) => check(row),
@@ -2439,10 +2363,10 @@ struct StoredRow {
 
 /// The `"null": "sql"` fields a row leaves out: null in a source, or with
 /// no entry in a source or a stored record. Nothing is sealed, derived or
-/// opened for them, so a row is run by the plan lowered without them
-/// ([`Plan::lower_without`]), with the other rows that leave out the same
+/// opened for them, so a row is run by the plan composed without them
+/// (`super::planned::compose`), with the other rows that leave out the same
 /// fields.
-type Absent = BTreeSet<String>;
+pub(super) type Absent = BTreeSet<String>;
 
 /// Take the one entry named `name` out of a row, whatever order the row had
 /// it in. `None` if the row has no such entry — or has it twice: the maps
@@ -3525,13 +3449,40 @@ mod tests {
                 ("mail", typed(label("email"), &["c", "eq"], "string")),
                 ("mail2", typed(label("email"), &["c", "eq"], "string")),
             ]));
-            assert!(matches!(parsed, Err(Error::Plan { .. })), "{parsed:?}");
-            // Two passthrough fields key nothing, so they may share a label.
+            assert!(
+                matches!(
+                    &parsed,
+                    Err(Error::Plan { field: Some(field), reason: Reason::SharedIdentity })
+                        if field == "mail2"
+                ),
+                "the later field is named: {parsed:?}"
+            );
+            // Two passthrough fields key nothing, so they may share a label,
+            // and a passthrough may share a sealed field's: the lowering seals
+            // nothing under the passthrough's.
             let parsed = plan(obj(vec![
                 ("a", spec(label("meta"), &["passthrough"])),
                 ("b", spec(label("meta"), &["passthrough"])),
             ]));
             assert!(parsed.is_ok(), "{parsed:?}");
+            let parsed = plan(obj(vec![
+                ("mail", typed(label("email"), &["c", "eq"], "string")),
+                ("mail_copy", spec(label("email"), &["passthrough"])),
+            ]));
+            assert!(parsed.is_ok(), "{parsed:?}");
+            // An indexed field keys its terms, so it shares with no sealed one.
+            let parsed = plan(obj(vec![
+                ("mail", typed(label("email"), &["c"], "string")),
+                ("mail_eq", typed(label("email"), &["eq"], "string")),
+            ]));
+            assert!(
+                matches!(
+                    &parsed,
+                    Err(Error::Plan { field: Some(field), reason: Reason::SharedIdentity })
+                        if field == "mail_eq"
+                ),
+                "{parsed:?}"
+            );
         }
 
         /// A field whose label ends in a segment other than its name is keyed
@@ -3544,12 +3495,11 @@ mod tests {
             )]))
             .expect("parses");
             assert_eq!(parsed.fields()[0].identity(), "handle");
-            let lowered = parsed.lower::<()>().expect("lowers");
-            let field = lowered.field("nickname").expect("the field");
-            assert_eq!(field.identity(), "handle");
+            assert_eq!(parsed.fields()[0].label().to_string(), "users/handle");
+            // The lowering seals the field under that label.
             assert_eq!(
-                field.label().map(ToString::to_string),
-                Some("users/handle".into())
+                parsed.contexts().expect("lowers").to_string(),
+                "nickname\n  context: users / handle\n"
             );
         }
 
@@ -5476,6 +5426,170 @@ mod tests {
                 34,
                 "and it opens under the extended context"
             );
+        }
+
+        /// The context field may be declared after the fields it keys: the
+        /// lowering reads it by name wherever the plan puts it, the terms
+        /// are the chain's, and the record comes back in plan order.
+        #[tokio::test]
+        async fn the_context_field_may_be_declared_last() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan(obj(vec![
+                ("age", typed(identity("age"), &["c", "eq"], "uint32")),
+                ("id", typed(identity("id"), &["passthrough"], "uint64")),
+                (
+                    "tenant",
+                    typed(identity("tenant"), &["passthrough"], "string"),
+                ),
+                ("context_field", s("tenant")),
+            ]))
+            .expect("parses");
+            assert_eq!(keys_of(&plan), ["age", "id", "tenant"]);
+            let shown = plan.contexts().expect("composes").to_string();
+            assert!(shown.contains("tenant"), "{shown}");
+
+            let source = || {
+                obj(vec![
+                    ("id", Tree::UInt64(7)),
+                    ("age", Tree::UInt32(34)),
+                    ("tenant", s("tenants/acme")),
+                ])
+            };
+            let mut fields = map(seal(&keyset, source(), &plan).await);
+            let stored = term_bytes(&node(&mut map(node(&mut fields, "age")), "eq"));
+            assert_eq!(
+                stored,
+                chain_term(&cipher, "tenants/acme", 34, &[]).await,
+                "the chain's term under tenants/acme"
+            );
+
+            let sealed = seal(&keyset, source(), &plan).await;
+            let opened = object(
+                decrypt(
+                    Scope::Client(&cipher),
+                    sealed,
+                    &plan,
+                    expected("tenants/acme"),
+                )
+                .expect("fits")
+                .await
+                .expect("opens under the expected context"),
+            );
+            assert_eq!(opened[0].0, "age");
+            assert_eq!(u32_of(&opened[0].1), 34);
+            assert_eq!(opened[2].0, "tenant");
+            assert_eq!(text_of(&opened[2].1), "tenants/acme");
+
+            let sealed = seal(&keyset, source(), &plan).await;
+            let retrieved = retrieves(&cipher);
+            let refused = decrypt(
+                Scope::Client(&cipher),
+                sealed,
+                &plan,
+                expected("tenants/globex"),
+            )
+            .expect("fits")
+            .await;
+            assert!(matches!(refused, Err(crate::Error::ContextMismatch { .. })));
+            assert_eq!(retrieves(&cipher), retrieved, "before any key");
+        }
+
+        /// A batch whose rows leave a `"null": "sql"` field out in different
+        /// places, under a context field: each group is composed without
+        /// its absent fields, every row's stored context is checked against
+        /// the expected one, and one row stored under another tenant
+        /// refuses the batch before any key is retrieved.
+        #[tokio::test]
+        async fn a_batch_with_absent_fields_checks_every_rows_context() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan(obj(vec![
+                ("context_field", s("tenant")),
+                (
+                    "tenant",
+                    typed(identity("tenant"), &["passthrough"], "string"),
+                ),
+                ("age", typed(identity("age"), &["c", "eq"], "uint32")),
+                (
+                    "score",
+                    obj(vec![
+                        ("context", identity("score")),
+                        ("outputs", strings(&["c"])),
+                        ("type", s("uint32")),
+                        ("null", s("sql")),
+                    ]),
+                ),
+            ]))
+            .expect("parses");
+            let row = |tenant: &str, age: u32, score: Option<u32>| {
+                let mut entries = vec![("tenant", s(tenant)), ("age", Tree::UInt32(age))];
+                if let Some(score) = score {
+                    entries.push(("score", Tree::UInt32(score)));
+                }
+                obj(entries)
+            };
+
+            let batch = Tree::Array(vec![
+                row("tenants/acme", 1, Some(10)),
+                row("tenants/acme", 2, None),
+                row("tenants/acme", 3, Some(30)),
+            ]);
+            let sealed = seal(&keyset, batch, &plan).await;
+            let opened = decrypt(
+                Scope::Client(&cipher),
+                sealed,
+                &plan,
+                expected("tenants/acme"),
+            )
+            .expect("fits")
+            .await
+            .expect("every row is acme's")
+            .tree();
+            assert_eq!(
+                opened,
+                Tree::Array(vec![
+                    obj(vec![
+                        ("tenant", s("tenants/acme")),
+                        ("age", Tree::UInt32(1)),
+                        ("score", Tree::UInt32(10)),
+                    ]),
+                    obj(vec![
+                        ("tenant", s("tenants/acme")),
+                        ("age", Tree::UInt32(2)),
+                        ("score", Tree::Null),
+                    ]),
+                    obj(vec![
+                        ("tenant", s("tenants/acme")),
+                        ("age", Tree::UInt32(3)),
+                        ("score", Tree::UInt32(30)),
+                    ]),
+                ])
+            );
+
+            let batch = Tree::Array(vec![
+                row("tenants/acme", 1, Some(10)),
+                row("tenants/globex", 2, None),
+                row("tenants/acme", 3, None),
+            ]);
+            let sealed = seal(&keyset, batch, &plan).await;
+            let retrieved = retrieves(&cipher);
+            let refused = decrypt(
+                Scope::Client(&cipher),
+                sealed,
+                &plan,
+                expected("tenants/acme"),
+            )
+            .expect("fits")
+            .await;
+            match refused {
+                Err(crate::Error::ContextMismatch { stored }) => {
+                    assert_eq!(stored.to_string(), "tenants/globex")
+                }
+                Err(other) => panic!("expected ContextMismatch, got {other:?}"),
+                Ok(_) => panic!("a row stored under another tenant opened"),
+            }
+            assert_eq!(retrieves(&cipher), retrieved, "before any key");
         }
     }
 
@@ -7555,6 +7669,27 @@ mod tests {
             ];
             assert!(matches!(
                 Plan::new_with(fields, &FakeEql),
+                Err(Error::Plan { .. })
+            ));
+            // A target shares its identity with nothing, a passthrough
+            // included, in either order; a sealed field may share with one.
+            let passthrough = || {
+                FieldPlan::new(
+                    "copy",
+                    context(label("email")).unwrap(),
+                    vec![Output::Passthrough],
+                )
+                .unwrap()
+            };
+            let target = || {
+                FieldPlan::with_target("email", context(label("email")).unwrap(), TEXT_EQ).unwrap()
+            };
+            assert!(matches!(
+                Plan::new_with(vec![target(), passthrough()], &FakeEql),
+                Err(Error::Plan { .. })
+            ));
+            assert!(matches!(
+                Plan::new_with(vec![passthrough(), target()], &FakeEql),
                 Err(Error::Plan { .. })
             ));
         }

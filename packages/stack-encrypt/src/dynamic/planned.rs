@@ -61,22 +61,26 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! # }).unwrap();
 //! ```
+use std::any::type_name;
 use std::borrow::Cow;
 use std::fmt;
+use std::sync::Arc;
 
 use zeroize::Zeroize;
 
 use super::query::{field_operators, find, query_term, QueryTerm};
-use super::record::{self, Plan};
+use super::record::{self, Absent, Context, FieldPlan, Plan, Verb};
 use super::target::{NoTargets, TargetResolver};
 use super::value_frame::ValueFrame;
-use super::{Error, Op, Reason, Scope};
+use super::{Error, Op, Reason, Scope, TermBytes};
 use crate::contexts::{self, CallerShape, Contexts, LeafContext, Placeholder};
+use crate::plan::{field_label, join, FieldValues, IntoLabel, Slot, FROM_CALL, FROM_PLAN};
 use crate::target::{
-    CallerContext, DeclaredContext, DecryptSource, Decryption, EncryptTarget, Encryption,
-    OptionalContext, Owned, Pending,
+    ciphertext, indexed, inspect, open, passthrough, AeadContext, Borrowed, CallerContext,
+    DeclaredContext, DecryptSource, Decryption, EncryptTarget, Encrypted, Encryption,
+    ExpectedContext, IndexSpec, Indexes, OptionalContext, Owned, Pending,
 };
-use crate::{Encrypt, KeysetCipher, PlanError, StackCipherText};
+use crate::{Encrypt, KeysetCipher, Label, NonEmpty, PlanError, StackCipherText};
 
 /// The resolver of a build without EQL types, for [`Plan::field`].
 static NO_TARGETS: NoTargets = NoTargets;
@@ -677,29 +681,514 @@ impl<'p, R: TargetResolver + ?Sized> DynamicQuery<'p, R> {
     }
 }
 
+// =============================================================================
+// The lowering: a data plan composed from the combinators
+// =============================================================================
+
+/// The description one run of `plan` executes over a record's values,
+/// without the fields in `absent`: a check that the values' fields are the
+/// plan's, then each field's verb as its combinator, read out of the
+/// record by name, under the field's label, zipped so every key request
+/// settles in one batch, and the record assembled. This is the one
+/// lowering of a data plan, as the derive's generated code is of a typed
+/// record: `encrypt_with` and `contexts()` run it. The
+/// checks a binding asks without a cipher ([`check_values`],
+/// [`check_stored`], [`opening_base`]) are a second statement of the rules
+/// the description enforces through `inspect`, `lift` and `under_by`, and
+/// the two are kept in step by the tests in this module.
+///
+/// # Errors
+///
+/// A field's label that is not plain ([`PlanError::FieldLabel`]), which the
+/// plan's parser refuses first, so a parsed plan never fails here.
+pub(super) fn compose<'s, K: 'static>(
+    plan: &Plan,
+    absent: &Absent,
+) -> Result<Encryption<'s, FieldValues, FieldValues, K, DeclaredContext>, crate::Error> {
+    let names = lowered_names(plan, absent);
+    let mut record: Encryption<'s, FieldValues, Vec<(Arc<str>, Slot)>, K, DeclaredContext> =
+        inspect::<FieldValues, K, DeclaredContext, _>(move |values| check_names(values, &names))
+            .map(|()| Vec::new());
+    for field in lowered_fields(plan, absent) {
+        let name: Arc<str> = Arc::from(field.name());
+        let identity = field.identity().to_owned();
+        let Some(operation) = operation_of::<K>(field, &name) else {
+            continue;
+        };
+        // A passthrough is sealed under nothing, so its label is only its
+        // record key: a context field's value is read as the context it is.
+        let keys_nothing = keys_nothing(field);
+        let operation = match plan.context_source() {
+            Context::Label(context) => match join(context, &identity) {
+                Ok(label) => operation.under(NonEmpty::from(label)),
+                Err(source) => return Err(field_label(field.name(), source)),
+            },
+            Context::Field(of) => {
+                let label_field = of.clone();
+                let field_name = field.name().to_owned();
+                let joined = (!keys_nothing).then(|| identity.clone());
+                operation.under_by(of, joined.as_deref(), move |values: &FieldValues| {
+                    let context = context_of(values, &label_field)?;
+                    if keys_nothing {
+                        Ok(context)
+                    } else {
+                        join(&context, &identity).map_err(|source| field_label(&field_name, source))
+                    }
+                })
+            }
+        }
+        .named(&name);
+        record =
+            record
+                .zip(operation)
+                .map(move |(mut slots, slot): (Vec<(Arc<str>, Slot)>, Slot)| {
+                    slots.push((name, slot));
+                    slots
+                });
+    }
+    Ok(record.map(FieldValues::from_slots))
+}
+
+/// The opening of a stored record's values under `plan`, without the
+/// fields in `absent`: each sealed field opened under the context it was
+/// sealed under (its label, extended by `extend`), passthrough fields
+/// carried back, fields that are terms alone left out. `expected` is the
+/// context the caller expects a context field to hold, checked before any
+/// key is requested; a plan with a context of its own refuses one.
+pub(super) fn opening<K: 'static>(
+    plan: &Plan,
+    mut values: FieldValues,
+    expected: Option<Label>,
+    extend: DeclaredContext,
+    absent: &Absent,
+) -> Decryption<FieldValues, K> {
+    if let Err(error) = check_stored(plan, &values, absent) {
+        return Decryption::failed(error);
+    }
+    let base = match opening_base(plan, &values, expected) {
+        Ok(base) => base,
+        Err(error) => return Decryption::failed(error),
+    };
+    let mut opened: Decryption<Vec<(Arc<str>, Slot)>, K> = Decryption::ready(Vec::new());
+    for field in lowered_fields(plan, absent).filter(|field| field.opens()) {
+        let name: Arc<str> = Arc::from(field.name());
+        let Some(slot) = values.take_slot(field.name()) else {
+            return Decryption::failed(not_in_value(field.name()));
+        };
+        let opening: Decryption<Slot, K> = if keys_nothing(field) {
+            Decryption::ready(slot)
+        } else {
+            let label = match join(&base, field.identity()) {
+                Ok(label) => label,
+                Err(source) => return Decryption::failed(field_label(field.name(), source)),
+            };
+            let ciphertext = match sealed_of(slot) {
+                Ok(ciphertext) => ciphertext,
+                Err(()) => {
+                    return Decryption::failed(field_type(
+                        field.name(),
+                        type_name::<StackCipherText>(),
+                    ))
+                }
+            };
+            let sealed_under = extend.clone().under(NonEmpty::from(label));
+            open::<ValueFrame, K>(ciphertext, AeadContext::from(sealed_under)).map(Slot::new)
+        };
+        opened =
+            opened
+                .zip(opening)
+                .map(move |(mut slots, slot): (Vec<(Arc<str>, Slot)>, Slot)| {
+                    slots.push((name, slot));
+                    slots
+                });
+    }
+    opened.map(FieldValues::from_slots)
+}
+
+/// Whether a field is carried in the clear, under no label of its own: a
+/// passthrough, which the field a context-field plan reads its context
+/// from always is ([`Plan::with_context_field`] requires it). Its name is
+/// only its record key, so a stored one is handed back as it is.
+fn keys_nothing(field: &FieldPlan) -> bool {
+    field.verb() == Verb::Passthrough
+}
+
+/// The names of the fields the lowering runs, in plan order.
+fn lowered_names(plan: &Plan, absent: &Absent) -> Vec<String> {
+    lowered_fields(plan, absent)
+        .map(|field| field.name().to_owned())
+        .collect()
+}
+
+/// One field's verb as its combinator over the field's value, lifted to
+/// read the field out of the record. `None` for a target field, which the
+/// resolver runs and the lowering never sees.
+fn operation_of<'s, K: 'static>(
+    field: &FieldPlan,
+    name: &Arc<str>,
+) -> Option<Encryption<'s, FieldValues, Slot, K, CallerContext>> {
+    let indexes = field.indexes();
+    Some(match field.verb() {
+        Verb::Encrypt => lift(
+            ciphertext::<ValueFrame, K, Borrowed>().accepting::<CallerContext>(),
+            name,
+        ),
+        Verb::EncryptIndex => lift(
+            indexed::<ValueFrame, K, Borrowed, Vec<IndexSpec>>(indexes),
+            name,
+        ),
+        Verb::Index => lift(indexes.operations::<K, Borrowed>(), name),
+        Verb::Passthrough => lift(
+            passthrough::<ValueFrame, K, Borrowed, CallerContext>(),
+            name,
+        ),
+        Verb::Target => return None,
+    })
+}
+
+/// The fields the lowering runs: every field but a target's, which the
+/// resolver runs, and the ones the row leaves out.
+fn lowered_fields<'p>(plan: &'p Plan, absent: &'p Absent) -> impl Iterator<Item = &'p FieldPlan> {
+    plan.fields()
+        .iter()
+        .filter(move |field| !field.is_target() && !absent.contains(field.name()))
+}
+
+/// A description over one field's value, lifted to read that field out of
+/// the record by name and to hold its output in a slot.
+fn lift<'s, T, K>(
+    operation: Encryption<'s, ValueFrame, T, K, CallerContext>,
+    name: &Arc<str>,
+) -> Encryption<'s, FieldValues, Slot, K, CallerContext>
+where
+    T: std::any::Any + Send + 'static,
+    K: 'static,
+{
+    let name = Arc::clone(name);
+    operation
+        .project_by(move |values: &FieldValues| {
+            values
+                .get::<ValueFrame>(&name)
+                .ok_or_else(|| field_type(&name, type_name::<ValueFrame>()))
+        })
+        .map(Slot::new)
+}
+
+/// The values' fields against the plan's, both ways, and each at the type
+/// the plan reads: what running the plan checks before any key is
+/// requested, and what [`check_source`](super::record::check_source) asks
+/// without a cipher.
+pub(super) fn check_values(
+    plan: &Plan,
+    values: &FieldValues,
+    absent: &Absent,
+) -> Result<(), crate::Error> {
+    check_names(values, &lowered_names(plan, absent))?;
+    for field in lowered_fields(plan, absent) {
+        if values.get::<ValueFrame>(field.name()).is_none() {
+            return Err(field_type(field.name(), type_name::<ValueFrame>()));
+        }
+    }
+    if let Context::Field(of) = plan.context_source() {
+        let _ = context_of(values, of)?;
+    }
+    Ok(())
+}
+
+/// A stored record's values against the plan, as opening checks them:
+/// every field of the record is one the plan names, and every field the
+/// plan can return is in it, of a type its opening reads.
+pub(super) fn check_stored(
+    plan: &Plan,
+    values: &FieldValues,
+    absent: &Absent,
+) -> Result<(), crate::Error> {
+    let names = lowered_names(plan, absent);
+    if let Some(extra) = values.names().find(|name| !names.iter().any(|n| n == name)) {
+        return Err(PlanError::NotInPlan {
+            field: extra.to_owned(),
+        }
+        .into());
+    }
+    for field in lowered_fields(plan, absent).filter(|field| field.opens()) {
+        let Some(slot) = values.slot(field.name()) else {
+            return Err(not_in_value(field.name()));
+        };
+        let keys_nothing = keys_nothing(field);
+        let holds = if keys_nothing {
+            slot.is::<ValueFrame>()
+        } else {
+            slot.is::<StackCipherText>() || slot.is::<Encrypted<Vec<TermBytes>>>()
+        };
+        if !holds {
+            let expected = if keys_nothing {
+                type_name::<ValueFrame>()
+            } else {
+                type_name::<StackCipherText>()
+            };
+            return Err(field_type(field.name(), expected));
+        }
+    }
+    Ok(())
+}
+
+/// The context a stored record opens under: the plan's own label, which
+/// an `expected` context contradicts, or the record's context field,
+/// checked against `expected` before any key is requested.
+pub(super) fn opening_base(
+    plan: &Plan,
+    values: &FieldValues,
+    expected: Option<Label>,
+) -> Result<Label, crate::Error> {
+    match (plan.context_source(), expected) {
+        (Context::Label(label), None) => Ok(label.clone()),
+        (Context::Label(_), Some(_)) => Err(PlanError::TwoContextSources {
+            first: FROM_PLAN,
+            second: FROM_CALL,
+        }
+        .into()),
+        (Context::Field(of), expected) => {
+            let stored = context_of(values, of)?;
+            let expected = match expected {
+                Some(expected) => ExpectedContext::from(NonEmpty::from(expected)),
+                None => ExpectedContext::default(),
+            };
+            expected.validate(stored).map(NonEmpty::into_inner)
+        }
+    }
+}
+
+/// The values' fields against the plan's, both ways.
+fn check_names(values: &FieldValues, names: &[String]) -> Result<(), crate::Error> {
+    if let Some(extra) = values
+        .names()
+        .find(|have| !names.iter().any(|name| name == have))
+    {
+        return Err(PlanError::NotInPlan {
+            field: extra.to_owned(),
+        }
+        .into());
+    }
+    if let Some(missing) = names.iter().find(|name| !values.contains(name)) {
+        return Err(not_in_value(missing));
+    }
+    Ok(())
+}
+
+/// The context a record's context field holds, read in place: each sealed
+/// field's closure reads it once per row, a parse of a short text, and
+/// copies nothing for it.
+fn context_of(values: &FieldValues, field: &str) -> Result<Label, crate::Error> {
+    values
+        .get::<ValueFrame>(field)
+        .ok_or_else(|| field_type(field, type_name::<ValueFrame>()))?
+        .into_label()
+        .map_err(|error| PlanError::ContextLabel(error).into())
+}
+
+/// A stored sealed field: its ciphertext, whether the slot holds the
+/// ciphertext alone, as a stored record does, or the whole
+/// `Encrypted<Vec<TermBytes>>` a caller of [`opening`] may hand it, as the
+/// typed plan's opener took either.
+fn sealed_of(slot: Slot) -> Result<StackCipherText, ()> {
+    let slot = match slot.downcast::<StackCipherText>() {
+        Ok(ciphertext) => return Ok(ciphertext),
+        Err(slot) => slot,
+    };
+    match slot.downcast::<Encrypted<Vec<TermBytes>>>() {
+        Ok(encrypted) => Ok(encrypted.ciphertext),
+        Err(_) => Err(()),
+    }
+}
+
+fn field_type(field: &str, expected: &'static str) -> crate::Error {
+    PlanError::FieldType {
+        field: field.to_owned(),
+        expected,
+    }
+    .into()
+}
+
+fn not_in_value(field: &str) -> crate::Error {
+    PlanError::NotInValue {
+        field: field.to_owned(),
+    }
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::{frame_of, Tree};
+    use crate::StackCipher;
+    use stack_kms::FakeDataKeySource;
     use vitaminc_protected::AsProtectedRef as _;
 
     fn s(value: &str) -> Tree {
         Tree::String(value.into())
     }
-
+    fn obj(entries: Vec<(&str, Tree)>) -> Tree {
+        Tree::Object(
+            entries
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        )
+    }
+    fn strings(items: &[&str]) -> Tree {
+        Tree::Array(items.iter().map(|item| s(item)).collect())
+    }
+    fn field<'a>(name: &'a str, outputs: &[&str], ty: &str) -> (&'a str, Tree) {
+        (
+            name,
+            obj(vec![
+                ("context", strings(&["users", name])),
+                ("outputs", strings(outputs)),
+                ("type", s(ty)),
+            ]),
+        )
+    }
+    /// A sealed field and a passthrough, both typed.
     fn the_plan() -> Plan {
-        let spec = Tree::Object(vec![
-            ("context".into(), Tree::Array(vec![s("users"), s("age")])),
-            ("outputs".into(), Tree::Array(vec![s("c")])),
-            ("type".into(), s("uint32")),
+        let value = obj(vec![
+            field("age", &["c", "eq"], "uint32"),
+            field("id", &["passthrough"], "uint64"),
         ]);
-        let value = Tree::Object(vec![("age".into(), spec)]);
         record::plan(frame_of(&value).as_protected_ref().as_deref()).expect("parses")
     }
-
-    fn a_row() -> ValueFrame {
-        let value = Tree::Object(vec![("age".into(), Tree::UInt32(34))]);
+    fn frame(value: Tree) -> ValueFrame {
         ValueFrame::from_bytes(frame_of(&value).as_protected_ref().as_deref()).expect("a frame")
+    }
+    fn values(age: Option<Tree>, id: Option<Tree>) -> FieldValues {
+        let mut values = FieldValues::new();
+        if let Some(age) = age {
+            let _ = values.insert("age", frame(age));
+        }
+        if let Some(id) = id {
+            let _ = values.insert("id", frame(id));
+        }
+        values
+    }
+    fn reason(error: crate::Error) -> PlanError {
+        match error {
+            crate::Error::Plan(error) => error,
+            other => panic!("not a plan refusal: {other:?}"),
+        }
+    }
+
+    /// What `check_source` asks without a cipher refuses what the
+    /// description refuses: a field the plan does not name, a field the
+    /// plan names that the values leave out, and a field at another type.
+    #[test]
+    fn the_values_are_checked_against_the_plan_both_ways() {
+        let plan = the_plan();
+        let absent = Absent::new();
+        let full = || values(Some(Tree::UInt32(34)), Some(Tree::UInt64(7)));
+        assert!(check_values(&plan, &full(), &absent).is_ok());
+
+        let mut extra = full();
+        let _ = extra.insert("name", frame(s("ada")));
+        assert!(matches!(
+            reason(check_values(&plan, &extra, &absent).unwrap_err()),
+            PlanError::NotInPlan { field } if field == "name"
+        ));
+
+        let missing = values(Some(Tree::UInt32(34)), None);
+        assert!(matches!(
+            reason(check_values(&plan, &missing, &absent).unwrap_err()),
+            PlanError::NotInValue { field } if field == "id"
+        ));
+
+        let mut typed = values(None, Some(Tree::UInt64(7)));
+        let _ = typed.insert("age", 34u32);
+        assert!(matches!(
+            reason(check_values(&plan, &typed, &absent).unwrap_err()),
+            PlanError::FieldType { field, expected }
+                if field == "age" && expected == type_name::<ValueFrame>()
+        ));
+
+        // A field the row leaves out is not expected.
+        let mut absent_id = Absent::new();
+        let _ = absent_id.insert("id".to_owned());
+        assert!(check_values(&plan, &missing, &absent_id).is_ok());
+    }
+
+    /// A stored record's values are checked at the types the opening reads:
+    /// a ciphertext for a sealed field, a frame for a passthrough. A sealed
+    /// slot may hold the ciphertext alone, as a stored record does, or the
+    /// whole `Encrypted` with its terms, and either opens.
+    #[tokio::test]
+    async fn the_stored_values_are_checked_against_the_plan() {
+        let cipher = StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .expect("build cipher");
+        let keyset = cipher.default_keyset();
+        let plan = the_plan();
+        let absent = Absent::new();
+        let seal = || async {
+            let description = compose::<FakeDataKeySource>(&plan, &absent).expect("composes");
+            keyset
+                .run(
+                    description,
+                    &values(Some(Tree::UInt32(34)), Some(Tree::UInt64(7))),
+                    DeclaredContext::default(),
+                )
+                .await
+                .expect("seals")
+        };
+        let mut sealed = seal().await;
+        assert!(check_stored(&plan, &sealed, &absent).is_ok());
+
+        let encrypted: Encrypted<Vec<TermBytes>> = sealed.take("age").expect("the age");
+        let ciphertext = seal()
+            .await
+            .take::<Encrypted<Vec<TermBytes>>>("age")
+            .expect("the age")
+            .ciphertext;
+        let stored = |age: Slot| {
+            FieldValues::from_slots(vec![
+                (Arc::from("age"), age),
+                (Arc::from("id"), Slot::new(frame(Tree::UInt64(7)))),
+            ])
+        };
+        let whole = stored(Slot::new(encrypted));
+        assert!(check_stored(&plan, &whole, &absent).is_ok());
+        let opened = cipher
+            .run_decryption(opening::<FakeDataKeySource>(
+                &plan,
+                whole,
+                None,
+                DeclaredContext::default(),
+                &absent,
+            ))
+            .await
+            .expect("opens");
+        assert_eq!(
+            opened.get::<ValueFrame>("age"),
+            Some(&frame(Tree::UInt32(34)))
+        );
+
+        // A sealed field holding a frame, an extra field, a missing field.
+        let swapped = stored(Slot::new(frame(Tree::UInt32(34))));
+        assert!(matches!(
+            reason(check_stored(&plan, &swapped, &absent).unwrap_err()),
+            PlanError::FieldType { field, expected }
+                if field == "age" && expected == type_name::<StackCipherText>()
+        ));
+        let mut extra = stored(Slot::new(ciphertext));
+        let _ = extra.insert("name", frame(s("ada")));
+        assert!(matches!(
+            reason(check_stored(&plan, &extra, &absent).unwrap_err()),
+            PlanError::NotInPlan { field } if field == "name"
+        ));
+        let missing =
+            FieldValues::from_slots(vec![(Arc::from("id"), Slot::new(frame(Tree::UInt64(7))))]);
+        assert!(matches!(
+            reason(check_stored(&plan, &missing, &absent).unwrap_err()),
+            PlanError::NotInValue { field } if field == "age"
+        ));
     }
 
     /// Zeroizing a planned value wipes the value it holds: the frame is
@@ -707,7 +1196,7 @@ mod tests {
     #[test]
     fn zeroizing_a_planned_value_empties_its_frame() {
         let plan = the_plan();
-        let mut planned = Planned::new(&plan, a_row());
+        let mut planned = Planned::new(&plan, frame(obj(vec![("age", Tree::UInt32(34))])));
         assert_ne!(planned.value, ValueFrame::empty());
         planned.zeroize();
         assert_eq!(planned.value, ValueFrame::empty());
@@ -717,7 +1206,10 @@ mod tests {
     #[test]
     fn debug_names_the_wrapper_and_the_field_but_no_value() {
         let plan = the_plan();
-        let shown = format!("{:?}", Planned::new(&plan, a_row()));
+        let shown = format!(
+            "{:?}",
+            Planned::new(&plan, frame(obj(vec![("age", Tree::UInt32(34))])))
+        );
         assert!(shown.starts_with("Planned"), "{shown}");
         assert!(!shown.contains("34"), "{shown}");
         let handle = plan.field("age").expect("the field");

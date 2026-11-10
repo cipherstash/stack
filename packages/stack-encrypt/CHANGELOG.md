@@ -498,6 +498,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A data plan lowers to the combinators directly** (#1488, first part).
+  `dynamic::planned::compose` and `opening` build each field's combinator
+  from the parsed plan, and the dynamic entry points run them:
+  `encrypt_with`, `decrypt_with`, `check_source`, `check_record`, and
+  `Plan::contexts`. The checks a binding asks without a cipher share
+  `check_names`, `check_stored` and `opening_base` with the lowering. The
+  plan builder is no longer in the dynamic path. No stored byte changes:
+  the record shape, the terms, and the contexts are the ones the
+  builder's lowering produced, and the conformance vectors pin them.
 - **The context parameter of the cipher-directed methods is named
   `context`, not `aad`** (#1568): `KeysetCipher::encrypt_tree`,
   `KeysetCipher::decrypt_tree`, `StackCipher::decrypt`,
