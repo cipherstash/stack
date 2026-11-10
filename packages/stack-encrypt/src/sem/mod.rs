@@ -286,7 +286,8 @@ pub enum TermError {
     /// is awaited, before a term exists. A *stored* value with no tokens is
     /// not refused: it is stored as the empty filter, which no query
     /// matches, so a short or empty value is a valid thing to hold in a
-    /// match column (ADR-0009).
+    /// match column. The empty filter shows that the value cut no token
+    /// (see [what a match index reveals](crate::sem#what-a-match-index-reveals)).
     #[error(
         "the query's text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
     )]
@@ -971,7 +972,7 @@ impl<O> Eq for MatchTerms<O> {}
 ///
 /// The two are different types because they are different things, even
 /// where their bytes share an encoding: a query is never stored, and a
-/// stored filter is never sent as a query. ADR-0009 records why. A
+/// stored filter is never sent as a query. A
 /// `MatchQuery` comes from a query chain ([`op::Matches`](struct@crate::op::Matches)),
 /// never from a target.
 ///
@@ -1077,8 +1078,8 @@ impl<O> Eq for MatchQuery<O> {}
 /// terms for both bounds, as one value. Inclusive at both ends.
 ///
 /// One query derives both bounds under one context, and the term stays
-/// one value in SQL (ADR-0009, decision 7), so no statement can pair the
-/// low bound of one query with the high bound of another, or bind them the
+/// one value in SQL, so no statement can pair the low bound of one query
+/// with the high bound of another, or bind them the
 /// wrong way round. `T` is the index's term: `OreTerm<u32>` for a range
 /// over an ORE index of `u32`, `OpeTerm<i64>` over an OPE index. The
 /// bounds are read with [`lo`](Self::lo) and [`hi`](Self::hi), each the
@@ -2103,7 +2104,7 @@ where
 /// A term that is going to be **stored** should come from a target instead,
 /// where the one context the target is handed reaches the ciphertext and the
 /// term beside it alike, and giving either a context of its own is written
-/// in the declaration rather than plumbed (ADR-0004). A derived record does
+/// in the declaration rather than plumbed. A derived record does
 /// this per field and cannot get it wrong; a hand-written target can still
 /// put a subtree under its own context, but has to say so. The bytes are
 /// identical either way; what differs is whether anything holds the two in

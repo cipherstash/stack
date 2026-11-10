@@ -29,7 +29,7 @@
 //! Same caveat as [`crate::sem`]: a term derived here is bound to the
 //! context you pass and to nothing else. Use it to *query*. A term that is
 //! going to be **stored** should come from the record path, where it shares
-//! one context with the ciphertext beside it (ADR-0004).
+//! one context with the ciphertext beside it.
 
 use std::collections::BTreeSet;
 use std::convert::Infallible;
@@ -97,9 +97,8 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 ///
 /// Serialized (it is `Serialize`), an index writes the string whenever the
 /// options are the defaults and the object otherwise, with every option but
-/// `short_words`, which it writes only when it is on. So a default plan is
-/// byte-for-byte what it was before options had a wire form, and a plan with
-/// other options is what it was before `short_words` existed.
+/// `short_words`, which it writes only when it is on. So a plan with
+/// default options writes each index as its bare key.
 impl IndexSpec {
     /// The index a bare key names, under default options, or `None` for a
     /// string that is not an index key.
@@ -642,7 +641,7 @@ enum OrderIndex {
 /// read it.
 ///
 /// Each scalar is encoded at the target of the Rust type named here
-/// ([`Orderable`]), as on the typed path: text by the system ADR-0002's
+/// ([`Orderable`]), as on the typed path: text by its case and accent
 /// fold, so `café` precomposed or with a combining accent, and `Café`, tie.
 /// A date, timestamp or decimal is read into its [`value`](crate::value)
 /// type, so it is ordered as one, never as the bare integer it is held as.

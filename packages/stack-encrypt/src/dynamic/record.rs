@@ -56,8 +56,7 @@
 //! either way: every field was sealed under the original. The keys
 //! `"context_field"` and `"bind"` (the caller's bindings, below) are
 //! reserved at the top level of a plan, so no field may be called either.
-//! A plan without the key is read exactly as before: the two-segment and
-//! shared-prefix rules hold, and it seals the same bytes.
+//! Without the key, a plan follows the two-segment and shared-prefix rules.
 //!
 //! # A field that names an EQL type
 //!
@@ -107,13 +106,13 @@
 //! kind, once checked — by the typed path's derivation, so they are the
 //! bytes a Rust `u32` or `String` field derives under the same label.
 //!
-//! The ciphertext is where a data plan and a Rust chain meet too. Since
-//! vitaminc ADR 0001 every leaf is tagged, a typed Rust value's as much as
+//! The ciphertext is where a data plan and a Rust chain meet too. Every
+//! leaf is tagged with its type, a typed Rust value's as much as
 //! a [`ValueFrame`]'s, so a Rust `u32` field and a `uint32` data field seal
 //! the same leaf under the same context, and each opens the other's. A reader
 //! of another type refuses a leaf rather than reading it as changed
-//! plaintext: the tag is authenticated. The lowering still never chooses an
-//! encoding from the type; it no longer has one to choose.
+//! plaintext: the tag is authenticated. The lowering never chooses an
+//! encoding from the type; it has none to choose.
 //!
 //! # The stored record is wire format
 //!
@@ -224,8 +223,8 @@ pub(super) enum Verb {
 }
 
 /// How a field stores a value that is not there: what a plan's `"null"`
-/// says (#1298). A field with no `"null"` needs every row to have it, and
-/// refuses a null where it declares a type, as before.
+/// says. A field with no `"null"` needs every row to have it, and
+/// refuses a null where it declares a type.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum NullMode {
     /// `"sealed"`: a null is sealed like a value, under the field's label,
@@ -1303,7 +1302,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// [module docs](self#what-a-fields-type-decides-and-what-it-does-not)).
 ///
 /// `"null"`, when given, is `"sealed"` or `"sql"`: how the field stores a
-/// value that is not there ([`NullMode`], #1298). Without it a row must
+/// value that is not there ([`NullMode`]). Without it a row must
 /// have the field, and a typed field refuses a null. `"sealed"` seals a
 /// null as a typed null as long as a value, so the stored record does not
 /// show it, and beside an equality index stores a null's equality term, the
@@ -4009,9 +4008,9 @@ mod tests {
             assert_eq!(keys(&age), ["c", "ore", "eq"]);
         }
 
-        /// ADR-0004's property, pinned: the ciphertext opens under the plan
-        /// label and under nothing else, and each term is the standalone
-        /// derivation under that same label.
+        // ADR-0004's property, pinned: the ciphertext opens under the plan
+        // label and under nothing else, and each term is the standalone
+        // derivation under that same label.
         #[tokio::test]
         async fn binds_the_ciphertext_and_every_term_under_the_one_field_label() {
             let cipher = cipher().await;

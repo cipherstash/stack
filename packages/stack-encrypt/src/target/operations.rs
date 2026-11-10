@@ -5,12 +5,15 @@
 //!
 //! No constructor takes a context either. The context reaches every operation
 //! by being threaded through the tree that composes them, as a type parameter
-//! of [`Encryption`] (ADR-0004): a target cannot route the context it is
+//! of [`Encryption`]: a target cannot route the context it is
 //! handed to one operation and something else to another, because there is
 //! no argument to route. What a subtree may do is take a context of its own,
 //! by name, with [`Encryption::under`] or [`Encryption::extend`]. A subtree
 //! can also read its context from a named field of the plaintext, with
 //! [`Encryption::context_from`].
+
+// One context per target, threaded through the declaration tree:
+// packages/stack-encrypt/docs/adr/0004-one-context-per-target-threaded-through-the-declaration-tree.md.
 use super::context::{AeadContext, CallerContext, DeclaredContext, Extends, StoredParts};
 use super::conversion::{DecryptSource, EncryptTarget};
 use super::core::{encrypt_native, open_native, Term};
@@ -42,7 +45,7 @@ pub trait EncryptFrom<S>: Sized + 'static {
     type Context;
     /// The description the cipher executes for one value of `S`. The context
     /// is supplied when the description is run, not here, so every operation
-    /// beneath it receives the same one (ADR-0004).
+    /// beneath it receives the same one.
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's;
@@ -109,7 +112,7 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 ///
 /// `Ctx` is the context this description still needs. It is a type parameter,
 /// not a stored value, and that is what makes two rules hold at compile time
-/// rather than by discipline (ADR-0004):
+/// rather than by discipline:
 ///
 /// - **One context per target.** [`zip`](Self::zip) requires both sides to
 ///   need the same `Ctx` and hands them the same value, so a target has no
@@ -285,7 +288,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// context of its own with [`under`](Self::under) or
     /// [`extend`](Self::extend) before it got here — that is how a record
     /// composes fields with different contexts — and `zip` cannot tell that
-    /// from a target's two halves (ADR-0004, decision 1).
+    /// from a target's two halves.
     ///
     /// Both sides also receive the same plaintext. In the default
     /// [`Borrowed`] mode that is the same reference, and costs nothing. In

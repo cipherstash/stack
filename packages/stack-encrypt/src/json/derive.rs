@@ -1587,7 +1587,7 @@ enum ExpectedSelector<'p> {
 /// every child to its place, and the selector and child-count checks there
 /// back the AEAD rather than replace it.
 ///
-/// Still allowed by design (ADR 0010): an entry from another row of the
+/// Still allowed by design: an entry from another row of the
 /// column, returned with that row's header; a node at the same selector
 /// under another element (`$.items[0].price` for `$.items[1].price`) at the
 /// top of a read, which no bound field tells apart; and rows withheld whole.

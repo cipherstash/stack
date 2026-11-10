@@ -11,8 +11,8 @@ field. Only this pair accepts `passthrough`.
 
 `EncryptFrom` and `DecryptInto` are the older pair. They encrypt a borrowed
 plaintext, `&user`. The caller keeps the original, and must wipe it. Plans
-and the dynamic engine still use them. The API plan removes them once those
-have moved to the new pair.
+and the dynamic engine still use them. The older pair will be removed once
+plans and the dynamic engine use the new pair (#1488).
 
 Derive one pair or the other on a record. `EncryptTarget` and
 `DecryptSource` already implement `EncryptFrom` and `DecryptInto` for the

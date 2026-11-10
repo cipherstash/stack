@@ -14,7 +14,7 @@
 //! an indexed field with no index is a compile error rather than a quiet
 //! ciphertext-only field; a field with no index is [`ciphertext`] alone.
 //!
-//! [`indexed`] does the composition every caller used to spell by hand —
+//! [`indexed`] does the composition a caller would otherwise spell by hand —
 //! `ciphertext().accepting().zip(equality()).zip(ore()).map(..)`, with its
 //! nested-pair bookkeeping — and produces an [`Encrypted<Terms>`]: the
 //! ciphertext, and the terms as a tuple read by destructuring.

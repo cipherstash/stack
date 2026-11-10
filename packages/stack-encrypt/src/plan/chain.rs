@@ -138,7 +138,7 @@ mod sealed {
 /// One finished chain: something `.await` settles, and [`all`] batches.
 ///
 /// Sealed: the chains in this module are the operations. What the trait
-/// shows is the shape the design promises: a chain is checked with no I/O
+/// shows is the contract: a chain is checked with no I/O
 /// ([`check`](Self::check)), then yields a [`Pending`] synchronously
 /// ([`prepare`](Self::prepare)), with every term derived and every key
 /// request queued, and only awaiting it reaches ZeroKMS.
