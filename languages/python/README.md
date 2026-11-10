@@ -89,10 +89,10 @@ A passthrough `datetime` field needs a `timestamptz` column. psycopg reads a `ti
 
 ## Search by equality
 
-`cipher.query` takes a field's name and a value, and returns a query term as a `str`. Cast the term to the field's query type in the SQL:
+`cipher.eq` takes a field's name and a value, and returns a query term as a `str`. Cast the term to the field's query type in the SQL:
 
 ```python
-term = cipher.query("email", "a@example.com")
+term = cipher.eq("email", "a@example.com")
 with psycopg.connect(DATABASE_URL) as conn:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
@@ -104,9 +104,15 @@ with psycopg.connect(DATABASE_URL) as conn:
 
 The query type is the marker's `query_sql_domain`. For `TextEq` it is `eql_v4.query_text_eq`. The `users_email_eq` index from "Create the table" lets PostgreSQL find the row without reading every row.
 
-`query` sends no request to CipherStash after the first operation of the process. The term is made from a key that the first operation loads.
+A query method sends no request to CipherStash after the first operation of the process. The term is made from a key that the first operation loads.
 
-`query` makes equality terms only. A field whose marker has no `eq` index raises `stackencrypt.QueryError` with the code `query_unsupported`. Examples are `Text`, `Passthrough`, `IntegerOrd`, and `TextMatch`. A name that is not a declared field raises `QueryError` with the code `query_unknown_field`. The value is checked as `encrypt` checks it.
+A field that does not support the operator raises `stackencrypt.QueryError` with the code `query_unsupported`. For `eq`, examples are `Text`, `Passthrough`, `IntegerOrd`, and `TextMatch`. A name that is not a declared field raises `QueryError` with the code `query_unknown_field`. The value is checked as `encrypt` checks it.
+
+## Search by order
+
+A field whose marker has an order index, such as `IntegerOrd`, supports `lt`, `lte`, `gt`, and `gte`. Each takes a field's name and a value, and returns a term as a `str`. Use the SQL operator of the same meaning: `<`, `<=`, `>`, or `>=`. For example, `cipher.gte("level", 3)` returns a term for `WHERE level >= %s::eql_v4.query_integer_ord`.
+
+The errors are the same as for `eq`. A `TextEq` field, for example, does not support `gte`.
 
 ## Declare a SQLAlchemy relationship
 
@@ -186,7 +192,7 @@ A model field cannot be a `uuid.UUID`. The decorator refuses it with the code `d
 
 ## What is not supported yet
 
-- Match, order, and range queries. `query` makes equality terms only.
+- Match and range queries. The query methods are `eq`, `lt`, `lte`, `gt`, and `gte`.
 - Encrypted JSON documents.
 - Lock contexts and identity-bound encryption.
 - More than one keyset, and a choice of keyset.
@@ -194,7 +200,7 @@ A model field cannot be a `uuid.UUID`. The decorator refuses it with the code `d
 
 ## Use it from several threads
 
-`encrypt`, `decrypt`, and `query` are synchronous. There is no async form yet.
+`encrypt`, `decrypt`, and the query methods are synchronous. There is no async form yet.
 
 Each call releases the GIL while the encryption runs. The GIL is CPython's global interpreter lock. So other Python threads keep running during a call, and calls from several threads run at the same time. Within one call, the requests to CipherStash go out one at a time.
 

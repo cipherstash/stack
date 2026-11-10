@@ -70,11 +70,11 @@ class DecryptError(StashError):
 
 
 class QueryError(StashError):
-    """A ``query`` call the declared class cannot answer, raised before any
-    request.
+    """A query method call the declared class cannot answer, such as ``eq``
+    or ``gte``, raised before any request.
 
     ``query_unknown_field``: the name is not a declared field.
-    ``query_unsupported``: the field's marker has no ``eq`` index, such as
-    ``Text``, ``Passthrough`` or ``IntegerOrd``. ``reason`` is the marker's
-    name.
+    ``query_unsupported``: the field does not support the operator. For
+    ``eq``, examples are ``Text``, ``Passthrough`` and ``IntegerOrd``. For
+    ``gte``, an example is ``TextEq``. ``reason`` is the marker's name.
     """

@@ -231,7 +231,7 @@ def test_each_equality_term_is_the_term_the_go_sdk_stored(fixture, cls, ids):
     for row in rows_of(fixture, ids):
         model = model_of(cls, row)
         for field in queried:
-            term = json.loads(cipher.query(field.name, getattr(model, field.name)))
+            term = json.loads(cipher.eq(field.name, getattr(model, field.name)))
             assert term["hm"] == row["stored"][field.name]["hm"], (row["id"], field.name)
 
 

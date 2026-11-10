@@ -1,4 +1,4 @@
-"""The value rules, through ``encrypt`` and ``query`` alike.
+"""The value rules, through ``encrypt`` and ``eq`` alike.
 
 Every value is checked by exact type and range before any request, by one
 function that both calls use. Each case here runs through both, and the
@@ -62,20 +62,20 @@ def through_encrypt(marker: Any, value: Any) -> None:
     Cipher(stackencrypt.model("rows")(cls)).encrypt([cls(x=value)])
 
 
-def through_query(marker: Any, value: Any) -> None:
+def through_eq(marker: Any, value: Any) -> None:
     cls = dataclasses.make_dataclass(
         "Row", [("x", Annotated[PYTHON_TYPE[marker], marker])]
     )
-    Cipher(stackencrypt.model("rows")(cls)).query("x", value)
+    Cipher(stackencrypt.model("rows")(cls)).eq("x", value)
 
 
 def calls(cases: List[Tuple[Any, ...]]) -> List[Any]:
-    """Each case through ``encrypt``, and through ``query`` where the
+    """Each case through ``encrypt``, and through ``eq`` where the
     marker has an ``eq`` index. ``Boolean`` has none."""
     return [
         pytest.param(call, *case, id=f"{call.__name__}-{case[0].__name__}-{case[1]!r}")
         for case in cases
-        for call in (through_encrypt, through_query)
+        for call in (through_encrypt, through_eq)
         if call is through_encrypt or "eq" in case[0].indexes
     ]
 

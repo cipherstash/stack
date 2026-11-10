@@ -1,7 +1,7 @@
 """``Cipher``: encrypts and decrypts the instances of one declared class.
 
 It checks the class and the credentials, and builds the model's plan once.
-``encrypt``, ``decrypt`` and ``query`` are here.
+``encrypt``, ``decrypt`` and the query methods are here.
 """
 
 from typing import Dict, Generic, List, Mapping, Sequence, Type, TypeVar
@@ -94,11 +94,11 @@ class Cipher(Generic[T]):
         """
         return _engine.decrypt(self._plan, self._cls, list(rows))
 
-    def query(self, field: str, value: object) -> str:
+    def eq(self, field: str, value: object) -> str:
         """The equality query term for ``value`` on the declared field
         ``field``, named as a ``str``::
 
-            term = users.query("email", "a@example.com")
+            term = users.eq("email", "a@example.com")
             cur.execute(
                 "SELECT * FROM users WHERE email = %s::eql_v4.query_text_eq",
                 (term,),
@@ -106,15 +106,50 @@ class Cipher(Generic[T]):
 
         The term is a ``str``. The SQL casts it to the field marker's
         ``query_sql_domain``. A term is derived from the keyset already
-        loaded: after the shared client is built, ``query`` makes no request.
+        loaded: after the shared client is built, a query method makes no
+        request.
 
         A name that is not a declared field raises ``QueryError``
-        (``query_unknown_field``). A field whose marker has no ``eq`` index
-        raises ``QueryError`` (``query_unsupported``). Examples are ``Text``,
-        ``Passthrough``, ``IntegerOrd`` and ``TextMatch``. The value is checked as ``encrypt`` checks
-        it, and a value that does not fit raises ``InvalidValueError``. All
-        three are raised before any request.
+        (``query_unknown_field``). A field that does not support the
+        operator raises ``QueryError`` (``query_unsupported``). Examples for
+        ``eq`` are ``Text``, ``Passthrough``, ``IntegerOrd`` and
+        ``TextMatch``. The value is checked as ``encrypt`` checks it, and a
+        value that does not fit raises ``InvalidValueError``. All three are
+        raised before any request. ``lt``, ``lte``, ``gt`` and ``gte`` work
+        the same way.
         """
+        return self._term("eq", field, value)
+
+    def lt(self, field: str, value: object) -> str:
+        """The query term for "less than ``value``" on ``field``::
+
+            term = users.lt("level", 3)
+            cur.execute(
+                "SELECT * FROM users WHERE level < %s::eql_v4.query_integer_ord",
+                (term,),
+            )
+
+        The field's marker needs an order index, such as ``IntegerOrd``.
+        The errors are those of ``eq``.
+        """
+        return self._term("lt", field, value)
+
+    def lte(self, field: str, value: object) -> str:
+        """The query term for "less than or equal to ``value``" on
+        ``field``. SQL: ``<=``. See ``lt``."""
+        return self._term("lte", field, value)
+
+    def gt(self, field: str, value: object) -> str:
+        """The query term for "greater than ``value``" on ``field``. SQL:
+        ``>``. See ``lt``."""
+        return self._term("gt", field, value)
+
+    def gte(self, field: str, value: object) -> str:
+        """The query term for "greater than or equal to ``value``" on
+        ``field``. SQL: ``>=``. See ``lt``."""
+        return self._term("gte", field, value)
+
+    def _term(self, op: str, field: str, value: object) -> str:
         declared = next(
             (f for f in self._declaration.fields if f.name == field), None
         )
@@ -122,26 +157,35 @@ class Cipher(Generic[T]):
             raise QueryError(
                 "query_unknown_field",
                 f"{field!r} is not a declared field of "
-                f"{self._cls.__qualname__!r}. {self._queryable()}",
+                f"{self._cls.__qualname__!r}. {self._supporting(op)}",
                 field=field if isinstance(field, str) else None,
             )
-        if not _has_equality(declared):
+        if op not in self._operators(declared):
             # Passthrough names no EQL type, so it has no `name` attribute.
             marker = declared.marker.__name__
             raise QueryError(
                 "query_unsupported",
-                f"field {field!r} is declared {marker}, which has no eq "
-                f"index, so it answers no equality query. {self._queryable()}",
+                f"field {field!r} is declared {marker}, which does not "
+                f"support {op}. {self._supporting(op)}",
                 field=field,
                 reason=marker,
             )
-        return _engine.query(self._plan, field, value)
+        return _engine.query(self._plan, field, op, value)
 
-    def _queryable(self) -> str:
-        names = [repr(f.name) for f in self._declaration.fields if _has_equality(f)]
+    def _operators(self, field: DeclaredField) -> List[str]:
+        """The operators the engine supports on ``field``, from the plan,
+        with no request. A passthrough field supports none."""
+        if field.marker is Passthrough:
+            return []
+        return _engine.operators(self._plan, field.name)
+
+    def _supporting(self, op: str) -> str:
+        names = [
+            repr(f.name) for f in self._declaration.fields if op in self._operators(f)
+        ]
         if not names:
-            return "The class has no field with an equality query."
-        return "Fields with an equality query: " + ", ".join(names) + "."
+            return f"The class has no field that supports {op}."
+        return f"Fields that support {op}: " + ", ".join(names) + "."
 
     @property
     def declaration(self) -> Declaration:
@@ -150,14 +194,6 @@ class Cipher(Generic[T]):
 
     def __repr__(self) -> str:
         return f"Cipher({self._cls.__qualname__})"
-
-
-def _has_equality(field: DeclaredField) -> bool:
-    """Whether ``query`` answers ``field``: the engine answers an equality
-    query through the ``eq`` index alone (``OpSpec::answered_by`` in
-    ``stack-encrypt``). A marker with only an order or match index has a
-    query type, but not for equality."""
-    return field.marker is not Passthrough and "eq" in field.marker.indexes
 
 
 def _not_decorated(cls: object) -> DeclarationError:

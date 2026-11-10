@@ -23,8 +23,8 @@ Each principle is marked:
 
 ## G1. One engine, and the SDK never executes: held
 
-- `Cipher.encrypt`, `decrypt`, and `query` each make one call into the extension, in `python/stackencrypt/_cipher.py`. The Python layer has no loop over rows, and no loop over a model's values.
-- The Python layer does loop over the declared fields in two places. `Cipher` lists them once, to build the plan. `query` searches them to name a field it refuses. Neither loop touches a value.
+- `Cipher.encrypt`, `decrypt`, and each query method make one call into the extension, in `python/stackencrypt/_cipher.py`. The Python layer has no loop over rows, and no loop over a model's values.
+- The Python layer does loop over the declared fields in two places. `Cipher` lists them once, to build the plan. A query method searches them to name a field it refuses. Neither loop touches a value.
 - The extension hands the engine one frame for the whole call, and reads back the engine's whole output. Encryption, decryption, and term derivation all run in `stack-encrypt`.
 - The declaration check asks the engine. When the class statement runs, the decorator calls `_engine.check_plan`, and the engine refuses a plan it cannot run. `Cipher` later builds the same plan with `_engine.build_plan`.
 - The EQL type rules are not copied. `crates/core` compiles the Go guest's resolver, `languages/golang/encrypt/guest/src/targets.rs`, in place. `python/stackencrypt/_eql.py` is generated from the EQL catalog, and `tests-python.yml` fails on a hand edit.
@@ -46,15 +46,15 @@ Each principle is marked:
 
 ## G4. One declaration serves the write, the query and the read: held
 
-- `Cipher(User)` builds one plan from the declaration. `encrypt`, `query`, and `decrypt` all use that plan.
-- No call takes a context or an index choice. `query` takes a field name and a value only (Python ADR-0002, under `docs/adr/`).
-- `test_a_query_term_finds_the_one_matching_row` in `tests/test_encrypt_live.py` runs `encrypt`, `query`, and `decrypt` on one `Cipher` against PostgreSQL. The README test runs the same three steps.
+- `Cipher(User)` builds one plan from the declaration. `encrypt`, the query methods, and `decrypt` all use that plan.
+- No call takes a context or an index choice. A query method, such as `eq` or `gte`, takes a field name and a value only (Python ADR-0002 and ADR-0003, under `docs/adr/`). The engine picks the index that supports the operator.
+- `test_a_query_term_finds_the_one_matching_row` in `tests/test_encrypt_live.py` runs `encrypt`, `eq`, and `decrypt` on one `Cipher` against PostgreSQL. The README test runs the same three steps.
 - A context that changes per caller, such as a tenant, is not supported yet. The README lists it.
 
 ## G5. Batch by default: held
 
 - `encrypt` and `decrypt` take a list. One call makes one key request for every 500 values, in sequence. `tests/test_encrypt_live.py` counts 3 requests for 1001 values, each way.
-- `query` is the single-value call the principle allows: one field, one search value. It makes no key request after the first call of the process.
+- Each query method is the single-value call the principle allows: one field, one search value. It makes no key request after the first call of the process.
 - A model's fields of different types go in one request.
 
 ## G6. A second way in has to earn its place: held

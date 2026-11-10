@@ -76,7 +76,7 @@ def add_customer(customer: Customer) -> Customer:
 @app.post("/customers/search", response_model=Customer)
 def find_customer(search: Search) -> Customer:
     # The email is in the body so that it stays out of URLs and access logs.
-    term = cipher.query("email", search.email)
+    term = cipher.eq("email", search.email)
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(f"{SELECT_CUSTOMER} WHERE email = %s::eql_v4.query_text_eq", (term,))
