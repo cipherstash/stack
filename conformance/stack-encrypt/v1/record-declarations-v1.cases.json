@@ -1916,7 +1916,11 @@
           }
         }
       },
-      "accepted": true
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
     },
     {
       "id": "type-bytes-ope",
@@ -1929,7 +1933,11 @@
           }
         }
       },
-      "accepted": true
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
     },
     {
       "id": "type-bytes-ore_block",
@@ -1942,7 +1950,11 @@
           }
         }
       },
-      "accepted": true
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
     },
     {
       "id": "type-array-eq",

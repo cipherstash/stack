@@ -324,7 +324,9 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"every index on an integer", "\tScore int64 `stash:\"score,encrypt,index=equality;ore\"`\n\tRank int32 `stash:\"rank,index=ope\"`"},
 		{"two order indexes on an integer", "\tScore int64 `stash:\"score,encrypt,index=ore;ope\"`"},
 		{"orders on a decimal, a date and a timestamp", "\tAmount encrypt.Decimal `stash:\"amount,encrypt,index=equality;ore\"`\n\tDay encrypt.Date `stash:\"day,encrypt,index=ope\"`\n\tAt time.Time `stash:\"at,encrypt,index=equality;ore\"`"},
-		{"orders on text, bytes and a float", "\tName string `stash:\"name,encrypt,index=ope;match\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`"},
+		{"orders on text and a float, equality on bytes", "\tName string `stash:\"name,encrypt,index=ope;match\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`"},
+		{"ore on bytes", "\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`"},
+		{"ope on bytes", "\tBlob []byte `stash:\"blob,index=ope\"`"},
 		{"a match query on an index-only field", "\tName string `stash:\"name,index=match\"`"},
 	} {
 		dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
@@ -367,38 +369,34 @@ func TestTheWholeDeclarationIsCheckedAgainstTheEmbeddedEngine(t *testing.T) {
 	}
 }
 
-// An index no generated method queries is stored, and the generator says
-// so, on stderr and in the file: an order index on bytes. An order index on
-// text, a float or an integer answers the orderings, so it gets methods and
-// no notice. A second order index on one field is no notice: the engine
-// refuses the declaration (`TestRefusalsHoldAgainstTheEmbeddedEngine`).
-func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
-	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tBlob []byte `stash:\"blob,encrypt,index=ope\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`\n\tAge int64 `stash:\"age,encrypt,index=ore\"`\n\tRank int32 `stash:\"rank,encrypt,index=ope\"`")
+// An order index on bytes is refused: no ordering operator is answered
+// over bytes, so its term would be stored and never queried. An order index
+// on text, a float or an integer answers the orderings, so it gets methods.
+func TestAnOrderIndexOnBytesIsRefused(t *testing.T) {
+	for _, index := range []string{"ore", "ope", "equality;ore"} {
+		src := user(ctx + "\tBlob []byte `stash:\"blob,encrypt,index=" + index + "\"`")
+		_, err := generate(t, src, stashgen.Request{Type: "User"})
+		var fe *stashgen.FieldError
+		if !errors.As(err, &fe) || fe.Field != "Blob" {
+			t.Errorf("index=%s on bytes: %v", index, err)
+		}
+	}
+	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`")
 	file, err := generate(t, src, stashgen.Request{Type: "User"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	notices := strings.Join(file.Notices, "\n")
-	for _, want := range []string{
-		"stashgen: User.Blob: stores ope terms that no generated method queries",
-	} {
-		if !strings.Contains(notices, want) {
-			t.Errorf("notices lack %q:\n%s", want, notices)
-		}
-	}
-	for _, field := range []string{"User.Name", "User.Rank", "User.Score", "User.Age"} {
-		if strings.Contains(notices, field) {
-			t.Errorf("an order index that answers the orderings got a notice (%s):\n%s", field, notices)
-		}
-	}
-	if !strings.Contains(string(file.Content), "// Blob: stores ope terms that no generated method queries") {
-		t.Errorf("the file does not carry the notice:\n%s", file.Content)
+	if notices := strings.Join(file.Notices, "\n"); strings.Contains(notices, "no generated method queries") {
+		t.Errorf("an index every field can query got a notice:\n%s", notices)
 	}
 	if !strings.Contains(string(file.Content), "func (f NameField) Lt(") {
 		t.Errorf("a text field with ope has no Lt:\n%s", file.Content)
 	}
 	if !strings.Contains(string(file.Content), "func (f ScoreField) Between(") {
 		t.Errorf("a float field with ore has no Between:\n%s", file.Content)
+	}
+	if !strings.Contains(string(file.Content), "func (f BlobField) Eq(") {
+		t.Errorf("a bytes field with equality has no Eq:\n%s", file.Content)
 	}
 }
 

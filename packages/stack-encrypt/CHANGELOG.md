@@ -89,6 +89,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A data plan refuses an order index on bytes** (#1577).
+  `dynamic::admits` no longer admits `ore`, `ope` or `ore_block` on a
+  `bytes` field, so `record::plan` refuses the declaration with
+  `index_not_admitted`. Go reaches the same check through the guest.
+  Before, the declaration was accepted, each row stored an order term
+  that anyone who held two rows could compare, and every ordering query
+  was refused as `operator_not_answered`.
+  - To upgrade, remove the index from the plan. A row stored with the
+    term still opens under the new plan: opening ignores a stored term,
+    and an index-only field, that the plan does not declare. The stored
+    terms stay in the database until the row is written again.
+  - `IndexSpec::defines` is unchanged. It reports whether the scheme has
+    a term for a value, and it has an order term for bytes.
+  - The conformance corpus follows. In `record-declarations-v1` the
+    cases `type-bytes-ore`, `type-bytes-ope` and `type-bytes-ore_block`
+    are now refused. `record-values-v1` no longer has an `unanswered`
+    list. In `record-query-refusals-v1` the bytes field declares
+    equality alone, and the six `*-on-bytes-order-index` cases are
+    renamed `*-on-bytes`.
+  - `tests/fixtures/stored_rows_v1.json` is not changed. Its `every_kind`
+    plan declares an order index on two bytes fields. The test now opens
+    those rows under the plan with the indexes removed.
+
 - **An order index on bytes does not compile** (#1577). `Ore`, `Ope` and
   `OreBlock` are indexes over `op::Ordered`, the trait their operators
   need. Until now they were indexes over `sem::Orderable`, which also

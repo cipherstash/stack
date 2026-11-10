@@ -84,7 +84,6 @@ type Probe struct {
 	U64 uint64   `stash:"u64,encrypt,index=ore"`
 	I64 int64    `stash:"i64,encrypt,index=ore"`
 	S   string   `stash:"s,encrypt,index=ore"`
-	B   []byte   `stash:"b,encrypt,index=ore"`
 	F64 float64  `stash:"f64,encrypt,index=ore"`
 	F32 float32  `stash:"f32,encrypt,index=ore"`
 }
@@ -98,7 +97,6 @@ type ProbeOpe struct {
 	U64 uint64   `stash:"u64,encrypt,index=ope"`
 	I64 int64    `stash:"i64,encrypt,index=ope"`
 	S   string   `stash:"s,encrypt,index=ope"`
-	B   []byte   `stash:"b,encrypt,index=ope"`
 	F64 float64  `stash:"f64,encrypt,index=ope"`
 	F32 float32  `stash:"f32,encrypt,index=ope"`
 }

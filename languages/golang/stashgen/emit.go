@@ -795,61 +795,31 @@ func planQueries(f *genFile) error {
 			}
 			g.queries = append(g.queries, q)
 		}
-		unqueried, err := indexesAnswer(g)
-		if err != nil {
+		if err := verifiable(g); err != nil {
 			return fieldErr(f.typeName, g.GoName, "%v", err)
-		}
-		for _, n := range unqueried {
-			f.notices = append(f.notices, g.GoName+": "+n)
-			f.unqueried = append(f.unqueried, fmt.Sprintf("stashgen: %s.%s: %s", f.typeName, g.GoName, n))
 		}
 	}
 	return nil
 }
 
-// indexesAnswer checks a field's indexes against the operators the engine
-// answers on it.
+// verifiable refuses a probabilistic query on an index-only field: the
+// query's rows are checked by decrypting them with Verify, and an
+// index-only field stores no ciphertext, so Verify could never pass and
+// every real match would be thrown away.
 //
-// It refuses a probabilistic query on an index-only field: the query's rows
-// are checked by decrypting them with Verify, and an index-only field
-// stores no ciphertext, so Verify could never pass and every real match
-// would be thrown away.
-//
-// It returns a notice for each index the engine answers no operator
-// through on the field: the index stores a term no generated method can
-// query. That is an ore or ope index on bytes: the engine stores it and
-// answers the orderings over integers, floats, text, decimals, dates and
-// timestamps only. Storing it is allowed, since a program may compare the
-// stored terms itself, but an order term tells anyone who reads the column
-// how its values order, so the generator says so. A second order index
-// beside the first is no longer a notice: the engine refuses a field that
-// declares two indexes for one operator (overlapping_outputs), before any
-// code is written.
-func indexesAnswer(g *genField) ([]string, error) {
-	if g.Verb != VerbEncryptIndex && g.Verb != VerbIndex {
-		return nil, nil
+// Every index the engine admits on a field answers an operator there, so
+// no index is stored that a generated method cannot query. The engine
+// refuses the one that would be: an order index on bytes.
+func verifiable(g *genField) error {
+	if g.Verb != VerbIndex {
+		return nil
 	}
-	answers := map[IndexName]string{}
 	for _, op := range g.operators {
-		if op.Probabilistic && g.Verb == VerbIndex {
-			return nil, fmt.Errorf("the %s index answers %s, whose rows are checked by decrypting them with Verify, and an index-only field stores no ciphertext to decrypt; seal it as well (encrypt,index=%s)", op.Index, op.Name, op.Index)
-		}
-		if _, ok := answers[op.Index]; !ok {
-			answers[op.Index] = op.Name
+		if op.Probabilistic {
+			return fmt.Errorf("the %s index answers %s, whose rows are checked by decrypting them with Verify, and an index-only field stores no ciphertext to decrypt; seal it as well (encrypt,index=%s)", op.Index, op.Name, op.Index)
 		}
 	}
-	var notices []string
-	for _, ix := range g.Indexes {
-		if _, ok := answers[ix.Name]; ok {
-			continue
-		}
-		why := ""
-		if ix.Name == IndexOre || ix.Name == IndexOpe {
-			why = ": the orderings are answered over integers, floats, text, decimals, dates and timestamps only"
-		}
-		notices = append(notices, fmt.Sprintf("stores %s terms that no generated method queries: the engine answers no query through the %s index on this field (%s)%s. Drop the index unless your own code compares the stored terms.", ix.Name, ix.Name, g.valueExpr, why))
-	}
-	return notices, nil
+	return nil
 }
 
 func queryFor(g *genField, op Operator) (queryMethod, error) {

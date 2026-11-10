@@ -262,10 +262,11 @@ func eightBit(t stashgen.GoType) bool {
 // every kind vitaminc gives an equality domain (integers of every width,
 // floats, decimals, dates, timestamps, text and bytes; a boolean has none),
 // match over text alone, ORE and OPE over integers of 16 bits and wider,
-// floats, text, bytes, decimals, dates and timestamps. Not over a boolean
-// or an 8-bit integer, whose order term would reveal which rows are true,
-// or each row's rank among 256 values. The JSON index is not in the engine
-// yet.
+// floats, text, decimals, dates and timestamps. Not over a boolean or an
+// 8-bit integer, whose order term would reveal which rows are true, or
+// each row's rank among 256 values. Not over bytes, which no ordering
+// operator is answered over: the term would be stored and never queried.
+// The JSON index is not in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
 	case stashgen.IndexEquality:
@@ -283,7 +284,7 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 		return fmt.Errorf("match applies to a string, not to %s", t)
 	case stashgen.IndexOre, stashgen.IndexOpe, stashgen.IndexOreBlock:
 		switch t.Kind {
-		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat,
+		case stashgen.KindString, stashgen.KindFloat,
 			stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
 			return nil
 		}

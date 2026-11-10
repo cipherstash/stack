@@ -77,10 +77,6 @@ struct Case {
     companion: Option<Input>,
     /// Another spelling whose equality query must derive the stored term.
     equal_query: Option<Input>,
-    /// Stored indexes no query operator answers for this kind: the term is
-    /// stored, and a query of it is refused as `operator_not_answered`.
-    #[serde(default)]
-    unanswered: Vec<String>,
     expected_error: Option<ExpectedError>,
 }
 
@@ -170,15 +166,6 @@ async fn shared_record_value_profile() {
         assert!(KINDS[..18].contains(&case.kind.as_str()), "{}", case.id);
         assert!(KINDS.contains(&case.input.kind.as_str()), "{}", case.id);
         assert!(!case.outputs.is_empty() && case.outputs[0] == "c");
-        // An unanswered index must be one the case declares, or the entry
-        // checks nothing.
-        for index in &case.unanswered {
-            assert!(
-                case.outputs[1..].contains(index),
-                "{}: unanswered {index} is not a declared index",
-                case.id
-            );
-        }
         let is_null = case.input.kind == "null";
         assert_eq!(case.frame.is_none(), is_null, "{}: frame", case.id);
         let mut spec = json!({"context": ["conformance", "value"], "outputs": case.outputs, "type": case.kind});
@@ -262,25 +249,6 @@ async fn shared_record_value_profile() {
                     "ore" | "ope" => Op::Lt,
                     other => panic!("{other}"),
                 };
-                if case.unanswered.contains(index) {
-                    let error = dynamic::query_term(
-                        &keyset,
-                        &plan,
-                        "value",
-                        operator,
-                        value(target),
-                        &NoTargets,
-                    )
-                    .err()
-                    .expect("an unanswered index is refused before any term");
-                    refusal(
-                        &error,
-                        "stack_encrypt::dynamic_source",
-                        "operator_not_answered",
-                        "value",
-                    );
-                    continue;
-                }
                 queried.push((target.clone(), operator, term.clone()));
             }
             if output == 0 {

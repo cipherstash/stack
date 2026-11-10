@@ -21,7 +21,7 @@ and `languages/golang/encrypt/query_refusal_conformance_test.go`.
 `["conformance", <name>]`: equality-only text, match-only text, order-only
 text (ORE and block ORE), an integer with equality and order, an order-only
 float, a 128-bit integer with equality and OPE, a ciphertext-only bool and
-text, a sealed-null and a SQL-null integer, and bytes with an order index.
+text, a sealed-null and a SQL-null integer, and equality-only bytes.
 
 A case names a `field`, an `operator` and an `input`: a scalar `{type, text}`
 in the value profile's form, or `{"type": "list", "items": [...]}` for a
@@ -40,7 +40,7 @@ Source and plan refusals cover every scalar operator (`eq`, `lt`, `lte`,
 indexes do not answer it, one case per pair: the equality-only text and
 integer, the match-only text, the ORE and block ORE text, the order-only
 float, the ciphertext-only bool and text, and the bytes field (equality
-and an order index no operator reads). The 128-bit integer (equality and
+alone: a declaration refuses an order index on bytes). The 128-bit integer (equality and
 OPE) and the 32-bit integer (equality and ORE) answer every operator but
 `matches`. The SQL-null integer shares the equality-only
 integer's indexes and is not repeated. A JSON document operator on an

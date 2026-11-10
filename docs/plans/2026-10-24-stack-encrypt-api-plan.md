@@ -2160,8 +2160,11 @@ review. The rules are the query artifact's.
      test: each order index, and each low-level order operation an
      index can be built from, is declared over `op::Ordered`, the trait
      its operators need. So an order index on bytes does not compile
-     (#1577). The dynamic path still admits an order index on bytes;
-     see the open question in #1577 about data that Go rc.3 stored.
+     (#1577). The dynamic path refuses the declaration, in
+     `dynamic::admits`, as `index_not_admitted`. A row stored under
+     such a declaration still opens once the index is removed from the
+     plan, because opening ignores a stored term the plan does not
+     declare.
   2. Derivation once, refusals once. The `sem` query functions, the
      analyzer in place of `MatchCase`, and `Match<Dynamic>` arrive.
      `check`, `verifier`, `admit`, `QueryToken`, `check_input`, and the

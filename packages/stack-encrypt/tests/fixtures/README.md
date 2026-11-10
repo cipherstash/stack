@@ -215,6 +215,14 @@ of being regenerated away.
   sealed leaves (which carry a fresh nonce): the same shape and map keys in
   order, the same terms and the same passthroughs.
 
+One declaration in the file is no longer accepted: an order index on a
+`bytes` field (`blob` with `ore`, and the index-only `blob_ope`, in
+`every_kind`). The file keeps it, because it records what was stored. The
+test removes those indexes from the plan before it builds it, as a user
+whose plan declared one must. It opens each row as stored, retired terms
+included, under that plan. It seals the source again and compares the two
+trees without the retired terms and without `blob_ope`.
+
 Nothing reads `STACK_ENCRYPT_UPDATE_FIXTURES` for this file. The one test that
 creates it, `write_stored_rows_v1`, is `#[ignore]`d and refuses to run when the
 file exists. The check rewrites it only under

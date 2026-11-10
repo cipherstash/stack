@@ -133,8 +133,6 @@ struct ValueCase {
     frame: Option<String>,
     companion: Option<Input>,
     equal_query: Option<Input>,
-    #[serde(default)]
-    unanswered: Vec<String>,
     expected_error: Option<serde_json::Value>,
 }
 
@@ -382,8 +380,6 @@ struct Terms<'a> {
     field: &'a str,
     /// The field's declared outputs, `c` first.
     declared: &'a [String],
-    /// Stored indexes no operator answers: present, and not queried.
-    unanswered: &'a [String],
     input: &'a Input,
     /// Another spelling whose equality query derives the same term.
     equal_query: Option<&'a Input>,
@@ -391,8 +387,7 @@ struct Terms<'a> {
 
 /// Every stored term is the term this runner's own query of the same value
 /// derives: the query semantics of the artifact, independent of who wrote
-/// it. An index the corpus lists as unanswered has no operator to compare
-/// with, so only its presence is checked.
+/// it.
 async fn check_terms(
     keyset: &KeysetCipher<'_, common::DeterministicSource>,
     terms: Terms<'_>,
@@ -403,9 +398,6 @@ async fn check_terms(
     let present: BTreeSet<_> = stored.terms.keys().map(String::as_str).collect();
     assert_eq!(present, declared, "{what}: stores every declared index");
     for (index, term) in &stored.terms {
-        if terms.unanswered.contains(index) {
-            continue;
-        }
         let mut probes = vec![terms.input];
         if index == "eq" {
             probes.extend(terms.equal_query);
@@ -649,7 +641,6 @@ async fn consume(
                     plan: &plan,
                     field: &corpus.values.field,
                     declared: &case.outputs,
-                    unanswered: &case.unanswered,
                     input: &case.input,
                     equal_query: case.equal_query.as_ref(),
                 },
@@ -694,7 +685,6 @@ async fn consume(
                         plan: &plan,
                         field: &field.name,
                         declared: &field.outputs,
-                        unanswered: &[],
                         input,
                         equal_query: None,
                     },
