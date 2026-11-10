@@ -15,7 +15,7 @@ help: the following other types implement trait `AllowsNoContext`
 ...
    | impl AllowsNoContext for DeclaredScopes {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
-note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into`
+note: required by a bound in `encrypt_into`
   --> src/target/conversion.rs
    |
    |     fn encrypt_into<'a, T, K: 'static>(self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
@@ -43,7 +43,7 @@ error[E0277]: the trait bound `Parts<NoScope, stack_encrypt::target::Bind<u128>>
              `Parts<Option<stack_encrypt::target::Scope<T>>, stack_encrypt::target::Bind<U>>` implements `From<stack_encrypt::target::Bind<U>>`
            and $N others
    = note: required for `stack_encrypt::target::Scope<u64>` to implement `Into<Parts<NoScope, stack_encrypt::target::Bind<u128>>>`
-note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into_with_context`
+note: required by a bound in `encrypt_into_with_context`
   --> src/target/conversion.rs
    |
    |     fn encrypt_into_with_context<'a, T, K: 'static>(
@@ -72,7 +72,7 @@ error[E0277]: the trait bound `Parts<stack_encrypt::target::Scope<u64>, NoBind>:
              `Parts<Option<stack_encrypt::target::Scope<T>>, stack_encrypt::target::Bind<U>>` implements `From<stack_encrypt::target::Bind<U>>`
            and $N others
    = note: required for `Parts<stack_encrypt::target::Scope<u64>, stack_encrypt::target::Bind<u128>>` to implement `Into<Parts<stack_encrypt::target::Scope<u64>, NoBind>>`
-note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into_with_context`
+note: required by a bound in `encrypt_into_with_context`
   --> src/target/conversion.rs
    |
    |     fn encrypt_into_with_context<'a, T, K: 'static>(

@@ -525,9 +525,9 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! DecryptInto)]`) encrypt a borrowed plaintext into a [`StackCipherText`].
 //! A `StackCipherText` is a tree of sealed leaves. The low-level entry
 //! points of the structural API are [`KeysetCipher::encrypt_tree`] and
-//! [`KeysetCipher::decrypt_tree`]. Its conversion helpers are in
-//! [`target::legacy`]. The structural API is separate from the owned scalar
-//! API.
+//! [`KeysetCipher::decrypt_tree`]. A declaration runs through
+//! [`KeysetCipher::encrypt_as`] and [`KeysetCipher::decrypt_as`]. The
+//! structural API is separate from the owned scalar API.
 //!
 //! The owned derives also implement the structural traits. So an owned
 //! record can be a field of a structural record, or a typed field of a plan.

@@ -11,7 +11,7 @@
 //! forms that must not compile.
 use stack_encrypt::plan::pick;
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
-use stack_encrypt::target::{legacy, AeadContext, DecryptSource, EncryptTarget};
+use stack_encrypt::target::{AeadContext, DecryptSource, EncryptTarget};
 use stack_encrypt::{
     nonempty, Ciphertext, DecryptFrom, EncryptFrom, EncryptInto, Encrypted, KeysetCipher, Plan,
     StackCipher, StackCipherText,
@@ -149,7 +149,7 @@ async fn records(
     let _: String = String::decrypt_from(stored, keyset).await?;
 
     // An owned record in a structural record, and as a typed plan field.
-    let _: EncryptedProfile = legacy::EncryptInto::encrypt_into(&profile, keyset).await?;
+    let _: EncryptedProfile = keyset.encrypt_as(&profile, Default::default()).await?;
     let plan = Plan::context("profiles")
         .fields::<Profile, _>()
         .encrypt_into::<EncryptedUser, _>(pick("user", |p: &Profile| &p.user))

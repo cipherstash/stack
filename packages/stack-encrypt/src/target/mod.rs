@@ -80,7 +80,7 @@
 //! # Structural API during migration
 //!
 //! The structural derives, plans, and dynamic targets still use the
-//! declarations below. Their borrowed convenience methods are isolated in [`legacy`].
+//! declarations below.
 //!
 //! [`EncryptFrom<S>`] describes ciphertext and/or term operations and has an
 //! associated context type. It does not receive plaintext or a cipher. The
@@ -167,9 +167,8 @@
 //! Implement `encryption`/`decryption`, returning core-owned descriptions, in place
 //! of `encrypt_from`/`decrypt_into` methods that took a cipher. The derives do this
 //! automatically. Call `keyset.encrypt_as(&value, context)` and
-//! `cipher.decrypt_as(record, context)`, or import [`legacy::EncryptInto`] and
-//! [`legacy::DecryptFrom`] while migrating these declarations. New scalar
-//! targets implement [`EncryptTarget`] and [`DecryptSource`].
+//! `cipher.decrypt_as(record, context)`. New scalar targets implement
+//! [`EncryptTarget`] and [`DecryptSource`].
 mod collections;
 mod context;
 mod conversion;
@@ -196,9 +195,14 @@ pub use context::{
     AeadContext, Bind, BindPart, CallerContext, CheckedInput, DeclaredContext, Extends, NoBind,
     NoScope, Parts, Scope, ScopePart, Scopes, StoredParts,
 };
+pub use conversion::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
 pub use index::{
     indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock,
     Select, TermSet, Whole,
+};
+pub use input::{
+    AcceptsContext, AllowsNoContext, ContextInput, DeclaredScopes, NoCallerContext,
+    OptionalContext, RequiredContext, ScalarContext,
 };
 #[cfg(feature = "dynamic")]
 pub(crate) use operations::chosen;
@@ -212,23 +216,8 @@ pub use pending::{CipherRef, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
-pub use tuples::JoinContext;
-
-// The old borrowed declarations remain for plans, derives and the dynamic
-// engine during the staged migration. New applications use the traits above.
-/// Borrowed conversion helpers for declarations not yet migrated to the owned API.
-/// Do not import these alongside the new conversion traits.
-pub mod legacy {
-    pub use super::operations::{
-        LegacyDecryptFrom as DecryptFrom, LegacyEncryptInto as EncryptInto,
-    };
-}
-pub use conversion::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
-pub use input::{
-    AcceptsContext, AllowsNoContext, ContextInput, DeclaredScopes, NoCallerContext,
-    OptionalContext, RequiredContext, ScalarContext,
-};
 pub use stack_encrypt_derive::{DecryptSource, EncryptTarget};
+pub use tuples::JoinContext;
 /// The cleanup trait that every owned plaintext must implement. It is
 /// re-exported here so that the derives can name it, even when the caller's
 /// crate does not depend on `zeroize`.

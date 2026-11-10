@@ -116,6 +116,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`target::legacy` is removed** (#1488). It held two traits,
+  implemented for every type, that gave the structural API a second
+  call syntax: `value.encrypt_into(&keyset)`,
+  `value.encrypt_into_with_context(&keyset, context)`,
+  `Target::encrypt_from(&value, &keyset, context)`,
+  `stored.decrypt_into(&cipher, context)`, `P::decrypt_from(stored, &cipher)`
+  and `P::decrypt_from_with_context(stored, &cipher, context)`. Their
+  names were the same as the owned traits' `EncryptInto` and
+  `DecryptFrom`, but they borrowed the plaintext.
+  - To upgrade a type that implements `EncryptTarget` or
+    `DecryptSource`, use the owned traits. They take the plaintext by
+    value.
+  - To upgrade a type that implements only `EncryptFrom` or
+    `DecryptInto`, call the cipher. The context is `T::Context`, so
+    convert it with `into()`:
+    `keyset.encrypt_as(&value, context.into())`,
+    `keyset.encrypt_as(&value, Default::default())` for a record with no
+    caller context, and `cipher.decrypt_as(stored, context.into())`.
+
 - **`target::ExpectedContext` is no longer part of the API** (#1488). It
   is the check that a `#[stash(context_field)]` record runs on decrypt:
   the stored context must equal the one the caller expects, if the caller
