@@ -101,6 +101,20 @@ describe('getCtsToken', () => {
     )
   })
 
+  it('still accepts a token that may be undefined', async () => {
+    // Deprecating the no-argument form must not stop this call compiling.
+    const ctsToken: CtsToken = {
+      accessToken: 'fake_token',
+      expiry: 1_900_000_000,
+    }
+    requestCookie(JSON.stringify(ctsToken))
+    const noToken = undefined as string | undefined
+
+    const result = await getCtsToken(noToken)
+
+    expect(result).toEqual({ success: true, ctsToken })
+  })
+
   it('reports a failure when there is no cookie and no JWT to exchange', async () => {
     requestCookie(undefined)
 

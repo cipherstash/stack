@@ -42,20 +42,36 @@ export type GetCtsTokenResponse = Promise<
     }
 >
 
-/**
- * The CipherStash session for the current request.
- *
- * With `oidcToken`, the session cookie is only returned when it was minted for
- * that token's issuer and subject; otherwise (no cookie, a malformed cookie, or
- * a cookie belonging to someone else) a fresh session is fetched for
- * `oidcToken`. Without it, the cookie is returned as-is, so pass the user's
- * token whenever you have one.
- *
- * `oidcToken` must be a token your application has already authenticated:
- * this function reads its `iss` and `sub` without verifying its signature, to
- * decide which session it may reuse. CTS verifies it when a session is minted.
- */
-export const getCtsToken = async (oidcToken?: string): GetCtsTokenResponse => {
+type GetCtsToken = {
+  /**
+   * The CipherStash session cookie for the current request, returned as-is.
+   *
+   * @deprecated Pass the user's OIDC token. With no token there is no identity
+   * to check the cookie against, so a session left behind by a sign-out on a
+   * route the middleware does not cover is returned to whoever calls this
+   * next. Call `resetCtsToken` when a user signs out on such a route.
+   */
+  (): GetCtsTokenResponse
+  /**
+   * The CipherStash session for the current request.
+   *
+   * With `oidcToken`, the session cookie is only returned when it was minted
+   * for that token's issuer and subject; otherwise (no cookie, a malformed
+   * cookie, or a cookie belonging to someone else) a fresh session is fetched
+   * for `oidcToken`. Without it, the cookie is returned as-is, so pass the
+   * user's token whenever you have one.
+   *
+   * `oidcToken` must be a token your application has already authenticated:
+   * this function reads its `iss` and `sub` without verifying its signature,
+   * to decide which session it may reuse. CTS verifies it when a session is
+   * minted.
+   */
+  (oidcToken: string | undefined): GetCtsTokenResponse
+}
+
+export const getCtsToken: GetCtsToken = async (
+  oidcToken?: string,
+): GetCtsTokenResponse => {
   const cookieStore = await cookies()
   const rawSession = cookieStore.get(CS_COOKIE_NAME)?.value
   const session = readCtsSession(rawSession)

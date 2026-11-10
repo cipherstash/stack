@@ -24,7 +24,8 @@ export type SessionIdentity = {
   owner: SessionOwner | undefined
   /**
    * The OIDC token to mint a new session with. Called only when the existing
-   * session cannot be reused, so a middleware can defer fetching it.
+   * session cannot be reused, so a middleware can defer fetching it. A rejection
+   * is treated as no token being available.
    */
   getOidcToken: () => Promise<string | null | undefined>
 }
@@ -37,7 +38,8 @@ export type SessionIdentity = {
  *   subject): pass through.
  * - Signed in otherwise (no session, a malformed or expired one, or one minted
  *   for someone else): mint a session for this user. If there is no token to
- *   mint with, or CTS refuses, a stale cookie is cleared rather than kept.
+ *   mint with (including when fetching one fails), or CTS refuses, a stale
+ *   cookie is cleared rather than kept.
  * - Signed out, with a session cookie: clear it.
  *
  * Whenever the cookie is written or cleared, the request forwarded to the rest
@@ -54,20 +56,13 @@ export async function syncCtsSession(
   identity: SessionIdentity | undefined,
   res?: NextResponse,
 ): Promise<NextResponse> {
-  const callerCookie = res?.cookies.get(CS_COOKIE_NAME)
-  const { response, keptSession } = await decideSession(req, identity, res)
+  const { response, keptSession, callerCookieLeftInPlace } =
+    await decideSession(req, identity, res)
 
-  // The decision left the caller's own session cookie in place when the
-  // cookie on the response is still the one the caller set.
-  const responseCookie = response.cookies.get(CS_COOKIE_NAME)
-  const callerCookieSurvived =
-    callerCookie !== undefined &&
-    responseCookie !== undefined &&
-    responseCookie.value === callerCookie.value
-  if (callerCookieSurvived) {
+  if (callerCookieLeftInPlace) {
     if (keptSession) {
       writeCtsSession(response, keptSession, keptSession.owner)
-    } else if (responseCookie.value !== '') {
+    } else {
       clearCtsSession(response)
     }
   }
@@ -77,6 +72,11 @@ export async function syncCtsSession(
 
 type SessionDecision = {
   response: NextResponse
+  /**
+   * Whether `response` still carries a session cookie the caller set on it,
+   * because the decision neither wrote nor deleted the cookie.
+   */
+  callerCookieLeftInPlace: boolean
   /** The request's own session, when it was checked and kept. */
   keptSession?: CtsSession
 }
@@ -93,20 +93,30 @@ async function decideSession(
   res: NextResponse | undefined,
 ): Promise<SessionDecision> {
   const rawSession = req.cookies.get(CS_COOKIE_NAME)?.value
+  const callerHasCookie = res?.cookies.has(CS_COOKIE_NAME) ?? false
   const passThrough = () => res ?? NextResponse.next()
+  const leaveCookie = (keptSession?: CtsSession): SessionDecision => ({
+    response: passThrough(),
+    callerCookieLeftInPlace: callerHasCookie,
+    keptSession,
+  })
+  const clearCookie = (): SessionDecision => ({
+    response: clearCtsSession(passThrough()),
+    callerCookieLeftInPlace: false,
+  })
 
   if (!identity) {
     if (rawSession) {
       logger.debug(
         'No user is signed in, so the CipherStash session was reset.',
       )
-      return { response: clearCtsSession(passThrough()) }
+      return clearCookie()
     }
 
     logger.debug(
       'No user is signed in, so the CipherStash session was not set.',
     )
-    return { response: passThrough() }
+    return leaveCookie()
   }
 
   if (!identity.owner) {
@@ -120,7 +130,7 @@ async function decideSession(
     logger.debug(
       'The CipherStash session belongs to the signed-in user and was kept.',
     )
-    return { response: passThrough(), keptSession: session }
+    return leaveCookie(session)
   }
 
   if (rawSession) {
@@ -129,18 +139,27 @@ async function decideSession(
     )
   }
 
-  const oidcToken = await identity.getOidcToken()
+  let oidcToken: string | null | undefined
+  try {
+    oidcToken = await identity.getOidcToken()
+  } catch {
+    // Handled like a missing token, so a stale cookie is still cleared and the
+    // request is not turned into a 500. The exception is not repeated: its
+    // message could contain a token.
+    logger.error(
+      'Fetching a token for the signed-in user failed, so the CipherStash session was not set.',
+    )
+  }
+
   if (!oidcToken) {
     logger.debug(
       'No token was available for the signed-in user, so the CipherStash session was not set.',
     )
-    return {
-      response: rawSession ? clearCtsSession(passThrough()) : passThrough(),
-    }
+    return rawSession ? clearCookie() : leaveCookie()
   }
 
   const minted = await setCtsToken(oidcToken, res, {
-    clearOnFailure: rawSession !== undefined && rawSession !== '',
+    clearOnFailure: callerHasCookie || Boolean(rawSession),
   })
-  return { response: minted }
+  return { response: minted, callerCookieLeftInPlace: false }
 }

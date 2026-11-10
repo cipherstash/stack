@@ -876,10 +876,11 @@ describe('a CTS transport failure', () => {
     expect(result.success).toBe(false)
     expect(result.error).not.toContain(oidcToken)
     const logged = vi.mocked(logger.error).mock.calls
-    expect(logged).toHaveLength(1)
-    expect(
-      logged.flat().map((arg) => (arg instanceof Error ? arg.message : arg)),
-    ).not.toContainEqual(expect.stringContaining('request failed'))
+    expect(logged).toEqual([
+      [
+        'There was an issue communicating with the CipherStash CTS API, the CipherStash session was not set. Failed to fetch CTS token: the CipherStash API could not be reached.',
+      ],
+    ])
   })
 })
 

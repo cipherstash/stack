@@ -274,10 +274,11 @@ export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
  * Mint a session for `oidcToken` and write it to the response, labelled with
  * the token's issuer and subject. Used by the Next.js middleware.
  *
- * `clearOnFailure` says the request carries a session cookie that must not
- * outlive this call (malformed, expired, or minted for someone else): if CTS
- * refuses, that cookie is deleted rather than left for the next request to read
- * as this user's session. Without it, a failed mint leaves the response alone.
+ * `clearOnFailure` says a session cookie, on the request or already on `res`,
+ * must not outlive this call (malformed, expired, minted for someone else, or
+ * never checked): if CTS refuses, that cookie is deleted rather than left for
+ * the next request to read as this user's session. Without it, a failed mint
+ * leaves the response alone.
  */
 export const setCtsToken = async (
   oidcToken: string,
