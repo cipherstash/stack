@@ -110,11 +110,6 @@ overrides:
   # #220 CVE-2026-102277 — raised to 5.0.12 (published 2026-09-14); the
   # ceiling moves with the pin so 5.0.9-5.0.11 cannot resolve.
   'brace-expansion@<5.0.12': '5.0.12'
-  # #287 CVE-2026-118764 / GHSA-g3hv-75wg-m249 — minimatch >=7.0.0 <11.0.1,
-  # reached only through rimraf>glob@13 (declares ^10.2.2, so no in-range fix).
-  # Override crosses one major line on a dev-only transitive dep; remove once
-  # glob/rimraf declare ^11.
-  'minimatch@>=7.0.0 <11.0.1': '11.0.1'
   # #153 GHSA-h67p-54hq-rp68 / CVE-2026-53550 — js-yaml merge-key DoS, 3.x line.
   # #189 GHSA-5p4m-2wfm-xmqj / CVE-2026-59870 (HIGH) — quadratic-CPU DoS in
   # `!!omap` duplicate-key detection; patched in 3.15.1.

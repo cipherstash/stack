@@ -165,19 +165,16 @@ describe('supply chain — pnpm configuration', () => {
     ).toBe(runner)
   })
 
-  it('security overrides stay range-scoped and remain a small allowlist (≤13 entries)', () => {
+  it('security overrides stay range-scoped and remain a small allowlist (≤12 entries)', () => {
     // Every override must be scoped to the advisory's vulnerable range
     // (`pkg@<range>`), never a blanket `pkg` pin — a blanket pin silently
     // rewrites versions outside the vulnerable range forever. The count cap
     // mirrors onlyBuiltDependencies: growth forces a conscious review.
-    // Raised 12 -> 13 for the minimatch override (#287, GHSA-g3hv-75wg-m249);
-    // drop it back once rimraf ^6.1.4 (glob 14, minimatch ^11) clears the
-    // minimumReleaseAge cooldown and the override can be removed.
     const ws = readYaml('pnpm-workspace.yaml') as {
       overrides?: Record<string, string>
     }
     const selectors = Object.keys(ws.overrides ?? {})
-    expect(selectors.length).toBeLessThanOrEqual(13)
+    expect(selectors.length).toBeLessThanOrEqual(12)
     for (const selector of selectors) {
       // A version-scoped selector has an `@` after the package name
       // (position > 0 handles `@scope/pkg@range`).
