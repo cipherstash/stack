@@ -1,24 +1,6 @@
-//! The EQL types as Stack Encrypt's resolver.
-//!
-//! Stack Encrypt's dynamic interface runs a plan that arrives as data. A
-//! field of that plan may name an EQL type, such as `"TextEq"`. Stack
-//! Encrypt does not depend on this crate, so a program gives it the EQL
-//! types through a [`TargetResolver`]. [`EqlTargets`] is that resolver. It
-//! holds every type in [`targets`](super::targets::targets), and runs a
-//! named type through [`encrypt_with`], [`decrypt`] and [`query`].
-//!
-//! ```
-//! use eql_bindings::encryption::EqlTargets;
-//! use stack_encrypt::dynamic::TargetResolver;
-//!
-//! let text_eq = EqlTargets.resolve("TextEq")?;
-//! assert_eq!(text_eq.sql_domain, "public.eql_v4_text_eq");
-//! assert_eq!(text_eq.indexes, ["eq"]);
-//! # Ok::<(), stack_encrypt::dynamic::TargetError>(())
-//! ```
-//!
-//! Pass `&EqlTargets` wherever the dynamic interface takes a resolver, such
-//! as `stack_encrypt::dynamic::record::plan_with`.
+//! The EQL types as Stack Encrypt's resolver: [`EqlTargets`], and the two
+//! conversions it is built from. The module is private, so the type's own
+//! documentation is what a reader sees.
 
 use stack_encrypt::dynamic::{self, TargetDescriptor, TargetOptions, TargetResolver, ValueFrame};
 use stack_encrypt::target::IndexSpec;
@@ -27,6 +9,26 @@ use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 use super::targets::{self, decrypt, encrypt_with, query, Target, TargetError};
 
 /// Every EQL type this crate defines, as Stack Encrypt's resolver.
+///
+/// Stack Encrypt's dynamic interface runs a plan that arrives as data. A
+/// field of that plan may name an EQL type, such as `"TextEq"`. Stack
+/// Encrypt does not depend on this crate, so a program gives it the EQL
+/// types through a [`TargetResolver`]. `EqlTargets` is that resolver. It
+/// holds every type in [`targets`](super::targets::targets), and runs a
+/// named type through [`encrypt_with`], [`decrypt`] and [`query`].
+///
+/// Pass `&EqlTargets` wherever the dynamic interface takes a resolver, such
+/// as `stack_encrypt::dynamic::record::plan_with`.
+///
+/// ```
+/// use eql_bindings::encryption::EqlTargets;
+/// use stack_encrypt::dynamic::TargetResolver;
+///
+/// let text_eq = EqlTargets.resolve("TextEq")?;
+/// assert_eq!(text_eq.sql_domain, "public.eql_v4_text_eq");
+/// assert_eq!(text_eq.indexes, ["eq"]);
+/// # Ok::<(), stack_encrypt::dynamic::TargetError>(())
+/// ```
 ///
 /// The resolver sees a type's name and a field's label. It never sees the
 /// field's name, so a refusal leaves the field name empty and the engine
@@ -160,7 +162,15 @@ impl From<TargetError> for dynamic::TargetError {
                 target: target.to_owned(),
                 reason: stack_encrypt::diagnostic::describe_json_error(&source),
             },
-            other => Self::Other(Box::new(other)),
+            // The engine refuses each of these before it calls the
+            // resolver: it derives a document's queries itself, asks a query
+            // only through an index the type carries, and refuses options on
+            // a type with no JSON index when it builds the plan. Reaching
+            // one is the engine's failure, not the caller's input. Each is
+            // named, so a variant added later must be placed by hand.
+            error @ (TargetError::DocumentQuery { .. }
+            | TargetError::NoIndex { .. }
+            | TargetError::Options { .. }) => Self::Other(Box::new(error)),
         }
     }
 }
@@ -294,16 +304,66 @@ mod tests {
             dynamic::TargetError::from(TargetError::NoQuery { name: "Text" }),
             dynamic::TargetError::NoQuery { name } if name == "Text"
         ));
-        // The engine asks a type's query only through an index the type
-        // carries. One it does not carry is the engine's failure, not the
-        // caller's input.
         assert!(matches!(
-            dynamic::TargetError::from(TargetError::NoIndex {
+            dynamic::TargetError::from(TargetError::Unproducible {
+                name: "Json",
+                reason: "not yet",
+            }),
+            dynamic::TargetError::Unproducible { name, reason }
+                if name == "Json" && reason == "not yet"
+        ));
+        // A value that is not a document keeps the engine's code, and no
+        // byte of the value.
+        let Err(source) = dynamic::read_json(&ValueFrame::of(r#"{"secret": "#).unwrap()) else {
+            panic!("the text is not a JSON document");
+        };
+        let code = source.code();
+        let error = dynamic::TargetError::from(TargetError::Json {
+            target: "JsonSearch",
+            source,
+        });
+        assert!(matches!(
+            &error,
+            dynamic::TargetError::Json { name, target, reason }
+                if name.is_empty() && target == "JsonSearch" && *reason == code
+        ));
+        let shown = format!("{error} {:?}", stack_encrypt::ErrorPayload::payload(&error));
+        assert!(!shown.contains("secret"), "{shown}");
+        // The engine refuses these three before it calls the resolver, so
+        // reaching one is the engine's failure, not the caller's input.
+        for refusal in [
+            TargetError::NoIndex {
                 name: "TextEq",
                 index: "ope",
-            }),
-            dynamic::TargetError::Other(_)
-        ));
+            },
+            TargetError::DocumentQuery { name: "JsonSearch" },
+            TargetError::Options { name: "TextEq" },
+        ] {
+            assert!(matches!(
+                dynamic::TargetError::from(refusal),
+                dynamic::TargetError::Other(_)
+            ));
+        }
+    }
+
+    /// Why `Options` converts to `Other`: the engine refuses options on a
+    /// type with no JSON index when it builds the plan, so the resolver is
+    /// never asked to encrypt under them.
+    #[test]
+    fn the_engine_refuses_options_on_a_type_without_a_json_index() {
+        let wire = serde_json::json!({
+            "email": {
+                "context": ["users", "email"],
+                "target": {"name": "TextEq", "options": {"ordered": []}}
+            }
+        });
+        let frame = dynamic::frame::serde::to_vec(&wire).expect("plan frame");
+        let error = record::plan_with(frame.as_protected_ref(), &EqlTargets).unwrap_err();
+        assert_eq!(
+            error.reason(),
+            Some(dynamic::Reason::TargetOptions),
+            "{error:?}"
+        );
     }
 
     /// `serde_json` quotes the value it refused, and a stored EQL value

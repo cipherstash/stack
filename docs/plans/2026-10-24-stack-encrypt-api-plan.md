@@ -760,9 +760,8 @@ take a declaration as a frame: `plan_with`, `encrypt_with`, `query`, and
 `decrypt_with`. `Planned` calls them. Each takes a `TargetResolver`. The
 resolver runs the EQL type that a field names.
 
-On `next`, each program writes its own resolver over `eql-bindings`. In
-the target state, `eql-bindings` provides it. See [A ready-made EQL
-resolver](#a-ready-made-eql-resolver).
+`eql-bindings` provides the resolver: `eql_bindings::encryption::EqlTargets`.
+See [A ready-made EQL resolver](#a-ready-made-eql-resolver).
 
 #### A query plan
 

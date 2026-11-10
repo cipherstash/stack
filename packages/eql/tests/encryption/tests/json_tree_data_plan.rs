@@ -21,7 +21,7 @@ mod common;
 use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 
-use eql_bindings::encryption::targets::{self as eql_targets};
+use eql_bindings::encryption::targets as eql_targets;
 use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument};
 use eql_bindings::Identifier;

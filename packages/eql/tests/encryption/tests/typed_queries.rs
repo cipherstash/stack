@@ -11,7 +11,7 @@
 mod common;
 
 use eql_bindings::encryption::query::{MatchTwin, QueryLabelError};
-use eql_bindings::encryption::targets::{self as eql_targets};
+use eql_bindings::encryption::targets as eql_targets;
 use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::answers::ANSWERS;
 use eql_bindings::v4::plaintext::{Date, Decimal, Timestamp};
