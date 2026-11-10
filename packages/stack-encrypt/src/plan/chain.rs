@@ -155,12 +155,14 @@ pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>>;
     /// The chain's plan, and the value or record it runs over, checked
     /// with no I/O and no keyset: the [`Error::Plan`] refusals
-    /// [`prepare`](Self::prepare) would raise.
+    /// [`prepare`](Self::prepare) would raise. A query chain also prepares
+    /// its query here ([`Supports::prepare`]), once, and keeps what the
+    /// query keeps for [`prepare`](Self::prepare).
     ///
     /// # Errors
     ///
     /// The first refusal, as [`prepare`](Self::prepare) would report it.
-    fn check(&self) -> Result<(), Error>;
+    fn check(&mut self) -> Result<(), Error>;
     /// Lower the chain and build its [`Pending`] under `keyset`, with no
     /// I/O. `scoped` says whether this chain named `keyset`: an opening is
     /// then confined to it, and otherwise opens leaves from any keyset.
@@ -219,8 +221,8 @@ where
 
 /// `.keyset(..)` and `.extend(..)`, on every chain.
 macro_rules! chain_options {
-    ($([$($generics:tt)*] $chain:ty;)+) => {$(
-        impl<$($generics)*> $chain {
+    ($([$($generics:tt)*] $chain:ty $(where [$($bounds:tt)*])?;)+) => {$(
+        impl<$($generics)*> $chain $(where $($bounds)*)? {
             /// Run under this keyset: a [`KeysetCipher`] in hand, or a
             /// keyset id or name, loaded when the chain is awaited. With
             /// none, encryption uses the client's default keyset.
@@ -239,15 +241,16 @@ macro_rules! chain_options {
                 self
             }
         }
-        impl<$($generics)*> sealed::Sealed for $chain {}
+        impl<$($generics)*> sealed::Sealed for $chain $(where $($bounds)*)? {}
     )+};
 }
 
 /// `.await` on a finished chain.
 macro_rules! settles {
-    ($([$($generics:tt)*] $chain:ty;)+) => {$(
+    ($([$($generics:tt)*] $chain:ty $(where [$($bounds:tt)*])?;)+) => {$(
         impl<$($generics)*> IntoFuture for $chain
         where
+            $($($bounds)*,)?
             Self: Operation<'a, K> + MaybeSend + 'a,
             K: PlanKms,
         {
@@ -416,7 +419,7 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn check(&self) -> Result<(), Error> {
+    fn check(&mut self) -> Result<(), Error> {
         match &self.context {
             Ok(_) => Ok(()),
             Err(error) => Err(PlanError::ContextLabel(*error).into()),
@@ -457,7 +460,7 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn check(&self) -> Result<(), Error> {
+    fn check(&mut self) -> Result<(), Error> {
         self.plan.check()
     }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
@@ -547,7 +550,7 @@ impl<'a, S: 'static, K: 'static> Operation<'a, K> for EncryptFields<'a, S, K> {
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn check(&self) -> Result<(), Error> {
+    fn check(&mut self) -> Result<(), Error> {
         self.plan.check(self.source)
     }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
@@ -579,7 +582,7 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn check(&self) -> Result<(), Error> {
+    fn check(&mut self) -> Result<(), Error> {
         self.plan.check(self.source, self.common.peek_context()?)
     }
     fn prepare<'p>(
@@ -875,15 +878,28 @@ where
 /// A chain deriving one query term for an operator, ready to await. It
 /// resolves to the [`QueryTerm`](crate::op::QueryTerm) the index sends for
 /// the operator ([`Supports::Query`]).
-pub struct QueryOp<'a, F, Op, I, K> {
+pub struct QueryOp<'a, F, Op, I, K>
+where
+    Op: Operator,
+    F: Input<Op::Arity>,
+    I: Supports<Op, F>,
+{
     common: Common<'a, K>,
     value: F,
     index: I,
     label: Result<Label, PlanError>,
+    /// What the index kept when [`Operation::check`] prepared the query,
+    /// so the term derivation does not prepare it again.
+    verifier: Option<I::Verifier>,
     op: PhantomData<fn() -> Op>,
 }
 
-impl<'a, F, Op, I, K> QueryOp<'a, F, Op, I, K> {
+impl<'a, F, Op, I, K> QueryOp<'a, F, Op, I, K>
+where
+    Op: Operator,
+    F: Input<Op::Arity>,
+    I: Supports<Op, F>,
+{
     /// The chain for a query on a plan: the index the plan resolves for the
     /// context the call named, and the label the write used, or why the
     /// plan refuses it. A call context that is not a label is that refusal,
@@ -907,6 +923,7 @@ impl<'a, F, Op, I, K> QueryOp<'a, F, Op, I, K> {
             value,
             index,
             label,
+            verifier: None,
             op,
         }
     }
@@ -928,14 +945,17 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn check(&self) -> Result<(), Error> {
+    fn check(&mut self) -> Result<(), Error> {
         if self.common.extend.has_bindings() {
             return Err(PlanError::BindInQuery.into());
         }
         let label = self.label.as_ref().map_err(|error| error.clone())?;
         self.index
             .check_label(label, self.common.extend.is_extended())?;
-        self.index.check(&self.value)
+        // Once per query: the verifier is kept for `prepare`, so a match
+        // query cuts its tokens here and never again.
+        self.verifier = Some(self.index.prepare(&self.value)?);
+        Ok(())
     }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
     where
@@ -951,18 +971,22 @@ where
             Ok(label) => label,
             Err(error) => return Pending::failed(keyset, error.into()),
         };
-        // `check` ran before any keyset was resolved; a chain prepared on
-        // its own is held to the same refusals, so no term is derived under
-        // a context or from a value the index refuses. `admit` checks and
-        // takes the verifier in one pass over the value.
+        // The context is checked here whatever `check` did: a chain can be
+        // extended between the two, and the label check is about the
+        // context. `check` ran before any keyset was resolved and kept the
+        // verifier, which is about the value alone. A chain prepared on its
+        // own prepares here instead: no term is derived under a context or
+        // from a value the index refuses, and no query is prepared twice.
         let extended = self.common.extend.is_extended();
-        let verifier = match self
-            .index
-            .check_label(&label, extended)
-            .and_then(|()| self.index.admit(&self.value))
-        {
-            Ok(verifier) => verifier,
-            Err(error) => return Pending::failed(keyset, error),
+        if let Err(error) = self.index.check_label(&label, extended) {
+            return Pending::failed(keyset, error);
+        }
+        let verifier = match self.verifier {
+            Some(verifier) => verifier,
+            None => match self.index.prepare(&self.value) {
+                Ok(verifier) => verifier,
+                Err(error) => return Pending::failed(keyset, error),
+            },
         };
         let token = QueryToken::new(label.clone(), extended);
         self.value
@@ -1019,7 +1043,7 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn check(&self) -> Result<(), Error> {
+    fn check(&mut self) -> Result<(), Error> {
         self.plan.check(&self.record, self.common.peek_context()?)
     }
     fn prepare<'p>(
@@ -1052,7 +1076,7 @@ chain_options! {
     ['a, S: ?Sized, P, K: 'static] EncryptUsing<'a, S, P, K>;
     ['a, Op, F, K: 'static] QueryBuilder<'a, Op, F, K>;
     ['a, Op, F, I, K: 'static] QueryVia<'a, Op, F, I, K>;
-    ['a, F, Op, I, K: 'static] QueryOp<'a, F, Op, I, K>;
+    ['a, F, Op, I, K: 'static] QueryOp<'a, F, Op, I, K> where [Op: Operator, F: Input<Op::Arity>, I: Supports<Op, F>];
     ['a, R, K: 'static] OpenBuilder<'a, R, K>;
     ['a, R, P, K: 'static] OpenUsing<'a, R, P, K>;
 }
@@ -1062,15 +1086,15 @@ settles! {
     ['a, S, X, K] EncryptIndexed<'a, S, X, K>;
     ['a, S: 'static, K: 'static] EncryptFields<'a, S, K>;
     ['a, S: ?Sized, P, K] EncryptUsing<'a, S, P, K>;
-    ['a, F, Op, I, K] QueryOp<'a, F, Op, I, K>;
+    ['a, F, Op, I, K] QueryOp<'a, F, Op, I, K> where [Op: Operator, F: Input<Op::Arity>, I: Supports<Op, F>];
     ['a, R, P, K] OpenUsing<'a, R, P, K>;
 }
 
 /// Each chain's `Debug` names the chain and nothing it holds: the value
 /// is plaintext.
 macro_rules! opaque_debug {
-    ($([$($generics:tt)*] $chain:ty, $name:literal;)+) => {$(
-        impl<$($generics)*> std::fmt::Debug for $chain {
+    ($([$($generics:tt)*] $chain:ty $(where [$($bounds:tt)*])?, $name:literal;)+) => {$(
+        impl<$($generics)*> std::fmt::Debug for $chain $(where $($bounds)*)? {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.debug_struct($name).finish_non_exhaustive()
             }
@@ -1085,7 +1109,7 @@ opaque_debug! {
     ['a, S: ?Sized, P, K] EncryptUsing<'a, S, P, K>, "EncryptUsing";
     ['a, Op, F, K] QueryBuilder<'a, Op, F, K>, "QueryBuilder";
     ['a, Op, F, I, K] QueryVia<'a, Op, F, I, K>, "QueryVia";
-    ['a, F, Op, I, K] QueryOp<'a, F, Op, I, K>, "QueryOp";
+    ['a, F, Op, I, K] QueryOp<'a, F, Op, I, K> where [Op: Operator, F: Input<Op::Arity>, I: Supports<Op, F>], "QueryOp";
     ['a, R, K] OpenBuilder<'a, R, K>, "OpenBuilder";
     ['a, R, P, K] OpenUsing<'a, R, P, K>, "OpenUsing";
 }

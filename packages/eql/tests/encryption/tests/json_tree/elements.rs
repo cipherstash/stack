@@ -28,7 +28,7 @@ use stack_encrypt::AsProtectedRef as _;
 
 use eql_bindings::encryption::targets::{self as eql_targets, Target};
 use stack_encrypt::dynamic::{
-    self, record, OpSpec, Operand, TargetDescriptor, TargetError, TargetResolver, ValueFrame,
+    self, record, Op, Operand, TargetDescriptor, TargetError, TargetResolver, ValueFrame,
 };
 use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 
@@ -156,7 +156,7 @@ pub(super) fn derive(
             keyset,
             plan,
             "profile",
-            OpSpec::parse(operator).unwrap(),
+            Op::parse(operator).unwrap(),
             frame_of(&input),
             &Eql,
         )
@@ -504,7 +504,7 @@ fn postgres_an_element_predicate_holds_of_one_element() {
     let error = dynamic::check_query(
         &plan,
         "profile",
-        OpSpec::ElementMatch,
+        Op::ElementMatch,
         frame_of(
             &json!({"path": "$.extra.emergency_contacts[*]", "predicates": [
                 {"member": "name", "op": "eq", "json": "\"x\""}

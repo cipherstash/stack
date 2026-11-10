@@ -79,6 +79,10 @@ exclude_re = [
   'stack-encrypt/src/target/index\.rs:\d+:\d+: replace <impl Clone for Match<O>>::clone -> Self with Default::default\(\)$',
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<FromEnv>::builder -> StackCipherBuilder with Default::default\(\)$',
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
+  # `Orderable`'s default `check_query` refuses nothing: its body is
+  # `Ok(())`, so the replacement is the body. Text overrides it with
+  # `query::order_text`, pinned by `an_ordering_refuses_only_text_it_cannot_encode`.
+  'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace sealed::Sealed::check_query -> Result<\(\), super::TermError> with Ok\(\(\)\)$',
   # Both unit-context conversions explicitly return Self::default().
   'stack-encrypt/src/target/context\.rs:\d+:\d+: replace <impl From<\(\)> for (DeclaredContext|ExpectedContext<T>)>::from -> Self with Default::default\(\)$',
   # A caller shape with no placeholder IS `CallerShape::default()`:

@@ -322,6 +322,19 @@ impl FieldPlan {
         if outputs.contains(&Output::Passthrough) && outputs.len() > 1 {
             return Err(refuse(Reason::PassthroughWithOutputs));
         }
+        // At most one index per operator, as the typed plan refuses
+        // (`PlanError::IndexOverlap`): `ore` beside `ope` would store a
+        // term no query uses.
+        let indexes: Vec<IndexSpec> = outputs
+            .iter()
+            .filter_map(|output| match output {
+                Output::Term(index) => Some(index.clone()),
+                _ => None,
+            })
+            .collect();
+        if crate::target::index::overlapping(&indexes).is_some() {
+            return Err(refuse(Reason::OverlappingOutputs));
+        }
         let (label, extension) = field_context(&name, context.get())?;
         Ok(Self {
             name,
@@ -635,6 +648,7 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         P::SharedIdentity { second, .. } => (Some(second), Reason::SharedIdentity),
         P::PassthroughIndexed { field } => (Some(field), Reason::PassthroughWithOutputs),
         P::DuplicateIndex { at, .. } => (Some(at), Reason::DuplicateOutput),
+        P::IndexOverlap { at, .. } => (Some(at), Reason::OverlappingOutputs),
         P::EmptyIndexes => (None, Reason::NoOutputs),
         P::NotInPlan { field } => (Some(field), Reason::UnknownField),
         P::NotInValue { field } => (Some(field), Reason::FieldMissing),
@@ -646,11 +660,9 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         }
         P::BindInQuery => (None, Reason::BindInQuery),
         P::EmptyPart => (None, Reason::EmptyBinding),
-        P::IdentityWithoutField
-        | P::MixedCiphers
-        | P::MatchCase { .. }
-        | P::TwoContextSources { .. }
-        | P::NoContext => (None, Reason::Refused),
+        P::IdentityWithoutField | P::MixedCiphers | P::TwoContextSources { .. } | P::NoContext => {
+            (None, Reason::Refused)
+        }
     }
 }
 
@@ -1913,7 +1925,7 @@ fn in_row_order<T>(
 /// the resolver ([`TargetResolver::query`]): a type whose query carries only
 /// the term its operator reads derives that index's term alone.
 /// [`query_term`](super::query_term()) passes the index
-/// [`OpSpec::answered_by`](super::OpSpec::answered_by) picks.
+/// [`Op::answered_by`](super::Op::answered_by) picks.
 ///
 /// # Errors
 ///
@@ -3672,7 +3684,7 @@ mod tests {
             ("an index alone", || vec![s("eq")], "uint32"),
             (
                 "several indexes",
-                || vec![s("c"), s("eq"), s("ore"), s("ope")],
+                || vec![s("c"), s("eq"), s("ore")],
                 "uint32",
             ),
         ];
@@ -4410,6 +4422,34 @@ mod tests {
                 none.stored().into_aad().as_bytes(),
                 own().into_aad().as_bytes()
             );
+        }
+
+        /// A field declares at most one index per operator, as the typed
+        /// plan refuses with `PlanError::IndexOverlap`: `ore` beside `ope`
+        /// is refused by name, before any key, and the refusal maps to the
+        /// same reason as the typed one.
+        #[test]
+        fn two_indexes_for_one_operator_are_refused() {
+            for outputs in [
+                &["c", "ore", "ope"][..],
+                &["ore", "ore_block"][..],
+                &["c", "eq", "ope", "ore_block"][..],
+            ] {
+                let refused =
+                    plan(obj(vec![("age", typed(label("age"), outputs, "uint32"))])).unwrap_err();
+                assert!(
+                    matches!(
+                        &refused,
+                        Error::Plan { field: Some(field), reason: Reason::OverlappingOutputs } if field == "age"
+                    ),
+                    "{outputs:?}: {refused:?}"
+                );
+            }
+            assert!(plan(obj(vec![(
+                "age",
+                typed(label("age"), &["c", "eq", "ore"], "uint32"),
+            )]))
+            .is_ok());
         }
 
         /// An empty binding would bind every row to one context: a row ID
@@ -5663,7 +5703,7 @@ mod tests {
         /// them. The ciphertext still does not show which they are.
         #[tokio::test]
         async fn a_sealed_null_stores_its_equality_term_and_a_query_finds_it() {
-            use crate::dynamic::{query_term, NoTargets, OpSpec, Operand};
+            use crate::dynamic::{query_term, NoTargets, Op, Operand};
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let plan = plan(obj(vec![
@@ -5703,30 +5743,23 @@ mod tests {
                 "the ciphertext is as long as a value's"
             );
 
-            let query = |field: &str, op: OpSpec| {
+            let query = |field: &str, op: Op| {
                 query_term(&keyset, &plan, field, op, &Tree::Null, &NoTargets)
             };
-            let null = query("age", OpSpec::Eq)
+            let null = query("age", Op::Eq)
                 .expect("eq takes a null")
                 .await
                 .expect("a term");
             assert_eq!(null.operand(), &Operand::One(terms[1].clone()));
-            let value = query_term(
-                &keyset,
-                &plan,
-                "age",
-                OpSpec::Eq,
-                Tree::UInt32(34),
-                &NoTargets,
-            )
-            .expect("eq takes a value")
-            .await
-            .expect("a term");
+            let value = query_term(&keyset, &plan, "age", Op::Eq, Tree::UInt32(34), &NoTargets)
+                .expect("eq takes a value")
+                .await
+                .expect("a term");
             assert_eq!(value.operand(), &Operand::One(terms[0].clone()));
 
             // A null has no order term, and a `"sql"` field stores none for
             // its nulls, which are SQL NULL.
-            for (field, op) in [("rank", OpSpec::Eq), ("rank", OpSpec::Lt)] {
+            for (field, op) in [("rank", Op::Eq), ("rank", Op::Lt)] {
                 let refused = query(field, op).err();
                 assert!(
                     matches!(&refused, Some(Error::Source { field: Some(f), reason: Reason::NullQuery }) if f == field),
@@ -8261,14 +8294,17 @@ mod tests {
                     Refused,
                 ),
                 (P::NoContext.into(), None, Refused),
+                (P::BindInQuery.into(), None, BindInQuery),
                 (
-                    P::MatchCase {
-                        declared: "CaseSensitive",
-                        folds: true,
+                    P::IndexOverlap {
+                        at: field(),
+                        first: "ore",
+                        second: "ope",
+                        operator: crate::op::Op::Lt,
                     }
                     .into(),
-                    None,
-                    Refused,
+                    some("age"),
+                    OverlappingOutputs,
                 ),
             ];
             for (error, field, reason) in cases {

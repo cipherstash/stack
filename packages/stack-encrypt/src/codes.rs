@@ -195,9 +195,11 @@ mod tests {
                     ..MatchOptions::default()
                 }),
             },
-            PlanError::MatchCase { .. } => PlanError::MatchCase {
-                declared: "CaseInsensitive",
-                folds: false,
+            PlanError::IndexOverlap { .. } => PlanError::IndexOverlap {
+                at: field(),
+                first: "ore",
+                second: "ope",
+                operator: crate::op::Op::Lt,
             },
             PlanError::TwoContextSources { .. } => PlanError::TwoContextSources {
                 first: "the plan",

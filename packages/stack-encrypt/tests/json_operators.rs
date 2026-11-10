@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use base64ct::{Base64, Encoding};
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{
-    self, record, OpSpec, Operand, QueryTerm, Reason, TargetDescriptor, TargetError, TargetOptions,
+    self, record, Op, Operand, QueryTerm, Reason, TargetDescriptor, TargetError, TargetOptions,
     TargetResolver, ValueFrame, ValueKind,
 };
 use stack_encrypt::json::{JsonDocument, Tag};
@@ -150,7 +150,7 @@ async fn term<K: Source>(
         keyset,
         plan,
         "profile",
-        OpSpec::parse(operator).unwrap(),
+        Op::parse(operator).unwrap(),
         json_frame(&input),
         &Documents,
     )
@@ -420,7 +420,7 @@ fn the_orderings_follow_the_resolved_options() {
     let error = dynamic::check_query(
         &unordered,
         "profile",
-        OpSpec::LtAt,
+        Op::LtAt,
         json_frame(&json!({"path": "$.age", "json": "1"})),
         &Documents,
     )
@@ -434,12 +434,12 @@ fn the_orderings_follow_the_resolved_options() {
 #[test]
 fn malformed_inputs_are_refused_with_their_reason() {
     let plan = plan();
-    let check = |operator: OpSpec, input: Value| {
+    let check = |operator: Op, input: Value| {
         dynamic::check_query(&plan, "profile", operator, json_frame(&input), &Documents)
     };
     // The data plan's reason, or for the engine's own refusals the index's
     // term error by name, so a refusal of another kind fails the row.
-    let reason = |operator: OpSpec, input: Value| -> String {
+    let reason = |operator: Op, input: Value| -> String {
         let error = check(operator, input).unwrap_err();
         assert!(!error.to_string().contains("secret"), "{error}");
         match (&error, error.reason()) {
@@ -455,89 +455,85 @@ fn malformed_inputs_are_refused_with_their_reason() {
         }
     };
     for (operator, input, want) in [
-        (OpSpec::Contains, json!({"needle": "{}"}), "json_input"),
-        (OpSpec::Contains, json!({"json": 1}), "json_input"),
-        (OpSpec::Contains, json!("{}"), "json_input"),
-        (OpSpec::EqAt, json!({"path": "$.a"}), "json_input"),
+        (Op::Contains, json!({"needle": "{}"}), "json_input"),
+        (Op::Contains, json!({"json": 1}), "json_input"),
+        (Op::Contains, json!("{}"), "json_input"),
+        (Op::EqAt, json!({"path": "$.a"}), "json_input"),
         (
-            OpSpec::BetweenAt,
+            Op::BetweenAt,
             json!({"path": "$.age", "low": "1"}),
             "json_input",
         ),
         (
-            OpSpec::Subtree,
+            Op::Subtree,
             json!({"path": "$.a", "wildcard_bound": "x"}),
             "json_input",
         ),
         (
-            OpSpec::Contains,
+            Op::Contains,
             json!({"json": r#"{"secret": 1, "secret": 2}"#}),
             "json_duplicate_key",
         ),
+        (Op::Contains, json!({"json": r#"{"secret""#}), "json_syntax"),
         (
-            OpSpec::Contains,
-            json!({"json": r#"{"secret""#}),
-            "json_syntax",
-        ),
-        (
-            OpSpec::Contains,
+            Op::Contains,
             json!({"json": "99999999999999999999"}),
             "json_integer_range",
         ),
         (
-            OpSpec::EqAt,
+            Op::EqAt,
             json!({"path": "$.a[2]", "json": "1"}),
             "json_path_position",
         ),
         (
-            OpSpec::LtAt,
+            Op::LtAt,
             json!({"path": "$.visits[0].at", "json": "1"}),
             // A position on an ordering is the index's own refusal, the
             // one the typed ordering gives.
             "JsonOrderingAtPosition",
         ),
         (
-            OpSpec::Selector,
+            Op::Selector,
             json!({"path": "$.a[0].b"}),
             "json_path_position",
         ),
         (
-            OpSpec::Children,
+            Op::Children,
             json!({"path": "$.a[*]"}),
             "json_path_wildcard",
         ),
         (
-            OpSpec::ChildCount,
+            Op::ChildCount,
             json!({"path": "$.a[*].b"}),
             "json_path_wildcard",
         ),
         // The engine's own: a container at a path, a path the field does
         // not order, a value no ordering takes, a path that is not one.
         (
-            OpSpec::EqAt,
+            Op::EqAt,
             json!({"path": "$.a", "json": r#"{"secret": 1}"#}),
             "JsonValueNotScalar",
         ),
         (
-            OpSpec::LtAt,
+            Op::LtAt,
             json!({"path": "$.name", "json": "1"}),
             "JsonPathNotOrdered",
         ),
         (
-            OpSpec::GtAt,
+            Op::GtAt,
             json!({"path": "$.age", "json": "true"}),
             "JsonLeafNotOrdered",
         ),
-        (OpSpec::Selector, json!({"path": "secret"}), "JsonPath"),
+        (Op::Selector, json!({"path": "secret"}), "JsonPath"),
         // A path with more steps than a document has levels names no node,
         // and is refused before a document as deep is built.
         (
-            OpSpec::EqAt,
+            Op::EqAt,
             json!({"path": format!("${}", ".a".repeat(50_000)), "json": "1"}),
             "JsonTooDeep",
         ),
         (
-            OpSpec::Selector,
+            Op::Selector,
             json!({"path": format!("${}", ".a".repeat(128))}),
             "JsonTooDeep",
         ),
@@ -545,18 +541,18 @@ fn malformed_inputs_are_refused_with_their_reason() {
         assert_eq!(reason(operator, input.clone()), want, "{operator:?}");
     }
     for (operator, input) in [
-        (OpSpec::Contains, json!({"json": "[1, {\"a\": null}]"})),
-        (OpSpec::EqAt, json!({"path": "$.visits[*].at", "json": "1"})),
+        (Op::Contains, json!({"json": "[1, {\"a\": null}]"})),
+        (Op::EqAt, json!({"path": "$.visits[*].at", "json": "1"})),
         (
-            OpSpec::BetweenAt,
+            Op::BetweenAt,
             json!({"path": "$.age", "low": "1", "high": "2"}),
         ),
-        (OpSpec::Subtree, json!({"path": "$.visits[1]"})),
-        (OpSpec::ChildCount, json!({"path": "$.visits"})),
+        (Op::Subtree, json!({"path": "$.visits[1]"})),
+        (Op::ChildCount, json!({"path": "$.visits"})),
         // As many steps as a document has levels: the deepest path that
         // can name a node is not refused as too deep.
         (
-            OpSpec::Selector,
+            Op::Selector,
             json!({"path": format!("${}", ".a".repeat(127))}),
         ),
     ] {
@@ -776,7 +772,7 @@ async fn rows_that_are_not_the_reads_are_refused() {
             &keyset,
             &two,
             "prefs",
-            OpSpec::Selector,
+            Op::Selector,
             json_frame(&json!({"path": "$.name"})),
             &Documents,
         )
@@ -1351,7 +1347,7 @@ mod element_match {
                 dynamic::check_query(
                     &plan,
                     "profile",
-                    OpSpec::ElementMatch,
+                    Op::ElementMatch,
                     json_frame(input),
                     &Documents,
                 )
@@ -1561,25 +1557,25 @@ mod element_match {
             let (_, index) = dynamic::field_operators(&plan, "profile", &Documents)
                 .unwrap()
                 .into_iter()
-                .find(|(op, _)| *op == OpSpec::ElementMatch)
+                .find(|(op, _)| *op == Op::ElementMatch)
                 .unwrap();
             assert!(
                 matches!(index, IndexSpec::Json(_)),
                 "the JSON index answers it: {index:?}"
             );
             assert_eq!(
-                OpSpec::parse("element_match"),
-                Some(OpSpec::ElementMatch),
+                Op::parse("element_match"),
+                Some(Op::ElementMatch),
                 "the wire name parses"
             );
             assert_eq!(
-                OpSpec::ElementMatch.input(),
+                Op::ElementMatch.input(),
                 "path_predicates",
                 "its input shape"
             );
             assert_eq!(
-                OpSpec::ElementMatch.fidelity(),
-                OpSpec::BetweenAt.fidelity(),
+                Op::ElementMatch.fidelity(),
+                Op::BetweenAt.fidelity(),
                 "compared as the orderings compare"
             );
         }
@@ -1612,7 +1608,7 @@ mod element_match {
             let error = dynamic::check_query(
                 &plan,
                 "profile",
-                OpSpec::ElementMatch,
+                Op::ElementMatch,
                 json_frame(&json!({"path": "$.a[*]", "predicates": [
                     {"member": "b", "op": "gt", "json": "1"}
                 ]})),
@@ -2200,7 +2196,7 @@ mod compiled_match {
             dynamic::check_query(
                 &people(),
                 "profile",
-                OpSpec::Match,
+                Op::Match,
                 json_frame(input),
                 &Documents,
             )
@@ -2375,17 +2371,13 @@ mod compiled_match {
             for plan in [people(), plan_of(json!("JsonSearch"))] {
                 assert_eq!(names(&plan, &Documents).last(), Some(&"match"));
             }
-            assert_eq!(
-                OpSpec::parse("match"),
-                Some(OpSpec::Match),
-                "the wire name parses"
-            );
-            assert_eq!(OpSpec::Match.input(), "predicate", "its input shape");
-            assert_eq!(OpSpec::Match.fidelity(), dynamic::Fidelity::Exact);
+            assert_eq!(Op::parse("match"), Some(Op::Match), "the wire name parses");
+            assert_eq!(Op::Match.input(), "predicate", "its input shape");
+            assert_eq!(Op::Match.fidelity(), dynamic::Fidelity::Exact);
             let (_, index) = dynamic::field_operators(&people(), "profile", &Documents)
                 .unwrap()
                 .into_iter()
-                .find(|(op, _)| *op == OpSpec::Match)
+                .find(|(op, _)| *op == Op::Match)
                 .unwrap();
             assert!(matches!(index, IndexSpec::Json(_)), "{index:?}");
         }
@@ -2409,7 +2401,7 @@ mod compiled_match {
             let error = dynamic::check_query(
                 &plan,
                 "profile",
-                OpSpec::Match,
+                Op::Match,
                 json_frame(&input("$.a == 1", json!({}))),
                 &Unnamed,
             )
@@ -2427,12 +2419,12 @@ mod compiled_match {
         #[test]
         fn a_types_operators_name_it_only_with_the_domain() {
             assert!(
-                Documents.targets()[0].operators().contains(&OpSpec::Match),
+                Documents.targets()[0].operators().contains(&Op::Match),
                 "named"
             );
             let unnamed = Unnamed.targets()[0].operators();
-            assert!(!unnamed.contains(&OpSpec::Match), "{unnamed:?}");
-            assert!(unnamed.contains(&OpSpec::EqAt), "{unnamed:?}");
+            assert!(!unnamed.contains(&Op::Match), "{unnamed:?}");
+            assert!(unnamed.contains(&Op::EqAt), "{unnamed:?}");
         }
     }
 }

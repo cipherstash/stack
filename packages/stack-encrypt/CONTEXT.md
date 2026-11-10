@@ -84,7 +84,10 @@ is; a term is not). A type on the Rust side, generic over the plaintext, so
 an index that does not apply to a type (match on an integer) does not
 compile; data at a binding boundary. An index answers queries by source
 type: a scalar index answers one, the JSON index answers containment, a
-path, and a value at a path.
+path, and a value at a path. Each index declares the operators it answers
+once (`Ore::OPERATORS`), and a field declares at most one index per
+operator: `(Equality, Ore)` is allowed, `(Ore, Ope)` is refused when the
+plan is built.
 _Avoid_: term (that is what an index produces), output, search type, target
 (the JSON index replaces the ciphertext but is still an index)
 
@@ -260,12 +263,17 @@ package's method name, not the concept)
 
 **Operator**:
 What a query asks of the server — equality, text match — as a unit type
-(`op::Eq`, `op::Matches`). An index declares the operators it answers and the
-query term it sends for each; a target type names the index that answers each
-operator for it. An operator nothing answers is refused before any key is
-requested: at compile time where the plan's type shows it, when the query is
-awaited where the plan is data (ADR-0009).
-_Avoid_: query type, index (that is what answers the operator)
+(`op::Eq`, `op::Matches`). Every operator is declared once, with its wire
+name: `op::Eq`, the dynamic `Op::Eq` and `"eq"` are three faces of one
+operator. An index declares the operators it answers and the query term it
+sends for each, and prepares a query once (`Supports::prepare`): what it
+refuses, and what the query keeps to check a row. A target type names the
+index that answers each operator for it. An operator nothing answers is
+refused before any key is requested: at compile time where the plan's type
+shows it, when the query is awaited where the plan is data (ADR-0009).
+Case belongs to the match index's configuration, not to the operator.
+_Avoid_: query type, index (that is what answers the operator), `OpSpec`
+(the dynamic enum's old name)
 
 **Query term**:
 The value a query sends to the server. It is not the stored term: equality

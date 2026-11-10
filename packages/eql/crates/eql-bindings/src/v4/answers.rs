@@ -10,7 +10,7 @@ use stack_encrypt::Equality;
 use stack_encrypt::Match;
 /// The operators each EQL type answers in Stack Encrypt's typed
 /// query chain (`op::Answers`), by the wire names
-/// `stack_encrypt::dynamic::OpSpec` gives them, in catalog order:
+/// `stack_encrypt::dynamic::Op` gives them, in catalog order:
 /// one row per type that answers any. Generated from the rule the
 /// impls below are, so the encryption tests can hold the impls to
 /// the operators the data path answers for each type. Not part of

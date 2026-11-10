@@ -2001,7 +2001,7 @@ Decided on 7 November 2026, as area two of the query design review.
   does not know which bound the caller meant. The `InvertedRange` error
   asked for in #1279 predates that commit and is dropped.
 - **Stored format and wire.** Unchanged. A query sends the operator's wire name. That name does not change.
-- **Tracked in.** Issues #1318 and #1279 are open. Issues #1317, #1319, and #1321 are open. Issue #1320, the inverted-range rule, is open. This plan's decision supersedes it, so it should be closed.
+- **Tracked in.** The pull request for #1279, #1318, #1317, #1321 and #1233 does this area's `Op` enum and the `Matches` case change. Issues #1319 and #1321 were open; #1321 closes with that pull request. Issue #1320, the inverted-range rule, is closed: this plan's decision superseded it.
 - **Finished when** these are all true:
   - the dynamic enum is generated from the `op` types;
   - `Matches` has no type parameter;
@@ -2130,7 +2130,7 @@ review. The rules are the query artifact's.
   `.via`. The `MatchConfig` documentation says a field and its query agree "by
   construction". That is true only for one-value plans today. Both
   are amended, not contradicted in silence.
-- **Tracked in.** Issues #1318 and #1279 are open. Issue #1233 is open: refuse a second order index. That is rule 2. Issues #1317 and #1321 are open.
+- **Tracked in.** Steps 1 and 2 are one pull request, which closes #1279, #1318, #1317, #1321 and #1233 (rule 2, the second order index). It brings `prepare`, the `sem::query` rules and `Op`, and drops `Matches`'s case parameter; the analyzer of "Match configuration: one analyzer" is its own work (#1319). Steps 3 and 4 are #1486 and #1488.
 - **Finished when** these are all true:
   - every index's operators appear in one declaration, and a test shows
     the typed and dynamic lookups agree on every index;

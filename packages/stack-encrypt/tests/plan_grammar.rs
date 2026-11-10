@@ -1063,25 +1063,8 @@ async fn a_typed_text_field_is_the_data_verbs_bytes_for_every_index_set() {
     same_field_bytes::<_, (EqualityTerm, OpeTerm<String>), _>(text(), (eq, ope)).await;
     same_field_bytes::<_, (M, OreTerm<String>), _>(text(), (m(), ore)).await;
     same_field_bytes::<_, (M, OpeTerm<String>), _>(text(), (m(), ope)).await;
-    same_field_bytes::<_, (OreTerm<String>, OpeTerm<String>), _>(text(), (ore, ope)).await;
     same_field_bytes::<_, (EqualityTerm, M, OreTerm<String>), _>(text(), (eq, m(), ore)).await;
     same_field_bytes::<_, (EqualityTerm, M, OpeTerm<String>), _>(text(), (eq, m(), ope)).await;
-    same_field_bytes::<_, (EqualityTerm, OreTerm<String>, OpeTerm<String>), _>(
-        text(),
-        (eq, ore, ope),
-    )
-    .await;
-    same_field_bytes::<_, (M, OreTerm<String>, OpeTerm<String>), _>(text(), (m(), ore, ope)).await;
-    same_field_bytes::<_, (EqualityTerm, M, OreTerm<String>, OpeTerm<String>), _>(
-        text(),
-        (eq, m(), ore, ope),
-    )
-    .await;
-    same_field_bytes::<_, (W, OpeTerm<String>, OreTerm<String>, EqualityTerm), _>(
-        text(),
-        (Match::<Words>::new(), ope, ore, eq),
-    )
-    .await;
 }
 
 /// Five indexes compile (there are four index kinds, so the fifth is a
@@ -1118,13 +1101,7 @@ async fn a_typed_integer_field_is_the_data_verbs_bytes_for_every_index_set() {
     same_field_bytes::<_, OpeTerm<u32>, _>(7u32, Ope).await;
     same_field_bytes::<_, (EqualityTerm, OreTerm<u32>), _>(7u32, (Equality, Ore)).await;
     same_field_bytes::<_, (EqualityTerm, OpeTerm<u32>), _>(7u32, (Equality, Ope)).await;
-    same_field_bytes::<_, (OreTerm<u32>, OpeTerm<u32>), _>(7u32, (Ore, Ope)).await;
     same_field_bytes::<_, (OreTerm<u32>, EqualityTerm), _>(7u32, (Ore, Equality)).await;
-    same_field_bytes::<_, (EqualityTerm, OreTerm<u32>, OpeTerm<u32>), _>(
-        7u32,
-        (Equality, Ore, Ope),
-    )
-    .await;
 }
 
 type EmailOut = Encrypted<(EqualityTerm, MatchTerms)>;

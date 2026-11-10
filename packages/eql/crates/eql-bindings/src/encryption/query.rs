@@ -152,9 +152,7 @@ use std::marker::PhantomData;
 
 use serde::{Serialize, Serializer};
 use stack_encrypt::kms::MaybeSend;
-use stack_encrypt::op::{
-    self, CaseInsensitive, Limit, MatchCase, Probabilistic, QueryTerm, QueryToken, Stats, Supports,
-};
+use stack_encrypt::op::{self, Limit, Probabilistic, QueryTerm, QueryToken, Stats, Supports};
 use stack_encrypt::sem::{EqualityTerm, MatchQuery, MatchTerms, QueryTokens};
 use stack_encrypt::target::{CallerContext, ConsumeSource, Encryption, Index, IndexSpec};
 use stack_encrypt::{Encrypt, Equality, Error, Label, Match, NonEmpty};
@@ -162,12 +160,6 @@ use stack_encrypt::{Encrypt, Equality, Error, Label, Match, NonEmpty};
 use super::{bloom_filter, hmac256, EqlMatch};
 use crate::v3::terms::{BloomFilter, Hmac256};
 use crate::Identifier;
-
-/// EQL's match configuration folds case, so its index answers the
-/// case-insensitive [`op::Matches`](struct@op::Matches).
-impl MatchCase for EqlMatch {
-    type Case = CaseInsensitive;
-}
 
 /// An EQL v4 query twin, assembled from the column it queries and the one
 /// term its type's index derived for the query's value. eql-codegen
@@ -318,17 +310,16 @@ fn column(token: &QueryToken) -> Identifier {
 impl<Q> Supports<op::Eq, Q::Plaintext> for TwinIndex<Equality, Q>
 where
     Q: QueryTwin<Hmac256> + QueryTerm + MaybeSend + 'static,
-    Q::Plaintext: Encrypt + 'static,
+    Q::Plaintext: Encrypt + Clone + 'static,
 {
     type Query = Q;
     type Verifier = ();
-    fn check(&self, value: &Q::Plaintext) -> Result<(), Error> {
-        Supports::<op::Eq, Q::Plaintext>::check(&self.index, value)
+    fn prepare(&self, value: &Q::Plaintext) -> Result<(), Error> {
+        Supports::<op::Eq, Q::Plaintext>::prepare(&self.index, value)
     }
     fn check_label(&self, label: &Label, extended: bool) -> Result<(), Error> {
         check_column(label, extended)
     }
-    fn verifier(&self, _: &Q::Plaintext) {}
     fn query((): (), term: EqualityTerm, token: QueryToken) -> Q {
         Q::assemble(column(&token), hmac256(&term))
     }
@@ -347,24 +338,18 @@ where
 {
     type Query = MatchTwin<Q>;
     type Verifier = QueryTokens;
-    fn check(&self, value: &Q::Plaintext) -> Result<(), Error> {
-        Supports::<op::Matches, Q::Plaintext>::check(&self.index, value)
+    fn prepare(&self, value: &Q::Plaintext) -> Result<QueryTokens, Error> {
+        Supports::<op::Matches, Q::Plaintext>::prepare(&self.index, value)
     }
     fn check_label(&self, label: &Label, extended: bool) -> Result<(), Error> {
         check_column(label, extended)
-    }
-    fn verifier(&self, value: &Q::Plaintext) -> QueryTokens {
-        Supports::<op::Matches, Q::Plaintext>::verifier(&self.index, value)
-    }
-    fn admit(&self, value: &Q::Plaintext) -> Result<QueryTokens, Error> {
-        Supports::<op::Matches, Q::Plaintext>::admit(&self.index, value)
     }
     fn query(tokens: QueryTokens, terms: MatchTerms<EqlMatch>, token: QueryToken) -> MatchTwin<Q> {
         let column = column(&token);
         let query =
             <Match<EqlMatch> as Supports<op::Matches, Q::Plaintext>>::query(tokens, terms, token);
         // `EqlMatch`'s filter is 2048 bits, so every position fits a
-        // smallint (`the_match_configuration_is_pinned`); and `admit`
+        // smallint (`the_match_configuration_is_pinned`); and `prepare`
         // refused a query with no tokens, so the filter is not empty.
         let bf = bloom_filter(query.positions())
             .expect("EqlMatch's 2048-bit filter keeps every position within a smallint");

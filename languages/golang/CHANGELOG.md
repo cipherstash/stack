@@ -12,6 +12,16 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Breaking
 
+- **A field declares at most one order index** (#1233). The engine refuses
+  a field tagged `index=ore;ope` (or `ore;ore_block`), so `stashgen` now
+  reports it as a field error at generate time, and a plan built by hand
+  with both is refused by the guest (`overlapping_outputs`) before any key
+  is requested. Before, the field stored both terms and every query used
+  the ORE one; the OPE term cost a write and told anyone who read the
+  column how its values order. `stashgen`'s notice for a second order index
+  is gone with the case it described; the notice for an order index on
+  bytes stays.
+
 - **`Cipher.Extend` is now `Cipher.Scope`, and `Cipher.Bind` is new**
   (#1487). A scope narrows the data and the queries over it. A binding ties
   a ciphertext to its row: it is in the stored context, after every scope,

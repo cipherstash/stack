@@ -16,7 +16,7 @@
 //!                                                 one element satisfies both
 //! ```
 //!
-//! `OpSpec::Match`'s documentation runs one through the data plan. The
+//! `Op::Match`'s documentation runs one through the data plan. The
 //! grammar and the compilation are documented with the operator, in
 //! the [`json_query`](super::json_query) module docs. This module holds the
 //! parser ([`parse`]), which reads the text into an [`Ast`] and refuses
@@ -39,7 +39,7 @@ use super::json_query::{
     derive_input, eql, json_reason, leaf, member_of, ordered_path_of, Bounds, Compare, Input,
     Parsed, Predicate,
 };
-use super::query::{OpSpec, Operand};
+use super::query::{Op, Operand};
 use super::{Error, Reason};
 use crate::json::{parse_text, JsonOptions, JsonPath, Segment, MAX_DEPTH};
 use crate::{KeysetCipher, Label, Pending};
@@ -128,7 +128,7 @@ impl From<Refusal> for Error {
 
 /// A comparison operator, as the text spells it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Op {
+enum PredicateOp {
     Eq,
     Ne,
     Lt,
@@ -137,14 +137,14 @@ enum Op {
     Gte,
 }
 
-impl Op {
+impl PredicateOp {
     /// The operator with its operands swapped: `1 < $.a` is `$.a > 1`.
     fn flipped(self) -> Self {
         match self {
-            Op::Lt => Op::Gt,
-            Op::Lte => Op::Gte,
-            Op::Gt => Op::Lt,
-            Op::Gte => Op::Lte,
+            PredicateOp::Lt => PredicateOp::Gt,
+            PredicateOp::Lte => PredicateOp::Gte,
+            PredicateOp::Gt => PredicateOp::Lt,
+            PredicateOp::Gte => PredicateOp::Lte,
             same => same,
         }
     }
@@ -153,12 +153,12 @@ impl Op {
     /// `!=`, which a filter does not take.
     fn compare(self) -> Option<Compare> {
         match self {
-            Op::Eq => Some(Compare::Eq),
-            Op::Lt => Some(Compare::Lt),
-            Op::Lte => Some(Compare::Lte),
-            Op::Gt => Some(Compare::Gt),
-            Op::Gte => Some(Compare::Gte),
-            Op::Ne => None,
+            PredicateOp::Eq => Some(Compare::Eq),
+            PredicateOp::Lt => Some(Compare::Lt),
+            PredicateOp::Lte => Some(Compare::Lte),
+            PredicateOp::Gt => Some(Compare::Gt),
+            PredicateOp::Gte => Some(Compare::Gte),
+            PredicateOp::Ne => None,
         }
     }
 }
@@ -204,7 +204,7 @@ enum Side {
 #[derive(Debug)]
 struct Comparison {
     path: PathAt,
-    op: Op,
+    op: PredicateOp,
     value: ValueAt,
     /// Where the operator is.
     at: usize,
@@ -457,22 +457,22 @@ impl<'t> Parser<'t> {
     }
 
     /// A comparison operator at the cursor, read, and where it was.
-    fn op(&mut self) -> Result<Option<(Op, usize)>, Refusal> {
+    fn op(&mut self) -> Result<Option<(PredicateOp, usize)>, Refusal> {
         self.space()?;
         let at = self.pos;
         let rest = self.rest();
         let (op, len) = if rest.starts_with("==") {
-            (Op::Eq, 2)
+            (PredicateOp::Eq, 2)
         } else if rest.starts_with("!=") || rest.starts_with("<>") {
-            (Op::Ne, 2)
+            (PredicateOp::Ne, 2)
         } else if rest.starts_with("<=") {
-            (Op::Lte, 2)
+            (PredicateOp::Lte, 2)
         } else if rest.starts_with(">=") {
-            (Op::Gte, 2)
+            (PredicateOp::Gte, 2)
         } else if rest.starts_with('<') {
-            (Op::Lt, 1)
+            (PredicateOp::Lt, 1)
         } else if rest.starts_with('>') {
-            (Op::Gt, 1)
+            (PredicateOp::Gt, 1)
         } else {
             return Ok(None);
         };
@@ -522,7 +522,7 @@ impl<'t> Parser<'t> {
                 Refusal::syntax(C_TEXT, at)
             });
         };
-        if in_filter && op == Op::Ne {
+        if in_filter && op == PredicateOp::Ne {
             return Err(Refusal::unsupported(C_NE_IN_FILTER, at));
         }
         self.space()?;
@@ -803,7 +803,7 @@ pub(super) enum Node {
     Or(Vec<Node>),
     Not(Box<Node>),
     /// One leaf: an operator and the input it derives from, checked.
-    Leaf(OpSpec, Input),
+    Leaf(Op, Input),
 }
 
 impl std::fmt::Debug for Node {
@@ -876,9 +876,7 @@ impl Compiler<'_> {
             ),
             Ast::Not(inner) => Node::Not(Box::new(self.node(*inner, !negated)?)),
             Ast::Compare(comparison) => self.comparison(comparison, negated)?,
-            Ast::Exists { path, filter: None } => {
-                Node::Leaf(OpSpec::Selector, Input::Path(path.path))
-            }
+            Ast::Exists { path, filter: None } => Node::Leaf(Op::Selector, Input::Path(path.path)),
             Ast::Exists {
                 path,
                 filter: Some(conditions),
@@ -942,15 +940,15 @@ impl Compiler<'_> {
         let (compare, operator) = match op {
             // `==`: containment of the value at the path, exact; at a
             // wildcard, of any element.
-            Op::Eq => {
+            PredicateOp::Eq => {
                 return Ok(Node::Leaf(
-                    OpSpec::EqAt,
+                    Op::EqAt,
                     Input::At(path.path, self.scalar(&value)?),
                 ))
             }
             // `!=` over several elements is true when one differs, which
             // containment cannot say.
-            Op::Ne if wild => {
+            PredicateOp::Ne if wild => {
                 return Err(Refusal {
                     reason: Reason::JsonPredicateNotEqualAtWildcard,
                     construct: C_NOT_EQUAL,
@@ -959,20 +957,17 @@ impl Compiler<'_> {
                 .into())
             }
             // `!=` at one node: a node there that is not the value.
-            Op::Ne => {
+            PredicateOp::Ne => {
                 let value = self.scalar(&value)?;
                 return Ok(Node::And(vec![
-                    Node::Leaf(OpSpec::Selector, Input::Path(path.path.clone())),
-                    Node::Not(Box::new(Node::Leaf(
-                        OpSpec::EqAt,
-                        Input::At(path.path, value),
-                    ))),
+                    Node::Leaf(Op::Selector, Input::Path(path.path.clone())),
+                    Node::Not(Box::new(Node::Leaf(Op::EqAt, Input::At(path.path, value)))),
                 ]));
             }
-            Op::Lt => (Compare::Lt, OpSpec::LtAt),
-            Op::Lte => (Compare::Lte, OpSpec::LteAt),
-            Op::Gt => (Compare::Gt, OpSpec::GtAt),
-            Op::Gte => (Compare::Gte, OpSpec::GteAt),
+            PredicateOp::Lt => (Compare::Lt, Op::LtAt),
+            PredicateOp::Lte => (Compare::Lte, Op::LteAt),
+            PredicateOp::Gt => (Compare::Gt, Op::GtAt),
+            PredicateOp::Gte => (Compare::Gte, Op::GteAt),
         };
         Ok(if wild {
             // An ordering at a wildcard: some element's field, which is
@@ -990,7 +985,7 @@ impl Compiler<'_> {
             let base = JsonPath::of(segments);
             let predicate = self.member(&base, JsonPath::of(member), compare, value)?;
             Node::Leaf(
-                OpSpec::ElementMatch,
+                Op::ElementMatch,
                 Input::Elements(self.bound, vec![predicate]),
             )
         } else {
@@ -1005,10 +1000,10 @@ impl Compiler<'_> {
             // rows hold null at the path, so it is sent only there.
             let value = self.ordered(&value)?;
             let path = ordered_path_of(self.options, path.path)?;
-            let mut leaves = vec![Node::Leaf(OpSpec::Selector, Input::Path(path.clone()))];
+            let mut leaves = vec![Node::Leaf(Op::Selector, Input::Path(path.clone()))];
             if negated {
                 leaves.push(Node::Not(Box::new(Node::Leaf(
-                    OpSpec::EqAt,
+                    Op::EqAt,
                     Input::At(path.clone(), Parsed(Value::Null)),
                 ))));
             }
@@ -1065,7 +1060,7 @@ impl Compiler<'_> {
             }
         }
         if let [only] = conditions.as_slice() {
-            if only.op == Op::Eq {
+            if only.op == PredicateOp::Eq {
                 let full = only.path.path.segments().iter().fold(
                     base.segments().to_vec(),
                     |mut at, segment| {
@@ -1074,7 +1069,7 @@ impl Compiler<'_> {
                     },
                 );
                 return Ok(Node::Leaf(
-                    OpSpec::EqAt,
+                    Op::EqAt,
                     Input::At(JsonPath::of(full), self.scalar(&only.value)?),
                 ));
             }
@@ -1096,7 +1091,7 @@ impl Compiler<'_> {
             predicates.push(self.member(&base, condition.path.path, compare, value)?);
         }
         Ok(Node::Leaf(
-            OpSpec::ElementMatch,
+            Op::ElementMatch,
             Input::Elements(self.bound, predicates),
         ))
     }
@@ -1174,7 +1169,7 @@ enum Shape {
 
 impl Shape {
     /// The shape of `node`, its leaves pushed to `leaves` in order.
-    fn of(node: Node, leaves: &mut Vec<(OpSpec, Input)>) -> Result<Self, Error> {
+    fn of(node: Node, leaves: &mut Vec<(Op, Input)>) -> Result<Self, Error> {
         Ok(match node {
             Node::And(children) => Shape::And(
                 children
@@ -1191,13 +1186,13 @@ impl Shape {
             Node::Not(child) => Shape::Not(Box::new(Self::of(*child, leaves)?)),
             Node::Leaf(op, input) => {
                 let shape = match op {
-                    OpSpec::EqAt => Shape::Leaf("contains", None),
-                    OpSpec::Selector => Shape::Leaf("exists", None),
-                    OpSpec::LtAt => Shape::Leaf("cmp", Some("lt")),
-                    OpSpec::LteAt => Shape::Leaf("cmp", Some("lte")),
-                    OpSpec::GtAt => Shape::Leaf("cmp", Some("gt")),
-                    OpSpec::GteAt => Shape::Leaf("cmp", Some("gte")),
-                    OpSpec::ElementMatch => Shape::Leaf("elements", None),
+                    Op::EqAt => Shape::Leaf("contains", None),
+                    Op::Selector => Shape::Leaf("exists", None),
+                    Op::LtAt => Shape::Leaf("cmp", Some("lt")),
+                    Op::LteAt => Shape::Leaf("cmp", Some("lte")),
+                    Op::GtAt => Shape::Leaf("cmp", Some("gt")),
+                    Op::GteAt => Shape::Leaf("cmp", Some("gte")),
+                    Op::ElementMatch => Shape::Leaf("elements", None),
                     _ => return Err(Error::Internal),
                 };
                 leaves.push((op, input));

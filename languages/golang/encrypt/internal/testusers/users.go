@@ -75,17 +75,32 @@ type Secret struct {
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Probe -name Probe
 
-// Probe has one field of each scalar type the ORE and OPE indexes order, for
-// the property tests of term ordering.
+// Probe has one field of each scalar type the ORE index orders, for the
+// property tests of term ordering. A field declares one order index (the
+// engine refuses `ore;ope` on one field), so ProbeOpe is its OPE twin.
 type Probe struct {
 	_   struct{} `stash:"context=prop"`
-	U32 uint32   `stash:"u32,encrypt,index=ore;ope"`
-	U64 uint64   `stash:"u64,encrypt,index=ore;ope"`
-	I64 int64    `stash:"i64,encrypt,index=ore;ope"`
-	S   string   `stash:"s,encrypt,index=ore;ope"`
-	B   []byte   `stash:"b,encrypt,index=ore;ope"`
-	F64 float64  `stash:"f64,encrypt,index=ore;ope"`
-	F32 float32  `stash:"f32,encrypt,index=ore;ope"`
+	U32 uint32   `stash:"u32,encrypt,index=ore"`
+	U64 uint64   `stash:"u64,encrypt,index=ore"`
+	I64 int64    `stash:"i64,encrypt,index=ore"`
+	S   string   `stash:"s,encrypt,index=ore"`
+	B   []byte   `stash:"b,encrypt,index=ore"`
+	F64 float64  `stash:"f64,encrypt,index=ore"`
+	F32 float32  `stash:"f32,encrypt,index=ore"`
+}
+
+//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type ProbeOpe -name ProbeOpe
+
+// ProbeOpe is Probe with the OPE index, under its own context.
+type ProbeOpe struct {
+	_   struct{} `stash:"context=prop_ope"`
+	U32 uint32   `stash:"u32,encrypt,index=ope"`
+	U64 uint64   `stash:"u64,encrypt,index=ope"`
+	I64 int64    `stash:"i64,encrypt,index=ope"`
+	S   string   `stash:"s,encrypt,index=ope"`
+	B   []byte   `stash:"b,encrypt,index=ope"`
+	F64 float64  `stash:"f64,encrypt,index=ope"`
+	F32 float32  `stash:"f32,encrypt,index=ope"`
 }
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Note -name Note

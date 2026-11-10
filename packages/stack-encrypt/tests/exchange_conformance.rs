@@ -16,7 +16,7 @@ use common::{hex, unhex};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, OpSpec, Operand, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, Scope, ValueFrame};
 use stack_encrypt::{
     AsProtectedRef as _, CipherText, Ciphertext, KeysetCipher, Label, OpaqueBlob, PassthroughFrame,
     SealedValue, StackCipherText,
@@ -367,10 +367,10 @@ fn passthrough_node(input: &Input) -> StackCipherText {
     )])
 }
 
-fn operator_for(index: &str) -> OpSpec {
+fn operator_for(index: &str) -> Op {
     match index {
-        "eq" => OpSpec::Eq,
-        "ore" | "ope" => OpSpec::Lt,
+        "eq" => Op::Eq,
+        "ore" | "ope" => Op::Lt,
         other => panic!("{other}: not an index this profile exchanges"),
     }
 }

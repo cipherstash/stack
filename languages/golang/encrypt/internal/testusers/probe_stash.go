@@ -16,45 +16,10 @@ const _ = gensupport.GeneratedVersion2
 // Probe prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
 
-// U32: stores ope terms that no generated method queries: the engine answers no
-// query through the ope index on this field (uint32): the ore index already
-// answers lt and the other orderings. Drop the index unless your own code
-// compares the stored terms.
-
-// U64: stores ope terms that no generated method queries: the engine answers no
-// query through the ope index on this field (uint64): the ore index already
-// answers lt and the other orderings. Drop the index unless your own code
-// compares the stored terms.
-
-// I64: stores ope terms that no generated method queries: the engine answers no
-// query through the ope index on this field (int64): the ore index already
-// answers lt and the other orderings. Drop the index unless your own code
-// compares the stored terms.
-
-// S: stores ope terms that no generated method queries: the engine answers no
-// query through the ope index on this field (string): the ore index already
-// answers lt and the other orderings. Drop the index unless your own code
-// compares the stored terms.
-
 // B: stores ore terms that no generated method queries: the engine answers no
 // query through the ore index on this field ([]byte): the orderings are
 // answered over integers, floats, text, decimals, dates and timestamps only.
 // Drop the index unless your own code compares the stored terms.
-
-// B: stores ope terms that no generated method queries: the engine answers no
-// query through the ope index on this field ([]byte): the orderings are
-// answered over integers, floats, text, decimals, dates and timestamps only.
-// Drop the index unless your own code compares the stored terms.
-
-// F64: stores ope terms that no generated method queries: the engine answers no
-// query through the ope index on this field (float64): the ore index already
-// answers lt and the other orderings. Drop the index unless your own code
-// compares the stored terms.
-
-// F32: stores ope terms that no generated method queries: the engine answers no
-// query through the ope index on this field (float32): the ore index already
-// answers lt and the other orderings. Drop the index unless your own code
-// compares the stored terms.
 
 type EncryptedProbe struct {
 	U32 EncryptedProbeU32
@@ -69,43 +34,36 @@ type EncryptedProbe struct {
 type EncryptedProbeU32 struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
-	Ope        encrypt.OpeTerm
 }
 
 type EncryptedProbeU64 struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
-	Ope        encrypt.OpeTerm
 }
 
 type EncryptedProbeI64 struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
-	Ope        encrypt.OpeTerm
 }
 
 type EncryptedProbeS struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
-	Ope        encrypt.OpeTerm
 }
 
 type EncryptedProbeB struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
-	Ope        encrypt.OpeTerm
 }
 
 type EncryptedProbeF64 struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
-	Ope        encrypt.OpeTerm
 }
 
 type EncryptedProbeF32 struct {
 	Ciphertext encrypt.Ciphertext
 	Ore        encrypt.OreTerm
-	Ope        encrypt.OpeTerm
 }
 
 func (e EncryptedProbe) String() string {
@@ -131,13 +89,13 @@ type probeShape struct {
 }
 
 var probeDeclaration = gensupport.Declare("prop").
-	EncryptIndex("u32", gensupport.Uint32, encrypt.Ore, encrypt.Ope).
-	EncryptIndex("u64", gensupport.Uint64, encrypt.Ore, encrypt.Ope).
-	EncryptIndex("i64", gensupport.Int64, encrypt.Ore, encrypt.Ope).
-	EncryptIndex("s", gensupport.String, encrypt.Ore, encrypt.Ope).
-	EncryptIndex("b", gensupport.Bytes, encrypt.Ore, encrypt.Ope).
-	EncryptIndex("f64", gensupport.Float64, encrypt.Ore, encrypt.Ope).
-	EncryptIndex("f32", gensupport.Float32, encrypt.Ore, encrypt.Ope)
+	EncryptIndex("u32", gensupport.Uint32, encrypt.Ore).
+	EncryptIndex("u64", gensupport.Uint64, encrypt.Ore).
+	EncryptIndex("i64", gensupport.Int64, encrypt.Ore).
+	EncryptIndex("s", gensupport.String, encrypt.Ore).
+	EncryptIndex("b", gensupport.Bytes, encrypt.Ore).
+	EncryptIndex("f64", gensupport.Float64, encrypt.Ore).
+	EncryptIndex("f32", gensupport.Float32, encrypt.Ore)
 
 var probeCodec = gensupport.New(gensupport.Generated[Probe, EncryptedProbe]{
 	TypeName:        "Probe",
@@ -159,49 +117,42 @@ var probeCodec = gensupport.New(gensupport.Generated[Probe, EncryptedProbe]{
 		e.U32 = EncryptedProbeU32{
 			Ciphertext: rec["u32"].Ciphertext,
 			Ore:        rec["u32"].Ore,
-			Ope:        rec["u32"].Ope,
 		}
 		e.U64 = EncryptedProbeU64{
 			Ciphertext: rec["u64"].Ciphertext,
 			Ore:        rec["u64"].Ore,
-			Ope:        rec["u64"].Ope,
 		}
 		e.I64 = EncryptedProbeI64{
 			Ciphertext: rec["i64"].Ciphertext,
 			Ore:        rec["i64"].Ore,
-			Ope:        rec["i64"].Ope,
 		}
 		e.S = EncryptedProbeS{
 			Ciphertext: rec["s"].Ciphertext,
 			Ore:        rec["s"].Ore,
-			Ope:        rec["s"].Ope,
 		}
 		e.B = EncryptedProbeB{
 			Ciphertext: rec["b"].Ciphertext,
 			Ore:        rec["b"].Ore,
-			Ope:        rec["b"].Ope,
 		}
 		e.F64 = EncryptedProbeF64{
 			Ciphertext: rec["f64"].Ciphertext,
 			Ore:        rec["f64"].Ore,
-			Ope:        rec["f64"].Ope,
 		}
 		e.F32 = EncryptedProbeF32{
 			Ciphertext: rec["f32"].Ciphertext,
 			Ore:        rec["f32"].Ore,
-			Ope:        rec["f32"].Ope,
 		}
 		return e, nil
 	},
 	Open: func(e EncryptedProbe) gensupport.Record {
 		return gensupport.Record{
-			"u32": {Ciphertext: e.U32.Ciphertext, Ore: e.U32.Ore, Ope: e.U32.Ope},
-			"u64": {Ciphertext: e.U64.Ciphertext, Ore: e.U64.Ore, Ope: e.U64.Ope},
-			"i64": {Ciphertext: e.I64.Ciphertext, Ore: e.I64.Ore, Ope: e.I64.Ope},
-			"s":   {Ciphertext: e.S.Ciphertext, Ore: e.S.Ore, Ope: e.S.Ope},
-			"b":   {Ciphertext: e.B.Ciphertext, Ore: e.B.Ore, Ope: e.B.Ope},
-			"f64": {Ciphertext: e.F64.Ciphertext, Ore: e.F64.Ore, Ope: e.F64.Ope},
-			"f32": {Ciphertext: e.F32.Ciphertext, Ore: e.F32.Ore, Ope: e.F32.Ope},
+			"u32": {Ciphertext: e.U32.Ciphertext, Ore: e.U32.Ore},
+			"u64": {Ciphertext: e.U64.Ciphertext, Ore: e.U64.Ore},
+			"i64": {Ciphertext: e.I64.Ciphertext, Ore: e.I64.Ore},
+			"s":   {Ciphertext: e.S.Ciphertext, Ore: e.S.Ore},
+			"b":   {Ciphertext: e.B.Ciphertext, Ore: e.B.Ore},
+			"f64": {Ciphertext: e.F64.Ciphertext, Ore: e.F64.Ore},
+			"f32": {Ciphertext: e.F32.Ciphertext, Ore: e.F32.Ore},
 		}
 	},
 	Value: func(e EncryptedProbe, vals gensupport.Values) (Probe, error) {
@@ -272,7 +223,7 @@ func (f ProbeU32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32)
 	if err != nil {
 		return EncryptedProbeU32{}, err
 	}
-	return EncryptedProbeU32{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
+	return EncryptedProbeU32{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
 func (f ProbeU32Field) Lt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
@@ -309,7 +260,7 @@ func (f ProbeU64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint64)
 	if err != nil {
 		return EncryptedProbeU64{}, err
 	}
-	return EncryptedProbeU64{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
+	return EncryptedProbeU64{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
 func (f ProbeU64Field) Lt(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OreTerm, error) {
@@ -346,7 +297,7 @@ func (f ProbeI64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) 
 	if err != nil {
 		return EncryptedProbeI64{}, err
 	}
-	return EncryptedProbeI64{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
+	return EncryptedProbeI64{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
 func (f ProbeI64Field) Lt(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
@@ -383,7 +334,7 @@ func (f ProbeSField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (
 	if err != nil {
 		return EncryptedProbeS{}, err
 	}
-	return EncryptedProbeS{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
+	return EncryptedProbeS{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
 func (f ProbeSField) Lt(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.OreTerm, error) {
@@ -420,7 +371,7 @@ func (f ProbeBField) Encrypt(ctx context.Context, c *encrypt.Cipher, v []byte) (
 	if err != nil {
 		return EncryptedProbeB{}, err
 	}
-	return EncryptedProbeB{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
+	return EncryptedProbeB{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
 type ProbeF64Field struct {
@@ -432,7 +383,7 @@ func (f ProbeF64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64
 	if err != nil {
 		return EncryptedProbeF64{}, err
 	}
-	return EncryptedProbeF64{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
+	return EncryptedProbeF64{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
 func (f ProbeF64Field) Lt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
@@ -469,7 +420,7 @@ func (f ProbeF32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v float32
 	if err != nil {
 		return EncryptedProbeF32{}, err
 	}
-	return EncryptedProbeF32{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
+	return EncryptedProbeF32{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
 }
 
 func (f ProbeF32Field) Lt(ctx context.Context, c *encrypt.Cipher, v float32) (encrypt.OreTerm, error) {

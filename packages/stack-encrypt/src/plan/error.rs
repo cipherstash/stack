@@ -1,4 +1,5 @@
 //! Why a plan was refused.
+use crate::op::Op;
 use crate::target::IndexSpec;
 use crate::LabelError;
 
@@ -183,22 +184,28 @@ pub enum PlanError {
         /// The index as the query asked for it.
         asked: IndexSpec,
     },
-    /// A match configuration's [`MatchCase`](crate::op::MatchCase) names one
-    /// case and its options fold the other, so a `Matches` query would be
-    /// asked in a case its index does not answer.
-    #[error(
-        "a match configuration declares the case {declared} but its options {}",
-        if *folds { "fold case" } else { "keep case" }
-    )]
+    /// A field declares two indexes that answer one operator, so a query
+    /// for it would have two terms to choose from and the plan has to
+    /// guess. A field declares at most one index per operator:
+    /// `(Equality, Ore)` answer different operators; `(Ore, Ope)` and
+    /// `(Ore, OreBlock)` do not. (Two match indexes are one index twice,
+    /// [`DuplicateIndex`](Self::DuplicateIndex), which is checked first.)
+    /// The second index would store a term no query uses, and an order
+    /// term tells anyone who reads the column how its values order.
+    #[error("field {at:?} declares two indexes that answer {operator}: {first} and {second}")]
     #[diagnostic(
-        code(stack_encrypt::plan_match_case),
-        help("Make `MatchCase::Case` agree with `MatchConfig::options().downcase`: `CaseInsensitive` when it is true, `CaseSensitive` when it is false.")
+        code(stack_encrypt::plan_index_overlap),
+        help("Declare one index per operator on the field: drop one of the two.")
     )]
-    MatchCase {
-        /// The case `MatchCase::Case` names: `CaseInsensitive` or `CaseSensitive`.
-        declared: &'static str,
-        /// Whether the configuration's options fold case.
-        folds: bool,
+    IndexOverlap {
+        /// The field, or `the value` for a one-value plan.
+        at: String,
+        /// The first index, as its key.
+        first: &'static str,
+        /// The second index, as its key.
+        second: &'static str,
+        /// An operator both answer.
+        operator: Op,
     },
     /// The plan's context was given twice. A plan takes its context from
     /// exactly one place: the plan, the call that runs it, or a context
@@ -300,9 +307,17 @@ impl crate::ErrorPayload for PlanError {
                 ("declared", index_value(declared)),
                 ("asked", index_value(asked)),
             ]),
-            Self::MatchCase { declared, folds } => {
-                payload([("declared", (*declared).into()), ("folds", (*folds).into())])
-            }
+            Self::IndexOverlap {
+                at,
+                first,
+                second,
+                operator,
+            } => payload([
+                ("field", at.as_str().into()),
+                ("first", (*first).into()),
+                ("second", (*second).into()),
+                ("operator", operator.name().into()),
+            ]),
             Self::TwoContextSources { first, second } => {
                 payload([("first", (*first).into()), ("second", (*second).into())])
             }

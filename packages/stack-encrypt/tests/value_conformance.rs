@@ -11,7 +11,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, OpSpec, Operand, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, Scope, ValueFrame};
 use stack_encrypt::{AsProtectedRef as _, CipherText, StackCipherText};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -258,8 +258,8 @@ async fn shared_record_value_profile() {
             };
             for (index, term) in terms {
                 let operator = match index.as_str() {
-                    "eq" => OpSpec::Eq,
-                    "ore" | "ope" => OpSpec::Lt,
+                    "eq" => Op::Eq,
+                    "ore" | "ope" => Op::Lt,
                     other => panic!("{other}"),
                 };
                 if case.unanswered.contains(index) {
@@ -285,7 +285,7 @@ async fn shared_record_value_profile() {
             }
             if output == 0 {
                 if let Some(other) = &case.equal_query {
-                    queried.push((other.clone(), OpSpec::Eq, terms["eq"].clone()));
+                    queried.push((other.clone(), Op::Eq, terms["eq"].clone()));
                 }
             }
         }
