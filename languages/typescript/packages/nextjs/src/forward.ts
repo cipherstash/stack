@@ -36,14 +36,16 @@ function continuesRequest(headers: Headers): boolean {
  * Applies only when `response` continues the request (`NextResponse.next()`
  * or a rewrite); any other response is returned unchanged.
  *
- * A `Set-Cookie` on the middleware response only reaches the browser. Next.js
- * releases before 14.2.10 do not copy it into the request that route handlers
- * and server components read, so without this a user switch would leave the
- * previous user's session visible to `getCtsToken()` for the rest of the
- * request. The forwarded request is changed through the same headers
- * `NextResponse.next({ request: { headers } })` writes. Overriding request
- * headers replaces the whole set, so every other header is carried across, and
- * an override the caller already put on `response` is extended, not replaced.
+ * A `Set-Cookie` on the middleware response only reaches the browser. Route
+ * handlers do not see it in the same request on any release tested from
+ * Next.js 14.0.0 to 15.5.29, and server components see it only through
+ * `cookies()`, and only on later 14.2 releases onwards. Without this, a user
+ * switch would leave the previous user's session visible to `getCtsToken()`
+ * for the rest of the request. The forwarded request is changed through the
+ * same headers `NextResponse.next({ request: { headers } })` writes.
+ * Overriding request headers replaces the whole set, so every other header is
+ * carried across, and an override the caller already put on `response` is
+ * extended, not replaced.
  *
  * When `response` leaves the session cookie alone, the request's own session
  * is what was decided on. With no override on `response`, Next.js forwards it
