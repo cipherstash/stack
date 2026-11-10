@@ -16,17 +16,11 @@ const _ = gensupport.GeneratedVersion2
 // ProbeOpe prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
 
-// B: stores ope terms that no generated method queries: the engine answers no
-// query through the ope index on this field ([]byte): the orderings are
-// answered over integers, floats, text, decimals, dates and timestamps only.
-// Drop the index unless your own code compares the stored terms.
-
 type EncryptedProbeOpe struct {
 	U32 EncryptedProbeOpeU32
 	U64 EncryptedProbeOpeU64
 	I64 EncryptedProbeOpeI64
 	S   EncryptedProbeOpeS
-	B   EncryptedProbeOpeB
 	F64 EncryptedProbeOpeF64
 	F32 EncryptedProbeOpeF32
 }
@@ -51,11 +45,6 @@ type EncryptedProbeOpeS struct {
 	Ope        encrypt.OpeTerm
 }
 
-type EncryptedProbeOpeB struct {
-	Ciphertext encrypt.Ciphertext
-	Ope        encrypt.OpeTerm
-}
-
 type EncryptedProbeOpeF64 struct {
 	Ciphertext encrypt.Ciphertext
 	Ope        encrypt.OpeTerm
@@ -67,11 +56,11 @@ type EncryptedProbeOpeF32 struct {
 }
 
 func (e EncryptedProbeOpe) String() string {
-	return gensupport.Redacted("EncryptedProbeOpe", nil, "U32", "U64", "I64", "S", "B", "F64", "F32")
+	return gensupport.Redacted("EncryptedProbeOpe", nil, "U32", "U64", "I64", "S", "F64", "F32")
 }
 
 func (e EncryptedProbeOpe) LogValue() slog.Value {
-	return gensupport.RedactedLog(nil, "U32", "U64", "I64", "S", "B", "F64", "F32")
+	return gensupport.RedactedLog(nil, "U32", "U64", "I64", "S", "F64", "F32")
 }
 
 // Stops compiling when ProbeOpe gains, loses, reorders or retypes a field.
@@ -83,7 +72,6 @@ type probeOpeShape struct {
 	U64 uint64
 	I64 int64
 	S   string
-	B   []byte
 	F64 float64
 	F32 float32
 }
@@ -93,7 +81,6 @@ var probeOpeDeclaration = gensupport.Declare("prop_ope").
 	EncryptIndex("u64", gensupport.Uint64, encrypt.Ope).
 	EncryptIndex("i64", gensupport.Int64, encrypt.Ope).
 	EncryptIndex("s", gensupport.String, encrypt.Ope).
-	EncryptIndex("b", gensupport.Bytes, encrypt.Ope).
 	EncryptIndex("f64", gensupport.Float64, encrypt.Ope).
 	EncryptIndex("f32", gensupport.Float32, encrypt.Ope)
 
@@ -107,7 +94,6 @@ var probeOpeCodec = gensupport.New(gensupport.Generated[ProbeOpe, EncryptedProbe
 			"u64": v.U64,
 			"i64": v.I64,
 			"s":   v.S,
-			"b":   v.B,
 			"f64": v.F64,
 			"f32": v.F32,
 		}
@@ -130,10 +116,6 @@ var probeOpeCodec = gensupport.New(gensupport.Generated[ProbeOpe, EncryptedProbe
 			Ciphertext: rec["s"].Ciphertext,
 			Ope:        rec["s"].Ope,
 		}
-		e.B = EncryptedProbeOpeB{
-			Ciphertext: rec["b"].Ciphertext,
-			Ope:        rec["b"].Ope,
-		}
 		e.F64 = EncryptedProbeOpeF64{
 			Ciphertext: rec["f64"].Ciphertext,
 			Ope:        rec["f64"].Ope,
@@ -150,7 +132,6 @@ var probeOpeCodec = gensupport.New(gensupport.Generated[ProbeOpe, EncryptedProbe
 			"u64": {Ciphertext: e.U64.Ciphertext, Ope: e.U64.Ope},
 			"i64": {Ciphertext: e.I64.Ciphertext, Ope: e.I64.Ope},
 			"s":   {Ciphertext: e.S.Ciphertext, Ope: e.S.Ope},
-			"b":   {Ciphertext: e.B.Ciphertext, Ope: e.B.Ope},
 			"f64": {Ciphertext: e.F64.Ciphertext, Ope: e.F64.Ope},
 			"f32": {Ciphertext: e.F32.Ciphertext, Ope: e.F32.Ope},
 		}
@@ -168,9 +149,6 @@ var probeOpeCodec = gensupport.New(gensupport.Generated[ProbeOpe, EncryptedProbe
 			return ProbeOpe{}, err
 		}
 		if v.S, err = gensupport.Get[string](vals, "s"); err != nil {
-			return ProbeOpe{}, err
-		}
-		if v.B, err = gensupport.Get[[]byte](vals, "b"); err != nil {
 			return ProbeOpe{}, err
 		}
 		if v.F64, err = gensupport.Get[float64](vals, "f64"); err != nil {
@@ -201,7 +179,6 @@ var ProbeOpeFields = struct {
 	U64 ProbeOpeU64Field
 	I64 ProbeOpeI64Field
 	S   ProbeOpeSField
-	B   ProbeOpeBField
 	F64 ProbeOpeF64Field
 	F32 ProbeOpeF32Field
 }{
@@ -209,7 +186,6 @@ var ProbeOpeFields = struct {
 	U64: ProbeOpeU64Field{gensupport.NewField[uint64](probeOpeDeclaration, "u64")},
 	I64: ProbeOpeI64Field{gensupport.NewField[int64](probeOpeDeclaration, "i64")},
 	S:   ProbeOpeSField{gensupport.NewField[string](probeOpeDeclaration, "s")},
-	B:   ProbeOpeBField{gensupport.NewField[[]byte](probeOpeDeclaration, "b")},
 	F64: ProbeOpeF64Field{gensupport.NewField[float64](probeOpeDeclaration, "f64")},
 	F32: ProbeOpeF32Field{gensupport.NewField[float32](probeOpeDeclaration, "f32")},
 }
@@ -360,18 +336,6 @@ func (f ProbeOpeSField) Gte(ctx context.Context, c *encrypt.Cipher, v string) (e
 func (f ProbeOpeSField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi string) (encrypt.Range[encrypt.OpeTerm], error) {
 	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
 	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
-}
-
-type ProbeOpeBField struct {
-	field gensupport.Field[[]byte]
-}
-
-func (f ProbeOpeBField) Encrypt(ctx context.Context, c *encrypt.Cipher, v []byte) (EncryptedProbeOpeB, error) {
-	out, err := f.field.Encrypt(ctx, c, v)
-	if err != nil {
-		return EncryptedProbeOpeB{}, err
-	}
-	return EncryptedProbeOpeB{Ciphertext: out.Ciphertext, Ope: out.Ope}, nil
 }
 
 type ProbeOpeF64Field struct {
