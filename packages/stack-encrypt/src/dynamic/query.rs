@@ -1,11 +1,10 @@
 //! Queries named by operator, for a binding.
 //!
 //! A Rust caller names an operator as a type, `cipher.query(op::Matches,
-//! "ali").on(&plan)`, and the compiler finds the index that answers it
-//! (ADR-0009). A binding has no type to name: its plan arrives as data and
-//! its operator as a string. This module is the runtime form of that query,
-//! written once here rather than once per language binding (ADR-0007,
-//! amended 2026-10-16):
+//! "ali").on(&plan)`, and the compiler finds the index that answers it. A
+//! binding has no type to name: its plan arrives as data and its operator
+//! as a string. This module is the runtime form of that query, written once
+//! here rather than once per language binding:
 //!
 //! - [`Op`] names an operator, as [`IndexSpec`] names an index, and
 //!   [`Op::answered_by`] is the table the typed path's `DefaultIndex`
@@ -41,7 +40,7 @@
 //! path's default for an ordering is ORE, and block ORE and OPE are the
 //! typed path's `.via(OreBlock)` and `.via(Ope)`; here a field that
 //! declares only one of them is answered through it. Every order term is
-//! derived over the value's ADR-0002 order key: a float's ties `-0.0` with
+//! derived over the value's order key: a float's ties `-0.0` with
 //! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
 //! bytes is not answered, as `op::Ordered` does not cover them. Nor is one
 //! over an 8-bit integer, which has no order term. A timestamp orders by the
@@ -51,7 +50,7 @@
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
 //! whose index the type carries, for a type the engine produces and that
 //! has a query twin. The term is the twin, which carries every term of the
-//! type; one query domain per operator is EQL v4's (ADR-0009, decision 8).
+//! type; one query domain per operator is EQL v4's.
 //! `matches` is answered through a type whose descriptor carries its match
 //! options ([`TargetDescriptor::with_match_options`]), since [`verify`]
 //! must cut the query's tokens as the stored filter was cut: `TextMatch`
@@ -216,7 +215,7 @@ impl Op {
 /// bits and wider, `int16` to `uint128`, the floats, text, and dates,
 /// timestamps and decimals, as [`op::Ordered`](crate::op::Ordered) covers
 /// them in the typed path. Not `int8` or `uint8`, which have no order term.
-/// Each orders by its ADR-0002 order key; a `float32` is ordered as the
+/// Each orders by its order key; a `float32` is ordered as the
 /// `f64` it widens to, as the typed path asks.
 fn ordered(kind: ValueKind) -> bool {
     matches!(
@@ -238,8 +237,8 @@ fn ordered(kind: ValueKind) -> bool {
     )
 }
 
-/// How far the server's answer to an operator can be trusted (ADR-0009,
-/// decision 4), as a catalog reports it.
+/// How far the server's answer to an operator can be trusted, as a catalog
+/// reports it.
 ///
 /// The typed path says this with traits, not a value: a term that
 /// implements [`Probabilistic`](crate::op::Probabilistic) can be verified,

@@ -19,8 +19,8 @@
 //! transport frame, in a buffer wiped when it drops. A record's source is
 //! walked once and split into one frame per field; a field is sealed and
 //! indexed by walking its frame into the encrypting sink and the term
-//! derivers; and a record opens straight into a frame (vitaminc ADR 0001: a
-//! value describes itself once, and sinks consume it). A binding's control
+//! derivers; and a record opens straight into a frame (a value describes
+//! itself once, and sinks consume it). A binding's control
 //! data (a plan, a context, query statistics) is read from its frame by
 //! serde (`vitaminc_aead_frame::serde`) into a typed message, with no tree
 //! built.
@@ -35,7 +35,7 @@
 //! * [`record`] — a fields plan spelled as data, *lowered* into the plan
 //!   builder ([`Plan`](crate::Plan)) and run by the engine: the same code a
 //!   Rust chain and the derive run, so a record written from any language
-//!   is the same bytes (ADR-0007). The one step that stays dynamic is
+//!   is the same bytes. The one step that stays dynamic is
 //!   dispatching a value whose type is known only at run time to the typed
 //!   term operation, which [`IndexSpec`]'s `Index` impls do.
 //! * [`read_json`] and [`json_frame`] — a `json` field's document, from
@@ -48,10 +48,9 @@
 //!   frozen bytes. Such a field's plaintext is a [`ValueFrame`].
 //! * [`query_term`], [`verify`] and [`target_limit`] — a query named by
 //!   operator ([`Op`]) on a plan field, and a probabilistic term's two
-//!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats)
-//!   (ADR-0009; ADR-0007, amended 2026-10-16), and [`field_operators`], the
-//!   operators a plan field answers, for a generator to ask before the
-//!   program runs.
+//!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats),
+//!   and [`field_operators`], the operators a plan field answers, for a
+//!   generator to ask before the program runs.
 //! * [`Scope`] — which cipher an opening operation decrypts through.
 //!
 //! # What is not here

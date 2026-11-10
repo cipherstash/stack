@@ -1,9 +1,7 @@
 //! The JSON index: a document stored as one searchable value, with
 //! node-local ciphertexts, a token chain and exact containment.
 //!
-//! `docs/plans/2026-10-17-json-tree-index.md` is the design
-//! this module implements, and the authority on why. In short, a document
-//! is flattened into one entry per node. Each entry carries:
+//! A document is flattened into one entry per node. Each entry carries:
 //!
 //! - a **selector** `s`, a PRF of the node's path with every array position
 //!   folded into the wildcard, so every element of an array shares one;
@@ -116,6 +114,8 @@
 //! derivations are versioned by their PAE domain labels, as every other
 //! term kind's are ([`sem`](crate::sem)): a change to any of them is a new
 //! version, never an edit in place.
+
+// The design this module implements, and why: docs/plans/2026-10-17-json-tree-index.md.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};

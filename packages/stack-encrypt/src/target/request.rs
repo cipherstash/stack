@@ -59,9 +59,9 @@ impl Request {
     /// Request one fresh data key (encrypt side), minted under `context`.
     ///
     /// The [`Descriptor`] is rendered here rather than supplied, so a request
-    /// cannot carry a descriptor that disagrees with its own `context`
-    /// (ADR-0004, decision 4). ZeroKMS HMACs the descriptor into the key
-    /// `tag`, so the key re-derives only under the same one. What this does
+    /// cannot carry a descriptor that disagrees with its own `context`.
+    /// ZeroKMS HMACs the descriptor into the key `tag`, so the key
+    /// re-derives only under the same one. What this does
     /// not relate is the request to the leaf sealed with the key: a
     /// [`SealedValue`](crate::SealedValue) is still assembled from raw parts
     /// at the extension point, and its AEAD context is the caller's to keep
@@ -370,7 +370,7 @@ mod tests {
 
     /// The public constructors render the descriptor themselves, from the
     /// context, so a request cannot carry one that disagrees with its own
-    /// context (ADR-0004, decision 4) — and rendering through an
+    /// context — and rendering through an
     /// `AeadContext` preserves the context's structured identity.
     #[test]
     fn a_public_request_renders_its_descriptor_from_its_context() {

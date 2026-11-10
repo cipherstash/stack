@@ -106,7 +106,7 @@
 //! instead declare `Context = ()`.
 //!
 //! Within one target, every operation runs under the one context the target is
-//! handed (ADR-0004): the context is a type parameter of [`Encryption`], zipped
+//! handed: the context is a type parameter of [`Encryption`], zipped
 //! subtrees must need the same one and receive the same value, and a ciphertext
 //! beside a term takes the term's `CallerContext` — of which its own
 //! `AeadContext` is the AEAD half — through [`Encryption::accepting`]. A record

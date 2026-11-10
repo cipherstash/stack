@@ -40,7 +40,7 @@
 //! when the plan is built ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap);
 //! two match indexes are one index twice, [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex)).
 //!
-//! Three traits connect an operator to an index, and ADR-0009 records why:
+//! Three traits connect an operator to an index:
 //!
 //! - [`Supports<Op, In>`] is on an index, for each operator it can answer
 //!   and the input `In` the query takes, and names the [`QueryTerm`] it
@@ -89,6 +89,9 @@
 //!
 //! [`MatchQuery`]: crate::sem::MatchQuery
 //! [`MatchTerms`]: crate::sem::MatchTerms
+
+// Why an operator selects the index, and why a query term is not the stored
+// term: packages/stack-encrypt/docs/adr/0009-operators-select-the-index-and-a-query-term-is-not-the-stored-term.md.
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -563,9 +566,9 @@ impl<S: 'static> Input<Pair> for (S, S) {
 /// as its [`Orderable`] target and its terms order as clww-ore orders that
 /// encoding: integers as numbers; floats as Postgres's `float8` does,
 /// `-0.0` tied with `0.0` and every NaN one value above `+Infinity`, an
-/// `f32` as the `f64` it widens to; text by the system ADR-0002's fold,
+/// `f32` as the `f64` it widens to; text by its fold,
 /// Unicode 16 NFC with case and accents folded, so `Café`, `cafe` and
-/// `CAFÉ` tie and `alice` orders before `Zoe` (ADR-0009); dates by day;
+/// `CAFÉ` tie and `alice` orders before `Zoe`; dates by day;
 /// timestamps by the microsecond, so instants within one microsecond tie;
 /// and decimals by value, so `1.5` ties `1.50`.
 ///
@@ -624,8 +627,8 @@ mod sealed {
 ///
 /// This trait says only that a value is a query term. How far the server's
 /// answer can be trusted is said by the traits that refine it: a term that
-/// can return false positives says how a row is checked (ADR-0009,
-/// decision 4), and one that refines nothing is exact.
+/// can return false positives says how a row is checked, and one that
+/// refines nothing is exact.
 pub trait QueryTerm {}
 
 impl QueryTerm for EqualityTerm {}

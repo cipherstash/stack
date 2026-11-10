@@ -1,6 +1,6 @@
 //! Plaintexts with no Rust standard type: a calendar date, a UTC instant
 //! and a decimal number, each held as the integers vitaminc's value model
-//! stores it as (ADR-0002).
+//! stores it as.
 //!
 //! The types the ecosystem offers (chrono's `NaiveDate` and
 //! `DateTime<Utc>`, rust_decimal's `Decimal`) keep their fields private,

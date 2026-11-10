@@ -408,7 +408,8 @@ impl JsonSelector {
     /// position reads as the wildcard, so any element at the path passes,
     /// as `->` returns the first one. It does not cover the row: the same
     /// path's entry from another row of the column, returned with that
-    /// row's header, opens (ADR 0010).
+    /// row's header, opens. A value is bound to its row only when its
+    /// context names the row.
     pub fn open(&self, node: JsonNode) -> JsonExtracted {
         JsonExtracted::keyed(node, self.0)
     }
@@ -536,8 +537,9 @@ impl JsonSubtreeKey {
     /// carrying two headers, are refused the same way.
     ///
     /// Not covered, by design: which row of the column the entries come
-    /// from (ADR 0010), and which element a node at the path's selector
-    /// sits under, since every element of an array shares its selector: a
+    /// from, unless their context names the row, and which element a node
+    /// at the path's selector sits under, since every element of an array
+    /// shares its selector: a
     /// read of `$.items[1].price` can be answered with `$.items[0].price`
     /// of the same row. Nor whether the database left whole nodes out: a
     /// read answered with no rows opens as no node, and a wildcard read

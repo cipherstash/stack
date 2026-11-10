@@ -860,7 +860,7 @@ impl DeclaredContext {
 /// expects, not by this type's default. What is *not* at risk is the key: the
 /// descriptor is HMAC'd into the tag, so altering a stored identifier makes
 /// the retrieve fail rather than succeed, and nobody reaches a key they are
-/// not entitled to. See ADR-0004.
+/// not entitled to.
 #[derive(Clone, Debug)]
 pub struct ExpectedContext<T>(Option<NonEmpty<T>>);
 impl<T> Default for ExpectedContext<T> {

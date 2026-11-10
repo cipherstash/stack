@@ -127,7 +127,7 @@ impl Field {
 /// have: the pair (container `scope`, segment), two parts, so it
 /// renders `prefix/field` without the field name having to be joined into,
 /// or kept out of, a string. The segment is the plaintext field's name or
-/// the field's `identity`. The derive knows no tables (ADR-0003); a consumer
+/// the field's `identity`. The derive knows no tables; a consumer
 /// whose prefix is a table gets EQL's `(table, column)` shape from it.
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct OwnContext {
@@ -717,7 +717,7 @@ impl Record {
         }
     }
     /// The context type the record's declaration tree carries on the
-    /// encrypt side (ADR-0004): a `DeclaredContext` when every field has a
+    /// encrypt side: a `DeclaredContext` when every field has a
     /// context of its own, so the caller's is optional; otherwise the
     /// caller's — the `context_type` named, or `CallerContext`. It is the
     /// record's own `Context` except for a record that stores its context,

@@ -17,7 +17,7 @@ use crate::Error;
 use stack_kms::MaybeSend;
 
 /// The one context two targets can be handed together: what a tuple of
-/// targets takes, so each element receives the same value (ADR-0004).
+/// targets takes, so each element receives the same value.
 ///
 /// Two targets that need the same context take that context; a ciphertext
 /// ([`AeadContext`]) beside a term or a record ([`CallerContext`],

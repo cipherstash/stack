@@ -10,8 +10,8 @@
 //!
 //! `EncryptFrom<P>` and `DecryptInto<P>` are an older pair of derives over a
 //! borrowed plaintext. They take the same attributes. Plans and the dynamic
-//! engine still use them, and the API plan removes them once those have
-//! moved to the new pair. See [Owned records](#owned-records).
+//! engine still use them, and they will be removed once those have moved to
+//! the new pair. See [Owned records](#owned-records).
 //!
 //! The generated code describes the encryption. Stack Encrypt runs it. The
 //! generated code is never given a cipher.

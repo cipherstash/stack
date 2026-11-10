@@ -194,7 +194,8 @@ pub enum Error {
     ///
     /// Which row a value belongs to is not checked: an entry from another
     /// row of the same column at the same path, returned with that row's
-    /// header, opens (ADR 0010, `docs/adr/0010-what-a-stored-value-authenticates.md`).
+    /// header, opens. A value is bound to its row only when its context
+    /// names the row.
     ///
     /// `expected` names what the read expected, never what the entry held.
     #[error("the database returned a JSON index entry other than {expected}")]

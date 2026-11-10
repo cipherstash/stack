@@ -531,6 +531,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vitaminc-aead-frame` is now always built, with its `serde` feature.
   Before, it was built only with the `dynamic` feature. The `dynamic`
   feature now adds no dependency.
+- The rustdoc states each rule itself and no longer names a design record
+  or plan, which are not published with the crate.
 
 ### Deprecated
 
