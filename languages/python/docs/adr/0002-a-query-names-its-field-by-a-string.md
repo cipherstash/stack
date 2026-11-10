@@ -3,6 +3,7 @@ status: accepted
 date: 2026-11-02
 ticket: "#1391, the first ticket that adds `query`, as the spec (#1341) says"
 extends: ADR-0001
+amended_by: ADR-0003
 ---
 
 # A query names its field by a string
@@ -52,6 +53,8 @@ B stays open for the later SQLAlchemy layer. A SQLAlchemy model already has a co
 A does not block B. A later version can accept a string or an attribute in the same position. A caller who passes a string sees no change.
 
 An operator can come later as a keyword argument, such as `op=`. A caller who passes none still gets equality.
+
+> **Replaced by ADR-0003.** The paragraph above is no longer the plan. ADR-0003 gives each operator its own method, such as `eq` and `gte`, and removes `query`. The field is still named by a string, as this ADR decided.
 
 ## Consequences
 
