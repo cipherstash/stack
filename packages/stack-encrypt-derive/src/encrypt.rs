@@ -70,6 +70,7 @@ fn struct_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Tok
                     Some(ByField {
                         from,
                         context: OwnContext { prefix: own, field: segment },
+                        ..
                     }),
             } = &field.kind
             else {

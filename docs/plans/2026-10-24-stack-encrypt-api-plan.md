@@ -331,9 +331,10 @@ plaintext type and no accessor, because the derive sees the record's
 field types and not the plaintext struct's, and a query value converts
 from the borrowed form a caller has (`&str` to `String`) through
 `ToOwned`. So an equality marker takes a value of any type its index
-accepts, and a field whose type is several indexes, a nullable field,
-or a record field has a marker with no operator method yet. Both gaps
-are #1596.
+accepts, unless the field states its query type with
+`#[stash(query = String)]`. A field whose type is several indexes, a
+nullable field, and a record field (through `.field(..)`) have operator
+methods too (#1596).
 
 A typed query starts from the marker, and has one method for each
 operator the field's indexes answer. A missing operator is a compile
@@ -1572,8 +1573,9 @@ review.
   it, so the marker's index list is its target type's `Answers` impls.
   Pull request #1595 lands the markers, their query methods and
   `assert_context!` over a marker (`src/marker.rs`, `tests/markers.rs`,
-  `tests/ui/marker_*.rs`). A field of several indexes, a nullable field
-  and a record field have markers with no operator method yet (#1596). The chain query
+  `tests/ui/marker_*.rs`). Pull request #1599 gives a field of several
+  indexes, a nullable field and a record field their operator methods,
+  and a field its query type (`#[stash(query = ..)]`). The chain query
   `cipher.query(op, value).on(&plan)` still exists until #1488 removes
   it.
 - **No hand-built plan.** The review of 7 November 2026 gave a
@@ -1588,7 +1590,8 @@ review.
   lands with the builder's removal. The dynamic grammar keeps its
   run-time checks.
 - **Tracked in.** Issue #1486 is open; pull request #1595 closes it.
-  Issue #1596 is the operator methods the markers still lack.
+  Issue #1596, the operator methods the markers lacked, is closed by
+  pull request #1599.
 - **Finished when** these are all true:
   - the [marker example](#query-a-record-field) compiles, with the
     index's query term as the output type; the EQL query types come

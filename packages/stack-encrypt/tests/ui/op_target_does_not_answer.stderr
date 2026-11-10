@@ -4,7 +4,7 @@ error[E0277]: `EqualityTerm` does not answer `stack_encrypt::op::Matches` given 
 13 |     let _ = cipher.query(op::Matches, "bob").on(&email_plan);
    |                                              ^^ this target type does not answer the operator
    |
-   = note: a target answers the operators its type implements `Answers` for; `.via(index)` names an index the target declares
+   = note: a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers; on a plan's query chain, `.via(index)` names an index the target declares
 help: the trait `Answers<stack_encrypt::op::Matches, std::string::String>` is not implemented for `EqualityTerm`
       but trait `Answers<stack_encrypt::op::Eq, std::string::String>` is implemented for it
   --> src/op/mod.rs

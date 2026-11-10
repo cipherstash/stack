@@ -73,6 +73,9 @@ pub(crate) struct ByField {
     /// The `(prefix, segment)` pair it is derived under, extended by a
     /// context the caller passes.
     pub(crate) context: OwnContext,
+    /// `#[stash(query = T)]`: the type a query of the field takes, for its
+    /// marker.
+    pub(crate) query: Option<Type>,
 }
 
 impl Field {
@@ -492,6 +495,23 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     ));
                 }
             }
+            // A query type is for a field's marker, and only a derived
+            // field of a `struct = ..` record has one.
+            if let Some(query) = &attrs.query {
+                if prefix.is_none()
+                    || attrs.context_field
+                    || attrs.passthrough
+                    || attrs.default.is_some()
+                {
+                    return Err(syn::Error::new_spanned(
+                        query,
+                        "`query = ..` names the type a query of the field takes, for the \
+                         field's marker; only a sealed field of a `struct = ..` record has a \
+                         marker, so it does not apply to a `plaintext` record's field, or to a \
+                         `context_field`, `passthrough` or `default` field",
+                    ));
+                }
+            }
             // An identity is one label segment, as the plan builder's is:
             // non-empty, and plain so the descriptor names the field.
             if let Some(identity) = &attrs.identity {
@@ -603,7 +623,11 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                 }
                             };
                             Kind::Derived {
-                                by_field: Some(ByField { from, context }),
+                                by_field: Some(ByField {
+                                    from,
+                                    context,
+                                    query: attrs.query,
+                                }),
                             }
                         }
                         // Every output of a `plaintext` record takes the
@@ -1063,6 +1087,84 @@ mod tests {
                     "{message}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_query_type_belongs_to_a_sealed_field_of_a_struct_record() {
+        let record = parse(parse_quote! {
+            #[stash(struct = User, scope = "users")]
+            struct Rec {
+                #[stash(query = String)]
+                email: Encrypted<EqualityTerm>,
+                name: StackCipherText,
+            }
+        })
+        .unwrap();
+        let queries: Vec<Option<String>> = record
+            .fields
+            .iter()
+            .map(|field| match &field.kind {
+                Kind::Derived {
+                    by_field: Some(by_field),
+                } => by_field
+                    .query
+                    .as_ref()
+                    .map(|ty| ty.to_token_stream().to_string()),
+                _ => unreachable!("both fields are derived"),
+            })
+            .collect();
+        assert_eq!(queries, [Some("String".to_owned()), None]);
+
+        let err = parse(parse_quote! {
+            #[stash(struct = User, scope = "users")]
+            struct Rec {
+                #[stash(query = String, query = u64)]
+                email: Encrypted<EqualityTerm>,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("`query` is given twice"), "{err}");
+
+        for refused in [
+            parse_quote! {
+                #[stash(plaintext = String)]
+                struct Rec {
+                    #[stash(query = String)]
+                    c: StackCipherText,
+                }
+            },
+            parse_quote! {
+                #[stash(struct = User, scope = "users")]
+                struct Rec {
+                    name: StackCipherText,
+                    #[stash(default, query = String)]
+                    v: u8,
+                }
+            },
+            parse_quote! {
+                #[stash(struct = User, scope = "users")]
+                struct Rec {
+                    name: StackCipherText,
+                    #[stash(passthrough, query = u64)]
+                    tenant: u64,
+                }
+            },
+            parse_quote! {
+                #[stash(plaintext = String)]
+                struct Rec {
+                    c: StackCipherText,
+                    #[stash(context_field, query = String)]
+                    ctx: String,
+                }
+            },
+        ] {
+            let err = parse(refused).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("only a sealed field of a `struct = ..` record"),
+                "{err}"
+            );
         }
     }
 

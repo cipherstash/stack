@@ -1,8 +1,10 @@
 //! Shapes a record's markers must compile in: a public record whose field
 //! is a private nested record (the marker's constant names that type), a
-//! raw-identifier field, and a generic record.
+//! raw-identifier field, a generic record, a field of four indexes whose
+//! last answers equality, a nullable field with a query type, and a marker
+//! reached through a record field.
 #![deny(warnings)]
-use stack_encrypt::sem::EqualityTerm;
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
 use stack_encrypt::target::EncryptTarget;
 use stack_encrypt::{Encrypted, StackCipherText};
 use zeroize::Zeroize;
@@ -21,7 +23,8 @@ pub struct Account {
 #[derive(EncryptTarget)]
 #[stash(struct = Address, scope = "addresses")]
 struct EncryptedAddress {
-    street: StackCipherText,
+    #[stash(query = String)]
+    street: Encrypted<EqualityTerm>,
 }
 
 #[derive(EncryptTarget)]
@@ -45,7 +48,31 @@ pub struct EncryptedTagged<T: Zeroize + Clone + Send + 'static> {
     extra: T,
 }
 
+#[derive(Clone, Zeroize)]
+pub struct Note {
+    body: String,
+    title: Option<String>,
+    blob: String,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Note, scope = "notes")]
+pub struct EncryptedNote {
+    body: Encrypted<(MatchTerms, OreTerm<String>, OpeTerm<String>, EqualityTerm)>,
+    #[stash(query = String)]
+    title: Option<Encrypted<EqualityTerm>>,
+    blob: StackCipherText,
+}
+
 fn main() {
+    let _ = EncryptedNote::BODY.eq("x");
+    let _ = EncryptedNote::BODY.matches("x");
+    let _ = EncryptedNote::TITLE.eq("x");
+    let _ = EncryptedNote::TITLE.eq(&String::from("x"));
+    let _ = EncryptedNote::BLOB;
+    let _ = EncryptedAccount::ADDRESS
+        .field(EncryptedAddress::STREET)
+        .eq("x");
     let _ = EncryptedAccount::TYPE;
     let _ = EncryptedAccount::ADDRESS;
     let _ = EncryptedTagged::<String>::TAG;

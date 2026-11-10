@@ -1,0 +1,22 @@
+error[E0277]: the plaintext field is `std::string::String`, which `query = u64` does not name
+  --> tests/ui/derive_query_type_not_the_plaintext_field.rs:17:21
+   |
+17 |     #[stash(query = u64)]
+   |                     ^^^ the plaintext field's type
+   |
+   = help: the trait `QueryField<u64>` is not implemented for `std::string::String`
+   = note: `#[stash(query = T)]` names the plaintext field's type, or the type inside its `Option`
+help: the trait `QueryField<V>` is implemented for `Option<V>`
+  --> src/marker.rs
+   |
+   | impl<V> QueryField<V> for Option<V> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `<EncryptedUser as EncryptTarget<User>>::encryption::{closure#0}::__query_field`
+  --> tests/ui/derive_query_type_not_the_plaintext_field.rs:14:10
+   |
+14 | #[derive(EncryptTarget)]
+   |          ^^^^^^^^^^^^^ required by this bound in `__query_field`
+...
+17 |     #[stash(query = u64)]
+   |                     --- required by a bound in this function
+   = note: this error originates in the derive macro `EncryptTarget` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -289,9 +289,11 @@ binding. It derives under the declaration the derive wrote, so it is the
 stored term. No plan is written by hand beside the record.
 
 `Marker::contexts()` is the record's contexts narrowed to the field, and
-`assert_context!` takes a marker. A field of several indexes, a nullable
-field, and a record field have markers with no operator method yet
-(#1596).
+`assert_context!` takes a marker. A field of several indexes answers each
+operator through the one index that answers it. A nullable field answers
+what a present value answers. A record field's marker reaches the inner
+record's markers with `.field(..)`, under the outer field's context.
+`#[stash(query = T)]` gives a marker the type its queries take.
 _Avoid_: field handle (that is the dynamic form), column, accessor
 
 **Planned**:
