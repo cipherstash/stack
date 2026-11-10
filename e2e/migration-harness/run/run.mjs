@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { requiredOracleChecks } from './migration-checks.mjs'
 
 const precedence = [
   'isolation-violation',
@@ -214,6 +215,12 @@ export async function run({ id, manifest, driver, supervision = null }) {
         throw new Error('Behaviour checks must not be empty')
       for (const check of checks)
         evidence('behaviour', 'oracle-check', check.id, check)
+      if (
+        requiredOracleChecks.some(
+          (id) => !checks.some((check) => check.id === id),
+        )
+      )
+        throw new Error('Required migration or no-rewrite checks are missing')
       if (checks.some((check) => !check.passed))
         throw new Error('Behaviour checks failed')
     },

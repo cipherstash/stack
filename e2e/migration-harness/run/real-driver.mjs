@@ -5,6 +5,12 @@ import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
+import {
+  legacyBytes,
+  migrationChecks,
+  noRewriteCheck,
+} from './migration-checks.mjs'
+import { runMigrator } from './migrator.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
@@ -31,6 +37,10 @@ export function createRealDriver({
   let oracleStores = null
   /** @type {Awaited<ReturnType<Isolation['openAppHost']>>|null} */
   let host = null
+  let baseCommit = ''
+  let ffiRange = ''
+  /** @type {unknown} */
+  let legacySnapshot
   /** @param {StoreSet|null} stores */
   function assigned(stores) {
     if (!stores) throw Error('Run Store Set has not been provisioned')
@@ -105,6 +115,18 @@ export function createRealDriver({
         !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(manifest.stack)
       )
         throw Error('Could not resolve exact Stack version')
+      ffiRange = JSON.parse(
+        (
+          await promisify(execFile)('npm', [
+            'view',
+            `@cipherstash/stack@${manifest.stack}`,
+            'dependencies.@cipherstash/protect-ffi',
+            '--json',
+          ])
+        ).stdout,
+      )
+      if (typeof ffiRange !== 'string' || !ffiRange)
+        throw Error('Could not resolve Stack FFI dependency')
       const guide = resolve(root, 'docs/migration/protect-dynamodb-to-stack.md')
       const content = await readFile(guide, 'utf8')
       manifest.guideHash = createHash('sha256').update(content).digest('hex')
@@ -131,6 +153,11 @@ export function createRealDriver({
         guide,
         frictionPath: '/workspace/friction.json',
       })
+      baseCommit = (
+        await promisify(execFile)('git', ['rev-parse', 'HEAD'], {
+          cwd: workspace,
+        })
+      ).stdout.trim()
       const eqlBundle = resolve(
         root,
         'packages/eql/packages/eql/sql/cipherstash-encrypt.sql',
@@ -180,25 +207,42 @@ export function createRealDriver({
       }
     },
     async snapshot() {
+      legacySnapshot = await assigned(oracleStores).snapshot()
+      legacyBytes(legacySnapshot)
       await writeFile(
         resolve(output, 'legacy-snapshot.json'),
-        JSON.stringify(await assigned(oracleStores).snapshot()),
+        JSON.stringify(legacySnapshot),
       )
     },
     async migrate() {
-      const result = await isolation.exec({
-        actor: 'migrator',
-        workspace,
-        env: env(migratorStores),
-        command: ['/bin/sh', '-lc', command],
-        forwards: forwards(migratorStores),
+      const result = await runMigrator({
+        command,
         timeoutMs: manifest.agents?.limits?.timeMs,
+        maxToolCalls: manifest.agents?.limits?.toolCalls,
+        maxModelTurns: manifest.agents?.limits?.turns,
+        stop: () => isolation.stop({ expected: true }),
+        execute: (argv, timeoutMs) =>
+          isolation.exec({
+            actor: 'migrator',
+            workspace,
+            env: env(migratorStores),
+            command: argv,
+            forwards: forwards(migratorStores),
+            timeoutMs,
+          }),
       })
       await writeFile(
         resolve(output, 'migrator-transcript.log'),
         `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
       )
-      await isolation.exec({
+      manifest.artifacts = {
+        transcript: 'migrator-transcript.log',
+        snapshot: 'legacy-snapshot.json',
+      }
+      // A timed-out broker has stopped its isolated tools and proof relays.
+      // Preserve its agent-limit result rather than restarting work for a diff.
+      if (result.exitCode !== 0 || result.limit) return result
+      const intent = await isolation.exec({
         actor: 'migrator',
         workspace,
         env: env(migratorStores),
@@ -214,6 +258,8 @@ export function createRealDriver({
         forwards: forwards(migratorStores),
         timeoutMs: manifest.agents?.limits?.timeMs,
       })
+      if (intent.exitCode !== 0)
+        throw Error(`git add -N exited ${intent.exitCode}`)
       const diff = await isolation.exec({
         actor: 'migrator',
         workspace,
@@ -225,11 +271,12 @@ export function createRealDriver({
           'diff',
           '--no-ext-diff',
           '--no-textconv',
-          'HEAD',
+          baseCommit,
         ],
         forwards: forwards(migratorStores),
         timeoutMs: manifest.agents?.limits?.timeMs,
       })
+      if (diff.exitCode !== 0) throw Error(`git diff exited ${diff.exitCode}`)
       await writeFile(resolve(output, 'migration.diff'), diff.stdout)
       manifest.artifacts = {
         transcript: 'migrator-transcript.log',
@@ -286,7 +333,24 @@ export function createRealDriver({
         const result = await behaviour((method, args) =>
           application.call(method, args),
         )
-        return await result.mutate()
+        const comparison = noRewriteCheck(
+          legacySnapshot,
+          await assigned(oracleStores).snapshot(),
+        )
+        result.checks.push(comparison)
+        const checks = await result.mutate()
+        checks.push(
+          ...(await migrationChecks({
+            workspace,
+            installedWorkspace: oracleWorkspace,
+            stackVersion: manifest.stack,
+            ffiRange,
+            mutationSnapshot: await assigned(oracleStores).snapshot(
+              mutation.pk,
+            ),
+          })),
+        )
+        return checks
       } finally {
         await application.close()
         host = null
@@ -294,8 +358,11 @@ export function createRealDriver({
     },
     async close() {
       if (host) await host.close().catch(() => {})
-      await isolation.stop()
-      await disposeStores(resources)
+      try {
+        await isolation.stop()
+      } finally {
+        await disposeStores(resources)
+      }
     },
   }
 }
