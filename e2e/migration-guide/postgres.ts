@@ -197,10 +197,13 @@ export async function createExample(sql: postgres.Sql, table: string) {
             payload.i?.t !== 'customers' ||
             payload.i?.c !== column ||
             Object.keys(payload).some(
-              (key) => !['v', 'k', 'i', 'c', 'hm'].includes(key),
+              (key) => !['v', 'k', 'i', 'c', 'hm', 'ob', 'bf'].includes(key),
             ) ||
+            // Protect represents unused index capabilities with null fields.
+            payload.ob != null ||
+            payload.bf != null ||
             (column === 'notes'
-              ? payload.hm !== undefined
+              ? payload.hm != null
               : typeof payload.hm !== 'string')
           ) {
             throw new Error(`Unsupported legacy payload in ${column}`)
@@ -266,7 +269,7 @@ export async function createExample(sql: postgres.Sql, table: string) {
           const after = converted[i][`${column}_v3`]
           if (
             after.c !== before.c ||
-            after.hm !== before.hm ||
+            (after.hm ?? null) !== (before.hm ?? null) ||
             ok(await stack.decrypt(after), 'verify target') !==
               ok(await legacy.decrypt(before), 'verify source')
           ) {
@@ -304,7 +307,7 @@ export async function createExample(sql: postgres.Sql, table: string) {
             !row[column] ||
             !row[`${column}_v3`] ||
             row[column].c !== row[`${column}_v3`].c ||
-            row[column].hm !== row[`${column}_v3`].hm
+            (row[column].hm ?? null) !== (row[`${column}_v3`].hm ?? null)
           ) {
             throw new Error(
               'Writes have resumed: reconcile target changes before rollback',

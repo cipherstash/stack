@@ -62,7 +62,9 @@ describe('Protect Postgres v2 to Stack v3', () => {
       for (const column of ['email', 'age', 'notes']) {
         expect(after[i][column]).toEqual(before[i][column])
         expect(after[i][`${column}_v3`].c).toBe(before[i][column].c)
-        expect(after[i][`${column}_v3`].hm).toBe(before[i][column].hm)
+        expect(after[i][`${column}_v3`].hm ?? null).toBe(
+          before[i][column].hm ?? null,
+        )
       }
     }
     await app.rollback()
