@@ -216,7 +216,9 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! record has `contexts()`, a [`Plan`] has [`Plan::contexts`], and a
 //! prepared call has [`Pending::context`](target::Pending::context). The
 //! `testing` feature adds `assert_context!`, which pins a context in a
-//! test. See [`contexts`] for the rendering.
+//! test. See [`contexts`] for the rendering. A field with a binding shows
+//! its query context and its stored context; see
+//! [`CallerContext`] for the two.
 //!
 //! ```
 //! use stack_encrypt::sem::EqualityTerm;
@@ -578,7 +580,8 @@ pub use cipher::{
     StackCipherBuilder, StackCipherText,
 };
 pub use contexts::{
-    CallContexts, ContextTree, Contexts, FieldContext, Placeholder, SuppliedContext,
+    CallContexts, CallerShape, ContextTree, Contexts, FieldContext, Kind, LeafContext, Placeholder,
+    SuppliedContext,
 };
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;

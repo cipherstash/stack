@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Every part of a context is a scope or a binding** (#1487). Search terms
+  derive under the query context, the scopes. The data key and the AAD
+  derive under the stored context, the scopes then the bindings. A record
+  with no binding stores exactly the bytes it stored before: the frozen
+  vectors do not change.
+  - A derived record lists the parts its caller supplies:
+    `#[stash(struct = User, scope = "users", scope(tenant: u64), bind(row: u128))]`.
+    The caller passes `Scope::new(tenant)`, `Bind::new(row)`, or
+    `Scope::new(tenant).bind(row)`. A part the record does not list does
+    not compile. The record's `ContextInput` is `RequiredContext<Parts<..>>`.
+  - A part stored in the row is listed as `scope(field = "tenant")` or
+    `bind(field = "id")`, in a `passthrough` field. The engine reads it from
+    the plaintext on encrypt and from the row on decrypt. A reader may pass
+    it to check it, and a mismatch is `ContextMismatch` before any key is
+    requested.
+  - `CallerContext` holds the scopes and the bindings apart, with `query()`
+    and `stored()`. `AeadContext` is the stored context. An empty `Scope`
+    or `Bind` is refused before any key is requested
+    (`PlanError::EmptyPart`).
+  - The dynamic record grammar has a plan-level `"bind"` key, a list of
+    parts. A query on a plan with a binding is refused, `bind_in_query`,
+    before any key is requested. `dynamic::record::Plan::with_bindings` and
+    `bindings` carry it. The key is reserved, so a field named `bind` is
+    refused (`bind`), and so is a grouped part, since a binding part is a
+    scalar. An empty binding is refused (`empty_binding`), and so is an
+    explicit empty list.
+  - A typed query carries no binding either: `.extend(Bind::new(..))` does
+    not compile, and a binding inside a `CallerContext` or `DeclaredContext`
+    is `PlanError::BindInQuery` when the query is awaited, before any key.
+  - `CallerContext` is no longer an `IntoContext`: a context with a binding
+    is two contexts, so a leaf takes `query()` or `stored()` by name, and a
+    PRF or AEAD API is never handed one whole. `AeadContext` nests a binding
+    as `CallerContext::extend` does. A JSON document seals under the stored
+    context and derives its selectors under the query context, so a bound
+    document is found by a query under the scopes.
+  - `Contexts` and `CallContexts` show a `query context:` line and a
+    `stored context:` line for a field with a binding, and one `context:`
+    line otherwise. `assert_context!` states both as
+    `field = { query = [..], stored = [..] }`. The placeholders say `scope`
+    and `bind`: a plan's optional extension is `{scope?: CallerContext}`,
+    which `testing::caller_scope()` states. `testing::extension()` is
+    renamed to `caller_scope()`.
+
 - **`OpaqueDecode` no longer requires vitaminc's `Decrypt` trait.** If you
   only name types that implement `OpaqueDecode`, nothing changes, because
   the trait is sealed. If your generic code is bounded on `P: OpaqueDecode`

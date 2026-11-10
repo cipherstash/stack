@@ -850,6 +850,12 @@ impl OperatorEntry {
 /// binding sends the plan under the context its query names.
 /// [`verify`] and [`target_limit`] derive nothing and take such a plan.
 fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
+    if !plan.bindings().is_empty() {
+        return Err(Error::Plan {
+            field: Some(field.to_owned()),
+            reason: Reason::BindInQuery,
+        });
+    }
     match plan.context_field() {
         Some(_) => Err(Error::Plan {
             field: Some(field.to_owned()),

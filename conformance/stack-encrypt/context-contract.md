@@ -20,19 +20,37 @@ Caller input has two distinct purposes:
   For a record storing its own context, an expected label checks that stored
   value. It does not replace or extend it. A caller label on a plan with a
   literal base is refused.
-- An **extension** appends to the resolved field context for encryption,
+- A **scope** appends to the resolved field context for encryption,
   decryption and search. Each call appends in order. Rust
   `.extend(7u64).extend(nonempty!("eu"))` and Go
-  `.Extend(uint64(7)).Extend("eu")` produce `((label)/7u64)/eu`.
-  Rust `.extend(())` and Go `.Extend()` append nothing. A Rust
+  `.Scope(uint64(7)).Scope("eu")` produce `((label)/7u64)/eu`.
+  Rust `.extend(())` and Go `.Scope()` append nothing. A Rust
   `DeclaredContext` containing several parts appends all of those parts.
+  Go `Extend` is the deprecated name of `Scope`. Earlier text called a
+  scope an extension.
+- A **binding** appends after every scope, for encryption and decryption
+  only. It is in the stored context, which the data key and the AAD derive
+  under, and in no query context, which the search terms derive under. Rust
+  `Scope::new(7u64).bind(9u64)` and Go `.Scope(uint64(7)).Bind(uint64(9))`
+  produce the stored context `((label)/7u64)/9u64` and the query context
+  `(label)/7u64`. A query with a binding is refused before any key is
+  requested. Rust refuses a bare `Bind` at compile time. A binding inside a
+  `CallerContext` or `DeclaredContext` is refused when the query is awaited
+  (`PlanError::BindInQuery`). The dynamic path refuses a query on a plan
+  with a `bind` key (`bind_in_query`). An empty binding is refused on every
+  path before any key is requested (Rust `PlanError::EmptyPart`, dynamic
+  `empty_binding`, Go `ErrEncoding`). An empty scope part stays allowed in
+  the dynamic grammar and Go `Scope`, as before. `bind` is a reserved
+  plan-level key, so no field is called that. `record-bindings-v1`
+  (`v1/record-bindings-v1.cases.json`) specifies this, and both languages
+  are required to run it.
 
 Grouping is significant. Rust `.extend(NonEmpty::from(7u64).with("eu"))` adds
 one composite part, producing `(label)/(7u64/eu)`. This has different AAD and
-terms from separate extensions. Nested `ContextPiece` values are supported by
-Rust's lower-level context APIs; the dynamic record grammar and Go `Extend`
-accept scalar extension parts only. Their refusal of a grouped extension is
-part of the supported API boundary, not permission to flatten it.
+terms from separate scopes. Nested `ContextPiece` values are supported by
+Rust's lower-level context APIs; the dynamic record grammar and Go `Scope`
+accept scalar parts only. Their refusal of a grouped part is part of the
+supported API boundary, not permission to flatten it.
 
 Previously, repeated Rust chain extensions replaced earlier parts. Records
 written by those chains still require the
@@ -117,10 +135,27 @@ checks and Rust typed/dynamic cross-opening. The required native `plan_grammar`
 binary additionally covers missing caller bases, conflicting sources, invalid
 labels, caller-derived queries and empty-batch validation before keyset loading.
 
+## Bindings
+
+`record-bindings-v1` specifies the split between the query context and the
+stored context. Each case has a unique `id`, a nonempty `label`, ordered
+`scopes`, and nonempty ordered `bind` parts, in the part form above. Every
+case encrypts and queries the string `hello` in the `text` field, with the
+all-zero deterministic seed.
+
+`v1/record-bindings-v1.expected.rust-native.json` pins, per case, the
+descriptor of the stored context, the equality term, one ciphertext, and the
+contexts text a plan prints. Rust checks that the term equals the term of the
+same plan with no binding, that the key is requested under the stored
+context's descriptor, that a query on the bound plan is refused, that the
+frozen ciphertext opens under its binding and under no other, and the
+contexts text. Go seals and opens through `Scope` and `Bind`, compares its
+term and the cipher's contexts text with the vector, opens the Rust
+ciphertext, and refuses a query through a cipher with a binding.
+
 ## Future roles
 
 This profile describes the current shared context: it feeds the data-key
-descriptor, ciphertext AAD and index PRF context. It does not introduce separate
-ciphertext-binding and search-scope contexts. That API design remains separate work;
-any future split needs explicit compatibility rules and new profile coverage.
-It also does not assert plaintext erasure in Go, Python or TypeScript heaps.
+descriptor, ciphertext AAD and index PRF context. The split between the
+stored context and the query context is in the bindings profile above.
+Neither profile asserts plaintext erasure in Go, Python or TypeScript heaps.

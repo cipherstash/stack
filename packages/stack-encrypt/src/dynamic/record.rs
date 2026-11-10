@@ -51,11 +51,11 @@
 //! refuses a record whose stored context differs with
 //! [`Error::ContextMismatch`](crate::Error::ContextMismatch) before any
 //! key is requested. A stored context changed in storage opens nothing
-//! either way: every field was sealed under the original. The key
-//! `"context_field"` is reserved at the top level of a plan, so no field
-//! may be called that. A plan without the key is read exactly as before:
-//! the two-segment and shared-prefix rules hold, and it seals the same
-//! bytes.
+//! either way: every field was sealed under the original. The keys
+//! `"context_field"` and `"bind"` (the caller's bindings, below) are
+//! reserved at the top level of a plan, so no field may be called either.
+//! A plan without the key is read exactly as before: the two-segment and
+//! shared-prefix rules hold, and it seals the same bytes.
 //!
 //! # A field that names an EQL type
 //!
@@ -644,6 +644,8 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         P::IndexNotDeclared { field, .. } | P::IndexOptions { field, .. } => {
             (Some(field), Reason::Refused)
         }
+        P::BindInQuery => (None, Reason::BindInQuery),
+        P::EmptyPart => (None, Reason::EmptyBinding),
         P::IdentityWithoutField
         | P::MixedCiphers
         | P::MatchCase { .. }
@@ -668,6 +670,10 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
 pub struct Plan {
     context: Context,
     extension: Vec<ContextPiece<'static>>,
+    /// The caller's bindings, in order: in the stored context of every
+    /// field, after the scopes, and in no query context. The plan-level
+    /// `"bind"` key.
+    bindings: Vec<ContextPiece<'static>>,
     fields: Vec<FieldPlan>,
 }
 
@@ -942,6 +948,7 @@ impl Plan {
         let plan = Self {
             context,
             extension,
+            bindings: Vec::new(),
             fields,
         };
         // The whole-plan rules the builder holds (names once, labels plain,
@@ -998,7 +1005,10 @@ impl Plan {
     ///
     /// The plan does not lower: the same errors as running it.
     pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
-        Ok(crate::contexts::resolve(self.caller_shapes()?, None))
+        Ok(crate::contexts::resolve(
+            self.caller_shapes()?,
+            crate::contexts::CallerShape::none(),
+        ))
     }
 
     /// The shape of every field's context, in plan order, with the plan's
@@ -1072,15 +1082,53 @@ impl Plan {
         builder.build()
     }
 
-    /// The extension every field's label is run under, as the chain's
-    /// `.extend(..)` would carry it.
+    /// This plan with the caller's bindings `parts`, each in the stored
+    /// context of every field after the scopes, and in no query context.
+    /// What a binding's `"bind"` key carries.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] with [`Reason::EmptyBinding`] for an empty part: a
+    /// row ID not yet assigned would bind every row to one context, and
+    /// the typed path refuses the same. [`Error::Target`] if a field names
+    /// an EQL type: an EQL value is stored under its table and column
+    /// alone, so a binding cannot extend it, as an extension cannot
+    /// ([`TargetError::Extended`]).
+    pub fn with_bindings(mut self, parts: Vec<ContextPiece<'static>>) -> Result<Self, Error> {
+        if parts.iter().any(crate::MaybeEmpty::is_empty) {
+            return Err(Error::bad_plan(Reason::EmptyBinding));
+        }
+        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
+            if !parts.is_empty() {
+                return Err(TargetError::Extended {
+                    name: target.name.clone(),
+                    label: target.label.to_string(),
+                }
+                .into());
+            }
+        }
+        self.bindings = parts;
+        Ok(self)
+    }
+
+    /// The caller's bindings, in order. Empty for a plan with none.
+    pub fn bindings(&self) -> &[ContextPiece<'static>] {
+        &self.bindings
+    }
+
+    /// The context every field's label is run under: the extension, as the
+    /// chain's `.extend(..)` would carry it, then the bindings.
     fn declared_context(&self) -> DeclaredContext {
-        self.extension
+        let scopes = self
+            .extension
             .iter()
             .cloned()
             .fold(DeclaredContext::default(), |context, part| {
                 context.with(CallerContext::from_piece(part))
-            })
+            });
+        self.bindings.iter().cloned().fold(scopes, |context, part| {
+            context.with(CallerContext::bind_piece(part))
+        })
     }
 
     fn shape(&self) -> Vec<FieldShape> {
@@ -1136,9 +1184,11 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// "<field name>"`, which makes the plan take its context from that field
 /// of each record ([`Plan::with_context_field`]; the
 /// [module docs](self#a-plan-whose-context-is-a-field-of-the-record) give
-/// the shape). The key is reserved: a top-level `"context_field"` whose
-/// value is not a string is refused rather than read as a field of that
-/// name.
+/// the shape), and one more, `"bind": [<part>, ...]`, the caller's
+/// bindings ([`Plan::with_bindings`]). Both keys are reserved: a top-level
+/// `"context_field"` whose value is not a string, or a `"bind"` whose
+/// value is not a list of context parts, is refused rather than read as a
+/// field of that name ([`Reason::ContextField`], [`Reason::Bind`]).
 ///
 /// A field may name an EQL type as its target instead of outputs:
 ///
@@ -1309,17 +1359,36 @@ pub fn plan_with(
     }
     // The whole-plan rules are the constructors', so a parsed plan and a
     // hand-built one are refused alike.
-    match wire.context_field {
+    let plan = match wire.context_field {
         Some(name) => Plan::with_context_field(name, fields),
         None => Plan::new_with(fields, resolver),
+    }?;
+    // The grammar's `bind` is a nonempty list of scalar parts: an explicit
+    // empty list is not an absent key, and a grouped part is not a part Go
+    // can supply through `Bind`.
+    match wire.bindings {
+        None => Ok(plan),
+        Some(parts) if parts.is_empty() => Err(Error::bad_plan(Reason::EmptyBinding)),
+        Some(parts)
+            if parts
+                .iter()
+                .any(|part| matches!(part, ContextPiece::List(_))) =>
+        {
+            Err(Error::bad_plan(Reason::Bind))
+        }
+        Some(parts) => plan.with_bindings(parts),
     }
 }
 
 /// A plan as a binding writes it: an object of field specs, in order, with
-/// one reserved key beside them, `"context_field"`. A visitor only to tell
-/// that key from a field's name; every value below it is derived.
+/// two reserved keys beside them, `"context_field"` and `"bind"`. A visitor
+/// only to tell those keys from a field's name; every value below it is
+/// derived.
 struct PlanWire {
     context_field: Option<String>,
+    /// `None` when the plan has no `"bind"` key: an explicit empty list is
+    /// kept apart from an absent key, and refused.
+    bindings: Option<Vec<ContextPiece<'static>>>,
     fields: Vec<(String, FieldSpecWire)>,
 }
 
@@ -1334,11 +1403,15 @@ impl<'de> Deserialize<'de> for PlanWire {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<PlanWire, A::Error> {
                 let mut plan = PlanWire {
                     context_field: None,
+                    bindings: None,
                     fields: Vec::with_capacity(super::context::reserved(map.size_hint())),
                 };
                 while let Some(name) = map.next_key::<&'de str>()? {
                     if name == CONTEXT_FIELD {
                         plan.context_field = Some(map.next_value()?);
+                    } else if name == BIND {
+                        let parts: Vec<super::context::Context> = map.next_value()?;
+                        plan.bindings = Some(parts.into_iter().map(|part| part.0).collect());
                     } else {
                         plan.fields.push((name.to_owned(), map.next_value()?));
                     }
@@ -1404,6 +1477,9 @@ fn spec_keys(frame: &[u8], field: &str) -> Option<Vec<String>> {
 
 /// The plan-level key naming the field a plan takes its context from.
 const CONTEXT_FIELD: &str = "context_field";
+/// The plan-level key listing the caller's bindings: a list of parts, each
+/// a context as [`context`](super::context()) reads one.
+const BIND: &str = "bind";
 
 /// One field's spec: a context, and exactly one of `"outputs"` and
 /// `"target"` (checked in `TryFrom`, once the field's name is known, so the
@@ -1574,6 +1650,9 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
     let field = &field;
     if field == CONTEXT_FIELD {
         return Error::bad_plan(Reason::ContextField);
+    }
+    if field == BIND {
+        return Error::bad_plan(Reason::Bind);
     }
     let reason = match path.get(1) {
         Some(Key(key)) if key == "context" => {
@@ -4309,12 +4388,12 @@ mod tests {
                 .with(CallerContext::from(7u64))
                 .under(own());
             assert_eq!(
-                one.clone().into_aad().as_bytes(),
-                with.into_aad().as_bytes(),
+                one.stored().into_aad().as_bytes(),
+                with.stored().into_aad().as_bytes(),
                 "one part: `with` is `From<NonEmpty>`"
             );
             assert_eq!(
-                one.into_aad().as_bytes(),
+                one.stored().into_aad().as_bytes(),
                 own().with(7u64).into_aad().as_bytes()
             );
             let two = DeclaredContext::default()
@@ -4322,12 +4401,112 @@ mod tests {
                 .with(CallerContext::from(nonempty!("eu")))
                 .under(own());
             assert_eq!(
-                two.into_aad().as_bytes(),
+                two.stored().into_aad().as_bytes(),
                 own().with(7u64).with("eu").into_aad().as_bytes(),
                 "two parts nest to the left"
             );
             let none = DeclaredContext::default().under(own());
-            assert_eq!(none.into_aad().as_bytes(), own().into_aad().as_bytes());
+            assert_eq!(
+                none.stored().into_aad().as_bytes(),
+                own().into_aad().as_bytes()
+            );
+        }
+
+        /// An empty binding would bind every row to one context: a row ID
+        /// not yet assigned. It is refused as the typed path refuses an
+        /// empty `Bind`, before any key is requested.
+        #[test]
+        fn an_empty_binding_is_refused() {
+            let plan = the_plan();
+            for empty in [
+                ContextPiece::Text("".into()),
+                ContextPiece::Bytes(Vec::new().into()),
+            ] {
+                let refused = plan.clone().with_bindings(vec![empty]).unwrap_err();
+                assert!(
+                    matches!(
+                        &refused,
+                        Error::Plan {
+                            field: None,
+                            reason: Reason::EmptyBinding
+                        }
+                    ),
+                    "{refused:?}"
+                );
+            }
+            assert!(plan.with_bindings(vec![ContextPiece::U64(9)]).is_ok());
+        }
+
+        /// `"bind"` is a plan-level key, so a field of that name is refused
+        /// by name, not read as the bindings and refused for its shape.
+        #[test]
+        fn a_field_named_bind_is_refused() {
+            let refused = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", typed(label("bind"), &["c"], "string")),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Plan {
+                        field: None,
+                        reason: Reason::Bind
+                    }
+                ),
+                "{refused:?}"
+            );
+            // The key itself still reads a list of parts.
+            let bound = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", Tree::Array(vec![Tree::UInt64(9)])),
+            ]))
+            .expect("a bind key with a list of parts");
+            assert_eq!(bound.bindings(), [ContextPiece::U64(9)]);
+        }
+
+        /// The grammar's `bind` is a nonempty list: an explicit empty list
+        /// is not an absent key, and would seal with no binding where the
+        /// plan says there is one.
+        #[test]
+        fn an_explicit_empty_bind_list_is_refused() {
+            let refused = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", Tree::Array(vec![])),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Plan {
+                        field: None,
+                        reason: Reason::EmptyBinding
+                    }
+                ),
+                "{refused:?}"
+            );
+        }
+
+        /// A binding part is a scalar: a grouped part is one Go cannot
+        /// supply through `Bind`, so it is refused rather than flattened or
+        /// nested.
+        #[test]
+        fn a_grouped_bind_part_is_refused() {
+            let refused = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", Tree::Array(vec![Tree::Array(vec![s("a"), s("b")])])),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Plan {
+                        field: None,
+                        reason: Reason::Bind
+                    }
+                ),
+                "{refused:?}"
+            );
         }
     }
 
@@ -6350,6 +6529,37 @@ mod tests {
 
         fn mixed_row(age: u32, email: &str) -> Tree {
             obj(vec![("age", Tree::UInt32(age)), ("email", s(email))])
+        }
+
+        /// An EQL value is stored under its table and column alone, so a
+        /// plan with a target field takes no binding, as it takes no
+        /// extension; no binding at all leaves it as it is.
+        #[test]
+        fn a_target_field_refuses_a_binding() {
+            let refused = mixed_plan()
+                .with_bindings(vec![ContextPiece::U64(9)])
+                .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Target(TargetError::Extended { name, label })
+                        if name == "email" && label == "users/email"
+                ),
+                "{refused:?}"
+            );
+            assert!(mixed_plan().with_bindings(vec![]).is_ok());
+            let wired = plan_with(
+                obj(vec![
+                    ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                    ("email", target_spec(label("email"), TEXT_EQ)),
+                    ("bind", Tree::Array(vec![Tree::UInt64(9)])),
+                ]),
+                &FakeEql,
+            );
+            assert!(
+                matches!(wired, Err(Error::Target(TargetError::Extended { .. }))),
+                "{wired:?}"
+            );
         }
 
         /// The context view shows a target field under its label alone, in

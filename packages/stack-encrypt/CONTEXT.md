@@ -110,10 +110,37 @@ _Avoid_: AAD (that is one of its encodings, not the concept), lock context
 **Own context**:
 The context a field carries itself: `<record context>/<identity>`, where the
 identity defaults to the field's name and `identity = ".."` pins it (see
-**Identity**). A caller's context *extends* it (`(("users", "age"), id)`); it
-is never discarded. A subtree of a declaration is given one with `under` (the
-caller's is then optional) or `extend` (the caller's stays required).
+**Identity**). A caller's scopes *extend* it (`(("users", "age"), tenant)`);
+it is never discarded. A subtree of a declaration is given one with `under`
+(the caller's is then optional) or `extend` (the caller's stays required).
 _Avoid_: default context, field prefix
+
+**Scope**:
+A part of a context that a query can supply too: the record's name, a
+field's name, a tenant. The declared scopes come first, then the caller's.
+A scope narrows the data and the queries over it. The **query context** is
+all the scopes, and the search terms derive under it. Declared as
+`scope(tenant: u64)` for a part the caller passes as `Scope::new(tenant)`,
+or `scope(field = "tenant")` for a part stored in the row. Go: `Scope`,
+formerly `Extend`.
+_Avoid_: extension (the old word), label (that is a key tag fact), tenant
+(one example of a scope)
+
+**Binding**:
+A part of a context that ties a ciphertext to one row, such as a row ID. A
+query does not know it. The **stored context** is the query context followed
+by the bindings, in order, and the data key and the AAD derive under it. So a
+bound row is found by a query under the scopes alone, and fails to open in
+another row. Declared as `bind(row: u128)` for a part the caller passes as
+`Bind::new(row)`, or `bind(field = "id")` for a part stored in the row. The
+kind of a part is in no derivation: a record with no binding stores the
+bytes it always did. Go: `Bind`.
+
+The word has a second meaning in this repository. AGENTS.md calls the FFI
+or WASI layer between the engine and a language a binding, and the
+conformance README's "bindings" are those. The `record-bindings-v1` profile
+tests context bindings, this entry's.
+_Avoid_: lock, label, row context, extension
 
 **Context field**:
 A field of a value whose value is the context of the value's other fields.

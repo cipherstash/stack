@@ -16,10 +16,10 @@ use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::plan::{Field, Fields, Operation as _};
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptSource, EncryptTarget, Encryption, RequiredContext};
-use stack_encrypt::testing::{extension, from_plaintext, required, Expect};
+use stack_encrypt::testing::{caller_scope, from_plaintext, required, Expect};
 use stack_encrypt::{
     assert_context, assert_contexts, nonempty, ContextTree, DecryptFrom, EncryptInto, Encrypted,
-    Equality, IntoContext as _, NonEmpty, Ore, Plan, StackCipher, StackCipherText,
+    Equality, IntoContext as _, LeafContext, NonEmpty, Ore, Plan, StackCipher, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -89,7 +89,7 @@ mod a_record_with_a_static_context {
             [["settings", "theme"], ["settings", "notes"]]
         );
         let contexts = EncryptedSettings::contexts();
-        let shown: Vec<&ContextTree> = contexts.fields().iter().map(|f| f.context()).collect();
+        let shown: Vec<_> = contexts.fields().iter().map(|f| f.context()).collect();
         assert_eq!(call.context().contexts().iter().collect::<Vec<_>>(), shown);
         let stored = call.await.unwrap();
 
@@ -318,8 +318,8 @@ mod a_plan {
             .unwrap();
         assert_context!(
             plan.contexts(),
-            email = [["users", "email"], extension()],
-            age = [["users", "age"], extension()],
+            email = [["users", "email"], caller_scope()],
+            age = [["users", "age"], caller_scope()],
         );
     }
 
@@ -336,7 +336,7 @@ mod a_plan {
                     Expect::from(required::<stack_encrypt::Label>()),
                     Expect::from("email"),
                 ],
-                extension(),
+                caller_scope(),
             ],
         );
     }
@@ -355,7 +355,7 @@ mod a_plan {
                     Expect::from(from_plaintext::<stack_encrypt::Label>("tenant")),
                     Expect::from("email"),
                 ],
-                extension(),
+                caller_scope(),
             ],
         );
     }
@@ -477,8 +477,8 @@ mod the_declaration_view_and_the_call_view {
         let call = String::from("ada")
             .encrypt_into_with_context::<Encrypted<EqualityTerm>, _>(&keyset, tenant);
         assert_eq!(
-            filled(declared.single().unwrap(), &value),
-            *call.context().single().unwrap()
+            filled(declared.single().unwrap().query(), &value),
+            *call.context().single().unwrap().query()
         );
         let _ = call.await.unwrap();
 
@@ -498,10 +498,15 @@ mod the_declaration_view_and_the_call_view {
             &settings,
             DeclaredContext::from(CallerContext::from(tenant)),
         );
-        let shown: Vec<ContextTree> = declared
+        let shown: Vec<LeafContext> = declared
             .fields()
             .iter()
-            .map(|field| ContextTree::List(vec![field.context().clone(), value.clone()]))
+            .map(|field| {
+                LeafContext::one(ContextTree::List(vec![
+                    field.context().query().clone(),
+                    value.clone(),
+                ]))
+            })
             .collect();
         assert_eq!(call.context().contexts(), shown.as_slice());
         let _ = call.await.unwrap();

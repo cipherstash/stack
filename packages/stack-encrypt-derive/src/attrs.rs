@@ -1,6 +1,6 @@
 //! Parsing of the `#[stash(...)]` container and field attributes.
 
-use syn::{Attribute, Expr, LitStr, Member, Path, Result, Type};
+use syn::{Attribute, Expr, Ident, LitStr, Member, Path, Result, Type};
 
 /// Container-level options, from `#[stash(...)]` on the struct itself.
 pub(crate) struct ContainerAttrs {
@@ -24,6 +24,18 @@ pub(crate) struct ContainerAttrs {
     /// data's identity, so it is given explicitly rather than inferred from a
     /// name a refactor can change. Only meaningful with `struct`.
     pub(crate) scope: Option<LitStr>,
+    /// `#[stash(scope(tenant: u64))]`: a scope the caller supplies on every
+    /// call, with its name and type. In the query context and the stored
+    /// context.
+    pub(crate) caller_scope: Option<(Ident, Type)>,
+    /// `#[stash(scope(field = "tenant"))]`: a scope stored in the row, in
+    /// the `passthrough` field derived from the named plaintext field.
+    pub(crate) stored_scope: Option<LitStr>,
+    /// `#[stash(bind(row: u128))]`: a binding the caller supplies on every
+    /// call. In the stored context only.
+    pub(crate) caller_bind: Option<(Ident, Type)>,
+    /// `#[stash(bind(field = "id"))]`: a binding stored in the row.
+    pub(crate) stored_bind: Option<LitStr>,
     /// `#[stash(context_type = Type)]`: the record's associated `Context`,
     /// when its fields take the caller's context. The default,
     /// `CallerContext`, derives ciphertext and terms alike and so needs both
@@ -35,8 +47,47 @@ pub(crate) struct ContainerAttrs {
 }
 
 const CONTAINER_KEYS: &str = "unsupported container attribute; expected `plaintext = Type`, \
-     `struct = Type`, `scope = \"...\"` (with `struct`), `context_type = Type` or \
-     `crate = \"...\"`";
+     `struct = Type`, `scope = \"...\"` (with `struct`), `scope(name: Type)`, \
+     `scope(field = \"...\")`, `bind(name: Type)`, `bind(field = \"...\")`, `context_type = Type` \
+     or `crate = \"...\"`";
+
+/// One `scope(..)` or `bind(..)` part: a caller part with its name and type,
+/// or a stored part naming the plaintext field.
+enum Part {
+    Caller(Ident, Box<Type>),
+    Stored(LitStr),
+}
+
+/// Parse the parentheses of `scope(..)` or `bind(..)`: `name: Type` or
+/// `field = "name"`.
+fn parse_part(input: syn::parse::ParseStream<'_>, kind: &str) -> Result<Part> {
+    let content;
+    syn::parenthesized!(content in input);
+    let name: Ident = content.call(syn::ext::IdentExt::parse_any)?;
+    if content.peek(syn::Token![=]) {
+        if name != "field" {
+            return Err(syn::Error::new(
+                name.span(),
+                format!(
+                    "`{kind}(..)` takes `name: Type` for a part the caller supplies, or \
+                     `field = \"..\"` for a part stored in the row"
+                ),
+            ));
+        }
+        let _: syn::Token![=] = content.parse()?;
+        return Ok(Part::Stored(content.parse()?));
+    }
+    let _: syn::Token![:] = content.parse().map_err(|_| {
+        syn::Error::new(
+            name.span(),
+            format!(
+                "`{kind}(..)` takes `name: Type` for a part the caller supplies, or \
+                 `field = \"..\"` for a part stored in the row"
+            ),
+        )
+    })?;
+    Ok(Part::Caller(name, Box::new(content.parse()?)))
+}
 
 impl ContainerAttrs {
     pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
@@ -44,6 +95,10 @@ impl ContainerAttrs {
         let mut plaintexts: Vec<Type> = Vec::new();
         let mut by_field: Option<Type> = None;
         let mut scope: Option<LitStr> = None;
+        let mut caller_scope: Option<(Ident, Type)> = None;
+        let mut stored_scope: Option<LitStr> = None;
+        let mut caller_bind: Option<(Ident, Type)> = None;
+        let mut stored_bind: Option<LitStr> = None;
         let mut context_type: Option<Type> = None;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
@@ -57,6 +112,30 @@ impl ContainerAttrs {
                     }
                     let lit: LitStr = meta.value()?.parse()?;
                     krate = Some(lit.parse()?);
+                    return Ok(());
+                }
+                if meta.path.is_ident("scope") && meta.input.peek(syn::token::Paren) {
+                    if caller_scope.is_some() || stored_scope.is_some() {
+                        return Err(meta.error(
+                            "`scope(..)` is given twice; a record lists one scope beside its name",
+                        ));
+                    }
+                    match parse_part(meta.input, "scope")? {
+                        Part::Caller(name, ty) => caller_scope = Some((name, *ty)),
+                        Part::Stored(field) => stored_scope = Some(field),
+                    }
+                    return Ok(());
+                }
+                if meta.path.is_ident("bind") && meta.input.peek(syn::token::Paren) {
+                    if caller_bind.is_some() || stored_bind.is_some() {
+                        return Err(
+                            meta.error("`bind(..)` is given twice; a record lists one binding")
+                        );
+                    }
+                    match parse_part(meta.input, "bind")? {
+                        Part::Caller(name, ty) => caller_bind = Some((name, *ty)),
+                        Part::Stored(field) => stored_bind = Some(field),
+                    }
                     return Ok(());
                 }
                 if meta.path.is_ident("scope") {
@@ -206,11 +285,31 @@ impl ContainerAttrs {
             return Err(err);
         }
 
+        if by_field.is_none() {
+            let part = caller_scope
+                .as_ref()
+                .map(|(name, _)| name.span())
+                .or_else(|| stored_scope.as_ref().map(|field| field.span()))
+                .or_else(|| caller_bind.as_ref().map(|(name, _)| name.span()))
+                .or_else(|| stored_bind.as_ref().map(|field| field.span()));
+            if let Some(span) = part {
+                return Err(syn::Error::new(
+                    span,
+                    "`scope(..)` and `bind(..)` list the parts of a `struct = ..` record's \
+                     context: a `plaintext` record takes the whole context from its caller",
+                ));
+            }
+        }
+
         Ok(Self {
             krate: krate.unwrap_or_else(|| syn::parse_quote!(::stack_encrypt)),
             plaintexts,
             by_field,
             scope,
+            caller_scope,
+            stored_scope,
+            caller_bind,
+            stored_bind,
             context_type,
         })
     }

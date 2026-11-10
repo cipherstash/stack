@@ -1682,7 +1682,7 @@ receive.
   instead of "extension". The frozen vectors do not change, because no key
   on the wire names the operation.
 - **Done already.** Nothing. Today every part is in both contexts.
-- **Tracked in.** Issue #1487 is open. It is exactly this item. Issue #1067 is open and related.
+- **Tracked in.** Issue #1487 is open. It is exactly this item. Its pull request adds the binding kind to the derive, the dynamic grammar, and Go, and the `record-bindings-v1` conformance profile. Issue #1067 is open and related.
 - **Finished when** these are all true, in Rust and in Go:
   - a record with a binding row ID encrypts;
   - a column query finds it;

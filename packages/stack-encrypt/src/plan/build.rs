@@ -1396,11 +1396,11 @@ impl<S: 'static, K: 'static> Plan<S, K> {
     ///     .build()?;
     /// println!("{}", plan.contexts());
     /// // email
-    /// //   context: (users / email) / {extension?: CallerContext}
+    /// //   context: (users / email) / {scope?: CallerContext}
     /// # #[cfg(feature = "testing")]
     /// stack_encrypt::assert_context!(
     ///     plan.contexts(),
-    ///     email = [["users", "email"], stack_encrypt::testing::extension()],
+    ///     email = [["users", "email"], stack_encrypt::testing::caller_scope()],
     /// );
     /// # Ok::<(), stack_encrypt::Error>(())
     /// ```
@@ -1422,7 +1422,7 @@ impl<S: 'static, K: 'static> Plan<S, K> {
             Source::Field(field) => Base::Field(Arc::clone(&field.of_value)),
             Source::Call => Base::Call,
         };
-        crate::contexts::under_parts(self.lowering(base).shapes(), extension.pieces())
+        crate::contexts::under_declared(self.lowering(base).shapes(), extension)
     }
 
     /// [`encryption`](Self::encryption), once the base context is known.

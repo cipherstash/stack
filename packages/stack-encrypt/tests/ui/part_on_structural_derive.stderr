@@ -1,0 +1,11 @@
+error: `scope(..)` and `bind(..)` are parts of an owned record's context: derive `EncryptTarget` and `DecryptSource`. The structural `EncryptFrom` / `DecryptInto` derives have no form for them
+  --> tests/ui/part_on_structural_derive.rs:11:8
+   |
+11 | struct Bound {
+   |        ^^^^^
+
+error: `scope(..)` and `bind(..)` are parts of an owned record's context: derive `EncryptTarget` and `DecryptSource`. The structural `EncryptFrom` / `DecryptInto` derives have no form for them
+  --> tests/ui/part_on_structural_derive.rs:17:8
+   |
+17 | struct Scoped {
+   |        ^^^^^^

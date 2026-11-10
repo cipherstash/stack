@@ -7,10 +7,16 @@
 //! to see the context a declaration will use, and a test must be able to
 //! state it.
 //!
+//! Every part of a context is a scope or a binding. The **query context** is
+//! the scopes, and the search terms derive under it. The **stored context**
+//! is the query context followed by the bindings, and the key and the AAD
+//! derive under it. A field with no binding has one context. See
+//! [`CallerContext`].
+//!
 //! Two views exist:
 //!
 //! - [`Contexts`], from [`Encryption::contexts`](crate::target::Encryption::contexts).
-//!   It lists the context of each field of a declaration. A part the caller
+//!   It lists the contexts of each field of a declaration. A part the caller
 //!   supplies when the declaration runs appears as a typed
 //!   [`Placeholder`]. The derives emit `contexts()` on every record, and a
 //!   [`Plan`](crate::Plan) has it too.
@@ -50,14 +56,19 @@
 //! | an integer | its value and its type: `7u64`, `-3i32` |
 //! | the unit context | `()` |
 //! | a pre-encoded context | `encoded:0x…` |
-//! | a part the caller supplies | `{context: u64}`; `{extension?: CallerContext}` when optional |
-//! | a part read from the plaintext | `{context: NonEmpty<Identifier>, from the plaintext}` |
+//! | a scope the caller supplies | `{scope: u64}`, or `{tenant: u64}` when the declaration names it; `{scope?: u64}` when optional |
+//! | a binding the caller supplies | `{bind: u128}`, or `{row: u128}` when the declaration names it |
+//! | a part read from the plaintext | `{tenant: u64, from the plaintext}` |
 //!
 //! Plain text is text the descriptor renders as it is: no `/`, no brackets,
 //! no control characters, and not starting with a digit, a `-`, or `b64:`.
 //! Text that would read as another form, starting with `{` or `encoded:`,
 //! is quoted too. Quoting escapes `"` and `\` with a backslash, and any
 //! other control or non-printing character as `\u{..}`.
+//!
+//! A field whose query context and stored context are the same shows one
+//! `context:` line. A field with a binding shows a `query context:` line
+//! and a `stored context:` line.
 //!
 //! # What a placeholder stands for
 //!
@@ -67,8 +78,8 @@
 //! - A placeholder of type `Label` stands for the label's segments, which
 //!   splice into the list around it. `{tenant: Label, from the plaintext} / text`
 //!   with the label `tenants/acme` is the flat list `tenants / acme / text`.
-//! - An optional placeholder, such as the `{extension?: CallerContext}` of
-//!   a plan, stands for no part, one part, or several parts applied in
+//! - An optional placeholder, such as the `{scope?: CallerContext}` of a
+//!   plan, stands for no part, one part, or several parts applied in
 //!   order, each nesting to the left of the one before.
 //!
 //! The text is the same once the values are known. The tree is not, so a
@@ -82,8 +93,8 @@ use std::sync::Arc;
 use vitaminc_aead::{ContextPiece, IntoAad};
 
 use crate::target::{
-    AeadContext, CallerContext, DeclaredContext, DeclaredScopes, NoCallerContext, OptionalContext,
-    RequiredContext,
+    AeadContext, Bind, BindPart, CallerContext, DeclaredContext, DeclaredScopes, NoCallerContext,
+    OptionalContext, Parts, RequiredContext, Scope, ScopePart,
 };
 use crate::{Descriptor, IntoContext as _, NonEmpty};
 
@@ -97,31 +108,45 @@ pub enum Supplier {
     Plaintext,
 }
 
+/// The kind of a part: a scope is in the query context and the stored
+/// context; a binding is in the stored context only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Kind {
+    /// A part a query supplies too.
+    Scope,
+    /// A part that ties a ciphertext to one row.
+    Bind,
+}
+
 /// A part of a context that is not known until the declaration runs.
 ///
 /// A placeholder names the part and its type. The type matters, because
 /// `7u64` and `7i64` are different contexts. An optional placeholder stands
-/// for a part the caller may leave out, such as the extension a plan accepts.
+/// for a part the caller may leave out, such as the scope a plan's run may
+/// add.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Placeholder {
     name: Cow<'static, str>,
     ty: Cow<'static, str>,
     optional: bool,
     supplier: Supplier,
+    kind: Kind,
 }
 
 impl Placeholder {
-    /// A part the caller must pass.
+    /// A scope the caller must pass.
     pub fn required(name: impl Into<Cow<'static, str>>, ty: impl Into<Cow<'static, str>>) -> Self {
         Self {
             name: name.into(),
             ty: ty.into(),
             optional: false,
             supplier: Supplier::Caller,
+            kind: Kind::Scope,
         }
     }
 
-    /// A part the caller may pass.
+    /// A scope the caller may pass.
     pub fn optional(name: impl Into<Cow<'static, str>>, ty: impl Into<Cow<'static, str>>) -> Self {
         Self {
             optional: true,
@@ -129,7 +154,7 @@ impl Placeholder {
         }
     }
 
-    /// A part read from a field of the plaintext.
+    /// A scope read from a field of the plaintext.
     pub fn from_plaintext(
         name: impl Into<Cow<'static, str>>,
         ty: impl Into<Cow<'static, str>>,
@@ -140,10 +165,44 @@ impl Placeholder {
         }
     }
 
-    /// A required part of type `T`, named `context`. The type is shown
+    /// A required scope of type `T`, named `context`. The type is shown
     /// without its module path.
     pub fn of<T: ?Sized>() -> Self {
         Self::required("context", short_type_name::<T>())
+    }
+
+    /// A caller scope of type `T`, named `scope`.
+    pub fn scope<T: ?Sized>() -> Self {
+        Self::required("scope", short_type_name::<T>())
+    }
+
+    /// A caller binding of type `T`, named `bind`.
+    pub fn bind<T: ?Sized>() -> Self {
+        Self::required("bind", short_type_name::<T>()).as_bind()
+    }
+
+    /// This placeholder as a binding.
+    pub fn as_bind(self) -> Self {
+        Self {
+            kind: Kind::Bind,
+            ..self
+        }
+    }
+
+    /// This placeholder as a part the caller may leave out.
+    pub fn as_optional(self) -> Self {
+        Self {
+            optional: true,
+            ..self
+        }
+    }
+
+    /// This placeholder with another name.
+    pub fn renamed(self, name: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            name: name.into(),
+            ..self
+        }
     }
 
     /// The name of the part.
@@ -164,6 +223,11 @@ impl Placeholder {
     /// Where the part comes from.
     pub fn supplier(&self) -> Supplier {
         self.supplier
+    }
+
+    /// Whether the part is a scope or a binding.
+    pub fn kind(&self) -> Kind {
+        self.kind
     }
 }
 
@@ -224,6 +288,15 @@ impl ContextTree {
             Self::Placeholder(_) => true,
             Self::List(parts) => parts.iter().any(Self::has_placeholder),
         }
+    }
+
+    fn unit() -> Self {
+        Self::Part(ContextPiece::Unit)
+    }
+
+    /// `head`, then `tail`: what [`NonEmpty::with`] nests.
+    fn nest(head: Self, tail: Self) -> Self {
+        Self::List(vec![head, tail])
     }
 
     fn render(&self, root: bool, out: &mut String) {
@@ -324,11 +397,61 @@ fn render_hex(bytes: &[u8], out: &mut String) {
     }
 }
 
-/// The context of one field of a declaration.
+/// The two contexts of one field or one leaf: the query context the terms
+/// derive under, and the stored context the key and the AAD derive under.
+/// They are the same when there is no binding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeafContext {
+    query: ContextTree,
+    stored: ContextTree,
+}
+
+impl LeafContext {
+    /// A context with no binding: the query context and the stored context
+    /// are the same.
+    pub fn one(context: ContextTree) -> Self {
+        Self {
+            stored: context.clone(),
+            query: context,
+        }
+    }
+
+    /// The query context: the scopes.
+    pub fn query(&self) -> &ContextTree {
+        &self.query
+    }
+
+    /// The stored context: the scopes, then the bindings.
+    pub fn stored(&self) -> &ContextTree {
+        &self.stored
+    }
+
+    /// Whether the stored context has a binding, so the two differ.
+    pub fn has_binding(&self) -> bool {
+        self.query != self.stored
+    }
+
+    fn write(&self, f: &mut fmt::Formatter<'_>, indent: &str) -> fmt::Result {
+        if self.has_binding() {
+            writeln!(f, "{indent}query context:  {}", self.query)?;
+            writeln!(f, "{indent}stored context: {}", self.stored)
+        } else {
+            writeln!(f, "{indent}context: {}", self.query)
+        }
+    }
+}
+
+impl fmt::Display for LeafContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write(f, "")
+    }
+}
+
+/// The contexts of one field of a declaration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldContext {
     name: Option<Arc<str>>,
-    context: ContextTree,
+    context: LeafContext,
 }
 
 impl FieldContext {
@@ -338,8 +461,8 @@ impl FieldContext {
         self.name.as_deref()
     }
 
-    /// The context the field is sealed and indexed under.
-    pub fn context(&self) -> &ContextTree {
+    /// The query context and the stored context of the field.
+    pub fn context(&self) -> &LeafContext {
         &self.context
     }
 }
@@ -389,8 +512,8 @@ impl Contexts {
         &self.fields
     }
 
-    /// The context of the field named `name`.
-    pub fn get(&self, name: &str) -> Option<&ContextTree> {
+    /// The contexts of the field named `name`.
+    pub fn get(&self, name: &str) -> Option<&LeafContext> {
         self.fields
             .iter()
             .find(|field| field.name.as_deref() == Some(name))
@@ -400,7 +523,7 @@ impl Contexts {
     /// The one context of a declaration that names no field, such as a
     /// declaration of one value. `None` when the declaration has several
     /// fields, or none.
-    pub fn single(&self) -> Option<&ContextTree> {
+    pub fn single(&self) -> Option<&LeafContext> {
         match self.fields.as_slice() {
             [field] if field.name.is_none() => Some(&field.context),
             _ => None,
@@ -420,8 +543,11 @@ impl fmt::Display for Contexts {
         }
         for field in &self.fields {
             match &field.name {
-                Some(name) => writeln!(f, "{name}\n  context: {}", field.context)?,
-                None => writeln!(f, "context: {}", field.context)?,
+                Some(name) => {
+                    writeln!(f, "{name}")?;
+                    field.context.write(f, "  ")?;
+                }
+                None => field.context.write(f, "")?,
             }
         }
         Ok(())
@@ -452,19 +578,34 @@ impl fmt::Display for Contexts {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallContexts {
-    contexts: Vec<ContextTree>,
+    contexts: Vec<LeafContext>,
     failed: bool,
 }
 
 impl CallContexts {
-    pub(crate) fn from_pieces(pieces: &[ContextPiece<'static>], failed: bool) -> Self {
-        let mut contexts: Vec<ContextTree> = Vec::new();
-        for piece in pieces {
-            let tree = ContextTree::from_piece(piece);
-            if !contexts.contains(&tree) {
-                contexts.push(tree);
+    pub(crate) fn from_pieces(
+        pieces: &[(ContextPiece<'static>, ContextPiece<'static>)],
+        failed: bool,
+    ) -> Self {
+        let mut contexts: Vec<LeafContext> = Vec::new();
+        for (query, stored) in pieces {
+            let context = LeafContext {
+                query: ContextTree::from_piece(query),
+                stored: ContextTree::from_piece(stored),
+            };
+            if !contexts.contains(&context) {
+                contexts.push(context);
             }
         }
+        // A ciphertext knows only the stored context it is sealed under. Beside
+        // a term of the same field, it is the same leaf context: the term
+        // shows the query context too, so the ciphertext's entry is dropped.
+        let bound: Vec<ContextTree> = contexts
+            .iter()
+            .filter(|context| context.has_binding())
+            .map(|context| context.stored.clone())
+            .collect();
+        contexts.retain(|context| context.has_binding() || !bound.contains(&context.stored));
         Self { contexts, failed }
     }
 
@@ -475,13 +616,13 @@ impl CallContexts {
     }
 
     /// The distinct contexts, in order.
-    pub fn contexts(&self) -> &[ContextTree] {
+    pub fn contexts(&self) -> &[LeafContext] {
         &self.contexts
     }
 
     /// The one context of a call whose leaves share a context. `None` when
     /// the call uses several contexts, or none.
-    pub fn single(&self) -> Option<&ContextTree> {
+    pub fn single(&self) -> Option<&LeafContext> {
         match self.contexts.as_slice() {
             [context] => Some(context),
             _ => None,
@@ -503,58 +644,83 @@ impl fmt::Display for CallContexts {
             return writeln!(f, "no context: the call seals and indexes nothing");
         }
         for context in &self.contexts {
-            writeln!(f, "context: {context}")?;
+            context.write(f, "")?;
         }
         Ok(())
     }
 }
 
+/// The parts a caller supplies to a declaration, as placeholders: a scope,
+/// a binding, both, or neither.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CallerShape {
+    scope: Option<Placeholder>,
+    bind: Option<Placeholder>,
+}
+
+impl CallerShape {
+    /// The caller supplies nothing.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// The caller supplies one scope, shown as `placeholder`.
+    pub fn scope(placeholder: Placeholder) -> Self {
+        Self {
+            scope: Some(placeholder),
+            bind: None,
+        }
+    }
+
+    /// The caller supplies one binding, shown as `placeholder`.
+    pub fn bind(placeholder: Placeholder) -> Self {
+        Self {
+            scope: None,
+            bind: Some(placeholder.as_bind()),
+        }
+    }
+
+    /// The caller supplies a scope and a binding.
+    pub fn both(scope: Placeholder, bind: Placeholder) -> Self {
+        Self {
+            scope: Some(scope),
+            bind: Some(bind.as_bind()),
+        }
+    }
+
+    /// The scope placeholder, if the caller supplies a scope.
+    pub fn scope_placeholder(&self) -> Option<&Placeholder> {
+        self.scope.as_ref()
+    }
+
+    /// The binding placeholder, if the caller supplies a binding.
+    pub fn bind_placeholder(&self) -> Option<&Placeholder> {
+        self.bind.as_ref()
+    }
+
+    fn named(self, scope: Option<&'static str>, bind: Option<&'static str>) -> Self {
+        Self {
+            scope: match (self.scope, scope) {
+                (Some(placeholder), Some(name)) => Some(placeholder.renamed(name)),
+                (placeholder, _) => placeholder,
+            },
+            bind: match (self.bind, bind) {
+                (Some(placeholder), Some(name)) => Some(placeholder.renamed(name)),
+                (placeholder, _) => placeholder,
+            },
+        }
+    }
+}
+
 /// What the caller supplies to a declaration whose context input is this
-/// type: the placeholder that stands for it in [`Contexts`], or `None` when
-/// the caller supplies nothing.
+/// type: the placeholders that stand for its parts in [`Contexts`].
 ///
 /// Implemented for the context inputs of the crate. The derives and the
 /// plan builder use it to render the root of a declaration. Sealed: a
 /// context input is one of this crate's types.
 pub trait SuppliedContext: sealed::Sealed {
-    /// The placeholder for the caller's part, or `None`.
-    fn placeholder() -> Option<Placeholder>;
-}
-
-impl SuppliedContext for NoCallerContext {
-    fn placeholder() -> Option<Placeholder> {
-        None
-    }
-}
-impl SuppliedContext for DeclaredScopes {
-    fn placeholder() -> Option<Placeholder> {
-        None
-    }
-}
-impl SuppliedContext for DeclaredContext {
-    fn placeholder() -> Option<Placeholder> {
-        Some(Placeholder::optional("extension", "CallerContext"))
-    }
-}
-impl<C> SuppliedContext for RequiredContext<C> {
-    fn placeholder() -> Option<Placeholder> {
-        Some(Placeholder::of::<C>())
-    }
-}
-impl<C> SuppliedContext for OptionalContext<C> {
-    fn placeholder() -> Option<Placeholder> {
-        Some(Placeholder::optional("context", short_type_name::<C>()))
-    }
-}
-impl SuppliedContext for CallerContext {
-    fn placeholder() -> Option<Placeholder> {
-        Some(Placeholder::of::<Self>())
-    }
-}
-impl SuppliedContext for AeadContext {
-    fn placeholder() -> Option<Placeholder> {
-        Some(Placeholder::of::<Self>())
-    }
+    /// The placeholders for the caller's parts.
+    fn supplies() -> CallerShape;
 }
 
 mod sealed {
@@ -570,6 +736,118 @@ mod sealed {
     impl<C> Sealed for OptionalContext<C> {}
     impl Sealed for CallerContext {}
     impl Sealed for AeadContext {}
+}
+
+impl SuppliedContext for NoCallerContext {
+    fn supplies() -> CallerShape {
+        CallerShape::none()
+    }
+}
+impl SuppliedContext for DeclaredScopes {
+    fn supplies() -> CallerShape {
+        CallerShape::none()
+    }
+}
+impl SuppliedContext for DeclaredContext {
+    fn supplies() -> CallerShape {
+        CallerShape::scope(Placeholder::optional("scope", "CallerContext"))
+    }
+}
+impl<C: PartsShape> SuppliedContext for RequiredContext<C> {
+    fn supplies() -> CallerShape {
+        C::parts_shape()
+    }
+}
+impl<C: PartsShape> SuppliedContext for OptionalContext<C> {
+    fn supplies() -> CallerShape {
+        let shape = C::parts_shape();
+        CallerShape {
+            scope: shape.scope.map(Placeholder::as_optional),
+            bind: shape.bind.map(Placeholder::as_optional),
+        }
+    }
+}
+impl SuppliedContext for CallerContext {
+    fn supplies() -> CallerShape {
+        CallerShape::scope(Placeholder::of::<Self>())
+    }
+}
+impl SuppliedContext for AeadContext {
+    fn supplies() -> CallerShape {
+        CallerShape::scope(Placeholder::of::<Self>())
+    }
+}
+
+/// The placeholders for a context value `C` a caller passes: the scope and
+/// binding slots of a [`Parts`], or one scope for any other context type.
+/// Sealed: the context types this crate accepts implement it.
+pub trait PartsShape: parts_sealed::Sealed {
+    /// The placeholders.
+    fn parts_shape() -> CallerShape;
+}
+mod parts_sealed {
+    pub trait Sealed {}
+    impl<S, B> Sealed for crate::target::Parts<S, B> {}
+    impl<T> Sealed for crate::target::Scope<T> {}
+    impl<T> Sealed for crate::target::Bind<T> {}
+    impl Sealed for crate::target::CallerContext {}
+    impl Sealed for crate::target::AeadContext {}
+    impl Sealed for crate::target::ScalarContext {}
+    impl<T> Sealed for crate::NonEmpty<T> {}
+    macro_rules! sealed_integers {
+        ($($ty:ty),* $(,)?) => {$( impl Sealed for $ty {} )*};
+    }
+    sealed_integers!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+}
+impl<S: ScopePart, B: BindPart> PartsShape for Parts<S, B> {
+    fn parts_shape() -> CallerShape {
+        CallerShape {
+            scope: S::type_name().map(|ty| Placeholder::required("scope", ty)),
+            bind: B::type_name().map(|ty| Placeholder::required("bind", ty).as_bind()),
+        }
+    }
+}
+impl<T> PartsShape for Scope<T> {
+    fn parts_shape() -> CallerShape {
+        CallerShape::scope(Placeholder::scope::<T>())
+    }
+}
+impl<T> PartsShape for Bind<T> {
+    fn parts_shape() -> CallerShape {
+        CallerShape::bind(Placeholder::bind::<T>())
+    }
+}
+macro_rules! one_scope_shapes {
+    ($($ty:ty),* $(,)?) => {$(
+        impl PartsShape for $ty {
+            fn parts_shape() -> CallerShape {
+                CallerShape::scope(Placeholder::of::<$ty>())
+            }
+        }
+    )*};
+}
+one_scope_shapes!(CallerContext, AeadContext, crate::target::ScalarContext);
+impl<T> PartsShape for NonEmpty<T> {
+    fn parts_shape() -> CallerShape {
+        CallerShape::scope(Placeholder::of::<Self>())
+    }
+}
+macro_rules! integer_shapes {
+    ($($ty:ty),* $(,)?) => {$(
+        impl PartsShape for $ty {
+            fn parts_shape() -> CallerShape {
+                CallerShape::scope(Placeholder::of::<$ty>())
+            }
+        }
+    )*};
+}
+integer_shapes!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+/// The name of `T` without module paths, for a placeholder. For generated
+/// code.
+#[doc(hidden)]
+pub fn type_name<T: ?Sized>() -> String {
+    short_type_name::<T>()
 }
 
 /// The name of `T` without module paths: `NonEmpty<Identifier>`, not
@@ -612,30 +890,87 @@ pub(crate) fn piece_of<'c>(
 /// Each combinator that changes the context a subtree runs under
 /// ([`under`](crate::target::Encryption::under),
 /// [`extend`](crate::target::Encryption::extend),
-/// [`context_from`](crate::target::Encryption::context_from)) substitutes
-/// [`Caller`](Self::Caller) in the subtree's shapes, exactly where the
-/// engine substitutes the context. At the root, `Caller` is the
-/// declaration's own input.
+/// [`context_from`](crate::target::Encryption::context_from),
+/// `parts_from`) substitutes [`Caller`](Self::Caller) in the subtree's
+/// shapes, exactly where the engine substitutes the context. At the root,
+/// `Caller` is the declaration's own input.
 #[derive(Clone, Debug)]
 pub(crate) enum Shape {
     /// The context this description is handed when it runs.
     Caller,
+    /// The caller's parts, with the names a record gives them.
+    NamedCaller {
+        scope: Option<&'static str>,
+        bind: Option<&'static str>,
+    },
     /// A part known when the declaration is written.
     Known(ContextPiece<'static>),
+    /// A known binding: a part that resolves into the bindings.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    KnownBind(ContextPiece<'static>),
     /// A part supplied when the declaration runs.
     Placeholder(Placeholder),
+    /// The parts a record reads from its plaintext.
+    StoredParts {
+        scope: Option<Placeholder>,
+        bind: Option<Placeholder>,
+    },
     /// `own`, extended by `by`: what `DeclaredContext::under` and
     /// `Extends::extend` build.
     Under { own: Box<Shape>, by: Box<Shape> },
     /// A list of parts, some of them not known yet: a label the call names
     /// joined to a field's identity.
     List(Vec<Shape>),
-    /// The parts of a known extension, applied in order: what a data plan
-    /// carries as its extension. Empty when the extension adds nothing.
+    /// Known caller parts, applied one after another: what a data plan
+    /// carries as its extension and its bindings.
     #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
-    Parts(Vec<ContextPiece<'static>>),
-    /// A caller that supplies nothing.
-    Absent,
+    Chain(Vec<Shape>),
+}
+
+/// A shape resolved against the caller: the scopes, as one tree, and the
+/// bindings, in order.
+#[derive(Clone, Debug, Default)]
+struct Resolved {
+    scopes: Option<ContextTree>,
+    bindings: Vec<ContextTree>,
+}
+
+impl Resolved {
+    fn scope(tree: ContextTree) -> Self {
+        Self {
+            scopes: Some(tree),
+            bindings: Vec::new(),
+        }
+    }
+
+    /// This, extended by `other`: the scopes nest to the left, and the
+    /// bindings follow those already given. The same rule as
+    /// `CallerContext::then`.
+    fn then(mut self, other: Resolved) -> Self {
+        if let Some(scopes) = other.scopes {
+            self.scopes = Some(match self.scopes.take() {
+                Some(head) => ContextTree::nest(head, scopes),
+                None => scopes,
+            });
+        }
+        self.bindings.extend(other.bindings);
+        self
+    }
+
+    fn into_leaf(self) -> LeafContext {
+        let query = self.scopes.clone().unwrap_or_else(ContextTree::unit);
+        let mut stored = self.scopes;
+        for binding in self.bindings {
+            stored = Some(match stored {
+                Some(head) => ContextTree::nest(head, binding),
+                None => binding,
+            });
+        }
+        LeafContext {
+            query,
+            stored: stored.unwrap_or_else(ContextTree::unit),
+        }
+    }
 }
 
 impl Shape {
@@ -683,42 +1018,90 @@ impl Shape {
         }
     }
 
-    fn into_tree(self) -> Option<ContextTree> {
+    /// The shape of a subtree run under the parts a record reads from its
+    /// plaintext, then the caller's parts. `scope` and `bind` are the name
+    /// and the type of each stored part.
+    pub(crate) fn stored_parts(
+        scope: Option<(&'static str, String)>,
+        bind: Option<(&'static str, String)>,
+    ) -> Shape {
+        Shape::Under {
+            own: Box::new(Shape::StoredParts {
+                scope: scope.map(|(name, ty)| Placeholder::from_plaintext(name, ty)),
+                bind: bind.map(|(name, ty)| Placeholder::from_plaintext(name, ty).as_bind()),
+            }),
+            by: Box::new(Shape::Caller),
+        }
+    }
+
+    /// The caller's parts, with the names a record gives them.
+    pub(crate) fn named_caller(scope: Option<&'static str>, bind: Option<&'static str>) -> Shape {
+        Shape::NamedCaller { scope, bind }
+    }
+
+    fn resolve(self, caller: &CallerShape) -> Resolved {
         match self {
-            // An unsubstituted caller is a caller that supplies nothing.
-            Shape::Caller | Shape::Absent => None,
-            Shape::Known(piece) => Some(ContextTree::from_piece(&piece)),
-            Shape::Placeholder(placeholder) => Some(ContextTree::Placeholder(placeholder)),
-            Shape::List(parts) => Some(ContextTree::List(
-                parts.into_iter().filter_map(Shape::into_tree).collect(),
-            )),
-            // Each part extends what came before it, nesting to the left,
-            // as `DeclaredContext::under` nests.
-            Shape::Under { own, by: parts } if matches!(*parts, Shape::Parts(_)) => {
-                let Shape::Parts(parts) = *parts else {
-                    unreachable!("matched above")
-                };
-                let mut tree = own.into_tree();
-                for part in parts {
-                    let part = ContextTree::from_piece(&part);
-                    tree = Some(match tree {
-                        Some(tree) => ContextTree::List(vec![tree, part]),
-                        None => part,
-                    });
-                }
-                tree
+            Shape::Caller => Self::caller_parts(caller.clone()),
+            Shape::NamedCaller { scope, bind } => {
+                Self::caller_parts(caller.clone().named(scope, bind))
             }
-            Shape::Parts(parts) => Shape::Under {
-                own: Box::new(Shape::Absent),
-                by: Box::new(Shape::Parts(parts)),
-            }
-            .into_tree(),
-            Shape::Under { own, by } => match (own.into_tree(), by.into_tree()) {
-                (Some(own), Some(by)) => Some(ContextTree::List(vec![own, by])),
-                (Some(own), None) => Some(own),
-                (None, Some(by)) => Some(by),
-                (None, None) => None,
+            Shape::Known(piece) => Resolved::scope(ContextTree::from_piece(&piece)),
+            Shape::KnownBind(piece) => Resolved {
+                scopes: None,
+                bindings: vec![ContextTree::from_piece(&piece)],
             },
+            Shape::Placeholder(placeholder) => match placeholder.kind {
+                Kind::Scope => Resolved::scope(ContextTree::Placeholder(placeholder)),
+                Kind::Bind => Resolved {
+                    scopes: None,
+                    bindings: vec![ContextTree::Placeholder(placeholder)],
+                },
+            },
+            Shape::StoredParts { scope, bind } => Resolved {
+                scopes: scope.map(ContextTree::Placeholder),
+                bindings: bind.map(ContextTree::Placeholder).into_iter().collect(),
+            },
+            // A chain applies its parts one after another, each nesting to
+            // the left of the context so far, as `DeclaredContext::under`
+            // does.
+            Shape::Under { own, by } => {
+                let own = own.resolve(caller);
+                match *by {
+                    Shape::Chain(parts) => parts
+                        .into_iter()
+                        .fold(own, |resolved, part| resolved.then(part.resolve(caller))),
+                    other => own.then(other.resolve(caller)),
+                }
+            }
+            Shape::List(parts) => {
+                let mut scopes = Vec::new();
+                let mut bindings = Vec::new();
+                for part in parts {
+                    let resolved = part.resolve(caller);
+                    scopes.extend(resolved.scopes);
+                    bindings.extend(resolved.bindings);
+                }
+                Resolved {
+                    scopes: Some(ContextTree::List(scopes)),
+                    bindings,
+                }
+            }
+            Shape::Chain(parts) => parts
+                .into_iter()
+                .fold(Resolved::default(), |resolved, part| {
+                    resolved.then(part.resolve(caller))
+                }),
+        }
+    }
+
+    fn caller_parts(caller: CallerShape) -> Resolved {
+        Resolved {
+            scopes: caller.scope.map(ContextTree::Placeholder),
+            bindings: caller
+                .bind
+                .map(ContextTree::Placeholder)
+                .into_iter()
+                .collect(),
         }
     }
 }
@@ -757,8 +1140,20 @@ pub(crate) fn known_leaf(name: &str, piece: ContextPiece<'static>) -> LeafShape 
 /// what [`resolve_under`] resolves, kept as shapes so more leaves can be
 /// placed among them first.
 #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
-pub(crate) fn under_parts(shapes: Shapes, parts: Vec<ContextPiece<'static>>) -> Shapes {
-    substitute(shapes, &Shape::Parts(parts))
+pub(crate) fn under_declared(shapes: Shapes, declared: &DeclaredContext) -> Shapes {
+    let chain = Shape::Chain(
+        declared
+            .parts()
+            .iter()
+            .map(|part| {
+                let (scopes, bindings) = part.pieces();
+                let mut parts: Vec<Shape> = scopes.into_iter().map(Shape::Known).collect();
+                parts.extend(bindings.into_iter().map(Shape::KnownBind));
+                Shape::Chain(parts)
+            })
+            .collect(),
+    );
+    substitute(shapes, &chain)
 }
 
 /// One leaf that runs under the context it is handed.
@@ -799,25 +1194,12 @@ pub(crate) fn name(shapes: Shapes, name: &str) -> Shapes {
 /// Resolve the leaves at the root of a declaration whose caller supplies
 /// `caller`. Leaves with one name and one context collapse into one field:
 /// a ciphertext and the terms beside it share a context.
-pub(crate) fn resolve(shapes: Shapes, caller: Option<Placeholder>) -> Contexts {
-    let caller = match caller {
-        Some(placeholder) => Shape::Placeholder(placeholder),
-        None => Shape::Absent,
-    };
-    resolve_with(shapes, &caller)
-}
-
-fn resolve_with(shapes: Shapes, caller: &Shape) -> Contexts {
+pub(crate) fn resolve(shapes: Shapes, caller: CallerShape) -> Contexts {
     let mut fields: Vec<FieldContext> = Vec::new();
     for leaf in shapes {
-        let context = leaf
-            .shape
-            .substitute(caller)
-            .into_tree()
-            .unwrap_or(ContextTree::Part(ContextPiece::Unit));
         let field = FieldContext {
             name: leaf.name,
-            context,
+            context: leaf.shape.resolve(&caller).into_leaf(),
         };
         if fields.last() != Some(&field) {
             fields.push(field);
@@ -826,14 +1208,20 @@ fn resolve_with(shapes: Shapes, caller: &Shape) -> Contexts {
     Contexts { fields }
 }
 
+/// [`resolve`] with the caller's parts known: a data plan's extension and
+/// bindings, as the declared context it runs under.
+#[cfg(test)]
+pub(crate) fn resolve_under(shapes: Shapes, declared: &DeclaredContext) -> Contexts {
+    resolve(under_declared(shapes, declared), CallerShape::none())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vitaminc_aead::IntoContext;
 
-    /// The leaves resolved under the caller's parts, as a data plan's
-    /// `contexts()` resolves them once its own leaves are placed.
-    fn resolve_under(shapes: Shapes, parts: Vec<ContextPiece<'static>>) -> Contexts {
-        resolve(under_parts(shapes, parts), None)
+    fn shown<'a>(value: impl IntoContext<'a>) -> String {
+        ContextTree::from_piece(&value.into_context()).to_string()
     }
     use vitaminc_protected::NonEmpty;
 
@@ -847,147 +1235,32 @@ mod tests {
 
     #[test]
     fn leaves_render_with_their_types() {
-        use vitaminc_aead::IntoContext;
         let column = NonEmpty::<&str>::new("users").unwrap().with("email");
-        let tree = ContextTree::from_piece(&column.into_context());
-        assert_eq!(tree.to_string(), "users / email");
-
-        let row = ContextTree::from_piece(
-            &NonEmpty::<&str>::new("users")
-                .unwrap()
-                .with("email")
-                .with(7u64)
-                .into_context(),
-        );
-        assert_eq!(row.to_string(), "(users / email) / 7u64");
-
-        assert_eq!(
-            ContextTree::from_piece(&7i64.into_context()).to_string(),
-            "7i64"
-        );
-        assert_eq!(
-            ContextTree::from_piece(&"7".into_context()).to_string(),
-            "\"7\""
-        );
+        assert_eq!(shown(column), "users / email");
+        let row = NonEmpty::<&str>::new("users")
+            .unwrap()
+            .with("email")
+            .with(7u64);
+        assert_eq!(shown(row), "(users / email) / 7u64");
+        assert_eq!(shown(7i64), "7i64");
+        assert_eq!(shown("7"), "\"7\"");
+        assert_eq!(shown(b"7".to_vec()), "0x37");
+        assert_eq!(shown(()), "()");
+        assert_eq!(shown("a/b"), "\"a/b\"");
         // Text that would read as a placeholder or an encoded context is
         // quoted, with this module's own escapes.
-        assert_eq!(
-            ContextTree::from_piece(&"{context: u64}".into_context()).to_string(),
-            "\"{context: u64}\""
-        );
-        assert_eq!(
-            ContextTree::from_piece(&"encoded:0x01".into_context()).to_string(),
-            "\"encoded:0x01\""
-        );
+        assert_eq!(shown("{context: u64}"), "\"{context: u64}\"");
+        assert_eq!(shown("encoded:0x01"), "\"encoded:0x01\"");
         // Plain text with quotes renders as it is. Text that is not plain
         // is quoted, and its quotes and backslashes are escaped.
-        assert_eq!(
-            ContextTree::from_piece(&"say \"hi\"".into_context()).to_string(),
-            "say \"hi\""
-        );
-        assert_eq!(
-            ContextTree::from_piece(&"a/\"b\"\\".into_context()).to_string(),
-            "\"a/\\\"b\\\"\\\\\""
-        );
-        assert_eq!(
-            ContextTree::from_piece(&"tab\there".into_context()).to_string(),
-            "\"tab\\u{9}here\""
-        );
-        assert_eq!(
-            ContextTree::from_piece(&"a\u{200B}b".into_context()).to_string(),
-            "\"a\\u{200b}b\""
-        );
-        assert_eq!(
-            ContextTree::from_piece(&b"7".to_vec().into_context()).to_string(),
-            "0x37"
-        );
-        assert_eq!(
-            ContextTree::from_piece(&().into_context()).to_string(),
-            "()"
-        );
-        assert_eq!(
-            ContextTree::from_piece(&"a/b".into_context()).to_string(),
-            "\"a/b\""
-        );
-    }
-
-    #[test]
-    fn placeholders_show_their_name_type_and_optionality() {
-        assert_eq!(Placeholder::of::<u64>().to_string(), "{context: u64}");
-        assert_eq!(
-            Placeholder::optional("extension", "CallerContext").to_string(),
-            "{extension?: CallerContext}"
-        );
-        assert_eq!(
-            Placeholder::from_plaintext("column", "Identifier").to_string(),
-            "{column: Identifier, from the plaintext}"
-        );
-    }
-
-    #[test]
-    fn a_leaf_under_a_known_context_shows_the_caller_as_an_extension() {
-        use vitaminc_aead::IntoContext;
-        let own = NonEmpty::<&str>::new("users")
-            .unwrap()
-            .with("email")
-            .into_context()
-            .into_owned();
-        let leaf = substitute(caller_leaf(), &Shape::under(own));
-
-        let alone = resolve(leaf.clone(), None);
-        assert_eq!(alone.to_string(), "context: users / email\n");
-
-        let extended = resolve(leaf, Some(Placeholder::of::<u64>()));
-        assert_eq!(
-            extended.to_string(),
-            "context: (users / email) / {context: u64}\n"
-        );
-    }
-
-    #[test]
-    fn a_known_extension_nests_each_part_to_the_left() {
-        use vitaminc_aead::IntoContext;
-        let own = NonEmpty::<&str>::new("users")
-            .unwrap()
-            .with("email")
-            .into_context()
-            .into_owned();
-        let leaf = substitute(caller_leaf(), &Shape::under(own));
-        let none = resolve_under(leaf.clone(), vec![]);
-        assert_eq!(none.to_string(), "context: users / email\n");
-        let two = resolve_under(
-            leaf,
-            vec![
-                7u64.into_context().into_owned(),
-                "eu".into_context().into_owned(),
-            ],
-        );
-        assert_eq!(two.to_string(), "context: ((users / email) / 7u64) / eu\n");
-    }
-
-    #[test]
-    fn a_nested_record_prefixes_the_names_of_its_fields() {
-        let leaves = name(name(caller_leaf(), "email"), "owner");
-        let contexts = resolve(leaves, Some(Placeholder::of::<u64>()));
-        assert_eq!(contexts.fields()[0].name(), Some("owner.email"));
-    }
-
-    #[test]
-    fn leaves_with_one_name_and_one_context_collapse() {
-        let own = ContextPiece::Text(Cow::Borrowed("users"));
-        let mut leaves = substitute(caller_leaf(), &Shape::under(own.clone()));
-        leaves.extend(substitute(caller_leaf(), &Shape::under(own)));
-        let contexts = resolve(name(leaves, "email"), None);
-        assert_eq!(contexts.fields().len(), 1);
-        assert_eq!(contexts.to_string(), "email\n  context: users\n");
+        assert_eq!(shown("say \"hi\""), "say \"hi\"");
+        assert_eq!(shown("a/\"b\"\\"), "\"a/\\\"b\\\"\\\\\"");
+        assert_eq!(shown("tab\there"), "\"tab\\u{9}here\"");
+        assert_eq!(shown("a\u{200B}b"), "\"a\\u{200b}b\"");
     }
 
     #[test]
     fn every_integer_width_renders_with_its_own_suffix() {
-        use vitaminc_aead::IntoContext;
-        fn shown<'a>(value: impl IntoContext<'a>) -> String {
-            ContextTree::from_piece(&value.into_context()).to_string()
-        }
         assert_eq!(shown(1u8), "1u8");
         assert_eq!(shown(2u16), "2u16");
         assert_eq!(shown(3u32), "3u32");
@@ -1006,8 +1279,6 @@ mod tests {
             ContextTree::from_piece(&encoded).to_string(),
             "encoded:0x0102"
         );
-        // A nested list inside a list is bracketed; a known list is a
-        // `List`, never a `Part`.
         let nested = ContextTree::from_piece(
             &NonEmpty::<&str>::new("a")
                 .unwrap()
@@ -1022,81 +1293,219 @@ mod tests {
             ContextTree::Placeholder(Placeholder::of::<u64>()),
         ]);
         assert!(with.has_placeholder());
-        // One part at the root is bracketed, as the descriptor brackets it.
         let one = ContextTree::List(vec![ContextTree::Placeholder(Placeholder::of::<u64>())]);
         assert_eq!(one.to_string(), "({context: u64})");
     }
 
     #[test]
-    fn a_placeholder_reports_its_parts() {
+    fn placeholders_show_their_name_type_kind_and_optionality() {
+        assert_eq!(Placeholder::of::<u64>().to_string(), "{context: u64}");
+        assert_eq!(Placeholder::scope::<u64>().to_string(), "{scope: u64}");
+        assert_eq!(Placeholder::bind::<u128>().to_string(), "{bind: u128}");
+        assert_eq!(Placeholder::bind::<u128>().kind(), Kind::Bind);
+        assert_eq!(
+            Placeholder::optional("scope", "CallerContext").to_string(),
+            "{scope?: CallerContext}"
+        );
+        assert_eq!(
+            Placeholder::from_plaintext("column", "Identifier").to_string(),
+            "{column: Identifier, from the plaintext}"
+        );
         let placeholder = Placeholder::from_plaintext("column", "Identifier");
         assert_eq!(placeholder.name(), "column");
         assert_eq!(placeholder.type_name(), "Identifier");
         assert!(!placeholder.is_optional());
         assert_eq!(placeholder.supplier(), Supplier::Plaintext);
-        let optional = Placeholder::optional("context", "u64");
-        assert!(optional.is_optional());
-        assert_eq!(optional.supplier(), Supplier::Caller);
+        assert_eq!(placeholder.kind(), Kind::Scope);
+        let renamed = Placeholder::scope::<u64>().renamed("tenant").as_optional();
+        assert_eq!(renamed.to_string(), "{tenant?: u64}");
+        assert_eq!(renamed.supplier(), Supplier::Caller);
+    }
+
+    fn own() -> ContextPiece<'static> {
+        NonEmpty::<&str>::new("users")
+            .unwrap()
+            .with("email")
+            .into_context()
+            .into_owned()
+    }
+
+    #[test]
+    fn a_leaf_under_a_known_context_shows_the_caller_as_an_extension() {
+        let leaf = substitute(caller_leaf(), &Shape::under(own()));
+        let alone = resolve(leaf.clone(), CallerShape::none());
+        assert_eq!(alone.to_string(), "context: users / email\n");
+        let extended = resolve(leaf, CallerShape::scope(Placeholder::of::<u64>()));
+        assert_eq!(
+            extended.to_string(),
+            "context: (users / email) / {context: u64}\n"
+        );
+    }
+
+    #[test]
+    fn a_binding_shows_a_query_context_and_a_stored_context() {
+        let leaf = substitute(caller_leaf(), &Shape::under(own()));
+        let bound = resolve(
+            leaf.clone(),
+            CallerShape::both(Placeholder::scope::<u64>(), Placeholder::bind::<u128>()),
+        );
+        assert_eq!(
+            bound.to_string(),
+            "query context:  (users / email) / {scope: u64}\n\
+             stored context: ((users / email) / {scope: u64}) / {bind: u128}\n"
+        );
+        let single = bound.single().unwrap();
+        assert!(single.has_binding());
+        assert_eq!(single.query().to_string(), "(users / email) / {scope: u64}");
+        let bind_only = resolve(leaf, CallerShape::bind(Placeholder::bind::<u128>()));
+        assert_eq!(
+            bind_only.to_string(),
+            "query context:  users / email\nstored context: (users / email) / {bind: u128}\n"
+        );
+    }
+
+    #[test]
+    fn a_record_names_the_callers_parts() {
+        let leaf = substitute(
+            substitute(caller_leaf(), &Shape::under(own())),
+            &Shape::named_caller(Some("tenant"), Some("row")),
+        );
+        let shown = resolve(
+            leaf,
+            CallerShape::both(Placeholder::scope::<u64>(), Placeholder::bind::<u128>()),
+        );
+        assert_eq!(
+            shown.to_string(),
+            "query context:  (users / email) / {tenant: u64}\n\
+             stored context: ((users / email) / {tenant: u64}) / {row: u128}\n"
+        );
+    }
+
+    #[test]
+    fn stored_parts_come_before_the_callers() {
+        let leaf = substitute(
+            substitute(caller_leaf(), &Shape::under(own())),
+            &Shape::stored_parts(Some(("tenant", "u64".to_owned())), None),
+        );
+        let shown = resolve(leaf, CallerShape::bind(Placeholder::bind::<u128>()));
+        assert_eq!(
+            shown.to_string(),
+            "query context:  (users / email) / {tenant: u64, from the plaintext}\n\
+             stored context: ((users / email) / {tenant: u64, from the plaintext}) / {bind: u128}\n"
+        );
+    }
+
+    #[test]
+    fn a_known_extension_nests_each_part_to_the_left() {
+        let leaf = substitute(caller_leaf(), &Shape::under(own()));
+        let none = resolve_under(leaf.clone(), &DeclaredContext::default());
+        assert_eq!(none.to_string(), "context: users / email\n");
+        let two = resolve_under(
+            leaf.clone(),
+            &DeclaredContext::default()
+                .with(7u64)
+                .with(NonEmpty::<&str>::new("eu").unwrap()),
+        );
+        assert_eq!(two.to_string(), "context: ((users / email) / 7u64) / eu\n");
+        let bound = resolve_under(
+            leaf,
+            &DeclaredContext::default().with(Scope::new(7u64).bind(9u128)),
+        );
+        assert_eq!(
+            bound.to_string(),
+            "query context:  (users / email) / 7u64\nstored context: ((users / email) / 7u64) / 9u128\n"
+        );
+    }
+
+    #[test]
+    fn a_nested_record_prefixes_the_names_of_its_fields() {
+        let leaves = name(name(caller_leaf(), "email"), "owner");
+        let contexts = resolve(leaves, CallerShape::scope(Placeholder::of::<u64>()));
+        assert_eq!(contexts.fields()[0].name(), Some("owner.email"));
+    }
+
+    #[test]
+    fn leaves_with_one_name_and_one_context_collapse() {
+        let piece = ContextPiece::Text(Cow::Borrowed("users"));
+        let mut leaves = substitute(caller_leaf(), &Shape::under(piece.clone()));
+        leaves.extend(substitute(caller_leaf(), &Shape::under(piece)));
+        let contexts = resolve(name(leaves, "email"), CallerShape::none());
+        assert_eq!(contexts.fields().len(), 1);
+        assert_eq!(contexts.to_string(), "email\n  context: users\n");
     }
 
     #[test]
     fn contexts_are_read_by_field_name() {
         let leaves = name(caller_leaf(), "email");
-        let contexts = resolve(leaves, Some(Placeholder::of::<u64>()));
+        let contexts = resolve(leaves, CallerShape::scope(Placeholder::of::<u64>()));
         assert_eq!(contexts.fields().len(), 1);
         assert_eq!(contexts.fields()[0].name(), Some("email"));
-        assert_eq!(
-            contexts.get("email"),
-            Some(&ContextTree::Placeholder(Placeholder::of::<u64>()))
-        );
+        let expected = LeafContext::one(ContextTree::Placeholder(Placeholder::of::<u64>()));
+        assert_eq!(contexts.get("email"), Some(&expected));
         assert_eq!(contexts.get("name"), None);
-        assert!(
-            contexts.single().is_none(),
-            "a named field is not a single context"
-        );
+        assert!(contexts.single().is_none());
         assert!(!contexts.is_empty());
 
-        let unnamed = resolve(caller_leaf(), Some(Placeholder::of::<u64>()));
-        assert_eq!(
-            unnamed.single(),
-            Some(&ContextTree::Placeholder(Placeholder::of::<u64>()))
-        );
+        let unnamed = resolve(caller_leaf(), CallerShape::scope(Placeholder::of::<u64>()));
+        assert_eq!(unnamed.single(), Some(&expected));
         assert_eq!(unnamed.fields()[0].name(), None);
 
-        let none = resolve(Vec::new(), None);
+        let none = resolve(Vec::new(), CallerShape::none());
         assert!(none.is_empty());
         assert_eq!(none.to_string(), "no field is sealed or indexed\n");
     }
 
     #[test]
     fn a_caller_that_supplies_nothing_leaves_a_bare_leaf_as_the_unit_context() {
-        let contexts = resolve(caller_leaf(), None);
+        let contexts = resolve(caller_leaf(), CallerShape::none());
         assert_eq!(contexts.to_string(), "context: ()\n");
     }
 
     #[test]
     fn the_supplied_context_of_each_input_is_what_the_caller_passes() {
-        assert_eq!(NoCallerContext::placeholder(), None);
-        assert_eq!(DeclaredScopes::placeholder(), None);
+        assert_eq!(NoCallerContext::supplies(), CallerShape::none());
+        assert_eq!(DeclaredScopes::supplies(), CallerShape::none());
         assert_eq!(
-            DeclaredContext::placeholder(),
-            Some(Placeholder::optional("extension", "CallerContext"))
+            DeclaredContext::supplies(),
+            CallerShape::scope(Placeholder::optional("scope", "CallerContext"))
         );
         assert_eq!(
-            RequiredContext::<u64>::placeholder(),
-            Some(Placeholder::required("context", "u64"))
+            RequiredContext::<u64>::supplies(),
+            CallerShape::scope(Placeholder::required("context", "u64"))
         );
         assert_eq!(
-            OptionalContext::<u64>::placeholder(),
-            Some(Placeholder::optional("context", "u64"))
+            RequiredContext::<Scope<u64>>::supplies(),
+            CallerShape::scope(Placeholder::scope::<u64>())
         );
         assert_eq!(
-            CallerContext::placeholder(),
-            Some(Placeholder::required("context", "CallerContext"))
+            RequiredContext::<Parts<Scope<u64>, Bind<u128>>>::supplies(),
+            CallerShape::both(Placeholder::scope::<u64>(), Placeholder::bind::<u128>())
         );
         assert_eq!(
-            AeadContext::placeholder(),
-            Some(Placeholder::required("context", "AeadContext"))
+            RequiredContext::<Parts<Option<Scope<u64>>, Bind<u128>>>::supplies(),
+            CallerShape::both(Placeholder::scope::<u64>(), Placeholder::bind::<u128>())
+        );
+        assert_eq!(
+            OptionalContext::<Parts<Option<Scope<u64>>, crate::target::NoBind>>::supplies(),
+            CallerShape::scope(Placeholder::scope::<u64>().as_optional())
+        );
+        assert_eq!(
+            OptionalContext::<u64>::supplies(),
+            CallerShape::scope(Placeholder::optional("context", "u64"))
+        );
+        assert_eq!(
+            CallerContext::supplies(),
+            CallerShape::scope(Placeholder::required("context", "CallerContext"))
+        );
+        assert_eq!(
+            AeadContext::supplies(),
+            CallerShape::scope(Placeholder::required("context", "AeadContext"))
+        );
+        let shape = RequiredContext::<Bind<u128>>::supplies();
+        assert!(shape.scope_placeholder().is_none());
+        assert_eq!(
+            shape.bind_placeholder().map(Placeholder::kind),
+            Some(Kind::Bind)
         );
     }
 
@@ -1107,7 +1516,7 @@ mod tests {
             &Shape::under_label(Placeholder::required("context", "Label"), Some("email")),
         );
         assert_eq!(
-            resolve(with, None).to_string(),
+            resolve(with, CallerShape::none()).to_string(),
             "context: {context: Label} / email\n"
         );
         let without = substitute(
@@ -1115,44 +1524,99 @@ mod tests {
             &Shape::under_label(Placeholder::required("context", "Label"), None),
         );
         assert_eq!(
-            resolve(without, None).to_string(),
+            resolve(without, CallerShape::none()).to_string(),
             "context: {context: Label}\n"
         );
     }
 
     #[test]
     fn call_contexts_list_each_distinct_context_once() {
-        use vitaminc_aead::IntoContext;
         let a = "users".into_context().into_owned();
         let b = "orders".into_context().into_owned();
-        let call = CallContexts::from_pieces(&[a.clone(), a.clone(), b], false);
+        let call = CallContexts::from_pieces(
+            &[
+                (a.clone(), a.clone()),
+                (a.clone(), a.clone()),
+                (b.clone(), b),
+            ],
+            false,
+        );
         assert_eq!(call.contexts().len(), 2);
         assert_eq!(call.to_string(), "context: users\ncontext: orders\n");
         assert!(call.single().is_none());
         assert!(!call.is_empty());
 
-        let one = CallContexts::from_pieces(&[a], false);
+        let one = CallContexts::from_pieces(&[(a.clone(), a.clone())], false);
         assert_eq!(
             one.single(),
-            Some(&ContextTree::Part("users".into_context().into_owned()))
+            Some(&LeafContext::one(ContextTree::Part(a.clone())))
         );
+
+        let bound = CallContexts::from_pieces(
+            &[(
+                a.clone(),
+                ContextPiece::List(vec![a.clone(), ContextPiece::U128(9)]),
+            )],
+            false,
+        );
+        assert_eq!(
+            bound.to_string(),
+            "query context:  users\nstored context: users / 9u128\n"
+        );
+        assert!(bound.single().unwrap().has_binding());
+        // A leaf context prints on its own as it prints in the call.
+        assert_eq!(
+            bound.single().unwrap().to_string(),
+            "query context:  users\nstored context: users / 9u128\n"
+        );
+        assert_eq!(
+            LeafContext::one(ContextTree::from_piece(&a)).to_string(),
+            "context: users\n"
+        );
+        // A ciphertext sealed under the same stored context is the other
+        // half of that field, not a context of its own.
+        let stored = ContextPiece::List(vec![a.clone(), ContextPiece::U128(9)]);
+        let with_ciphertext = CallContexts::from_pieces(
+            &[(stored.clone(), stored.clone()), (a.clone(), stored)],
+            false,
+        );
+        assert_eq!(with_ciphertext, bound);
 
         let none = CallContexts::from_pieces(&[], false);
         assert!(none.is_empty());
         assert!(none.single().is_none());
+        assert!(!none.has_failed());
         assert_eq!(
             none.to_string(),
             "no context: the call seals and indexes nothing\n"
         );
-    }
-
-    /// A call that has failed before any key was requested says so, and
-    /// one that has not does not.
-    #[test]
-    fn a_call_knows_whether_it_has_failed() {
-        let live = CallContexts::from_pieces(&[], false);
-        assert!(!live.has_failed());
         let failed = CallContexts::from_pieces(&[], true);
         assert!(failed.has_failed());
+        assert_eq!(
+            failed.to_string(),
+            "no context: the call has failed; await it for the error\n"
+        );
+    }
+
+    /// A caller shape names the placeholders it holds, and only those.
+    #[test]
+    fn a_caller_shape_holds_its_placeholders() {
+        let none = CallerShape::none();
+        assert!(none.scope_placeholder().is_none());
+        assert!(none.bind_placeholder().is_none());
+        let scope = CallerShape::scope(Placeholder::scope::<u64>());
+        assert_eq!(
+            scope.scope_placeholder().map(Placeholder::to_string),
+            Some("{scope: u64}".to_owned())
+        );
+        assert!(scope.bind_placeholder().is_none());
+        let bind = CallerShape::bind(Placeholder::bind::<u128>());
+        assert!(bind.scope_placeholder().is_none());
+        assert_eq!(
+            bind.bind_placeholder().map(Placeholder::to_string),
+            Some("{bind: u128}".to_owned())
+        );
+        let both = CallerShape::both(Placeholder::scope::<u64>(), Placeholder::bind::<u128>());
+        assert!(both.scope_placeholder().is_some() && both.bind_placeholder().is_some());
     }
 }

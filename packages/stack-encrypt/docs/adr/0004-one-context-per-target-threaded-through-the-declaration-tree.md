@@ -432,3 +432,73 @@ A stored EQL type still takes its `NonEmpty<Identifier>` by value. Rust's
 orphan rule keeps `From<&NonEmpty<T>>` for `NonEmpty<T>` out of this
 repository, so that impl belongs in Vitamin C.
 
+## Amended 2026-11-10 (#1487)
+
+Every part of a context is now a **scope** or a **binding**. The API plan
+decided this on 7 November 2026.
+
+- The **query context** is the scopes: the declared ones, then the
+  caller's. Search terms derive under it.
+- The **stored context** is the query context followed by the bindings.
+  The data key and the AAD derive under it.
+
+The kind of a part is not in any derivation. Only the values and their
+order are. So a record with no binding stores exactly the bytes it stored
+before. The frozen vectors do not change.
+
+A binding ties a ciphertext to one row, such as a row ID. A query does not
+know it. So a value bound to its row is still found by a column or tenant
+query, and fails to open in another row. Before this change every part was
+in both contexts, and a developer had to choose between the two.
+
+Decision 1 holds. One context input still reaches every operation of a
+target. The input now carries the caller's scopes and bindings apart:
+`Scope::new(..)`, `Bind::new(..)`, or `Scope::new(..).bind(..)`. A term
+reads the query context from it. A ciphertext reads the stored context. A
+record lists the parts its caller supplies, with kind and type, as
+`scope(tenant: u64)` and `bind(row: u128)`. A part the record does not
+list does not compile. A part stored in the row is listed as
+`scope(field = "tenant")` or `bind(field = "id")`, in a `passthrough`
+field. The engine reads it from the plaintext on encrypt, and from the row
+on decrypt. A reader may pass it as well, to check it.
+
+Decision 2 holds, with the words changed. `under` and `extend` compose the
+scopes as before. The bindings follow the scopes, in order, in the stored
+context alone.
+
+A query has no binding. The Rust chain's `.extend(..)` takes a `Scope` and
+no bare `Bind`, so `.extend(Bind::new(..))` does not compile. A binding
+inside a `CallerContext` or a `DeclaredContext` reaches the chain. It is
+refused when the query is awaited, before any key is requested
+(`PlanError::BindInQuery`). The dynamic path refuses a query on a plan with
+a `bind` key the same way (`bind_in_query`). That plan-level `bind` key is
+reserved, so no field is called `bind`. An empty binding is refused on every
+path. Go has `Scope` and `Bind`, and `Extend` stays as a deprecated alias of
+`Scope` until 0.1.0.
+
+`CallerContext` is no longer a context in Vitamin C's sense (`IntoContext`).
+A context with a binding is two contexts, and an API handed one whole would
+have to pick. A leaf takes `query()` or `stored()` by name. `AeadContext` is
+the stored context, and it nests a binding exactly as `CallerContext::extend`
+does. A JSON document seals under the stored context. Its selectors derive
+under the query context, so a bound document is found by a query under the
+scopes.
+
+A binding stored in the row (`bind(field = "id")`) is read from a
+passthrough field. That field is not authenticated. It protects the row only
+when that field is the identity the database enforces, such as the primary
+key: a writer who copies the row's `id` and ciphertext together gets a
+record that opens and reports that `id`. A reader that has the row's
+identity passes `Bind::new(expected)` as well. A mismatch is refused before
+any key is requested.
+
+The kind of a part is in no derivation. A ciphertext sealed under
+`Scope::new(7).bind(9)` also opens under `Scope::new(7)` then
+`Scope::new(9)`. The terms differ. Changing a part's kind on a live table
+keeps every ciphertext openable and orphans every stored term. Moving a row
+ID from a scope to a binding, or a tenant the other way, is a search-index
+migration.
+
+An EQL type refuses a binding, as it refuses an extension: its stored
+context is its table and column, and nothing else.
+

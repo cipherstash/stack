@@ -174,6 +174,7 @@ mod tests {
                 index: "eq",
             },
             PlanError::EmptyIndexes => PlanError::EmptyIndexes,
+            PlanError::EmptyPart => PlanError::EmptyPart,
             PlanError::NotInPlan { .. } => PlanError::NotInPlan { field: field() },
             PlanError::NotInValue { .. } => PlanError::NotInValue { field: field() },
             PlanError::FieldType { .. } => PlanError::FieldType {
@@ -203,6 +204,7 @@ mod tests {
                 second: "the call",
             },
             PlanError::NoContext => PlanError::NoContext,
+            PlanError::BindInQuery => PlanError::BindInQuery,
             PlanError::TargetWithVerbs { .. } => PlanError::TargetWithVerbs { field: field() },
         ]));
         #[cfg(feature = "dynamic")]

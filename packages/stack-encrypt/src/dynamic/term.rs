@@ -857,12 +857,15 @@ impl Index<ValueFrame> for IndexSpec {
     ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
         let spec = self.clone();
         chosen(move |source: M::Source, cipher, cx: CallerContext| {
+            // A term derives under the query context: the scopes, with no
+            // binding.
+            let (query, stored) = (cx.query(), cx.stored());
             let context = match cx.validated() {
-                Ok(context) => context,
+                Ok(context) => CallerContext::query_nonempty(context),
                 Err(error) => return Pending::failed(cipher, error),
             };
             match derive(cipher, M::view(&source), &spec, context, Use::Store) {
-                Ok(pending) => pending,
+                Ok(pending) => pending.under_context(query, stored),
                 Err(error) => Pending::failed(cipher, lifted(error)),
             }
         })

@@ -542,6 +542,10 @@ reasons! {
         ContextNotUtf8 => "context_not_utf8", "a context string is not UTF-8";
         /// A context renders empty.
         EmptyContext => "empty_context", "the context renders empty";
+        /// A part of the plan's `"bind"` list is empty. A binding ties a row
+        /// to a context of its own, and an empty one would bind every row
+        /// to one context.
+        EmptyBinding => "empty_binding", "a binding is empty";
         /// A field's context is not a label of at least two plain segments,
         /// optionally extended by scalar parts.
         ContextNotLabel => "context_not_label", "the context is not a label of at least two plain segments, optionally extended";
@@ -609,6 +613,10 @@ reasons! {
         /// string passthrough, or the plan-level `"context_field"` key is not a
         /// string.
         ContextField => "context_field", r#"the context field is not a string passthrough, or "context_field" is not a string"#;
+        /// `"bind"` is reserved at the top level of a plan for the caller's
+        /// bindings, a list of scalar context parts: it is not a field name,
+        /// and its value is nothing else, so a grouped part is refused.
+        Bind => "bind", r#""bind" is reserved for the caller's bindings: not a field name, and its value is a list of scalar context parts"#;
         /// The plan builder refused the plan for a reason none of the above
         /// names.
         Refused => "refused", "the plan builder refused it";
@@ -640,6 +648,9 @@ reasons! {
         /// it has no context: the caller names the context, and sends the plan
         /// under it.
         QueryContextField => "query_context_field", "the plan takes its context from a field of each record, so a query has none";
+        /// The plan carries a binding, which is not in the query context, so
+        /// a query cannot take it.
+        BindInQuery => "bind_in_query", "a query takes no binding: a binding is in the stored context only";
         /// An operator name is not one the engine knows ([`OpSpec::parse`]).
         UnknownOperator => "unknown_operator", "the operator is not one the engine knows";
         /// The field's type does not answer the operator: no index it declares

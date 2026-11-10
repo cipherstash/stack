@@ -33,7 +33,8 @@ use super::shuffle;
 use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
 use crate::keyset::KeysetState;
 use crate::sem::TermError;
-use crate::target::{AeadContext, CallerContext, Decryption, Pending, Request};
+use crate::target::{AeadContext, Decryption, Pending, Request};
+use crate::ContextPiece;
 use crate::{DecryptInto, Descriptor, Error, KeysetCipher, NonEmpty, StackCipher};
 
 /// PAE domain of the path selector `s`.
@@ -753,7 +754,7 @@ pub(crate) fn terms_pending<'a, K>(
     value: &Value,
     options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
-    context: NonEmpty<CallerContext>,
+    context: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonTerms, K> {
     let context = context.into_prf_context().into_owned();
     let terms = cipher
@@ -772,25 +773,29 @@ pub(crate) fn terms_pending<'a, K>(
     Pending::ready(cipher, terms)
 }
 
-/// Seal `value` into a [`JsonDocument`] under `context`: one data key for
-/// the document, requested under the context's descriptor, and every entry
-/// sealed under it with the AAD that binds the entry to the document, the
-/// column and its ordinal.
+/// Seal `value` into a [`JsonDocument`]: one data key for the document,
+/// requested under the descriptor of the stored context `stored`, and every
+/// entry sealed under it with the AAD that binds the entry to the document,
+/// the column and its ordinal. The selectors and the other terms derive
+/// under the query context `query`, as [`terms_pending`] derives a query's,
+/// so a document bound to its row is still found by a query under the
+/// scopes. The two are one context for a caller with no binding.
 pub(crate) fn seal_pending<'a, K: 'static>(
     value: Value,
     options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
-    context: NonEmpty<CallerContext>,
+    query: NonEmpty<ContextPiece<'static>>,
+    stored: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonDocument, K> {
     // The caller's document, owned here: wiped when this returns, also when
     // the context is refused below.
     let value = PlainJson::protect(value);
-    let piece = context.into_context();
+    let piece = stored.into_context();
     let descriptor = Descriptor::from_piece(&piece);
     if let Err(error) = descriptor.check() {
         return Pending::failed(cipher, error);
     }
-    let prf_context = piece.clone().into_prf_context().into_owned();
+    let prf_context = query.into_context().into_prf_context().into_owned();
     let aad = piece.into_aad().into_owned();
     // One generator for the document: its members' ordinals, its stored
     // order and the order of its selector set.
@@ -1206,9 +1211,14 @@ fn open_document<'a, K>(
     cipher: &'a StackCipher<K>,
     context: AeadContext,
 ) -> Pending<'a, Value, K> {
+    // The key and the AAD derive under the stored context, the scopes then
+    // the bindings; the token chain and the selectors under the query
+    // context, the scopes alone, as they were sealed (`seal_pending`). So a
+    // document bound to its row opens under its binding, and its root
+    // token is the one a query under the scopes derives.
+    let prf_context = context.query().into_prf_context().into_owned();
     let piece = context.into_context();
     let shown = piece.clone().into_owned();
-    let prf_context = piece.clone().into_prf_context().into_owned();
     let (request, aad) = match key_retrieval(&doc.header, piece) {
         Ok(parts) => parts,
         Err(error) => return Pending::failed(cipher, error),
@@ -1230,7 +1240,7 @@ fn open_document<'a, K>(
             open_sealed_root(&doc, &aes, &aad)
         }
     })
-    .under_context(shown)
+    .under_context(shown.clone(), shown)
 }
 
 /// The whole document out of its sealed root, which is stored at slot `0`
@@ -1528,7 +1538,7 @@ fn open_subtree<'a, K>(
         };
         place(rows, &key.reads, &key.selectors, key.bound, &opening)
     })
-    .under_context(shown)
+    .under_context(shown.clone(), shown)
 }
 
 /// The cipher side of opening a document's rows: its header, the AAD its
@@ -1911,7 +1921,7 @@ fn open_fallback<'a, K>(
         let whole = opened.whole.ok_or_else(|| shape("a sealed root"))?;
         Ok((key, whole))
     })
-    .under_context(shown)
+    .under_context(shown.clone(), shown)
 }
 
 // =============================================================================

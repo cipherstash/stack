@@ -1,0 +1,11 @@
+error: `scope(..)` and `bind(..)` list the parts of a `struct = ..` record's context: a `plaintext` record takes the whole context from its caller
+ --> tests/ui/part_on_plaintext_record.rs:8:35
+  |
+8 | #[stash(plaintext = String, scope(tenant: u64))]
+  |                                   ^^^^^^
+
+error: `scope(..)` and `bind(..)` list the parts of a `struct = ..` record's context: a `plaintext` record takes the whole context from its caller
+  --> tests/ui/part_on_plaintext_record.rs:15:34
+   |
+15 | #[stash(plaintext = String, bind(row: u128))]
+   |                                  ^^^

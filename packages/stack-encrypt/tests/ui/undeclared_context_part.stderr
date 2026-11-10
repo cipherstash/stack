@@ -1,0 +1,85 @@
+error[E0277]: the trait bound `RequiredContext<Parts<stack_encrypt::target::Scope<u64>, NoBind>>: AllowsNoContext` is not satisfied
+  --> tests/ui/undeclared_context_part.rs:28:32
+   |
+28 |     let _: TenantScoped = user.encrypt_into(keyset).await.unwrap();
+   |                                ^^^^^^^^^^^^ the trait `AllowsNoContext` is not implemented for `RequiredContext<Parts<stack_encrypt::target::Scope<u64>, NoBind>>`
+   |
+help: the following other types implement trait `AllowsNoContext`
+  --> src/target/input.rs
+   |
+   | impl AllowsNoContext for NoCallerContext {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoCallerContext`
+...
+   | impl<C> AllowsNoContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+...
+   | impl AllowsNoContext for DeclaredScopes {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
+...
+   | impl<T> AllowsNoContext for ExpectedContext<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
+note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into`
+  --> src/target/conversion.rs
+   |
+   |     fn encrypt_into<'a, T, K: 'static>(self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
+   |        ------------ required by a bound in this associated function
+...
+   |         T::ContextInput: AllowsNoContext,
+   |                          ^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+
+error[E0277]: the trait bound `Parts<NoScope, stack_encrypt::target::Bind<u128>>: From<stack_encrypt::target::Scope<u64>>` is not satisfied
+  --> tests/ui/undeclared_context_part.rs:34:44
+   |
+34 |         .encrypt_into_with_context(keyset, Scope::new(42u64))
+   |          -------------------------         ^^^^^^^^^^^^^^^^^ the trait `From<stack_encrypt::target::Scope<u64>>` is not implemented for `Parts<NoScope, stack_encrypt::target::Bind<u128>>`
+   |          |
+   |          required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `From<T>`:
+             `Parts<NoScope, Option<stack_encrypt::target::Bind<U>>>` implements `From<stack_encrypt::target::Bind<U>>`
+             `Parts<NoScope, stack_encrypt::target::Bind<U>>` implements `From<stack_encrypt::target::Bind<U>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, NoBind>` implements `From<stack_encrypt::target::Scope<T>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, Option<stack_encrypt::target::Bind<U>>>` implements `From<Parts<stack_encrypt::target::Scope<T>, stack_encrypt::target::Bind<U>>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, Option<stack_encrypt::target::Bind<U>>>` implements `From<stack_encrypt::target::Bind<U>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, Option<stack_encrypt::target::Bind<U>>>` implements `From<stack_encrypt::target::Scope<T>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, stack_encrypt::target::Bind<U>>` implements `From<Parts<stack_encrypt::target::Scope<T>, stack_encrypt::target::Bind<U>>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, stack_encrypt::target::Bind<U>>` implements `From<stack_encrypt::target::Bind<U>>`
+           and $N others
+   = note: required for `stack_encrypt::target::Scope<u64>` to implement `Into<Parts<NoScope, stack_encrypt::target::Bind<u128>>>`
+note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<T::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into_with_context`
+
+error[E0277]: the trait bound `Parts<stack_encrypt::target::Scope<u64>, NoBind>: From<Parts<stack_encrypt::target::Scope<u64>, stack_encrypt::target::Bind<u128>>>` is not satisfied
+  --> tests/ui/undeclared_context_part.rs:42:44
+   |
+42 |         .encrypt_into_with_context(keyset, Scope::new(42u64).bind(9u128))
+   |          -------------------------         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |          |
+   |          required by a bound introduced by this call
+   |
+   = help: the trait `From<Parts<stack_encrypt::target::Scope<u64>, stack_encrypt::target::Bind<u128>>>` is not implemented for `Parts<stack_encrypt::target::Scope<u64>, NoBind>`
+   = help: the following other types implement trait `From<T>`:
+             `Parts<NoScope, Option<stack_encrypt::target::Bind<U>>>` implements `From<stack_encrypt::target::Bind<U>>`
+             `Parts<NoScope, stack_encrypt::target::Bind<U>>` implements `From<stack_encrypt::target::Bind<U>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, NoBind>` implements `From<stack_encrypt::target::Scope<T>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, Option<stack_encrypt::target::Bind<U>>>` implements `From<Parts<stack_encrypt::target::Scope<T>, stack_encrypt::target::Bind<U>>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, Option<stack_encrypt::target::Bind<U>>>` implements `From<stack_encrypt::target::Bind<U>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, Option<stack_encrypt::target::Bind<U>>>` implements `From<stack_encrypt::target::Scope<T>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, stack_encrypt::target::Bind<U>>` implements `From<Parts<stack_encrypt::target::Scope<T>, stack_encrypt::target::Bind<U>>>`
+             `Parts<Option<stack_encrypt::target::Scope<T>>, stack_encrypt::target::Bind<U>>` implements `From<stack_encrypt::target::Bind<U>>`
+           and $N others
+   = note: required for `Parts<stack_encrypt::target::Scope<u64>, stack_encrypt::target::Bind<u128>>` to implement `Into<Parts<stack_encrypt::target::Scope<u64>, NoBind>>`
+note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<T::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into_with_context`

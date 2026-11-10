@@ -39,6 +39,8 @@ these rules.
 | `record-contexts-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
 | `record-contexts-v1.expected.rust-native.json` | expected | `tests/context_conformance.rs` (writes it) | `context_conformance_test.go` |
 | `record-context-boundaries-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
+| `record-bindings-v1.cases.json` | cases | `tests/binding_conformance.rs` | `binding_conformance_test.go` |
+| `record-bindings-v1.expected.rust-native.json` | expected | `tests/binding_conformance.rs` (writes it) | `binding_conformance_test.go` |
 | `record-values-v1.cases.json` | cases | `tests/value_conformance.rs` | `value_conformance_test.go` |
 | `record-query-refusals-v1.cases.json` | cases | `tests/query_refusal_conformance.rs` | `query_refusal_conformance_test.go` |
 | `record-raw-frames-v1.cases.json` | cases | `tests/raw_frame_conformance.rs` | `raw_frame_conformance_test.go` |
@@ -116,7 +118,7 @@ disposable database setup, intentional SQL differences and version reports.
 
 ## Context composition and expectations
 
-The [context contract](context-contract.md) covers ordered extensions, canonical
+The [context contract](context-contract.md) covers ordered scopes, bindings, canonical
 context encodings, typed/generated API calls, stored-context expectations,
 tampering and preflight boundaries. The required command runs the new
 `context_conformance` Rust binary and `TestContextConformance` /

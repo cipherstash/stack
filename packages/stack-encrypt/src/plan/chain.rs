@@ -929,6 +929,9 @@ where
         self.common.keyset.take()
     }
     fn check(&self) -> Result<(), Error> {
+        if self.common.extend.has_bindings() {
+            return Err(PlanError::BindInQuery.into());
+        }
         let label = self.label.as_ref().map_err(|error| error.clone())?;
         self.index
             .check_label(label, self.common.extend.is_extended())?;
@@ -938,6 +941,12 @@ where
     where
         'a: 'p,
     {
+        // A binding is in no query context. A `DeclaredContext` carries one
+        // through `CallerContext`, so the refusal is here, before any key,
+        // as the dynamic path's `bind_in_query` is.
+        if self.common.extend.has_bindings() {
+            return Pending::failed(keyset, PlanError::BindInQuery.into());
+        }
         let label = match self.label {
             Ok(label) => label,
             Err(error) => return Pending::failed(keyset, error.into()),

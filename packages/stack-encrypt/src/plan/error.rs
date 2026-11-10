@@ -224,6 +224,26 @@ pub enum PlanError {
     )]
     #[diagnostic(code(stack_encrypt::plan_no_context))]
     NoContext,
+    /// A query was extended by a binding. A binding is in the stored
+    /// context alone, so a query cannot carry one: the row is found by its
+    /// scopes, and the binding is checked when the row is opened.
+    #[error("a query takes no binding: a binding is in the stored context only")]
+    #[diagnostic(
+        code(stack_encrypt::plan_bind_in_query),
+        help(
+            "Extend the query by its scopes alone. The binding is checked when the row is opened."
+        )
+    )]
+    BindInQuery,
+    /// A scope or binding the caller passed is empty: an empty text or byte
+    /// string. A part names a tenant or a row, and an empty one would put
+    /// every row under one context. Refused before any key is requested.
+    #[error("a scope or binding is empty")]
+    #[diagnostic(
+        code(stack_encrypt::plan_empty_part),
+        help("Give the scope or binding a value. An empty part would put every row under one context.")
+    )]
+    EmptyPart,
     /// A field was declared both as a typed target (`encrypt_into`) and with
     /// a data verb. A field is one or the other: the target's type decides
     /// its layout and its queries.
@@ -289,7 +309,9 @@ impl crate::ErrorPayload for PlanError {
             Self::IdentityWithoutField
             | Self::EmptyIndexes
             | Self::MixedCiphers
-            | Self::NoContext => serde_json::Map::new(),
+            | Self::NoContext
+            | Self::BindInQuery
+            | Self::EmptyPart => serde_json::Map::new(),
         }
     }
 }
