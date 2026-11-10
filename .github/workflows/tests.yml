@@ -458,9 +458,11 @@ jobs:
       # nothing in `e2e/tests/**` loads the WASM build (the Deno smoke test that
       # does lives in `e2e/wasm/` and runs in `wasm-e2e-tests`).
       - name: Build the protect-ffi binding
+        id: ffi-binding
         uses: ./.github/actions/build-ffi-binding
 
       - name: Build the @cipherstash/auth binding
+        id: auth-binding
         uses: ./.github/actions/build-auth-binding
 
       # Run the standalone `e2e/` workspace via turbo so the `^build`
@@ -485,11 +487,12 @@ jobs:
       # `integration-db` gives this job its own compose project and ephemeral
       # port; the suite installs EQL v3 itself through the real
       # `stash eql install`. Loose env mode for the same reason as above.
-      # `!cancelled()` on both steps: the suite is independent of the
-      # protect-dynamodb step above, so a failure there must not hide it.
+      # The suite is independent of the preceding test suites, but still
+      # requires both native bindings. A failed build must not start the DB
+      # and produce a second set of missing-binding errors.
       - name: Start postgres
         id: db
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.ffi-binding.outcome == 'success' && steps.auth-binding.outcome == 'success' }}
         uses: ./.github/actions/integration-db
         with:
           db: postgres

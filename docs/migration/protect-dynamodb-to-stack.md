@@ -364,7 +364,7 @@ What the crossover suite proves:
 - protect-dynamodb items copied into Postgres are accepted by the column types (`crossover › the EQL v3 column domains accept the copied attributes`), arrive byte-for-byte (`crossover › stores the DynamoDB ciphertext and HMAC byte-for-byte`), decrypt with Stack (`crossover › Stack 1.x decrypts the Postgres rows`), and are found by SQL equality (`crossover › SQL equality queries find exactly the right rows`).
 - Copying back returns the original item exactly (`crossover › round trip DynamoDB → Postgres → DynamoDB returns the original item exactly`).
 - A Stack-written Postgres row copied into DynamoDB decrypts with Stack (`crossover › Stack 1.x encryptedDynamoDB decrypts the item`) and with protect-dynamodb 6.0.1 (`crossover › protect-dynamodb 6.0.1 decrypts the item too`), and carries the `__hmac` a native write would (`crossover › the item carries the same __hmac a native DynamoDB write would, so existing key conditions match it`).
-- Raw payloads from Protect's `encrypt` copy into both stores the same way (`crossover › becomes a DynamoDB item Stack 1.x decrypts, identical to what protect-dynamodb wrote`, `crossover › becomes a Postgres EQL v3 row that SQL finds and Stack 1.x decrypts`).
+- Raw payloads from Protect's `encrypt` copy into both stores the same way (`crossover › becomes a DynamoDB item Stack 1.x decrypts with the legacy email equality term`, `crossover › becomes a Postgres EQL v3 row that SQL finds and Stack 1.x decrypts`).
 
 ## Outside what the tests cover
 
