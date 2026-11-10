@@ -3,26 +3,28 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
+import { parseArgs, promisify } from 'node:util'
 import { createRealDriver } from './real-driver.mjs'
 import { run } from './run.mjs'
 
-const args = process.argv.slice(2)
-const command = args[args.indexOf('--migrator') + 1]
-if (!args.includes('--migrator') || !command)
+const { values } = parseArgs({
+  args: process.argv.slice(2),
+  options: {
+    migrator: { type: 'string' },
+    output: { type: 'string' },
+    stack: { type: 'string' },
+  },
+  strict: true,
+})
+const command = values.migrator
+if (!command || values.output === '' || values.stack === '')
   throw Error('Usage: harness:run --migrator <command>')
 const id = randomUUID()
 const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
-const output = resolve(
-  args.includes('--output')
-    ? args[args.indexOf('--output') + 1]
-    : `.migration-harness-runs/${id}`,
-)
+const output = resolve(values.output ?? `.migration-harness-runs/${id}`)
 await mkdir(output, { recursive: true })
 const manifest = {
-  stack: args.includes('--stack')
-    ? args[args.indexOf('--stack') + 1]
-    : '^1.2.1',
+  stack: values.stack ?? '^1.2.1',
   guideHash: null,
   fixtureRevision: (
     await promisify(execFile)('git', ['rev-parse', 'HEAD'], { cwd: root })
@@ -31,7 +33,7 @@ const manifest = {
     migrator: command,
     model: 'command-adapter',
     limits: { timeMs: 40 * 60 * 1000, turns: 200 },
-    allowlist: ['workspace file tools', 'isolated commands'],
+    allowlist: ['brokered isolated exec'],
   },
   isolation: { backend: 'linux-ptrace-network-namespace', verified: false },
 }

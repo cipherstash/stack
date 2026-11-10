@@ -42,7 +42,7 @@ function command(args) {
 export function createIsolation({ onEvent = (_event) => {} } = {}) {
   /** @type {import('./types.js').AccessEvent[]} */
   const events = []
-  /** @type {Set<{stop:()=>Promise<unknown>}>} */
+  /** @type {Set<{stop:(options?:{expected?:boolean})=>Promise<unknown>,settled:()=>Promise<unknown>}>} */
   const active = new Set()
   /** @type {string[]} */
   const proofContainers = []
@@ -186,7 +186,7 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
       '--mount',
       `type=bind,src=${join(here, 'run/app-host.mjs')},dst=/harness/app-host.mjs,readonly`,
       '-e',
-      `HARNESS_CONFIG=${config}`,
+      'HARNESS_CONFIG',
       '-e',
       `HARNESS_MODEL_CANARY=${name}`,
     ]
@@ -199,7 +199,10 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
         `type=bind,src=${canary},dst=/protected-canary,readonly`,
       )
     args.push(image)
-    const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn('docker', args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, HARNESS_CONFIG: config },
+    })
     /** @type {number|undefined} */
     let actorExit
     /** @type {number|undefined} */
@@ -211,13 +214,27 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
       streamEnded = false
     /** @type {(text:string)=>void} */
     let onOutput = (_text) => {}
-    const stop = () => command(['kill', name]).catch(() => {})
+    /** @type {Promise<boolean>|null} */
+    let expectedCancellation = null
+    /** @param {{expected?:boolean}} options */
+    const stop = ({ expected = false } = {}) => {
+      const killed = command(['kill', name])
+      if (!expected) return killed.catch(() => {})
+      expectedCancellation = killed.then(
+        (result) => result.exitCode === 0,
+        () => false,
+      )
+      return killed.then((result) => {
+        if (result.exitCode !== 0)
+          throw infrastructure('Could not cancel isolated actor')
+      })
+    }
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true
       void stop()
     }, timeoutMs)
-    const running = { stop }
+    const running = { stop, settled: () => completion }
     active.add(running)
     /** @type {Promise<import('./types.js').IsolationResult>} */
     const completion = new Promise((resolve, reject) => {
@@ -264,17 +281,25 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
         clearTimeout(timer)
         active.delete(running)
         await release()
-        if (timedOut) {
+        if (timedOut && !failure) {
           resolve({ exitCode: 124, stdout, stderr, timedOut })
           return
         }
+        const cancelled = expectedCancellation
+          ? await expectedCancellation
+          : false
         const stoppedForBreach = events.some(
           (event) => event.actor === actor && isBreach(event),
         )
         if (
-          !streamEnded ||
-          exitCode === undefined ||
-          (!stoppedForBreach && actorExit !== exitCode)
+          (!cancelled &&
+            (!streamEnded ||
+              exitCode === undefined ||
+              (!stoppedForBreach && actorExit !== exitCode))) ||
+          (!stoppedForBreach &&
+            actorExit !== undefined &&
+            exitCode !== undefined &&
+            actorExit !== exitCode)
         )
           failure ??= infrastructure(
             `Broken trusted event stream (Docker exit ${code}): ${stderr}`,
@@ -283,7 +308,12 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
           failure.message += `: ${stderr}; last forbidden event: ${JSON.stringify(events.filter((event) => event.decision === 'forbidden').at(-1))}`
           fatal = failure
           reject(failure)
-        } else if (exitCode !== undefined) resolve({ exitCode, stdout, stderr })
+        } else if (
+          cancelled &&
+          (!streamEnded || exitCode === undefined || actorExit === undefined)
+        )
+          resolve({ exitCode: 130, stdout, stderr })
+        else if (exitCode !== undefined) resolve({ exitCode, stdout, stderr })
       })
     })
     return {
@@ -577,13 +607,22 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
       if (fatal && !events.some(isBreach)) throw fatal
       return events.splice(0)
     },
-    async stop() {
-      await Promise.all([...active].map((process) => process.stop()))
+    /** Expected cancellation waits for actor shutdown so the caller can drain all events.
+     * @param {{expected?:boolean}} options */
+    async stop({ expected = false } = {}) {
+      const stopped = await Promise.allSettled(
+        [...active].map(async (process) => {
+          await process.stop({ expected })
+          if (expected) await process.settled()
+        }),
+      )
       await Promise.all(
         proofContainers.splice(0).map((name) => command(['rm', '-f', name])),
       )
       if (proofNetwork) await command(['network', 'rm', proofNetwork])
       proofNetwork = null
+      const failure = stopped.find((result) => result.status === 'rejected')
+      if (failure?.status === 'rejected') throw failure.reason
     },
   }
   return backend

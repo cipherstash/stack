@@ -68,12 +68,12 @@ export interface Manifest {
   guideHash: string | null
   guideSections?: string[]
   agents?: {
-    limits?: { timeMs: number; turns?: number }
+    limits?: { timeMs: number; turns?: number; toolCalls?: number }
     [key: string]: unknown
   }
   isolation?: unknown
   fixtureRevision?: string
-  artifacts?: { transcript: string; diff: string; snapshot: string }
+  artifacts?: { transcript: string; diff?: string; snapshot: string }
   storeCapabilities?: unknown
   [key: string]: unknown
 }

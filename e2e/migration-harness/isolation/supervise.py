@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import unquote, urlsplit
 
 lock = threading.Lock()
 def emit(kind, **fields):
@@ -31,6 +32,30 @@ for forward in config.get('forwards', []):
                       'UNIX-CONNECT:/forwards/%s.sock' % forward['index']],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def credential_redactions(env):
+    """Collect configured credentials and URL passwords before exporting paths."""
+    values = set()
+    for key, value in env.items():
+        if not isinstance(value, str) or not value:
+            continue
+        if key.startswith('CS_') or key == 'DATABASE_URL':
+            values.add(value)
+        if key == 'DATABASE_URL':
+            password = urlsplit(value).password
+            if password:
+                values.update((password, unquote(password)))
+    # strace quotes filesystem strings; match their escaped spelling too.
+    values.update(json.dumps(value)[1:-1] for value in tuple(values))
+    return sorted(values, key=len, reverse=True)
+
+
+def resource_identity(resource, redactions):
+    """Retain the resource location without configured secrets or URL userinfo."""
+    for value in redactions:
+        resource = resource.replace(value, '[redacted]')
+    return re.sub(r'([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@', r'\1[redacted]@', resource)
+
+
 def invoke(argv, stage):
     # Only configured application credentials enter the actor. In particular no
     # Docker, model, host HOME, or supervisor configuration environment is inherited.
@@ -38,6 +63,7 @@ def invoke(argv, stage):
                HOME='/tmp', TMPDIR='/tmp')
     env.pop('HARNESS_CONFIG', None)
     env.pop('HARNESS_MODEL_CANARY', None)
+    redactions = credential_redactions(env)
     if stage == 'startup-probe':
         env['HARNESS_STARTUP_TARGETS'] = json.dumps(config.get('forbiddenTargets', []))
     command = ['strace', '-f', '-q', '-yy', '-s', '4096', '-e',
@@ -45,7 +71,7 @@ def invoke(argv, stage):
                'setpriv', '--reuid=%s' % config['uid'], '--regid=%s' % config['gid'], '--clear-groups',
                '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all',
                '--no-new-privs', '--', '/bin/sh', '-c', 'exec 2>&3; exec 3>&-; exec \"$@\"', 'actor'] + argv
-    actor_stderr = os.open('/trace/actor-stderr', os.O_RDWR | os.O_CREAT, 0o600)
+    actor_stderr = os.open('/trace/actor-stderr', os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
     # fd 3 is reserved for actor diagnostics; the ptrace observer owns stderr.
     if actor_stderr != 3:
         os.dup2(actor_stderr, 3)
@@ -136,7 +162,7 @@ def invoke(argv, stage):
                 if ' = ' not in call: continue
                 operation, result = call.rsplit(' = ', 1)
                 # Canonical paths returned by the kernel are decoded by strace -yy.
-                # Other path operations retain their syscall arguments as evidence.
+                # Raw arguments are used only to decide access, never exported.
                 canonical = re.match(r'\d+<(/[^>]+)>', result)
                 path = canonical.group(1) if canonical else None
                 if path is None:
@@ -149,7 +175,8 @@ def invoke(argv, stage):
                     if path is not None:
                         path = os.path.normpath(path)
                 denied = result.startswith('-1 ')
-                resource = path or operation
+                operation_name = operation.split('(', 1)[0]
+                resource = path or 'syscall:' + operation_name
                 forbidden = bool(path and not permitted(path))
                 if operation.startswith(('connect(', 'sendto(', 'sendmsg(', 'sendmmsg(', 'recvfrom(', 'recvmsg(', 'recvmmsg(', 'getsockopt(')):
                     endpoint = re.search(r'sin_port=htons\((\d+)\).*sin_addr=inet_addr\("([^"]+)"\)', operation)
@@ -185,9 +212,10 @@ def invoke(argv, stage):
                         elif operation.startswith(('sendto(', 'sendmsg(', 'sendmmsg(')):
                             # Unknown datagram destinations cannot be authenticated.
                             forbidden = True
-                event = dict(actor=actor, stage=stage, pid=int(pid), operation=operation.split('(')[0],
-                             resource=resource, decision='forbidden' if forbidden else 'allowed',
-                             result='denied' if denied else 'success', syscall=call)
+                event = dict(actor=actor, stage=stage, pid=int(pid), operation=operation_name,
+                             resource=resource_identity(resource, redactions),
+                             decision='forbidden' if forbidden else 'allowed',
+                             result='denied' if denied else 'success')
                 emit('event', event=event)
                 if forbidden and not denied:
                     stop()

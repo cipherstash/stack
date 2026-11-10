@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
+import { requiredOracleChecks } from '../run/migration-checks.mjs'
 import { run } from '../run/run.mjs'
 import type { RunDriver } from '../types.js'
 
@@ -18,7 +19,10 @@ function driver(overrides: Partial<RunDriver> = {}): RunDriver {
     migrate: async () => ({ exitCode: 0 }),
     friction: async () => [],
     installAppHost: async () => {},
-    behaviour: async () => [{ id: 'behaviour.synthetic', passed: true }],
+    behaviour: async () => [
+      { id: 'behaviour.synthetic', passed: true },
+      ...requiredOracleChecks.map((id) => ({ id, passed: true })),
+    ],
     ...overrides,
   }
 }
@@ -147,6 +151,22 @@ test('agent failure after a failed npm command remains agent-limit', async () =>
   assert.deepEqual(
     report.failures.map((f) => f.category),
     ['agent-limit'],
+  )
+})
+
+test('F18 an explicit agent limit with exit zero skips dependent stages', async () => {
+  const report = await run({
+    id: 'explicit-limit',
+    manifest,
+    driver: driver({
+      migrate: async () => ({ exitCode: 0, limit: 'turn limit reached' }),
+    }),
+  })
+  assert.equal(report.outcome, 'agent-limit')
+  assert.equal(report.failures[0].cause, 'turn limit reached')
+  assert.equal(
+    report.stages.find((stage) => stage.name === 'behaviour')?.status,
+    'skipped',
   )
 })
 test('App Host install failure outranks invalid friction', async () => {
