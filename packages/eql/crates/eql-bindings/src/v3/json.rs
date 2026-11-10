@@ -130,7 +130,7 @@ where
 /// selector `s`, raw AEAD ciphertext `c` (see [`EntryCiphertext`] — the
 /// decryption unit is `h` + `s` + `c`, with the document `h` grafted onto
 /// extracted entries by `->`), an optional array-membership marker `a`
-/// (emitted only when true), and — for ordered (number/string) path entries
+/// (a boolean; producers emit it only when true), and — for ordered (number/string) path entries
 /// only — the `op` ordering term. Value entries (value-inclusive selectors)
 /// and non-orderable path entries are term-less: exact matching is selector
 /// presence, so no per-entry equality term exists (`hm` is retired). The

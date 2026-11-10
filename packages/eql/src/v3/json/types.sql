@@ -91,7 +91,8 @@ $$;
 --!         data key; entry `c` values are raw AEAD output whose nonces are
 --!         derived from the entries' selectors) — it is opaque to SQL and
 --!         only ever carried/grafted, never parsed. Unknown envelope keys are
---!         rejected; `k` and `a` remain optional compatibility fields.
+--!         rejected; `k` and `a` remain optional, and `a`, when present, must be a
+--!         JSON boolean (matching the sv entry validator).
 CREATE OR REPLACE FUNCTION public.eql_v3_is_valid_ste_vec_document_payload(val jsonb)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
@@ -104,6 +105,7 @@ AS $$
      AND jsonb_typeof(val -> 'h') = 'string'
      AND jsonb_typeof(val -> 'sv') = 'array'
      AND val - ARRAY['v', 'k', 'i', 'h', 'sv', 'a']::text[] = '{}'::jsonb
+     AND (NOT (val ? 'a') OR jsonb_typeof(val -> 'a') = 'boolean')
      AND NOT EXISTS (
        SELECT 1
        FROM jsonb_array_elements(

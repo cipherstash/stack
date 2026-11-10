@@ -213,7 +213,10 @@ CREATE FUNCTION eql_v3_internal.is_ste_vec_array(val jsonb)
   SET search_path = pg_catalog, extensions, public
 AS $$
   BEGIN
-    IF val ? 'a' THEN
+    -- Guard the cast: a non-boolean `a` (e.g. 'maybe') would otherwise raise.
+    -- The document validator rejects one at storage time; raw jsonb callers
+    -- get "not an array" instead of a cast error.
+    IF jsonb_typeof(val->'a') = 'boolean' THEN
       RETURN (val->>'a')::boolean;
     END IF;
     RETURN false;
