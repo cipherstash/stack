@@ -645,6 +645,7 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
             (Some(field), Reason::Refused)
         }
         P::BindInQuery => (None, Reason::BindInQuery),
+        P::EmptyPart => (None, Reason::EmptyBinding),
         P::IdentityWithoutField
         | P::MixedCiphers
         | P::MatchCase { .. }
@@ -1362,7 +1363,21 @@ pub fn plan_with(
         Some(name) => Plan::with_context_field(name, fields),
         None => Plan::new_with(fields, resolver),
     }?;
-    plan.with_bindings(wire.bindings)
+    // The grammar's `bind` is a nonempty list of scalar parts: an explicit
+    // empty list is not an absent key, and a grouped part is not a part Go
+    // can supply through `Bind`.
+    match wire.bindings {
+        None => Ok(plan),
+        Some(parts) if parts.is_empty() => Err(Error::bad_plan(Reason::EmptyBinding)),
+        Some(parts)
+            if parts
+                .iter()
+                .any(|part| matches!(part, ContextPiece::List(_))) =>
+        {
+            Err(Error::bad_plan(Reason::Bind))
+        }
+        Some(parts) => plan.with_bindings(parts),
+    }
 }
 
 /// A plan as a binding writes it: an object of field specs, in order, with
@@ -1371,7 +1386,9 @@ pub fn plan_with(
 /// derived.
 struct PlanWire {
     context_field: Option<String>,
-    bindings: Vec<ContextPiece<'static>>,
+    /// `None` when the plan has no `"bind"` key: an explicit empty list is
+    /// kept apart from an absent key, and refused.
+    bindings: Option<Vec<ContextPiece<'static>>>,
     fields: Vec<(String, FieldSpecWire)>,
 }
 
@@ -1386,7 +1403,7 @@ impl<'de> Deserialize<'de> for PlanWire {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<PlanWire, A::Error> {
                 let mut plan = PlanWire {
                     context_field: None,
-                    bindings: Vec::new(),
+                    bindings: None,
                     fields: Vec::with_capacity(super::context::reserved(map.size_hint())),
                 };
                 while let Some(name) = map.next_key::<&'de str>()? {
@@ -1394,7 +1411,7 @@ impl<'de> Deserialize<'de> for PlanWire {
                         plan.context_field = Some(map.next_value()?);
                     } else if name == BIND {
                         let parts: Vec<super::context::Context> = map.next_value()?;
-                        plan.bindings = parts.into_iter().map(|part| part.0).collect();
+                        plan.bindings = Some(parts.into_iter().map(|part| part.0).collect());
                     } else {
                         plan.fields.push((name.to_owned(), map.next_value()?));
                     }
@@ -4446,6 +4463,50 @@ mod tests {
             ]))
             .expect("a bind key with a list of parts");
             assert_eq!(bound.bindings(), [ContextPiece::U64(9)]);
+        }
+
+        /// The grammar's `bind` is a nonempty list: an explicit empty list
+        /// is not an absent key, and would seal with no binding where the
+        /// plan says there is one.
+        #[test]
+        fn an_explicit_empty_bind_list_is_refused() {
+            let refused = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", Tree::Array(vec![])),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Plan {
+                        field: None,
+                        reason: Reason::EmptyBinding
+                    }
+                ),
+                "{refused:?}"
+            );
+        }
+
+        /// A binding part is a scalar: a grouped part is one Go cannot
+        /// supply through `Bind`, so it is refused rather than flattened or
+        /// nested.
+        #[test]
+        fn a_grouped_bind_part_is_refused() {
+            let refused = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", Tree::Array(vec![Tree::Array(vec![s("a"), s("b")])])),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Plan {
+                        field: None,
+                        reason: Reason::Bind
+                    }
+                ),
+                "{refused:?}"
+            );
         }
     }
 

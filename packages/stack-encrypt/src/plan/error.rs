@@ -235,6 +235,15 @@ pub enum PlanError {
         )
     )]
     BindInQuery,
+    /// A scope or binding the caller passed is empty: an empty text or byte
+    /// string. A part names a tenant or a row, and an empty one would put
+    /// every row under one context. Refused before any key is requested.
+    #[error("a scope or binding is empty")]
+    #[diagnostic(
+        code(stack_encrypt::plan_empty_part),
+        help("Give the scope or binding a value. An empty part would put every row under one context.")
+    )]
+    EmptyPart,
     /// A field was declared both as a typed target (`encrypt_into`) and with
     /// a data verb. A field is one or the other: the target's type decides
     /// its layout and its queries.
@@ -301,7 +310,8 @@ impl crate::ErrorPayload for PlanError {
             | Self::EmptyIndexes
             | Self::MixedCiphers
             | Self::NoContext
-            | Self::BindInQuery => serde_json::Map::new(),
+            | Self::BindInQuery
+            | Self::EmptyPart => serde_json::Map::new(),
         }
     }
 }

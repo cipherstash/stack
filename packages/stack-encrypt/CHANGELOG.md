@@ -25,14 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it to check it, and a mismatch is `ContextMismatch` before any key is
     requested.
   - `CallerContext` holds the scopes and the bindings apart, with `query()`
-    and `stored()`. Its `IntoContext` is the stored context. `AeadContext`
-    is the stored context. An empty `Scope` or `Bind` is refused before any
-    key is requested.
+    and `stored()`. `AeadContext` is the stored context. An empty `Scope`
+    or `Bind` is refused before any key is requested
+    (`PlanError::EmptyPart`).
   - The dynamic record grammar has a plan-level `"bind"` key, a list of
     parts. A query on a plan with a binding is refused, `bind_in_query`,
     before any key is requested. `dynamic::record::Plan::with_bindings` and
     `bindings` carry it. The key is reserved, so a field named `bind` is
-    refused (`bind`), and an empty binding is refused (`empty_binding`).
+    refused (`bind`), and so is a grouped part, since a binding part is a
+    scalar. An empty binding is refused (`empty_binding`), and so is an
+    explicit empty list.
   - A typed query carries no binding either: `.extend(Bind::new(..))` does
     not compile, and a binding inside a `CallerContext` or `DeclaredContext`
     is `PlanError::BindInQuery` when the query is awaited, before any key.

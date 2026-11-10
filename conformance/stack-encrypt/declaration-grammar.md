@@ -144,8 +144,9 @@ With `context_field`:
 
 With `bind`:
 
-- Its value is a nonempty list of scalar parts, each nonempty; an empty part
-  is refused (`empty_binding`).
+- Its value is a nonempty list of scalar parts, each nonempty. An empty part
+  is refused (`empty_binding`), and so is an explicit empty list. A grouped
+  part, a list inside the list, is refused (`bind`).
 - Every field's stored context is its label, extended, then the parts in
   order. No query context includes them, so a query on the plan is refused
   (`bind_in_query`). No target field is admitted.

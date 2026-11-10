@@ -174,6 +174,7 @@ mod tests {
                 index: "eq",
             },
             PlanError::EmptyIndexes => PlanError::EmptyIndexes,
+            PlanError::EmptyPart => PlanError::EmptyPart,
             PlanError::NotInPlan { .. } => PlanError::NotInPlan { field: field() },
             PlanError::NotInValue { .. } => PlanError::NotInValue { field: field() },
             PlanError::FieldType { .. } => PlanError::FieldType {

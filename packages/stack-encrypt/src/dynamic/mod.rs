@@ -614,9 +614,9 @@ reasons! {
         /// string.
         ContextField => "context_field", r#"the context field is not a string passthrough, or "context_field" is not a string"#;
         /// `"bind"` is reserved at the top level of a plan for the caller's
-        /// bindings, a list of context parts: it is not a field name, and
-        /// its value is nothing else.
-        Bind => "bind", r#""bind" is reserved for the caller's bindings: not a field name, and its value is a list of context parts"#;
+        /// bindings, a list of scalar context parts: it is not a field name,
+        /// and its value is nothing else, so a grouped part is refused.
+        Bind => "bind", r#""bind" is reserved for the caller's bindings: not a field name, and its value is a list of scalar context parts"#;
         /// The plan builder refused the plan for a reason none of the above
         /// names.
         Refused => "refused", "the plan builder refused it";

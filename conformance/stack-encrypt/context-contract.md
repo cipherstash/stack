@@ -38,7 +38,7 @@ Caller input has two distinct purposes:
   `CallerContext` or `DeclaredContext` is refused when the query is awaited
   (`PlanError::BindInQuery`). The dynamic path refuses a query on a plan
   with a `bind` key (`bind_in_query`). An empty binding is refused on every
-  path before any key is requested (Rust `Error::Context`, dynamic
+  path before any key is requested (Rust `PlanError::EmptyPart`, dynamic
   `empty_binding`, Go `ErrEncoding`). An empty scope part stays allowed in
   the dynamic grammar and Go `Scope`, as before. `bind` is a reserved
   plan-level key, so no field is called that. `record-bindings-v1`

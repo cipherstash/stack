@@ -38,18 +38,10 @@ pub(super) fn nonempty<T: MaybeEmpty>(value: T) -> Result<NonEmpty<T>, Error> {
 }
 
 /// A part the caller passed that is empty: an empty text or byte string.
-/// Refused before any key is requested, as an empty context is.
-#[derive(Debug)]
-struct EmptyPart;
-impl std::fmt::Display for EmptyPart {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("a scope or binding is empty")
-    }
-}
-impl std::error::Error for EmptyPart {}
-
+/// Refused before any key is requested, as an empty context is, with an
+/// error a caller can match on.
 fn refuse_empty_part() -> Error {
-    Error::Other(Box::new(EmptyPart))
+    crate::plan::PlanError::EmptyPart.into()
 }
 
 /// Nest `tail` under `head`, as [`NonEmpty::with`] nests: `(head, tail)`.
