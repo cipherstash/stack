@@ -46,7 +46,8 @@
 //! is inside its ciphertext, so the client knows it is a genuine node at the
 //! path asked for, but not which one when several share a selector. Three
 //! things stay outside the proof by design: another element's node at
-//! depth `0`, another row's entry, and withheld rows.
+//! depth `0`, another row's entry unless the context names the row, and
+//! withheld rows.
 //!
 //! Nothing stored changes: the AAD is not stored, and the tag is already the
 //! last sixteen bytes of every ciphertext.

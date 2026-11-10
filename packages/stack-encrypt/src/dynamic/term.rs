@@ -97,9 +97,8 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 ///
 /// Serialized (it is `Serialize`), an index writes the string whenever the
 /// options are the defaults and the object otherwise, with every option but
-/// `short_words`, which it writes only when it is on. So a default plan is
-/// byte-for-byte what it was before options had a wire form, and a plan with
-/// other options is what it was before `short_words` existed.
+/// `short_words`, which it writes only when it is on. So a plan with
+/// default options writes each index as its bare key.
 impl IndexSpec {
     /// The index a bare key names, under default options, or `None` for a
     /// string that is not an index key.

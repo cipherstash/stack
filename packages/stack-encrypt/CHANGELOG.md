@@ -531,8 +531,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vitaminc-aead-frame` is now always built, with its `serde` feature.
   Before, it was built only with the `dynamic` feature. The `dynamic`
   feature now adds no dependency.
-- The rustdoc states each rule itself and no longer names a design record
-  or plan, which are not published with the crate.
+- The rustdoc of `stack-encrypt` and `stack-encrypt-derive` states each
+  rule itself. It no longer names design records or plans, since those are
+  not published with the crates.
 
 ### Deprecated
 
@@ -548,6 +549,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The docs of `dynamic::read` said the engine never calls it. `dynamic::query_term`
+  does: it reads a query's input as the field's kind.
 - **A refused context no longer drops a copy of the plaintext unwiped**
   (#1504). `target::ciphertext()` cloned a borrowed plaintext before it
   checked the context. When the context was too long for a ZeroKMS

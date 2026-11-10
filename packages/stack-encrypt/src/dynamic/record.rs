@@ -56,8 +56,7 @@
 //! either way: every field was sealed under the original. The keys
 //! `"context_field"` and `"bind"` (the caller's bindings, below) are
 //! reserved at the top level of a plan, so no field may be called either.
-//! A plan without the key is read exactly as before: the two-segment and
-//! shared-prefix rules hold, and it seals the same bytes.
+//! Without the key, a plan follows the two-segment and shared-prefix rules.
 //!
 //! # A field that names an EQL type
 //!

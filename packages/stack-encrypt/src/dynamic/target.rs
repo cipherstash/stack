@@ -2,12 +2,12 @@
 //!
 //! A data plan field may name an EQL type instead of its outputs
 //! (`{"target": "TextEq", "context": [...]}`; see [`record::plan`]). The
-//! engine knows no EQL type — `eql-bindings` depends on this crate, so this
-//! crate cannot depend on it — so the dispatch that resolves the name is in
-//! the guest build that holds the EQL types. This module is the seam: a
+//! engine knows no EQL type: `eql-bindings` depends on this crate, so this
+//! crate cannot depend on it. A host that has the EQL types resolves the
+//! name, as the Go guest's EQL build does. This module is the seam: a
 //! [`TargetResolver`] the host installs, which the lowering calls once per
-//! target field, and [`NoTargets`], the
-//! resolver of a build without EQL types, which refuses every name.
+//! target field, and [`NoTargets`], the resolver of a build without EQL
+//! types, which refuses every name.
 //!
 //! The resolver runs the named type's own plan (its `EncryptFrom` /
 //! `DecryptInto`) and hands back the engine's [`Pending`], so a target field

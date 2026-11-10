@@ -195,7 +195,7 @@ pub enum Error {
     /// Which row a value belongs to is not checked: an entry from another
     /// row of the same column at the same path, returned with that row's
     /// header, opens. A value is bound to its row only when its context
-    /// names the row.
+    /// names the row. Its selectors and terms are then that row's alone.
     ///
     /// `expected` names what the read expected, never what the entry held.
     #[error("the database returned a JSON index entry other than {expected}")]

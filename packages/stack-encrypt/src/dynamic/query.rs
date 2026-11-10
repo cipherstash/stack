@@ -50,7 +50,9 @@
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
 //! whose index the type carries, for a type the engine produces and that
 //! has a query twin. The term is the twin, which carries every term of the
-//! type; one query domain per operator is EQL v4's.
+//! type. It binds as the twin's one query domain
+//! ([`TargetDescriptor::query_sql_domain`]), whichever operator it answers:
+//! EQL v4 has one query domain per type family and term, not per operator.
 //! `matches` is answered through a type whose descriptor carries its match
 //! options ([`TargetDescriptor::with_match_options`]), since [`verify`]
 //! must cut the query's tokens as the stored filter was cut: `TextMatch`

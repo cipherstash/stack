@@ -286,7 +286,8 @@ pub enum TermError {
     /// is awaited, before a term exists. A *stored* value with no tokens is
     /// not refused: it is stored as the empty filter, which no query
     /// matches, so a short or empty value is a valid thing to hold in a
-    /// match column.
+    /// match column. The empty filter shows that the value cut no token
+    /// (see [what a match index reveals](crate::sem#what-a-match-index-reveals)).
     #[error(
         "the query's text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
     )]

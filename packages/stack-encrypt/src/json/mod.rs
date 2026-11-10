@@ -69,33 +69,24 @@
 //! nothing above it is read. The entries are stored in a random order, root
 //! first, and no check reads a slot as a position in the document.
 //!
-//! # Where this deviates from the design
+//! # Nonces and tokens
 //!
-//! Two deliberate deviations, recorded here so the plan can be read against
-//! the code:
-//!
-//! - **Nonces are random, not derived.** The design derives each entry's
-//!   AES-GCM nonce from its selector and ordinal. This module seals every
-//!   entry through the engine's one AEAD path (`vitaminc-encrypt`'s
-//!   `Aes256Cipher`, a fresh random 96-bit nonce per seal, carried in the
-//!   ciphertext), so there is one leaf cipher in the crate and no second
-//!   AES-GCM call site. Uniqueness under one document key is probabilistic
-//!   rather than structural: at `N` entries the collision probability is
-//!   `N² / 2^97`, negligible for any document. The AAD still binds the
-//!   entry to its slot, and its parent's AAD to its tag, so a moved or
-//!   reordered entry fails to open as the design requires. The cost is
-//!   twelve bytes per entry.
-//! - **Tokens chain by selector, and nothing stores a token.** The design
-//!   wraps each child's label-derived token under its parent's (`w`) and
-//!   stores the ordinal (`o`) so the server can find and unmask it. Here a
-//!   child's token is a hash of its parent's token and its own selector,
-//!   with its index for an array element, so the client derives any node's
-//!   token from the path and the server derives each child's as it walks,
-//!   and both fields go. The ordinals under a node are dense from zero, so
-//!   the walk needs no fan-out bound either: it probes until the first
-//!   miss. A wildcard names no one node, so the client expands it into
-//!   concrete paths up to a bound, with a probe past it
-//!   ([`JsonSubtreeKey`]).
+//! - **Nonces are random.** Every entry is sealed through the engine's one
+//!   AEAD path (`vitaminc-encrypt`'s `Aes256Cipher`, a fresh random 96-bit
+//!   nonce per seal, carried in the ciphertext), so there is one leaf
+//!   cipher in the crate. Uniqueness under one document key is
+//!   probabilistic rather than structural: at `N` entries the collision
+//!   probability is `N² / 2^97`, negligible for any document. The AAD binds
+//!   the entry to its slot, and its parent's AAD to its tag, so a moved or
+//!   reordered entry fails to open. The nonce costs twelve bytes per entry.
+//! - **Tokens chain by selector, and nothing stores a token.** A child's
+//!   token is a hash of its parent's token and its own selector, with its
+//!   index for an array element, so the client derives any node's token
+//!   from the path and the server derives each child's as it walks. The
+//!   ordinals under a node are dense from zero, so the walk needs no
+//!   fan-out bound: it probes until the first miss. A wildcard names no one
+//!   node, so the client expands it into concrete paths up to a bound, with
+//!   a probe past it ([`JsonSubtreeKey`]).
 //!
 //! # Byte encodings
 //!
@@ -116,6 +107,12 @@
 //! version, never an edit in place.
 
 // The design this module implements, and why: docs/plans/2026-10-17-json-tree-index.md.
+// The module departs from it in two places, on purpose. The plan derives each
+// entry's AES-GCM nonce from its selector and ordinal; here every entry is
+// sealed through the engine's one AEAD path with a random nonce, so there is
+// no second AES-GCM call site. The plan wraps each child's token under its
+// parent's (`w`) and stores the ordinal (`o`); here tokens chain by selector
+// and both fields go.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -282,9 +279,9 @@ impl Default for JsonOptions {
 ///
 /// The SQL reads the `iv` at offset 22 to compute parent tags, and the
 /// flags at offset 1 to know whether a walk may fall back to the sealed
-/// root; it parses nothing else. The epoch is reserved for bounding a revealed token
-/// in time (the design's "Epochs"); writing it now keeps that a new value
-/// rather than a new layout.
+/// root; it parses nothing else. The epoch is reserved for bounding a
+/// revealed token in time; writing it now keeps that a new value rather
+/// than a new layout.
 ///
 /// `Debug` ([`OpaqueDebug`]) prints the keyset and the layout, which say
 /// what a header is for, and masks the ZeroKMS `iv` and `tag`, which

@@ -165,8 +165,9 @@ fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
 /// with [`FieldPlan::field_type`](super::FieldPlan::field_type). One that
 /// skips it hands `Float64(34.0)` to a `uint64` field, derives a float term
 /// where the stored one is the `u64` term, and matches nothing, with no
-/// error. [`query_term`](super::query_term) does call it: a query named by
-/// operator reads its input as the field's kind.
+/// error. [`query_term`](super::query_term) does call it, for a non-null
+/// input to any operator but a document's: a query named by operator reads
+/// its input as the field's kind.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{read, ValueFrame, ValueKind};

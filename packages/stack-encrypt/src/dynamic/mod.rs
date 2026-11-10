@@ -699,7 +699,7 @@ reasons! {
         NullPassthrough => "null_passthrough", r#"a passthrough carries a null as it is, and takes no "null""#;
         /// A field with `"null": "sealed"` derives a term other than
         /// equality's, or names an EQL type that carries one: a null has an
-        /// equality term and no other (#1298), so its absence would show in
+        /// equality term and no other, so its absence would show in
         /// that term's column.
         SealedNullIndex => "sealed_null_index", r#"a null has an equality term and no other, so a field with another index takes "null": "sql""#;
         /// A field with `"null": "sealed"` declares no type, or one of no
