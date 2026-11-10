@@ -298,8 +298,8 @@ pub enum Error {
     #[diagnostic(code(stack_encrypt::unsupported_shape))]
     UnsupportedShape,
     /// A record carrying its context in storage (`#[stash(context_field)]`)
-    /// was opened with an [`ExpectedContext`](crate::target::ExpectedContext)
-    /// naming a different one. Refused before any key is retrieved.
+    /// was opened with an expected context that differs from the stored
+    /// one. Refused before any key is retrieved.
     ///
     /// `stored` is the stored context's descriptor, rendered as ZeroKMS
     /// would log it, for a caller in this process. The message gives only

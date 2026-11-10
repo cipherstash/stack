@@ -3,7 +3,7 @@
 mod common;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::transcode::{MapReader, Reader, SequenceReader, Transcode, Visitor};
-use stack_encrypt::target::{self, CallerContext, ExpectedContext};
+use stack_encrypt::target::{self, CallerContext};
 use stack_encrypt::{
     nonempty, CipherText, ContextPiece, DecryptField, DecryptInto, Decryptable, Decryption,
     Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, PassthroughFrame,
@@ -162,10 +162,7 @@ async fn canonical_ciphertext_opens_through_the_record() {
         hm: probe,
         v: 3,
     };
-    let opened: String = cipher
-        .decrypt_as(record, ExpectedContext::default())
-        .await
-        .unwrap();
+    let opened: String = cipher.decrypt_as(record, ().into()).await.unwrap();
     assert_eq!(
         opened, email,
         "a record assembled from canonical output opens under its stored identifier"

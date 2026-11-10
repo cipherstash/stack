@@ -873,7 +873,6 @@ async fn a_plaintext_record_field_may_be_a_record_with_declared_contexts() {
 mod the_plan_writes_what_the_derive_writes {
     use super::*;
     use stack_encrypt::plan::{pick, FieldValues};
-    use stack_encrypt::target::ExpectedContext;
     use stack_encrypt::{Label, Plan};
 
     fn account() -> Account {
@@ -1103,9 +1102,8 @@ mod the_plan_writes_what_the_derive_writes {
             .encrypt_as(&tenant_record().email, scope())
             .await
             .unwrap();
-        let other: ExpectedContext<Label> =
-            NonEmpty::from(Label::parse("tenants/globex/email").unwrap()).into();
-        let refused: Result<String, _> = cipher.decrypt_as(derived, other).await;
+        let other = NonEmpty::from(Label::parse("tenants/globex/email").unwrap());
+        let refused: Result<String, _> = cipher.decrypt_as(derived, other.into()).await;
         assert!(
             matches!(refused, Err(Error::ContextMismatch { .. })),
             "{refused:?}"

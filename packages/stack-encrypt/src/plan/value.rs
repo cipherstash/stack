@@ -193,8 +193,8 @@ impl<S> ValueStart<S> {
     /// is: what protects the record is that the target was sealed under it.
     /// When the record is opened
     /// ([`decryption_with_context`](ValuePlan::decryption_with_context)), the
-    /// stored context is checked first against the one the caller expects
-    /// ([`ExpectedContext`]): a mismatch is
+    /// stored context is checked first against the one the caller expects,
+    /// if the caller names one: a mismatch is
     /// [`Error::ContextMismatch`](crate::Error::ContextMismatch), before any
     /// key is requested.
     ///
@@ -319,13 +319,13 @@ impl<S, C, T> ValuePlan<S, Stored<C, T>> {
     }
 
     /// The opening of a stored `(C, T)`: the stored context checked against
-    /// `expected` (which [`ExpectedContext::default`] leaves unchecked beyond
-    /// being nonempty), before any key is requested, then `T` opened under
-    /// it through its own [`DecryptInto`].
+    /// `expected` (`None` leaves it unchecked beyond being nonempty), before
+    /// any key is requested, then `T` opened under it through its own
+    /// [`DecryptInto`].
     pub fn decryption_with_context<K: 'static>(
         &self,
         record: (C, T),
-        expected: ExpectedContext<C>,
+        expected: Option<NonEmpty<C>>,
     ) -> Decryption<S, K>
     where
         S: 'static,
@@ -334,6 +334,7 @@ impl<S, C, T> ValuePlan<S, Stored<C, T>> {
         C: MaybeEmpty + PartialEq + IntoContext<'static>,
     {
         let (stored, target) = record;
+        let expected = expected.map_or_else(ExpectedContext::default, ExpectedContext::from);
         match expected.validate(stored) {
             Ok(context) => target.decryption(context.into()),
             Err(error) => Decryption::failed(error),
