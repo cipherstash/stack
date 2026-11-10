@@ -47,14 +47,17 @@ describe('Protect Postgres v2 to Stack v3', () => {
     expect(await app.find('v2', 'age', 36)).toEqual(['ada', 'alan'])
     expect(await app.find('v2', 'email', 'ada@example.com')).toEqual(['ada'])
     expect(await app.find('v2', 'email', 'nobody@example.com')).toEqual([])
-    const before = await sql`SELECT * FROM ${sql(table)} ORDER BY pk`
+    const before =
+      await sql`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${sql(table)} ORDER BY pk`
     expect(before[0].email.v).toBe(2)
     await app.migrate()
     expect(await app.read('v3')).toEqual(app.corpus)
     expect(await app.find('v3', 'age', 36)).toEqual(['ada', 'alan'])
     expect(await app.find('v3', 'email', 'ada@example.com')).toEqual(['ada'])
     expect(await app.find('v3', 'email', 'nobody@example.com')).toEqual([])
-    const after = await sql`SELECT * FROM ${sql(table)} ORDER BY pk`
+    const after =
+      await sql`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes,
+      email_v3::jsonb AS email_v3, age_v3::jsonb AS age_v3, notes_v3::jsonb AS notes_v3 FROM ${sql(table)} ORDER BY pk`
     for (let i = 0; i < before.length; i++) {
       for (const column of ['email', 'age', 'notes']) {
         expect(after[i][column]).toEqual(before[i][column])
@@ -64,7 +67,9 @@ describe('Protect Postgres v2 to Stack v3', () => {
     }
     await app.rollback()
     expect(await app.read('v2')).toEqual(app.corpus)
-    expect(await sql`SELECT * FROM ${sql(table)} ORDER BY pk`).toEqual(before)
+    expect(
+      await sql`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${sql(table)} ORDER BY pk`,
+    ).toEqual(before)
   }, 120_000)
 
   it('reads and queries fresh Stack writes beside legacy rows and refuses stale rollback', async () => {
@@ -85,7 +90,7 @@ describe('Protect Postgres v2 to Stack v3', () => {
       FROM ${sql(table)}, generate_series(1, 5000) n WHERE pk = 'grace'`
     await sql`ANALYZE ${sql(table)}`
     const [ada] =
-      await sql`SELECT email_v3, age_v3 FROM ${sql(table)} WHERE pk = 'ada'`
+      await sql`SELECT email_v3::jsonb AS email_v3, age_v3::jsonb AS age_v3 FROM ${sql(table)} WHERE pk = 'ada'`
     const emailPlan =
       await sql`EXPLAIN (FORMAT JSON) SELECT pk FROM ${sql(table)}
       WHERE eql_v3.eq(email_v3, ${sql.json(ada.email_v3)}::jsonb::eql_v3.query_text_eq)`

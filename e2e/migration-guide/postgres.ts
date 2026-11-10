@@ -63,12 +63,17 @@ export async function createExample(sql: postgres.Sql, table: string) {
   }
 
   async function read(generation: 'v2' | 'v3') {
-    const rows = await sql`SELECT * FROM ${sql(table)} ORDER BY pk`
+    // Custom domain OIDs are not JSON parser OIDs in postgres.js. Project the
+    // base jsonb type explicitly instead of passing serialized text to the SDK.
+    const rows =
+      generation === 'v2'
+        ? await sql`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${sql(table)} ORDER BY pk`
+        : await sql`SELECT pk, email_v3::jsonb AS email, age_v3::jsonb AS age, notes_v3::jsonb AS notes FROM ${sql(table)} ORDER BY pk`
     return Promise.all(
       rows.map(async (row) => {
         const values = await Promise.all(
           columns.map(async (column) => {
-            const payload = row[generation === 'v3' ? `${column}_v3` : column]
+            const payload = row[column]
             return [
               column,
               ok(
@@ -178,7 +183,8 @@ export async function createExample(sql: postgres.Sql, table: string) {
           'Unsupported columns: expected pk and three EQL v2 columns',
         )
       await checkDependencies(tx, false)
-      const rows = await tx`SELECT * FROM ${tx(table)} ORDER BY pk`
+      const rows =
+        await tx`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${tx(table)} ORDER BY pk`
       if (rows.length === 0)
         throw new Error('Empty source: this example requires legacy records')
       for (const row of rows) {
@@ -252,7 +258,8 @@ export async function createExample(sql: postgres.Sql, table: string) {
       await tx`CREATE INDEX ${tx(`${table}_email_v3_idx`)} ON ${tx(table)} (eql_v3.eq_term(email_v3))`
       await tx`CREATE INDEX ${tx(`${table}_age_v3_idx`)} ON ${tx(table)} (eql_v3.eq_term(age_v3))`
       // Read through Stack before committing, so a wrong mapping rolls back DDL too.
-      const converted = await tx`SELECT * FROM ${tx(table)} ORDER BY pk`
+      const converted =
+        await tx`SELECT pk, email_v3::jsonb AS email_v3, age_v3::jsonb AS age_v3, notes_v3::jsonb AS notes_v3 FROM ${tx(table)} ORDER BY pk`
       for (let i = 0; i < rows.length; i++) {
         for (const column of columns) {
           const before = rows[i][column]
@@ -288,7 +295,9 @@ export async function createExample(sql: postgres.Sql, table: string) {
     await sql.begin(async (tx) => {
       await tx`LOCK TABLE ${tx(table)} IN ACCESS EXCLUSIVE MODE`
       await checkDependencies(tx, true)
-      const rows = await tx`SELECT * FROM ${tx(table)}`
+      const rows =
+        await tx`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes,
+        email_v3::jsonb AS email_v3, age_v3::jsonb AS age_v3, notes_v3::jsonb AS notes_v3 FROM ${tx(table)}`
       for (const row of rows) {
         for (const column of columns) {
           if (
