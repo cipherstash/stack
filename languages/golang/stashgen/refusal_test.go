@@ -386,8 +386,12 @@ func TestAnOrderIndexOnBytesIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if notices := strings.Join(file.Notices, "\n"); strings.Contains(notices, "no generated method queries") {
-		t.Errorf("an index every field can query got a notice:\n%s", notices)
+	// Every index here answers a query method, so no notice names a field.
+	notices := strings.Join(file.Notices, "\n")
+	for _, field := range []string{"User.Name", "User.Blob", "User.Score"} {
+		if strings.Contains(notices, field) {
+			t.Errorf("a field whose every index is queried got a notice (%s):\n%s", field, notices)
+		}
 	}
 	if !strings.Contains(string(file.Content), "func (f NameField) Lt(") {
 		t.Errorf("a text field with ope has no Lt:\n%s", file.Content)

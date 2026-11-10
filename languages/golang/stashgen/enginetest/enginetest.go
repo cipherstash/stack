@@ -199,9 +199,10 @@ func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[stri
 // answeredBy mirrors Op::answered_by in stack-encrypt: eq through an
 // equality index, matches through a match index, and the orderings through
 // the one order index the field declares (ORE, block ORE or OPE; check
-// refused a field with two), over an integer of 16 bits or wider, a float,
-// text, a decimal, a date or a timestamp; each only where the index applies
-// to the type.
+// refused a field with two); each only where the index applies to the type
+// (indexApplies). There is no second list of the types the orderings are
+// answered over: an index that applies answers its operators, as in the
+// engine.
 func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName) (stashgen.IndexName, bool) {
 	declared := func(want stashgen.IndexName) bool {
 		for _, idx := range indexes {
@@ -217,11 +218,6 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	case "matches":
 		return stashgen.IndexMatch, declared(stashgen.IndexMatch)
 	}
-	orderable := (integer(t) && !eightBit(t)) || logical(t) ||
-		t.Kind == stashgen.KindFloat || t.Kind == stashgen.KindString
-	if !orderable {
-		return "", false
-	}
 	for _, index := range []stashgen.IndexName{stashgen.IndexOre, stashgen.IndexOreBlock} {
 		if declared(index) {
 			return index, true
@@ -234,15 +230,6 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 func integer(t stashgen.GoType) bool {
 	switch t.Kind {
 	case stashgen.KindInt, stashgen.KindUint, stashgen.KindInt128, stashgen.KindUint128:
-		return true
-	}
-	return false
-}
-
-// logical reports whether the type is a decimal, a date or a timestamp.
-func logical(t stashgen.GoType) bool {
-	switch t.Kind {
-	case stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
 		return true
 	}
 	return false

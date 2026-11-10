@@ -13,9 +13,10 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 ### Breaking
 
 - **An order index on bytes is refused** (#1577). A `[]byte` field tagged
-  `index=ore`, `index=ope` or `index=ore_block` is now a field error from
-  `stashgen`, and a plan built by hand with one is refused by the guest
-  (`index_not_admitted`) before any key is requested. No ordering operator
+  `index=ore` or `index=ope` is now a field error from `stashgen`. A plan
+  built by hand with an `ore`, `ope` or `ore_block` output on a `bytes`
+  field is refused by the guest (`index_not_admitted`) before any key is
+  requested. No ordering operator
   is answered over bytes, so the field stored an order term that anyone
   who read the column could compare and that no query could use.
   `stashgen`'s notice for an index no generated method queries is gone

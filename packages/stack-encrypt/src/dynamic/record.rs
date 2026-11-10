@@ -414,8 +414,8 @@ impl FieldPlan {
     /// [`Error::Plan`] if the field asks for an index the kind is not
     /// defined for ([`admits`](super::admits)), with the reason [`not_admitted`] gives:
     /// [`Reason::IndexNotAdmitted`] for match on an integer, equality or an
-    /// order index on a boolean, an order index on an 8-bit integer, any
-    /// index on a composite.
+    /// order index on a boolean, an order index on an 8-bit integer or on
+    /// bytes, any index on a composite.
     pub fn with_type(mut self, field_type: ValueKind) -> Result<Self, Error> {
         for output in &self.outputs {
             if let Output::Term(index) = output {
