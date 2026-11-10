@@ -370,7 +370,7 @@ impl<V> QueryValue<V> for TakesAny {}
 ///
 /// A value of another type is refused at compile time. Since `V` is the one
 /// type the marker accepts, the compiler reports it as a mismatch of the
-/// value's owned form: "type mismatch resolving `<u64 as ToOwned>::Owned
+/// value's query form: "type mismatch resolving `<u64 as QueryInput>::Value
 /// == String`".
 pub struct Takes<V>(PhantomData<fn() -> V>);
 impl<V> value_sealed::Sealed<V> for Takes<V> {}
