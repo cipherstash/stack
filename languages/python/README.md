@@ -114,6 +114,8 @@ A field whose marker has an order index, such as `IntegerOrd`, supports `lt`, `l
 
 The errors are the same as for `eq`. A `TextEq` field, for example, does not support `gte`.
 
+There is no `between` yet. For a range, use `gte` and `lte` together: `WHERE level >= %s::eql_v4.query_integer_ord AND level <= %s::eql_v4.query_integer_ord`.
+
 ## Declare a SQLAlchemy relationship
 
 A SQLAlchemy relationship is not a column. Every annotated field needs a marker, so write a relationship in one of two ways:
