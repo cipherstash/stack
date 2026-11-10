@@ -11,7 +11,8 @@
 mod common;
 
 use eql_bindings::encryption::query::{MatchTwin, QueryLabelError};
-use eql_bindings::encryption::targets::{self as eql_targets, Target};
+use eql_bindings::encryption::targets::{self as eql_targets};
+use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::answers::ANSWERS;
 use eql_bindings::v4::plaintext::{Date, Decimal, Timestamp};
 use eql_bindings::v4::text::{TextEq, TextMatch, TextMatchQuery};
@@ -20,83 +21,15 @@ use eql_bindings::v4::{
 };
 use eql_bindings::Identifier;
 use serde::Serialize;
-use stack_encrypt::dynamic::{
-    self, record, FieldPlan, Op, Operand, TargetDescriptor, TargetError, TargetResolver, ValueFrame,
-};
+use stack_encrypt::dynamic::{self, record, FieldPlan, Op, Operand, TargetDescriptor, ValueFrame};
 use stack_encrypt::op::{self, Probabilistic, Stats};
-use stack_encrypt::{
-    ContextPiece, Encrypt, Error, KeysetCipher, Label, NonEmpty, Pending, Plan, StackCipher,
-};
+use stack_encrypt::{ContextPiece, Encrypt, Error, NonEmpty, Plan, StackCipher};
 
 type Cipher = StackCipher<common::Observed>;
 
 /// A Rust value as the engine's runtime plaintext: its frame.
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
     ValueFrame::of(value).unwrap()
-}
-
-/// eql-bindings' table as the engine's resolver, as the Go guest installs
-/// it (`languages/golang/encrypt/guest/src/targets.rs`).
-struct Eql;
-
-/// A table row as the engine's descriptor, with the match options of a type
-/// that carries a match index, as the guest describes it.
-fn describe(target: &Target) -> TargetDescriptor {
-    let descriptor = TargetDescriptor::new(
-        target.name,
-        target.family,
-        target.suffix,
-        target.plaintext_kind(),
-        target.sql_domain,
-        target.indexes.iter().map(|key| (*key).to_owned()).collect(),
-        target.query.map(str::to_owned),
-        target.query_sql_domain.map(str::to_owned),
-        target.producible,
-        target.reason.map(str::to_owned),
-    );
-    match target.match_options() {
-        Some(options) => descriptor.with_match_options(options),
-        None => descriptor,
-    }
-}
-
-fn convert(error: eql_targets::TargetError) -> TargetError {
-    TargetError::Other(Box::new(error))
-}
-
-impl TargetResolver for Eql {
-    fn targets(&self) -> Vec<TargetDescriptor> {
-        eql_targets::targets().iter().map(describe).collect()
-    }
-    fn encrypt<'a, K: 'static>(
-        &self,
-        name: &str,
-        options: Option<&dynamic::TargetOptions>,
-        keyset: &'a KeysetCipher<'_, K>,
-        label: &Label,
-        plaintext: ValueFrame,
-    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::encrypt_with(name, options, keyset, label, plaintext).map_err(convert)
-    }
-    fn decrypt<'a, K: 'static>(
-        &self,
-        name: &str,
-        cipher: &'a StackCipher<K>,
-        label: &Label,
-        stored: &[u8],
-    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
-        eql_targets::decrypt(name, cipher, label, stored).map_err(convert)
-    }
-    fn query<'a, K: 'static>(
-        &self,
-        name: &str,
-        index: &stack_encrypt::target::IndexSpec,
-        keyset: &'a KeysetCipher<'_, K>,
-        label: &Label,
-        plaintext: ValueFrame,
-    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::query(name, index, keyset, label, plaintext).map_err(convert)
-    }
 }
 
 /// A data plan with one field, `value`, under `users/<column>`, naming the
@@ -108,7 +41,7 @@ fn data_plan(name: &str, column: &str) -> record::Plan {
     ]))
     .unwrap();
     let field = FieldPlan::with_target("value", context, name).unwrap();
-    record::Plan::new_with(vec![field], &Eql).unwrap()
+    record::Plan::new_with(vec![field], &EqlTargets).unwrap()
 }
 
 /// The data path's term for the query, and the domain it is cast to.
@@ -126,7 +59,7 @@ async fn data_term(
         "value",
         operator,
         input,
-        &Eql,
+        &EqlTargets,
     )
     .unwrap()
     .await
@@ -296,7 +229,7 @@ fn the_typed_chain_answers_what_the_data_path_answers() {
         .iter()
         .filter(|t| t.plaintext != Some("json"))
     {
-        let data: Vec<&str> = describe(target)
+        let data: Vec<&str> = TargetDescriptor::from(target)
             .operators()
             .into_iter()
             .map(Op::name)
@@ -420,7 +353,15 @@ async fn a_typed_match_query_verifies_and_sizes_as_the_data_path_does() {
         let input = frame(needle);
 
         let page = ["Alice Smith", "alicia", "Bob", "malice", "ALICE", "al", ""];
-        let data = dynamic::verify(&plan, "value", Op::Matches, input.clone(), page, &Eql).unwrap();
+        let data = dynamic::verify(
+            &plan,
+            "value",
+            Op::Matches,
+            input.clone(),
+            page,
+            &EqlTargets,
+        )
+        .unwrap();
         let typed: Vec<bool> = page.iter().map(|v| query.verify(v)).collect();
         assert_eq!(typed, data, "{needle}");
         assert!(query.verify("Alice Smith"), "{needle}");
@@ -438,9 +379,16 @@ async fn a_typed_match_query_verifies_and_sizes_as_the_data_path_does() {
             Stats::declared(1_000_000),
         ] {
             for want in [0, 1, 10, 1_000] {
-                let data =
-                    dynamic::target_limit(&plan, "value", Op::Matches, &term, want, &stats, &Eql)
-                        .unwrap();
+                let data = dynamic::target_limit(
+                    &plan,
+                    "value",
+                    Op::Matches,
+                    &term,
+                    want,
+                    &stats,
+                    &EqlTargets,
+                )
+                .unwrap();
                 assert_eq!(query.target_limit(want, &stats), data, "{needle} {want}");
             }
         }
@@ -576,13 +524,13 @@ async fn a_record_stores_a_null_in_an_eql_field_as_its_plan_says() {
                 .unwrap()
                 .with_null(NullMode::Sql),
         ],
-        &Eql,
+        &EqlTargets,
     )
     .unwrap();
     let day = chrono::NaiveDate::from_ymd_opt(1990, 5, 17);
     let rows = |dob, born| BTreeMap::from([("a_dob", dob), ("b_born", born)]);
     let source = vec![rows(day, day), rows(None, None)];
-    let sealed = record::encrypt_with(&keyset, frame(&source), &plan, &Eql)
+    let sealed = record::encrypt_with(&keyset, frame(&source), &plan, &EqlTargets)
         .unwrap()
         .await
         .unwrap();
@@ -615,7 +563,7 @@ async fn a_record_stores_a_null_in_an_eql_field_as_its_plan_says() {
         "a sql null stores nothing"
     );
 
-    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &Eql)
+    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &EqlTargets)
         .unwrap()
         .await
         .unwrap();

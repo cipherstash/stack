@@ -2,11 +2,9 @@
 //! Encrypt's JSON index, the `element_match` operand derived through a data
 //! plan over eql-bindings' target table, and
 //! `eql_v4.json_tree_element_match` over the stored column. The resolver
-//! here ([`Eql`]) names the document's leaf, element-scoped and compiled
-//! predicate domains, so the engine answers `element_match` and `match`
-//! through it. The Go guest's resolver names the leaf domain alone (its
-//! `targets` tests pin that), so the Go SDK is not offered either operator
-//! until the Go side takes them.
+//! is eql-bindings' own ([`EqlTargets`]). It names the document's leaf,
+//! element-scoped and compiled predicate domains, so the engine answers
+//! `element_match` and `match` through it.
 //!
 //! These tests pin:
 //!
@@ -26,80 +24,9 @@
 use super::*;
 use stack_encrypt::AsProtectedRef as _;
 
-use eql_bindings::encryption::targets::{self as eql_targets, Target};
-use stack_encrypt::dynamic::{
-    self, record, Op, Operand, TargetDescriptor, TargetError, TargetResolver, ValueFrame,
-};
-use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
-
-/// eql-bindings' table as the engine's resolver, naming each type's leaf,
-/// element predicate and compiled predicate domains: a host that answers
-/// `element_match` and `match`. Not the Go guest's resolver, which names
-/// the leaf domain alone.
-pub(super) struct Eql;
-
-fn describe(target: &Target) -> TargetDescriptor {
-    let mut descriptor = TargetDescriptor::new(
-        target.name,
-        target.family,
-        target.suffix,
-        target.plaintext_kind(),
-        target.sql_domain,
-        target.indexes.iter().map(|key| (*key).to_owned()).collect(),
-        target.query.map(str::to_owned),
-        target.query_sql_domain.map(str::to_owned),
-        target.producible,
-        target.reason.map(str::to_owned),
-    );
-    if let Some(domain) = target.leaf_query_sql_domain() {
-        descriptor = descriptor.with_leaf_query_sql_domain(domain);
-    }
-    if let Some(domain) = target.elements_query_sql_domain() {
-        descriptor = descriptor.with_elements_query_sql_domain(domain);
-    }
-    if let Some(domain) = target.predicate_query_sql_domain() {
-        descriptor = descriptor.with_predicate_query_sql_domain(domain);
-    }
-    descriptor
-}
-
-impl TargetResolver for Eql {
-    fn targets(&self) -> Vec<TargetDescriptor> {
-        eql_targets::targets().iter().map(describe).collect()
-    }
-    fn encrypt<'a, K: 'static>(
-        &self,
-        name: &str,
-        options: Option<&dynamic::TargetOptions>,
-        keyset: &'a KeysetCipher<'_, K>,
-        label: &Label,
-        plaintext: ValueFrame,
-    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::encrypt_with(name, options, keyset, label, plaintext)
-            .map_err(|error| TargetError::Other(Box::new(error)))
-    }
-    fn decrypt<'a, K: 'static>(
-        &self,
-        name: &str,
-        cipher: &'a StackCipher<K>,
-        label: &Label,
-        stored: &[u8],
-    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
-        eql_targets::decrypt(name, cipher, label, stored)
-            .map_err(|error| TargetError::Other(Box::new(error)))
-    }
-    fn query<'a, K: 'static>(
-        &self,
-        name: &str,
-        index: &stack_encrypt::target::IndexSpec,
-        keyset: &'a KeysetCipher<'_, K>,
-        label: &Label,
-        plaintext: ValueFrame,
-    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::query(name, index, keyset, label, plaintext)
-            .map_err(|error| TargetError::Other(Box::new(error)))
-    }
-}
+use eql_bindings::encryption::EqlTargets;
+use stack_encrypt::dynamic::{self, record, Op, Operand, ValueFrame};
+use stack_encrypt::KeysetCipher;
 
 const RELATIONSHIP: &str = "$.extra.emergency_contacts[*].relationship";
 const CALLS: &str = "$.extra.emergency_contacts[*].previous_call_count";
@@ -127,7 +54,7 @@ fn contact_plan() -> record::Plan {
         dynamic::frame::serde::to_vec(&wire)
             .unwrap()
             .as_protected_ref(),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap()
 }
@@ -158,7 +85,7 @@ pub(super) fn derive(
             "profile",
             Op::parse(operator).unwrap(),
             frame_of(&input),
-            &Eql,
+            &EqlTargets,
         )
         .unwrap(),
     )
@@ -205,7 +132,7 @@ fn layout_plan(sealed: bool) -> record::Plan {
         dynamic::frame::serde::to_vec(&wire)
             .unwrap()
             .as_protected_ref(),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap()
 }
@@ -510,7 +437,7 @@ fn postgres_an_element_predicate_holds_of_one_element() {
                 {"member": "name", "op": "eq", "json": "\"x\""}
             ]}),
         ),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap_err();
     assert!(

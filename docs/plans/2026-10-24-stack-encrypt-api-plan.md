@@ -1521,7 +1521,8 @@ Base64.
 - **Done already.** The functions it calls exist in `eql-bindings`:
   `encrypt_with`, `decrypt`, and `query` in `v4::targets` and
   `encryption::targets`.
-- **Tracked in.** No issue.
+- **Tracked in.** #1571. Done: the resolver is
+  `eql_bindings::encryption::EqlTargets`.
 - **Finished when** the tests and the Go guest use the resolver from
   `eql-bindings`, and their own copies are deleted.
 
