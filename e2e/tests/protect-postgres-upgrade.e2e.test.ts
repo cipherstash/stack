@@ -45,11 +45,14 @@ describe('Protect Postgres v2 to Stack v3', () => {
   it('migrates actual v2 columns, preserves ciphertext and queries, and rolls back before writes resume', async () => {
     expect(await app.read('v2')).toEqual(app.corpus)
     expect(await app.find('v2', 'age', 36)).toEqual(['ada', 'alan'])
+    expect(await app.find('v2', 'email', 'ada@example.com')).toEqual(['ada'])
+    expect(await app.find('v2', 'email', 'nobody@example.com')).toEqual([])
     const before = await sql`SELECT * FROM ${sql(table)} ORDER BY pk`
     expect(before[0].email.v).toBe(2)
     await app.migrate()
     expect(await app.read('v3')).toEqual(app.corpus)
     expect(await app.find('v3', 'age', 36)).toEqual(['ada', 'alan'])
+    expect(await app.find('v3', 'email', 'ada@example.com')).toEqual(['ada'])
     expect(await app.find('v3', 'email', 'nobody@example.com')).toEqual([])
     const after = await sql`SELECT * FROM ${sql(table)} ORDER BY pk`
     for (let i = 0; i < before.length; i++) {
@@ -119,4 +122,31 @@ describe('Protect Postgres v2 to Stack v3', () => {
       await sql`DROP VIEW ${sql(`${table}_view`)}`
     }
   }, 120_000)
+
+  it.each(['constraint', 'index'])(
+    'refuses rollback that would discard a customer %s',
+    async (dependency) => {
+      await app.migrate()
+      if (dependency === 'constraint') {
+        await sql`ALTER TABLE ${sql(table)} ADD CONSTRAINT customer_check CHECK (email_v3 IS NOT NULL)`
+      } else {
+        await sql`CREATE INDEX ${sql(`${table}_custom`)} ON ${sql(table)} (eql_v3.eq_term(email_v3))`
+      }
+      const before = await sql`SELECT * FROM ${sql(table)} ORDER BY pk`
+      await expect(app.rollback()).rejects.toThrow(
+        'Unsupported table dependencies',
+      )
+      expect(await sql`SELECT * FROM ${sql(table)} ORDER BY pk`).toEqual(before)
+      if (dependency === 'constraint') {
+        expect(
+          await sql`SELECT 1 FROM pg_constraint WHERE conrelid = ${table}::regclass AND conname = 'customer_check'`,
+        ).toHaveLength(1)
+      } else {
+        expect(
+          await sql`SELECT 1 FROM pg_indexes WHERE tablename = ${table} AND indexname = ${`${table}_custom`}`,
+        ).toHaveLength(1)
+      }
+    },
+    120_000,
+  )
 })

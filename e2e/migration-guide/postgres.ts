@@ -133,6 +133,30 @@ export async function createExample(sql: postgres.Sql, table: string) {
     return rows.map((row) => row.pk)
   }
 
+  async function checkDependencies(
+    tx: postgres.TransactionSql,
+    allowTargetIndexes: boolean,
+  ) {
+    const dependencies = await tx`SELECT
+      EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = ${table}::regclass AND NOT tgisinternal)
+      OR EXISTS (SELECT 1 FROM pg_constraint WHERE (conrelid = ${table}::regclass OR confrelid = ${table}::regclass)
+        AND (contype <> 'p' OR conkey <> ARRAY[1]::smallint[]))
+      OR EXISTS (SELECT 1 FROM pg_index ix JOIN pg_class idx ON idx.oid = ix.indexrelid
+        WHERE indrelid = ${table}::regclass AND NOT indisprimary AND NOT (
+          ${allowTargetIndexes} AND NOT indisunique AND indpred IS NULL AND indnatts = 1
+          AND ((idx.relname = ${`${table}_email_v3_idx`} AND pg_get_indexdef(indexrelid, 1, true) = 'eql_v3.eq_term(email_v3)')
+            OR (idx.relname = ${`${table}_age_v3_idx`} AND pg_get_indexdef(indexrelid, 1, true) = 'eql_v3.eq_term(age_v3)'))))
+      OR EXISTS (SELECT 1 FROM pg_depend WHERE refobjid = ${table}::regclass AND classid = 'pg_rewrite'::regclass)
+      OR (SELECT relrowsecurity OR relispartition OR relkind <> 'r' FROM pg_class WHERE oid = ${table}::regclass)
+      OR EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = ${table}::regclass)
+      OR EXISTS (SELECT 1 FROM pg_inherits WHERE inhparent = ${table}::regclass OR inhrelid = ${table}::regclass)
+      AS unsupported`
+    if (dependencies[0].unsupported)
+      throw new Error(
+        'Unsupported table dependencies: review constraints, indexes, views, triggers, policies and inheritance first',
+      )
+  }
+
   async function migrate() {
     await sql.begin(async (tx) => {
       await tx`LOCK TABLE ${tx(table)} IN ACCESS EXCLUSIVE MODE`
@@ -153,18 +177,7 @@ export async function createExample(sql: postgres.Sql, table: string) {
         throw new Error(
           'Unsupported columns: expected pk and three EQL v2 columns',
         )
-      const dependencies = await tx`SELECT
-        EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = ${table}::regclass AND NOT tgisinternal)
-        OR EXISTS (SELECT 1 FROM pg_constraint WHERE (conrelid = ${table}::regclass OR confrelid = ${table}::regclass) AND contype <> 'p')
-        OR EXISTS (SELECT 1 FROM pg_index WHERE indrelid = ${table}::regclass AND NOT indisprimary)
-        OR EXISTS (SELECT 1 FROM pg_depend WHERE refobjid = ${table}::regclass AND classid = 'pg_rewrite'::regclass)
-        OR (SELECT relrowsecurity OR relispartition OR relkind <> 'r' FROM pg_class WHERE oid = ${table}::regclass)
-        OR EXISTS (SELECT 1 FROM pg_inherits WHERE inhparent = ${table}::regclass OR inhrelid = ${table}::regclass)
-        AS unsupported`
-      if (dependencies[0].unsupported)
-        throw new Error(
-          'Unsupported table dependencies: review constraints, indexes, views, triggers, policies and inheritance first',
-        )
+      await checkDependencies(tx, false)
       const rows = await tx`SELECT * FROM ${tx(table)} ORDER BY pk`
       if (rows.length === 0)
         throw new Error('Empty source: this example requires legacy records')
@@ -172,8 +185,7 @@ export async function createExample(sql: postgres.Sql, table: string) {
         for (const column of columns) {
           const payload = row[column]
           if (
-            !payload ||
-            payload.v !== 2 ||
+            payload?.v !== 2 ||
             payload.k !== 'ct' ||
             typeof payload.c !== 'string' ||
             payload.i?.t !== 'customers' ||
@@ -275,6 +287,7 @@ export async function createExample(sql: postgres.Sql, table: string) {
   async function rollback() {
     await sql.begin(async (tx) => {
       await tx`LOCK TABLE ${tx(table)} IN ACCESS EXCLUSIVE MODE`
+      await checkDependencies(tx, true)
       const rows = await tx`SELECT * FROM ${tx(table)}`
       for (const row of rows) {
         for (const column of columns) {
@@ -290,7 +303,8 @@ export async function createExample(sql: postgres.Sql, table: string) {
           }
         }
       }
-      // No CASCADE: dependent objects must be reviewed, never silently discarded.
+      // Preflight permits only our two derived indexes. PostgreSQL otherwise
+      // drops same-table constraints/indexes with a column even without CASCADE.
       await tx`ALTER TABLE ${tx(table)} DROP COLUMN email_v3, DROP COLUMN age_v3, DROP COLUMN notes_v3`
     })
   }

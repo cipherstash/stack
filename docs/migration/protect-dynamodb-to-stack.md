@@ -326,7 +326,7 @@ In rehearsal, test fresh Stack writes beside migrated rows, reads, lookups and u
 
 ### 5. Rollback boundary
 
-**Before writes resume**, switch the application back to its preserved Protect build and original columns. The example's rollback checks source/target ciphertext and terms still match, then drops only the target columns and their derived indexes, without `CASCADE`. Legacy reads remain available. Stop on any dependency error rather than dropping customer objects.
+**Before writes resume**, switch the application back to its preserved Protect build and original columns. The example's rollback checks source/target ciphertext and terms still match and refuses customer dependencies added since conversion, allowing only its own known target indexes. It then drops the target columns and their derived indexes without `CASCADE`. Legacy reads remain available. PostgreSQL can automatically drop same-table constraints and indexes with a column even without `CASCADE`, so dependency preflight is essential (`postgres-upgrade › refuses rollback that would discard a customer %s`). Stop on any dependency error rather than dropping customer objects.
 
 **After target-only writes resume**, the source columns are stale. Do not roll back by selecting or renaming them: new or updated data would be missing. Reconcile changes or restore through a separately rehearsed recovery procedure. The example rejects a fresh target-only row; it is not a general change journal and cannot prove that arbitrary application deletes or writes never occurred.
 
