@@ -40,10 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `PlanError::IndexOverlap` on the typed path and `overlapping_outputs`
   on the dynamic one, before any key is requested; two match indexes were
   already one index twice (`DuplicateIndex`). `(Equality, Ore)` answer
-  different operators and are allowed. The rule is a plan's: `indexed(..)`
-  and `encrypt_as` with two order indexes still run, since no plan holds
-  them and no query reads the second term. Each index
-  declares the operators it answers once (`Equality::OPERATORS`,
+  different operators and are allowed. The rule is a declaration's. A
+  record derived with `EncryptFrom` builds a plan, so a field of
+  `(OreTerm, OpeTerm)` on it is refused the same way. `indexed(..)` and a
+  hand-written `EncryptFrom` with two order indexes still run, since no
+  plan holds them and no query reads the second term. Each index declares the operators it answers once (`Equality::OPERATORS`,
   `Ore::OPERATORS`, …; `IndexSpec::operators` and `IndexSpec::answers`
   read them), and `Op::answered_by` has no priority between order indexes.
   A field that stored both order terms wrote the OPE one for nothing, and
