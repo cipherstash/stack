@@ -242,7 +242,7 @@ impl Descriptor {
     /// Text that renders verbatim: non-empty, and nothing another form
     /// begins with or contains — exactly what a [`Label`] segment may be.
     /// One definition serves both, so a label always renders verbatim.
-    fn is_plain(text: &str) -> bool {
+    pub(crate) fn is_plain(text: &str) -> bool {
         Label::check_segment(0, text).is_ok()
     }
 

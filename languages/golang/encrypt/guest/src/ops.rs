@@ -506,6 +506,21 @@ pub fn operators(plan: &Bytes, field: &[u8]) -> Result<Vec<u8>, u32> {
     )
 }
 
+/// The contexts the fields of a codec-encoded plan are sealed and indexed
+/// under, as text: one line per field, then one indented line with its
+/// context, with the plan's extension applied and a placeholder for a
+/// context read from a field of each record
+/// ([`Plan::contexts`](stack_encrypt::dynamic::record::Plan::contexts)).
+/// The same text a Rust record's `contexts()` prints for the same
+/// declaration, so a Go test can pin a record's contexts and a conformance
+/// case can compare the two. The answer is a codec-encoded string. A plan
+/// the engine refuses is [`STATUS_ENCODING`]. Needs no cipher.
+pub fn contexts(plan: &Bytes) -> Result<Vec<u8>, u32> {
+    let plan = parse_plan(plan)?;
+    let contexts = plan.contexts().map_err(|e| fail_error(&e))?;
+    encode_answer(&contexts.to_string())
+}
+
 // =============================================================================
 // Boundary validation
 // =============================================================================

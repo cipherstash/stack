@@ -28,7 +28,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     } else {
         value_derive(&input, &record, &derived)
     };
-    Ok(quote!(#emitted #decryptable))
+    let contexts = contexts_fn(&input, &record);
+    Ok(quote!(#emitted #decryptable #contexts))
 }
 
 /// The caller's input on the encrypt side. A record whose fields have their
@@ -85,6 +86,54 @@ fn participating(record: &Record) -> Vec<&Field> {
         .iter()
         .filter(|field| field.is_derived() || field.is_passthrough())
         .collect()
+}
+
+/// The name of a field as `contexts()` shows it: the identifier, or the
+/// index of a tuple field.
+fn field_name(field: &Field) -> String {
+    match &field.member {
+        syn::Member::Named(ident) => ident.to_string(),
+        syn::Member::Unnamed(index) => index.index.to_string(),
+    }
+}
+
+/// The inherent `contexts()` of a record: the contexts of its
+/// `EncryptTarget<S>` declaration, for the first plaintext type the record
+/// names, or for a generic plaintext when it names none.
+fn contexts_fn(input: &DeriveInput, record: &Record) -> TokenStream {
+    let krate = &record.krate;
+    let name = &input.ident;
+    let (sources, generic) = record.sources(parse_quote!(__S));
+    let source = &sources[0];
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let doc = format!(
+        "The contexts this record's fields are sealed and indexed under, with a placeholder for each part the caller supplies. No key is requested. Emitted by `#[derive(EncryptTarget)]`, so a record cannot define another method named `contexts`; see [`Contexts`]({}::Contexts).",
+        quote!(#krate)
+    );
+    // A record that names no plaintext is generic over it. Then the
+    // plaintext is a parameter of `contexts` itself, with the bounds the
+    // declaration needs.
+    let (params, bounds) = if generic {
+        (
+            quote!(<__S: #krate::target::Zeroize>),
+            quote! {
+                where
+                    Self: #krate::target::EncryptTarget<__S>,
+                    <Self as #krate::target::EncryptTarget<__S>>::ContextInput: #krate::SuppliedContext,
+            },
+        )
+    } else {
+        (quote!(), quote!())
+    };
+    quote! {
+        #[automatically_derived]
+        impl #impl_generics #name #ty_generics #where_clause {
+            #[doc = #doc]
+            pub fn contexts #params () -> #krate::Contexts #bounds {
+                <Self as #krate::target::EncryptTarget<#source>>::encryption::<'_, ()>().contexts()
+            }
+        }
+    }
 }
 
 /// `a.zip(b).zip(c)` over the local variables, and the pattern that binds each
@@ -148,10 +197,12 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
                     by_field: Some(ByField { from, context }),
                 } => {
                     let own = own_expr(krate, context);
+                    let name = field_name(field);
                     quote_spanned! {ty.span()=>
                         let #local = <#ty as #krate::target::EncryptTarget<_>>::encryption::<__K>()
                             .project(|__source: &#source| &__source.#from)
-                            .under(#own);
+                            .under(#own)
+                            .named(#name);
                     }
                 }
                 Kind::Passthrough { from } => quote_spanned! {ty.span()=>
@@ -181,9 +232,11 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
                     by_field: Some(ByField { context, .. }),
                 } => {
                     let own = own_expr(krate, context);
+                    let name = field_name(field);
                     quote_spanned! {ty.span()=>
                         let #local = <#ty as #krate::target::EncryptTarget<_>>::owned_encryption::<__K>()
-                            .under(#own);
+                            .under(#own)
+                            .named(#name);
                     }
                 }
                 Kind::Passthrough { .. } => quote_spanned! {ty.span()=>
@@ -370,9 +423,11 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
                         quote!(#threaded: ::core::convert::Into<<#ty as #krate::target::EncryptTarget<#source>>::ContextInput>),
                     ));
                 }
+                let name = field_name(field);
                 quote_spanned! {ty.span()=>
                     let #local = <#ty as #krate::target::EncryptTarget<#source>>::encryption::<__K>()
-                        .accepting::<#threaded>();
+                        .accepting::<#threaded>()
+                        .named(#name);
                 }
             })
             .collect();

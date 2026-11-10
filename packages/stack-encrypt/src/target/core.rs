@@ -58,9 +58,10 @@ pub(crate) fn encrypt_opaque<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
     if let Err(error) = descriptor.check() {
         return Pending::failed(cipher, error);
     }
+    let piece = context.clone().into_owned();
     let aad = context.into_aad().into_owned();
     match PendingStackCipherText::plan(source, aad) {
-        Ok(tree) => seal_pending(cipher, tree, descriptor),
+        Ok(tree) => seal_pending(cipher, tree, descriptor).under_context(piece),
         Err(error) => Pending::ready(cipher, Err(error)),
     }
 }
@@ -77,11 +78,13 @@ pub(crate) fn open_opaque<'a, 'c, P: Decrypt + Send + 'static, K, T: IntoContext
         return Pending::ready(cipher, Err(e));
     }
     let requests = retrieve_requests(&tree, &descriptor);
+    let piece = context.clone().into_owned();
     let aad = context.into_aad().into_owned();
     Pending::request(cipher, requests, move |responses| {
         let keyed = keyed_from_responses(tree, responses)?;
         open_keyed(keyed, aad)
     })
+    .under_context(piece)
 }
 pub(crate) fn seal_pending<'a, K>(
     cipher: &'a KeysetCipher<'_, K>,

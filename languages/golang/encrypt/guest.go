@@ -89,6 +89,7 @@ type instance struct {
 	jsonOpen                      api.Function
 	encryptRecord, decryptRecord  api.Function
 	planCheck, targets, operators api.Function
+	contexts                      api.Function
 	// The step loop (step.go): take a paused export's step, resume it with
 	// the responses, or abort it.
 	io, resume, abort api.Function
@@ -188,6 +189,7 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 		"se_plan_check":     &inst.planCheck,
 		"se_targets":        &inst.targets,
 		"se_operators":      &inst.operators,
+		"se_contexts":       &inst.contexts,
 		"se_io":             &inst.io,
 		"se_resume":         &inst.resume,
 		"se_abort":          &inst.abort,

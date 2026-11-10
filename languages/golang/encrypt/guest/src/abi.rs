@@ -723,6 +723,25 @@ pub unsafe extern "C" fn se_operators(
     })
 }
 
+/// The contexts a codec-encoded plan's fields are sealed and indexed under
+/// ([`ops::contexts`]): the plan in, a codec-encoded string out, one line
+/// per field and one indented line with its context. A plan the engine
+/// refuses is `STATUS_ENCODING`. Needs no cipher: it works in every
+/// instance state, as [`se_plan_check`] does.
+///
+/// # Safety
+///
+/// As for [`se_term`].
+#[no_mangle]
+pub unsafe extern "C" fn se_contexts(plan_ptr: *const u8, plan_len: u32) -> u64 {
+    export(|| {
+        // SAFETY: a host-owned range the export was handed; the borrow ends
+        // before it returns.
+        let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
+        ops::contexts(&plan)
+    })
+}
+
 /// The step a paused export left: its handle and the requests it waits on,
 /// as a packed buffer ([`crate::io`]), handed over once — the slot is
 /// emptied, so a second call returns zero, as does a call with no step

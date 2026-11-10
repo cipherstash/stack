@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -298,6 +299,20 @@ func (d Declaration) add(f field) Declaration {
 
 // Err is the declaration's mistake, if any.
 func (d Declaration) Err() error { return d.err }
+
+// Contexts asks the engine which contexts this declaration's fields are
+// sealed and indexed under, before any key is requested: one line per field,
+// then one indented line with its context, such as "email\n  context: users /
+// email\n". The text is [encrypt.Checker.Contexts]'s, and the same as a Rust
+// record's contexts() for the same declaration. A test pins it with
+// encrypttest.AssertContexts.
+func (d Declaration) Contexts(ctx context.Context, checker *encrypt.Checker) (string, error) {
+	plan, err := d.plan()
+	if err != nil {
+		return "", err
+	}
+	return checker.Contexts(ctx, plan)
+}
 
 // sealed reports whether a field has a ciphertext or a term.
 func (f field) sealed() bool {

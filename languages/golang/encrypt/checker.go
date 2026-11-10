@@ -115,6 +115,45 @@ func (k *Checker) Operators(ctx context.Context, plan *record.Plan, field string
 	return operators, nil
 }
 
+// Contexts shows the contexts the plan's fields are sealed and indexed
+// under, before any key is requested: one line per field, then one indented
+// line with its context, such as "email\n  context: users / email\n". A
+// context read from a field of each record shows as a placeholder. The text
+// is the engine's, and the same as a Rust record's contexts() for the same
+// declaration, so a test that pins it agrees with Rust. A plan the engine
+// refuses is [ErrEncoding]. For the contexts a cipher's extension adds, use
+// [Cipher.Contexts].
+func (k *Checker) Contexts(ctx context.Context, plan *record.Plan) (string, error) {
+	if err := plan.Validate(); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrEncoding, err)
+	}
+	return contextsOf(ctx, k.c, plan)
+}
+
+// contextsOf asks se_contexts about a lowered plan: the half of
+// [Checker.Contexts] and [Cipher.Contexts] that reaches the engine.
+func contextsOf(ctx context.Context, c *Client, plan *record.Plan) (string, error) {
+	encoded, err := vcffi.Marshal(plan.Wire())
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrEncoding, err)
+	}
+	out, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.contexts, buf(encoded))
+	})
+	if err != nil {
+		return "", err
+	}
+	decoded, err := vcffi.Unmarshal(out)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInternal, err)
+	}
+	text, ok := decoded.(string)
+	if !ok {
+		return "", fmt.Errorf("%w: se_contexts returned %T, not a string", ErrInternal, decoded)
+	}
+	return text, nil
+}
+
 // parseTargets reads se_targets's decoded value: {"targets": [entry, ...]},
 // each entry an object with exactly the keys record.Target documents. The
 // shape is a contract between eql-bindings' serialiser and this reader, so

@@ -35,6 +35,17 @@ where
         Self(context.into_context().into_owned())
     }
 }
+/// A borrowed context: a write and a query can share one `NonEmpty`
+/// without the caller moving it. The parts are cloned into the call, so
+/// `T` is `Clone`.
+impl<'c, T> From<&NonEmpty<T>> for CallerContext
+where
+    T: Clone + IntoContext<'c>,
+{
+    fn from(context: &NonEmpty<T>) -> Self {
+        Self::from(context.clone())
+    }
+}
 impl MaybeEmpty for CallerContext {
     fn is_empty(&self) -> bool {
         false
@@ -48,6 +59,10 @@ impl<'a> IntoContext<'a> for CallerContext {
 impl CallerContext {
     pub(crate) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         nonempty(self)
+    }
+    /// The parts of this context.
+    pub(crate) fn piece(&self) -> &ContextPiece<'static> {
+        &self.0
     }
     /// A caller context from a context part as a binding spelled it, with
     /// no emptiness proof: what a plan lowered from data extends a field's
@@ -85,6 +100,12 @@ impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for AeadContext {
         Self(value.into_context().into_owned())
     }
 }
+/// A borrowed context, as for [`CallerContext`].
+impl<'a, T: Clone + IntoContext<'a>> From<&NonEmpty<T>> for AeadContext {
+    fn from(value: &NonEmpty<T>) -> Self {
+        Self::from(value.clone())
+    }
+}
 impl From<CallerContext> for AeadContext {
     fn from(value: CallerContext) -> Self {
         Self(value.0)
@@ -103,6 +124,10 @@ impl<'a> IntoContext<'a> for AeadContext {
 impl AeadContext {
     pub(super) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         nonempty(self)
+    }
+    /// The parts of this context.
+    pub(crate) fn piece(&self) -> &ContextPiece<'static> {
+        &self.0
     }
     /// [`validated`](Self::validated), and also check that the descriptor
     /// of this context fits in a ZeroKMS request.
@@ -181,10 +206,22 @@ impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for DeclaredContext {
         Self(vec![value.into()])
     }
 }
+/// A borrowed context, as for [`CallerContext`].
+impl<'a, T: Clone + IntoContext<'a>> From<&NonEmpty<T>> for DeclaredContext {
+    fn from(value: &NonEmpty<T>) -> Self {
+        Self(vec![value.into()])
+    }
+}
 impl DeclaredContext {
     /// Whether any part extends the field's own context.
     pub(crate) fn is_extended(&self) -> bool {
         !self.0.is_empty()
+    }
+
+    /// The parts, in order, for [`Contexts`](crate::Contexts).
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn pieces(&self) -> Vec<ContextPiece<'static>> {
+        self.0.iter().map(|part| part.0.clone()).collect()
     }
 
     /// Extend by one more part, after any already given: the field's own
@@ -296,3 +333,31 @@ macro_rules! integer_contexts {
 // A bare integer is a context in its own right (see `CONTEXT.md`): it needs
 // no `NonEmpty` proof, so it converts directly.
 integer_contexts!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nonempty;
+
+    /// A borrowed `NonEmpty` converts to the same declared context as the
+    /// owned one, and extends the field's own context by it: the
+    /// conversion is not an empty declaration.
+    #[test]
+    fn a_borrowed_nonempty_is_the_same_declared_context_as_the_owned_one() {
+        let parts = NonEmpty::from(7u64).with("eu");
+        let own = || nonempty!("users").with("age");
+        let borrowed = DeclaredContext::from(&parts);
+        let owned = DeclaredContext::from(parts);
+        assert!(borrowed.is_extended());
+        assert_eq!(
+            borrowed.under(own()).into_context(),
+            owned.under(own()).into_context()
+        );
+        assert_ne!(
+            DeclaredContext::from(&parts).under(own()).into_context(),
+            DeclaredContext::default().under(own()).into_context()
+        );
+        let caller = CallerContext::from(&parts);
+        assert_eq!(caller.into_context(), parts.into_context());
+    }
+}

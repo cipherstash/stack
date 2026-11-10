@@ -71,6 +71,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A declaration and a call show the context they use, before any key is
+  requested** (#1568). `Encryption::contexts()` lists the context of each
+  field that is sealed or indexed, with a typed placeholder for each part
+  the caller supplies, such as `{context: u64}`. The derives emit
+  `contexts()` on every record, and `Plan::contexts()` shows a plan's. A
+  data plan's field that names an EQL type is shown under its label alone,
+  in plan order, since an EQL value takes no part from the caller.
+  `Pending::context()` lists the exact contexts a prepared call will use,
+  with the caller's values filled in. Both views show each part's type:
+  `7u64`, `7i64`, the text `7`, and the bytes `0x37` are four different
+  contexts. The views are built by the same combinators that build the key
+  descriptor and the AAD, so what a developer sees is what the engine uses.
+  The dynamic interface has the same view, `dynamic::record::Plan::contexts`.
+- **The `testing` feature adds `assert_context!`**, which pins the context
+  of a declaration or a call in a test. It names the first part that
+  differs. `assert_contexts!` pins each context a call uses, in order.
+  `stack_encrypt::testing` also has `required`, `optional`, `extension`,
+  `from_plaintext`, and `list`, which state the caller's parts and a
+  one-part list.
+- **A context can be passed by reference.** `CallerContext`, `AeadContext`,
+  and `DeclaredContext` convert from `&NonEmpty<T>`, so
+  `value.encrypt_into_with_context(&keyset, &column)` compiles for a target
+  that takes a `CallerContext`, and the column is still usable afterwards.
 - **A target can take its context from a field of the plaintext:
   `Encryption::context_from`** (#1586). Some values arrive together with the
   context they are stored under. For example, a value decrypted from an older
@@ -340,6 +363,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The context parameter of the cipher-directed methods is named
+  `context`, not `aad`** (#1568): `KeysetCipher::encrypt_tree`,
+  `KeysetCipher::decrypt_tree`, `StackCipher::decrypt`,
+  `PendingStackCipherText::plan`, `seal`, and `into_pending`. A positional
+  call does not change. The stored format does not change.
 - `vitaminc-aead-frame` is now always built, with its `serde` feature.
   Before, it was built only with the `dynamic` feature. The `dynamic`
   feature now adds no dependency.

@@ -112,6 +112,7 @@
 //! `AeadContext` is the AEAD half — through [`Encryption::accepting`]. A record
 //! gives a field a context of its own with [`Encryption::under`] or
 //! [`Encryption::extend`], and the caller's context then extends it.
+//! [`Encryption::contexts`] shows the result, before any key is requested.
 //!
 //! # Output adapters
 //!

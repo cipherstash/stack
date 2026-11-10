@@ -1761,7 +1761,11 @@ Decided on 7 November 2026.
 - **Done already.** `Descriptor` renders a context as text, and
   `ContextMismatch` reports the stored descriptor. Neither shows the
   types, and neither is reachable from a plan or a call.
-- **Tracked in.** No issue.
+- **Tracked in.** Issue #1568, with the two items below. Its first pull
+  request lands `contexts()`, `context()`, `assert_context!`, and the Go
+  `encrypttest` package for the declarations that exist today. The
+  scenarios that need `scope(..)` and `bind(..)` land with #1487, and the
+  field-marker form with #1486.
 - **Finished when** these are all true:
   - a test pins the output of `contexts()` for each of the [context
     scenarios](2026-10-24-stack-encrypt-context-examples.md);
@@ -1788,7 +1792,7 @@ not change the stored format. Renaming Vitamin C's `IntoAad` trait is a
 follow-up in Vitamin C. The Go SDK and the dynamic interface have no public
 parameter named `aad`.
 
-- **Tracked in.** No issue.
+- **Tracked in.** Issue #1568.
 
 #### Pass context by reference
 
@@ -1802,9 +1806,12 @@ parameter named `aad`.
   the old context path type that [Apply the naming
   review](#apply-the-naming-review) removes.
   The context inputs, such as `RequiredContext`, still need an owned value.
-- **Tracked in.** No issue.
+- **Tracked in.** Issue #1568. A stored EQL type still takes its
+  `NonEmpty<Identifier>` by value: Rust's orphan rule keeps
+  `From<&NonEmpty<T>>` for `NonEmpty<T>` out of this repository, so that
+  impl is a follow-up in Vitamin C.
 - **Finished when** the examples in this plan pass a context by reference,
-  with no clone, and compile.
+  without moving it, and compile. The parts are cloned into the call.
 
 #### Encrypt borrowed values
 
