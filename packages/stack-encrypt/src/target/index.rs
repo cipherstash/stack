@@ -354,9 +354,13 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
         matching()
     }
 }
+// Each order index is declared over `Ordered`, the trait its operators
+// need, and not over `Orderable`, which also covers bytes. An index stores
+// a term that reveals the order of the rows, so it is declared only for a
+// type an ordering operator is answered over.
 impl<S> Index<S> for Ore
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Term = OreTerm<S>;
     fn spec(&self) -> IndexSpec {
@@ -373,7 +377,7 @@ where
 }
 impl<S> Index<S> for Ope
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Term = OpeTerm<S>;
     fn spec(&self) -> IndexSpec {
@@ -390,7 +394,7 @@ where
 }
 impl<S> Index<S> for OreBlock
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Term = OreBlockTerm<S>;
     fn spec(&self) -> IndexSpec {
@@ -753,21 +757,21 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> TermSet<S> for MatchTerms<O> {
 }
 impl<S> TermSet<S> for OreTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Indexes = Ore;
     const INDEXES: Ore = Ore;
 }
 impl<S> TermSet<S> for OpeTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Indexes = Ope;
     const INDEXES: Ope = Ope;
 }
 impl<S> TermSet<S> for OreBlockTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Indexes = OreBlock;
     const INDEXES: OreBlock = OreBlock;

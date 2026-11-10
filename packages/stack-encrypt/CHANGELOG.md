@@ -89,6 +89,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **An order index on bytes does not compile** (#1577). `Ore`, `Ope` and
+  `OreBlock` are indexes over `op::Ordered`, the trait their operators
+  need. Until now they were indexes over `sem::Orderable`, which also
+  covers `Vec<u8>`. So a plan or a record could declare an order index on
+  bytes. Each row then stored a term that reveals its order, and no query
+  could use the term, because no ordering operator is answered over
+  bytes.
+  - These no longer compile: `.with::<Vec<u8>, _>(Ore)` on a plan, a
+    record field `Encrypted<OreTerm<Vec<u8>>>`, and `OreTerm<Vec<u8>>`,
+    `OpeTerm<Vec<u8>>` or `OreBlockTerm<Vec<u8>>` as a target.
+  - Remove the order index from the field. Its ciphertext and its
+    equality term are unchanged.
+  - The term functions `ore_term`, `ope_term` and `ore_block_term` on a
+    keyset, and the low-level operations `target::ore`, `ope` and
+    `ore_block`, still take bytes. They derive one term and declare no
+    index.
+  - The dynamic interface is unchanged. It still admits an order index on
+    bytes, so that rows the Go SDK stored stay readable.
+
 - **`CipherRef` replaces `target::CipherScope` and `dynamic::Scope`**
   (#1488). A `CipherRef` is one borrowed value: a connection, and the
   keyset it is confined to, if any. It is built from `&StackCipher`,

@@ -2155,6 +2155,12 @@ review. The rules are the query artifact's.
      generated from the `op` types. Each index declares its operators and admitted
      plaintexts once, and `index_for` reads them. Overlap is refused on
      both paths. A test shows the typed and dynamic faces agree.
+     An index admits exactly the plaintexts one of its operators
+     answers. The typed path enforces this with a trait bound, not a
+     test: each order index is declared over `op::Ordered`, the trait
+     its operators need, so an order index on bytes does not compile
+     (#1577). The dynamic path still admits an order index on bytes;
+     see the open question in #1577 about data that Go rc.3 stored.
   2. Derivation once, refusals once. The `sem` query functions, the
      analyzer in place of `MatchCase`, and `Match<Dynamic>` arrive.
      `check`, `verifier`, `admit`, `QueryToken`, `check_input`, and the

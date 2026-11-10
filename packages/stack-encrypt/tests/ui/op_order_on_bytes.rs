@@ -1,6 +1,7 @@
 //! The ordering operators are answered over the integer types, the floats and text.
-//! Bytes have no order key the ordering operators compare, so an ordering on
-//! a bytes plan does not compile, even where the plan declares an ORE index.
+//! Bytes have no order key the ordering operators compare. So a plan
+//! cannot declare an ORE index on bytes, and an ordering on a bytes plan
+//! does not compile.
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op;
 use stack_encrypt::{Ore, Plan, StackCipher};

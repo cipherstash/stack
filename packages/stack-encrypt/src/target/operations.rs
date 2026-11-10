@@ -1040,6 +1040,10 @@ term_operation!(
 term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.
     /// The bound is the leaf's own: it says which `S` has an order target.
+    /// This is the low-level operation. It declares no index, so it also
+    /// takes bytes, which no ordering operator is answered over. A plan or
+    /// a record declares an order index through [`Ore`](super::Ore), which
+    /// takes only the types a query can order.
     ore, crate::sem::OreTerm<S>, consume, [],
     [S: crate::sem::Orderable]
 );
@@ -1654,7 +1658,7 @@ impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
 }
 impl<S> EncryptFrom<S> for crate::sem::OreTerm<S>
 where
-    S: crate::sem::Orderable + Clone,
+    S: crate::op::Ordered + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -1669,7 +1673,7 @@ where
 }
 impl<S> EncryptFrom<S> for crate::sem::OpeTerm<S>
 where
-    S: crate::sem::Orderable + Clone,
+    S: crate::op::Ordered + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -1684,7 +1688,7 @@ where
 }
 impl<S> EncryptFrom<S> for crate::sem::OreBlockTerm<S>
 where
-    S: crate::sem::Orderable + Clone,
+    S: crate::op::Ordered + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -1762,7 +1766,7 @@ impl<S: AsRef<str> + zeroize::Zeroize, O: crate::sem::MatchConfig + 'static> Enc
 }
 macro_rules! owned_order_term {
     ($($ty:ident, $operation:ident;)+) => {$(
-        impl<S: crate::sem::Orderable + Clone + zeroize::Zeroize> EncryptTarget<S> for crate::sem::$ty<S> {
+        impl<S: crate::op::Ordered + Clone + zeroize::Zeroize> EncryptTarget<S> for crate::sem::$ty<S> {
             type ContextInput = RequiredContext<CallerContext>;
             fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
             where
