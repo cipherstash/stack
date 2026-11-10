@@ -143,11 +143,10 @@ Each runs in native Rust and Go WASI under `test:conformance`.
 | Native `a_stored_record_that_does_not_fit`, the read profile | `shape-*`, `authenticated-*`, `success-*` | Mutation vocabulary over real ciphertext |
 | Guest `test_frame` and `last_error` tests | `transport-*`, `leaf-*` | Plan-frame boundary cases, ABI status mapping |
 
-Unsupported combinations the corpora record rather than skip: the order
-index on `bytes` stores a term no operator reads; the typed chain refuses
-equality, order and block ORE value refusals only after its keyset loads,
-where the binding refuses before any; a repeated key in a stored record is
-a transport refusal in both decoders, and the engine's own `field_repeated`
+Unsupported combinations the corpora record rather than skip: the typed
+chain refuses equality, order and block ORE value refusals only after its
+keyset loads, where the binding refuses before any; a repeated key in a
+stored record is a transport refusal in both decoders, and the engine's own `field_repeated`
 and `repeated_key` guards are reached natively alone; the Go host refuses
 the zero `Date`, a decimal scale above 28, a timestamp outside the
 decoder's range and non-value Go types before the engine. `NaN` and
