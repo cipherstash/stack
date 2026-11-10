@@ -265,8 +265,10 @@ These are deliberate. Each one is documented where the caller meets it.
 ### What is not done yet
 
 - A caller's scope or row binding, declared on the record. See decision 3.
-- `ExpectedContext` stays public until the plan's `Planned` value replaces
-  it. A context passed on decrypt will then be checked the same way.
+- The plan's `Planned` value does not yet check a context passed on
+  decrypt the way `ExpectedContext` does. `ExpectedContext` is no longer
+  documented: the derives still emit it, and a caller passes a
+  `NonEmpty<T>` or nothing.
 - Configured targets, such as a JSON index with options, cannot be fields of
   an owned record yet. Their plaintext, `serde_json::Value`, does not
   implement `Zeroize`.

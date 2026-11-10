@@ -102,7 +102,7 @@ The plaintext type must implement `Zeroize`.
 ### The context a call takes
 
 Each kind of record decides whether the caller must pass a context, may
-pass one, or must not pass one. Its `ContextInput` type says which:
+pass one, or must not pass one. This table shows which:
 
 | Record | Encrypt input | Decrypt input | Example call |
 |---|---|---|---|

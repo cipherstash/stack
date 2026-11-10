@@ -15,9 +15,6 @@ help: the following other types implement trait `AllowsNoContext`
 ...
    | impl AllowsNoContext for DeclaredScopes {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
-...
-   | impl<T> AllowsNoContext for ExpectedContext<T> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
 note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into`
   --> src/target/conversion.rs
    |
@@ -46,9 +43,6 @@ help: the following other types implement trait `AllowsNoContext`
 ...
    | impl AllowsNoContext for DeclaredScopes {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
-...
-   | impl<T> AllowsNoContext for ExpectedContext<T> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
 note: required by a bound in `stack_encrypt::DecryptFrom::decrypt_from`
   --> src/target/conversion.rs
    |

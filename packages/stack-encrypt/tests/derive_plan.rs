@@ -20,7 +20,8 @@ use stack_encrypt::target::{
     Encryption, IndexSpec,
 };
 use stack_encrypt::{
-    nonempty, DecryptInto, EncryptFrom, Error, NonEmpty, Plan, PlanError, StackCipherText,
+    nonempty, DecryptInto, EmptyError, EncryptFrom, Error, NonEmpty, Plan, PlanError,
+    StackCipherText,
 };
 
 // --- A `plaintext = T` record ------------------------------------------------
@@ -745,7 +746,12 @@ async fn a_context_field_plan_refuses_an_empty_stored_context_before_any_request
     let refused = keyset
         .run_decryption(plan.decryption_with_context((String::new(), sealed), None))
         .await;
-    assert!(refused.is_err(), "{:?}", refused.ok());
+    // The empty-context refusal, not a mismatch: with no expected context
+    // there is nothing for the stored one to differ from.
+    assert!(
+        matches!(&refused, Err(Error::Other(error)) if error.is::<EmptyError>()),
+        "{refused:?}"
+    );
     assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
 }
 

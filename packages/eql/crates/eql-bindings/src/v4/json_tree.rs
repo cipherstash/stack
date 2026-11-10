@@ -514,8 +514,10 @@ impl EncryptFrom<Value> for JsonTreeDocument {
     }
 }
 
-/// Opens to the plaintext document, under the stored identifier, which an
-/// [`ExpectedContext`] may require to be the column the caller expects.
+/// Opens to the plaintext document, under the stored identifier. A caller
+/// that passes the column it expects, as a `NonEmpty<Identifier>`, has the
+/// stored identifier checked against it before any key is requested. A
+/// caller that passes nothing opens under the stored identifier unchecked.
 impl DecryptInto<Value> for JsonTreeDocument {
     type Context = ExpectedContext<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
