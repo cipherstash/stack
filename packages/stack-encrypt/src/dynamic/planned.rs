@@ -975,12 +975,13 @@ fn check_names(values: &FieldValues, names: &[String]) -> Result<(), crate::Erro
     Ok(())
 }
 
-/// The context a record's context field holds.
+/// The context a record's context field holds, read in place: each sealed
+/// field's closure reads it once per row, a parse of a short text, and
+/// copies nothing for it.
 fn context_of(values: &FieldValues, field: &str) -> Result<Label, crate::Error> {
     values
         .get::<ValueFrame>(field)
         .ok_or_else(|| field_type(field, type_name::<ValueFrame>()))?
-        .clone()
         .into_label()
         .map_err(|error| PlanError::ContextLabel(error).into())
 }

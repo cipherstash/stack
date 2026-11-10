@@ -406,8 +406,9 @@ impl PartialEq for ValueFrame {
 /// A text value read as a plan's context: what a data plan's
 /// `"context_field"` holds (`"tenants/acme"`), parsed as a Rust chain's
 /// `String` context field is ([`Label::parse`]). Anything else is
-/// [`LabelError::NotText`].
-impl IntoLabel for ValueFrame {
+/// [`LabelError::NotText`]. The frame is read in place: a record's context
+/// field is read once per sealed field, and nothing is copied for it.
+impl IntoLabel for &ValueFrame {
     fn into_label(self) -> Result<Label, LabelError> {
         self.visit(super::term::OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
@@ -416,6 +417,12 @@ impl IntoLabel for ValueFrame {
             },
         ))
         .unwrap_or(Err(LabelError::NotText))
+    }
+}
+
+impl IntoLabel for ValueFrame {
+    fn into_label(self) -> Result<Label, LabelError> {
+        (&self).into_label()
     }
 }
 
