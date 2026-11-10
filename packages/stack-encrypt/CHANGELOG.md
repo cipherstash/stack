@@ -99,14 +99,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - These no longer compile: `.with::<Vec<u8>, _>(Ore)` on a plan, a
     record field `Encrypted<OreTerm<Vec<u8>>>`, and `OreTerm<Vec<u8>>`,
     `OpeTerm<Vec<u8>>` or `OreBlockTerm<Vec<u8>>` as a target.
+  - The low-level operations `target::ore`, `target::ope` and
+    `target::ore_block` are bounded on `op::Ordered` too. An index or a
+    target of another crate is built from them, so it could otherwise
+    store an order term over bytes.
   - Remove the order index from the field. Its ciphertext and its
     equality term are unchanged.
-  - The term functions `ore_term`, `ope_term` and `ore_block_term` on a
-    keyset, and the low-level operations `target::ore`, `ope` and
-    `ore_block`, still take bytes. They derive one term and declare no
-    index.
+  - Rows stored before stay readable. A record that only opens
+    (`DecryptInto`, `DecryptSource`) can still name
+    `Encrypted<OreTerm<Vec<u8>>>`.
+  - The keyset's term functions `ore_term`, `ope_term` and
+    `ore_block_term` still take bytes. Each derives one term. It is not a
+    description, so no plan, record or target can be built from it.
   - The dynamic interface is unchanged. It still admits an order index on
-    bytes, so that rows the Go SDK stored stay readable.
+    bytes. How it should treat a declaration that Go rc.3 accepted is not
+    decided yet.
 
 - **`CipherRef` replaces `target::CipherScope` and `dynamic::Scope`**
   (#1488). A `CipherRef` is one borrowed value: a connection, and the

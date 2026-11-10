@@ -2157,8 +2157,9 @@ review. The rules are the query artifact's.
      both paths. A test shows the typed and dynamic faces agree.
      An index admits exactly the plaintexts one of its operators
      answers. The typed path enforces this with a trait bound, not a
-     test: each order index is declared over `op::Ordered`, the trait
-     its operators need, so an order index on bytes does not compile
+     test: each order index, and each low-level order operation an
+     index can be built from, is declared over `op::Ordered`, the trait
+     its operators need. So an order index on bytes does not compile
      (#1577). The dynamic path still admits an order index on bytes;
      see the open question in #1577 about data that Go rc.3 stored.
   2. Derivation once, refusals once. The `sem` query functions, the

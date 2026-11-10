@@ -1039,25 +1039,30 @@ term_operation!(
 );
 term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.
-    /// The bound is the leaf's own: it says which `S` has an order target.
-    /// This is the low-level operation. It declares no index, so it also
-    /// takes bytes, which no ordering operator is answered over. A plan or
-    /// a record declares an order index through [`Ore`](super::Ore), which
-    /// takes only the types a query can order.
+    ///
+    /// `S` is a type an ordering operator is answered over
+    /// ([`op::Ordered`](crate::op::Ordered)), as for the [`Ore`](super::Ore)
+    /// index. An index or a target of another crate is built from this
+    /// operation, so it takes no type that the index refuses. Bytes have an
+    /// order term but no ordering operator, so a term stored for them would
+    /// reveal the order of the rows and answer no query. The keyset's
+    /// [`ore_term`](crate::KeysetCipher::ore_term) still derives one term of
+    /// bytes, for tests of the term itself; it is not a description, so no
+    /// plan or target can be built from it.
     ore, crate::sem::OreTerm<S>, consume, [],
-    [S: crate::sem::Orderable]
+    [S: crate::op::Ordered]
 );
 term_operation!(
     /// The order-preserving term of `S` under the context the tree hands it,
     /// with the same bounds as [`ore`].
     ope, crate::sem::OpeTerm<S>, consume, [],
-    [S: crate::sem::Orderable]
+    [S: crate::op::Ordered]
 );
 term_operation!(
     /// The block ORE term of `S` under the context the tree hands it, with
     /// the same bounds as [`ore`].
     ore_block, crate::sem::OreBlockTerm<S>, consume, [],
-    [S: crate::sem::Orderable]
+    [S: crate::op::Ordered]
 );
 
 /// The JSON index's terms of a document under the context the tree hands

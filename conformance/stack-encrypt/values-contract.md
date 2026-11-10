@@ -102,9 +102,9 @@ This is a leak, not only a gap. Anyone who holds the stored rows can
 compare the order terms without a key. No query uses them.
 
 The typed Rust path had the same fault, and no longer has it. An order
-index is declared over `Ordered`, the trait its operators need, and
-`Vec<u8>` is not `Ordered`. So an order index on `bytes` does not compile
-there. The dynamic path, which both runners use, still admits it: data
+index, and each low-level order operation an index can be built from, is
+declared over `Ordered`, the trait its operators need, and `Vec<u8>` is
+not `Ordered`. So an order index on `bytes` does not compile there. The dynamic path, which both runners use, still admits it: data
 that Go rc.3 stored must stay readable, and how a declaration that rc.3
 accepted is handled is not decided yet. Until then, this entry keeps the
 behaviour visible.
