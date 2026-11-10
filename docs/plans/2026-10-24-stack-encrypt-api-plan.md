@@ -1758,7 +1758,7 @@ records only the work.
   the Go guest builds one from its keyset selector. A `Keyset` reference
   refuses a foreign leaf with `ForeignKeyset`. A `Cipher` reference opens leaves from any keyset the client has.
   Done, in the second pull request for #1488.
-- **Tracked in.** Issue #1488 is open. It is the chain removal. Issue #1120 is open. Pull request #1504 is open and adds the record pairs.
+- **Tracked in.** Issue #1488 is open. It is the chain removal. Issue #1120 is closed. Pull request #1504 is merged and added the record pairs.
 - **Finished when** these are all true:
   - the examples in [Target state](#target-state) compile;
   - the compile-fail cases in `tests/ui` cover a binding in a query, and

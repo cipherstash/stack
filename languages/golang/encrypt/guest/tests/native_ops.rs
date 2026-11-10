@@ -27,6 +27,7 @@ use stack_encrypt::{
 };
 use stack_encrypt::{Controlled, Protected};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
+use stack_encrypt_guest::options::{scope_for, KeysetSelector};
 use stack_encrypt_guest::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_TERM,
 };
@@ -1008,6 +1009,28 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
         Err(STATUS_FOREIGN_KEYSET)
     );
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), before);
+}
+
+/// Each opening selector names the reference a decrypt runs through:
+/// `{"any"}` the client, confined to no keyset, and every other selector
+/// the keyset it resolves to.
+#[test]
+fn each_opening_selector_names_its_keyset() {
+    let cipher = cipher();
+    let acme = keyset_named(&cipher, "acme").keyset_id();
+    let keyset_of =
+        |selector: KeysetSelector| block_on(scope_for(&cipher, &selector)).map(|r| r.keyset_id());
+
+    assert_eq!(keyset_of(KeysetSelector::Any), Ok(None));
+    assert_eq!(
+        keyset_of(KeysetSelector::Default),
+        Ok(Some(cipher.default_keyset().keyset_id()))
+    );
+    let name = zerokms_protocol::Name::try_from("acme")
+        .ok()
+        .expect("a valid name");
+    assert_eq!(keyset_of(KeysetSelector::Name(name)), Ok(Some(acme)));
+    assert_eq!(keyset_of(KeysetSelector::Id(acme)), Ok(Some(acme)));
 }
 
 /// Terms derive under the selected keyset's index key: the same probe

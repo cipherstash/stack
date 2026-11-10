@@ -243,6 +243,43 @@ async fn wrong_keyset_is_rejected_before_retrieval() {
     assert_eq!(retrieves.load(Ordering::SeqCst), 0);
 }
 
+/// An owned keyset handle confines a decrypt as a borrowed one does: a
+/// leaf from another keyset is refused before any key is retrieved, and
+/// its own leaf opens.
+#[tokio::test]
+async fn an_owned_keyset_confines_a_typed_decrypt() {
+    use std::sync::atomic::Ordering;
+    let (cipher, _, retrieves) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let other = cipher
+        .keyset(stack_encrypt::kms::IdentifiedBy::Uuid(uuid::Uuid::new_v4()))
+        .await
+        .unwrap();
+    let ct = keyset.encrypt(42i32).await.unwrap();
+    assert!(matches!(
+        i32::decrypt_from(ct, other).await,
+        Err(Error::ForeignKeyset { .. })
+    ));
+    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+
+    let ct = keyset.encrypt(42i32).await.unwrap();
+    assert_eq!(i32::decrypt_from(ct, keyset.clone()).await.unwrap(), 42);
+}
+
+/// A pending built through a keyset keeps the keyset's ID, not a borrow of
+/// the handle. So the handle can be a temporary value, and the pending can
+/// be stored and awaited after the handle is dropped.
+#[tokio::test]
+async fn a_pending_outlives_a_temporary_keyset_handle() {
+    let (cipher, _, _) = common::counting_cipher().await;
+    let ct = cipher.default_keyset().encrypt(42i32).await.unwrap();
+    // The borrow is the point of this test, so clippy's advice to pass the
+    // handle by value does not apply.
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    let pending = i32::decrypt_from(ct, &cipher.default_keyset());
+    assert_eq!(pending.await.unwrap(), 42);
+}
+
 // Deliberately not Clone: selecting a scalar field must not copy its owner.
 struct Tracked {
     value: String,

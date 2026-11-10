@@ -130,7 +130,6 @@ pub trait DecryptFrom: Zeroize + Sized + 'static {
         S: DecryptSource<Self>,
         S::ContextInput: AllowsNoContext,
     {
-        let cipher: CipherRef<'a, K> = cipher.into();
         source
             .decryption(S::ContextInput::omitted())
             .open_in(cipher)
@@ -146,7 +145,6 @@ pub trait DecryptFrom: Zeroize + Sized + 'static {
         S: DecryptSource<Self>,
         S::ContextInput: AcceptsContext,
     {
-        let cipher: CipherRef<'a, K> = cipher.into();
         source
             .decryption(S::ContextInput::supplied(context.into()))
             .open_in(cipher)

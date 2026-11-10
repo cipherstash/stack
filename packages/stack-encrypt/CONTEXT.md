@@ -373,8 +373,9 @@ What a `Pending` was built through, and therefore what it is allowed to do:
 a `KeysetCipher` scope mints under its keyset and opens leaves from no
 other; a `StackCipher` scope mints nothing and opens leaves from any keyset.
 `CipherRef` is the one borrowed value that carries the choice: a connection
-and an optional keyset ID, built from a reference to either cipher. The typed
-API and the dynamic interface both take it. Two pendings merge when their scopes agree on a keyset — which
+and an optional keyset ID. It is built from a reference to either cipher, or
+from an owned `KeysetCipher`. The typed API and the dynamic interface both
+take it. Two pendings merge when their scopes agree on a keyset — which
 cipher *value* each came from is not part of the rule.
 _Avoid_: binding (that is a name's), context (that is the AAD's), opener
 

@@ -2116,7 +2116,7 @@ pub fn decrypt_with<'a, K: 'static>(
     let rows = record_rows(record, plan)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
-    let (cipher, keyset) = (scope.cipher(), scope.keyset());
+    let (cipher, keyset) = (scope.cipher(), scope.keyset_id());
     let mut pendings = Vec::new();
     let mut targets = |row: StoredRow| -> Result<(Absent, FieldValues, usize), Error> {
         let fields = plan
@@ -5608,7 +5608,7 @@ mod tests {
         async fn debug_names_the_keyset_a_reference_is_confined_to() {
             let cipher = cipher().await;
             let any = format!("{:?}", CipherRef::from(&cipher));
-            assert!(any.contains("keyset: None"), "{any}");
+            assert!(any.contains("keyset_id: None"), "{any}");
             let keyset = cipher.default_keyset();
             let one = format!("{:?}", CipherRef::from(&keyset));
             assert!(one.contains(&format!("{:?}", keyset.keyset_id())), "{one}");

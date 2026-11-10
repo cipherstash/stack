@@ -90,10 +90,18 @@ pub struct Pending<'a, T, K> {
 /// What a [`Pending`] is built through: a borrowed connection, and the
 /// keyset it is confined to, if any.
 ///
-/// Build one from a reference to a [`StackCipher`] or to a
-/// [`KeysetCipher`]. Every entry point that runs through a cipher takes
-/// `impl Into<CipherRef>`, so a caller passes `&cipher` or `&keyset` and
-/// never names this type.
+/// Build one from a reference to a [`StackCipher`], or from a
+/// [`KeysetCipher`], borrowed or owned. The entry points that can run
+/// through either cipher take `impl Into<CipherRef>`. These are the decrypt
+/// entry points, such as [`DecryptFrom::decrypt_from`](super::DecryptFrom::decrypt_from)
+/// and `dynamic::record::decrypt`, and the [`Pending`] constructors. So a
+/// caller passes `&cipher` or `&keyset` and does not name this type. An
+/// entry point that encrypts needs a keyset to generate keys under, so it
+/// takes a [`KeysetCipher`] and not a `CipherRef`.
+///
+/// A `CipherRef` built from a [`KeysetCipher`] keeps the keyset's ID and
+/// the connection, not the handle. So it lives as long as the connection,
+/// even when the handle is a temporary value.
 ///
 /// - A reference to a [`StackCipher`] is confined to no keyset. It opens a
 ///   leaf sealed under any keyset the client can use. It cannot generate a
@@ -132,11 +140,6 @@ impl<'c, K> CipherRef<'c, K> {
         self.cipher
     }
 
-    /// The keyset the pending is confined to, if any.
-    pub(crate) fn keyset(&self) -> Option<Uuid> {
-        self.keyset
-    }
-
     /// The ID of the keyset this reference is confined to. `None` for a
     /// reference to a [`StackCipher`], which is confined to no keyset.
     pub fn keyset_id(&self) -> Option<Uuid> {
@@ -156,7 +159,7 @@ impl<K> Copy for CipherRef<'_, K> {}
 impl<K> std::fmt::Debug for CipherRef<'_, K> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CipherRef")
-            .field("keyset", &self.keyset)
+            .field("keyset_id", &self.keyset)
             .finish_non_exhaustive()
     }
 }
@@ -196,7 +199,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         match result {
             Ok(value) => Self {
                 cipher: scope.cipher(),
-                keyset: scope.keyset(),
+                keyset: scope.keyset_id(),
                 requests: Vec::new(),
                 failed: None,
                 contexts: Vec::new(),
@@ -224,7 +227,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         let scope: CipherRef<'a, K> = scope.into();
         Self {
             cipher: scope.cipher(),
-            keyset: scope.keyset(),
+            keyset: scope.keyset_id(),
             requests: Vec::new(),
             failed: Some(error),
             contexts: Vec::new(),
@@ -259,12 +262,12 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     {
         let scope: CipherRef<'a, K> = scope.into();
         let (generated, retrieved, keysets) = tally(&requests);
-        if let Err(error) = check_scope(scope.keyset(), &requests) {
+        if let Err(error) = check_scope(scope.keyset_id(), &requests) {
             return Self::failed(scope, error);
         }
         Self {
             cipher: scope.cipher(),
-            keyset: scope.keyset(),
+            keyset: scope.keyset_id(),
             requests,
             failed: None,
             contexts: Vec::new(),
@@ -466,7 +469,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         scope: impl Into<CipherRef<'a, K>>,
         items: Vec<Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K> {
-        let scope: CipherRef<'a, K> = scope.into();
         Self::collect(scope, items)
     }
 
@@ -507,14 +509,13 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// When an item fails or panics, `release` receives the items fulfilled
     /// before it. When every item succeeds, `release` is not called.
     fn collect_releasing(
-        scope: impl Into<CipherRef<'a, K>>,
+        scope: CipherRef<'a, K>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
         release: impl FnOnce(Vec<T>) + MaybeSend + 'a,
     ) -> Pending<'a, Vec<T>, K> {
-        let scope: CipherRef<'a, K> = scope.into();
         let items = items.into_iter();
         let cipher = scope.cipher();
-        let mut keyset = scope.keyset();
+        let mut keyset = scope.keyset_id();
         let mut requests = Vec::new();
         let mut contexts = Vec::new();
         let mut fulfils = Vec::with_capacity(items.size_hint().0);
@@ -916,7 +917,6 @@ mod tests {
         let owned = CipherRef::from(keyset.clone());
         for one in [borrowed, owned] {
             assert_eq!(one.keyset_id(), Some(keyset.keyset_id()));
-            assert_eq!(one.keyset(), one.keyset_id());
             assert!(std::ptr::eq(one.cipher(), &cipher));
         }
         // A pending keeps the keyset of the reference it was built through.
@@ -925,7 +925,7 @@ mod tests {
         let pending = Pending::ready(&cipher, Ok(()));
         assert_eq!(pending.keyset, None);
         let shown = format!("{any:?} {borrowed:?}");
-        assert!(shown.contains("keyset: None"), "{shown}");
+        assert!(shown.contains("keyset_id: None"), "{shown}");
         assert!(
             shown.contains(&format!("{:?}", keyset.keyset_id())),
             "{shown}"

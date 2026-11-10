@@ -1372,7 +1372,7 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             Opening::Failed(error) => return Pending::failed(scope, error),
             Opening::Open(open) => open(scope.cipher()),
         };
-        match scope.keyset() {
+        match scope.keyset_id() {
             Some(id) => pending.scoped_to(id),
             None => pending,
         }
@@ -1576,7 +1576,6 @@ pub trait LegacyDecryptFrom: Sized + 'static {
     where
         Self: DecryptInto<P>,
     {
-        let cipher: CipherRef<'a, K> = cipher.into();
         self.decryption(context.into()).open_in(cipher)
     }
     /// Recover `Self` from `source` with its default context — the plain
@@ -1590,7 +1589,6 @@ pub trait LegacyDecryptFrom: Sized + 'static {
         S: DecryptInto<Self> + 'static,
         S::Context: Default,
     {
-        let cipher: CipherRef<'a, K> = cipher.into();
         source.decrypt_into(cipher, S::Context::default())
     }
     /// Recover `Self` from `source` under `context`.
@@ -1602,7 +1600,6 @@ pub trait LegacyDecryptFrom: Sized + 'static {
     where
         S: DecryptInto<Self> + 'static,
     {
-        let cipher: CipherRef<'a, K> = cipher.into();
         source.decrypt_into(cipher, context.into())
     }
 }
