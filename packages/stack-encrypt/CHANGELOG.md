@@ -131,9 +131,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - To upgrade a type that implements only `EncryptFrom` or
     `DecryptInto`, call the cipher. The context is `T::Context`, so
     convert it with `into()`:
-    `keyset.encrypt_as(&value, context.into())`,
-    `keyset.encrypt_as(&value, Default::default())` for a record with no
-    caller context, and `cipher.decrypt_as(stored, context.into())`.
+
+    | Removed call | Replacement |
+    | --- | --- |
+    | `value.encrypt_into(&keyset)` | `keyset.encrypt_as(&value, Default::default())` |
+    | `value.encrypt_into_with_context(&keyset, context)` | `keyset.encrypt_as(&value, context.into())` |
+    | `Target::encrypt_from(&value, &keyset, context)` | `keyset.encrypt_as::<_, Target>(&value, context.into())` |
+    | `stored.decrypt_into(&cipher, context)` | `cipher.decrypt_as(stored, context.into())` |
+    | `P::decrypt_from(stored, &cipher)` | `cipher.decrypt_as::<P, _>(stored, Default::default())` |
+    | `P::decrypt_from_with_context(stored, &cipher, context)` | `cipher.decrypt_as::<P, _>(stored, context.into())` |
+
+    `encrypt_as` does not name the target, so name it with a type
+    annotation on the result or with the turbofish shown.
+  - If `value` is already a reference, pass it as it is:
+    `keyset.encrypt_as(value, ..)`. The removed methods took the value
+    through method-call autoref, so a `&String` receiver encrypted a
+    `String`. `encrypt_as(&value, ..)` on a `&String` encrypts a
+    `&String` instead. Into a derived record that is a compile error.
+    Into `StackCipherText` it compiles, because that target accepts any
+    `Encrypt` source.
 
 - **`target::ExpectedContext` is no longer part of the API** (#1488). It
   is the check that a `#[stash(context_field)]` record runs on decrypt:

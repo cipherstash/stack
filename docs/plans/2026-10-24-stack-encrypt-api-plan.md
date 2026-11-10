@@ -293,8 +293,8 @@ let email = Identifier::for_column("members", "email")?;
 let age = Identifier::for_column("members", "age")?;
 
 // Not on `next` yet: the new traits for EQL types, and a borrowed value
-// and context. Today this needs `keyset.encrypt_as(&value, context)`,
-// and an owned context.
+// and context. Today this needs `keyset.encrypt_as(&value, context)`
+// with an owned context.
 let by_email: TextEqQuery = "alice@example.com"
     .encrypt_into_with_context(&keyset, Scope::new(&email))
     .await?;
