@@ -51,7 +51,7 @@ pub enum InvalidEndpoint {
     /// CipherStash's own regional endpoints; anything else must be configured
     /// explicitly by the operator.
     #[error(
-        "the token's services claim may only name a CipherStash-hosted ZeroKMS endpoint (`https://<region>.<provider>.viturhosted.net/`)"
+        "the token's services claim may only name a CipherStash-hosted ZeroKMS endpoint (`https://<region>.<provider>.viturhosted.net/` or `https://<region>.<provider>.zerokms.cipherstashmanaged.net/`)"
     )]
     #[diagnostic(
         code(stack_kms::endpoint_not_hosted),
@@ -85,6 +85,24 @@ impl stack_auth::ErrorPayload for InvalidEndpoint {
             | Self::Mismatch => serde_json::Map::new(),
         }
     }
+}
+
+/// The domains CipherStash serves ZeroKMS from. A hosted ZeroKMS is
+/// `<region>.<provider>.<domain>`; `cts_common` knows only the first, so
+/// the list lives here.
+const HOSTED_ZEROKMS_DOMAINS: &[&str] = &["viturhosted.net", "zerokms.cipherstashmanaged.net"];
+
+/// Whether `host` is `<region>.<provider>.<domain>` for a hosted domain and a
+/// region CipherStash runs. `host` comes from a parsed [`Url`], so it is
+/// already lowercase and IDNA-normalised.
+fn is_hosted_zerokms(host: &str) -> bool {
+    HOSTED_ZEROKMS_DOMAINS.iter().any(|domain| {
+        host.strip_suffix(domain)
+            .and_then(|prefix| prefix.strip_suffix('.'))
+            // Exactly two labels: `<region>.<provider>`.
+            .filter(|region| region.matches('.').count() == 1)
+            .is_some_and(|region| cts_common::Region::new(region).is_ok())
+    })
 }
 
 /// A validated ZeroKMS base URL.
@@ -146,8 +164,9 @@ impl ZeroKmsEndpoint {
     /// claimed endpoint must be a CipherStash-hosted ZeroKMS:
     ///
     /// * scheme `https`, on the default port, at the root path
-    /// * host `<region>.<provider>.viturhosted.net`, for a region CipherStash
-    ///   runs (`cts_common::Region`) — the form CTS issues. A region newer
+    /// * host `<region>.<provider>.viturhosted.net` or
+    ///   `<region>.<provider>.zerokms.cipherstashmanaged.net`, for a region
+    ///   CipherStash runs (`cts_common::Region`) — the forms CTS issues. A region newer
     ///   than this build's `cts-common` is refused, as its workspace CRN
     ///   already is by stack-auth.
     ///
@@ -165,9 +184,7 @@ impl ZeroKmsEndpoint {
         let hosted = url.scheme() == "https"
             && url.port().is_none()
             && url.path() == "/"
-            && url.host_str().is_some_and(|host| {
-                cts_common::ZeroKmsServiceDiscovery::region_from_host_fqdn(host).is_ok()
-            });
+            && url.host_str().is_some_and(is_hosted_zerokms);
         if hosted {
             Ok(endpoint)
         } else {
@@ -380,11 +397,18 @@ mod tests {
         use super::*;
 
         #[test]
-        fn accepts_every_region_cipherstash_runs() {
-            for region in cts_common::Region::all() {
-                let s = format!("https://{}.viturhosted.net/", region.identifier());
-                assert_eq!(claimed(&s).map(|e| e.to_string()), Ok(s.clone()), "{s}");
+        fn accepts_every_region_cipherstash_runs_on_every_hosted_domain() {
+            for domain in HOSTED_ZEROKMS_DOMAINS {
+                for region in cts_common::Region::all() {
+                    let s = format!("https://{}.{domain}/", region.identifier());
+                    assert_eq!(claimed(&s).map(|e| e.to_string()), Ok(s.clone()), "{s}");
+                }
             }
+        }
+
+        #[test]
+        fn accepts_the_cipherstashmanaged_form() {
+            assert!(claimed("https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net/").is_ok());
         }
 
         #[test]
@@ -417,6 +441,13 @@ mod tests {
                 "https://us-east-1.aws.viturhosted.net.",
                 "https://us-east-1-aws.viturhosted.net/",
                 "https://xviturhosted.net/",
+                "https://zerokms.cipherstashmanaged.net/",
+                "https://aws.zerokms.cipherstashmanaged.net/",
+                "https://us-east-1.aws.cts.cipherstashmanaged.net/",
+                "https://us-east-1.aws.cipherstashmanaged.net/",
+                "https://evil.us-east-1.aws.zerokms.cipherstashmanaged.net/",
+                "https://us-east-1.aws.zerokms.cipherstashmanaged.net.evil.example/",
+                "https://us-east-1.aws.xzerokms.cipherstashmanaged.net/",
             ] {
                 assert!(
                     matches!(claimed(s), Err(InvalidEndpoint::NotHosted(_))),
@@ -434,6 +465,10 @@ mod tests {
             ));
             assert!(matches!(
                 claimed("https://us-east-1.gcp.viturhosted.net/"),
+                Err(InvalidEndpoint::NotHosted(_))
+            ));
+            assert!(matches!(
+                claimed("https://mars-north-1.aws.zerokms.cipherstashmanaged.net/"),
                 Err(InvalidEndpoint::NotHosted(_))
             ));
         }

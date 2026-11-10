@@ -753,7 +753,7 @@ mod tests {
         use std::sync::Mutex;
 
         const SYDNEY: &str = "https://ap-southeast-2.aws.viturhosted.net/";
-        const VIRGINIA: &str = "https://us-east-1.aws.viturhosted.net/";
+        const VIRGINIA: &str = "https://us-east-1.aws.zerokms.cipherstashmanaged.net/";
 
         /// An unsigned JWT naming `zerokms` — the shape a poisoned
         /// `TokenStore` can hand back, since nothing verifies the signature.

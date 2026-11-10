@@ -44,7 +44,7 @@ recipher = { workspace = true }
 # `http` feature rides on this crate's `http` feature rather than arriving by
 # default.
 stack-auth = { workspace = true }
-# `ZeroKmsServiceDiscovery`: which hosts a token's `services` claim may name.
+# `Region`: which regions a token's `services` claim may name a ZeroKMS in.
 cts-common = { workspace = true }
 zerokms-protocol = { workspace = true }
 
