@@ -44,9 +44,10 @@
 //! What it does not prove: the place in the document of the node at the top
 //! of a read. That node opens under its own selector and slot, and its label
 //! is inside its ciphertext, so the client knows it is a genuine node at the
-//! path asked for, but not which one when several share a selector (ADR
-//! 0010's allowances: another element's node at depth `0`, another row's
-//! entry, withheld rows).
+//! path asked for, but not which one when several share a selector. Three
+//! things stay outside the proof by design: another element's node at
+//! depth `0`, another row's entry unless the context names the row, and
+//! withheld rows.
 //!
 //! Nothing stored changes: the AAD is not stored, and the tag is already the
 //! last sixteen bytes of every ciphertext.

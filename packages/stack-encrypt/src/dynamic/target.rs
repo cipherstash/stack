@@ -2,12 +2,12 @@
 //!
 //! A data plan field may name an EQL type instead of its outputs
 //! (`{"target": "TextEq", "context": [...]}`; see [`record::plan`]). The
-//! engine knows no EQL type — `eql-bindings` depends on this crate, so this
-//! crate cannot depend on it — and ADR-0007 (amended 2026-10-06) puts the
-//! dispatch that resolves the name in the guest build that holds the EQL
-//! types. This module is the seam: a [`TargetResolver`] the host installs,
-//! which the lowering calls once per target field, and [`NoTargets`], the
-//! resolver of a build without EQL types, which refuses every name.
+//! engine knows no EQL type: `eql-bindings` depends on this crate, so this
+//! crate cannot depend on it. A host that has the EQL types resolves the
+//! name, as the Go guest's EQL build does. This module is the seam: a
+//! [`TargetResolver`] the host installs, which the lowering calls once per
+//! target field, and [`NoTargets`], the resolver of a build without EQL
+//! types, which refuses every name.
 //!
 //! The resolver runs the named type's own plan (its `EncryptFrom` /
 //! `DecryptInto`) and hands back the engine's [`Pending`], so a target field
@@ -28,7 +28,7 @@
 use std::fmt;
 
 use super::query::target_operators;
-use super::{OpSpec, ValueFrame, ValueKind};
+use super::{Op, ValueFrame, ValueKind};
 
 use crate::json::JsonOptions;
 use crate::sem::MatchOptions;
@@ -62,14 +62,14 @@ use crate::{KeysetCipher, Label, Pending, StackCipher};
 ///
 /// | key | value |
 /// |---|---|
-/// | `operator` | string: the operator's name, `eq` ([`OpSpec::name`]) |
+/// | `operator` | string: the operator's name, `eq` ([`Op::name`]) |
 /// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`](super::Fidelity::name)) |
 /// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
 /// | `index` | string: the key of the type's index that answers it, `eq` |
 ///
 /// The first ten keys are the row `eql-bindings` serializes for the type;
 /// `operators` is the engine's, computed from the row by the table every
-/// plan field is held to ([`OpSpec::answered_by`]), so a generator reads the
+/// plan field is held to ([`Op::answered_by`]), so a generator reads the
 /// operators from the engine it embeds rather than from a copy of the rules.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -241,10 +241,10 @@ impl TargetDescriptor {
     }
 
     /// The operators the engine answers for a field that names this type,
-    /// in [`OpSpec::ALL`]'s order: none for a type it does not produce or
+    /// in [`Op::ALL`]'s order: none for a type it does not produce or
     /// that has no query twin, and otherwise each operator of one value
     /// that one of the type's indexes answers for its plaintext kind
-    /// ([`OpSpec::answered_by`]): the exact ones, `matches` when the
+    /// ([`Op::answered_by`]): the exact ones, `matches` when the
     /// type's match options are known ([`with_match_options`](Self::with_match_options)),
     /// and a JSON operator when the type names the SQL type its operand
     /// binds as (`match` with
@@ -252,7 +252,7 @@ impl TargetDescriptor {
     /// The query for each is the type's query twin. `between` is not
     /// answered through a type yet: see [`query_term`](super::query_term)'s
     /// module.
-    pub fn operators(&self) -> Vec<OpSpec> {
+    pub fn operators(&self) -> Vec<Op> {
         target_operators(self)
             .into_iter()
             .map(|(op, _)| op)
@@ -623,7 +623,7 @@ pub trait TargetResolver {
     /// `index` is the type's index that answers the query's operator, one of
     /// the descriptor's [`indexes`](TargetDescriptor::indexes):
     /// [`query_term`](super::query_term()) passes the one
-    /// [`OpSpec::answered_by`] picks. A twin that carries every term of the
+    /// [`Op::answered_by`] picks. A twin that carries every term of the
     /// type may ignore it. A twin whose terms are optional (EQL v4's
     /// `TextSearchQuery`) carries that index's term alone, so a query whose
     /// operator needs one term is not refused for want of another: a match

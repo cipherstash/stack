@@ -16,10 +16,10 @@ import (
 )
 
 // Property tests of term ordering: random plaintexts, the terms the guest
-// stores for them through the generated Probe fields' Encrypt, comparison
-// in Go. A query method derives the same bytes, but only for the index
-// that answers its operator (ORE, where a field declares both), and only
-// over integers, floats and text, so the stored terms reach every index and kind. ORE is
+// stores for them through the generated Probe and ProbeOpe fields' Encrypt,
+// comparison in Go. A query method derives the same bytes, but only over
+// integers, floats and text, so the stored terms reach every index and
+// kind; a field declares one order index, so ORE and OPE are two records. ORE is
 // probabilistic — a wrong comparator or a wrong derivation still agrees
 // with plaintext order on many pairs — so a fixed vector set says little;
 // hundreds of random pairs per type say more. The index key is the
@@ -28,19 +28,28 @@ import (
 // termOf derives one ORE or OPE term for v.
 type termOf[T any] func(ctx context.Context, c *encrypt.Cipher, v T) ([]byte, error)
 
-// storedTerm is the ORE or OPE term a field's Encrypt stores for v, read
-// from its output E.
-func storedTerm[T, E any](seal func(context.Context, *encrypt.Cipher, T) (E, error), ope bool, ore, opeTerm func(E) []byte) termOf[T] {
+// storedTerm is the order term a field's Encrypt stores for v, read from
+// its output E: the ORE term of a Probe field, or the OPE term of the
+// ProbeOpe field of the same name.
+func storedTerm[T, E any](seal func(context.Context, *encrypt.Cipher, T) (E, error), term func(E) []byte) termOf[T] {
 	return func(ctx context.Context, c *encrypt.Cipher, v T) ([]byte, error) {
 		out, err := seal(ctx, c, v)
 		if err != nil {
 			return nil, err
 		}
-		if ope {
-			return opeTerm(out), nil
-		}
-		return ore(out), nil
+		return term(out), nil
 	}
+}
+
+// probeTerm picks the ORE or the OPE record's stored term for one field.
+func probeTerm[T, EO, EP any](ope bool,
+	oreSeal func(context.Context, *encrypt.Cipher, T) (EO, error), oreTerm func(EO) []byte,
+	opeSeal func(context.Context, *encrypt.Cipher, T) (EP, error), opeTerm func(EP) []byte,
+) termOf[T] {
+	if ope {
+		return storedTerm(opeSeal, opeTerm)
+	}
+	return storedTerm(oreSeal, oreTerm)
 }
 
 func compareTerms(ope bool, a, b []byte) int {
@@ -177,7 +186,7 @@ func inOrder(values []string) func(a, b string) int {
 func TestTermOrderIsPlaintextOrder(t *testing.T) {
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
-	f := testusers.ProbeFields
+	f, p := testusers.ProbeFields, testusers.ProbeOpeFields
 	byteOrder := func(a, b string) int { return bytes.Compare([]byte(a), []byte(b)) }
 	same := func(a, b string) int { return 0 }
 	for _, ope := range []bool{false, true} {
@@ -187,30 +196,30 @@ func TestTermOrderIsPlaintextOrder(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Run("uint32", func(t *testing.T) {
-				d := storedTerm(f.U32.Encrypt, ope,
-					func(e testusers.EncryptedProbeU32) []byte { return e.Ore },
-					func(e testusers.EncryptedProbeU32) []byte { return e.Ope })
+				d := probeTerm(ope,
+					f.U32.Encrypt, func(e testusers.EncryptedProbeU32) []byte { return e.Ore },
+					p.U32.Encrypt, func(e testusers.EncryptedProbeOpeU32) []byte { return e.Ope })
 				orderProperty(t, cipher, ope, d, cmp.Compare[uint32])
 				adjacentProperty(t, cipher, ope, d, []uint32{0, 1, 2, 255, 256, 257, 65535, 65536, 1<<31 - 1, 1 << 31, 1<<32 - 2, 1<<32 - 1}, cmp.Compare[uint32])
 			})
 			t.Run("uint64", func(t *testing.T) {
-				d := storedTerm(f.U64.Encrypt, ope,
-					func(e testusers.EncryptedProbeU64) []byte { return e.Ore },
-					func(e testusers.EncryptedProbeU64) []byte { return e.Ope })
+				d := probeTerm(ope,
+					f.U64.Encrypt, func(e testusers.EncryptedProbeU64) []byte { return e.Ore },
+					p.U64.Encrypt, func(e testusers.EncryptedProbeOpeU64) []byte { return e.Ope })
 				orderProperty(t, cipher, ope, d, cmp.Compare[uint64])
 				adjacentProperty(t, cipher, ope, d, []uint64{0, 1, 1<<32 - 1, 1 << 32, 1<<63 - 1, 1 << 63, 1<<64 - 1}, cmp.Compare[uint64])
 			})
 			t.Run("int64", func(t *testing.T) {
-				d := storedTerm(f.I64.Encrypt, ope,
-					func(e testusers.EncryptedProbeI64) []byte { return e.Ore },
-					func(e testusers.EncryptedProbeI64) []byte { return e.Ope })
+				d := probeTerm(ope,
+					f.I64.Encrypt, func(e testusers.EncryptedProbeI64) []byte { return e.Ore },
+					p.I64.Encrypt, func(e testusers.EncryptedProbeOpeI64) []byte { return e.Ope })
 				orderProperty(t, cipher, ope, d, cmp.Compare[int64])
 				adjacentProperty(t, cipher, ope, d, []int64{-1 << 63, -1<<63 + 1, -2, -1, 0, 1, 2, 1<<63 - 1}, cmp.Compare[int64])
 			})
 			t.Run("string", func(t *testing.T) {
-				d := storedTerm(f.S.Encrypt, ope,
-					func(e testusers.EncryptedProbeS) []byte { return e.Ore },
-					func(e testusers.EncryptedProbeS) []byte { return e.Ope })
+				d := probeTerm(ope,
+					f.S.Encrypt, func(e testusers.EncryptedProbeS) []byte { return e.Ore },
+					p.S.Encrypt, func(e testusers.EncryptedProbeOpeS) []byte { return e.Ope })
 				// Strings order by the UTF-8 bytes of their folded form; a
 				// prefix orders before its extensions. See foldedAlphabet.
 				orderProperty(t, cipher, ope, d, byteOrder, foldedString)
@@ -227,9 +236,9 @@ func TestTermOrderIsPlaintextOrder(t *testing.T) {
 				adjacentProperty(t, cipher, ope, d, names, inOrder(names))
 			})
 			t.Run("float64", func(t *testing.T) {
-				d := storedTerm(f.F64.Encrypt, ope,
-					func(e testusers.EncryptedProbeF64) []byte { return e.Ore },
-					func(e testusers.EncryptedProbeF64) []byte { return e.Ope })
+				d := probeTerm(ope,
+					f.F64.Encrypt, func(e testusers.EncryptedProbeF64) []byte { return e.Ore },
+					p.F64.Encrypt, func(e testusers.EncryptedProbeOpeF64) []byte { return e.Ope })
 				// Every bit pattern, so every exponent is drawn: testing/quick's
 				// default scales by MaxFloat64 and draws only huge values.
 				orderProperty(t, cipher, ope, d, floatOrder[float64], func(r *rand.Rand) float64 {
@@ -238,9 +247,9 @@ func TestTermOrderIsPlaintextOrder(t *testing.T) {
 				adjacentProperty(t, cipher, ope, d, floatValues(), floatOrder[float64])
 			})
 			t.Run("float32", func(t *testing.T) {
-				d := storedTerm(f.F32.Encrypt, ope,
-					func(e testusers.EncryptedProbeF32) []byte { return e.Ore },
-					func(e testusers.EncryptedProbeF32) []byte { return e.Ope })
+				d := probeTerm(ope,
+					f.F32.Encrypt, func(e testusers.EncryptedProbeF32) []byte { return e.Ore },
+					p.F32.Encrypt, func(e testusers.EncryptedProbeOpeF32) []byte { return e.Ope })
 				orderProperty(t, cipher, ope, d, floatOrder[float32], func(r *rand.Rand) float32 {
 					return math.Float32frombits(r.Uint32())
 				})
@@ -252,9 +261,9 @@ func TestTermOrderIsPlaintextOrder(t *testing.T) {
 				adjacentProperty(t, cipher, ope, d, values, floatOrder[float32])
 			})
 			t.Run("bytes", func(t *testing.T) {
-				d := storedTerm(f.B.Encrypt, ope,
-					func(e testusers.EncryptedProbeB) []byte { return e.Ore },
-					func(e testusers.EncryptedProbeB) []byte { return e.Ope })
+				d := probeTerm(ope,
+					f.B.Encrypt, func(e testusers.EncryptedProbeB) []byte { return e.Ore },
+					p.B.Encrypt, func(e testusers.EncryptedProbeOpeB) []byte { return e.Ope })
 				orderProperty(t, cipher, ope, d, bytes.Compare)
 				adjacentProperty(t, cipher, ope, d, [][]byte{{}, {0}, {0, 0}, {0, 1}, {1}, {255}, {255, 0}}, bytes.Compare)
 			})

@@ -19,8 +19,8 @@
 //! transport frame, in a buffer wiped when it drops. A record's source is
 //! walked once and split into one frame per field; a field is sealed and
 //! indexed by walking its frame into the encrypting sink and the term
-//! derivers; and a record opens straight into a frame (vitaminc ADR 0001: a
-//! value describes itself once, and sinks consume it). A binding's control
+//! derivers; and a record opens straight into a frame (a value describes
+//! itself once, and sinks consume it). A binding's control
 //! data (a plan, a context, query statistics) is read from its frame by
 //! serde (`vitaminc_aead_frame::serde`) into a typed message, with no tree
 //! built.
@@ -35,7 +35,7 @@
 //! * [`record`] — a fields plan spelled as data, *lowered* into the plan
 //!   builder ([`Plan`](crate::Plan)) and run by the engine: the same code a
 //!   Rust chain and the derive run, so a record written from any language
-//!   is the same bytes (ADR-0007). The one step that stays dynamic is
+//!   is the same bytes. The one step that stays dynamic is
 //!   dispatching a value whose type is known only at run time to the typed
 //!   term operation, which [`IndexSpec`]'s `Index` impls do.
 //! * [`read_json`] and [`json_frame`] — a `json` field's document, from
@@ -47,11 +47,10 @@
 //! * [`TermBytes`] — the term a field lowered from data derives, as its
 //!   frozen bytes. Such a field's plaintext is a [`ValueFrame`].
 //! * [`query_term`], [`verify`] and [`target_limit`] — a query named by
-//!   operator ([`OpSpec`]) on a plan field, and a probabilistic term's two
-//!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats)
-//!   (ADR-0009; ADR-0007, amended 2026-10-16), and [`field_operators`], the
-//!   operators a plan field answers, for a generator to ask before the
-//!   program runs.
+//!   operator ([`Op`]) on a plan field, and a probabilistic term's two
+//!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats),
+//!   and [`field_operators`], the operators a plan field answers, for a
+//!   generator to ask before the program runs.
 //! * [`Scope`] — which cipher an opening operation decrypts through.
 //!
 //! # What is not here
@@ -92,6 +91,7 @@ mod json;
 mod json_predicate;
 mod json_query;
 mod kind;
+pub mod planned;
 mod query;
 pub mod record;
 mod target;
@@ -108,9 +108,12 @@ pub use json::{json_frame, read_json, JsonPlaintext, JsonValueError};
 /// kind's names are frozen wire format; see [`admits`] and [`read`] for what
 /// a kind means to this engine.
 pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
+pub use planned::{DynamicQuery, FieldHandle, Planned, QueryPlan};
+#[allow(deprecated)]
+pub use query::OpSpec;
 pub use query::{
     check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
-    Fidelity, OpSpec, Operand, OperatorEntry, QueryTerm,
+    Fidelity, Op, Operand, OperatorEntry, QueryTerm,
 };
 pub use record::{FieldPlan, NullMode, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetOptions, TargetResolver};
@@ -542,6 +545,10 @@ reasons! {
         ContextNotUtf8 => "context_not_utf8", "a context string is not UTF-8";
         /// A context renders empty.
         EmptyContext => "empty_context", "the context renders empty";
+        /// A part of the plan's `"bind"` list is empty. A binding ties a row
+        /// to a context of its own, and an empty one would bind every row
+        /// to one context.
+        EmptyBinding => "empty_binding", "a binding is empty";
         /// A field's context is not a label of at least two plain segments,
         /// optionally extended by scalar parts.
         ContextNotLabel => "context_not_label", "the context is not a label of at least two plain segments, optionally extended";
@@ -574,6 +581,10 @@ reasons! {
         NoOutputs => "no_outputs", "no outputs";
         /// A field names one output, or one index, twice.
         DuplicateOutput => "duplicate_output", "an output is named twice";
+        /// Two outputs answer one operator: `ore` beside `ope`, or two match
+        /// indexes. A field declares at most one index per operator, as the
+        /// typed plan does (`PlanError::IndexOverlap`).
+        OverlappingOutputs => "overlapping_outputs", "two outputs answer one operator: a field declares at most one index per operator";
         /// A field names `"passthrough"` beside another output.
         PassthroughWithOutputs => "passthrough_with_outputs", r#""passthrough" beside another output"#;
         /// `"target"` is not a non-empty string, nor an object of a
@@ -609,6 +620,10 @@ reasons! {
         /// string passthrough, or the plan-level `"context_field"` key is not a
         /// string.
         ContextField => "context_field", r#"the context field is not a string passthrough, or "context_field" is not a string"#;
+        /// `"bind"` is reserved at the top level of a plan for the caller's
+        /// bindings, a list of scalar context parts: it is not a field name,
+        /// and its value is nothing else, so a grouped part is refused.
+        Bind => "bind", r#""bind" is reserved for the caller's bindings: not a field name, and its value is a list of scalar context parts"#;
         /// The plan builder refused the plan for a reason none of the above
         /// names.
         Refused => "refused", "the plan builder refused it";
@@ -640,10 +655,13 @@ reasons! {
         /// it has no context: the caller names the context, and sends the plan
         /// under it.
         QueryContextField => "query_context_field", "the plan takes its context from a field of each record, so a query has none";
-        /// An operator name is not one the engine knows ([`OpSpec::parse`]).
+        /// The plan carries a binding, which is not in the query context, so
+        /// a query cannot take it.
+        BindInQuery => "bind_in_query", "a query takes no binding: a binding is in the stored context only";
+        /// An operator name is not one the engine knows ([`Op::parse`]).
         UnknownOperator => "unknown_operator", "the operator is not one the engine knows";
         /// The field's type does not answer the operator: no index it declares
-        /// answers it, or the EQL type it names does not ([`OpSpec::answered_by`]).
+        /// answers it, or the EQL type it names does not ([`Op::answered_by`]).
         OperatorNotAnswered => "operator_not_answered", "the field's type does not answer the operator";
         /// A range's input is not a list of two values.
         NotARange => "not_a_range", "a range is not a list of two values";
@@ -657,7 +675,7 @@ reasons! {
         NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
         /// A JSON operator's input or a read's request or rows are not the
         /// object the operator takes ([`json_open`], the JSON operators of
-        /// [`OpSpec`]): a missing or unknown key, a value of another kind,
+        /// [`Op`]): a missing or unknown key, a value of another kind,
         /// a row that is not an entry, or more than one entry for a
         /// selector.
         JsonInput => "json_input", "the input is not the object the JSON operator takes";
@@ -681,7 +699,7 @@ reasons! {
         NullPassthrough => "null_passthrough", r#"a passthrough carries a null as it is, and takes no "null""#;
         /// A field with `"null": "sealed"` derives a term other than
         /// equality's, or names an EQL type that carries one: a null has an
-        /// equality term and no other (#1298), so its absence would show in
+        /// equality term and no other, so its absence would show in
         /// that term's column.
         SealedNullIndex => "sealed_null_index", r#"a null has an equality term and no other, so a field with another index takes "null": "sql""#;
         /// A field with `"null": "sealed"` declares no type, or one of no

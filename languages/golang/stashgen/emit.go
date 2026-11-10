@@ -817,13 +817,14 @@ func planQueries(f *genFile) error {
 //
 // It returns a notice for each index the engine answers no operator
 // through on the field: the index stores a term no generated method can
-// query. That is an ore or ope index on bytes (the engine stores it and
+// query. That is an ore or ope index on bytes: the engine stores it and
 // answers the orderings over integers, floats, text, decimals, dates and
-// timestamps only), or a second
-// order index beside the one the engine already answers the orderings
-// with. Storing it is allowed, since a program may compare the stored terms
-// itself, but an order term tells anyone who reads the column how its
-// values order, so the generator says so.
+// timestamps only. Storing it is allowed, since a program may compare the
+// stored terms itself, but an order term tells anyone who reads the column
+// how its values order, so the generator says so. A second order index
+// beside the first is no longer a notice: the engine refuses a field that
+// declares two indexes for one operator (overlapping_outputs), before any
+// code is written.
 func indexesAnswer(g *genField) ([]string, error) {
 	if g.Verb != VerbEncryptIndex && g.Verb != VerbIndex {
 		return nil, nil
@@ -845,11 +846,6 @@ func indexesAnswer(g *genField) ([]string, error) {
 		why := ""
 		if ix.Name == IndexOre || ix.Name == IndexOpe {
 			why = ": the orderings are answered over integers, floats, text, decimals, dates and timestamps only"
-			for _, other := range []IndexName{IndexOre, IndexOpe} {
-				if op, ok := answers[other]; ok && other != ix.Name {
-					why = fmt.Sprintf(": the %s index already answers %s and the other orderings", other, op)
-				}
-			}
 		}
 		notices = append(notices, fmt.Sprintf("stores %s terms that no generated method queries: the engine answers no query through the %s index on this field (%s)%s. Drop the index unless your own code compares the stored terms.", ix.Name, ix.Name, g.valueExpr, why))
 	}

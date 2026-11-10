@@ -174,6 +174,7 @@ mod tests {
                 index: "eq",
             },
             PlanError::EmptyIndexes => PlanError::EmptyIndexes,
+            PlanError::EmptyPart => PlanError::EmptyPart,
             PlanError::NotInPlan { .. } => PlanError::NotInPlan { field: field() },
             PlanError::NotInValue { .. } => PlanError::NotInValue { field: field() },
             PlanError::FieldType { .. } => PlanError::FieldType {
@@ -194,15 +195,18 @@ mod tests {
                     ..MatchOptions::default()
                 }),
             },
-            PlanError::MatchCase { .. } => PlanError::MatchCase {
-                declared: "CaseInsensitive",
-                folds: false,
+            PlanError::IndexOverlap { .. } => PlanError::IndexOverlap {
+                at: field(),
+                first: "ore",
+                second: "ope",
+                operator: crate::op::Op::Lt,
             },
             PlanError::TwoContextSources { .. } => PlanError::TwoContextSources {
                 first: "the plan",
                 second: "the call",
             },
             PlanError::NoContext => PlanError::NoContext,
+            PlanError::BindInQuery => PlanError::BindInQuery,
             PlanError::TargetWithVerbs { .. } => PlanError::TargetWithVerbs { field: field() },
         ]));
         #[cfg(feature = "dynamic")]

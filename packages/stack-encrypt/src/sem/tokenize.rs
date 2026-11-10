@@ -138,7 +138,7 @@ pub(crate) fn tokens(text: &str, options: &MatchOptions) -> Result<Tokens, Norma
 /// May return no tokens (empty text, separator-only text, or text shorter
 /// than the n-gram length that holds no short word). A stored value with
 /// none is the empty filter; a query with none is refused before a term
-/// exists, because its filter would match every row (ADR-0009).
+/// exists, because its filter would match every row.
 ///
 /// The tokenizer must be valid: an n-gram length of zero panics. Callers
 /// validate the [`MatchOptions`](super::MatchOptions) first.

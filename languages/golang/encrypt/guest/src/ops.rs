@@ -250,7 +250,7 @@ where
 /// The input is one value for every operator but `between`, whose input is
 /// a list of two, low then high, and a document's operators, whose input
 /// is an object of named inputs (`{"json"}`, `{"path", "json"}`, ...; see
-/// [`dynamic::OpSpec::input`]). A value is read as the field's declared
+/// [`dynamic::Op::input`]). A value is read as the field's declared
 /// kind first, so a host's float `34.0` queries a `uint64` field. A field
 /// with indexes derives the term of the index that answers the operator,
 /// as bytes; `between` derives one per bound, as a list of two. A field
@@ -390,18 +390,18 @@ fn parse_field<'f>(plan: &Bytes, field: &'f [u8]) -> Result<(dynamic::record::Pl
 }
 
 /// The plan, field name and operator a query names: [`parse_field`]'s two,
-/// and the operator one the engine knows ([`dynamic::OpSpec::parse`]); an
+/// and the operator one the engine knows ([`dynamic::Op::parse`]); an
 /// unknown operator is refused naming the field, as an operator the field
 /// does not answer is.
 fn parse_query<'f>(
     plan: &Bytes,
     field: &'f [u8],
     operator: &[u8],
-) -> Result<(dynamic::record::Plan, &'f str, dynamic::OpSpec), u32> {
+) -> Result<(dynamic::record::Plan, &'f str, dynamic::Op), u32> {
     let (plan, field) = parse_field(plan, field)?;
     let operator = std::str::from_utf8(operator)
         .ok()
-        .and_then(dynamic::OpSpec::parse)
+        .and_then(dynamic::Op::parse)
         .ok_or_else(|| {
             fail_dynamic(&dynamic::Error::Source {
                 field: Some(field.to_owned()),
@@ -504,6 +504,21 @@ pub fn operators(plan: &Bytes, field: &[u8]) -> Result<Vec<u8>, u32> {
             .map(|(operator, index)| dynamic::OperatorEntry::new(*operator, index))
             .collect::<Vec<_>>(),
     )
+}
+
+/// The contexts the fields of a codec-encoded plan are sealed and indexed
+/// under, as text: one line per field, then one indented line with its
+/// context, with the plan's extension applied and a placeholder for a
+/// context read from a field of each record
+/// ([`Plan::contexts`](stack_encrypt::dynamic::record::Plan::contexts)).
+/// The same text a Rust record's `contexts()` prints for the same
+/// declaration, so a Go test can pin a record's contexts and a conformance
+/// case can compare the two. The answer is a codec-encoded string. A plan
+/// the engine refuses is [`STATUS_ENCODING`]. Needs no cipher.
+pub fn contexts(plan: &Bytes) -> Result<Vec<u8>, u32> {
+    let plan = parse_plan(plan)?;
+    let contexts = plan.contexts().map_err(|e| fail_error(&e))?;
+    encode_answer(&contexts.to_string())
 }
 
 // =============================================================================
@@ -752,8 +767,8 @@ mod tests {
     #[test]
     fn an_encoded_answer_has_no_spare_capacity() {
         let entries = [
-            dynamic::OperatorEntry::new(dynamic::OpSpec::Eq, &IndexSpec::Equality),
-            dynamic::OperatorEntry::new(dynamic::OpSpec::Between, &IndexSpec::Ope),
+            dynamic::OperatorEntry::new(dynamic::Op::Eq, &IndexSpec::Equality),
+            dynamic::OperatorEntry::new(dynamic::Op::Between, &IndexSpec::Ope),
         ];
         for out in [
             encode_answer(&vec![true, false, true]),

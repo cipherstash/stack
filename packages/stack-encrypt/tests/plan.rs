@@ -1204,15 +1204,12 @@ async fn match_options_must_agree_for_a_query_to_be_declared() {
             }
         }
     }
-    impl stack_encrypt::op::MatchCase for Shingles {
-        type Case = op::CaseSensitive;
-    }
     let cipher = stack_cipher().await;
     let users_plan: Plan<User, FakeDataKeySource> = users_plan();
     let email_plan = users_plan.field("email").unwrap();
     let refused = plan_error(
         cipher
-            .query(op::Matches.case_sensitive(), "bob")
+            .query(op::Matches, "bob")
             .via(Match::<Shingles>::new())
             .on(&email_plan)
             .await,

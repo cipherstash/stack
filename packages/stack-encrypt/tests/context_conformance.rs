@@ -44,6 +44,9 @@ struct Vector {
     prf: String,
     ciphertext: String,
     equality: String,
+    /// `Plan::contexts()` of the data plan: what Rust and Go print for the
+    /// declaration, with the extension applied.
+    contexts: String,
 }
 /// The `record-contexts-v1` outputs of one producer, keyed by case ID.
 #[derive(Deserialize, Serialize)]
@@ -224,6 +227,7 @@ async fn shared_context_composition() {
             prf,
             ciphertext: hex(&ciphertext(fresh)),
             equality: hex(&term.to_bytes()),
+            contexts: plan.contexts().unwrap().to_string(),
         };
         let (recording, sent) = common::recording_cipher().await;
         record::encrypt(&recording.default_keyset(), source(&case), &plan)
@@ -250,7 +254,7 @@ async fn shared_context_composition() {
             &keyset,
             &query_plan,
             "text",
-            dynamic::OpSpec::Eq,
+            dynamic::Op::Eq,
             "hello",
             &dynamic::NoTargets,
         )
@@ -267,7 +271,7 @@ async fn shared_context_composition() {
                     &keyset,
                     &plan,
                     "text",
-                    dynamic::OpSpec::Eq,
+                    dynamic::Op::Eq,
                     "hello",
                     &dynamic::NoTargets
                 )
@@ -282,6 +286,7 @@ async fn shared_context_composition() {
         assert_eq!(vector.aad, expected.aad);
         assert_eq!(vector.prf, expected.prf);
         assert_eq!(vector.equality, expected.equality);
+        assert_eq!(vector.contexts, expected.contexts);
         let opened = record::decrypt(
             Scope::Keyset(keyset.clone()),
             stored(&case, expected),
@@ -379,16 +384,16 @@ fn grouped_extensions_preserve_their_shape() {
         .under(own());
     let grouped = DeclaredContext::from(NonEmpty::from(7u64).with("eu")).under(own());
     assert_eq!(
-        Descriptor::of(separate.clone()).as_str(),
+        Descriptor::of(separate.stored()).as_str(),
         "((users/age)/7u64)/eu"
     );
     assert_eq!(
-        Descriptor::of(grouped.clone()).as_str(),
+        Descriptor::of(grouped.stored()).as_str(),
         "(users/age)/(7u64/eu)"
     );
     assert_ne!(
-        separate.into_aad().as_bytes(),
-        grouped.into_aad().as_bytes()
+        separate.stored().into_aad().as_bytes(),
+        grouped.stored().into_aad().as_bytes()
     );
 }
 

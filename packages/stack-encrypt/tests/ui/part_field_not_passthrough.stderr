@@ -1,0 +1,5 @@
+error: `scope(field = "tenant")` names a part stored in the row, so the record needs a `#[stash(passthrough)]` field derived from the plaintext field `tenant`
+  --> tests/ui/part_field_not_passthrough.rs:16:55
+   |
+16 | #[stash(struct = User, scope = "users", scope(field = "tenant"))]
+   |                                                       ^^^^^^^^

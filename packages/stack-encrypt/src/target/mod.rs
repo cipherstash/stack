@@ -106,12 +106,13 @@
 //! instead declare `Context = ()`.
 //!
 //! Within one target, every operation runs under the one context the target is
-//! handed (ADR-0004): the context is a type parameter of [`Encryption`], zipped
+//! handed: the context is a type parameter of [`Encryption`], zipped
 //! subtrees must need the same one and receive the same value, and a ciphertext
 //! beside a term takes the term's `CallerContext` — of which its own
 //! `AeadContext` is the AEAD half — through [`Encryption::accepting`]. A record
 //! gives a field a context of its own with [`Encryption::under`] or
 //! [`Encryption::extend`], and the caller's context then extends it.
+//! [`Encryption::contexts`] shows the result, before any key is requested.
 //!
 //! # Output adapters
 //!
@@ -173,7 +174,7 @@ mod collections;
 mod context;
 mod conversion;
 pub(crate) mod core;
-mod index;
+pub(crate) mod index;
 mod input;
 mod operations;
 mod pending;
@@ -183,7 +184,10 @@ pub mod transcode;
 mod tuples;
 
 pub(crate) use self::core::{bind_pending, seal_pending};
-pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, Extends};
+pub use context::{
+    AeadContext, Bind, BindPart, CallerContext, CheckedInput, DeclaredContext, ExpectedContext,
+    Extends, NoBind, NoScope, Parts, Scope, ScopePart, StoredParts,
+};
 pub use index::{
     indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock,
     Select, TermSet, Whole,

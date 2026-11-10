@@ -1,7 +1,7 @@
 //! Emit the record's plan, and an `EncryptFrom` that runs it. The derive
 //! names plan verbs only; how fields are zipped, which context each is
 //! handed and how the outputs are reassembled is the plan's business, so a
-//! derived record and a hand-written plan cannot drift apart (ADR-0007).
+//! derived record and a hand-written plan cannot drift apart.
 use crate::shape::{fresh_lifetime, outputs, trait_impl, ByField, Field, Kind, OwnContext, Record};
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
@@ -70,6 +70,7 @@ fn struct_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Tok
                     Some(ByField {
                         from,
                         context: OwnContext { prefix: own, field: segment },
+                        ..
                     }),
             } = &field.kind
             else {

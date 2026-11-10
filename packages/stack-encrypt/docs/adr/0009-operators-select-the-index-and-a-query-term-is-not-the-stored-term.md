@@ -1,7 +1,7 @@
 ---
 status: proposed
 date: 2026-10-13
-amended: 2026-10-19
+amended: 2026-11-10
 supersedes: ADR-0004 (decision 5)
 extends: ADR-0003, ADR-0007
 ---
@@ -1211,3 +1211,65 @@ What does not translate is the compile error for an unsupported operator
 when the schema is only known at runtime. There the engine's refusal is the
 check, and nothing about the Rust model makes it fire earlier; only a
 generator does.
+
+## Amended 2026-11-10 (#1279, #1318, #1233)
+
+The query half is tidied. Three changes to decisions 1 and 2, and one rule
+the plan enforces.
+
+**Every operator is declared once.** The `op` module has one list of the
+operators, with each one's type, arity and wire name. The dynamic enum
+`Op` (`OpSpec` until now, which stays as a deprecated alias), each type's
+`Operator::OP`, and `Op::name` are generated from it. So `op::Eq`, `Op::Eq`
+and `"eq"` are three faces of one operator, and a test holds them together.
+Rust is the superset: an operator with no wire form, such as one defined in
+another crate, has `OP` of `None`. The wire names do not change.
+
+**`Matches` has no case parameter.** Decision 1 gave the text operators a
+case, `Matches<C = CaseInsensitive>`, and a match index answered the case
+its configuration fixed. The configuration is the only place case belongs:
+the stored filter and the query are both cut under its `downcase`, so they
+agree by the one declaration. `Matches` is a unit type, and `Case`,
+`CaseInsensitive`, `CaseSensitive`, `MatchCase` and `PlanError::MatchCase`
+are gone. A `MatchConfig` needs nothing more to be queried.
+
+**`Supports` has one method in place of three.** Decision 2's `check`,
+`verifier` and `admit` are one `prepare(&self, input) -> Result<Verifier,
+Error>`. A verifier can exist only for an input the index accepted, and the
+query chain calls it once, when the query is awaited and before any keyset
+is resolved, then keeps the verifier until the term is derived. A match
+query cuts its tokens once. `check_label` and `QueryToken` are unchanged.
+
+**The scalar refusals are written once.** What a scalar query is refused
+for before any term exists lives in `sem::query`, one function per index:
+match options the index cannot use, text that cuts no token, text an
+equality or order index cannot normalize, and block ORE text over its
+limit. The typed `prepare` impls and the dynamic path (`check_query`,
+`query_term`, `verify`) call the same functions, so neither has a copy of
+a rule. The JSON document operators' refusals (a path that does not parse,
+a container at a path, a path the field does not order) are still written
+for the typed index and for the dynamic path separately; they join when
+the dynamic path runs the typed derivation (the plan's step 4). A consequence for the
+typed chain: an equality or order query of text that cannot be normalized
+is refused before the keyset is resolved, as the dynamic path refused it
+already. The equality index reads a copy of the value for that check, so
+its plaintext is `Clone`. The shared conformance profile
+`record-query-refusals-v1` pins both paths at the same stage.
+
+**A field of a plan declares at most one index per operator.** `(Equality,
+Ore)` answer different operators and are allowed. `(Ore, Ope)` and `(Ore,
+OreBlock)` are refused when the plan is built, on both paths
+(`PlanError::IndexOverlap`, `overlapping_outputs`); two match indexes were
+already one index twice (`DuplicateIndex`). The rule is a plan's: the
+low-level `indexed(..)` operation and `encrypt_as` run any set of indexes,
+since no plan holds them and no query reads the second term. Each index
+declares the operators it answers once (`Equality::OPERATORS`,
+`Ore::OPERATORS`, …), and the dynamic lookup reads that declaration with
+no priority between indexes, since a plan never holds two that answer one
+operator. Before this, a field could store an ORE term and an OPE term and
+every query used the ORE one: the OPE term cost a write and told anyone
+who read the column how its values order, for nothing.
+
+The ADR-0004 decision 5 history above is unchanged. ADR-0007's rule, one
+executor and never a second, is nearer: the dynamic path still has its
+own term derivation, which the API plan's step 4 moves onto the typed one.

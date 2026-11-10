@@ -6,7 +6,7 @@ mod common;
 
 use common::{loads_counting_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::op::{self, Limit, MatchCase, Probabilistic, Stats};
+use stack_encrypt::op::{self, Limit, Probabilistic, Stats};
 use stack_encrypt::plan::{Field, FieldSchema, Fields, PlanError};
 use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms, OpeTerm, OreTerm, RangeQuery,
@@ -15,10 +15,10 @@ use stack_encrypt::sem::{
 use stack_encrypt::target::{
     CallerContext, ConsumeSource, EncryptFrom, Encrypted, Encryption, Index, IndexSpec,
 };
-use stack_encrypt::{Equality, Error, Label, Match, NonEmpty, Ope, Ore, Plan};
+use stack_encrypt::{Equality, Error, Label, Match, NonEmpty, Ope, Ore, OreBlock, Plan};
 
-/// A match configuration that keeps case, so its index answers only a
-/// case-sensitive `Matches`.
+/// A match configuration that keeps case: its index cuts stored text and
+/// queries as written, so `Nguyen` and `nguyen` are different tokens.
 struct Exact;
 impl MatchConfig for Exact {
     fn options() -> MatchOptions {
@@ -27,9 +27,6 @@ impl MatchConfig for Exact {
             ..Default::default()
         }
     }
-}
-impl MatchCase for Exact {
-    type Case = op::CaseSensitive;
 }
 
 /// A match configuration the index cannot use: an n-gram length of zero.
@@ -41,9 +38,6 @@ impl MatchConfig for ZeroGram {
             ..Default::default()
         }
     }
-}
-impl MatchCase for ZeroGram {
-    type Case = op::CaseInsensitive;
 }
 
 #[derive(Clone)]
@@ -166,7 +160,7 @@ async fn a_match_index_with_its_own_configuration_is_named_with_via() {
 
     let exact = |value: &'static str| {
         cipher
-            .query(op::Matches.case_sensitive(), value)
+            .query(op::Matches, value)
             .via(Match::<Exact>::new())
             .on(&name_plan)
     };
@@ -244,7 +238,7 @@ async fn a_one_value_plan_answers_from_its_indexes_by_type() {
         .await
         .unwrap();
     let query = cipher
-        .query(op::Matches.case_sensitive(), "Ali")
+        .query(op::Matches, "Ali")
         .via(Match::<Exact>::new())
         .on(&exact_plan)
         .await
@@ -291,7 +285,7 @@ async fn a_target_answers_an_operator_through_the_index_it_names() {
 }
 
 #[tokio::test]
-async fn a_target_with_several_terms_names_the_index_with_via() {
+async fn a_target_with_several_terms_answers_through_the_term_that_answers() {
     let cipher = stack_cipher().await;
     let plan = Plan::value::<String>()
         .context("users/email")
@@ -316,6 +310,16 @@ async fn a_target_with_several_terms_names_the_index_with_via() {
         .on(&plan)
         .await
         .unwrap();
+    assert!(stored.terms.1.matches(&matches));
+
+    // Each operator has one term that answers it, so `via` is optional.
+    let eq = cipher
+        .query(op::Eq, "bob@example.com")
+        .on(&plan)
+        .await
+        .unwrap();
+    assert_eq!(eq, stored.terms.0);
+    let matches = cipher.query(op::Matches, "bob").on(&plan).await.unwrap();
     assert!(stored.terms.1.matches(&matches));
 
     // An index the target does not declare is refused when awaited.
@@ -396,8 +400,8 @@ impl Index<String> for Labelled {
 impl op::Supports<op::Eq, String> for Labelled {
     type Query = LabelledTerm;
     type Verifier = ();
-    fn check(&self, value: &String) -> Result<(), Error> {
-        op::Supports::<op::Eq, String>::check(&Equality, value)
+    fn prepare(&self, value: &String) -> Result<(), Error> {
+        <Equality as op::Supports<op::Eq, String>>::prepare(&Equality, value)
     }
     fn check_label(&self, label: &Label, _: bool) -> Result<(), Error> {
         if label.segments().len() == 2 {
@@ -406,7 +410,6 @@ impl op::Supports<op::Eq, String> for Labelled {
             Err(Error::Other("not a column".into()))
         }
     }
-    fn verifier(&self, _: &String) {}
     fn query((): (), term: EqualityTerm, token: op::QueryToken) -> LabelledTerm {
         LabelledTerm {
             label: token.label().to_string(),
@@ -425,6 +428,90 @@ fn refused_as_not_a_column<T: std::fmt::Debug>(result: Result<T, Error>) {
         matches!(&result, Err(Error::Other(reason)) if reason.to_string() == "not a column"),
         "{result:?}"
     );
+}
+
+/// A target whose index refuses an extended context: what an EQL column
+/// is, stored under its table and column alone.
+struct Column;
+
+impl EncryptFrom<String> for Column {
+    type Context = NonEmpty<Label>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    where
+        String: 's,
+    {
+        <EqualityTerm as EncryptFrom<String>>::encryption()
+            .accepting::<NonEmpty<Label>>()
+            .map(|_| Column)
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Equality]
+    }
+}
+
+impl op::LabelledTarget for Column {}
+
+/// The equality index that refuses an extended context.
+#[derive(Default)]
+struct Unextendable;
+
+impl Index<String> for Unextendable {
+    type Term = EqualityTerm;
+    fn spec(&self) -> IndexSpec {
+        Index::<String>::spec(&Equality)
+    }
+    fn operation<'s, K: 'static, M: ConsumeSource<'s, String>>(
+        &self,
+    ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
+        Index::<String>::operation(&Equality)
+    }
+}
+
+impl op::Supports<op::Eq, String> for Unextendable {
+    type Query = EqualityTerm;
+    type Verifier = ();
+    fn prepare(&self, value: &String) -> Result<(), Error> {
+        <Equality as op::Supports<op::Eq, String>>::prepare(&Equality, value)
+    }
+    fn check_label(&self, _: &Label, extended: bool) -> Result<(), Error> {
+        if extended {
+            Err(Error::Other("no extension".into()))
+        } else {
+            Ok(())
+        }
+    }
+    fn query((): (), term: EqualityTerm, _: op::QueryToken) -> EqualityTerm {
+        term
+    }
+}
+
+impl op::Answers<op::Eq, String> for Column {
+    type Via = Unextendable;
+}
+
+/// A chain checked and then extended is checked again when it is prepared:
+/// the label check is about the context, which a later `.extend(..)`
+/// changes, so a kept verifier does not carry a stale acceptance.
+#[tokio::test]
+async fn a_chain_extended_after_its_check_is_checked_again() {
+    use stack_encrypt::plan::Operation;
+    let cipher = stack_cipher().await;
+    let plan = Plan::value::<String>()
+        .context("users/email")
+        .encrypt_into::<Column>()
+        .build()
+        .unwrap();
+    let mut query = cipher.query(op::Eq, "bob@example.com").on(&plan);
+    query.check().unwrap();
+    let refused = query.extend(7u64).await;
+    assert!(
+        matches!(&refused, Err(Error::Other(reason)) if reason.to_string() == "no extension"),
+        "{refused:?}"
+    );
+    // Unextended, the checked chain derives its term.
+    let mut query = cipher.query(op::Eq, "bob@example.com").on(&plan);
+    query.check().unwrap();
+    assert!(query.await.is_ok());
 }
 
 /// A `LabelledTarget` is queried through its plan though nothing can be
@@ -585,73 +672,34 @@ async fn a_query_chain_debugs_without_its_value() {
     assert_eq!(shown, "QueryOp { .. }");
 }
 
-/// A configuration whose `MatchCase` says it folds case while its options
-/// keep it: the type cannot see the options, so the query is refused.
-struct Mislabelled;
-impl MatchConfig for Mislabelled {
-    fn options() -> MatchOptions {
-        MatchOptions {
-            downcase: false,
-            ..Default::default()
-        }
-    }
-}
-impl MatchCase for Mislabelled {
-    type Case = op::CaseInsensitive;
-}
-
+/// A match index the field declares under other options is refused by
+/// the plan before the query's text is cut, and a plan with no context is
+/// refused before the index is looked at.
 #[tokio::test]
-async fn a_match_case_that_disagrees_with_its_options_is_refused() {
-    let cipher = stack_cipher().await;
-    let plan = Plan::context("users/name")
-        .with::<String, _>(Match::<Mislabelled>::new())
-        .build()
-        .unwrap();
-    let refused = plan_error(
-        cipher
-            .query(op::Matches, "Bob")
-            .via(Match::<Mislabelled>::new())
-            .on(&plan)
-            .await,
-    );
-    assert_eq!(
-        refused,
-        PlanError::MatchCase {
-            declared: "CaseInsensitive",
-            folds: false
-        }
-    );
-    assert_eq!(
-        refused.to_string(),
-        "a match configuration declares the case CaseInsensitive but its options keep case"
-    );
-}
-
-#[tokio::test]
-async fn an_undeclared_index_is_refused_before_its_case_is_checked() {
+async fn an_undeclared_index_is_refused_before_the_query_is_prepared() {
     let cipher = stack_cipher().await;
     let plan = people_plan();
     let refused = plan_error(
         cipher
             .query(op::Matches, "Bob")
-            .via(Match::<Mislabelled>::new())
+            .via(Match::<Exact>::new())
             .on(&plan.field("email").unwrap())
             .await,
     );
     assert!(
         matches!(refused, PlanError::IndexOptions { ref field, .. } if field == "email"),
-        "the plan's refusal comes first, not the case: {refused:?}"
+        "the plan's refusal: {refused:?}"
     );
 
     let no_context: Plan<Person, FakeDataKeySource> = Plan::fields()
         .encrypt::<String>("email")
-        .encrypt_index::<String>("name", Match::<Mislabelled>::new())
+        .encrypt_index::<String>("name", Match::<Exact>::new())
         .build()
         .unwrap();
     let refused = plan_error(
         cipher
             .query(op::Matches, "Bob")
-            .via(Match::<Mislabelled>::new())
+            .via(Match::<Exact>::new())
             .on(&no_context.field("name").unwrap())
             .await,
     );
@@ -751,9 +799,6 @@ impl MatchConfig for Tiny {
         }
     }
 }
-impl MatchCase for Tiny {
-    type Case = op::CaseInsensitive;
-}
 
 #[tokio::test]
 async fn verify_keeps_every_real_match_and_folds_case_as_the_index_does() {
@@ -773,7 +818,7 @@ async fn verify_keeps_every_real_match_and_folds_case_as_the_index_does() {
     assert!(query.clone().verify("bob@example.com"));
 
     let exact = cipher
-        .query(op::Matches.case_sensitive(), "Nguyen")
+        .query(op::Matches, "Nguyen")
         .via(Match::<Exact>::new())
         .on(&name_plan)
         .await
@@ -902,9 +947,6 @@ impl MatchConfig for Words {
         }
     }
 }
-impl MatchCase for Words {
-    type Case = op::CaseInsensitive;
-}
 
 /// A Bloom match asks for the query's tokens, in any order and anywhere;
 /// it is not a substring test, and `verify` must not become one, or it
@@ -959,9 +1001,6 @@ impl MatchConfig for Notes {
     fn expected_tokens() -> Option<u32> {
         Some(200)
     }
-}
-impl MatchCase for Notes {
-    type Case = op::CaseInsensitive;
 }
 
 #[tokio::test]
@@ -1122,7 +1161,7 @@ async fn a_match_query_with_no_tokens_is_refused_before_any_term_or_keyset() {
     }
     // Through `via`, under another configuration, and in a batch.
     let refused = cipher
-        .query(op::Matches.case_sensitive(), "Al")
+        .query(op::Matches, "Al")
         .via(Match::<Exact>::new())
         .on(&plan.field("name").unwrap())
         .await;
@@ -1190,15 +1229,16 @@ async fn a_match_query_under_invalid_options_is_refused_not_tokenised() {
 /// An ordering query sends the index's own term for the value: this
 /// crate's ORE is CLLW, whose ciphertext has no left half to send alone,
 /// so what is sent is what is stored, as for an HMAC. The ordering
-/// operators default to ORE; OPE is named with `via`.
+/// operators default to ORE; OPE is named with `via`, on a plan that
+/// declares it (a plan declares one order index).
 #[tokio::test]
 async fn an_ordering_query_is_the_index_term_of_the_value() {
     let cipher = stack_cipher().await;
     let plan = Plan::context("users/age")
-        .with::<u32, _>((Equality, Ore, Ope))
+        .with::<u32, _>((Equality, Ore))
         .build()
         .unwrap();
-    let stored: Encrypted<(EqualityTerm, OreTerm<u32>, OpeTerm<u32>)> =
+    let stored: Encrypted<(EqualityTerm, OreTerm<u32>)> =
         cipher.encrypt(&34u32).using(&plan).await.unwrap();
 
     let lt: OreTerm<u32> = cipher.query(op::Lt, &34u32).on(&plan).await.unwrap();
@@ -1215,17 +1255,23 @@ async fn an_ordering_query_is_the_index_term_of_the_value() {
         "ORE terms order as the values"
     );
 
+    let ope_plan = Plan::context("users/age")
+        .with::<u32, _>((Equality, Ope))
+        .build()
+        .unwrap();
+    let stored_ope: Encrypted<(EqualityTerm, OpeTerm<u32>)> =
+        cipher.encrypt(&34u32).using(&ope_plan).await.unwrap();
     let ope: OpeTerm<u32> = cipher
         .query(op::Gte, &34u32)
         .via(Ope)
-        .on(&plan)
+        .on(&ope_plan)
         .await
         .unwrap();
-    assert_eq!(ope, stored.terms.2, "OPE is named with via");
+    assert_eq!(ope, stored_ope.terms.1, "OPE is named with via");
     let ope_above = cipher
         .query(op::Gt, &35u32)
         .via(Ope)
-        .on(&plan)
+        .on(&ope_plan)
         .await
         .unwrap();
     assert!(
@@ -1242,6 +1288,44 @@ async fn an_ordering_query_is_the_index_term_of_the_value() {
     let stored = cipher.encrypt(&5u32).using(&typed).await.unwrap();
     let query = cipher.query(op::Lte, &5u32).on(&typed).await.unwrap();
     assert_eq!(query, stored.terms);
+}
+
+/// A field declares at most one index per operator (#1233): `(Ore, Ope)`
+/// would store a second order term that no query uses, and that tells
+/// anyone who reads the column how its values order. Both spellings of a
+/// plan refuse it when the plan is built, before any key is requested, and
+/// so does a typed target that declares both. `(Equality, Ore)` answer
+/// different operators and are allowed.
+#[test]
+fn a_field_declares_one_index_per_operator() {
+    let overlap = |at: &str, first: &'static str, second: &'static str| PlanError::IndexOverlap {
+        at: at.into(),
+        first,
+        second,
+        operator: stack_encrypt::op::Op::Lt,
+    };
+    let with = Plan::context("users/age")
+        .with::<u32, _>((Ore, Ope))
+        .build();
+    assert_eq!(plan_error(with), overlap("the value", "ore", "ope"));
+    let typed = Plan::value::<u32>()
+        .context("users/age")
+        .encrypt_into::<Encrypted<(OreTerm<u32>, OpeTerm<u32>)>>()
+        .build();
+    assert_eq!(plan_error(typed), overlap("the value", "ore", "ope"));
+    let field: Result<Plan<Person, FakeDataKeySource>, _> = Plan::context("users")
+        .fields()
+        .encrypt_index::<String>("name", (Equality, Ore, OreBlock))
+        .build();
+    assert_eq!(plan_error(field), overlap("name", "ore", "ore_block"));
+    assert_eq!(
+        overlap("name", "ore", "ore_block").to_string(),
+        "field \"name\" declares two indexes that answer lt: ore and ore_block"
+    );
+    assert!(Plan::context("users/age")
+        .with::<u32, _>((Equality, Ore))
+        .build()
+        .is_ok());
 }
 
 /// `Between` is one term carrying both bounds, inclusive, derived under
@@ -1281,15 +1365,17 @@ async fn a_between_query_is_one_term_carrying_both_bounds() {
     assert_eq!(one.lo(), one.hi());
     assert_ne!(one, range);
 
-    // OPE is named with via, and a typed target answers through its index.
-    let both = Plan::context("users/age")
-        .with::<u32, _>((Ore, Ope))
+    // OPE is a plan's own index, named with via, and a typed target answers
+    // through its index. A plan declares one order index: `(Ore, Ope)` is
+    // refused when it is built (`a_field_declares_one_index_per_operator`).
+    let ope_plan = Plan::context("users/age")
+        .with::<u32, _>(Ope)
         .build()
         .unwrap();
     let ope: RangeQuery<OpeTerm<u32>> = cipher
         .query(op::Between, &(18u32, 65))
         .via(Ope)
-        .on(&both)
+        .on(&ope_plan)
         .await
         .unwrap();
     assert!(ope.lo().as_bytes() < ope.hi().as_bytes());
@@ -1452,11 +1538,15 @@ async fn a_field_answers_the_orderings_through_its_declared_index() {
 async fn text_orders_by_its_folded_key() {
     let cipher = stack_cipher().await;
     let plan = Plan::context("users/surname")
-        .with::<String, _>((Ore, Ope))
+        .with::<String, _>(Ore)
+        .build()
+        .unwrap();
+    let ope_plan = Plan::context("users/surname")
+        .with::<String, _>(Ope)
         .build()
         .unwrap();
     let lt = |text: &str| cipher.query(op::Lt, text).on(&plan);
-    let ope = |text: &str| cipher.query(op::Lt, text).via(Ope).on(&plan);
+    let ope = |text: &str| cipher.query(op::Lt, text).via(Ope).on(&ope_plan);
     let cafe: OreTerm<String> = lt("cafe").await.unwrap();
     for text in ["Caf\u{e9}", "CAF\u{c9}", "cafe\u{301}"] {
         assert_eq!(lt(text).await.unwrap(), cafe, "{text:?}");
@@ -1499,11 +1589,15 @@ async fn text_orders_by_its_folded_key() {
 async fn floats_order_by_their_order_key() {
     let cipher = stack_cipher().await;
     let plan = Plan::context("users/score")
-        .with::<f64, _>((Ore, Ope))
+        .with::<f64, _>(Ore)
+        .build()
+        .unwrap();
+    let ope_plan = Plan::context("users/score")
+        .with::<f64, _>(Ope)
         .build()
         .unwrap();
     let lt = |value: f64| cipher.query(op::Lt, &value).on(&plan);
-    let ope = |value: f64| cipher.query(op::Lt, &value).via(Ope).on(&plan);
+    let ope = |value: f64| cipher.query(op::Lt, &value).via(Ope).on(&ope_plan);
     let zero: OreTerm<f64> = lt(0.0).await.unwrap();
     assert_eq!(lt(-0.0).await.unwrap(), zero, "-0.0 is 0.0");
     let nan: OreTerm<f64> = lt(f64::NAN).await.unwrap();

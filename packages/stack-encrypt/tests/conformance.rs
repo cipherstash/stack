@@ -13,9 +13,7 @@ use common::frames::{frame, object};
 use common::{hex, unhex};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use stack_encrypt::dynamic::{
-    self, record, Fidelity, NoTargets, OpSpec, Operand, Scope, ValueFrame,
-};
+use stack_encrypt::dynamic::{self, record, Fidelity, NoTargets, Op, Operand, Scope, ValueFrame};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{
     CipherText, Ciphertext, Error, KeysetCipher, Label, SealedValue, StackCipherText,
@@ -225,7 +223,7 @@ async fn shared_record_scalar_profile() {
                 &scope,
                 &plan,
                 &corpus.field,
-                OpSpec::Eq,
+                Op::Eq,
                 value(&case.input),
                 &NoTargets,
             ) {
@@ -260,14 +258,14 @@ async fn shared_record_scalar_profile() {
             &keyset,
             &plan,
             &corpus.field,
-            OpSpec::Eq,
+            Op::Eq,
             input.clone(),
             &NoTargets,
         )
         .unwrap()
         .await
         .unwrap();
-        assert_eq!(term.operator(), OpSpec::Eq);
+        assert_eq!(term.operator(), Op::Eq);
         assert_eq!(term.index(), &IndexSpec::Equality);
         assert_eq!(term.fidelity(), Fidelity::Exact);
         assert_eq!(term.encoding(), "bytes");

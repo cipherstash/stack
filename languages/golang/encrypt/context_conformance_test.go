@@ -32,6 +32,7 @@ type contextVector struct {
 	PRF              string `json:"prf"`
 	Ciphertext       string `json:"ciphertext"`
 	Equality         string `json:"equality"`
+	Contexts         string `json:"contexts"`
 }
 
 func TestContextConformance(t *testing.T) {
@@ -68,7 +69,7 @@ func TestContextConformance(t *testing.T) {
 		t.Fatal("vector case set differs")
 	}
 	t.Run("grouped-extension-is-not-a-go-record-part", func(t *testing.T) {
-		cipher := client.DefaultKeyset().Extend([]any{uint64(7), "eu"})
+		cipher := client.DefaultKeyset().Scope([]any{uint64(7), "eu"})
 		_, err := testusers.NoteFields.Text.Eq(ctx, cipher.Context("tenants/acme"), "hello")
 		if !errors.Is(err, encrypt.ErrEncoding) {
 			t.Fatalf("grouped extension: %v", err)
@@ -121,7 +122,15 @@ func TestContextConformance(t *testing.T) {
 					t.Fatal("unsupported context part")
 				}
 				parts = append(parts, v)
-				cipher = cipher.Extend(v)
+				cipher = cipher.Scope(v)
+			}
+			// The contexts the cipher shows for this plan are the ones Rust
+			// pinned for the same declaration: the field, under the label,
+			// extended by each part in order.
+			if shown, e := cipher.Contexts(ctx, p); e != nil {
+				t.Fatal(e)
+			} else if shown != want.Contexts {
+				t.Fatalf("contexts differ from Rust's:\n%s\nwant:\n%s", shown, want.Contexts)
 			}
 			// Inspect the bytes actually passed to se_encrypt_record, not a
 			// separately reconstructed copy of the host's plan.
@@ -172,7 +181,7 @@ func TestContextConformance(t *testing.T) {
 				t.Fatal("query differs")
 			}
 			// Variadic and repeated calls must agree, including a no-op Extend().
-			combined := client.DefaultKeyset().Extend(parts...).Extend()
+			combined := client.DefaultKeyset().Scope(parts...).Scope()
 			if c.Base == "field" {
 				combined = combined.Context(c.Label)
 			}

@@ -1,17 +1,19 @@
-//! Records from data: a plan spelled as a value, lowered into the plan
-//! builder.
+//! Records from data: a plan spelled as a value, lowered to the
+//! combinators.
 //!
 //! A binding has no types to name, so it declares a record as data: per
 //! field, a context, what to produce and, optionally, what type the values
-//! are. This module reads that declaration ([`plan`]) and *lowers* it into
-//! the same [`Plan`](crate::Plan) a Rust chain writes and the derive emits:
-//! `Plan::context(c).fields()`, then `encrypt`, `encrypt_index`, `index` or
-//! `passthrough` per field. Encrypting runs that plan's description through
+//! are. This module reads that declaration ([`plan`]) and *lowers* it to
+//! the combinators the derive's generated code is made of
+//! (`super::planned::compose`): `ciphertext`, `indexed`, the indexes'
+//! `operations` or `passthrough` per field, each under the field's label.
+//! Encrypting runs that description through
 //! [`KeysetCipher::run`](crate::KeysetCipher::run); decrypting runs its
-//! opener. There is no second executor here: every field's context, every
-//! key request and the one batch they settle in are the engine's, so a
-//! record written from Go and one written from Rust under the same
-//! declaration are the same bytes because they ran the same code (ADR-0007).
+//! opening (`super::planned::opening`). There is no second executor here:
+//! every field's context, every key request and the one batch they settle
+//! in are the engine's, so a record written from Go and one written from
+//! Rust under the same declaration are the same bytes because they ran the
+//! same code.
 //!
 //! What stays dynamic is one step: a field whose type is known only when its
 //! value arrives dispatches to the typed term operation then, through
@@ -34,8 +36,8 @@
 //!
 //! # A plan whose context is a field of the record
 //!
-//! The plan builder's third context source, `context_field`, has a data
-//! form too: a plan-level key, `"context_field": "<field name>"`, beside
+//! The typed plan builder's third context source, `context_field`, has a
+//! data form too: a plan-level key, `"context_field": "<field name>"`, beside
 //! the field specs. The named field's value in each record is then the
 //! context every other field is sealed under — a tenant label such as
 //! `"tenants/acme"`, which must parse as a plain [`Label`] — and the field
@@ -51,11 +53,10 @@
 //! refuses a record whose stored context differs with
 //! [`Error::ContextMismatch`](crate::Error::ContextMismatch) before any
 //! key is requested. A stored context changed in storage opens nothing
-//! either way: every field was sealed under the original. The key
-//! `"context_field"` is reserved at the top level of a plan, so no field
-//! may be called that. A plan without the key is read exactly as before:
-//! the two-segment and shared-prefix rules hold, and it seals the same
-//! bytes.
+//! either way: every field was sealed under the original. The keys
+//! `"context_field"` and `"bind"` (the caller's bindings, below) are
+//! reserved at the top level of a plan, so no field may be called either.
+//! Without the key, a plan follows the two-segment and shared-prefix rules.
 //!
 //! # A field that names an EQL type
 //!
@@ -105,13 +106,13 @@
 //! kind, once checked — by the typed path's derivation, so they are the
 //! bytes a Rust `u32` or `String` field derives under the same label.
 //!
-//! The ciphertext is where a data plan and a Rust chain meet too. Since
-//! vitaminc ADR 0001 every leaf is tagged, a typed Rust value's as much as
+//! The ciphertext is where a data plan and a Rust chain meet too. Every
+//! leaf is tagged with its type, a typed Rust value's as much as
 //! a [`ValueFrame`]'s, so a Rust `u32` field and a `uint32` data field seal
 //! the same leaf under the same context, and each opens the other's. A reader
 //! of another type refuses a leaf rather than reading it as changed
-//! plaintext: the tag is authenticated. The lowering still never chooses an
-//! encoding from the type; it no longer has one to choose.
+//! plaintext: the tag is authenticated. The lowering never chooses an
+//! encoding from the type; it has none to choose.
 //!
 //! # The stored record is wire format
 //!
@@ -153,15 +154,17 @@ use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{DecodeError, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
 
+use super::planned::{check_stored, check_values, compose, opening, opening_base};
 use super::{
     not_admitted, Error, NoTargets, Reason, Scope, TargetError, TargetResolver, TermBytes,
 };
-use crate::plan::{FieldValues, FieldsBuilder, Opens, Runs};
-use crate::target::{CallerContext, DeclaredContext, Encrypted, IndexSpec};
+use crate::plan::FieldValues;
+use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
 use crate::{
     CipherText, ContextPiece, KeysetCipher, Label, NonEmpty, PassthroughFrame, Pending,
     StackCipherText,
 };
+use vitaminc_aead::IntoContext as _;
 
 /// The map key a target field's EQL value rides under in a stored record:
 /// wire format, like the output keys (see the
@@ -208,10 +211,10 @@ impl Output {
     }
 }
 
-/// The verb a field's outputs lower to: one of the plan builder's four, or
-/// a target, which the resolver runs beside the lowered plan.
+/// The verb a field's outputs lower to: one of the four combinators, or a
+/// target, which the resolver runs beside the lowered fields.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Verb {
+pub(super) enum Verb {
     Encrypt,
     EncryptIndex,
     Index,
@@ -220,8 +223,8 @@ enum Verb {
 }
 
 /// How a field stores a value that is not there: what a plan's `"null"`
-/// says (#1298). A field with no `"null"` needs every row to have it, and
-/// refuses a null where it declares a type, as before.
+/// says. A field with no `"null"` needs every row to have it, and
+/// refuses a null where it declares a type.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum NullMode {
     /// `"sealed"`: a null is sealed like a value, under the field's label,
@@ -321,6 +324,19 @@ impl FieldPlan {
         }
         if outputs.contains(&Output::Passthrough) && outputs.len() > 1 {
             return Err(refuse(Reason::PassthroughWithOutputs));
+        }
+        // At most one index per operator, as the typed plan refuses
+        // (`PlanError::IndexOverlap`): `ore` beside `ope` would store a
+        // term no query uses.
+        let indexes: Vec<IndexSpec> = outputs
+            .iter()
+            .filter_map(|output| match output {
+                Output::Term(index) => Some(index.clone()),
+                _ => None,
+            })
+            .collect();
+        if crate::target::index::overlapping(&indexes).is_some() {
+            return Err(refuse(Reason::OverlappingOutputs));
         }
         let (label, extension) = field_context(&name, context.get())?;
         Ok(Self {
@@ -481,11 +497,11 @@ impl FieldPlan {
 
     /// Whether the field comes back from [`decrypt`]: sealed and passthrough
     /// fields do, index-only fields do not.
-    fn opens(&self) -> bool {
+    pub(super) fn opens(&self) -> bool {
         self.verb() != Verb::Index
     }
 
-    fn verb(&self) -> Verb {
+    pub(super) fn verb(&self) -> Verb {
         if self.target.is_some() {
             Verb::Target
         } else if self.outputs.contains(&Output::Passthrough) {
@@ -563,8 +579,19 @@ impl FieldPlan {
     }
 
     /// Whether the field is run by the resolver rather than the lowered plan.
-    fn is_target(&self) -> bool {
+    pub(super) fn is_target(&self) -> bool {
         self.target.is_some()
+    }
+
+    /// Extend the field's context by `part`, nested to the left as a
+    /// binding spells it (`[[..label], part]`), and record it in the
+    /// extension: what [`Plan::with_scopes`] does to every field.
+    fn extend(&mut self, part: ContextPiece<'static>) {
+        let own = self.context.get().clone();
+        let nested = ContextPiece::List(vec![own, part.clone()]);
+        self.context = NonEmpty::new(nested)
+            .unwrap_or_else(|_| unreachable!("a list of two parts is not empty"));
+        self.extension.push(part);
     }
 }
 
@@ -619,7 +646,7 @@ fn field_context(
     })
 }
 
-/// A refusal of the plan builder or the engine's own check, as the field it
+/// A refusal of the lowering or the engine's own check, as the field it
 /// names and the nearest [`Reason`]. Matched exhaustively, so a new
 /// [`PlanError`](crate::PlanError) says here which reason it reads as; an
 /// engine failure that is not a plan refusal is [`Reason::Refused`].
@@ -635,6 +662,7 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         P::SharedIdentity { second, .. } => (Some(second), Reason::SharedIdentity),
         P::PassthroughIndexed { field } => (Some(field), Reason::PassthroughWithOutputs),
         P::DuplicateIndex { at, .. } => (Some(at), Reason::DuplicateOutput),
+        P::IndexOverlap { at, .. } => (Some(at), Reason::OverlappingOutputs),
         P::EmptyIndexes => (None, Reason::NoOutputs),
         P::NotInPlan { field } => (Some(field), Reason::UnknownField),
         P::NotInValue { field } => (Some(field), Reason::FieldMissing),
@@ -644,11 +672,11 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         P::IndexNotDeclared { field, .. } | P::IndexOptions { field, .. } => {
             (Some(field), Reason::Refused)
         }
-        P::IdentityWithoutField
-        | P::MixedCiphers
-        | P::MatchCase { .. }
-        | P::TwoContextSources { .. }
-        | P::NoContext => (None, Reason::Refused),
+        P::BindInQuery => (None, Reason::BindInQuery),
+        P::EmptyPart => (None, Reason::EmptyBinding),
+        P::IdentityWithoutField | P::MixedCiphers | P::TwoContextSources { .. } | P::NoContext => {
+            (None, Reason::Refused)
+        }
     }
 }
 
@@ -659,8 +687,8 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
 /// whole that no single [`FieldPlan`] can carry: there is at least one
 /// field, no two fields share a name, every field's label sits under the
 /// one plan context (or, under a context field, is its identity alone) and
-/// carries the one extension, and the whole lowers to a
-/// [`Plan`](crate::Plan) that builds. Both the parser ([`plan`]) and the
+/// carries the one extension, and no two keyed fields share an identity,
+/// so the whole composes. Both the parser ([`plan`]) and the
 /// manual constructors ([`Plan::new`], [`Plan::with_context_field`]) go
 /// through the one check, so a plan in hand is a plan that holds them,
 /// whichever way it was built.
@@ -668,6 +696,10 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
 pub struct Plan {
     context: Context,
     extension: Vec<ContextPiece<'static>>,
+    /// The caller's bindings, in order: in the stored context of every
+    /// field, after the scopes, and in no query context. The plan-level
+    /// `"bind"` key.
+    bindings: Vec<ContextPiece<'static>>,
     fields: Vec<FieldPlan>,
 }
 
@@ -675,7 +707,7 @@ pub struct Plan {
 /// sources. The second, the call, has no data form: a binding names the
 /// context in the declaration it sends.
 #[derive(Clone, Debug)]
-enum Context {
+pub(super) enum Context {
     /// The plan's own label, which every field's label extends.
     Label(Label),
     /// The named field of each record, whose value is the context.
@@ -811,7 +843,7 @@ impl Plan {
 
     /// A plan over `fields` that takes its context from the field named
     /// `context_field`: the plan builder's
-    /// [`context_field`](FieldsBuilder::context_field), as data. That
+    /// [`context_field`](crate::plan::FieldsBuilder::context_field), as data. That
     /// field's value in each record is the context every other field is
     /// sealed under, and the field is carried as a passthrough of type
     /// string. Each field's label is its identity alone, a one-segment
@@ -885,7 +917,8 @@ impl Plan {
     }
 
     /// The rules both constructors share: fields named once, one extension,
-    /// every field with a term output typed, and a whole the builder accepts.
+    /// every field with a term output typed, no two keyed fields under one
+    /// identity.
     fn build(context: Context, fields: Vec<FieldPlan>) -> Result<Self, Error> {
         let Some(first) = fields.first() else {
             return Err(Error::bad_plan(Reason::NoFields));
@@ -921,37 +954,25 @@ impl Plan {
                     field: field.name.clone(),
                 });
             }
-            // A target field is keyed under its identity like a sealed one;
-            // the builder checks that rule for the fields it lowers, so the
-            // target fields are checked against every field here.
-            if field.is_target()
-                && fields[..at]
-                    .iter()
-                    .any(|prior| prior.identity() == field.identity())
-            {
-                return Err(refuse(Reason::SharedIdentity));
-            }
-            if !field.is_target()
-                && fields[..at]
-                    .iter()
-                    .any(|prior| prior.is_target() && prior.identity() == field.identity())
-            {
+            // Two fields that key something, sealed or indexed or a target,
+            // cannot share one identity: their data would share one
+            // descriptor. A passthrough keys nothing (the context field is
+            // one), so two may share a label, and one may share a sealed
+            // field's. A target shares with nothing.
+            let keys = |f: &FieldPlan| f.verb() != Verb::Passthrough;
+            if fields[..at].iter().any(|prior| {
+                prior.identity() == field.identity()
+                    && (prior.is_target() || field.is_target() || (keys(prior) && keys(field)))
+            }) {
                 return Err(refuse(Reason::SharedIdentity));
             }
         }
         let plan = Self {
             context,
             extension,
+            bindings: Vec::new(),
             fields,
         };
-        // The whole-plan rules the builder holds (names once, labels plain,
-        // no shared identity) are checked by building, so a plan in hand
-        // lowers. `()` stands in for the key source: the check does not
-        // depend on it.
-        let _ = plan.lower::<()>().map_err(|error| {
-            let (field, reason) = refusal(error);
-            Error::Plan { field, reason }
-        })?;
         Ok(plan)
     }
 
@@ -987,57 +1008,188 @@ impl Plan {
         &self.extension
     }
 
-    /// The fields plan this declaration lowers to, for a cipher over `K`.
+    /// The contexts this plan's fields are sealed and indexed under, with
+    /// the plan's extension applied and a placeholder for a context read
+    /// from a field of each record. No key is requested. The same view as
+    /// [`Plan::contexts`](crate::Plan::contexts) for a typed plan, so a
+    /// binding can show a record's contexts, and a test in that language
+    /// can pin them.
     ///
-    /// Built afresh per call: a built plan is bound to its key source type,
-    /// and a declaration is not. Every field is declared by name, as a
-    /// [`ValueFrame`], read out of the [`FieldValues`] the source is split
-    /// into. A context field is declared through the builder's own
-    /// `context_field`, which carries it as a passthrough and reads it as
-    /// the context; the loop then skips it.
-    fn lower<K: 'static>(&self) -> Result<crate::Plan<FieldValues, K>, crate::Error> {
-        self.lower_without(&Absent::new())
+    /// # Errors
+    ///
+    /// Unreachable for a plan from [`plan`], [`Plan::new`] or
+    /// [`Plan::with_context_field`]: a parsed plan always composes.
+    pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
+        let lowered = crate::contexts::under_declared(
+            compose::<()>(self, &Absent::new())?.shapes(),
+            &self.declared_context(),
+        );
+        Ok(crate::contexts::resolve(
+            self.placed(lowered),
+            crate::contexts::CallerShape::none(),
+        ))
     }
 
-    /// The fields plan this declaration lowers to without the fields in
-    /// `absent`: what runs a row that leaves them out (a `"null": "sql"`
-    /// field that is null or not there). Their names are the plan's own.
-    fn lower_without<K: 'static>(
-        &self,
-        absent: &Absent,
-    ) -> Result<crate::Plan<FieldValues, K>, crate::Error> {
-        let mut builder = match &self.context {
-            Context::Label(label) => crate::Plan::context(label.clone()).fields::<FieldValues, K>(),
-            Context::Field(name) => {
-                crate::Plan::fields::<FieldValues, K>().context_field::<ValueFrame>(name.as_str())
-            }
-        };
+    /// The shape of every field's context, in plan order: the `lowered`
+    /// fields' shapes, and each target field under its label alone. An EQL
+    /// value is sealed under its table and column by the resolver, and
+    /// takes no part from the caller: the plan refuses an extension for it
+    /// before it runs.
+    fn placed(&self, lowered: crate::contexts::Shapes) -> crate::contexts::Shapes {
+        let mut lowered = lowered.into_iter().peekable();
+        let mut shapes = crate::contexts::Shapes::with_capacity(self.fields.len());
         for field in &self.fields {
-            // The context field is declared by `context_field` above; a
-            // target field is the resolver's.
-            if self.context_field() == Some(field.name.as_str())
-                || field.is_target()
-                || absent.contains(&field.name)
-            {
+            if field.is_target() {
+                shapes.push(crate::contexts::known_leaf(
+                    &field.name,
+                    field.label.clone().into_context(),
+                ));
                 continue;
             }
-            builder = declare(builder, field);
-            if field.identity() != field.name {
-                builder = builder.identity(field.identity());
+            while lowered
+                .peek()
+                .is_some_and(|leaf| leaf.name() == Some(field.name.as_str()))
+            {
+                shapes.extend(lowered.next());
             }
         }
-        builder.build()
+        shapes.extend(lowered);
+        shapes
     }
 
-    /// The extension every field's label is run under, as the chain's
-    /// `.extend(..)` would carry it.
+    /// Where this plan takes its context from.
+    pub(super) fn context_source(&self) -> &Context {
+        &self.context
+    }
+
+    /// This plan with the caller's bindings `parts`, each in the stored
+    /// context of every field after the scopes, and in no query context.
+    /// What a binding's `"bind"` key carries.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] with [`Reason::EmptyBinding`] for an empty part: a
+    /// row ID not yet assigned would bind every row to one context, and
+    /// the typed path refuses the same. [`Error::Target`] if a field names
+    /// an EQL type: an EQL value is stored under its table and column
+    /// alone, so a binding cannot extend it, as an extension cannot
+    /// ([`TargetError::Extended`]).
+    pub fn with_bindings(mut self, parts: Vec<ContextPiece<'static>>) -> Result<Self, Error> {
+        if parts.iter().any(crate::MaybeEmpty::is_empty) {
+            return Err(Error::bad_plan(Reason::EmptyBinding));
+        }
+        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
+            if !parts.is_empty() {
+                return Err(TargetError::Extended {
+                    name: target.name.clone(),
+                    label: target.label.to_string(),
+                }
+                .into());
+            }
+        }
+        self.bindings = parts;
+        Ok(self)
+    }
+
+    /// The caller's bindings, in order. Empty for a plan with none.
+    pub fn bindings(&self) -> &[ContextPiece<'static>] {
+        &self.bindings
+    }
+
+    /// Add a caller's scopes to this plan. Each scope becomes one more part
+    /// at the end of every field's context, after the parts the plan
+    /// already has, in the order given. A scoped call runs the plan this
+    /// returns. So a field is sealed and indexed under its label, then the
+    /// plan's own extension, then the scopes. A call with no scope borrows
+    /// the plan instead, and copies nothing.
+    ///
+    /// A plan with a field that names an EQL type takes no scope. An EQL
+    /// value is stored under its table and column alone.
+    ///
+    /// The scope shows in the context of the call. Here a record under a
+    /// one-field plan is encrypted under the scope `42u64`:
+    ///
+    /// ```
+    /// use stack_encrypt::dynamic::{record, Planned, ValueFrame};
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::Scope;
+    /// use stack_encrypt::{AsProtectedRef, EncryptInto, Pending, StackCipher, StackCipherText};
+    /// use vitaminc_aead_frame::serde::to_vec;
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let declaration = to_vec(&serde_json::json!({
+    ///     "email": { "context": ["users", "email"], "outputs": ["c"], "type": "string" },
+    /// }))?;
+    /// let plan = record::plan(declaration.as_protected_ref())?;
+    /// let values = ValueFrame::from_bytes(
+    ///     to_vec(&serde_json::json!({"email": "ada@example.com"}))?.as_protected_ref(),
+    /// )?;
+    /// let call: Pending<'_, StackCipherText, FakeDataKeySource> =
+    ///     Planned::new(&plan, values).encrypt_into_with_context(&keyset, Scope::new(42u64));
+    /// // The field's context is its label, then the scope.
+    /// # #[cfg(feature = "testing")]
+    /// stack_encrypt::assert_context!(call.context(), [["users", "email"], 42u64]);
+    /// let _row = call.await?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] with [`Reason::EmptyContext`] for an empty part, and
+    /// [`Error::Target`] if a field names an EQL type
+    /// ([`TargetError::Extended`]), as [`with_bindings`](Self::with_bindings).
+    pub(super) fn with_scopes(
+        mut self,
+        parts: impl IntoIterator<Item = ContextPiece<'static>>,
+    ) -> Result<Self, Error> {
+        let parts: Vec<_> = parts.into_iter().collect();
+        if parts.iter().any(crate::MaybeEmpty::is_empty) {
+            return Err(Error::bad_plan(Reason::EmptyContext));
+        }
+        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
+            if !parts.is_empty() {
+                return Err(TargetError::Extended {
+                    name: target.name.clone(),
+                    label: target.label.to_string(),
+                }
+                .into());
+            }
+        }
+        for field in &mut self.fields {
+            for part in &parts {
+                field.extend(part.clone());
+            }
+        }
+        self.extension.extend(parts);
+        Ok(self)
+    }
+
+    /// The shapes of every field's leaf, run under this plan's context and
+    /// then the context the caller hands a [`Planned`](super::Planned)
+    /// record.
+    pub(super) fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
+        Ok(self.placed(crate::contexts::under_declared_then_caller(
+            compose::<()>(self, &Absent::new())?.shapes(),
+            &self.declared_context(),
+        )))
+    }
+
+    /// The context every field's label is run under: the extension, as the
+    /// chain's `.extend(..)` would carry it, then the bindings.
     fn declared_context(&self) -> DeclaredContext {
-        self.extension
+        let scopes = self
+            .extension
             .iter()
             .cloned()
             .fold(DeclaredContext::default(), |context, part| {
                 context.with(CallerContext::from_piece(part))
-            })
+            });
+        self.bindings.iter().cloned().fold(scopes, |context, part| {
+            context.with(CallerContext::bind_piece(part))
+        })
     }
 
     fn shape(&self) -> Vec<FieldShape> {
@@ -1047,24 +1199,6 @@ impl Plan {
     /// The fields that name a target, in plan order: the resolver's.
     fn target_fields(&self) -> impl Iterator<Item = &FieldPlan> + '_ {
         self.fields.iter().filter(|field| field.is_target())
-    }
-}
-
-/// One field's verb, over a [`ValueFrame`]; its indexes are the
-/// [`IndexSpec`]s the plan named, each an [`Index`](crate::target::Index) of
-/// a `ValueFrame`.
-fn declare<K: 'static>(
-    builder: FieldsBuilder<FieldValues, K>,
-    field: &FieldPlan,
-) -> FieldsBuilder<FieldValues, K> {
-    let name = field.name.as_str();
-    match field.verb() {
-        Verb::Encrypt => builder.encrypt::<ValueFrame>(name),
-        Verb::EncryptIndex => builder.encrypt_index::<ValueFrame>(name, field.indexes()),
-        Verb::Index => builder.index::<ValueFrame>(name, field.indexes()),
-        Verb::Passthrough => builder.passthrough::<ValueFrame>(name),
-        // `lower` never hands a target field here: the resolver runs it.
-        Verb::Target => builder,
     }
 }
 
@@ -1093,9 +1227,11 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// "<field name>"`, which makes the plan take its context from that field
 /// of each record ([`Plan::with_context_field`]; the
 /// [module docs](self#a-plan-whose-context-is-a-field-of-the-record) give
-/// the shape). The key is reserved: a top-level `"context_field"` whose
-/// value is not a string is refused rather than read as a field of that
-/// name.
+/// the shape), and one more, `"bind": [<part>, ...]`, the caller's
+/// bindings ([`Plan::with_bindings`]). Both keys are reserved: a top-level
+/// `"context_field"` whose value is not a string, or a `"bind"` whose
+/// value is not a list of context parts, is refused rather than read as a
+/// field of that name ([`Reason::ContextField`], [`Reason::Bind`]).
 ///
 /// A field may name an EQL type as its target instead of outputs:
 ///
@@ -1166,7 +1302,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// [module docs](self#what-a-fields-type-decides-and-what-it-does-not)).
 ///
 /// `"null"`, when given, is `"sealed"` or `"sql"`: how the field stores a
-/// value that is not there ([`NullMode`], #1298). Without it a row must
+/// value that is not there ([`NullMode`]). Without it a row must
 /// have the field, and a typed field refuses a null. `"sealed"` seals a
 /// null as a typed null as long as a value, so the stored record does not
 /// show it, and beside an equality index stores a null's equality term, the
@@ -1224,7 +1360,7 @@ pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, E
 /// not a string naming a [`ValueKind`], a type that does not admit one of
 /// the field's index outputs, a context that is not a label of at least two
 /// segments (optionally extended), fields under different contexts or
-/// extensions, or a plan the builder refuses ([`Plan::new`]); with
+/// extensions, or a plan [`Plan::new`] refuses; with
 /// `"context_field"`, a value that is not a string, naming no field of the
 /// plan, or a plan [`Plan::with_context_field`] refuses.
 /// [`Error::UntypedIndex`], naming the field, for a field with a term output
@@ -1266,17 +1402,36 @@ pub fn plan_with(
     }
     // The whole-plan rules are the constructors', so a parsed plan and a
     // hand-built one are refused alike.
-    match wire.context_field {
+    let plan = match wire.context_field {
         Some(name) => Plan::with_context_field(name, fields),
         None => Plan::new_with(fields, resolver),
+    }?;
+    // The grammar's `bind` is a nonempty list of scalar parts: an explicit
+    // empty list is not an absent key, and a grouped part is not a part Go
+    // can supply through `Bind`.
+    match wire.bindings {
+        None => Ok(plan),
+        Some(parts) if parts.is_empty() => Err(Error::bad_plan(Reason::EmptyBinding)),
+        Some(parts)
+            if parts
+                .iter()
+                .any(|part| matches!(part, ContextPiece::List(_))) =>
+        {
+            Err(Error::bad_plan(Reason::Bind))
+        }
+        Some(parts) => plan.with_bindings(parts),
     }
 }
 
 /// A plan as a binding writes it: an object of field specs, in order, with
-/// one reserved key beside them, `"context_field"`. A visitor only to tell
-/// that key from a field's name; every value below it is derived.
+/// two reserved keys beside them, `"context_field"` and `"bind"`. A visitor
+/// only to tell those keys from a field's name; every value below it is
+/// derived.
 struct PlanWire {
     context_field: Option<String>,
+    /// `None` when the plan has no `"bind"` key: an explicit empty list is
+    /// kept apart from an absent key, and refused.
+    bindings: Option<Vec<ContextPiece<'static>>>,
     fields: Vec<(String, FieldSpecWire)>,
 }
 
@@ -1291,11 +1446,15 @@ impl<'de> Deserialize<'de> for PlanWire {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<PlanWire, A::Error> {
                 let mut plan = PlanWire {
                     context_field: None,
+                    bindings: None,
                     fields: Vec::with_capacity(super::context::reserved(map.size_hint())),
                 };
                 while let Some(name) = map.next_key::<&'de str>()? {
                     if name == CONTEXT_FIELD {
                         plan.context_field = Some(map.next_value()?);
+                    } else if name == BIND {
+                        let parts: Vec<super::context::Context> = map.next_value()?;
+                        plan.bindings = Some(parts.into_iter().map(|part| part.0).collect());
                     } else {
                         plan.fields.push((name.to_owned(), map.next_value()?));
                     }
@@ -1361,6 +1520,9 @@ fn spec_keys(frame: &[u8], field: &str) -> Option<Vec<String>> {
 
 /// The plan-level key naming the field a plan takes its context from.
 const CONTEXT_FIELD: &str = "context_field";
+/// The plan-level key listing the caller's bindings: a list of parts, each
+/// a context as [`context`](super::context()) reads one.
+const BIND: &str = "bind";
 
 /// One field's spec: a context, and exactly one of `"outputs"` and
 /// `"target"` (checked in `TryFrom`, once the field's name is known, so the
@@ -1532,6 +1694,9 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
     if field == CONTEXT_FIELD {
         return Error::bad_plan(Reason::ContextField);
     }
+    if field == BIND {
+        return Error::bad_plan(Reason::Bind);
+    }
     let reason = match path.get(1) {
         Some(Key(key)) if key == "context" => {
             return Error::bad_context(Reason::ContextKind).in_field(field)
@@ -1660,7 +1825,6 @@ pub fn encrypt_with<'a, K: 'static>(
     let rows = source_rows(source, plan)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
-    let lower = |absent: &Absent| plan.lower_without::<K>(absent).map_err(|_| Error::Internal);
     // Every target field of every row, in row-major order, run by the
     // resolver; `all` merges their requests with the lowered plan's below.
     // A row runs the target fields it does not leave out, so each row's
@@ -1685,9 +1849,10 @@ pub fn encrypt_with<'a, K: 'static>(
     Ok(match rows {
         Rows::One(row) => {
             let (absent, values, _) = targets(row)?;
-            let lowered = lower(&absent)?;
+            let description = compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
             let eql = Pending::all(cipher, pendings);
-            Runs::<FieldValues, K>::pending(&lowered, cipher, &values, None, extend)
+            cipher
+                .run(description, &values, extend)
                 .zip(eql)
                 .try_map(move |(values, eql)| shape_record(values, eql, &shape, &absent))
         }
@@ -1711,14 +1876,12 @@ pub fn encrypt_with<'a, K: 'static>(
             let mut runs = Vec::with_capacity(groups.len());
             let mut positions = Vec::with_capacity(groups.len());
             for (absent, at, values) in groups {
-                let lowered = lower(&absent)?;
-                runs.push(Runs::<[FieldValues], K>::pending(
-                    &lowered,
-                    cipher,
-                    &values,
-                    None,
-                    extend.clone(),
-                ));
+                let mut rows = Vec::with_capacity(values.len());
+                for values in &values {
+                    let description = compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
+                    rows.push(cipher.run(description, values, extend.clone()));
+                }
+                runs.push(Pending::all(cipher, rows));
                 positions.push(at);
             }
             let eql = Pending::all(cipher, pendings);
@@ -1742,8 +1905,8 @@ pub fn encrypt_with<'a, K: 'static>(
 
 /// The rows of a batch grouped by the fields they leave out, each group
 /// with the positions of its rows in the batch, in the order each group
-/// first appears: one lowered plan runs each group
-/// ([`Plan::lower_without`]). A batch with no `"null": "sql"` field is one
+/// first appears: one composed description runs each group
+/// (`super::planned::compose`). A batch with no `"null": "sql"` field is one
 /// group, as it was one plan before.
 fn by_absent<R>(rows: Vec<(Absent, R)>) -> Vec<(Absent, Vec<usize>, Vec<R>)> {
     let mut groups: Vec<(Absent, Vec<usize>, Vec<R>)> = Vec::new();
@@ -1791,7 +1954,7 @@ fn in_row_order<T>(
 /// the resolver ([`TargetResolver::query`]): a type whose query carries only
 /// the term its operator reads derives that index's term alone.
 /// [`query_term`](super::query_term()) passes the index
-/// [`OpSpec::answered_by`](super::OpSpec::answered_by) picks.
+/// [`Op::answered_by`](super::Op::answered_by) picks.
 ///
 /// # Errors
 ///
@@ -1954,7 +2117,6 @@ pub fn decrypt_with<'a, K: 'static>(
     let rows = record_rows(record, plan)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
-    let lower = |absent: &Absent| plan.lower_without::<K>(absent).map_err(|_| Error::Internal);
     let (cipher, keyset) = match &scope {
         Scope::Client(cipher) => (*cipher, None),
         Scope::Keyset(keyset) => (keyset.cipher(), Some(keyset.keyset_id())),
@@ -1983,12 +2145,9 @@ pub fn decrypt_with<'a, K: 'static>(
     Ok(match rows {
         Rows::One(row) => {
             let (absent, values, _) = targets(row)?;
-            let lowered = lower(&absent)?;
             let eql = Pending::all(cipher, pendings);
             confine(
-                cipher.run_decryption(Opens::<FieldValues, K>::decryption(
-                    &lowered, values, expected, extend,
-                )),
+                cipher.run_decryption(opening::<K>(plan, values, expected, extend, &absent)),
                 keyset,
             )
             .zip(eql)
@@ -2014,14 +2173,11 @@ pub fn decrypt_with<'a, K: 'static>(
             let mut opens = Vec::with_capacity(groups.len());
             let mut positions = Vec::with_capacity(groups.len());
             for (absent, at, values) in groups {
-                let lowered = lower(&absent)?;
+                let rows = values.into_iter().map(|values| {
+                    opening::<K>(plan, values, expected.clone(), extend.clone(), &absent)
+                });
                 opens.push(confine(
-                    cipher.run_decryption(Opens::<Vec<FieldValues>, K>::decryption(
-                        &lowered,
-                        values,
-                        expected.clone(),
-                        extend.clone(),
-                    )),
+                    cipher.run_decryption(Decryption::all(rows)),
                     keyset,
                 ));
                 positions.push(at);
@@ -2074,10 +2230,7 @@ fn confine<'a, T: 'a, K>(
 pub fn check_source(source: impl Encrypt, plan: &Plan) -> Result<(), Error> {
     let rows = source_rows(source, plan)?;
     let check = |row: &Row| {
-        let lowered = plan
-            .lower_without::<()>(&row.absent)
-            .map_err(|_| Error::Internal)?;
-        Runs::<FieldValues, ()>::check(&lowered, &row.values, None).map_err(|error| {
+        check_values(plan, &row.values, &row.absent).map_err(|error| {
             let (field, reason) = refusal(error);
             Error::Source { field, reason }
         })
@@ -2113,18 +2266,15 @@ pub fn check_record(
 ) -> Result<(), Error> {
     let rows = record_rows(record, plan)?;
     let check = |row: &StoredRow| {
-        let lowered = plan
-            .lower_without::<()>(&row.absent)
-            .map_err(|_| Error::Internal)?;
-        Opens::<FieldValues, ()>::check(&lowered, &row.values, expected).map_err(
-            |error| match error {
+        check_stored(plan, &row.values, &row.absent)
+            .and_then(|()| opening_base(plan, &row.values, expected.cloned()).map(drop))
+            .map_err(|error| match error {
                 mismatch @ crate::Error::ContextMismatch { .. } => Error::Cipher(mismatch),
                 error => {
                     let (field, reason) = refusal(error);
                     Error::Record { field, reason }
                 }
-            },
-        )
+            })
     };
     match &rows {
         Rows::One(row) => check(row),
@@ -2212,10 +2362,10 @@ struct StoredRow {
 
 /// The `"null": "sql"` fields a row leaves out: null in a source, or with
 /// no entry in a source or a stored record. Nothing is sealed, derived or
-/// opened for them, so a row is run by the plan lowered without them
-/// ([`Plan::lower_without`]), with the other rows that leave out the same
+/// opened for them, so a row is run by the plan composed without them
+/// (`super::planned::compose`), with the other rows that leave out the same
 /// fields.
-type Absent = BTreeSet<String>;
+pub(super) type Absent = BTreeSet<String>;
 
 /// Take the one entry named `name` out of a row, whatever order the row had
 /// it in. `None` if the row has no such entry — or has it twice: the maps
@@ -3298,13 +3448,40 @@ mod tests {
                 ("mail", typed(label("email"), &["c", "eq"], "string")),
                 ("mail2", typed(label("email"), &["c", "eq"], "string")),
             ]));
-            assert!(matches!(parsed, Err(Error::Plan { .. })), "{parsed:?}");
-            // Two passthrough fields key nothing, so they may share a label.
+            assert!(
+                matches!(
+                    &parsed,
+                    Err(Error::Plan { field: Some(field), reason: Reason::SharedIdentity })
+                        if field == "mail2"
+                ),
+                "the later field is named: {parsed:?}"
+            );
+            // Two passthrough fields key nothing, so they may share a label,
+            // and a passthrough may share a sealed field's: the lowering seals
+            // nothing under the passthrough's.
             let parsed = plan(obj(vec![
                 ("a", spec(label("meta"), &["passthrough"])),
                 ("b", spec(label("meta"), &["passthrough"])),
             ]));
             assert!(parsed.is_ok(), "{parsed:?}");
+            let parsed = plan(obj(vec![
+                ("mail", typed(label("email"), &["c", "eq"], "string")),
+                ("mail_copy", spec(label("email"), &["passthrough"])),
+            ]));
+            assert!(parsed.is_ok(), "{parsed:?}");
+            // An indexed field keys its terms, so it shares with no sealed one.
+            let parsed = plan(obj(vec![
+                ("mail", typed(label("email"), &["c"], "string")),
+                ("mail_eq", typed(label("email"), &["eq"], "string")),
+            ]));
+            assert!(
+                matches!(
+                    &parsed,
+                    Err(Error::Plan { field: Some(field), reason: Reason::SharedIdentity })
+                        if field == "mail_eq"
+                ),
+                "{parsed:?}"
+            );
         }
 
         /// A field whose label ends in a segment other than its name is keyed
@@ -3317,12 +3494,11 @@ mod tests {
             )]))
             .expect("parses");
             assert_eq!(parsed.fields()[0].identity(), "handle");
-            let lowered = parsed.lower::<()>().expect("lowers");
-            let field = lowered.field("nickname").expect("the field");
-            assert_eq!(field.identity(), "handle");
+            assert_eq!(parsed.fields()[0].label().to_string(), "users/handle");
+            // The lowering seals the field under that label.
             assert_eq!(
-                field.label().map(ToString::to_string),
-                Some("users/handle".into())
+                parsed.contexts().expect("lowers").to_string(),
+                "nickname\n  context: users / handle\n"
             );
         }
 
@@ -3550,7 +3726,7 @@ mod tests {
             ("an index alone", || vec![s("eq")], "uint32"),
             (
                 "several indexes",
-                || vec![s("c"), s("eq"), s("ore"), s("ope")],
+                || vec![s("c"), s("eq"), s("ore")],
                 "uint32",
             ),
         ];
@@ -3832,9 +4008,9 @@ mod tests {
             assert_eq!(keys(&age), ["c", "ore", "eq"]);
         }
 
-        /// ADR-0004's property, pinned: the ciphertext opens under the plan
-        /// label and under nothing else, and each term is the standalone
-        /// derivation under that same label.
+        // ADR-0004's property, pinned: the ciphertext opens under the plan
+        // label and under nothing else, and each term is the standalone
+        // derivation under that same label.
         #[tokio::test]
         async fn binds_the_ciphertext_and_every_term_under_the_one_field_label() {
             let cipher = cipher().await;
@@ -4266,12 +4442,12 @@ mod tests {
                 .with(CallerContext::from(7u64))
                 .under(own());
             assert_eq!(
-                one.clone().into_aad().as_bytes(),
-                with.into_aad().as_bytes(),
+                one.stored().into_aad().as_bytes(),
+                with.stored().into_aad().as_bytes(),
                 "one part: `with` is `From<NonEmpty>`"
             );
             assert_eq!(
-                one.into_aad().as_bytes(),
+                one.stored().into_aad().as_bytes(),
                 own().with(7u64).into_aad().as_bytes()
             );
             let two = DeclaredContext::default()
@@ -4279,12 +4455,140 @@ mod tests {
                 .with(CallerContext::from(nonempty!("eu")))
                 .under(own());
             assert_eq!(
-                two.into_aad().as_bytes(),
+                two.stored().into_aad().as_bytes(),
                 own().with(7u64).with("eu").into_aad().as_bytes(),
                 "two parts nest to the left"
             );
             let none = DeclaredContext::default().under(own());
-            assert_eq!(none.into_aad().as_bytes(), own().into_aad().as_bytes());
+            assert_eq!(
+                none.stored().into_aad().as_bytes(),
+                own().into_aad().as_bytes()
+            );
+        }
+
+        /// A field declares at most one index per operator, as the typed
+        /// plan refuses with `PlanError::IndexOverlap`: `ore` beside `ope`
+        /// is refused by name, before any key, and the refusal maps to the
+        /// same reason as the typed one.
+        #[test]
+        fn two_indexes_for_one_operator_are_refused() {
+            for outputs in [
+                &["c", "ore", "ope"][..],
+                &["ore", "ore_block"][..],
+                &["c", "eq", "ope", "ore_block"][..],
+            ] {
+                let refused =
+                    plan(obj(vec![("age", typed(label("age"), outputs, "uint32"))])).unwrap_err();
+                assert!(
+                    matches!(
+                        &refused,
+                        Error::Plan { field: Some(field), reason: Reason::OverlappingOutputs } if field == "age"
+                    ),
+                    "{outputs:?}: {refused:?}"
+                );
+            }
+            assert!(plan(obj(vec![(
+                "age",
+                typed(label("age"), &["c", "eq", "ore"], "uint32"),
+            )]))
+            .is_ok());
+        }
+
+        /// An empty binding would bind every row to one context: a row ID
+        /// not yet assigned. It is refused as the typed path refuses an
+        /// empty `Bind`, before any key is requested.
+        #[test]
+        fn an_empty_binding_is_refused() {
+            let plan = the_plan();
+            for empty in [
+                ContextPiece::Text("".into()),
+                ContextPiece::Bytes(Vec::new().into()),
+            ] {
+                let refused = plan.clone().with_bindings(vec![empty]).unwrap_err();
+                assert!(
+                    matches!(
+                        &refused,
+                        Error::Plan {
+                            field: None,
+                            reason: Reason::EmptyBinding
+                        }
+                    ),
+                    "{refused:?}"
+                );
+            }
+            assert!(plan.with_bindings(vec![ContextPiece::U64(9)]).is_ok());
+        }
+
+        /// `"bind"` is a plan-level key, so a field of that name is refused
+        /// by name, not read as the bindings and refused for its shape.
+        #[test]
+        fn a_field_named_bind_is_refused() {
+            let refused = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", typed(label("bind"), &["c"], "string")),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Plan {
+                        field: None,
+                        reason: Reason::Bind
+                    }
+                ),
+                "{refused:?}"
+            );
+            // The key itself still reads a list of parts.
+            let bound = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", Tree::Array(vec![Tree::UInt64(9)])),
+            ]))
+            .expect("a bind key with a list of parts");
+            assert_eq!(bound.bindings(), [ContextPiece::U64(9)]);
+        }
+
+        /// The grammar's `bind` is a nonempty list: an explicit empty list
+        /// is not an absent key, and would seal with no binding where the
+        /// plan says there is one.
+        #[test]
+        fn an_explicit_empty_bind_list_is_refused() {
+            let refused = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", Tree::Array(vec![])),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Plan {
+                        field: None,
+                        reason: Reason::EmptyBinding
+                    }
+                ),
+                "{refused:?}"
+            );
+        }
+
+        /// A binding part is a scalar: a grouped part is one Go cannot
+        /// supply through `Bind`, so it is refused rather than flattened or
+        /// nested.
+        #[test]
+        fn a_grouped_bind_part_is_refused() {
+            let refused = plan(obj(vec![
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                ("bind", Tree::Array(vec![Tree::Array(vec![s("a"), s("b")])])),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Plan {
+                        field: None,
+                        reason: Reason::Bind
+                    }
+                ),
+                "{refused:?}"
+            );
         }
     }
 
@@ -5122,6 +5426,170 @@ mod tests {
                 "and it opens under the extended context"
             );
         }
+
+        /// The context field may be declared after the fields it keys: the
+        /// lowering reads it by name wherever the plan puts it, the terms
+        /// are the chain's, and the record comes back in plan order.
+        #[tokio::test]
+        async fn the_context_field_may_be_declared_last() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan(obj(vec![
+                ("age", typed(identity("age"), &["c", "eq"], "uint32")),
+                ("id", typed(identity("id"), &["passthrough"], "uint64")),
+                (
+                    "tenant",
+                    typed(identity("tenant"), &["passthrough"], "string"),
+                ),
+                ("context_field", s("tenant")),
+            ]))
+            .expect("parses");
+            assert_eq!(keys_of(&plan), ["age", "id", "tenant"]);
+            let shown = plan.contexts().expect("composes").to_string();
+            assert!(shown.contains("tenant"), "{shown}");
+
+            let source = || {
+                obj(vec![
+                    ("id", Tree::UInt64(7)),
+                    ("age", Tree::UInt32(34)),
+                    ("tenant", s("tenants/acme")),
+                ])
+            };
+            let mut fields = map(seal(&keyset, source(), &plan).await);
+            let stored = term_bytes(&node(&mut map(node(&mut fields, "age")), "eq"));
+            assert_eq!(
+                stored,
+                chain_term(&cipher, "tenants/acme", 34, &[]).await,
+                "the chain's term under tenants/acme"
+            );
+
+            let sealed = seal(&keyset, source(), &plan).await;
+            let opened = object(
+                decrypt(
+                    Scope::Client(&cipher),
+                    sealed,
+                    &plan,
+                    expected("tenants/acme"),
+                )
+                .expect("fits")
+                .await
+                .expect("opens under the expected context"),
+            );
+            assert_eq!(opened[0].0, "age");
+            assert_eq!(u32_of(&opened[0].1), 34);
+            assert_eq!(opened[2].0, "tenant");
+            assert_eq!(text_of(&opened[2].1), "tenants/acme");
+
+            let sealed = seal(&keyset, source(), &plan).await;
+            let retrieved = retrieves(&cipher);
+            let refused = decrypt(
+                Scope::Client(&cipher),
+                sealed,
+                &plan,
+                expected("tenants/globex"),
+            )
+            .expect("fits")
+            .await;
+            assert!(matches!(refused, Err(crate::Error::ContextMismatch { .. })));
+            assert_eq!(retrieves(&cipher), retrieved, "before any key");
+        }
+
+        /// A batch whose rows leave a `"null": "sql"` field out in different
+        /// places, under a context field: each group is composed without
+        /// its absent fields, every row's stored context is checked against
+        /// the expected one, and one row stored under another tenant
+        /// refuses the batch before any key is retrieved.
+        #[tokio::test]
+        async fn a_batch_with_absent_fields_checks_every_rows_context() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan(obj(vec![
+                ("context_field", s("tenant")),
+                (
+                    "tenant",
+                    typed(identity("tenant"), &["passthrough"], "string"),
+                ),
+                ("age", typed(identity("age"), &["c", "eq"], "uint32")),
+                (
+                    "score",
+                    obj(vec![
+                        ("context", identity("score")),
+                        ("outputs", strings(&["c"])),
+                        ("type", s("uint32")),
+                        ("null", s("sql")),
+                    ]),
+                ),
+            ]))
+            .expect("parses");
+            let row = |tenant: &str, age: u32, score: Option<u32>| {
+                let mut entries = vec![("tenant", s(tenant)), ("age", Tree::UInt32(age))];
+                if let Some(score) = score {
+                    entries.push(("score", Tree::UInt32(score)));
+                }
+                obj(entries)
+            };
+
+            let batch = Tree::Array(vec![
+                row("tenants/acme", 1, Some(10)),
+                row("tenants/acme", 2, None),
+                row("tenants/acme", 3, Some(30)),
+            ]);
+            let sealed = seal(&keyset, batch, &plan).await;
+            let opened = decrypt(
+                Scope::Client(&cipher),
+                sealed,
+                &plan,
+                expected("tenants/acme"),
+            )
+            .expect("fits")
+            .await
+            .expect("every row is acme's")
+            .tree();
+            assert_eq!(
+                opened,
+                Tree::Array(vec![
+                    obj(vec![
+                        ("tenant", s("tenants/acme")),
+                        ("age", Tree::UInt32(1)),
+                        ("score", Tree::UInt32(10)),
+                    ]),
+                    obj(vec![
+                        ("tenant", s("tenants/acme")),
+                        ("age", Tree::UInt32(2)),
+                        ("score", Tree::Null),
+                    ]),
+                    obj(vec![
+                        ("tenant", s("tenants/acme")),
+                        ("age", Tree::UInt32(3)),
+                        ("score", Tree::UInt32(30)),
+                    ]),
+                ])
+            );
+
+            let batch = Tree::Array(vec![
+                row("tenants/acme", 1, Some(10)),
+                row("tenants/globex", 2, None),
+                row("tenants/acme", 3, None),
+            ]);
+            let sealed = seal(&keyset, batch, &plan).await;
+            let retrieved = retrieves(&cipher);
+            let refused = decrypt(
+                Scope::Client(&cipher),
+                sealed,
+                &plan,
+                expected("tenants/acme"),
+            )
+            .expect("fits")
+            .await;
+            match refused {
+                Err(crate::Error::ContextMismatch { stored }) => {
+                    assert_eq!(stored.to_string(), "tenants/globex")
+                }
+                Err(other) => panic!("expected ContextMismatch, got {other:?}"),
+                Ok(_) => panic!("a row stored under another tenant opened"),
+            }
+            assert_eq!(retrieves(&cipher), retrieved, "before any key");
+        }
     }
 
     mod given_a_keyset_scope {
@@ -5441,7 +5909,7 @@ mod tests {
         /// them. The ciphertext still does not show which they are.
         #[tokio::test]
         async fn a_sealed_null_stores_its_equality_term_and_a_query_finds_it() {
-            use crate::dynamic::{query_term, NoTargets, OpSpec, Operand};
+            use crate::dynamic::{query_term, NoTargets, Op, Operand};
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let plan = plan(obj(vec![
@@ -5481,30 +5949,23 @@ mod tests {
                 "the ciphertext is as long as a value's"
             );
 
-            let query = |field: &str, op: OpSpec| {
+            let query = |field: &str, op: Op| {
                 query_term(&keyset, &plan, field, op, &Tree::Null, &NoTargets)
             };
-            let null = query("age", OpSpec::Eq)
+            let null = query("age", Op::Eq)
                 .expect("eq takes a null")
                 .await
                 .expect("a term");
             assert_eq!(null.operand(), &Operand::One(terms[1].clone()));
-            let value = query_term(
-                &keyset,
-                &plan,
-                "age",
-                OpSpec::Eq,
-                Tree::UInt32(34),
-                &NoTargets,
-            )
-            .expect("eq takes a value")
-            .await
-            .expect("a term");
+            let value = query_term(&keyset, &plan, "age", Op::Eq, Tree::UInt32(34), &NoTargets)
+                .expect("eq takes a value")
+                .await
+                .expect("a term");
             assert_eq!(value.operand(), &Operand::One(terms[0].clone()));
 
             // A null has no order term, and a `"sql"` field stores none for
             // its nulls, which are SQL NULL.
-            for (field, op) in [("rank", OpSpec::Eq), ("rank", OpSpec::Lt)] {
+            for (field, op) in [("rank", Op::Eq), ("rank", Op::Lt)] {
                 let refused = query(field, op).err();
                 assert!(
                     matches!(&refused, Some(Error::Source { field: Some(f), reason: Reason::NullQuery }) if f == field),
@@ -6307,6 +6768,57 @@ mod tests {
 
         fn mixed_row(age: u32, email: &str) -> Tree {
             obj(vec![("age", Tree::UInt32(age)), ("email", s(email))])
+        }
+
+        /// An EQL value is stored under its table and column alone, so a
+        /// plan with a target field takes no binding, as it takes no
+        /// extension; no binding at all leaves it as it is.
+        #[test]
+        fn a_target_field_refuses_a_binding() {
+            let refused = mixed_plan()
+                .with_bindings(vec![ContextPiece::U64(9)])
+                .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Target(TargetError::Extended { name, label })
+                        if name == "email" && label == "users/email"
+                ),
+                "{refused:?}"
+            );
+            assert!(mixed_plan().with_bindings(vec![]).is_ok());
+            let wired = plan_with(
+                obj(vec![
+                    ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                    ("email", target_spec(label("email"), TEXT_EQ)),
+                    ("bind", Tree::Array(vec![Tree::UInt64(9)])),
+                ]),
+                &FakeEql,
+            );
+            assert!(
+                matches!(wired, Err(Error::Target(TargetError::Extended { .. }))),
+                "{wired:?}"
+            );
+        }
+
+        /// The context view shows a target field under its label alone, in
+        /// plan order among the lowered fields: an EQL value takes no part
+        /// from the caller, so there is nothing to fill in.
+        #[test]
+        fn the_contexts_show_a_target_field_in_plan_order() {
+            let plan = plan_with(
+                obj(vec![
+                    ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                    ("email", target_spec(label("email"), TEXT_EQ)),
+                    ("nick", spec(label("nick"), &["c"])),
+                ]),
+                &FakeEql,
+            )
+            .expect("a plan with a target parses");
+            assert_eq!(
+                plan.contexts().unwrap().to_string(),
+                "age\n  context: users / age\nemail\n  context: users / email\nnick\n  context: users / nick\n"
+            );
         }
 
         fn eql_json(record: &mut Vec<(String, StackCipherText)>, field: &str) -> serde_json::Value {
@@ -7158,6 +7670,27 @@ mod tests {
                 Plan::new_with(fields, &FakeEql),
                 Err(Error::Plan { .. })
             ));
+            // A target shares its identity with nothing, a passthrough
+            // included, in either order; a sealed field may share with one.
+            let passthrough = || {
+                FieldPlan::new(
+                    "copy",
+                    context(label("email")).unwrap(),
+                    vec![Output::Passthrough],
+                )
+                .unwrap()
+            };
+            let target = || {
+                FieldPlan::with_target("email", context(label("email")).unwrap(), TEXT_EQ).unwrap()
+            };
+            assert!(matches!(
+                Plan::new_with(vec![target(), passthrough()], &FakeEql),
+                Err(Error::Plan { .. })
+            ));
+            assert!(matches!(
+                Plan::new_with(vec![passthrough(), target()], &FakeEql),
+                Err(Error::Plan { .. })
+            ));
         }
 
         #[tokio::test]
@@ -7988,14 +8521,17 @@ mod tests {
                     Refused,
                 ),
                 (P::NoContext.into(), None, Refused),
+                (P::BindInQuery.into(), None, BindInQuery),
                 (
-                    P::MatchCase {
-                        declared: "CaseSensitive",
-                        folds: true,
+                    P::IndexOverlap {
+                        at: field(),
+                        first: "ore",
+                        second: "ope",
+                        operator: crate::op::Op::Lt,
                     }
                     .into(),
-                    None,
-                    Refused,
+                    some("age"),
+                    OverlappingOutputs,
                 ),
             ];
             for (error, field, reason) in cases {

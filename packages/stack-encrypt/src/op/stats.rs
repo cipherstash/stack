@@ -1,5 +1,5 @@
 //! How many rows to fetch for a probabilistic query: [`Stats`] in,
-//! [`Limit`] out (ADR-0009, decision 5).
+//! [`Limit`] out.
 //!
 //! A Bloom match returns every real match and some rows that matched by
 //! chance. A non-matching row whose stored filter has fill `f` (the
@@ -382,8 +382,8 @@ mod tests {
         }
     }
 
-    /// ADR-0009 decision 5's worked table: EQL v4 defaults (`k = 6`,
-    /// `m = 2048`), a million rows, 99%.
+    // ADR-0009 decision 5's worked table: EQL v4 defaults (`k = 6`,
+    // `m = 2048`), a million rows, 99%.
     #[test]
     fn the_declared_prior_reproduces_the_worked_table() {
         let stats = Stats::declared(1_000_000);

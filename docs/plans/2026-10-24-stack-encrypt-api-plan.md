@@ -321,22 +321,37 @@ and checks each one.
 #### Query a record field
 
 The derive emits one marker for each field of a record, such as
-`EncryptedMember::EMAIL`. A marker names the field, its plaintext type,
-its accessor, and the field's index list. It is the value a query starts
-from. The derive emits no plan: the marker is enough for a query, and a
-binding sends a plan of its own.
+`EncryptedMember::EMAIL`. A marker names the field, the context the
+derive sealed it under (the record's scope, then the field's identity),
+and the field's target type, whose `Answers` impls are the field's index
+list. It is the value a query starts from. The derive emits no plan: the
+marker is enough for a query, and a binding sends a plan of its own.
+Built on 10 November 2026 (pull request #1595): the marker has no
+plaintext type and no accessor, because the derive sees the record's
+field types and not the plaintext struct's, and a query value converts
+from the borrowed form a caller has (`&str` to `String`) through
+`ToOwned`. So an equality marker takes a value of any type its index
+accepts, unless the field states its query type with
+`#[stash(query = String)]`. A field whose type is several indexes, a
+nullable field, and a record field (through `.field(..)`) have operator
+methods too (#1596).
 
 A typed query starts from the marker, and has one method for each
 operator the field's indexes answer. A missing operator is a compile
 error: "no method named `gt`", with a message that names the field's
-indexes. Scopes chain on the query. A binding cannot, because the query
-builder has no `bind` method, so a query accepts scopes only, by type.
-The query ends with `encrypt(&keyset)`, and its output type is the EQL
-query type the marker fixes. Decided on 7 November 2026.
+indexes. A record that lists a caller scope gives its markers the
+scope's type, and the query has no `encrypt` until `.scope(..)` is given
+once, with a value of that type; a record with no caller scope gives a
+query that is ready at once. A binding cannot be given, because the
+query type has no `bind` method, so a query accepts its scope only, by
+type. The query ends with `encrypt(&keyset)`, and its output type is the
+EQL query type the marker fixes. Decided on 7 November 2026.
 
 ```rust
-// Not on `next` yet: field markers and their query methods. Today a
-// query names a plan written by hand: `cipher.query(op::Eq, value).on(&plan)`.
+// On `next` since pull request #1595, with the index's query term as
+// the output type (`EqualityTerm`, `RangeQuery<OreTerm<u32>>`,
+// `MatchQuery`); the EQL query types follow with the EQL owned
+// implementations. A value is passed by value; a string literal as it is.
 let by_email: TextEqQuery = EncryptedMember::EMAIL
     .eq("alice@example.com")
     .scope(tenant)
@@ -344,6 +359,7 @@ let by_email: TextEqQuery = EncryptedMember::EMAIL
     .await?;
 let adults: IntegerOrdQuery = EncryptedMember::AGE
     .between(18, 65)
+    .scope(tenant)
     .encrypt(&keyset)
     .await?;
 
@@ -690,13 +706,12 @@ keyset as the argument. Made a target after the combinator spike of
 9 November 2026 (ADR-0007, amended).
 
 ```rust
-// Not on `next` yet: `Planned`. Today the chain does this:
-// `cipher.encrypt(&user).using(&plan)` and `cipher.query(op, v).on(&plan)`.
-// The value under a data plan is the dynamic interface's record,
-// `FieldValues`, and the stored row is a `StackCipherText`. A typed
-// struct uses the derive, not a plan.
+// On `next` since pull request #1595. The value under a data plan is
+// the dynamic interface's value, a `ValueFrame` of the record's fields,
+// and the stored row is a `StackCipherText`. A typed struct uses the
+// derive, not a plan.
 let row: StackCipherText = Planned::new(&plan, values).encrypt_into(&keyset).await?;
-let values = FieldValues::decrypt_from(Planned::new(&plan, row), &keyset).await?;
+let values = ValueFrame::decrypt_from(Planned::new(&plan, row), &keyset).await?;
 
 let row: StackCipherText = Planned::new(&plan, values)
     .encrypt_into_with_context(&keyset, Scope::new(tenant).bind(row_id))
@@ -760,10 +775,10 @@ it declares about queries, so no declaration lists the queries a program
 might run.
 
 ```rust
-// Not on `next` yet: query plans.
+// On `next` since pull request #1595. A query value is a `ValueFrame`.
 let by_email = plan.query("email", Op::Eq)?;   // refused here if no index answers Eq
 
-let q: QueryTerm = Planned::new(&by_email, "alice@example.com")
+let q: QueryTerm = Planned::new(&by_email, ValueFrame::of("alice@example.com")?)
     .encrypt_into_with_context(&keyset, Scope::new(tenant))
     .await?;
 ```
@@ -785,15 +800,18 @@ field](#query-a-record-field) shows the typed form.
 #### The dynamic field handle
 
 A program whose plan is data uses the same builder through a field
-handle. The handle has every operator method. Each one is checked at run
-time against the plan, and returns `IndexNotDeclared` when no index
-answers it. The handle has no `bind` method either.
+handle. The handle has one method per scalar operator, and `op(..)` for
+any operator, the JSON ones included. Each one is checked at run time
+against the plan, and returns `operator_not_answered` when no index
+answers it. A field that names an EQL type takes its resolver at the
+handle, `plan.field_with(name, &resolver)`. The handle has no `bind`
+method either.
 
 ```rust
-// Not on `next` yet: the dynamic field handle.
+// On `next` since pull request #1595. A query value is a `ValueFrame`.
 let email = plan.field("email")?;
 let q: QueryTerm = email
-    .eq("alice@example.com")?        // refused here if no index answers Eq
+    .eq(ValueFrame::of("alice@example.com")?)?   // refused here if no index answers Eq
     .scope(tenant)
     .encrypt(&keyset)
     .await?;
@@ -1550,10 +1568,16 @@ review.
   The caller must not write a second plan by hand. The marker holds the
   declaration the derive wrote, so the query term and the stored term
   come from one source.
-- **Done already.** `Answers` on a target type is today's compile-time
-  lookup of the index for an operator. The marker's index list extends
-  it to a record field. Until the markers land, a query works through a
-  plan written by hand: `cipher.query(op, value).on(&plan)`.
+- **Done already.** `Answers` on a target type is the compile-time
+  lookup of the index for an operator; a marker's methods are bound by
+  it, so the marker's index list is its target type's `Answers` impls.
+  Pull request #1595 lands the markers, their query methods and
+  `assert_context!` over a marker (`src/marker.rs`, `tests/markers.rs`,
+  `tests/ui/marker_*.rs`). Pull request #1599 gives a field of several
+  indexes, a nullable field and a record field their operator methods,
+  and a field its query type (`#[stash(query = ..)]`). The chain query
+  `cipher.query(op, value).on(&plan)` still exists until #1488 removes
+  it.
 - **No hand-built plan.** The review of 7 November 2026 gave a
   hand-built plan the same markers, through `Plan::<Member>::scope(..)`
   with `pick!`. That is withdrawn. No Rust program builds a plan by hand.
@@ -1565,13 +1589,19 @@ review.
   time too. Today the builder refuses it at run time, so that check
   lands with the builder's removal. The dynamic grammar keeps its
   run-time checks.
-- **Tracked in.** Issue #1486 is open.
+- **Tracked in.** Issue #1486 is open; pull request #1595 closes it.
+  Issue #1596, the operator methods the markers lacked, is closed by
+  pull request #1599.
 - **Finished when** these are all true:
-  - the [marker example](#query-a-record-field) compiles;
+  - the [marker example](#query-a-record-field) compiles, with the
+    index's query term as the output type; the EQL query types come
+    with the EQL owned implementations;
   - the compile-fail cases in `tests/ui` cover an operator the field's
-    indexes do not answer;
+    indexes do not answer (`marker_operator_not_answered`), a binding
+    on a query (`marker_query_has_no_bind`), and a missing, mistyped or
+    repeated scope (`marker_query_needs_its_scope`);
   - tests show that a query cannot run without its plan or its required
-    context.
+    context (`tests/markers.rs`, `tests/planned.rs`).
 
 #### `Planned` and its serialised form
 
@@ -1603,11 +1633,17 @@ Decided on 7 November 2026, as area one of the query design review.
 - **Rules.** A serialised `Planned` is a transport form, never a storage
   form, because its value is plaintext. It is never logged or written to disk. Its shape
   is not part of the stored format.
-- **Done already.** The guest already sends the engine a plan frame, then
-  a value frame for each call, through `plan_with`, `encrypt_with`,
-  `query`, and `decrypt_with` in `dynamic::record`. The serialised `Planned` names and groups what those functions already
-receive.
-- **Tracked in.** Issue #1486 is open, in part. On the Go side, issue #1116 is open to hide or rename `record.Plan`. Issue #1307 is open for a Go plan-building API, for types `stashgen` cannot tag. It builds a data plan, so the Rust builder's removal does not affect it.
+- **Done already.** `Planned`, the query plan, the field handle,
+  `QueryTerm` and `contexts()` on a `Plan` and a `Planned` are on pull
+  request #1595 (`src/dynamic/planned.rs`, `tests/planned.rs`). `Planned` calls `encrypt_with`, `query_term` and
+  `decrypt_with` in `dynamic::record` and `dynamic::query`, under the
+  plan extended by the caller's parts. The guest still sends the engine
+  a plan frame, then a value frame for each call. The serialised
+  `Planned` names and groups what those functions already receive, and
+  is not built yet.
+- **Tracked in.** Issue #1486 is open, in part. Issue #1594 is the
+  serialised `Planned`, the Go module sending it, and the corpus
+  rewrite, split from pull request #1595. On the Go side, issue #1116 is open to hide or rename `record.Plan`. Issue #1307 is open for a Go plan-building API, for types `stashgen` cannot tag. It builds a data plan, so the Rust builder's removal does not affect it.
 - **Finished when** these are all true:
   - every case in the conformance corpus is a serialised `Plan` or
     `Planned` with the engine's expected answer beside it;
@@ -1682,7 +1718,7 @@ receive.
   instead of "extension". The frozen vectors do not change, because no key
   on the wire names the operation.
 - **Done already.** Nothing. Today every part is in both contexts.
-- **Tracked in.** Issue #1487 is open. It is exactly this item. Issue #1067 is open and related.
+- **Tracked in.** Issue #1487 is open. It is exactly this item. Its pull request adds the binding kind to the derive, the dynamic grammar, and Go, and the `record-bindings-v1` conformance profile. Issue #1067 is open and related.
 - **Finished when** these are all true, in Rust and in Go:
   - a record with a binding row ID encrypts;
   - a column query finds it;
@@ -1761,7 +1797,11 @@ Decided on 7 November 2026.
 - **Done already.** `Descriptor` renders a context as text, and
   `ContextMismatch` reports the stored descriptor. Neither shows the
   types, and neither is reachable from a plan or a call.
-- **Tracked in.** No issue.
+- **Tracked in.** Issue #1568, with the two items below. Its first pull
+  request lands `contexts()`, `context()`, `assert_context!`, and the Go
+  `encrypttest` package for the declarations that exist today. The
+  scenarios that need `scope(..)` and `bind(..)` land with #1487, and the
+  field-marker form with #1486.
 - **Finished when** these are all true:
   - a test pins the output of `contexts()` for each of the [context
     scenarios](2026-10-24-stack-encrypt-context-examples.md);
@@ -1788,7 +1828,7 @@ not change the stored format. Renaming Vitamin C's `IntoAad` trait is a
 follow-up in Vitamin C. The Go SDK and the dynamic interface have no public
 parameter named `aad`.
 
-- **Tracked in.** No issue.
+- **Tracked in.** Issue #1568.
 
 #### Pass context by reference
 
@@ -1802,9 +1842,12 @@ parameter named `aad`.
   the old context path type that [Apply the naming
   review](#apply-the-naming-review) removes.
   The context inputs, such as `RequiredContext`, still need an owned value.
-- **Tracked in.** No issue.
+- **Tracked in.** Issue #1568. A stored EQL type still takes its
+  `NonEmpty<Identifier>` by value: Rust's orphan rule keeps
+  `From<&NonEmpty<T>>` for `NonEmpty<T>` out of this repository, so that
+  impl is a follow-up in Vitamin C.
 - **Finished when** the examples in this plan pass a context by reference,
-  with no clone, and compile.
+  without moving it, and compile. The parts are cloned into the call.
 
 #### Encrypt borrowed values
 
@@ -1953,9 +1996,16 @@ table.
   The removal of `Label` is also listed in [Apply the naming
   review](#apply-the-naming-review); it happens once, here.
 - **Why.** Two APIs for the same job make the right one hard to find.
-- **Done already.** The new API exists beside the old one. Issue #1488
-  tracks the removal.
-- **Tracked in.** Issue #1488 is open.
+- **Done already.** The new API exists beside the old one. The first
+  pull request for #1488 makes `Planned` the one lowering of a data plan:
+  `dynamic::planned::compose` and `opening` build each field's combinator
+  from the parsed plan, and `encrypt_with`, `decrypt_with`, `contexts()`
+  and the checks read them. The dynamic path no longer uses the plan
+  builder. Those functions do not yet build a `Planned`: they run the
+  lowering themselves. That inversion, the builder, the chain, the old
+  traits and `Label` are still to be removed.
+- **Tracked in.** Issue #1488 is open. Its first pull request is the
+  lowering; the removals follow it.
 - **Finished when** the old API is gone, and every consumer uses the new
   API.
 
@@ -1994,7 +2044,7 @@ Decided on 7 November 2026, as area two of the query design review.
   does not know which bound the caller meant. The `InvertedRange` error
   asked for in #1279 predates that commit and is dropped.
 - **Stored format and wire.** Unchanged. A query sends the operator's wire name. That name does not change.
-- **Tracked in.** Issues #1318 and #1279 are open. Issues #1317, #1319, and #1321 are open. Issue #1320, the inverted-range rule, is open. This plan's decision supersedes it, so it should be closed.
+- **Tracked in.** The pull request for #1279, #1318, #1317, #1321 and #1233 does this area's `Op` enum and the `Matches` case change. Issues #1319 and #1321 were open; #1321 closes with that pull request. Issue #1320, the inverted-range rule, is closed: this plan's decision superseded it.
 - **Finished when** these are all true:
   - the dynamic enum is generated from the `op` types;
   - `Matches` has no type parameter;
@@ -2123,7 +2173,7 @@ review. The rules are the query artifact's.
   `.via`. The `MatchConfig` documentation says a field and its query agree "by
   construction". That is true only for one-value plans today. Both
   are amended, not contradicted in silence.
-- **Tracked in.** Issues #1318 and #1279 are open. Issue #1233 is open: refuse a second order index. That is rule 2. Issues #1317 and #1321 are open.
+- **Tracked in.** Steps 1 and 2 are one pull request, which closes #1279, #1318, #1317, #1321 and #1233 (rule 2, the second order index). It brings `prepare`, the `sem::query` rules and `Op`, and drops `Matches`'s case parameter; the analyzer of "Match configuration: one analyzer" is its own work (#1319). Steps 3 and 4 are #1486 and #1488.
 - **Finished when** these are all true:
   - every index's operators appear in one declaration, and a test shows
     the typed and dynamic lookups agree on every index;

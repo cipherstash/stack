@@ -23,10 +23,9 @@ impl Index<String> for Shortcut {
 impl op::Supports<op::Matches, String> for Shortcut {
     type Query = EqualityTerm;
     type Verifier = ();
-    fn check(&self, _: &String) -> Result<(), stack_encrypt::Error> {
+    fn prepare(&self, _: &String) -> Result<(), stack_encrypt::Error> {
         Ok(())
     }
-    fn verifier(&self, _: &String) {}
     fn query((): (), term: EqualityTerm, _: op::QueryToken) -> EqualityTerm {
         term
     }

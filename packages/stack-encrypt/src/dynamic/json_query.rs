@@ -202,7 +202,7 @@ use serde_json::Value;
 use vitaminc_protected::Protected;
 use zeroize::Zeroizing;
 
-use super::query::{OpSpec, Operand};
+use super::query::{Op, Operand};
 use super::{Error, Reason, ValueFrame};
 use crate::json::{
     parse_text, wipe_value, JsonExtracted, JsonLeafQuery, JsonNode, JsonOptions, JsonPath,
@@ -231,25 +231,17 @@ pub(super) enum Binds {
 
 /// What a JSON operator's operand binds as, or `None` for an operator
 /// that is not one: the one table that says which operators the JSON
-/// index answers ([`OpSpec::is_json`]). Exhaustive, so a new operator
+/// index answers ([`Op::is_json`]). Exhaustive, so a new operator
 /// must be placed.
-pub(super) fn binds(op: OpSpec) -> Option<Binds> {
+pub(super) fn binds(op: Op) -> Option<Binds> {
     match op {
-        OpSpec::Contains | OpSpec::ContainedBy | OpSpec::EqAt => Some(Binds::Query),
-        OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt | OpSpec::BetweenAt => {
-            Some(Binds::Leaf)
-        }
-        OpSpec::Selector | OpSpec::Children | OpSpec::ChildCount => Some(Binds::Text),
-        OpSpec::Subtree => Some(Binds::TextArray),
-        OpSpec::ElementMatch => Some(Binds::Elements),
-        OpSpec::Match => Some(Binds::Predicate),
-        OpSpec::Eq
-        | OpSpec::Matches
-        | OpSpec::Lt
-        | OpSpec::Lte
-        | OpSpec::Gt
-        | OpSpec::Gte
-        | OpSpec::Between => None,
+        Op::Contains | Op::ContainedBy | Op::EqAt => Some(Binds::Query),
+        Op::LtAt | Op::LteAt | Op::GtAt | Op::GteAt | Op::BetweenAt => Some(Binds::Leaf),
+        Op::Selector | Op::Children | Op::ChildCount => Some(Binds::Text),
+        Op::Subtree => Some(Binds::TextArray),
+        Op::ElementMatch => Some(Binds::Elements),
+        Op::Match => Some(Binds::Predicate),
+        Op::Eq | Op::Matches | Op::Lt | Op::Lte | Op::Gt | Op::Gte | Op::Between => None,
     }
 }
 
@@ -477,31 +469,29 @@ fn term(error: TermError) -> Error {
 }
 
 /// Read and check an operator's input against the field's options.
-fn read_input(op: OpSpec, options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+fn read_input(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
     match op {
-        OpSpec::Contains | OpSpec::ContainedBy => Ok(Input::Document(
+        Op::Contains | Op::ContainedBy => Ok(Input::Document(
             read_frame::<DocumentInput>(input)?.json.parse()?,
         )),
-        OpSpec::EqAt => read_eq_at(input),
-        OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt => {
-            read_ordering(options, input)
-        }
-        OpSpec::BetweenAt => read_between(options, input),
-        OpSpec::Selector => Ok(Input::Path(selector_path(
+        Op::EqAt => read_eq_at(input),
+        Op::LtAt | Op::LteAt | Op::GtAt | Op::GteAt => read_ordering(options, input),
+        Op::BetweenAt => read_between(options, input),
+        Op::Selector => Ok(Input::Path(selector_path(
             &read_frame::<PathInput>(input)?.path,
         )?)),
-        OpSpec::Children | OpSpec::ChildCount => Ok(Input::Path(node_path(
+        Op::Children | Op::ChildCount => Ok(Input::Path(node_path(
             &read_frame::<PathInput>(input)?.path,
         )?)),
-        OpSpec::Subtree => {
+        Op::Subtree => {
             let read: ReadInput = read_frame(input)?;
             Ok(Input::Read(
                 path(&read.path)?,
                 read.wildcard_bound.unwrap_or(JsonSubtreeKey::DEFAULT_BOUND),
             ))
         }
-        OpSpec::ElementMatch => read_elements(options, input),
-        OpSpec::Match => read_match(options, input),
+        Op::ElementMatch => read_elements(options, input),
+        Op::Match => read_match(options, input),
         _ => Err(Error::Internal),
     }
 }
@@ -696,7 +686,7 @@ pub(super) fn leaf(value: &Value) -> Result<(), Error> {
 /// built, a wildcard expanding too wide or a path too deep for its
 /// tokens (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`), are
 /// [`derive`]'s, after the keyset is resolved.
-pub(super) fn check(op: OpSpec, options: &JsonOptions, input: &ValueFrame) -> Result<(), Error> {
+pub(super) fn check(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<(), Error> {
     read_input(op, options, input).map(drop)
 }
 
@@ -726,7 +716,7 @@ pub(super) fn derive<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     label: &Label,
     options: &JsonOptions,
-    op: OpSpec,
+    op: Op,
     input: &ValueFrame,
 ) -> Result<Pending<'a, Operand, K>, Error> {
     derive_input(keyset, label, options, op, read_input(op, options, input)?)
@@ -739,14 +729,14 @@ pub(super) fn derive_input<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     label: &Label,
     options: &JsonOptions,
-    op: OpSpec,
+    op: Op,
     input: Input,
 ) -> Result<Pending<'a, Operand, K>, Error> {
     let column = || NonEmpty::from(label.clone());
     Ok(match input {
         Input::Document(document) => terms(keyset, options, label, document.0.clone())
             .try_map(|terms| eql(&JsonQuery::of_terms(terms)).map(Operand::One)),
-        Input::At(path, value) if op == OpSpec::EqAt => {
+        Input::At(path, value) if op == Op::EqAt => {
             terms(keyset, options, label, path.holding(value.0.clone()))
                 .try_map(|terms| eql(&JsonQuery::at_path(terms)).map(Operand::One))
         }
@@ -762,7 +752,7 @@ pub(super) fn derive_input<'a, K: 'static>(
                     })
                 })
         }
-        Input::Path(path) if op == OpSpec::Selector => {
+        Input::Path(path) if op == Op::Selector => {
             let selector = keyset.json_selector_now(&path, column())?;
             Pending::ready(keyset, Ok(Operand::Text(selector.to_string())))
         }
@@ -916,11 +906,11 @@ enum Read {
 /// or none.
 fn read_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(Read, Vec<Vec<JsonNode>>), Error> {
     let request: ReadRequest = read_frame(request)?;
-    let read = match OpSpec::parse(&request.operation) {
-        Some(OpSpec::Selector) if request.wildcard_bound.is_none() => {
+    let read = match Op::parse(&request.operation) {
+        Some(Op::Selector) if request.wildcard_bound.is_none() => {
             Read::Selector(selector_path(&request.path)?)
         }
-        Some(OpSpec::Subtree) => Read::Subtree(
+        Some(Op::Subtree) => Read::Subtree(
             path(&request.path)?,
             request
                 .wildcard_bound

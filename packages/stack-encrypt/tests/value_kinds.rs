@@ -27,7 +27,7 @@ use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{
-    context, query_term, NoTargets, OpSpec, Operand, Reason, Scope, ValueFrame, ValueKind,
+    context, query_term, NoTargets, Op, Operand, Reason, Scope, ValueFrame, ValueKind,
 };
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{CipherText, KeysetCipher, SealedValue, StackCipher, StackCipherText};
@@ -328,7 +328,7 @@ async fn query(
     keyset: &KeysetCipher<'_, DeterministicSource>,
     plan: &DataPlan,
     field: &str,
-    operator: OpSpec,
+    operator: Op,
     input: Raw<'_>,
 ) -> Vec<u8> {
     let term = query_term(keyset, plan, field, operator, input, &NoTargets)
@@ -360,7 +360,7 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
     );
     for kind in kinds() {
         let stored = |key: &str| unhex(sealed[kind.field][key].as_str().expect("a term"));
-        let eq = query(&keyset, &plan, kind.field, OpSpec::Eq, kind.value).await;
+        let eq = query(&keyset, &plan, kind.field, Op::Eq, kind.value).await;
         assert_eq!(
             eq,
             stored("eq"),
@@ -385,7 +385,7 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
         );
         for (key, index) in [("ore", IndexSpec::Ore), ("ope", IndexSpec::Ope)] {
             if kind.outputs.contains(&key) {
-                let lt = query(&keyset, &plan, kind.field, OpSpec::Lt, kind.value).await;
+                let lt = query(&keyset, &plan, kind.field, Op::Lt, kind.value).await;
                 assert_eq!(lt, stored(key), "{} {key}", kind.field);
                 let probe = stack_encrypt::dynamic::term(&keyset, kind.value, &index, ctx.clone())
                     .await
@@ -397,7 +397,7 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
     for (field, _, input) in folded_queries() {
         let stored = unhex(sealed[field]["eq"].as_str().expect("a term"));
         assert_eq!(
-            query(&keyset, &plan, field, OpSpec::Eq, input).await,
+            query(&keyset, &plan, field, Op::Eq, input).await,
             stored,
             "{field}: vitaminc-normalize folds the query onto the stored term"
         );
@@ -406,7 +406,7 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             .find(|key| sealed[field].get(*key).is_some())
             .expect("each folded field has an order term");
         assert_eq!(
-            query(&keyset, &plan, field, OpSpec::Lt, input).await,
+            query(&keyset, &plan, field, Op::Lt, input).await,
             unhex(sealed[field][order].as_str().expect("a term")),
             "{field}: vitaminc-ore folds the query onto the stored {order} term"
         );
@@ -475,7 +475,7 @@ async fn the_committed_fixture_opens_and_its_terms_are_todays() {
         let record = json_of_record(seal(&cipher, &plan).await);
         let mut queries = Vec::new();
         for (field, text, input) in folded_queries() {
-            let term = query(&keyset, &plan, field, OpSpec::Eq, input).await;
+            let term = query(&keyset, &plan, field, Op::Eq, input).await;
             queries.push(json!({
                 "field": field,
                 "operator": "eq",
@@ -525,7 +525,7 @@ async fn the_committed_fixture_opens_and_its_terms_are_todays() {
         assert_eq!(entry["text"], json!(text));
         assert_eq!(entry["frame"], json!(frame(input)));
         assert_eq!(entry["term"], record[field]["eq"], "{field}: folded");
-        let term = query(&keyset, &plan, field, OpSpec::Eq, input).await;
+        let term = query(&keyset, &plan, field, Op::Eq, input).await;
         assert_eq!(json!(hex(&term)), entry["term"], "{field}: today's");
     }
 }

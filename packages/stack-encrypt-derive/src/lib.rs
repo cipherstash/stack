@@ -10,8 +10,9 @@
 //!
 //! `EncryptFrom<P>` and `DecryptInto<P>` are an older pair of derives over a
 //! borrowed plaintext. They take the same attributes. Plans and the dynamic
-//! engine still use them, and the API plan removes them once those have
-//! moved to the new pair. See [Owned records](#owned-records).
+//! engine still use them. The older pair will be removed once plans and the
+//! dynamic engine use the new pair (#1488). See
+//! [Owned records](#owned-records).
 //!
 //! The generated code describes the encryption. Stack Encrypt runs it. The
 //! generated code is never given a cipher.
@@ -54,9 +55,102 @@
 //! `struct = User, scope = "users"` selects plaintext fields
 //! and binds each under the pair `("users", "<field>")`, which renders
 //! `users/<field>` as its ZeroKMS descriptor; `identity = ".."` on a field keys
-//! it under `users/<identity>` instead. The storage envelope itself adds no
+//! it under `users/<identity>` instead.
+//!
+//! # Scopes and bindings
+//!
+//! A `struct` record lists the parts of its context that are not declared,
+//! each a scope or a binding. A scope is a part a query supplies too, such
+//! as a tenant. A binding ties a ciphertext to one row, such as a row ID. A
+//! query does not know it, so a bound row is still found by a query under
+//! the scopes.
+//!
+//! - `scope(tenant: u64)`: the caller passes the scope on every call, as
+//!   `Scope::new(tenant)`.
+//! - `bind(row: u128)`: the caller passes the binding on every call, as
+//!   `Bind::new(row)`, or `Scope::new(tenant).bind(row)` with a scope.
+//! - `scope(field = "tenant")` and `bind(field = "id")`: the part is stored
+//!   in the row, in the `#[stash(passthrough)]` field derived from that
+//!   plaintext field. Encrypt reads it from the plaintext. Decrypt reads it
+//!   from the row, and checks it against a part the reader passes.
+//!
+//! A part the record does not list does not compile. The record's
+//! `ContextInput` is `RequiredContext<Parts<..>>` when the caller supplies
+//! a part, and the caller's value converts into it.
+//!
+//! A part stored in the row is a passthrough field, which is not
+//! authenticated. It protects the row only when it is the identity the
+//! database enforces, such as the primary key: a writer who copies the
+//! row's `id` and ciphertext together gets a record that opens and reports
+//! that `id`. A reader that has the row's identity passes it as well, as
+//! `Scope::new(42u64).bind(9u128)` does below. A mismatch is refused before
+//! any key is requested.
+//!
+//! ```
+//! use stack_encrypt::sem::EqualityTerm;
+//! use stack_encrypt::target::{Bind, DecryptSource, EncryptTarget, Scope};
+//! use stack_encrypt::{DecryptFrom, EncryptInto, Encrypted, StackCipher};
+//! use stack_encrypt::kms::FakeDataKeySource;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User { tenant: u64, email: String }
+//!
+//! #[derive(EncryptTarget, DecryptSource)]
+//! #[stash(struct = User, scope = "users", scope(field = "tenant"), bind(row: u128))]
+//! struct EncryptedUser {
+//!     #[stash(passthrough)]
+//!     tenant: u64,
+//!     email: Encrypted<EqualityTerm>,
+//! }
+//!
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let keyset = cipher.default_keyset();
+//! let user = User { tenant: 42, email: "ada@example.com".into() };
+//! // The tenant comes from the plaintext. The row ID comes from the caller.
+//! let stored: EncryptedUser = user.encrypt_into_with_context(&keyset, Bind::new(9u128)).await?;
+//! assert_eq!(stored.tenant, 42);
+//! // The row ID must be passed. The tenant may be passed, to check it.
+//! let back = User::decrypt_from_with_context(stored, &keyset, Scope::new(42u64).bind(9u128)).await?;
+//! assert_eq!(back.email, "ada@example.com");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # }).unwrap();
+//! ```
+//!
+//! The storage envelope itself adds no
 //! cryptographic map-entry context. Vitamin C still binds keys inside plaintext
 //! maps and preserves authenticated absence and empty-container markers.
+//!
+//! # Field markers
+//!
+//! A `struct` record also emits one marker per derived field, as an
+//! associated constant named after the field in upper case:
+//! `EncryptedUser::EMAIL` for a field `email` (`EncryptedDoc::TYPE` for
+//! `r#type`). A marker is the value a typed query of the field starts
+//! from. It has one method per operator the field's indexes answer,
+//! checked at compile time: one index (`Encrypted<EqualityTerm>`), several
+//! (`Encrypted<(EqualityTerm, MatchTerms)>`, each operator answered by the
+//! one index that answers it), or a nullable field of either
+//! (`Option<Encrypted<EqualityTerm>>`). A record field's marker reaches the
+//! inner record's markers under its own context:
+//! `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)`.
+//!
+//! `#[stash(query = String)]` on a field states the type its queries take,
+//! so each of its marker's methods takes that type alone. The derive checks
+//! it against the plaintext struct's field, which is that type or an
+//! `Option` of it. Without it, an equality marker takes any type its index
+//! accepts, since the derive does not see the plaintext struct's field
+//! types otherwise. On a field whose marker has no operator method, such
+//! as a record field or a `StackCipherText`, it does nothing beyond that
+//! check. A record that lists a caller scope
+//! gives its markers that scope's type, and the query takes it with
+//! `.scope(..)`, once; a record with none gives a query that is ready at
+//! once. No binding can be given. The query ends with `.encrypt(&keyset)`
+//! and derives under the context the derive sealed the field under, so it
+//! is the stored term. See `stack_encrypt::Marker`. The constant's name is
+//! the field's in upper case, so a record cannot define another constant
+//! of that name; a tuple field has no name, so no marker.
 //!
 //! Ciphertext and term operations compose before awaiting, preserving batched
 //! key requests. Terms alone need only their respective PRF or ordering trait.

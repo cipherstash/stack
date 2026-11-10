@@ -27,6 +27,19 @@ type Decrypter interface {
 	Open(ctx context.Context, plan *record.Plan, records []record.Sealed) ([]record.Source, error)
 }
 
+// Contexts shows the contexts this cipher seals and indexes the plan's
+// fields under, with the cipher's extension applied, before any key is
+// requested: what [Cipher.Seal] will use for every row. The text is
+// [Checker.Contexts]'s, one line per field and one indented line with its
+// context. A plan the engine refuses is [ErrEncoding].
+func (cph *Cipher) Contexts(ctx context.Context, plan *record.Plan) (string, error) {
+	p, err := cph.plan(plan)
+	if err != nil {
+		return "", err
+	}
+	return contextsOf(ctx, cph.client, p)
+}
+
 // Seal encrypts rows under the plan, through this cipher's keyset and with
 // its extension: the sealed fields of every row, in order, with one ZeroKMS
 // request for each 500 sealed values. For generated code.
@@ -169,6 +182,9 @@ func (cph *Cipher) queryPlan(plan *record.Plan, field string) (*record.Plan, err
 	if err != nil {
 		return nil, err
 	}
+	if len(p.Bind) != 0 {
+		return nil, fmt.Errorf("%w: field %q: a query takes no binding; a binding is in the stored context only, so a query by the scopes alone finds the row", ErrEncoding, field)
+	}
 	if p.ContextField == "" {
 		return p, nil
 	}
@@ -217,6 +233,7 @@ func (cph *Cipher) plan(plan *record.Plan) (*record.Plan, error) {
 	}
 	p := *plan
 	p.Extension = append(append([]any(nil), plan.Extension...), cph.extension...)
+	p.Bind = append(append([]any(nil), plan.Bind...), cph.bindings...)
 	if err := p.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}

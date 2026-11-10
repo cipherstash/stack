@@ -13,7 +13,7 @@ use common::{
 use miette::Diagnostic;
 use serde::Deserialize;
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, Error, NoTargets, OpSpec, ValueFrame};
+use stack_encrypt::dynamic::{self, record, Error, NoTargets, Op, ValueFrame};
 use stack_encrypt::sem::DefaultMatch;
 use stack_encrypt::{
     op, AsProtectedRef as _, Equality, Match, Ope, Ore, OreBlock, Plan, StackCipher,
@@ -153,7 +153,7 @@ async fn typed(
     field: &str,
     kind: &str,
     outputs: &[String],
-    operator: OpSpec,
+    operator: Op,
     query: &QueryInput,
 ) -> Option<String> {
     let context = format!("conformance/{field}");
@@ -189,8 +189,8 @@ async fn typed(
     // The index that answers the operator, as the plan declares it: the
     // equality, match or order index, whichever the operator reads.
     let answers: &[&str] = match operator {
-        OpSpec::Eq => &["eq"],
-        OpSpec::Matches => &["match"],
+        Op::Eq => &["eq"],
+        Op::Matches => &["match"],
         _ => &["ore", "ore_block", "ope"],
     };
     let index = outputs
@@ -214,14 +214,14 @@ async fn typed(
         };
     }
     match (kind, index, operator) {
-        ("string", "eq", OpSpec::Eq) => {
+        ("string", "eq", Op::Eq) => {
             let plan = Plan::context(context)
                 .with::<String, _>(Equality)
                 .build()
                 .unwrap();
             run!(plan, op::Eq, &text(query), Equality)
         }
-        ("string", "match", OpSpec::Matches) => {
+        ("string", "match", Op::Matches) => {
             let plan = Plan::context(context)
                 .with::<String, _>(Match::<DefaultMatch>::default())
                 .build()
@@ -233,46 +233,46 @@ async fn typed(
                 Match::<DefaultMatch>::default()
             )
         }
-        ("string", "ore", OpSpec::Lt) => {
+        ("string", "ore", Op::Lt) => {
             let plan = Plan::context(context)
                 .with::<String, _>(Ore)
                 .build()
                 .unwrap();
             run!(plan, op::Lt, &text(query))
         }
-        ("string", "ore", OpSpec::Between) => {
+        ("string", "ore", Op::Between) => {
             let plan = Plan::context(context)
                 .with::<String, _>(Ore)
                 .build()
                 .unwrap();
             run!(plan, op::Between, &texts(query))
         }
-        ("string", "ore_block", OpSpec::Lt) => {
+        ("string", "ore_block", Op::Lt) => {
             let plan = Plan::context(context)
                 .with::<String, _>(OreBlock)
                 .build()
                 .unwrap();
             run!(plan, op::Lt, &text(query), OreBlock)
         }
-        ("string", "ore_block", OpSpec::Gt) => {
+        ("string", "ore_block", Op::Gt) => {
             let plan = Plan::context(context)
                 .with::<String, _>(OreBlock)
                 .build()
                 .unwrap();
             run!(plan, op::Gt, &text(query), OreBlock)
         }
-        ("string", "ore_block", OpSpec::Between) => {
+        ("string", "ore_block", Op::Between) => {
             let plan = Plan::context(context)
                 .with::<String, _>(OreBlock)
                 .build()
                 .unwrap();
             run!(plan, op::Between, &texts(query), OreBlock)
         }
-        ("uint32", "ore", OpSpec::Between) => {
+        ("uint32", "ore", Op::Between) => {
             let plan = Plan::context(context).with::<u32, _>(Ore).build().unwrap();
             run!(plan, op::Between, &u32s(query))
         }
-        ("int128", "ope", OpSpec::Between) => {
+        ("int128", "ope", Op::Between) => {
             let plan = Plan::context(context).with::<i128, _>(Ope).build().unwrap();
             run!(plan, op::Between, &i128s(query), Ope)
         }
@@ -337,7 +337,7 @@ async fn shared_query_refusal_profile() {
         for counter in &counters {
             counter.store(0, Ordering::SeqCst);
         }
-        let Some(operator) = OpSpec::parse(&case.operator) else {
+        let Some(operator) = Op::parse(&case.operator) else {
             // The engine's operator vocabulary is closed: a name it does not
             // parse never reaches a query here. The binding, which takes the
             // name as text, is where the refusal is observed.
@@ -363,7 +363,7 @@ async fn shared_query_refusal_profile() {
                 Err(error) => Err(error),
             };
         check(&case.id, "query_term", derived, expected);
-        if operator == OpSpec::Matches {
+        if operator == Op::Matches {
             let verified = dynamic::verify(
                 &plan,
                 &case.field,

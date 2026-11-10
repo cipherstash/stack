@@ -296,6 +296,13 @@ enum Source<S> {
 }
 
 impl<S> Source<S> {
+    /// The name of the context field, for a plan whose context is one.
+    fn field_name(&self) -> Option<&str> {
+        match self {
+            Source::Field(field) => Some(&field.name),
+            Source::Plan(_) | Source::Call => None,
+        }
+    }
     fn what(&self) -> &'static str {
         match self {
             Source::Plan(_) => FROM_PLAN,
@@ -1185,9 +1192,13 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     }
 }
 
-/// No index named twice in one field or one-value plan. Two match indexes
-/// with different options are still one index twice: a field has one term
-/// per index kind.
+/// No index named twice in one field or one-value plan, and no two indexes
+/// that answer one operator. Two match indexes with different options are
+/// still one index twice: a field has one term per index kind. `(Ore,
+/// Ope)` are two indexes that both answer the orderings, so a query for
+/// them would have to choose; the plan refuses them instead
+/// ([`PlanError::IndexOverlap`]), and the dynamic path refuses the same
+/// declaration (`overlapping_outputs`).
 pub(crate) fn check_indexes(at: &str, indexes: &[IndexSpec]) -> Result<(), PlanError> {
     for (i, index) in indexes.iter().enumerate() {
         if indexes[..i]
@@ -1199,6 +1210,14 @@ pub(crate) fn check_indexes(at: &str, indexes: &[IndexSpec]) -> Result<(), PlanE
                 index: index.key(),
             });
         }
+    }
+    if let Some((first, second, operator)) = crate::target::index::overlapping(indexes) {
+        return Err(PlanError::IndexOverlap {
+            at: at.to_owned(),
+            first: first.key(),
+            second: second.key(),
+            operator,
+        });
     }
     Ok(())
 }
@@ -1296,6 +1315,9 @@ fn check_value(have: &[&str], names: &[Arc<str>]) -> Result<(), Error> {
 enum Base<S> {
     Label(Label),
     Field(OfValue<S>),
+    /// The call names the context, and no call has been made: what
+    /// [`Plan::contexts`] lowers a plan built without a context under.
+    Call,
 }
 
 impl<S: 'static, K: 'static> Plan<S, K> {
@@ -1355,6 +1377,56 @@ impl<S: 'static, K: 'static> Plan<S, K> {
             Ok(base) => base,
             Err(error) => return Encryption::failed(error.into()),
         };
+        self.lowering(base)
+    }
+
+    /// The contexts this plan's fields are sealed and indexed under, with a
+    /// placeholder for each part that is not known until the plan runs: the
+    /// context a call names, a context read from a field of the value, and
+    /// the extension a call may add. No key is requested. See
+    /// [`Contexts`](crate::Contexts).
+    ///
+    /// ```
+    /// # use stack_encrypt::plan::{Field, Fields};
+    /// # struct User { email: String, id: u64 }
+    /// # impl Fields for User {
+    /// #     fn field_names(&self) -> Vec<&str> { vec!["email", "id"] }
+    /// # }
+    /// # impl Field<String> for User {
+    /// #     fn field(&self, name: &str) -> Option<&String> { (name == "email").then_some(&self.email) }
+    /// # }
+    /// # impl Field<u64> for User {
+    /// #     fn field(&self, name: &str) -> Option<&u64> { (name == "id").then_some(&self.id) }
+    /// # }
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::{Equality, Plan};
+    ///
+    /// let plan: Plan<User, FakeDataKeySource> = Plan::context("users")
+    ///     .fields()
+    ///     .encrypt_index::<String>("email", Equality)
+    ///     .passthrough::<u64>("id")
+    ///     .build()?;
+    /// println!("{}", plan.contexts());
+    /// // email
+    /// //   context: (users / email) / {scope?: CallerContext}
+    /// # #[cfg(feature = "testing")]
+    /// stack_encrypt::assert_context!(
+    ///     plan.contexts(),
+    ///     email = [["users", "email"], stack_encrypt::testing::caller_scope()],
+    /// );
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// ```
+    pub fn contexts(&self) -> crate::Contexts {
+        let base = match &self.inner.source {
+            Source::Plan(label) => Base::Label(label.clone()),
+            Source::Field(field) => Base::Field(Arc::clone(&field.of_value)),
+            Source::Call => Base::Call,
+        };
+        self.lowering(base).contexts()
+    }
+
+    /// [`encryption`](Self::encryption), once the base context is known.
+    fn lowering<'s>(&self, base: Base<S>) -> Encryption<'s, S, FieldValues, K, DeclaredContext> {
         let names = Arc::clone(&self.inner.names);
         let fields_of = self.inner.fields_of;
         let mut record = inspect::<S, K, DeclaredContext, _>(move |source| match fields_of {
@@ -1380,7 +1452,9 @@ impl<S: 'static, K: 'static> Plan<S, K> {
                     let of_value = Arc::clone(of_value);
                     let name = Arc::clone(&name);
                     let keys_nothing = keys_nothing(field.plan.kind);
-                    operation.under_by(move |source: &S| {
+                    let context_field = self.inner.source.field_name().unwrap_or("context");
+                    let joined: Option<String> = (!keys_nothing).then(|| identity.to_string());
+                    operation.under_by(context_field, joined.as_deref(), move |source: &S| {
                         let context = of_value(source)?;
                         match keys_nothing {
                             true => Ok(context),
@@ -1388,7 +1462,14 @@ impl<S: 'static, K: 'static> Plan<S, K> {
                         }
                     })
                 }
-            };
+                // The call names the context. Only `contexts()` lowers a
+                // plan this way: a run has the call's label by then.
+                Base::Call => {
+                    let joined = (!keys_nothing(field.plan.kind)).then_some(&*identity);
+                    operation.under_call(joined, PlanError::NoContext.into())
+                }
+            }
+            .named(&name);
             record = record.zip(operation).map(move |(mut slots, slot)| {
                 slots.push((name, slot));
                 slots
@@ -1435,6 +1516,8 @@ impl<S: 'static, K: 'static> Plan<S, K> {
         match base {
             Base::Label(_) => Ok(()),
             Base::Field(of_value) => of_value(source).map(drop),
+            // `base(call)` never yields it: a run has the call's label.
+            Base::Call => Err(PlanError::NoContext.into()),
         }
     }
 
@@ -1565,7 +1648,7 @@ fn keys_nothing(kind: FieldKind) -> bool {
     matches!(kind, FieldKind::Passthrough | FieldKind::ContextField)
 }
 
-fn field_label(field: &str, source: LabelError) -> Error {
+pub(crate) fn field_label(field: &str, source: LabelError) -> Error {
     PlanError::FieldLabel {
         field: field.to_owned(),
         source,

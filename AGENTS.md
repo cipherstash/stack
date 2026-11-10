@@ -269,8 +269,11 @@ credentials**, and **EQL v2, v3 and v4 installed** in the database.
   `:all`, which is what CI runs. Both tasks live in
   `integration-tests/tasks.toml`, included from `mise.toml`'s `[task_config]`,
   and both build the binding themselves (debug) and rerun `eql:v4:install` and
-  `eql:v4:codec` before invoking vitest, so a local run cannot pass against a
-  stale codec or stale `eql_v4` SQL. Those steps refuse a stale
+  `eql:v4:codec` before invoking vitest, so a local run uses the current codec
+  and rebuilds the `eql_v4` schema. The `public.eql_v4_*` column domains survive
+  a reinstall on purpose, so after changing a domain, recreate the container
+  with `docker compose down -v` and run `mise run setup`; CI starts from a new
+  database, so it is not affected. The two v4 steps refuse a stale
   `packages/eql/Cargo.lock`; the comment in `tasks.toml` says why. Postgres
   is on **5436** (`docker-compose.yml` publishes `5436:5432`); `mise.toml`'s
   `[env]` carries the matching `PG*` values, and mise's `[env]` overrides an

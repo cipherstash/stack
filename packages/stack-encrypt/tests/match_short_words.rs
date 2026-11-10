@@ -19,7 +19,7 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::{Config, RngAlgorithm, RngSeed, TestRng, TestRunner};
 use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::op::{self, MatchCase, Probabilistic};
+use stack_encrypt::op::{self, Probabilistic};
 use stack_encrypt::plan::{Field, FieldSchema, Fields, Indexed, PlanError, ValuePlan};
 use stack_encrypt::sem::{MatchConfig, MatchOptions, MatchQuery, MatchTerms, TermError, Tokenizer};
 use stack_encrypt::target::{Encrypted, IndexSpec};
@@ -39,9 +39,6 @@ impl MatchConfig for ShortWords {
         }
     }
 }
-impl MatchCase for ShortWords {
-    type Case = op::CaseInsensitive;
-}
 
 /// Short words beside the standard tokenizer, which already indexes whole
 /// words: options the index refuses.
@@ -54,9 +51,6 @@ impl MatchConfig for StandardShortWords {
             ..MatchOptions::default()
         }
     }
-}
-impl MatchCase for StandardShortWords {
-    type Case = op::CaseInsensitive;
 }
 
 type Cipher = StackCipher<FakeDataKeySource>;

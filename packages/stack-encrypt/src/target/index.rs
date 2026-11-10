@@ -14,7 +14,7 @@
 //! an indexed field with no index is a compile error rather than a quiet
 //! ciphertext-only field; a field with no index is [`ciphertext`] alone.
 //!
-//! [`indexed`] does the composition every caller used to spell by hand —
+//! [`indexed`] does the composition a caller would otherwise spell by hand —
 //! `ciphertext().accepting().zip(equality()).zip(ore()).map(..)`, with its
 //! nested-pair bookkeeping — and produces an [`Encrypted<Terms>`]: the
 //! ciphertext, and the terms as a tuple read by destructuring.
@@ -65,6 +65,7 @@ use super::{
     Encryption, RequiredContext,
 };
 use crate::json::{JsonOptions, JsonTerms};
+use crate::op::Op;
 use crate::sem::{
     DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreBlockTerm,
     OreTerm,
@@ -122,6 +123,61 @@ impl IndexSpec {
             IndexSpec::Json(_) => "json",
         }
     }
+
+    /// The operators this index declares: the one declaration each index
+    /// type carries (`Equality::OPERATORS`, `Ore::OPERATORS`, …), which the
+    /// typed `Supports` impls are written beside, so the typed and the
+    /// dynamic lookup read one table. An index declared as data has the
+    /// operators its type has, whatever its options.
+    pub fn operators(&self) -> &'static [Op] {
+        match self {
+            IndexSpec::Equality => Equality::OPERATORS,
+            IndexSpec::Match(_) => Match::<DefaultMatch>::OPERATORS,
+            IndexSpec::Ore => Ore::OPERATORS,
+            IndexSpec::Ope => Ope::OPERATORS,
+            IndexSpec::OreBlock => OreBlock::OPERATORS,
+            IndexSpec::Json(_) => Json::OPERATORS,
+        }
+    }
+
+    /// Whether this index, as configured, answers `op`: the operator is in
+    /// its [declaration](Self::operators), and for a JSON index an ordering
+    /// at a path, or an element predicate built of them, only when the
+    /// index orders some path.
+    pub fn answers(&self, op: Op) -> bool {
+        if !self.operators().contains(&op) {
+            return false;
+        }
+        match self {
+            IndexSpec::Json(options) if json_ordering(op) => !options.ordered.is_empty(),
+            _ => true,
+        }
+    }
+}
+
+/// The JSON operators answered only by an index that orders some path.
+fn json_ordering(op: Op) -> bool {
+    matches!(
+        op,
+        Op::LtAt | Op::LteAt | Op::GtAt | Op::GteAt | Op::BetweenAt | Op::ElementMatch
+    )
+}
+
+/// Two indexes of `indexes` that declare one operator, with that operator:
+/// a field declares at most one index per operator, so the lookup for an
+/// operator finds zero or one index. `(Equality, Ore)` declares none in
+/// common; `(Ore, Ope)`, `(Ore, OreBlock)` and two match indexes do. The
+/// first pair in declaration order, and its first common operator.
+pub(crate) fn overlapping(indexes: &[IndexSpec]) -> Option<(&IndexSpec, &IndexSpec, Op)> {
+    indexes.iter().enumerate().find_map(|(i, first)| {
+        indexes[i + 1..].iter().find_map(|second| {
+            first
+                .operators()
+                .iter()
+                .find(|op| second.operators().contains(op))
+                .map(|op| (first, second, *op))
+        })
+    })
 }
 
 impl fmt::Display for IndexSpec {

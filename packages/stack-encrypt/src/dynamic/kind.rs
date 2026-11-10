@@ -159,13 +159,15 @@ fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
 /// being sealed is not converted; it must already be of the field's kind,
 /// and is refused otherwise.
 ///
-/// **The engine does not call this.** [`term`](super::term()) takes a
-/// value and an [`IndexSpec`] and never sees the field's declared kind, so a binding deriving a query term for a typed field must
-/// call `read` first, with [`FieldPlan::field_type`](super::FieldPlan::field_type).
-/// One that skips it hands `Float64(34.0)` to a `uint64` field, derives a
-/// float term where the stored one is the `u64` term, and matches nothing,
-/// with no error. Wiring this into the plan's query path
-/// (`query(v).using(&plan)`) is tracked in #1057.
+/// **[`term`](super::term()) does not call this.** It takes a value and an
+/// [`IndexSpec`] and never sees the field's declared kind, so a binding
+/// deriving a query term with it for a typed field must call `read` first,
+/// with [`FieldPlan::field_type`](super::FieldPlan::field_type). One that
+/// skips it hands `Float64(34.0)` to a `uint64` field, derives a float term
+/// where the stored one is the `u64` term, and matches nothing, with no
+/// error. [`query_term`](super::query_term) does call it, for a non-null
+/// input to any operator but a document's: a query named by operator reads
+/// its input as the field's kind.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{read, ValueFrame, ValueKind};

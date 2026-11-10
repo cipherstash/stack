@@ -1,14 +1,13 @@
 //! Queries named by operator, for a binding.
 //!
 //! A Rust caller names an operator as a type, `cipher.query(op::Matches,
-//! "ali").on(&plan)`, and the compiler finds the index that answers it
-//! (ADR-0009). A binding has no type to name: its plan arrives as data and
-//! its operator as a string. This module is the runtime form of that query,
-//! written once here rather than once per language binding (ADR-0007,
-//! amended 2026-10-16):
+//! "ali").on(&plan)`, and the compiler finds the index that answers it. A
+//! binding has no type to name: its plan arrives as data and its operator
+//! as a string. This module is the runtime form of that query, written once
+//! here rather than once per language binding:
 //!
-//! - [`OpSpec`] names an operator, as [`IndexSpec`] names an index, and
-//!   [`OpSpec::answered_by`] is the table the typed path's `DefaultIndex`
+//! - [`Op`] names an operator, as [`IndexSpec`] names an index, and
+//!   [`Op::answered_by`] is the table the typed path's `DefaultIndex`
 //!   impls state: which declared index answers the operator for a field of
 //!   a kind, if any does.
 //! - [`query_term`] derives the query term for a plan field, an operator and
@@ -32,7 +31,7 @@
 //!
 //! # Which operators a field answers
 //!
-//! A field with indexes answers what [`OpSpec::answered_by`] says for its
+//! A field with indexes answers what [`Op::answered_by`] says for its
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
 //! `between`) through an ORE index over an integer of 16 bits or wider, a
@@ -41,7 +40,7 @@
 //! path's default for an ordering is ORE, and block ORE and OPE are the
 //! typed path's `.via(OreBlock)` and `.via(Ope)`; here a field that
 //! declares only one of them is answered through it. Every order term is
-//! derived over the value's ADR-0002 order key: a float's ties `-0.0` with
+//! derived over the value's order key: a float's ties `-0.0` with
 //! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
 //! bytes is not answered, as `op::Ordered` does not cover them. Nor is one
 //! over an 8-bit integer, which has no order term. A timestamp orders by the
@@ -51,7 +50,9 @@
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
 //! whose index the type carries, for a type the engine produces and that
 //! has a query twin. The term is the twin, which carries every term of the
-//! type; one query domain per operator is EQL v4's (ADR-0009, decision 8).
+//! type. It binds as the twin's one query domain
+//! ([`TargetDescriptor::query_sql_domain`]), whichever operator it answers:
+//! EQL v4 has one query domain per type family and term, not per operator.
 //! `matches` is answered through a type whose descriptor carries its match
 //! options ([`TargetDescriptor::with_match_options`]), since [`verify`]
 //! must cut the query's tokens as the stored filter was cut: `TextMatch`
@@ -61,7 +62,7 @@
 //!
 //! # Wire format
 //!
-//! An operator is its [`name`](OpSpec::name). A query term is the object
+//! An operator is its [`name`](Op::name). A query term is the object
 //! [`QueryTerm`] serializes to, the statistics the frame object
 //! [`Stats::from_frame`] reads, and a limit [`Limit::rows`]: an unsigned
 //! 64-bit integer, or null for no finite fetch. Each answer is written to a
@@ -76,11 +77,11 @@ use serde::{Serialize, Serializer};
 use super::WireBytes;
 use std::fmt;
 
-use stack_kms::{DataKeySource, IndexKeySource};
+use stack_kms::DataKeySource;
 
 use super::record::{FieldPlan, Plan};
+use super::term::derive;
 use super::term::OneScalar;
-use super::term::{derive, Use};
 use super::value_frame::Parts;
 use super::ValueKind;
 use super::{
@@ -94,214 +95,19 @@ use crate::{KeysetCipher, Pending};
 use vitaminc_aead::plaintext::{Logical, Physical};
 use vitaminc_aead::Encrypt;
 
-/// An operator, named at run time: the runtime form of the
-/// [`op`](crate::op) module's operator types, as [`IndexSpec`] is of the
-/// index types.
-///
-/// Not `#[non_exhaustive]`, for the reason the [module docs](super#stability)
-/// give for [`IndexSpec`]: the names are wire format, and a new operator is
-/// one every binding has to be taught.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum OpSpec {
-    /// `"eq"`: [`op::Eq`](struct@crate::op::Eq).
-    Eq,
-    /// `"lt"`: [`op::Lt`](crate::op::Lt).
-    Lt,
-    /// `"lte"`: [`op::Lte`](crate::op::Lte).
-    Lte,
-    /// `"gt"`: [`op::Gt`](crate::op::Gt).
-    Gt,
-    /// `"gte"`: [`op::Gte`](crate::op::Gte).
-    Gte,
-    /// `"between"`: [`op::Between`](crate::op::Between), whose input is a
-    /// pair of bounds, low then high, inclusive.
-    Between,
-    /// `"matches"`: [`op::Matches`](struct@crate::op::Matches), in the case
-    /// the field's match index fixes.
-    Matches,
-    /// `"contains"`: [`op::Contains`](crate::op::Contains), a stored
-    /// document containing a JSON document (`@>`). Answered by the JSON index
-    /// of a field that stores a document. The inputs of this and the
-    /// operators below are named by [`OpSpec::input`]; [`query_term`]
-    /// derives their operands and [`json_open`] opens their reads.
-    Contains,
-    /// `"contained_by"`: [`op::ContainedBy`](crate::op::ContainedBy), a
-    /// stored document contained by a JSON document (`<@`).
-    ContainedBy,
-    /// `"eq_at"`: [`op::AtPath`](crate::op::AtPath)`(op::Eq)`, a scalar at
-    /// a path.
-    EqAt,
-    /// `"lt_at"`: `op::AtPath(op::Lt)`, at a path the index orders.
-    LtAt,
-    /// `"lte_at"`: `op::AtPath(op::Lte)`.
-    LteAt,
-    /// `"gt_at"`: `op::AtPath(op::Gt)`.
-    GtAt,
-    /// `"gte_at"`: `op::AtPath(op::Gte)`.
-    GteAt,
-    /// `"between_at"`: `op::AtPath(op::Between)`, two bounds, inclusive.
-    BetweenAt,
-    /// `"selector"`: the selector of a path, which `->` and the path
-    /// functions take ([`KeysetCipher::json_selector`](crate::KeysetCipher::json_selector)).
-    Selector,
-    /// `"subtree"`: the tokens of a read of the node at a path, wildcards
-    /// expanded to a bound, which `json_tree_subtree` takes
-    /// ([`KeysetCipher::json_subtree_key_with_bound`](crate::KeysetCipher::json_subtree_key_with_bound)).
-    Subtree,
-    /// `"children"`: the token of the node at a path with no wildcard,
-    /// which `json_tree_children` takes.
-    Children,
-    /// `"child_count"`: the same token, which `json_tree_child_count`
-    /// takes.
-    ChildCount,
-    /// `"element_match"`: a predicate on one element of an array, each
-    /// member a field of the element at an ordered path with its bounds,
-    /// which `json_tree_element_match` takes. True of a row where some one
-    /// element satisfies every member.
-    ElementMatch,
-    /// `"match"`: a jsonpath predicate and its variables, compiled to a
-    /// tree of the other operators' operands, which `json_tree_match` and
-    /// `@@` take: the one-parameter form of `jsonb_path_match`. Its input
-    /// is `{"predicate", "vars"?, "wildcard_bound"?}`, `vars` the JSON text
-    /// of the object `jsonb_path_match` takes. It reads the subset of
-    /// SQL/JSON path predicates the index's terms answer: comparisons of a
-    /// path (`$.a.b`, `$.a[*].b`, `$."a b"`) with a variable or a literal,
-    /// `exists(path)`, `exists(path[*] ? (@.x == $v && @.y > $w))`, `&&`,
-    /// `||`, `!` and parentheses; and refuses anything else at the byte
-    /// it starts ([`Error::Predicate`](super::Error::Predicate)). The text
-    /// is PostgreSQL's [SQL/JSON path language](https://www.postgresql.org/docs/current/functions-json.html#FUNCTIONS-SQLJSON-PATH).
-    /// It is true of jsonpath's rows, and its answer is jsonpath's,
-    /// three-valued, save that an ordering of a JSON `null` is unknown
-    /// rather than false except under an odd number of `!` (which picks
-    /// the same rows, and keeps a `null` needle out of the operand), a
-    /// path is read as written (lax mode's unwrapping of an array the path
-    /// names no `[*]` for, and its wrapping of a value that is not an
-    /// array where it does, are not applied), a comparison of two kinds
-    /// of value is decided by the terms where jsonpath answers unknown,
-    /// and an ordering or a filter of more than one condition compares by
-    /// the ordering terms, as `element_match` does.
-    ///
-    /// ```
-    /// use serde_json::json;
-    /// use stack_encrypt::dynamic::{check_query, frame, record, OpSpec, Reason, ValueFrame};
-    /// use stack_encrypt::AsProtectedRef;
-    /// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
-    /// # use stack_encrypt::target::IndexSpec;
-    /// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
-    /// # /// A host whose `JsonSearch` names the compiled predicate's domain.
-    /// # struct Documents;
-    /// # impl TargetResolver for Documents {
-    /// #     fn targets(&self) -> Vec<TargetDescriptor> {
-    /// #         vec![TargetDescriptor::new(
-    /// #             "JsonSearch", "json", "", Some(ValueKind::Json), "public.eql_v4_json_search",
-    /// #             vec!["json".to_owned()], Some("JsonSearchQuery".to_owned()),
-    /// #             Some("eql_v4.query_json".to_owned()), true, None,
-    /// #         )
-    /// #         .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
-    /// #     }
-    /// #     fn encrypt<'a, K: 'static>(&self, _: &str, _: Option<&TargetOptions>,
-    /// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: ValueFrame,
-    /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
-    /// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label, _: &[u8],
-    /// #     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> { unreachable!() }
-    /// #     fn query<'a, K: 'static>(&self, _: &str, _: &IndexSpec, _: &'a KeysetCipher<'_, K>,
-    /// #         _: &Label, _: ValueFrame,
-    /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
-    /// # }
-    /// // A document field that orders `$.age`.
-    /// let declaration = frame::serde::to_vec(&json!({"profile": {
-    ///     "context": ["users", "profile"], "type": "json", "null": "sql",
-    ///     "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}
-    /// }}))?;
-    /// let plan = record::plan_with(declaration.as_protected_ref(), &Documents)?;
-    /// // What `jsonb_path_match(col, $1, $2)` takes: the predicate, and its
-    /// // variables as the JSON text of one object.
-    /// let input = |predicate: &str| -> ValueFrame {
-    ///     let input = json!({"predicate": predicate, "vars": r#"{"min": 18, "r": "sibling"}"#});
-    ///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().as_protected_ref()).unwrap()
-    /// };
-    /// let check = |predicate: &str| {
-    ///     check_query(&plan, "profile", OpSpec::Match, input(predicate), &Documents)
-    /// };
-    ///
-    /// check("$.age >= $min && !(exists($.retired))")?;
-    /// check(r#"$.name == "ann" || $."first name" != null"#)?;
-    /// check("exists($.contacts[*] ? (@.relationship == $r))")?;
-    ///
-    /// // Refused at the byte the construct starts, by name, never quoting
-    /// // the text.
-    /// let error = check(r#"$.email like_regex "@""#).unwrap_err();
-    /// assert_eq!(error.reason(), Some(Reason::JsonPredicateUnsupported));
-    /// let error = check("$.age + 1 > $min").unwrap_err();
-    /// assert!(error.to_string().contains("at byte 6"), "{error}");
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    Match,
-}
+pub use crate::op::Op;
 
-impl OpSpec {
-    /// Every operator, in declaration order: the order a catalog lists them
-    /// in.
-    pub const ALL: [OpSpec; 21] = [
-        OpSpec::Eq,
-        OpSpec::Lt,
-        OpSpec::Lte,
-        OpSpec::Gt,
-        OpSpec::Gte,
-        OpSpec::Between,
-        OpSpec::Matches,
-        OpSpec::Contains,
-        OpSpec::ContainedBy,
-        OpSpec::EqAt,
-        OpSpec::LtAt,
-        OpSpec::LteAt,
-        OpSpec::GtAt,
-        OpSpec::GteAt,
-        OpSpec::BetweenAt,
-        OpSpec::Selector,
-        OpSpec::Subtree,
-        OpSpec::Children,
-        OpSpec::ChildCount,
-        OpSpec::ElementMatch,
-        OpSpec::Match,
-    ];
+/// The former name of [`Op`].
+#[deprecated(
+    since = "0.4.0",
+    note = "renamed to `Op`; the variants and their names are unchanged"
+)]
+pub type OpSpec = Op;
 
-    /// The operator a name names, or `None` for a name that is not one.
-    /// Names match exactly: `"eq"`, not `"Eq"` or `"="`.
-    pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|op| op.name() == name)
-    }
-
-    /// The operator's wire name.
-    pub fn name(self) -> &'static str {
-        match self {
-            OpSpec::Eq => "eq",
-            OpSpec::Lt => "lt",
-            OpSpec::Lte => "lte",
-            OpSpec::Gt => "gt",
-            OpSpec::Gte => "gte",
-            OpSpec::Between => "between",
-            OpSpec::Matches => "matches",
-            OpSpec::Contains => "contains",
-            OpSpec::ContainedBy => "contained_by",
-            OpSpec::EqAt => "eq_at",
-            OpSpec::LtAt => "lt_at",
-            OpSpec::LteAt => "lte_at",
-            OpSpec::GtAt => "gt_at",
-            OpSpec::GteAt => "gte_at",
-            OpSpec::BetweenAt => "between_at",
-            OpSpec::Selector => "selector",
-            OpSpec::Subtree => "subtree",
-            OpSpec::Children => "children",
-            OpSpec::ChildCount => "child_count",
-            OpSpec::ElementMatch => "element_match",
-            OpSpec::Match => "match",
-        }
-    }
-
+impl Op {
     /// Whether the JSON index answers this operator: the document
     /// operators, whose input is an object of named JSON inputs
-    /// ([`OpSpec::input`]).
+    /// ([`Op::input`]).
     pub fn is_json(self) -> bool {
         super::json_query::binds(self).is_some()
     }
@@ -315,19 +121,15 @@ impl OpSpec {
     /// "vars"?, "wildcard_bound"?}`).
     pub fn input(self) -> &'static str {
         match self {
-            OpSpec::Between => "pair",
-            OpSpec::Contains | OpSpec::ContainedBy => "json",
-            OpSpec::EqAt | OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt => {
-                "path_json"
-            }
-            OpSpec::BetweenAt => "path_pair",
-            OpSpec::Selector | OpSpec::Children | OpSpec::ChildCount => "path",
-            OpSpec::Subtree => "path_bound",
-            OpSpec::ElementMatch => "path_predicates",
-            OpSpec::Match => "predicate",
-            OpSpec::Eq | OpSpec::Lt | OpSpec::Lte | OpSpec::Gt | OpSpec::Gte | OpSpec::Matches => {
-                "value"
-            }
+            Op::Between => "pair",
+            Op::Contains | Op::ContainedBy => "json",
+            Op::EqAt | Op::LtAt | Op::LteAt | Op::GtAt | Op::GteAt => "path_json",
+            Op::BetweenAt => "path_pair",
+            Op::Selector | Op::Children | Op::ChildCount => "path",
+            Op::Subtree => "path_bound",
+            Op::ElementMatch => "path_predicates",
+            Op::Match => "predicate",
+            Op::Eq | Op::Lt | Op::Lte | Op::Gt | Op::Gte | Op::Matches => "value",
         }
     }
 
@@ -350,11 +152,11 @@ impl OpSpec {
     /// `match` is exact on the terms its leaves are: its equalities are
     /// `eq_at`'s save inside an element-scoped filter of more than one
     /// condition, which is `element_match`'s, and its orderings are the
-    /// orderings' ([`OpSpec::Match`] says where its answer and jsonpath's
+    /// orderings' ([`Op::Match`] says where its answer and jsonpath's
     /// part).
     pub fn fidelity(self) -> Fidelity {
         match self {
-            OpSpec::Matches => Fidelity::Probabilistic,
+            Op::Matches => Fidelity::Probabilistic,
             _ => Fidelity::Exact,
         }
     }
@@ -363,82 +165,51 @@ impl OpSpec {
     /// than one: `between` does. `between_at` takes one object holding its
     /// path and both bounds (its [`input`](Self::input) is `path_pair`).
     pub fn takes_pair(self) -> bool {
-        matches!(self, OpSpec::Between)
+        matches!(self, Op::Between)
     }
 
     /// The index among `indexes` that answers this operator for a field of
-    /// `kind`, or `None` when none does: the typed path's `DefaultIndex`
-    /// table, stated over a kind and the indexes a field declares.
+    /// `kind`, or `None` when none does: each index's declaration
+    /// ([`IndexSpec::answers`]), read over the kind. A plan declares at
+    /// most one index per operator, so at most one answers.
     ///
     /// ```
-    /// use stack_encrypt::dynamic::{OpSpec, ValueKind};
+    /// use stack_encrypt::dynamic::{Op, ValueKind};
     /// use stack_encrypt::target::IndexSpec;
     ///
-    /// let both = [IndexSpec::Ope, IndexSpec::Ore];
-    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::UInt32, &both), Some(&IndexSpec::Ore));
-    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::String, &both), Some(&IndexSpec::Ore));
-    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Float32, &both), Some(&IndexSpec::Ore));
-    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Bytes, &both), None);
-    /// assert_eq!(OpSpec::Eq.answered_by(ValueKind::UInt32, &both), None);
+    /// let declared = [IndexSpec::Equality, IndexSpec::Ope];
+    /// assert_eq!(Op::Lt.answered_by(ValueKind::UInt32, &declared), Some(&IndexSpec::Ope));
+    /// assert_eq!(Op::Lt.answered_by(ValueKind::String, &declared), Some(&IndexSpec::Ope));
+    /// assert_eq!(Op::Lt.answered_by(ValueKind::Float32, &declared), Some(&IndexSpec::Ope));
+    /// assert_eq!(Op::Lt.answered_by(ValueKind::Bytes, &declared), None);
+    /// assert_eq!(Op::Eq.answered_by(ValueKind::UInt32, &declared), Some(&IndexSpec::Equality));
+    /// assert_eq!(Op::Matches.answered_by(ValueKind::UInt32, &declared), None);
     /// ```
     pub fn answered_by(self, kind: ValueKind, indexes: &[IndexSpec]) -> Option<&IndexSpec> {
-        let declared = |wanted: fn(&IndexSpec) -> bool| indexes.iter().find(|index| wanted(index));
-        if self.is_json() {
-            // A document field's JSON index answers the document operators;
-            // the orderings at a path, and the element predicates built of
-            // them, only when it orders some path.
-            if kind != ValueKind::Json {
-                return None;
-            }
-            let ordering = matches!(
-                self,
-                OpSpec::LtAt
-                    | OpSpec::LteAt
-                    | OpSpec::GtAt
-                    | OpSpec::GteAt
-                    | OpSpec::BetweenAt
-                    | OpSpec::ElementMatch
-            );
-            return indexes.iter().find(|index| match index {
-                IndexSpec::Json(options) => !ordering || !options.ordered.is_empty(),
-                _ => false,
-            });
+        // One declaration per index (`IndexSpec::operators`), and a plan
+        // declares at most one index per operator, so the first index that
+        // answers is the one. A document field's JSON index answers the
+        // document operators over a document alone; every other index
+        // answers over the kinds it is defined for.
+        // An order index over bytes stores a term and answers no ordering:
+        // the orderings are answered over the integers, the floats, text,
+        // decimals, dates and timestamps.
+        if self.is_ordering() && !ordered(kind) {
+            return None;
         }
-        match self {
-            OpSpec::Eq => declared(|index| matches!(index, IndexSpec::Equality)),
-            OpSpec::Matches => declared(|index| matches!(index, IndexSpec::Match(_))),
-            OpSpec::Lt | OpSpec::Lte | OpSpec::Gt | OpSpec::Gte | OpSpec::Between => {
-                if !ordered(kind) {
-                    return None;
+        indexes.iter().find(|index| {
+            index.answers(self)
+                && match index {
+                    IndexSpec::Json(_) => kind == ValueKind::Json,
+                    _ => admits(kind, index),
                 }
-                declared(|index| matches!(index, IndexSpec::Ore))
-                    .or_else(|| declared(|index| matches!(index, IndexSpec::OreBlock)))
-                    .or_else(|| declared(|index| matches!(index, IndexSpec::Ope)))
-            }
-            // Answered above, by the JSON index alone.
-            OpSpec::Contains
-            | OpSpec::ContainedBy
-            | OpSpec::EqAt
-            | OpSpec::LtAt
-            | OpSpec::LteAt
-            | OpSpec::GtAt
-            | OpSpec::GteAt
-            | OpSpec::BetweenAt
-            | OpSpec::Selector
-            | OpSpec::Subtree
-            | OpSpec::Children
-            | OpSpec::ChildCount
-            | OpSpec::ElementMatch
-            | OpSpec::Match => None,
-        }
-        .filter(|index| admits(kind, index))
+        })
     }
-}
 
-impl fmt::Display for OpSpec {
-    /// Writes [`name`](Self::name).
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
+    /// Whether this is an ordering operator over a scalar: `lt`, `lte`,
+    /// `gt`, `gte` or `between`.
+    fn is_ordering(self) -> bool {
+        matches!(self, Op::Lt | Op::Lte | Op::Gt | Op::Gte | Op::Between)
     }
 }
 
@@ -446,7 +217,7 @@ impl fmt::Display for OpSpec {
 /// bits and wider, `int16` to `uint128`, the floats, text, and dates,
 /// timestamps and decimals, as [`op::Ordered`](crate::op::Ordered) covers
 /// them in the typed path. Not `int8` or `uint8`, which have no order term.
-/// Each orders by its ADR-0002 order key; a `float32` is ordered as the
+/// Each orders by its order key; a `float32` is ordered as the
 /// `f64` it widens to, as the typed path asks.
 fn ordered(kind: ValueKind) -> bool {
     matches!(
@@ -468,8 +239,8 @@ fn ordered(kind: ValueKind) -> bool {
     )
 }
 
-/// How far the server's answer to an operator can be trusted (ADR-0009,
-/// decision 4), as a catalog reports it.
+/// How far the server's answer to an operator can be trusted, as a catalog
+/// reports it.
 ///
 /// The typed path says this with traits, not a value: a term that
 /// implements [`Probabilistic`](crate::op::Probabilistic) can be verified,
@@ -502,7 +273,7 @@ impl Fidelity {
 /// type's match options are known, and a JSON operator only when the type
 /// names the domain its operand binds as. The match index answers under those
 /// options. See the [module docs](self#which-operators-a-field-answers).
-pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(OpSpec, IndexSpec)> {
+pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(Op, IndexSpec)> {
     let Some(kind) = target
         .plaintext
         .filter(|_| target.producible && target.query.is_some())
@@ -524,7 +295,7 @@ pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(OpSpec, IndexS
     // document is (its bounds are two leaf operands). A JSON operator is
     // listed only when the type names the SQL type its operand binds as,
     // as a field's list has it.
-    OpSpec::ALL
+    Op::ALL
         .into_iter()
         .filter(|op| !op.takes_pair())
         .filter(|op| {
@@ -547,7 +318,7 @@ pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(OpSpec, IndexS
 /// again from the query's input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryTerm {
-    operator: OpSpec,
+    operator: Op,
     index: IndexSpec,
     domain: Option<String>,
     operand: Operand,
@@ -580,7 +351,7 @@ pub enum Operand {
 ///
 /// | key | value |
 /// |---|---|
-/// | `operator` | string: the [operator's name](OpSpec::name), `"matches"` |
+/// | `operator` | string: the [operator's name](Op::name), `"matches"` |
 /// | `fidelity` | string: `"exact"` or `"probabilistic"` ([`Fidelity::name`]) |
 /// | `index` | string: the [key](IndexSpec::key) of the index that answers, `"match"` |
 /// | `domain` | string or null: the SQL type the operand binds as: an EQL query domain for a field that names an EQL type, `text` or `text[]` for a selector or tokens, null for an index term's bytes |
@@ -624,7 +395,7 @@ impl Serialize for QueryTerm {
 
 impl QueryTerm {
     /// The operator the term answers.
-    pub fn operator(&self) -> OpSpec {
+    pub fn operator(&self) -> Op {
         self.operator
     }
 
@@ -689,7 +460,7 @@ enum Input {
 fn answer<'p>(
     plan: &'p Plan,
     field: &str,
-    operator: OpSpec,
+    operator: Op,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Answer<'p>, Error> {
     let found = find(plan, field)?;
@@ -712,7 +483,7 @@ fn answer<'p>(
 
 /// The field named `field`, or [`Error::Plan`] with
 /// [`Reason::NoSuchField`].
-fn find<'p>(plan: &'p Plan, field: &str) -> Result<&'p FieldPlan, Error> {
+pub(super) fn find<'p>(plan: &'p Plan, field: &str) -> Result<&'p FieldPlan, Error> {
     plan.fields()
         .iter()
         .find(|candidate| candidate.name() == field)
@@ -723,7 +494,7 @@ fn find<'p>(plan: &'p Plan, field: &str) -> Result<&'p FieldPlan, Error> {
 }
 
 /// Operators a field answers, each with the index that answers it.
-type Operators = Vec<(OpSpec, IndexSpec)>;
+type Operators = Vec<(Op, IndexSpec)>;
 
 /// Every operator `field` answers with the index that answers it, and the
 /// EQL type it names, resolved: the one table [`answer`] and
@@ -746,7 +517,7 @@ fn answers(
         // derives.
         if let Some(TargetOptions::Json(options)) = field.target_options() {
             let index = [IndexSpec::Json(options.clone())];
-            let operators = OpSpec::ALL
+            let operators = Op::ALL
                 .into_iter()
                 .filter(|op| {
                     super::json_query::binds(*op)
@@ -760,7 +531,7 @@ fn answers(
         return Ok((target_operators(&target), Some(target)));
     }
     let indexes = field.indexes();
-    let operators = OpSpec::ALL
+    let operators = Op::ALL
         .into_iter()
         .filter_map(|op| {
             op.answered_by(kind, &indexes)
@@ -771,12 +542,12 @@ fn answers(
 }
 
 /// The operators a field of a plan answers, each with the index that
-/// answers it, in [`OpSpec::ALL`]'s order: exactly the operators
+/// answers it, in [`Op::ALL`]'s order: exactly the operators
 /// [`query_term`] derives a term for on that field, so a generator asks the
 /// engine which query methods to write rather than holding a copy of the
 /// table.
 ///
-/// A field with indexes answers each operator [`OpSpec::answered_by`] finds
+/// A field with indexes answers each operator [`Op::answered_by`] finds
 /// an index for under its declared kind; a field that names an EQL type
 /// answers what the type's [`TargetDescriptor::operators`] lists; a field
 /// with no declared kind answers none. The context does not matter, so a
@@ -784,7 +555,7 @@ fn answers(
 /// as an [`OperatorEntry`].
 ///
 /// ```
-/// use stack_encrypt::dynamic::{field_operators, record, NoTargets, OpSpec};
+/// use stack_encrypt::dynamic::{field_operators, record, NoTargets, Op};
 /// use stack_encrypt::target::IndexSpec;
 /// use stack_encrypt::AsProtectedRef;
 ///
@@ -794,8 +565,8 @@ fn answers(
 /// let plan = record::plan(declaration.as_protected_ref())?;
 ///
 /// let operators = field_operators(&plan, "age", &NoTargets)?;
-/// assert_eq!(operators[0], (OpSpec::Eq, IndexSpec::Equality));
-/// assert_eq!(operators[1], (OpSpec::Lt, IndexSpec::Ore));
+/// assert_eq!(operators[0], (Op::Eq, IndexSpec::Equality));
+/// assert_eq!(operators[1], (Op::Lt, IndexSpec::Ore));
 /// assert_eq!(operators.len(), 6, "eq, the four comparisons and between");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -809,7 +580,7 @@ pub fn field_operators(
     plan: &Plan,
     field: &str,
     resolver: &(impl TargetResolver + ?Sized),
-) -> Result<Vec<(OpSpec, IndexSpec)>, Error> {
+) -> Result<Vec<(Op, IndexSpec)>, Error> {
     answers(find(plan, field)?, resolver).map(|(operators, _)| operators)
 }
 
@@ -818,11 +589,11 @@ pub fn field_operators(
 ///
 /// | key | value |
 /// |---|---|
-/// | `operator` | string: the operator's name, `eq` ([`OpSpec::name`]) |
+/// | `operator` | string: the operator's name, `eq` ([`Op::name`]) |
 /// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`]) |
 /// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
 /// | `index` | string: the [key](IndexSpec::key) of the index that answers it, `eq` |
-/// | `input` | string: the shape of the operator's input ([`OpSpec::input`]): `value`, `pair`, `json`, `path_json`, `path_pair`, `path` or `path_bound` |
+/// | `input` | string: the shape of the operator's input ([`Op::input`]): `value`, `pair`, `json`, `path_json`, `path_pair`, `path` or `path_bound` |
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct OperatorEntry {
     operator: &'static str,
@@ -834,7 +605,7 @@ pub struct OperatorEntry {
 
 impl OperatorEntry {
     /// The entry for `operator`, answered by `index`.
-    pub fn new(operator: OpSpec, index: &IndexSpec) -> Self {
+    pub fn new(operator: Op, index: &IndexSpec) -> Self {
         Self {
             operator: operator.name(),
             fidelity: operator.fidelity().name(),
@@ -850,6 +621,12 @@ impl OperatorEntry {
 /// binding sends the plan under the context its query names.
 /// [`verify`] and [`target_limit`] derive nothing and take such a plan.
 fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
+    if !plan.bindings().is_empty() {
+        return Err(Error::Plan {
+            field: Some(field.to_owned()),
+            reason: Reason::BindInQuery,
+        });
+    }
     match plan.context_field() {
         Some(_) => Err(Error::Plan {
             field: Some(field.to_owned()),
@@ -867,7 +644,7 @@ fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
 /// [`Error::Source`] naming the field: [`Reason::FieldType`] for a value
 /// that cannot be read as the kind, [`Reason::NotARange`] for a `between`
 /// input that is not a list of two values.
-fn read_input(answer: &Answer<'_>, operator: OpSpec, input: impl Encrypt) -> Result<Input, Error> {
+fn read_input(answer: &Answer<'_>, operator: Op, input: impl Encrypt) -> Result<Input, Error> {
     let name = answer.field.name();
     if !operator.takes_pair() {
         let input = ValueFrame::of(input).map_err(|_| Error::Source {
@@ -910,75 +687,59 @@ fn not_a_range(field: &str) -> Error {
     }
 }
 
-/// The refusals the typed path makes when a query is awaited, before any
-/// term exists ([`Supports::check`](crate::op::Supports::check)): match
-/// text the index cannot normalize or that cuts no token, and equality
-/// text the scheme cannot normalize. Each index's own derivation refuses
-/// these again; asking here lets a binding refuse at its boundary. A range
-/// whose low bound is above its high bound is not refused: as SQL's
+/// What a query of `input` through `index` is refused for before any term
+/// exists, and what it keeps: the `sem` module's rules, which the typed
+/// chain's [`Supports::prepare`](crate::op::Supports::prepare) applies to
+/// the same effect. A binding asks at its boundary ([`check_query`]), and
+/// [`query_term`] and [`verify`] ask before they derive anything, so the
+/// three refuse exactly the same inputs. A match query keeps its tokens.
+///
+/// # Errors
+///
+/// [`Error::Cipher`] with the term error: match options the index cannot
+/// use ([`TermError::InvalidOptions`]), text no index can normalize
+/// ([`TermError::Normalize`]), match text that cuts no token
+/// ([`TermError::EmptyTermText`]), and block ORE text over its limit
+/// ([`TermError::OreBlockTooLong`], [`TermError::OreBlockTrailingNul`]). A
+/// range whose low bound is above its high bound is not refused: as SQL's
 /// `BETWEEN`, it matches nothing.
-fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
+fn prepare_input(index: &IndexSpec, input: &Input) -> Result<Option<QueryTokens>, Error> {
     let refused = |error: TermError| Error::Cipher(error.into());
     match (index, input) {
-        // Order text the fold cannot take (a code point unassigned in
-        // Unicode 16) is refused here, before a term or a keyset, as
-        // derivation would refuse it after one.
         (IndexSpec::Ore | IndexSpec::Ope, Input::One(value)) => {
-            order_text(value).map_err(refused)?;
+            order_text(value, false).map_err(refused)?;
         }
         (IndexSpec::Ore | IndexSpec::Ope, Input::Pair(lo, hi)) => {
-            order_text(lo).map_err(refused)?;
-            order_text(hi).map_err(refused)?;
+            order_text(lo, false).map_err(refused)?;
+            order_text(hi, false).map_err(refused)?;
         }
-        // Block ORE refuses more order text: a fold longer than 1023
-        // bytes, or one that ends in NUL.
         (IndexSpec::OreBlock, Input::One(value)) => {
-            ore_block_text(value).map_err(refused)?;
+            order_text(value, true).map_err(refused)?;
         }
         (IndexSpec::OreBlock, Input::Pair(lo, hi)) => {
-            ore_block_text(lo).map_err(refused)?;
-            ore_block_text(hi).map_err(refused)?;
+            order_text(lo, true).map_err(refused)?;
+            order_text(hi, true).map_err(refused)?;
         }
         (IndexSpec::Match(options), Input::One(value)) => {
-            query_tokens(value, options).map(drop)?;
+            return query_tokens(value, options).map(Some);
         }
-        // Equality text the scheme cannot normalize (a code point
-        // unassigned in Unicode 16) is refused here, before a term or a
-        // keyset, as derivation would refuse it after one.
         (IndexSpec::Equality, Input::One(value)) => {
-            crate::sem::normalized(value).map(drop).map_err(refused)?;
+            crate::sem::query::equality(value).map_err(refused)?;
         }
         _ => {}
     }
-    Ok(())
+    Ok(None)
 }
 
-/// Whether `value`, if it is order text, has a fold: `vitaminc-ore`'s
-/// `Text` encoding, the one an order index encrypts, refuses a code point
-/// Unicode 16 does not assign. Anything but text has nothing to refuse.
-fn order_text(value: &ValueFrame) -> Result<(), TermError> {
+/// Whether `value`, if it is order text, has an order encoding the index
+/// takes ([`crate::sem::query::order_text`]): the fold exists, and under
+/// block ORE (`block`) fits the scheme and does not end in NUL. Anything
+/// but text has nothing to refuse.
+fn order_text(value: &ValueFrame, block: bool) -> Result<(), TermError> {
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
-                (None, Physical::Text(text)) => Ok(vitaminc_ore::text(text)
-                    .map(drop)
-                    .map_err(TermError::Normalize)),
-                _ => Err(None),
-            },
-        ))
-        // Not one text scalar: nothing to refuse here.
-        .unwrap_or(Ok(()))
-}
-
-/// Whether `value`, if it is order text, has a block ORE term: its fold
-/// exists, is at most 1023 bytes and does not end in NUL
-/// ([`crate::sem::ore_block_text`]). Anything but text has nothing to
-/// refuse here.
-fn ore_block_text(value: &ValueFrame) -> Result<(), TermError> {
-    value
-        .visit(OneScalar::new(
-            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
-                (None, Physical::Text(text)) => Ok(crate::sem::ore_block_text(text)),
+                (None, Physical::Text(text)) => Ok(crate::sem::query::order_text(text, block)),
                 _ => Err(None),
             },
         ))
@@ -1001,8 +762,8 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
-                // The query chain's rule, from the same helper.
-                (None, Physical::Text(text)) => Ok(QueryTokens::of_query(text, options)
+                // The query chain's rule, from the same function.
+                (None, Physical::Text(text)) => Ok(crate::sem::query::match_tokens(text, options)
                     .map_err(|error| Error::Cipher(error.into()))),
                 _ => Err(None),
             },
@@ -1014,13 +775,73 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// it derives anything. A binding calls this at its boundary, so a bad
 /// query is refused before a keyset is resolved.
 ///
+/// A document field's `match` operator takes a jsonpath predicate, and
+/// refuses what the index's terms cannot answer at the byte it starts,
+/// by name, never quoting the text:
+///
+/// ```
+/// use serde_json::json;
+/// use stack_encrypt::dynamic::{check_query, frame, record, Op, Reason, ValueFrame};
+/// use stack_encrypt::AsProtectedRef;
+/// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
+/// # use stack_encrypt::target::IndexSpec;
+/// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
+/// # /// A host whose `JsonSearch` names the compiled predicate's domain.
+/// # struct Documents;
+/// # impl TargetResolver for Documents {
+/// #     fn targets(&self) -> Vec<TargetDescriptor> {
+/// #         vec![TargetDescriptor::new(
+/// #             "JsonSearch", "json", "", Some(ValueKind::Json), "public.eql_v4_json_search",
+/// #             vec!["json".to_owned()], Some("JsonSearchQuery".to_owned()),
+/// #             Some("eql_v4.query_json".to_owned()), true, None,
+/// #         )
+/// #         .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
+/// #     }
+/// #     fn encrypt<'a, K: 'static>(&self, _: &str, _: Option<&TargetOptions>,
+/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: ValueFrame,
+/// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
+/// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label, _: &[u8],
+/// #     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> { unreachable!() }
+/// #     fn query<'a, K: 'static>(&self, _: &str, _: &IndexSpec, _: &'a KeysetCipher<'_, K>,
+/// #         _: &Label, _: ValueFrame,
+/// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
+/// # }
+/// // A document field that orders `$.age`.
+/// let declaration = frame::serde::to_vec(&json!({"profile": {
+///     "context": ["users", "profile"], "type": "json", "null": "sql",
+///     "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}
+/// }}))?;
+/// let plan = record::plan_with(declaration.as_protected_ref(), &Documents)?;
+/// // What `jsonb_path_match(col, $1, $2)` takes: the predicate, and its
+/// // variables as the JSON text of one object.
+/// let input = |predicate: &str| -> ValueFrame {
+///     let input = json!({"predicate": predicate, "vars": r#"{"min": 18, "r": "sibling"}"#});
+///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().as_protected_ref()).unwrap()
+/// };
+/// let check = |predicate: &str| {
+///     check_query(&plan, "profile", Op::Match, input(predicate), &Documents)
+/// };
+///
+/// check("$.age >= $min && !(exists($.retired))")?;
+/// check(r#"$.name == "ann" || $."first name" != null"#)?;
+/// check("exists($.contacts[*] ? (@.relationship == $r))")?;
+///
+/// // Refused at the byte the construct starts, by name, never quoting
+/// // the text.
+/// let error = check(r#"$.email like_regex "@""#).unwrap_err();
+/// assert_eq!(error.reason(), Some(Reason::JsonPredicateUnsupported));
+/// let error = check("$.age + 1 > $min").unwrap_err();
+/// assert!(error.to_string().contains("at byte 6"), "{error}");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
 /// # Errors
 ///
 /// As [`query_term`].
 pub fn check_query(
     plan: &Plan,
     field: &str,
-    operator: OpSpec,
+    operator: Op,
     input: impl Encrypt,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<(), Error> {
@@ -1032,7 +853,7 @@ pub fn check_query(
             .map_err(|error| error.in_field(field));
     }
     let input = read_input(&answer, operator, input)?;
-    check_input(&answer.index, &input)
+    prepare_input(&answer.index, &input).map(drop)
 }
 
 /// The JSON index options a document field's plan resolved.
@@ -1057,7 +878,7 @@ fn json_input(field: &str) -> Error {
 fn json_term<'a, K: 'static>(
     cipher: &'a KeysetCipher<'_, K>,
     answer: Answer<'_>,
-    operator: OpSpec,
+    operator: Op,
     input: impl Encrypt,
 ) -> Result<Pending<'a, QueryTerm, K>, Error> {
     let field = answer.field.name();
@@ -1102,7 +923,7 @@ pub fn check_json_open(
     rows: impl Encrypt,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<(), Error> {
-    let _ = answer(plan, field, OpSpec::Selector, resolver)?;
+    let _ = answer(plan, field, Op::Selector, resolver)?;
     has_context(plan, field)?;
     let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
     let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
@@ -1156,7 +977,7 @@ where
     K: DataKeySource + Sync + 'static,
 {
     // Answering `selector` is what makes a field a document field.
-    let answer = answer(plan, field, OpSpec::Selector, resolver)?;
+    let answer = answer(plan, field, Op::Selector, resolver)?;
     has_context(plan, field)?;
     let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
     let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
@@ -1172,8 +993,8 @@ where
 
 /// Derive the query term for one field of a plan, an operator and its
 /// input: one value for most operators, a list of two for
-/// [`between`](OpSpec::Between), and for a document's operators an object
-/// of named inputs ([`OpSpec::input`]), whose operand the engine derives
+/// [`between`](Op::Between), and for a document's operators an object
+/// of named inputs ([`Op::input`]), whose operand the engine derives
 /// with the JSON index under the options the plan resolved for the field,
 /// tagged with its encoding ([`QueryTerm::encoding`]) and the SQL type it
 /// binds as ([`QueryTerm::domain`]).
@@ -1181,7 +1002,7 @@ where
 /// The input is read as the field's declared kind first ([`read`]), so a
 /// host's `34` as a float queries a `uint64` field as the `u64` it stored.
 /// A field with indexes derives the term of the index that answers the
-/// operator ([`OpSpec::answered_by`]) under the field's context, by the
+/// operator ([`Op::answered_by`]) under the field's context, by the
 /// derivation its stored terms came from; a range derives one term per
 /// bound under that one context. A field that names an EQL type runs the
 /// type's query twin through `resolver`. Nothing is requested: the pending
@@ -1190,7 +1011,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{query_term, record, NoTargets, OpSpec, Operand};
+/// use stack_encrypt::dynamic::{query_term, record, NoTargets, Op, Operand};
 /// use stack_encrypt::kms::FakeDataKeySource;
 /// use stack_encrypt::{op, AsProtectedRef, Ore, Plan, StackCipher};
 ///
@@ -1202,7 +1023,7 @@ where
 /// }))?;
 /// let plan = record::plan(declaration.as_protected_ref())?;
 ///
-/// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, 40u32, &NoTargets)?.await?;
+/// let term = query_term(&keyset, &plan, "age", Op::Lt, 40u32, &NoTargets)?.await?;
 ///
 /// // The typed path's term for the same query.
 /// let typed_plan = Plan::context("users/age").with::<u32, _>(Ore).build()?;
@@ -1236,24 +1057,24 @@ where
 /// bound is above its high bound is not refused: as SQL's `BETWEEN`, it
 /// matches nothing.
 /// [`Error::Target`] for what the resolver refuses.
-pub fn query_term<'a, K>(
+pub fn query_term<'a, K: 'static>(
     cipher: &'a KeysetCipher<'_, K>,
     plan: &Plan,
     field: &str,
-    operator: OpSpec,
+    operator: Op,
     input: impl Encrypt,
     resolver: &(impl TargetResolver + ?Sized),
-) -> Result<Pending<'a, QueryTerm, K>, Error>
-where
-    K: DataKeySource + IndexKeySource + Sync + 'static,
-{
+) -> Result<Pending<'a, QueryTerm, K>, Error> {
     let answer = answer(plan, field, operator, resolver)?;
     has_context(plan, field)?;
     if operator.is_json() {
         return json_term(cipher, answer, operator, input);
     }
     let input = read_input(&answer, operator, input)?;
-    check_input(&answer.index, &input)?;
+    // Prepared once, here: the derivation below refuses nothing a query
+    // refuses, so what passes is derived. A match query's tokens are
+    // plaintext the caller cuts again for `verify`; they cross no binding.
+    let _ = prepare_input(&answer.index, &input)?;
     let index = answer.index.clone();
     let made = move |domain: Option<String>, operand| QueryTerm {
         operator,
@@ -1275,8 +1096,7 @@ where
     }
     let context = answer.field.context();
     let term = |value: &ValueFrame| {
-        derive(cipher, value, &answer.index, context.clone(), Use::Query)
-            .map_err(|error| error.in_field(field))
+        derive(cipher, value, &answer.index, context.clone()).map_err(|error| error.in_field(field))
     };
     Ok(match input {
         Input::One(value) => {
@@ -1301,7 +1121,7 @@ where
 fn probabilistic(
     plan: &Plan,
     field: &str,
-    operator: OpSpec,
+    operator: Op,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<(MatchOptions, bool), Error> {
     let answer = answer(plan, field, operator, resolver)?;
@@ -1344,7 +1164,7 @@ fn probabilistic(
 pub fn verify<V: Encrypt>(
     plan: &Plan,
     field: &str,
-    operator: OpSpec,
+    operator: Op,
     input: impl Encrypt,
     values: impl IntoIterator<Item = V>,
     resolver: &(impl TargetResolver + ?Sized),
@@ -1399,7 +1219,7 @@ pub fn verify<V: Encrypt>(
 pub fn target_limit(
     plan: &Plan,
     field: &str,
-    operator: OpSpec,
+    operator: Op,
     term: &[u8],
     want: u64,
     stats: &Stats,
@@ -1527,7 +1347,7 @@ mod tests {
     use crate::dynamic::test_frame::{frame_of, value_of};
     use vitaminc_protected::AsProtectedRef as _;
 
-    fn operator_value(operator: OpSpec, index: &IndexSpec) -> Tree {
+    fn operator_value(operator: Op, index: &IndexSpec) -> Tree {
         value_of(&OperatorEntry::new(operator, index))
     }
 
@@ -1588,7 +1408,7 @@ mod tests {
             frame_of(&Tree::Object(vec![
                 field("email", "string", vec![text("c"), text("eq")]),
                 field("name", "string", vec![text("c"), text("match")]),
-                field("age", "uint32", vec![text("c"), text("ope"), text("ore")]),
+                field("age", "uint32", vec![text("c"), text("ore")]),
                 field("score", "int64", vec![text("ope")]),
                 field("nickname", "string", vec![text("c"), text("ore")]),
                 field("handle", "string", vec![text("c"), case_sensitive]),
@@ -1604,7 +1424,7 @@ mod tests {
     async fn query(
         keyset: &KeysetCipher<'_, FakeDataKeySource>,
         name: &str,
-        operator: OpSpec,
+        operator: Op,
         input: impl Encrypt,
     ) -> Result<QueryTerm, Error> {
         query_term(keyset, &users(), name, operator, input, &NoTargets)?
@@ -1625,66 +1445,83 @@ mod tests {
 
     #[test]
     fn an_operator_reads_back_from_its_name_and_no_other() {
-        for op in OpSpec::ALL {
-            assert_eq!(OpSpec::parse(op.name()), Some(op), "{op}");
+        for op in Op::ALL {
+            assert_eq!(Op::parse(op.name()), Some(op), "{op}");
             assert_eq!(op.to_string(), op.name());
         }
-        let names: std::collections::BTreeSet<&str> =
-            OpSpec::ALL.iter().map(|op| op.name()).collect();
-        assert_eq!(names.len(), OpSpec::ALL.len(), "names are distinct");
+        let names: std::collections::BTreeSet<&str> = Op::ALL.iter().map(|op| op.name()).collect();
+        assert_eq!(names.len(), Op::ALL.len(), "names are distinct");
         for not_one in ["Eq", "=", "", "Contains", "at_path", "matches ", "eq-at"] {
-            assert_eq!(OpSpec::parse(not_one), None, "{not_one:?}");
+            assert_eq!(Op::parse(not_one), None, "{not_one:?}");
         }
     }
 
     #[test]
     fn only_matches_is_probabilistic_and_only_between_takes_a_pair() {
-        for op in OpSpec::ALL {
+        for op in Op::ALL {
             assert_eq!(
                 op.fidelity() == Fidelity::Probabilistic,
-                op == OpSpec::Matches,
+                op == Op::Matches,
                 "{op}"
             );
-            assert_eq!(op.takes_pair(), op == OpSpec::Between, "{op}");
+            assert_eq!(op.takes_pair(), op == Op::Between, "{op}");
         }
         assert_eq!(Fidelity::Exact.name(), "exact");
         assert_eq!(Fidelity::Probabilistic.name(), "probabilistic");
     }
 
-    /// The typed path's `DefaultIndex` table, over kinds: equality answers
-    /// `eq`, match answers `matches` over text, and the orderings go to ORE
-    /// over an integer, or to OPE when there is no ORE.
+    /// The index declarations, read over kinds: equality answers `eq`,
+    /// match answers `matches` over text, and an order index answers the
+    /// orderings over the kinds that have an order term. A field declares
+    /// one order index, so there is no priority between them: a set that
+    /// declares two is refused when the plan is built, which
+    /// `overlapping` is the rule for.
     #[test]
     fn the_answering_index_is_the_typed_paths_default() {
         let all = [
             IndexSpec::Equality,
             IndexSpec::Match(MatchOptions::default()),
-            IndexSpec::Ope,
             IndexSpec::Ore,
         ];
-        let answered =
-            |op: OpSpec, kind, indexes: &[IndexSpec]| op.answered_by(kind, indexes).cloned();
         assert_eq!(
-            answered(OpSpec::Eq, ValueKind::String, &all),
+            crate::target::index::overlapping(&[IndexSpec::Ope, IndexSpec::Ore])
+                .map(|(first, second, op)| (first.key(), second.key(), op)),
+            Some(("ope", "ore", Op::Lt)),
+            "two order indexes declare one operator"
+        );
+        assert_eq!(
+            crate::target::index::overlapping(&[IndexSpec::Ore, IndexSpec::OreBlock])
+                .map(|(_, _, op)| op),
+            Some(Op::Lt)
+        );
+        assert_eq!(
+            crate::target::index::overlapping(&[
+                IndexSpec::Match(MatchOptions::default()),
+                IndexSpec::Match(MatchOptions {
+                    downcase: false,
+                    ..MatchOptions::default()
+                }),
+            ])
+            .map(|(_, _, op)| op),
+            Some(Op::Matches)
+        );
+        assert_eq!(crate::target::index::overlapping(&all), None);
+        let answered = |op: Op, kind, indexes: &[IndexSpec]| op.answered_by(kind, indexes).cloned();
+        assert_eq!(
+            answered(Op::Eq, ValueKind::String, &all),
             Some(IndexSpec::Equality)
         );
         assert_eq!(
-            answered(OpSpec::Eq, ValueKind::Bool, &all),
+            answered(Op::Eq, ValueKind::Bool, &all),
             None,
             "a boolean has no equality term"
         );
         assert_eq!(
-            answered(OpSpec::Matches, ValueKind::String, &all),
+            answered(Op::Matches, ValueKind::String, &all),
             Some(IndexSpec::Match(MatchOptions::default()))
         );
-        assert_eq!(answered(OpSpec::Matches, ValueKind::UInt64, &all), None);
-        for op in [
-            OpSpec::Lt,
-            OpSpec::Lte,
-            OpSpec::Gt,
-            OpSpec::Gte,
-            OpSpec::Between,
-        ] {
+        assert_eq!(answered(Op::Matches, ValueKind::UInt64, &all), None);
+        for op in [Op::Lt, Op::Lte, Op::Gt, Op::Gte, Op::Between] {
             for kind in [ValueKind::Int8, ValueKind::UInt8, ValueKind::Bool] {
                 assert_eq!(
                     answered(op, kind, &all),
@@ -1735,12 +1572,12 @@ mod tests {
         // A decimal, a date and a timestamp answer `eq` through equality.
         for kind in [ValueKind::Decimal, ValueKind::Date, ValueKind::Timestamp] {
             assert_eq!(
-                answered(OpSpec::Eq, kind, &all),
+                answered(Op::Eq, kind, &all),
                 Some(IndexSpec::Equality),
                 "{kind}"
             );
         }
-        for op in OpSpec::ALL {
+        for op in Op::ALL {
             assert_eq!(
                 answered(op, ValueKind::UInt32, &[]),
                 None,
@@ -1753,7 +1590,7 @@ mod tests {
     async fn eq_derives_the_typed_paths_equality_term() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let term = query(&keyset, "email", OpSpec::Eq, text("bob@example.com"))
+        let term = query(&keyset, "email", Op::Eq, text("bob@example.com"))
             .await
             .unwrap();
         let plan = crate::Plan::context("users/email")
@@ -1766,7 +1603,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
-        assert_eq!(term.operator(), OpSpec::Eq);
+        assert_eq!(term.operator(), Op::Eq);
         assert_eq!(term.fidelity(), Fidelity::Exact);
         assert_eq!(term.index(), &IndexSpec::Equality);
         assert_eq!(term.domain(), None, "a field with indexes binds bytes");
@@ -1782,7 +1619,7 @@ mod tests {
             .unwrap();
         let typed = cipher.query(op::Lt, &40u32).on(&plan).await.unwrap();
         for input in [Tree::UInt32(40), Tree::Float64(40.0), Tree::Int64(40)] {
-            let term = query(&keyset, "age", OpSpec::Lt, input).await.unwrap();
+            let term = query(&keyset, "age", Op::Lt, input).await.unwrap();
             assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
             assert_eq!(term.index(), &IndexSpec::Ore, "ORE before OPE");
         }
@@ -1804,7 +1641,7 @@ mod tests {
         let term = query(
             &keyset,
             "age",
-            OpSpec::Between,
+            Op::Between,
             Tree::Array(vec![Tree::UInt32(18), Tree::UInt32(65)]),
         )
         .await
@@ -1819,7 +1656,7 @@ mod tests {
         let one = query(
             &keyset,
             "age",
-            OpSpec::Between,
+            Op::Between,
             Tree::Array(vec![Tree::UInt32(7), Tree::UInt32(7)]),
         )
         .await;
@@ -1838,7 +1675,7 @@ mod tests {
         let term = query(
             &keyset,
             "score",
-            OpSpec::Between,
+            Op::Between,
             Tree::Array(vec![Tree::Int64(-5), Tree::Int64(5)]),
         )
         .await
@@ -1866,7 +1703,7 @@ mod tests {
             .build()
             .unwrap();
         let typed = cipher.query(op::Matches, "alice").on(&plan).await.unwrap();
-        let term = query(&keyset, "name", OpSpec::Matches, text("alice"))
+        let term = query(&keyset, "name", Op::Matches, text("alice"))
             .await
             .unwrap();
         assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
@@ -1883,18 +1720,16 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         // The terms of folded equivalents are one term.
-        let cafe = query(&keyset, "nickname", OpSpec::Lt, "cafe")
-            .await
-            .unwrap();
-        let folded = query(&keyset, "nickname", OpSpec::Lt, "CAF\u{c9}")
+        let cafe = query(&keyset, "nickname", Op::Lt, "cafe").await.unwrap();
+        let folded = query(&keyset, "nickname", Op::Lt, "CAF\u{c9}")
             .await
             .unwrap();
         assert_eq!(folded.operand, cafe.operand);
 
         // A float32 orders as the f64 it widens to: `-0.0` ties `0.0`, so
         // the two are one term.
-        let zero = query(&keyset, "ratio", OpSpec::Lt, 0.0f32).await.unwrap();
-        let negative_zero = query(&keyset, "ratio", OpSpec::Lt, -0.0f32).await.unwrap();
+        let zero = query(&keyset, "ratio", Op::Lt, 0.0f32).await.unwrap();
+        let negative_zero = query(&keyset, "ratio", Op::Lt, -0.0f32).await.unwrap();
         assert_eq!(negative_zero.operand, zero.operand);
     }
 
@@ -1921,11 +1756,11 @@ mod tests {
         let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
         let longest = "a".repeat(1023);
         let accepted = [
-            (OpSpec::Lt, one(&longest)),
-            (OpSpec::Lt, one("a\0b")),
-            (OpSpec::Lt, one("")),
-            (OpSpec::Between, two("", &longest)),
-            (OpSpec::Between, two("a\0b", "b")),
+            (Op::Lt, one(&longest)),
+            (Op::Lt, one("a\0b")),
+            (Op::Lt, one("")),
+            (Op::Between, two("", &longest)),
+            (Op::Between, two("a\0b", "b")),
         ];
         for (op, input) in accepted {
             let term = query_term(&keyset, &plan, "title", op, &input, &NoTargets)
@@ -1963,14 +1798,14 @@ mod tests {
             .as_deref(),
         )
         .unwrap();
-        let error = query_term(&keyset, &plan, "email", OpSpec::Eq, text("a"), &NoTargets)
+        let error = query_term(&keyset, &plan, "email", Op::Eq, text("a"), &NoTargets)
             .map(drop)
             .unwrap_err();
         assert_eq!(
             reason_of(&error),
             (Some("email"), Some(Reason::QueryContextField))
         );
-        let checked = check_query(&plan, "email", OpSpec::Eq, text("a"), &NoTargets).unwrap_err();
+        let checked = check_query(&plan, "email", Op::Eq, text("a"), &NoTargets).unwrap_err();
         assert_eq!(
             reason_of(&checked),
             (Some("email"), Some(Reason::QueryContextField))
@@ -1979,7 +1814,7 @@ mod tests {
         let error = verify(
             &plan,
             "email",
-            OpSpec::Eq,
+            Op::Eq,
             text("a"),
             Vec::<Tree>::new(),
             &NoTargets,
@@ -2007,7 +1842,7 @@ mod tests {
         let verified = verify(
             &users(),
             "name",
-            OpSpec::Matches,
+            Op::Matches,
             text("alice"),
             &values,
             &NoTargets,
@@ -2023,7 +1858,7 @@ mod tests {
         let nulls = verify(
             &users(),
             "name",
-            OpSpec::Matches,
+            Op::Matches,
             text("alice"),
             &[Tree::Null],
             &NoTargets,
@@ -2033,7 +1868,7 @@ mod tests {
         let empty = verify(
             &users(),
             "name",
-            OpSpec::Matches,
+            Op::Matches,
             text("alice"),
             Vec::<Tree>::new(),
             &NoTargets,
@@ -2048,7 +1883,7 @@ mod tests {
             verify(
                 &users(),
                 "handle",
-                OpSpec::Matches,
+                Op::Matches,
                 text(input),
                 &[text(value)],
                 &NoTargets,
@@ -2063,7 +1898,7 @@ mod tests {
         let folding = verify(
             &users(),
             "name",
-            OpSpec::Matches,
+            Op::Matches,
             text("Alice"),
             &[text("alice")],
             &NoTargets,
@@ -2074,29 +1909,29 @@ mod tests {
 
     #[test]
     fn verify_refuses_what_it_cannot_answer() {
-        let refused = |name: &str, op: OpSpec, input: Tree, values: &[Tree]| {
+        let refused = |name: &str, op: Op, input: Tree, values: &[Tree]| {
             verify(&users(), name, op, input, values, &NoTargets).unwrap_err()
         };
-        let error = refused("email", OpSpec::Eq, text("a"), &[text("a")]);
+        let error = refused("email", Op::Eq, text("a"), &[text("a")]);
         assert_eq!(
             reason_of(&error),
             (Some("email"), Some(Reason::ExactOperator))
         );
-        let error = refused("age", OpSpec::Lt, Tree::UInt32(1), &[]);
+        let error = refused("age", Op::Lt, Tree::UInt32(1), &[]);
         assert_eq!(
             reason_of(&error),
             (Some("age"), Some(Reason::ExactOperator))
         );
-        let error = refused("email", OpSpec::Matches, text("abc"), &[]);
+        let error = refused("email", Op::Matches, text("abc"), &[]);
         assert_eq!(
             reason_of(&error),
             (Some("email"), Some(Reason::OperatorNotAnswered))
         );
-        let error = refused("name", OpSpec::Matches, text("alice"), &[Tree::UInt32(1)]);
+        let error = refused("name", Op::Matches, text("alice"), &[Tree::UInt32(1)]);
         assert_eq!(reason_of(&error), (Some("name"), Some(Reason::FieldType)));
-        let error = refused("name", OpSpec::Matches, Tree::UInt32(1), &[]);
+        let error = refused("name", Op::Matches, Tree::UInt32(1), &[]);
         assert_eq!(reason_of(&error), (Some("name"), Some(Reason::FieldType)));
-        let error = refused("name", OpSpec::Matches, text("al"), &[text("al")]);
+        let error = refused("name", Op::Matches, text("al"), &[text("al")]);
         assert!(
             matches!(term_error(&error), Some(TermError::EmptyTermText)),
             "{error:?}"
@@ -2132,14 +1967,12 @@ mod tests {
                 "{error:?}"
             );
         };
-        invalid(
-            check_query(&plan, "name", OpSpec::Matches, text("alice"), &NoTargets).unwrap_err(),
-        );
+        invalid(check_query(&plan, "name", Op::Matches, text("alice"), &NoTargets).unwrap_err());
         invalid(
             verify(
                 &plan,
                 "name",
-                OpSpec::Matches,
+                Op::Matches,
                 text("alice"),
                 &[text("alice")],
                 &NoTargets,
@@ -2159,7 +1992,7 @@ mod tests {
             .build()
             .unwrap();
         let typed = cipher.query(op::Matches, "ali").on(&plan).await.unwrap();
-        let term = query(&keyset, "name", OpSpec::Matches, text("ali"))
+        let term = query(&keyset, "name", Op::Matches, text("ali"))
             .await
             .unwrap();
         let Operand::One(bytes) = term.operand() else {
@@ -2171,27 +2004,19 @@ mod tests {
             measured.clone().with_confidence(0.5),
             Stats::declared(1_000_000),
         ] {
-            let limit = target_limit(
-                &users(),
-                "name",
-                OpSpec::Matches,
-                bytes,
-                10,
-                &stats,
-                &NoTargets,
-            )
-            .unwrap();
+            let limit =
+                target_limit(&users(), "name", Op::Matches, bytes, 10, &stats, &NoTargets).unwrap();
             assert_eq!(limit, typed.target_limit(10, &stats), "{stats:?}");
         }
         assert!(matches!(
-            target_limit(&users(), "name", OpSpec::Matches, bytes, 10, &measured, &NoTargets),
+            target_limit(&users(), "name", Op::Matches, bytes, 10, &measured, &NoTargets),
             Ok(Limit::Rows(rows)) if rows > 10
         ));
         assert_eq!(
             target_limit(
                 &users(),
                 "name",
-                OpSpec::Matches,
+                Op::Matches,
                 bytes,
                 10,
                 &Stats::declared(1_000_000),
@@ -2206,11 +2031,11 @@ mod tests {
     #[test]
     fn target_limit_refuses_a_term_its_index_would_not_derive() {
         let stats = Stats::measured(100, [(10, 100)]);
-        let limit = |name: &str, op: OpSpec, term: &[u8]| {
+        let limit = |name: &str, op: Op, term: &[u8]| {
             target_limit(&users(), name, op, term, 1, &stats, &NoTargets)
         };
         let positions = |p: &[u16]| p.iter().flat_map(|p| p.to_le_bytes()).collect::<Vec<u8>>();
-        assert!(limit("name", OpSpec::Matches, &positions(&[1, 2, 255])).is_ok());
+        assert!(limit("name", Op::Matches, &positions(&[1, 2, 255])).is_ok());
         for (what, bytes) in [
             ("none", positions(&[])),
             ("half a position", vec![1, 0, 2]),
@@ -2218,14 +2043,14 @@ mod tests {
             ("out of order", positions(&[2, 1])),
             ("repeated", positions(&[2, 2])),
         ] {
-            let error = limit("name", OpSpec::Matches, &bytes).unwrap_err();
+            let error = limit("name", Op::Matches, &bytes).unwrap_err();
             assert_eq!(
                 reason_of(&error),
                 (Some("name"), Some(Reason::NotAQueryTerm)),
                 "{what}"
             );
         }
-        let error = limit("email", OpSpec::Eq, &[0; 32]).unwrap_err();
+        let error = limit("email", Op::Eq, &[0; 32]).unwrap_err();
         assert_eq!(
             reason_of(&error),
             (Some("email"), Some(Reason::ExactOperator))
@@ -2234,7 +2059,7 @@ mod tests {
         // bytes say nothing of which side derived them, and the limit is a
         // number, not a query.
         let stored = MatchTerms::<crate::sem::DefaultMatch>::from_positions(vec![3, 9]).unwrap();
-        assert!(limit("name", OpSpec::Matches, &stored.to_bytes()).is_ok());
+        assert!(limit("name", Op::Matches, &stored.to_bytes()).is_ok());
     }
 
     #[test]
@@ -2360,7 +2185,7 @@ mod tests {
             ValueFrame::of(Raw(ty, value)).expect("a value")
         };
         let int = |int: Int| frame(None, Physical::Int(int));
-        let ask = |name: &'static str, operator: OpSpec, input: ValueFrame| {
+        let ask = |name: &'static str, operator: Op, input: ValueFrame| {
             let plan = &plan;
             let keyset = &keyset;
             async move {
@@ -2380,10 +2205,10 @@ mod tests {
             vf(&Tree::Int64(-8)),
             vf(&Tree::Float64(-8.0)),
         ] {
-            let term = ask("tiny", OpSpec::Lt, input).await.unwrap();
+            let term = ask("tiny", Op::Lt, input).await.unwrap();
             assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
         }
-        let refused = ask("tiny", OpSpec::Lt, vf(&Tree::Int64(70_000))).await;
+        let refused = ask("tiny", Op::Lt, vf(&Tree::Int64(70_000))).await;
         assert!(
             matches!(&refused, Err(error) if reason_of(error) == (Some("tiny"), Some(Reason::FieldType))),
             "70000 is no int16: {refused:?}"
@@ -2404,7 +2229,7 @@ mod tests {
             Raw(None, Physical::Int(Int::I128(i128::MAX))),
         ])
         .unwrap();
-        let term = ask("huge", OpSpec::Between, bounds).await.unwrap();
+        let term = ask("huge", Op::Between, bounds).await.unwrap();
         assert_eq!(
             term.operand(),
             &Operand::Range {
@@ -2418,7 +2243,7 @@ mod tests {
         ])
         .unwrap();
         assert!(
-            ask("huge", OpSpec::Between, inverted).await.is_ok(),
+            ask("huge", Op::Between, inverted).await.is_ok(),
             "an inverted 128-bit range is not refused"
         );
 
@@ -2438,13 +2263,13 @@ mod tests {
             }
         };
         let day = frame(Some(Logical::Date), Physical::Int(Int::I32(19_782)));
-        let term = ask("day", OpSpec::Eq, day.clone()).await.unwrap();
+        let term = ask("day", Op::Eq, day.clone()).await.unwrap();
         assert_eq!(term.operand(), &Operand::One(stored(&day, "day").await));
         let at = frame(
             Some(Logical::Timestamp(TimeUnit::Nanos)),
             Physical::Int(Int::I128(1_760_662_923_123_456_789)),
         );
-        let term = ask("at", OpSpec::Eq, at.clone()).await.unwrap();
+        let term = ask("at", Op::Eq, at.clone()).await.unwrap();
         assert_eq!(term.operand(), &Operand::One(stored(&at, "at").await));
         let price = frame(
             Some(Logical::Decimal { scale: 2 }),
@@ -2459,18 +2284,14 @@ mod tests {
             vf(&Tree::Int32(34)),
             int(Int::U8(34)),
         ] {
-            let term = ask("price", OpSpec::Eq, input).await.unwrap();
+            let term = ask("price", Op::Eq, input).await.unwrap();
             assert_eq!(
                 term.operand(),
                 &Operand::One(thirty_four.clone()),
                 "34 is 34.00"
             );
         }
-        for (name, operator) in [
-            ("day", OpSpec::Lt),
-            ("at", OpSpec::Gt),
-            ("price", OpSpec::Between),
-        ] {
+        for (name, operator) in [("day", Op::Lt), ("at", Op::Gt), ("price", Op::Between)] {
             let refused = ask(name, operator, vf(&Tree::Int32(1))).await;
             assert!(
                 matches!(&refused, Err(error) if reason_of(error) == (Some(name), Some(Reason::OperatorNotAnswered))),
@@ -2484,17 +2305,11 @@ mod tests {
                 .map(|(op, _)| op)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(operators("day"), [OpSpec::Eq]);
-        assert_eq!(operators("price"), [OpSpec::Eq]);
+        assert_eq!(operators("day"), [Op::Eq]);
+        assert_eq!(operators("price"), [Op::Eq]);
         assert_eq!(
             operators("tiny"),
-            [
-                OpSpec::Lt,
-                OpSpec::Lte,
-                OpSpec::Gt,
-                OpSpec::Gte,
-                OpSpec::Between
-            ]
+            [Op::Lt, Op::Lte, Op::Gt, Op::Gte, Op::Between]
         );
     }
 
@@ -2507,15 +2322,8 @@ mod tests {
         let keyset = cipher.default_keyset();
         // `score` declares OPE alone, whose terms compare as bytes.
         let inverted = Tree::Array(vec![Tree::Int64(65), Tree::Int64(18)]);
-        assert!(check_query(
-            &users(),
-            "score",
-            OpSpec::Between,
-            vf(&inverted),
-            &NoTargets
-        )
-        .is_ok());
-        let term = query(&keyset, "score", OpSpec::Between, inverted)
+        assert!(check_query(&users(), "score", Op::Between, vf(&inverted), &NoTargets).is_ok());
+        let term = query(&keyset, "score", Op::Between, inverted)
             .await
             .expect("derived");
         let Operand::Range { lo, hi } = term.operand() else {
@@ -2562,7 +2370,7 @@ mod tests {
         let term = query(
             &keyset,
             "age",
-            OpSpec::Between,
+            Op::Between,
             Tree::Array(vec![Tree::UInt32(1), Tree::UInt32(2)]),
         )
         .await
@@ -2620,11 +2428,11 @@ mod tests {
         let int = Some(ValueKind::Int64);
         assert_eq!(
             descriptor(string, &["eq"], true, true).operators(),
-            [OpSpec::Eq]
+            [Op::Eq]
         );
         assert_eq!(
             descriptor(int, &["eq", "ore"], true, true).operators(),
-            [OpSpec::Eq, OpSpec::Lt, OpSpec::Lte, OpSpec::Gt, OpSpec::Gte],
+            [Op::Eq, Op::Lt, Op::Lte, Op::Gt, Op::Gte],
             "no between: the twin is one value"
         );
         assert!(
@@ -2636,10 +2444,10 @@ mod tests {
         let options = eql_match();
         let with_options =
             descriptor(string, &["match"], true, true).with_match_options(options.clone());
-        assert_eq!(with_options.operators(), [OpSpec::Matches]);
+        assert_eq!(with_options.operators(), [Op::Matches]);
         assert_eq!(
             target_operators(&with_options),
-            [(OpSpec::Matches, IndexSpec::Match(options))],
+            [(Op::Matches, IndexSpec::Match(options))],
             "the type's match index answers under the type's options"
         );
         assert!(descriptor(string, &["eq"], true, false)
@@ -2695,7 +2503,7 @@ mod tests {
     async fn a_fields_operators_are_exactly_the_queries_it_answers() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let input = |kind: &str, op: OpSpec| {
+        let input = |kind: &str, op: Op| {
             let one = if kind == "string" {
                 text("alice smith")
             } else {
@@ -2708,38 +2516,38 @@ mod tests {
             }
         };
         for (name, kind, want) in [
-            ("email", "string", vec![(OpSpec::Eq, IndexSpec::Equality)]),
+            ("email", "string", vec![(Op::Eq, IndexSpec::Equality)]),
             (
                 "name",
                 "string",
-                vec![(OpSpec::Matches, IndexSpec::Match(MatchOptions::default()))],
+                vec![(Op::Matches, IndexSpec::Match(MatchOptions::default()))],
             ),
             (
                 "age",
                 "uint32",
                 vec![
-                    (OpSpec::Lt, IndexSpec::Ore),
-                    (OpSpec::Lte, IndexSpec::Ore),
-                    (OpSpec::Gt, IndexSpec::Ore),
-                    (OpSpec::Gte, IndexSpec::Ore),
-                    (OpSpec::Between, IndexSpec::Ore),
+                    (Op::Lt, IndexSpec::Ore),
+                    (Op::Lte, IndexSpec::Ore),
+                    (Op::Gt, IndexSpec::Ore),
+                    (Op::Gte, IndexSpec::Ore),
+                    (Op::Between, IndexSpec::Ore),
                 ],
             ),
             (
                 "nickname",
                 "string",
                 vec![
-                    (OpSpec::Lt, IndexSpec::Ore),
-                    (OpSpec::Lte, IndexSpec::Ore),
-                    (OpSpec::Gt, IndexSpec::Ore),
-                    (OpSpec::Gte, IndexSpec::Ore),
-                    (OpSpec::Between, IndexSpec::Ore),
+                    (Op::Lt, IndexSpec::Ore),
+                    (Op::Lte, IndexSpec::Ore),
+                    (Op::Gt, IndexSpec::Ore),
+                    (Op::Gte, IndexSpec::Ore),
+                    (Op::Between, IndexSpec::Ore),
                 ],
             ),
         ] {
             let listed = field_operators(&users(), name, &NoTargets).unwrap();
             assert_eq!(listed, want, "{name}");
-            for op in OpSpec::ALL {
+            for op in Op::ALL {
                 let found = query(&keyset, name, op, input(kind, op)).await;
                 match (listed.iter().find(|(listed, _)| *listed == op), found) {
                     (Some((_, index)), Ok(term)) => {
@@ -2768,7 +2576,7 @@ mod tests {
 
     #[test]
     fn an_operator_is_written_with_every_key_in_order() {
-        let Tree::Object(entries) = operator_value(OpSpec::Between, &IndexSpec::Ope) else {
+        let Tree::Object(entries) = operator_value(Op::Between, &IndexSpec::Ope) else {
             panic!("an object");
         };
         let entries: Vec<(&str, &[u8])> = entries
@@ -2789,7 +2597,7 @@ mod tests {
             ]
         );
         let Tree::Object(entries) =
-            operator_value(OpSpec::Matches, &IndexSpec::Match(MatchOptions::default()))
+            operator_value(Op::Matches, &IndexSpec::Match(MatchOptions::default()))
         else {
             panic!("an object");
         };
@@ -2877,13 +2685,13 @@ mod tests {
         let plan = match_type_plan();
         assert_eq!(
             field_operators(&plan, "name", &MatchType).unwrap(),
-            [(OpSpec::Matches, IndexSpec::Match(eql_match()))]
+            [(Op::Matches, IndexSpec::Match(eql_match()))]
         );
         let term = query_term(
             &keyset,
             &plan,
             "name",
-            OpSpec::Matches,
+            Op::Matches,
             text("Alice"),
             &MatchType,
         )
@@ -2898,16 +2706,9 @@ mod tests {
         assert_eq!(term.fidelity(), Fidelity::Probabilistic);
 
         // Text that cuts no token is refused before the twin is asked for.
-        let error = query_term(
-            &keyset,
-            &plan,
-            "name",
-            OpSpec::Matches,
-            text("al"),
-            &MatchType,
-        )
-        .map(drop)
-        .unwrap_err();
+        let error = query_term(&keyset, &plan, "name", Op::Matches, text("al"), &MatchType)
+            .map(drop)
+            .unwrap_err();
         assert!(
             matches!(
                 error,
@@ -2915,16 +2716,9 @@ mod tests {
             ),
             "{error:?}"
         );
-        let error = query_term(
-            &keyset,
-            &plan,
-            "name",
-            OpSpec::Eq,
-            text("Alice"),
-            &MatchType,
-        )
-        .map(drop)
-        .unwrap_err();
+        let error = query_term(&keyset, &plan, "name", Op::Eq, text("Alice"), &MatchType)
+            .map(drop)
+            .unwrap_err();
         assert_eq!(
             reason_of(&error),
             (Some("name"), Some(Reason::OperatorNotAnswered))
@@ -2934,7 +2728,7 @@ mod tests {
             verify(
                 &plan,
                 "name",
-                OpSpec::Matches,
+                Op::Matches,
                 text("ALICE"),
                 &[text("say alice nguyen"), text("alison"), Tree::Null],
                 &MatchType,
@@ -2949,7 +2743,7 @@ mod tests {
             target_limit(
                 &plan,
                 "name",
-                OpSpec::Matches,
+                Op::Matches,
                 br#"{"bf":[1,5,2047]}"#,
                 10,
                 &stats,
@@ -2969,16 +2763,8 @@ mod tests {
             br#"[1,5]"#,
             &[1, 0, 5, 0],
         ] {
-            let error = target_limit(
-                &plan,
-                "name",
-                OpSpec::Matches,
-                refused,
-                10,
-                &stats,
-                &MatchType,
-            )
-            .unwrap_err();
+            let error = target_limit(&plan, "name", Op::Matches, refused, 10, &stats, &MatchType)
+                .unwrap_err();
             assert_eq!(
                 reason_of(&error),
                 (Some("name"), Some(Reason::NotAQueryTerm)),
@@ -3047,7 +2833,7 @@ mod tests {
             &OneType,
         )
         .unwrap();
-        let term = query_term(&keyset, &plan, "email", OpSpec::Eq, text("a"), &OneType)
+        let term = query_term(&keyset, &plan, "email", Op::Eq, text("a"), &OneType)
             .unwrap()
             .await
             .unwrap();
@@ -3056,10 +2842,10 @@ mod tests {
         assert_eq!(term.index(), &IndexSpec::Equality);
         assert_eq!(
             field_operators(&plan, "email", &OneType).unwrap(),
-            [(OpSpec::Eq, IndexSpec::Equality)],
+            [(Op::Eq, IndexSpec::Equality)],
             "a target field answers what its type lists"
         );
-        for op in [OpSpec::Lt, OpSpec::Matches, OpSpec::Between] {
+        for op in [Op::Lt, Op::Matches, Op::Between] {
             let error = query_term(&keyset, &plan, "email", op, text("a"), &OneType)
                 .map(drop)
                 .unwrap_err();
@@ -3072,7 +2858,7 @@ mod tests {
         let error = verify(
             &plan,
             "email",
-            OpSpec::Eq,
+            Op::Eq,
             text("a"),
             Vec::<Tree>::new(),
             &OneType,
@@ -3151,19 +2937,19 @@ mod wire_bytes {
         let mut written = Vec::new();
         for index in indexes() {
             written.push(hex(&index));
-            for op in OpSpec::ALL {
+            for op in Op::ALL {
                 written.push(hex(&OperatorEntry::new(op, &index)));
             }
         }
         for term in [
             QueryTerm {
-                operator: OpSpec::Eq,
+                operator: Op::Eq,
                 index: IndexSpec::Equality,
                 domain: None,
                 operand: Operand::One(vec![1, 2, 3]),
             },
             QueryTerm {
-                operator: OpSpec::Between,
+                operator: Op::Between,
                 index: IndexSpec::Ope,
                 domain: Some("eql_v4.query_int".to_owned()),
                 operand: Operand::Range {
@@ -3172,19 +2958,19 @@ mod wire_bytes {
                 },
             },
             QueryTerm {
-                operator: OpSpec::Matches,
+                operator: Op::Matches,
                 index: IndexSpec::Match(MatchOptions::default()),
                 domain: None,
                 operand: Operand::One(Vec::new()),
             },
             QueryTerm {
-                operator: OpSpec::Selector,
+                operator: Op::Selector,
                 index: IndexSpec::Json(crate::json::JsonOptions::default()),
                 domain: Some("text".to_owned()),
                 operand: Operand::Text("c2VsZWN0b3I=".to_owned()),
             },
             QueryTerm {
-                operator: OpSpec::Subtree,
+                operator: Op::Subtree,
                 index: IndexSpec::Json(crate::json::JsonOptions::default()),
                 domain: Some("text[]".to_owned()),
                 operand: Operand::TextList(vec!["dA==".to_owned(), "dQ==".to_owned()]),

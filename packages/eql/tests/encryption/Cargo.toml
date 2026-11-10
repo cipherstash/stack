@@ -37,7 +37,8 @@ eql-domains = { path = "../../crates/eql-domains" }
 # `http`: `StackCipher::new()` over live ZeroKMS, for `examples/v4_codec.rs`,
 # the codec the protect-ffi migration suites re-encrypt through. The tests
 # here still build their ciphers over explicit fake key sources.
-stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic", "http"] }
+# `testing`: `assert_context!`, which pins the contexts of the EQL types.
+stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic", "http", "testing"] }
 # `plaintext::Sink`, for a plaintext type with its own `Encrypt` impl; and
 # chrono's and rust_decimal's own sources, which seal the leaf a date,
 # timestamp or decimal from any other producer seals.

@@ -29,7 +29,7 @@
 //! Same caveat as [`crate::sem`]: a term derived here is bound to the
 //! context you pass and to nothing else. Use it to *query*. A term that is
 //! going to be **stored** should come from the record path, where it shares
-//! one context with the ciphertext beside it (ADR-0004).
+//! one context with the ciphertext beside it.
 
 use std::collections::BTreeSet;
 use std::convert::Infallible;
@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
 use crate::json::{JsonOptions, JsonPath};
-use crate::sem::{DefaultMatch, MatchOptions, Orderable, QueryTokens, TermError, Tokenizer};
+use crate::sem::{DefaultMatch, MatchOptions, Orderable, TermError, Tokenizer};
 use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::value::{Date, Decimal, Timestamp};
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
@@ -97,9 +97,8 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 ///
 /// Serialized (it is `Serialize`), an index writes the string whenever the
 /// options are the defaults and the object otherwise, with every option but
-/// `short_words`, which it writes only when it is on. So a default plan is
-/// byte-for-byte what it was before options had a wire form, and a plan with
-/// other options is what it was before `short_words` existed.
+/// `short_words`, which it writes only when it is on. So a plan with
+/// default options writes each index as its bare key.
 impl IndexSpec {
     /// The index a bare key names, under default options, or `None` for a
     /// string that is not an index key.
@@ -457,13 +456,59 @@ pub async fn term<'c, K, P, D>(
 ) -> Result<Vec<u8>, Error>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
-    P: Encrypt,
+    P: Encrypt + Clone,
     D: IntoPrfContext<'c>,
 {
-    derive(cipher, value, kind, context, Use::Query)?
+    // A value the index does not take is refused as that kind, first.
+    if !kind.defines(value.clone()) {
+        return Err(Error::Term {
+            field: None,
+            kind: kind.clone(),
+        });
+    }
+    // Then the query refusals, as `query_term` makes them: a probe is a
+    // query, so match text that cuts no token is refused here rather than
+    // derived as the empty filter a stored value keeps. The value is read
+    // as it is, not re-framed, so every scalar `defines` takes is one a
+    // probe takes.
+    prepare_probe(kind, value.clone())?;
+    derive(cipher, value, kind, context)?
         .await
         .map(TermBytes::into_bytes)
         .map_err(Error::Cipher)
+}
+
+/// The query refusals of a probe of `value` through `kind`: the `sem`
+/// module's rules, as `query_term` applies them to a field's input.
+///
+/// # Errors
+///
+/// [`Error::Cipher`] with the term error, as `query_term`.
+fn prepare_probe<P: Encrypt>(kind: &IndexSpec, value: P) -> Result<(), Error> {
+    let refused = |error: TermError| Error::Cipher(error.into());
+    let text_rule = |value: P, rule: &dyn Fn(&str) -> Result<(), TermError>| {
+        value
+            .visit(OneScalar::new(
+                |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                    (None, Physical::Text(text)) => Ok(rule(text)),
+                    _ => Err(None),
+                },
+            ))
+            // Not one text scalar: nothing to refuse here.
+            .unwrap_or(Ok(()))
+            .map_err(refused)
+    };
+    match kind {
+        IndexSpec::Equality => crate::sem::query::equality(value).map_err(refused),
+        IndexSpec::Match(options) => text_rule(value, &|text| {
+            crate::sem::query::match_tokens(text, options).map(drop)
+        }),
+        IndexSpec::Ore | IndexSpec::Ope => {
+            text_rule(value, &|text| crate::sem::query::order_text(text, false))
+        }
+        IndexSpec::OreBlock => text_rule(value, &|text| crate::sem::query::order_text(text, true)),
+        IndexSpec::Json(_) => Ok(()),
+    }
 }
 
 /// An index term in its frozen byte encoding, as a binding stores and
@@ -497,14 +542,6 @@ impl AsRef<[u8]> for TermBytes {
     }
 }
 
-/// What a derived term is for: a query refuses match text that cuts no
-/// token, which a stored value keeps as the empty filter.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Use {
-    Query,
-    Store,
-}
-
 /// Walk `value` to its one scalar and derive `kind`'s term there. Nothing
 /// is requested: a term is derived by the keyset cipher's own PRF, so the
 /// pending is ready when it is built.
@@ -512,14 +549,15 @@ pub(super) enum Use {
 /// # Errors
 ///
 /// [`Error::Term`] if the value is not one scalar `kind` takes, and
-/// [`Error::Cipher`] for a query's match text with no token or text the
-/// index cannot normalize, as for [`term`].
+/// [`Error::Cipher`] for text the index cannot normalize. The query
+/// refusals are not here: a caller that derives a query term has prepared
+/// the input ([`super::query::prepare_scalar`]), and the record path
+/// stores match text with no token as the empty filter.
 pub(super) fn derive<'a, 'c, K: 'static, P, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: P,
     kind: &IndexSpec,
     context: NonEmpty<D>,
-    purpose: Use,
 ) -> Result<Pending<'a, TermBytes, K>, Error>
 where
     P: Encrypt,
@@ -528,7 +566,7 @@ where
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| {
-                scalar_term(cipher, kind, ty, value, context, purpose)
+                scalar_term(cipher, kind, ty, value, context)
             },
         ))
         .map_err(|refused| {
@@ -550,7 +588,6 @@ fn scalar_term<'a, 'c, K: 'static, D>(
     ty: Option<Logical>,
     value: Physical<'_>,
     context: NonEmpty<D>,
-    purpose: Use,
 ) -> Result<Pending<'a, TermBytes, K>, Option<Error>>
 where
     D: IntoPrfContext<'c>,
@@ -570,13 +607,6 @@ where
             let Physical::Text(text) = value else {
                 return Err(None);
             };
-            if purpose == Use::Query {
-                // The query chain's rule, from the same helper: options the
-                // index cannot use, then text the index cannot normalize or
-                // that cuts no token.
-                let _tokens = QueryTokens::of_query(text, options)
-                    .map_err(|error| Some(Error::Cipher(error.into())))?;
-            }
             Ok(cipher
                 .match_terms_under::<DefaultMatch>(text, context, options.clone())
                 .map(|terms| TermBytes(terms.to_bytes())))
@@ -611,7 +641,7 @@ enum OrderIndex {
 /// read it.
 ///
 /// Each scalar is encoded at the target of the Rust type named here
-/// ([`Orderable`]), as on the typed path: text by the system ADR-0002's
+/// ([`Orderable`]), as on the typed path: text by its case and accent
 /// fold, so `café` precomposed or with a combining accent, and `Café`, tie.
 /// A date, timestamp or decimal is read into its [`value`](crate::value)
 /// type, so it is ordered as one, never as the bare integer it is held as.
@@ -857,12 +887,15 @@ impl Index<ValueFrame> for IndexSpec {
     ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
         let spec = self.clone();
         chosen(move |source: M::Source, cipher, cx: CallerContext| {
+            // A term derives under the query context: the scopes, with no
+            // binding.
+            let (query, stored) = (cx.query(), cx.stored());
             let context = match cx.validated() {
-                Ok(context) => context,
+                Ok(context) => CallerContext::query_nonempty(context),
                 Err(error) => return Pending::failed(cipher, error),
             };
-            match derive(cipher, M::view(&source), &spec, context, Use::Store) {
-                Ok(pending) => pending,
+            match derive(cipher, M::view(&source), &spec, context) {
+                Ok(pending) => pending.under_context(query, stored),
                 Err(error) => Pending::failed(cipher, lifted(error)),
             }
         })

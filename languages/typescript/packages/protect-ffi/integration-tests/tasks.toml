@@ -110,9 +110,12 @@ depends = ["start-db"]
 # the wasm artifacts must exist before vitest runs even though the rest
 # of the integration tests only need the Neon binding.
 #
-# `eql:v4:install` and `eql:v4:codec` rerun so a local run cannot pass against a
-# stale codec or stale `eql_v4` SQL. `start-db` above has Postgres up by then,
-# and a failing step stops the task before vitest. Both tasks do this.
+# `eql:v4:install` and `eql:v4:codec` rerun so a local run uses the current codec
+# and rebuilds the `eql_v4` schema. The `public.eql_v4_*` column domains survive
+# a reinstall on purpose, so after changing a domain, recreate the container with
+# `docker compose down -v` and run `mise run setup`. CI starts from a new
+# database, so it is not affected. `start-db` above has Postgres up by then, and
+# a failing step stops the task before vitest. Both tasks do this.
 #
 # `pnpm exec vitest`, not `pnpm run vitest:live`, only because of the extra
 # flag: pnpm forwards a trailing `--` to the command rather than swallowing it,

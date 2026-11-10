@@ -208,6 +208,41 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # }).unwrap();
 //! ```
 //!
+//! # Seeing the context
+//!
+//! A wrong context loses data silently: a query under the wrong context
+//! matches nothing, and gives no error. So every declaration and every call
+//! can show the context it uses, before any key is requested. A derived
+//! record has `contexts()`, a [`Plan`] has [`Plan::contexts`], and a
+//! prepared call has [`Pending::context`](target::Pending::context). The
+//! `testing` feature adds `assert_context!`, which pins a context in a
+//! test. See [`contexts`] for the rendering. A field with a binding shows
+//! its query context and its stored context; see
+//! [`CallerContext`] for the two.
+//!
+//! ```
+//! use stack_encrypt::sem::EqualityTerm;
+//! use stack_encrypt::target::{DecryptSource, EncryptTarget};
+//! use stack_encrypt::{Encrypted, StackCipherText};
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User { email: String, notes: String }
+//!
+//! #[derive(EncryptTarget, DecryptSource)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     email: Encrypted<EqualityTerm>,
+//!     notes: StackCipherText,
+//! }
+//!
+//! println!("{}", EncryptedUser::contexts());
+//! // email
+//! //   context: users / email
+//! // notes
+//! //   context: users / notes
+//! ```
+//!
 //! # Storing ciphertext
 //!
 //! [`KeysetCipher::encrypt`] returns one opaque [`Ciphertext`]. Persist it with
@@ -521,6 +556,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod blob;
 pub mod cipher;
+pub mod contexts;
 mod scalar;
 pub use blob::{BlobError, OpaqueBlob};
 pub use scalar::{Ciphertext, OpaqueDecode, OpaqueEncode};
@@ -531,18 +567,26 @@ pub mod descriptor;
 pub mod dynamic;
 pub mod json;
 pub mod keyset;
+pub mod marker;
 pub mod op;
 pub mod plan;
 pub mod sem;
 pub mod target;
+#[cfg(feature = "testing")]
+pub mod testing;
 pub mod value;
 
 pub use cipher::{
     Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,
     StackCipherBuilder, StackCipherText,
 };
+pub use contexts::{
+    CallContexts, CallerShape, ContextTree, Contexts, FieldContext, Kind, LeafContext, Placeholder,
+    SuppliedContext,
+};
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;
+pub use marker::{BetweenQuery, MarkedQuery, Marker, Needs, QueryInput, Ready, ScopeInput};
 pub use plan::{all, Plan, PlanError};
 // stack-kms is a public dependency: `StackCipher` is generic over its
 // `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is

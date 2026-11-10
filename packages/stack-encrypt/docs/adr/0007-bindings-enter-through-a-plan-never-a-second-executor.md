@@ -378,6 +378,15 @@ The data side stays: the parsed `Plan` and its parser in
 `dynamic::record`, `FieldValues`, `ValueFrame`, the target resolver, and
 the field index list. The functions in `dynamic::record` that the guest
 calls become thin wrappers. Each parses a frame and builds a `Planned`.
+The first pull request for #1488 did the lowering: `compose` and
+`opening` in `dynamic::planned` build the combinators from the parsed
+plan, and `encrypt_with`, `decrypt_with` and `contexts()` run them.
+`check_source` and `check_record` run no combinator: they state the same
+rules through `check_values`, `check_stored` and `opening_base`, which
+the lowering shares. The builder is no longer in the dynamic path.
+The inversion is still to come: those functions run `compose` and
+`opening` themselves rather than building a `Planned`, so `Planned` and
+the record functions are two callers of one lowering until then.
 
 **The derive emits no plan.** `encryption_plan()` is not added. A typed
 query starts from a field marker. The marker has the field's context and
@@ -400,7 +409,8 @@ type's plan. The equivalence suite uses data plans written by hand.
 2. **The builder's typed surface had one Rust author.** In the engine's
    own source, nothing outside `plan/` and `dynamic/` builds a plan. The
    one real use is a typed query, `cipher.query(op, value).on(&plan)`.
-   That use exists only because field markers are not built yet.
+   That use existed only because field markers were not built; they
+   are, since #1486's markers pull request.
    `eql-bindings` and the tests are the other users. A plan is the
    dynamic interface's declaration. A Rust program that learns its
    declaration at run time uses the dynamic interface through `Planned`,

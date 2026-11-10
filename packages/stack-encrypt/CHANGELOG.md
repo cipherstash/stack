@@ -7,7 +7,158 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Field markers** (#1486, #1590, #1596). `#[derive(EncryptTarget)]` on
+  a `struct = ..` record emits one `Marker` per derived field. It is an
+  associated constant named after the field in upper case:
+  `EncryptedUser::EMAIL`. A marker is `Marker<W, T, C, P>`. `W` is where
+  the field sits: `marker::Root<R>` for a field of the record `R`, or
+  `marker::Nested<W>` for one reached through a record field. `T` is the
+  field's target type. `C` is the scope the record's caller supplies.
+  `P` is the type a query takes: `marker::TakesAny`, or `marker::Takes<V>`
+  for a field marked `#[stash(query = V)]`.
+  - Its methods are one per operator the field's indexes answer, checked
+    at compile time through `Answers`: `eq`, `lt`, `lte`, `gt`, `gte`,
+    `between`, and `matches`. A field of several indexes,
+    `Encrypted<(EqualityTerm, MatchTerms)>`, answers each operator through
+    the one index that answers it. Each term states its answer with
+    `op::OperatorAnswer`. An operator no index answers, or two answer, has
+    no method. An `Option<..>` field has the methods a present value has.
+  - `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)` is the
+    inner field's marker under the outer field's context. It takes the
+    outer record's scope. `field` accepts only a marker of the inner record.
+  - `#[stash(query = String)]` states the type a field's queries take. The
+    derive checks it against the plaintext struct's field.
+  - A record that lists a caller scope, `scope(tenant: u64)`, gives a
+    query with no `encrypt` until `.scope(..)` is given once, with a
+    `Scope<u64>`. A record with no caller scope gives a query that is
+    ready at once. The query has no `bind` method, and ends with
+    `.encrypt(&keyset)`. The output is the index's query term.
+  - A query from a marker derives under the declaration the derive wrote,
+    so it is the stored term. No plan is written by hand beside the
+    record. A method takes its value by value, and a string literal as
+    it is (`QueryInput`). The query's value is wiped when it is derived,
+    refused, or dropped. `assert_context!` takes a marker, and
+    `Marker::contexts()` is the record's contexts narrowed to the field.
+    A tuple field has no marker.
+- **Tuples of terms answer the query chain too** (#1596). A query of
+  `op::Eq` or `op::Matches` on a plan of
+  `Encrypted<(EqualityTerm, MatchTerms)>` needs no `.via(index)`. The
+  query uses the one term that answers the operator. `OreBlockTerm` implements `LabelledTarget`, so a block ORE field
+  is queried under its label.
+- **`dynamic::Planned`, a value under a plan that is data** (#1486). A
+  record under a `Plan`, or a query value under a `QueryPlan`, each a
+  `ValueFrame`, is a target in the owned API's sense. `StackCipherText`
+  implements `EncryptTarget<Planned<Plan, ValueFrame>>`. `QueryTerm`
+  implements `EncryptTarget<Planned<QueryPlan, ValueFrame>>`.
+  `Planned<Plan, StackCipherText>` implements `DecryptSource<ValueFrame>`.
+  So `encrypt_into`, `decrypt_from`, and their `_with_context` forms run
+  them. The caller's scope and bindings are the one context argument,
+  after the plan's own. A query takes scopes alone, and refuses a binding
+  before any key is requested, as `PlanError::BindInQuery`. A refused
+  term keeps its kind (`Error::Term`); other dynamic refusals are
+  `Error::Other`. `Planned::contexts()` shows every field's context with
+  a placeholder for the caller's scope and one for the caller's binding,
+  before any value is encrypted.
+- **Query plans and the dynamic field handle** (#1486). `Plan::query(field,
+  op)` and `Plan::query_with(.., &resolver)` narrow a record plan to one
+  field and one operator. They are refused where they are made when none
+  of the field's indexes answers the operator (`operator_not_answered`),
+  or when the plan has no such field. `Plan::field(name)` and
+  `Plan::field_with(name, &resolver)` are the handle a program whose plan
+  is data queries through. It has one method per scalar operator and
+  `op(..)` for any, each checked against the plan where it is called, then
+  `.scope(..)` and `.encrypt(&keyset)`. Neither has a `bind` method.
+- `ValueFrame` implements `Zeroize`. `dynamic::query_term` takes any
+  `K: 'static`, as `record::encrypt_with` does. The key source's bounds
+  apply when the pending is awaited, not when the term is described.
+
 ### Breaking
+
+- **Every operator is declared once, and `op::Supports` has one method**
+  (#1279, #1318). The `op` module lists each operator with its type, its
+  arity and its wire name; the dynamic enum `Op` (`dynamic::OpSpec` until
+  now, kept as a deprecated alias), each type's `Operator::OP` and
+  `Op::name` are generated from that list, so `op::Eq`, `Op::Eq` and
+  `"eq"` cannot drift apart. `Leaf` gains `AT`, the operator's path form.
+  - `Supports::check`, `verifier` and `admit` are one
+    `prepare(&self, input) -> Result<Self::Verifier, Error>`, called once
+    per query, when the query is awaited and before any keyset is
+    resolved. A match query is prepared once and keeps its tokens as the
+    verifier. An index outside this crate implements `prepare` in place of
+    the three. `Operator::OP` and `Leaf::AT` are new, with `None` defaults,
+    so an operator outside this crate needs nothing more.
+  - What a query is refused for is written once, in the `sem` module, for
+    the typed chain and the dynamic path alike. So the typed chain now
+    refuses an equality or order query of text with no normal form, and
+    block ORE text over its limit, before the keyset is resolved
+    (#1321); the dynamic path already did. `Supports<Eq, S> for Equality`
+    and `Answers<Eq, S>` need `S: Clone` for that check.
+  - `op::Matches` has no case parameter: `Case`, `CaseInsensitive`,
+    `CaseSensitive`, `op::MatchCase` and `PlanError::MatchCase` are gone.
+    Case is the match index's configuration alone, for the stored filter
+    and the query. Write `op::Matches` where you wrote
+    `op::Matches.case_sensitive()`; a `MatchConfig` needs no `MatchCase`.
+  - `dynamic::term` prepares its probe as `query_term` does, and the
+    stored-term derivation no longer carries a query flag.
+- **A field declares at most one index per operator** (#1233).
+  `(Ore, Ope)` and `(Ore, OreBlock)` are refused when the plan is built,
+  as `PlanError::IndexOverlap` on the typed path and `overlapping_outputs`
+  on the dynamic one, before any key is requested; two match indexes were
+  already one index twice (`DuplicateIndex`). `(Equality, Ore)` answer
+  different operators and are allowed. The rule is a declaration's. A
+  record derived with `EncryptFrom` builds a plan, so a field of
+  `(OreTerm, OpeTerm)` on it is refused the same way. `indexed(..)` and a
+  hand-written `EncryptFrom` with two order indexes still run, since no
+  plan holds them and no query reads the second term. Each index declares the operators it answers once (`Equality::OPERATORS`,
+  `Ore::OPERATORS`, …; `IndexSpec::operators` and `IndexSpec::answers`
+  read them), and `Op::answered_by` has no priority between order indexes.
+  A field that stored both order terms wrote the OPE one for nothing, and
+  it told anyone who read the column how its values order.
+
+- **Every part of a context is a scope or a binding** (#1487). Search terms
+  derive under the query context, the scopes. The data key and the AAD
+  derive under the stored context, the scopes then the bindings. A record
+  with no binding stores exactly the bytes it stored before: the frozen
+  vectors do not change.
+  - A derived record lists the parts its caller supplies:
+    `#[stash(struct = User, scope = "users", scope(tenant: u64), bind(row: u128))]`.
+    The caller passes `Scope::new(tenant)`, `Bind::new(row)`, or
+    `Scope::new(tenant).bind(row)`. A part the record does not list does
+    not compile. The record's `ContextInput` is `RequiredContext<Parts<..>>`.
+  - A part stored in the row is listed as `scope(field = "tenant")` or
+    `bind(field = "id")`, in a `passthrough` field. The engine reads it from
+    the plaintext on encrypt and from the row on decrypt. A reader may pass
+    it to check it, and a mismatch is `ContextMismatch` before any key is
+    requested.
+  - `CallerContext` holds the scopes and the bindings apart, with `query()`
+    and `stored()`. `AeadContext` is the stored context. An empty `Scope`
+    or `Bind` is refused before any key is requested
+    (`PlanError::EmptyPart`).
+  - The dynamic record grammar has a plan-level `"bind"` key, a list of
+    parts. A query on a plan with a binding is refused, `bind_in_query`,
+    before any key is requested. `dynamic::record::Plan::with_bindings` and
+    `bindings` carry it. The key is reserved, so a field named `bind` is
+    refused (`bind`), and so is a grouped part, since a binding part is a
+    scalar. An empty binding is refused (`empty_binding`), and so is an
+    explicit empty list.
+  - A typed query carries no binding either: `.extend(Bind::new(..))` does
+    not compile, and a binding inside a `CallerContext` or `DeclaredContext`
+    is `PlanError::BindInQuery` when the query is awaited, before any key.
+  - `CallerContext` is no longer an `IntoContext`: a context with a binding
+    is two contexts, so a leaf takes `query()` or `stored()` by name, and a
+    PRF or AEAD API is never handed one whole. `AeadContext` nests a binding
+    as `CallerContext::extend` does. A JSON document seals under the stored
+    context and derives its selectors under the query context, so a bound
+    document is found by a query under the scopes.
+  - `Contexts` and `CallContexts` show a `query context:` line and a
+    `stored context:` line for a field with a binding, and one `context:`
+    line otherwise. `assert_context!` states both as
+    `field = { query = [..], stored = [..] }`. The placeholders say `scope`
+    and `bind`: a plan's optional extension is `{scope?: CallerContext}`,
+    which `testing::caller_scope()` states. `testing::extension()` is
+    renamed to `caller_scope()`.
 
 - **`OpaqueDecode` no longer requires vitaminc's `Decrypt` trait.** If you
   only name types that implement `OpaqueDecode`, nothing changes, because
@@ -71,6 +222,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A declaration and a call show the context they use, before any key is
+  requested** (#1568). `Encryption::contexts()` lists the context of each
+  field that is sealed or indexed, with a typed placeholder for each part
+  the caller supplies, such as `{context: u64}`. The derives emit
+  `contexts()` on every record, and `Plan::contexts()` shows a plan's. A
+  data plan's field that names an EQL type is shown under its label alone,
+  in plan order, since an EQL value takes no part from the caller.
+  `Pending::context()` lists the exact contexts a prepared call will use,
+  with the caller's values filled in. Both views show each part's type:
+  `7u64`, `7i64`, the text `7`, and the bytes `0x37` are four different
+  contexts. The views are built by the same combinators that build the key
+  descriptor and the AAD, so what a developer sees is what the engine uses.
+  The dynamic interface has the same view, `dynamic::record::Plan::contexts`.
+- **The `testing` feature adds `assert_context!`**, which pins the context
+  of a declaration or a call in a test. It names the first part that
+  differs. `assert_contexts!` pins each context a call uses, in order.
+  `stack_encrypt::testing` also has `required`, `optional`, `extension`,
+  `from_plaintext`, and `list`, which state the caller's parts and a
+  one-part list.
+- **A context can be passed by reference.** `CallerContext`, `AeadContext`,
+  and `DeclaredContext` convert from `&NonEmpty<T>`, so
+  `value.encrypt_into_with_context(&keyset, &column)` compiles for a target
+  that takes a `CallerContext`, and the column is still usable afterwards.
 - **A target can take its context from a field of the plaintext:
   `Encryption::context_from`** (#1586). Some values arrive together with the
   context they are stored under. For example, a value decrypted from an older
@@ -340,9 +514,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A data plan lowers to the combinators directly** (#1488, first part).
+  `dynamic::planned::compose` and `opening` build each field's combinator
+  from the parsed plan, and the dynamic entry points run them:
+  `encrypt_with`, `decrypt_with`, `check_source`, `check_record`, and
+  `Plan::contexts`. The checks a binding asks without a cipher share
+  `check_names`, `check_stored` and `opening_base` with the lowering. The
+  plan builder is no longer in the dynamic path. No stored byte changes:
+  the record shape, the terms, and the contexts are the ones the
+  builder's lowering produced, and the conformance vectors pin them.
+- **The context parameter of the cipher-directed methods is named
+  `context`, not `aad`** (#1568): `KeysetCipher::encrypt_tree`,
+  `KeysetCipher::decrypt_tree`, `StackCipher::decrypt`,
+  `PendingStackCipherText::plan`, `seal`, and `into_pending`. A positional
+  call does not change. The stored format does not change.
 - `vitaminc-aead-frame` is now always built, with its `serde` feature.
   Before, it was built only with the `dynamic` feature. The `dynamic`
   feature now adds no dependency.
+- The rustdoc of `stack-encrypt` and `stack-encrypt-derive` states each
+  rule itself. It no longer names design records or plans, since those are
+  not published with the crates.
 
 ### Deprecated
 
@@ -358,6 +549,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The docs of `dynamic::read` said the engine never calls it. `dynamic::query_term`
+  does: it reads a query's input as the field's kind.
 - **A refused context no longer drops a copy of the plaintext unwiped**
   (#1504). `target::ciphertext()` cloned a borrowed plaintext before it
   checked the context. When the context was too long for a ZeroKMS

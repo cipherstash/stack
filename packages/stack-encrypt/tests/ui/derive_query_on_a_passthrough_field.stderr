@@ -1,0 +1,5 @@
+error: `query = ..` names the type a query of the field takes, for the field's marker; only a sealed field of a `struct = ..` record has a marker, so it does not apply to a `plaintext` record's field, or to a `context_field`, `passthrough` or `default` field
+  --> tests/ui/derive_query_on_a_passthrough_field.rs:17:34
+   |
+17 |     #[stash(passthrough, query = u64)]
+   |                                  ^^^

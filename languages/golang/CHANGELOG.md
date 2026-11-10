@@ -10,6 +10,51 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+### Breaking
+
+- **A field declares at most one order index** (#1233). The engine refuses
+  a field tagged `index=ore;ope` (or `ore;ore_block`), so `stashgen` now
+  reports it as a field error at generate time, and a plan built by hand
+  with both is refused by the guest (`overlapping_outputs`) before any key
+  is requested. Before, the field stored both terms and every query used
+  the ORE one; the OPE term cost a write and told anyone who read the
+  column how its values order. `stashgen`'s notice for a second order index
+  is gone with the case it described; the notice for an order index on
+  bytes stays.
+
+- **`Cipher.Extend` is now `Cipher.Scope`, and `Cipher.Bind` is new**
+  (#1487). A scope narrows the data and the queries over it. A binding ties
+  a ciphertext to its row: it is in the stored context, after every scope,
+  and in no query context. So `cipher.Scope(tenant).Bind(rowID)` seals a
+  row that a query through `cipher.Scope(tenant)` still finds, and that
+  opens only through a cipher with the same binding. A query through a
+  cipher with a binding is refused as `ErrEncoding`. `Extend` and
+  `Extension` stay as deprecated aliases of `Scope` and `Scopes` until
+  0.1.0. The stored bytes of a cipher with no binding do not change.
+- The plan wire form has a plan-level `bind` key, a list of parts, beside
+  the field specs. `record.Plan` has a `Bind` field. An EQL type refuses a
+  binding, as it refuses an extension. `bind` is a reserved field name, as
+  `context_field` is: a record with a field called `bind` is refused by
+  `Plan.Validate`, so every `Cipher` call on it fails with `ErrEncoding`.
+
+### Added
+
+- `Checker.Contexts` and `Cipher.Contexts` show the contexts a plan's
+  fields are sealed and indexed under, before any key is requested: one
+  line per field, then one indented line with its context, such as
+  `email\n  context: users / email\n`. A cipher shows its extension
+  applied. The text is the engine's, and the same text a Rust record's
+  `contexts()` prints for the same declaration, so the two SDKs agree.
+  `gensupport.Declaration.Contexts` asks the same of a generated record's
+  declaration.
+- The `encrypttest` package: `encrypttest.AssertContexts` pins a generated
+  record's contexts in a test, one `encrypttest.Field(name, parts...)` per
+  field, in order. A part is a string, a fixed-width integer, a `[]byte`, a
+  nested `encrypttest.List`, or a placeholder such as
+  `encrypttest.Extension()`, and renders as the engine prints it, so a Rust
+  test states the same parts. The failure names the first field whose
+  context differs. `encrypttest.Contexts` returns the engine's text.
+
 ## [0.1.0-rc.3] - 2026-11-02
 
 ### Upgrading from rc.2

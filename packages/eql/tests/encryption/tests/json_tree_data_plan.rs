@@ -515,7 +515,7 @@ async fn data_term(
         keyset,
         plan,
         "profile",
-        dynamic::OpSpec::parse(operator).unwrap(),
+        dynamic::Op::parse(operator).unwrap(),
         input(entries),
         &Eql,
     )
@@ -785,7 +785,7 @@ fn a_json_operator_refuses_what_it_cannot_answer() {
         dynamic::check_query(
             &plan,
             "profile",
-            dynamic::OpSpec::parse(operator).unwrap(),
+            dynamic::Op::parse(operator).unwrap(),
             input(entries),
             &Eql,
         )
@@ -850,7 +850,7 @@ fn a_json_operator_refuses_what_it_cannot_answer() {
     }
     // `eq` and friends are not a document's operators.
     let error =
-        dynamic::check_query(&plan, "profile", dynamic::OpSpec::Eq, input(&[]), &Eql).unwrap_err();
+        dynamic::check_query(&plan, "profile", dynamic::Op::Eq, input(&[]), &Eql).unwrap_err();
     assert_eq!(error.reason(), Some(Reason::OperatorNotAnswered));
 }
 

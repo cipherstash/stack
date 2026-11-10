@@ -48,6 +48,7 @@ where
         // collection stops declaring at the first element that fails, so a
         // refused context is reported once rather than once per row.
         Encryption::from_build(
+            T::encryption::<K>().shapes(),
             move |source: &'s Vec<S>, cipher, context: T::ContextInput| {
                 Pending::collect(
                     cipher,
@@ -68,30 +69,33 @@ where
     where
         S: 's,
     {
-        Encryption::from_build(move |source: Vec<S>, cipher, context: T::ContextInput| {
-            // Run every element, whatever happened to the elements before it.
-            // Each element's own declaration is what wipes it, so an element
-            // left unvisited after an earlier failure would be dropped as it
-            // is. The column still reports a refused context once, because
-            // `collect` keeps the first failure.
-            //
-            // The elements not yet handed over stay in a guard. The guard
-            // wipes them if a declaration panics, as the guard over the whole
-            // vector did before. An element is taken out only once its
-            // description and context exist, so nothing that can panic runs
-            // while an element is unguarded.
-            let mut unvisited = Unvisited(source.into_iter());
-            let mut elements = Vec::with_capacity(unvisited.0.len());
-            while !unvisited.0.as_slice().is_empty() {
-                let description = T::owned_encryption();
-                let context = context.clone();
-                let Some(element) = unvisited.0.next() else {
-                    break;
-                };
-                elements.push(cipher.run(description, element, context));
-            }
-            Pending::collect(cipher, elements)
-        })
+        Encryption::from_build(
+            T::owned_encryption::<K>().shapes(),
+            move |source: Vec<S>, cipher, context: T::ContextInput| {
+                // Run every element, whatever happened to the elements before it.
+                // Each element's own declaration is what wipes it, so an element
+                // left unvisited after an earlier failure would be dropped as it
+                // is. The column still reports a refused context once, because
+                // `collect` keeps the first failure.
+                //
+                // The elements not yet handed over stay in a guard. The guard
+                // wipes them if a declaration panics, as the guard over the whole
+                // vector did before. An element is taken out only once its
+                // description and context exist, so nothing that can panic runs
+                // while an element is unguarded.
+                let mut unvisited = Unvisited(source.into_iter());
+                let mut elements = Vec::with_capacity(unvisited.0.len());
+                while !unvisited.0.as_slice().is_empty() {
+                    let description = T::owned_encryption();
+                    let context = context.clone();
+                    let Some(element) = unvisited.0.next() else {
+                        break;
+                    };
+                    elements.push(cipher.run(description, element, context));
+                }
+                Pending::collect(cipher, elements)
+            },
+        )
     }
 }
 
@@ -147,6 +151,7 @@ impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for O
         S: 's,
     {
         Encryption::from_build(
+            T::encryption::<K>().shapes(),
             move |source: &'s Option<S>, cipher, context: T::ContextInput| match source {
                 Some(value) => cipher.run(T::encryption(), value, context).map(Some),
                 None => Pending::ready(cipher, Ok(None)),
@@ -161,17 +166,20 @@ impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for O
     where
         S: 's,
     {
-        Encryption::from_build(move |source: Option<S>, cipher, context: T::ContextInput| {
-            // Building the target's declaration can panic, so the value stays
-            // guarded until the declaration exists. The declaration then takes
-            // the value over, and wipes it.
-            let guarded = Protected::new(source);
-            let description = T::owned_encryption();
-            match guarded.risky_unwrap() {
-                Some(value) => cipher.run(description, value, context).map(Some),
-                None => Pending::ready(cipher, Ok(None)),
-            }
-        })
+        Encryption::from_build(
+            T::owned_encryption::<K>().shapes(),
+            move |source: Option<S>, cipher, context: T::ContextInput| {
+                // Building the target's declaration can panic, so the value stays
+                // guarded until the declaration exists. The declaration then takes
+                // the value over, and wipes it.
+                let guarded = Protected::new(source);
+                let description = T::owned_encryption();
+                match guarded.risky_unwrap() {
+                    Some(value) => cipher.run(description, value, context).map(Some),
+                    None => Pending::ready(cipher, Ok(None)),
+                }
+            },
+        )
     }
     fn indexes() -> Vec<super::IndexSpec> {
         T::indexes()

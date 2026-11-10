@@ -8,7 +8,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, NoTargets, OpSpec, Operand, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, Scope, ValueFrame};
 use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::CipherText;
 use std::{
@@ -166,7 +166,7 @@ async fn shared_record_runtime_profile() {
                             &keyset,
                             &plan,
                             "value",
-                            OpSpec::Eq,
+                            Op::Eq,
                             value(&expected["value"]),
                             &NoTargets,
                         )
@@ -211,14 +211,8 @@ async fn shared_record_runtime_profile() {
                 expected_value,
                 expected_error,
             } => {
-                let result = dynamic::query_term(
-                    &keyset,
-                    &plan,
-                    "value",
-                    OpSpec::Eq,
-                    value(&input),
-                    &NoTargets,
-                );
+                let result =
+                    dynamic::query_term(&keyset, &plan, "value", Op::Eq, value(&input), &NoTargets);
                 if let Some(expected) = expected_error {
                     assert!(expected_value.is_none());
                     refusal(

@@ -194,7 +194,9 @@ pub enum Error {
     ///
     /// Which row a value belongs to is not checked: an entry from another
     /// row of the same column at the same path, returned with that row's
-    /// header, opens (ADR 0010, `docs/adr/0010-what-a-stored-value-authenticates.md`).
+    /// header, opens. A value is bound to its row only when its context
+    /// names the row. A row binding protects the ciphertext; selectors and
+    /// terms still derive under the query scopes alone.
     ///
     /// `expected` names what the read expected, never what the entry held.
     #[error("the database returned a JSON index entry other than {expected}")]
@@ -1026,15 +1028,19 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// For one opaque scalar use
     /// [`Self::encrypt`] or [`Self::encrypt_with_context`].
     ///
-    /// Encrypt a value, binding `aad`, and seal it against fresh ZeroKMS data
-    /// keys in a single batched `generate_keys` call under this keyset.
-    /// Every key is requested under the [`Descriptor`] of `aad`.
-    pub async fn encrypt_tree<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
+    /// Encrypt a value, binding `context`, and seal it against fresh ZeroKMS
+    /// data keys in a single batched `generate_keys` call under this keyset.
+    /// Every key is requested under the [`Descriptor`] of `context`.
+    pub async fn encrypt_tree<'a, T, A>(
+        &self,
+        value: T,
+        context: A,
+    ) -> Result<StackCipherText, Error>
     where
         T: Encrypt,
         A: IntoContext<'a>,
     {
-        let context = aad.into_context();
+        let context = context.into_context();
         let pending = PendingStackCipherText::plan(value, context.clone())?;
         pending.seal(self, context).await
     }
@@ -1047,13 +1053,13 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     pub async fn decrypt_tree<'a, T, A>(
         &self,
         ciphertext: StackCipherText,
-        aad: A,
+        context: A,
     ) -> Result<T, Error>
     where
         T: Decrypt,
         A: IntoContext<'a>,
     {
-        decrypt_through(self, ciphertext, aad).await
+        decrypt_through(self, ciphertext, context).await
     }
 }
 
@@ -1084,11 +1090,12 @@ where
 }
 
 impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
-    /// Decrypt a [`StackCipherText`] into `T`, authenticating against `aad`.
+    /// Decrypt a [`StackCipherText`] into `T`, authenticating against
+    /// `context`.
     ///
     /// One batched `retrieve_keys` call per keyset the leaves were sealed
-    /// under, every key under the [`Descriptor`] of `aad`, then vitaminc
-    /// opens every leaf under the AAD it derives from the *same* `aad` and
+    /// under, every key under the [`Descriptor`] of `context`, then vitaminc
+    /// opens every leaf under the AAD it derives from the *same* `context` and
     /// walks the result into `T`'s [`Decrypt`] sink — exactly as
     /// `vitaminc_aead::decrypt` does over an `Aes256Cipher`. One context in,
     /// and every leaf's AAD derived from it; there is no form of this call
@@ -1113,12 +1120,16 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// trust — one tenant's data at a time — should hold that tenant's
     /// [`KeysetCipher::decrypt_tree`], which is one round trip at most and refuses
     /// a foreign leaf before any.
-    pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
+    pub async fn decrypt<'a, T, A>(
+        &self,
+        ciphertext: StackCipherText,
+        context: A,
+    ) -> Result<T, Error>
     where
         T: Decrypt,
         A: IntoContext<'a>,
     {
-        decrypt_through(self, ciphertext, aad).await
+        decrypt_through(self, ciphertext, context).await
     }
 }
 
@@ -1487,14 +1498,14 @@ pub(crate) fn bind_keys(
 pub struct PendingStackCipherText(Node<Pending>);
 
 impl PendingStackCipherText {
-    /// Plan `value` for sealing under `aad`. No key is requested.
+    /// Plan `value` for sealing under `context`. No key is requested.
     ///
     /// A value vitaminc refuses to encrypt as given (a map with a repeated
     /// key, a container whose every child is a passthrough, a nesting deeper
     /// than the transport carries) is [`Error::Aead`], as it is when the
     /// value is sealed in one step.
-    pub fn plan<'a, P: Encrypt>(value: P, aad: impl IntoAad<'a>) -> Result<Self, Error> {
-        vitaminc_aead::plan::<_, Unspecified, _>(value, aad)
+    pub fn plan<'a, P: Encrypt>(value: P, context: impl IntoAad<'a>) -> Result<Self, Error> {
+        vitaminc_aead::plan::<_, Unspecified, _>(value, context)
             .map(Self)
             .map_err(|_| Error::Aead)
     }
@@ -1515,9 +1526,9 @@ impl PendingStackCipherText {
 
     /// Generate one data key per keyed leaf (one batched ZeroKMS call — none
     /// for a passthrough-only tree), every key under the [`Descriptor`] of
-    /// `aad`, and seal the whole tree.
+    /// `context`, and seal the whole tree.
     ///
-    /// `aad` is the context the tree was planned under — the value passed to
+    /// `context` is the context the tree was planned under — the value passed to
     /// [`plan`](Self::plan), in the same shape (see the
     /// [descriptor docs](crate::descriptor)). The tree itself only carries
     /// the *derived* per-leaf AADs, so the root is named here; nothing can
@@ -1531,9 +1542,9 @@ impl PendingStackCipherText {
     pub async fn seal<'a, K: DataKeySource + IndexKeySource>(
         self,
         cipher: &KeysetCipher<'_, K>,
-        aad: impl IntoContext<'a>,
+        context: impl IntoContext<'a>,
     ) -> Result<StackCipherText, Error> {
-        self.into_pending(cipher, aad).settle().await
+        self.into_pending(cipher, context).settle().await
     }
 
     /// Turn this tree into a [`Pending`](crate::target::Pending) request
@@ -1562,9 +1573,11 @@ impl PendingStackCipherText {
     pub fn into_pending<'c, 'a, K>(
         self,
         cipher: &'a KeysetCipher<'_, K>,
-        aad: impl IntoContext<'c>,
+        context: impl IntoContext<'c>,
     ) -> crate::target::Pending<'a, StackCipherText, K> {
-        crate::target::seal_pending(cipher, self, Descriptor::of(aad))
+        let context = context.into_context();
+        crate::target::seal_pending(cipher, self, Descriptor::from_piece(&context))
+            .under_context(context.clone().into_owned(), context.into_owned())
     }
 
     /// Seal under `keyset_id`, drawing one key per leaf from `keys` in

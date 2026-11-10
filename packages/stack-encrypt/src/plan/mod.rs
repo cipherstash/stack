@@ -274,7 +274,7 @@
 //! the declaration it sends, or in the record.
 //!
 //! The engine is shared, and so is the stored leaf: every leaf is tagged
-//! with its type (vitaminc ADR 0001), so a data plan's `uint32` field and a
+//! with its type, so a data plan's `uint32` field and a
 //! Rust `u32` field seal the same leaf under the same context, and a reader
 //! of another type refuses it rather than misreading it.
 //!
@@ -312,6 +312,8 @@ mod field_ref;
 mod value;
 mod values;
 
+#[cfg(feature = "dynamic")]
+pub(crate) use build::{field_label, join, FROM_CALL, FROM_PLAN};
 pub use build::{FieldKind, FieldPlan, FieldsBuilder, IntoLabel, Opens, Plan, PlanContext, Runs};
 pub use chain::{
     all, All, Batch, Chooses, EncryptBuilder, EncryptFields, EncryptIndexed, EncryptUsing,
@@ -324,4 +326,6 @@ pub use value::{
     ContextFieldStart, Indexed, Laid, Stored, Typed, ValueLayout, ValuePlan, ValuePlanBuilder,
     ValueShape, ValueStart,
 };
+#[cfg(feature = "dynamic")]
+pub(crate) use values::Slot;
 pub use values::{Field, FieldSchema, FieldValues, Fields};
