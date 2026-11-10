@@ -1139,9 +1139,45 @@ impl Plan {
         &self.bindings
     }
 
-    /// This plan with `parts` after its extension: a caller's scopes, each
-    /// one more part of every field's context, as a plan's `"context"` key
-    /// carries them.
+    /// Add a caller's scopes to this plan. Each scope becomes one more part
+    /// at the end of every field's context, after the parts the plan
+    /// already has, in the order given. A scoped call runs the plan this
+    /// returns. So a field is sealed and indexed under its label, then the
+    /// plan's own extension, then the scopes. A call with no scope borrows
+    /// the plan instead, and copies nothing.
+    ///
+    /// A plan with a field that names an EQL type takes no scope. An EQL
+    /// value is stored under its table and column alone.
+    ///
+    /// The scope shows in the context of the call. Here a record under a
+    /// one-field plan is encrypted under the scope `42u64`:
+    ///
+    /// ```
+    /// use stack_encrypt::dynamic::{record, Planned, ValueFrame};
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::Scope;
+    /// use stack_encrypt::{AsProtectedRef, EncryptInto, Pending, StackCipher, StackCipherText};
+    /// use vitaminc_aead_frame::serde::to_vec;
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let declaration = to_vec(&serde_json::json!({
+    ///     "email": { "context": ["users", "email"], "outputs": ["c"], "type": "string" },
+    /// }))?;
+    /// let plan = record::plan(declaration.as_protected_ref())?;
+    /// let values = ValueFrame::from_bytes(
+    ///     to_vec(&serde_json::json!({"email": "ada@example.com"}))?.as_protected_ref(),
+    /// )?;
+    /// let call: Pending<'_, StackCipherText, FakeDataKeySource> =
+    ///     Planned::new(&plan, values).encrypt_into_with_context(&keyset, Scope::new(42u64));
+    /// // The field's context is its label, then the scope.
+    /// # #[cfg(feature = "testing")]
+    /// stack_encrypt::assert_context!(call.context(), [["users", "email"], 42u64]);
+    /// let _row = call.await?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # }).unwrap();
+    /// ```
     ///
     /// # Errors
     ///
