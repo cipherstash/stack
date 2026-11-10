@@ -6531,6 +6531,37 @@ mod tests {
             obj(vec![("age", Tree::UInt32(age)), ("email", s(email))])
         }
 
+        /// An EQL value is stored under its table and column alone, so a
+        /// plan with a target field takes no binding, as it takes no
+        /// extension; no binding at all leaves it as it is.
+        #[test]
+        fn a_target_field_refuses_a_binding() {
+            let refused = mixed_plan()
+                .with_bindings(vec![ContextPiece::U64(9)])
+                .unwrap_err();
+            assert!(
+                matches!(
+                    &refused,
+                    Error::Target(TargetError::Extended { name, label })
+                        if name == "email" && label == "users/email"
+                ),
+                "{refused:?}"
+            );
+            assert!(mixed_plan().with_bindings(vec![]).is_ok());
+            let wired = plan_with(
+                obj(vec![
+                    ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                    ("email", target_spec(label("email"), TEXT_EQ)),
+                    ("bind", Tree::Array(vec![Tree::UInt64(9)])),
+                ]),
+                &FakeEql,
+            );
+            assert!(
+                matches!(wired, Err(Error::Target(TargetError::Extended { .. }))),
+                "{wired:?}"
+            );
+        }
+
         /// The context view shows a target field under its label alone, in
         /// plan order among the lowered fields: an EQL value takes no part
         /// from the caller, so there is nothing to fill in.
