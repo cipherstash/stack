@@ -223,12 +223,6 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
         self.shapes = contexts::name(self.shapes, name);
         self
     }
-    /// [`contexts`](Self::contexts) with the caller's extension known: what
-    /// a data plan carries. Crate-internal: the dynamic plan is its caller.
-    #[cfg(feature = "dynamic")]
-    pub(crate) fn contexts_under(&self, extension: &DeclaredContext) -> Contexts {
-        contexts::resolve_under(self.shapes.clone(), extension.pieces())
-    }
     /// A description whose output is already known — metadata a record
     /// carries, or a declaration rejected before any key request.
     pub fn ready(result: Result<T, Error>) -> Self

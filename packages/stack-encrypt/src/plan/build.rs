@@ -1413,16 +1413,16 @@ impl<S: 'static, K: 'static> Plan<S, K> {
         self.lowering(base).contexts()
     }
 
-    /// [`contexts`](Self::contexts) with the extension a run adds known, as
-    /// a data plan carries it. Crate-internal: the dynamic plan calls it.
+    /// The shapes behind [`contexts_under`](Self::contexts_under), with the
+    /// extension known, for a caller that places more leaves among them.
     #[cfg(feature = "dynamic")]
-    pub(crate) fn contexts_under(&self, extension: &DeclaredContext) -> crate::Contexts {
+    pub(crate) fn shapes_under(&self, extension: &DeclaredContext) -> crate::contexts::Shapes {
         let base = match &self.inner.source {
             Source::Plan(label) => Base::Label(label.clone()),
             Source::Field(field) => Base::Field(Arc::clone(&field.of_value)),
             Source::Call => Base::Call,
         };
-        self.lowering(base).contexts_under(extension)
+        crate::contexts::under_parts(self.lowering(base).shapes(), extension.pieces())
     }
 
     /// [`encryption`](Self::encryption), once the base context is known.

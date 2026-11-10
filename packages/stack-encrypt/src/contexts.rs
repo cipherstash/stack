@@ -734,6 +734,33 @@ pub(crate) struct LeafShape {
 /// The shapes of every leaf of a declaration, in order.
 pub(crate) type Shapes = Vec<LeafShape>;
 
+impl LeafShape {
+    /// The field this leaf is, as [`name`] named it.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+/// One named leaf under a context known when the declaration is written,
+/// and extended by nothing: a data plan's EQL field, sealed under its label
+/// by the resolver.
+#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+pub(crate) fn known_leaf(name: &str, piece: ContextPiece<'static>) -> LeafShape {
+    LeafShape {
+        name: Some(Arc::from(name)),
+        shape: Shape::Known(piece),
+    }
+}
+
+/// The leaves with the caller's parts known, as a data plan carries them:
+/// what [`resolve_under`] resolves, kept as shapes so more leaves can be
+/// placed among them first.
+#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+pub(crate) fn under_parts(shapes: Shapes, parts: Vec<ContextPiece<'static>>) -> Shapes {
+    substitute(shapes, &Shape::Parts(parts))
+}
+
 /// One leaf that runs under the context it is handed.
 pub(crate) fn caller_leaf() -> Shapes {
     vec![LeafShape {
@@ -780,12 +807,6 @@ pub(crate) fn resolve(shapes: Shapes, caller: Option<Placeholder>) -> Contexts {
     resolve_with(shapes, &caller)
 }
 
-/// [`resolve`] with the caller's parts known: a data plan's extension.
-#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
-pub(crate) fn resolve_under(shapes: Shapes, parts: Vec<ContextPiece<'static>>) -> Contexts {
-    resolve_with(shapes, &Shape::Parts(parts))
-}
-
 fn resolve_with(shapes: Shapes, caller: &Shape) -> Contexts {
     let mut fields: Vec<FieldContext> = Vec::new();
     for leaf in shapes {
@@ -808,6 +829,12 @@ fn resolve_with(shapes: Shapes, caller: &Shape) -> Contexts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The leaves resolved under the caller's parts, as a data plan's
+    /// `contexts()` resolves them once its own leaves are placed.
+    fn resolve_under(shapes: Shapes, parts: Vec<ContextPiece<'static>>) -> Contexts {
+        resolve(under_parts(shapes, parts), None)
+    }
     use vitaminc_protected::NonEmpty;
 
     #[test]

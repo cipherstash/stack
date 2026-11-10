@@ -998,8 +998,36 @@ impl Plan {
     ///
     /// The plan does not lower: the same errors as running it.
     pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
-        let plan = self.lower::<()>()?;
-        Ok(plan.contexts_under(&self.declared_context()))
+        Ok(crate::contexts::resolve(self.caller_shapes()?, None))
+    }
+
+    /// The shape of every field's context, in plan order, with the plan's
+    /// extension applied: the lowered fields' shapes, and each target field
+    /// under its label alone. An EQL value is sealed under its table and
+    /// column by the resolver, and takes no part from the caller: the plan
+    /// refuses an extension for it before it runs.
+    fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
+        use vitaminc_aead::IntoContext as _;
+        let lowered = self.lower::<()>()?.shapes_under(&self.declared_context());
+        let mut lowered = lowered.into_iter().peekable();
+        let mut shapes = crate::contexts::Shapes::with_capacity(self.fields.len());
+        for field in &self.fields {
+            if field.is_target() {
+                shapes.push(crate::contexts::known_leaf(
+                    &field.name,
+                    field.label.clone().into_context(),
+                ));
+                continue;
+            }
+            while lowered
+                .peek()
+                .is_some_and(|leaf| leaf.name() == Some(field.name.as_str()))
+            {
+                shapes.extend(lowered.next());
+            }
+        }
+        shapes.extend(lowered);
+        Ok(shapes)
     }
 
     /// The fields plan this declaration lowers to, for a cipher over `K`.
@@ -6322,6 +6350,26 @@ mod tests {
 
         fn mixed_row(age: u32, email: &str) -> Tree {
             obj(vec![("age", Tree::UInt32(age)), ("email", s(email))])
+        }
+
+        /// The context view shows a target field under its label alone, in
+        /// plan order among the lowered fields: an EQL value takes no part
+        /// from the caller, so there is nothing to fill in.
+        #[test]
+        fn the_contexts_show_a_target_field_in_plan_order() {
+            let plan = plan_with(
+                obj(vec![
+                    ("age", typed(label("age"), &["c", "eq"], "uint32")),
+                    ("email", target_spec(label("email"), TEXT_EQ)),
+                    ("nick", spec(label("nick"), &["c"])),
+                ]),
+                &FakeEql,
+            )
+            .expect("a plan with a target parses");
+            assert_eq!(
+                plan.contexts().unwrap().to_string(),
+                "age\n  context: users / age\nemail\n  context: users / email\nnick\n  context: users / nick\n"
+            );
         }
 
         fn eql_json(record: &mut Vec<(String, StackCipherText)>, field: &str) -> serde_json::Value {

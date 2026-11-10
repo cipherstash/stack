@@ -75,7 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requested** (#1568). `Encryption::contexts()` lists the context of each
   field that is sealed or indexed, with a typed placeholder for each part
   the caller supplies, such as `{context: u64}`. The derives emit
-  `contexts()` on every record, and `Plan::contexts()` shows a plan's.
+  `contexts()` on every record, and `Plan::contexts()` shows a plan's. A
+  data plan's field that names an EQL type is shown under its label alone,
+  in plan order, since an EQL value takes no part from the caller.
   `Pending::context()` lists the exact contexts a prepared call will use,
   with the caller's values filled in. Both views show each part's type:
   `7u64`, `7i64`, the text `7`, and the bytes `0x37` are four different
