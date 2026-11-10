@@ -121,6 +121,25 @@
 //! cryptographic map-entry context. Vitamin C still binds keys inside plaintext
 //! maps and preserves authenticated absence and empty-container markers.
 //!
+//! # Field markers
+//!
+//! A `struct` record also emits one marker per derived field, as an
+//! associated constant named after the field in upper case:
+//! `EncryptedUser::EMAIL` for a field `email` (`EncryptedDoc::TYPE` for
+//! `r#type`). A marker is the value a typed query of the field starts
+//! from. It has one method per operator the field's indexes answer,
+//! checked at compile time, where the field's type is one index
+//! (`Encrypted<EqualityTerm>`, `Encrypted<OreTerm<u32>>`, `MatchTerms`);
+//! a field of several indexes, a nullable field or a record field has a
+//! marker with no operator method yet. A record that lists a caller scope
+//! gives its markers that scope's type, and the query takes it with
+//! `.scope(..)`, once; a record with none gives a query that is ready at
+//! once. No binding can be given. The query ends with `.encrypt(&keyset)`
+//! and derives under the context the derive sealed the field under, so it
+//! is the stored term. See `stack_encrypt::Marker`. The constant's name is
+//! the field's in upper case, so a record cannot define another constant
+//! of that name; a tuple field has no name, so no marker.
+//!
 //! Ciphertext and term operations compose before awaiting, preserving batched
 //! key requests. Terms alone need only their respective PRF or ordering trait.
 //! Query-only targets derive `EncryptFrom` alone.

@@ -534,6 +534,30 @@ impl Contexts {
     pub fn is_empty(&self) -> bool {
         self.fields.is_empty()
     }
+
+    /// The fields of the one named `name`: the field itself, and for a
+    /// field that is a record, each of its fields (`name.inner`), with the
+    /// prefix taken off.
+    pub(crate) fn narrowed(&self, name: &str) -> Contexts {
+        let prefix = format!("{name}.");
+        let fields = self
+            .fields
+            .iter()
+            .filter_map(|field| {
+                let own = field.name.as_deref()?;
+                let inner = if own == name {
+                    None
+                } else {
+                    Some(Arc::from(own.strip_prefix(&prefix)?))
+                };
+                Some(FieldContext {
+                    name: inner,
+                    context: field.context.clone(),
+                })
+            })
+            .collect();
+        Contexts { fields }
+    }
 }
 
 impl fmt::Display for Contexts {
@@ -1141,19 +1165,7 @@ pub(crate) fn known_leaf(name: &str, piece: ContextPiece<'static>) -> LeafShape 
 /// placed among them first.
 #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
 pub(crate) fn under_declared(shapes: Shapes, declared: &DeclaredContext) -> Shapes {
-    let chain = Shape::Chain(
-        declared
-            .parts()
-            .iter()
-            .map(|part| {
-                let (scopes, bindings) = part.pieces();
-                let mut parts: Vec<Shape> = scopes.into_iter().map(Shape::Known).collect();
-                parts.extend(bindings.into_iter().map(Shape::KnownBind));
-                Shape::Chain(parts)
-            })
-            .collect(),
-    );
-    substitute(shapes, &chain)
+    substitute(shapes, &Shape::Chain(declared_chain(declared)))
 }
 
 /// One leaf that runs under the context it is handed.
@@ -1213,6 +1225,32 @@ pub(crate) fn resolve(shapes: Shapes, caller: CallerShape) -> Contexts {
 #[cfg(test)]
 pub(crate) fn resolve_under(shapes: Shapes, declared: &DeclaredContext) -> Contexts {
     resolve(under_declared(shapes, declared), CallerShape::none())
+}
+
+/// The shapes of a declaration run under `declared` and then the context
+/// it is handed: what a data plan's record is run under when a caller adds
+/// scopes and bindings to the plan's own.
+#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+pub(crate) fn under_declared_then_caller(shapes: Shapes, declared: &DeclaredContext) -> Shapes {
+    let mut chain = declared_chain(declared);
+    chain.push(Shape::Caller);
+    substitute(shapes, &Shape::Chain(chain))
+}
+
+/// The known parts of `declared`, one chain per part: its scope, then its
+/// bindings.
+#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+fn declared_chain(declared: &DeclaredContext) -> Vec<Shape> {
+    declared
+        .parts()
+        .iter()
+        .map(|part| {
+            let (scopes, bindings) = part.pieces();
+            let mut parts: Vec<Shape> = scopes.into_iter().map(Shape::Known).collect();
+            parts.extend(bindings.into_iter().map(Shape::KnownBind));
+            Shape::Chain(parts)
+        })
+        .collect()
 }
 
 #[cfg(test)]

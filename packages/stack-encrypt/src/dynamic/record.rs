@@ -162,6 +162,7 @@ use crate::{
     CipherText, ContextPiece, KeysetCipher, Label, NonEmpty, PassthroughFrame, Pending,
     StackCipherText,
 };
+use vitaminc_aead::IntoContext as _;
 
 /// The map key a target field's EQL value rides under in a stored record:
 /// wire format, like the output keys (see the
@@ -578,6 +579,17 @@ impl FieldPlan {
     /// Whether the field is run by the resolver rather than the lowered plan.
     fn is_target(&self) -> bool {
         self.target.is_some()
+    }
+
+    /// Extend the field's context by `part`, nested to the left as a
+    /// binding spells it (`[[..label], part]`), and record it in the
+    /// extension: what [`Plan::with_scopes`] does to every field.
+    fn extend(&mut self, part: ContextPiece<'static>) {
+        let own = self.context.get().clone();
+        let nested = ContextPiece::List(vec![own, part.clone()]);
+        self.context = NonEmpty::new(nested)
+            .unwrap_or_else(|_| unreachable!("a list of two parts is not empty"));
+        self.extension.push(part);
     }
 }
 
@@ -1017,20 +1029,19 @@ impl Plan {
     ///
     /// The plan does not lower: the same errors as running it.
     pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
+        let lowered = self.lower::<()>()?.shapes_under(&self.declared_context());
         Ok(crate::contexts::resolve(
-            self.caller_shapes()?,
+            self.placed(lowered),
             crate::contexts::CallerShape::none(),
         ))
     }
 
-    /// The shape of every field's context, in plan order, with the plan's
-    /// extension applied: the lowered fields' shapes, and each target field
-    /// under its label alone. An EQL value is sealed under its table and
-    /// column by the resolver, and takes no part from the caller: the plan
-    /// refuses an extension for it before it runs.
-    fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
-        use vitaminc_aead::IntoContext as _;
-        let lowered = self.lower::<()>()?.shapes_under(&self.declared_context());
+    /// The shape of every field's context, in plan order: the `lowered`
+    /// fields' shapes, and each target field under its label alone. An EQL
+    /// value is sealed under its table and column by the resolver, and
+    /// takes no part from the caller: the plan refuses an extension for it
+    /// before it runs.
+    fn placed(&self, lowered: crate::contexts::Shapes) -> crate::contexts::Shapes {
         let mut lowered = lowered.into_iter().peekable();
         let mut shapes = crate::contexts::Shapes::with_capacity(self.fields.len());
         for field in &self.fields {
@@ -1049,7 +1060,7 @@ impl Plan {
             }
         }
         shapes.extend(lowered);
-        Ok(shapes)
+        shapes
     }
 
     /// The fields plan this declaration lowers to, for a cipher over `K`.
@@ -1126,6 +1137,88 @@ impl Plan {
     /// The caller's bindings, in order. Empty for a plan with none.
     pub fn bindings(&self) -> &[ContextPiece<'static>] {
         &self.bindings
+    }
+
+    /// Add a caller's scopes to this plan. Each scope becomes one more part
+    /// at the end of every field's context, after the parts the plan
+    /// already has, in the order given. A scoped call runs the plan this
+    /// returns. So a field is sealed and indexed under its label, then the
+    /// plan's own extension, then the scopes. A call with no scope borrows
+    /// the plan instead, and copies nothing.
+    ///
+    /// A plan with a field that names an EQL type takes no scope. An EQL
+    /// value is stored under its table and column alone.
+    ///
+    /// The scope shows in the context of the call. Here a record under a
+    /// one-field plan is encrypted under the scope `42u64`:
+    ///
+    /// ```
+    /// use stack_encrypt::dynamic::{record, Planned, ValueFrame};
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::Scope;
+    /// use stack_encrypt::{AsProtectedRef, EncryptInto, Pending, StackCipher, StackCipherText};
+    /// use vitaminc_aead_frame::serde::to_vec;
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let declaration = to_vec(&serde_json::json!({
+    ///     "email": { "context": ["users", "email"], "outputs": ["c"], "type": "string" },
+    /// }))?;
+    /// let plan = record::plan(declaration.as_protected_ref())?;
+    /// let values = ValueFrame::from_bytes(
+    ///     to_vec(&serde_json::json!({"email": "ada@example.com"}))?.as_protected_ref(),
+    /// )?;
+    /// let call: Pending<'_, StackCipherText, FakeDataKeySource> =
+    ///     Planned::new(&plan, values).encrypt_into_with_context(&keyset, Scope::new(42u64));
+    /// // The field's context is its label, then the scope.
+    /// # #[cfg(feature = "testing")]
+    /// stack_encrypt::assert_context!(call.context(), [["users", "email"], 42u64]);
+    /// let _row = call.await?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] with [`Reason::EmptyContext`] for an empty part, and
+    /// [`Error::Target`] if a field names an EQL type
+    /// ([`TargetError::Extended`]), as [`with_bindings`](Self::with_bindings).
+    pub(super) fn with_scopes(
+        mut self,
+        parts: impl IntoIterator<Item = ContextPiece<'static>>,
+    ) -> Result<Self, Error> {
+        let parts: Vec<_> = parts.into_iter().collect();
+        if parts.iter().any(crate::MaybeEmpty::is_empty) {
+            return Err(Error::bad_plan(Reason::EmptyContext));
+        }
+        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
+            if !parts.is_empty() {
+                return Err(TargetError::Extended {
+                    name: target.name.clone(),
+                    label: target.label.to_string(),
+                }
+                .into());
+            }
+        }
+        for field in &mut self.fields {
+            for part in &parts {
+                field.extend(part.clone());
+            }
+        }
+        self.extension.extend(parts);
+        Ok(self)
+    }
+
+    /// The shapes of every field's leaf, run under this plan's context and
+    /// then the context the caller hands a [`Planned`](super::Planned)
+    /// record.
+    pub(super) fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
+        let plan = self.lower::<()>()?;
+        Ok(self.placed(crate::contexts::under_declared_then_caller(
+            plan.shapes(),
+            &self.declared_context(),
+        )))
     }
 
     /// The context every field's label is run under: the extension, as the
