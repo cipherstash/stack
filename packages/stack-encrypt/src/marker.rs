@@ -56,7 +56,7 @@
 //!     .await?;
 //! assert_eq!(by_email, stored.email.terms);
 //! let adults = EncryptedUser::AGE
-//!     .between(&18u32, &36)
+//!     .between(18u32, 36)
 //!     .scope(Scope::new(42u64))
 //!     .encrypt(&keyset)
 //!     .await?;
@@ -75,7 +75,7 @@
 //! # What a marker does not check
 //!
 //! An equality marker takes a value of any type that the equality index
-//! accepts: `EMAIL.eq(&42u64)` compiles on a text field and matches
+//! accepts: `EMAIL.eq(42u64)` compiles on a text field and matches
 //! nothing, because the derive sees the record's field types and not the
 //! plaintext struct's. An order marker fixes the type, since `OreTerm<S>`
 //! names it. A field whose type is several indexes, such as
@@ -203,22 +203,95 @@ fn wipe_pair<S: Zeroize>((mut lo, mut hi): (S, S)) {
     hi.zeroize();
 }
 
+/// What a marker's operator methods take: an owned scalar, moved into the
+/// query, or a borrowed text or byte string, copied into it. A number is
+/// given by value, `AGE.between(18, 65)`, and a string literal as it is,
+/// `EMAIL.eq("ada@example.com")`. The query holds the owned value and
+/// wipes it when it is derived, refused or dropped. The scalars are the
+/// ones the indexes accept: the booleans, the integers, the floats, text,
+/// bytes, the [`value`](crate::value) types, and an `Option` of each.
+pub trait QueryInput {
+    /// The owned value the query holds.
+    type Value: Zeroize + 'static;
+    /// The value, owned.
+    fn into_value(self) -> Self::Value;
+}
+macro_rules! owned_query_inputs {
+    ($($ty:ty),+ $(,)?) => {$(
+        impl QueryInput for $ty {
+            type Value = $ty;
+            fn into_value(self) -> $ty {
+                self
+            }
+        }
+    )+};
+}
+owned_query_inputs!(
+    bool,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    f32,
+    f64,
+    String,
+    Vec<u8>,
+    crate::value::Date,
+    crate::value::Timestamp,
+    crate::value::Decimal,
+);
+impl<V: QueryInput> QueryInput for Option<V> {
+    type Value = Option<V::Value>;
+    fn into_value(self) -> Self::Value {
+        self.map(V::into_value)
+    }
+}
+impl QueryInput for &str {
+    type Value = String;
+    fn into_value(self) -> String {
+        self.to_owned()
+    }
+}
+impl QueryInput for &String {
+    type Value = String;
+    fn into_value(self) -> String {
+        self.clone()
+    }
+}
+impl QueryInput for &[u8] {
+    type Value = Vec<u8>;
+    fn into_value(self) -> Vec<u8> {
+        self.to_vec()
+    }
+}
+impl QueryInput for &Vec<u8> {
+    type Value = Vec<u8>;
+    fn into_value(self) -> Vec<u8> {
+        self.clone()
+    }
+}
+
 /// One method per operator. Each exists only where the field's target type
 /// answers the operator ([`Answers`]), so a missing one is a compile error
-/// that names the field's indexes. The value is copied into the query
-/// (`ToOwned`), and the copy is wiped when the query is derived, refused or
+/// that names the field's indexes. The value is moved or copied into the
+/// query ([`QueryInput`]), and wiped when the query is derived, refused or
 /// dropped.
 macro_rules! operator_methods {
     ($($(#[$doc:meta])* $method:ident => $op:ident;)+) => {$(
         impl<T, C: ScopeInput> Marker<T, C> {
             $(#[$doc])*
-            pub fn $method<Q>(self, value: &Q) -> MarkedQuery<T, $op, Q::Owned, C::Start>
+            pub fn $method<Q>(self, value: Q) -> MarkedQuery<T, $op, Q::Value, C::Start>
             where
-                Q: ?Sized + ToOwned,
-                Q::Owned: Zeroize + 'static,
-                T: Answers<$op, Q::Owned> + LabelledTarget,
+                Q: QueryInput,
+                T: Answers<$op, Q::Value> + LabelledTarget,
             {
-                self.query(value.to_owned(), wipe_one)
+                self.query(value.into_value(), wipe_one)
             }
         }
     )+};
@@ -244,13 +317,12 @@ impl<T, C: ScopeInput> Marker<T, C> {
     /// Rows whose value is between `lo` and `hi`, inclusive
     /// ([`op::Between`](Between)): one term carrying both bounds, derived
     /// under one context.
-    pub fn between<Q>(self, lo: &Q, hi: &Q) -> BetweenQuery<T, Q::Owned, C::Start>
+    pub fn between<Q>(self, lo: Q, hi: Q) -> BetweenQuery<T, Q::Value, C::Start>
     where
-        Q: ?Sized + ToOwned,
-        Q::Owned: Zeroize + 'static,
-        T: Answers<Between, (Q::Owned, Q::Owned)> + LabelledTarget,
+        Q: QueryInput,
+        T: Answers<Between, (Q::Value, Q::Value)> + LabelledTarget,
     {
-        self.query((lo.to_owned(), hi.to_owned()), wipe_pair)
+        self.query((lo.into_value(), hi.into_value()), wipe_pair)
     }
 }
 
@@ -443,5 +515,49 @@ mod tests {
         drop(query);
         assert_eq!(wipes.load(Ordering::SeqCst), 0, "nothing left to wipe");
         drop(taken);
+    }
+
+    /// An owned scalar is the query's as it is, for each scalar the
+    /// indexes accept; a borrowed text or byte string is copied into an
+    /// owned one.
+    #[test]
+    fn a_query_input_is_owned_or_copied_in() {
+        use crate::value::{Date, Decimal, Timestamp};
+        macro_rules! owned_as_it_is {
+            ($($value:expr),+ $(,)?) => {$(
+                assert_eq!($value.into_value(), $value);
+                assert_eq!(Some($value).into_value(), Some($value));
+            )+};
+        }
+        owned_as_it_is!(
+            true,
+            7u8,
+            7u16,
+            7u32,
+            7u64,
+            7u128,
+            -7i8,
+            -7i16,
+            -7i32,
+            -7i64,
+            -7i128,
+            0.5f32,
+            0.5f64,
+            String::from("ada"),
+            b"ada".to_vec(),
+        );
+        let date = Date::from_days_since_epoch(7).unwrap();
+        assert_eq!(date.into_value().days_since_epoch(), 7);
+        let instant = Timestamp::new(7, 9).unwrap();
+        let instant = instant.into_value();
+        assert_eq!((instant.seconds(), instant.nanoseconds()), (7, 9));
+        let decimal = Decimal::new(75, 1).unwrap();
+        let decimal = decimal.into_value();
+        assert_eq!((decimal.mantissa(), decimal.scale()), (75, 1));
+
+        assert_eq!("ada".into_value(), String::from("ada"));
+        assert_eq!((&String::from("ada")).into_value(), String::from("ada"));
+        assert_eq!(b"ada"[..].into_value(), b"ada".to_vec());
+        assert_eq!((&b"ada".to_vec()).into_value(), b"ada".to_vec());
     }
 }

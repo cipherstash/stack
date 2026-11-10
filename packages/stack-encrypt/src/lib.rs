@@ -586,7 +586,7 @@ pub use contexts::{
 };
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;
-pub use marker::{BetweenQuery, MarkedQuery, Marker, Needs, Ready, ScopeInput};
+pub use marker::{BetweenQuery, MarkedQuery, Marker, Needs, QueryInput, Ready, ScopeInput};
 pub use plan::{all, Plan, PlanError};
 // stack-kms is a public dependency: `StackCipher` is generic over its
 // `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is

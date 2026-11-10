@@ -350,14 +350,14 @@ EQL query type the marker fixes. Decided on 7 November 2026.
 // On `next` since pull request #1595, with the index's query term as
 // the output type (`EqualityTerm`, `RangeQuery<OreTerm<u32>>`,
 // `MatchQuery`); the EQL query types follow with the EQL owned
-// implementations. The bounds are passed by reference.
+// implementations. A value is passed by value; a string literal as it is.
 let by_email: TextEqQuery = EncryptedMember::EMAIL
     .eq("alice@example.com")
     .scope(tenant)
     .encrypt(&keyset)
     .await?;
 let adults: IntegerOrdQuery = EncryptedMember::AGE
-    .between(&18, &65)
+    .between(18, 65)
     .scope(tenant)
     .encrypt(&keyset)
     .await?;

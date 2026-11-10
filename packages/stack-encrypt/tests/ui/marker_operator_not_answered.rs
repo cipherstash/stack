@@ -22,6 +22,6 @@ struct EncryptedUser {
 fn main() {
     let _ = EncryptedUser::EMAIL.eq("ada@example.com");
     let _ = EncryptedUser::EMAIL.gt("ada@example.com");
-    let _ = EncryptedUser::AGE.between(&18u32, &65);
+    let _ = EncryptedUser::AGE.between(18u32, 65);
     let _ = EncryptedUser::AGE.matches("36");
 }

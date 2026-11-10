@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bind` method, and ends with `.encrypt(&keyset)`. The output is the
   index's query term. A query from a marker derives under the declaration
   the derive wrote, so it is the stored term. No plan is written by hand
-  beside the record. The query's copy of the value is wiped when it is
+  beside the record. A method takes its value by value, and a string
+  literal as it is (`QueryInput`). The query's value is wiped when it is
   derived, refused, or dropped. `assert_context!` takes a marker, and
   `Marker::contexts()` is the record's contexts narrowed to the field.
   Not yet (#1596): a field of several indexes, a nullable field, and a

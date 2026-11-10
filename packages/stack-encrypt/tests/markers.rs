@@ -243,7 +243,7 @@ mod a_marker_query {
 
         // A bound equal to the stored value derives the stored term.
         let at_36 = EncryptedUser::AGE
-            .gte(&36u32)
+            .gte(36u32)
             .scope(Scope::new(42u64))
             .encrypt(&keyset)
             .await
@@ -253,7 +253,7 @@ mod a_marker_query {
         // A range carries one term per bound, each as the stored term of
         // that value would be.
         let adults = EncryptedUser::AGE
-            .between(&18u32, &36u32)
+            .between(18u32, 36u32)
             .scope(Scope::new(42u64))
             .encrypt(&keyset)
             .await
