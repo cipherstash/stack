@@ -172,6 +172,15 @@ func TestAByteSlicePartIsCopied(t *testing.T) {
 	if !reflect.DeepEqual(bound.Scopes(), []any{[]byte("acme")}) {
 		t.Fatalf("the scope changed with the caller's buffer: %v", bound.Scopes())
 	}
+	// A returned part is a copy too: changing it does not change the cipher.
+	copy(bound.Bindings()[0].([]byte), "row-1")
+	copy(bound.Scopes()[0].([]byte), "evil")
+	if !reflect.DeepEqual(bound.Bindings(), []any{[]byte("row-9")}) {
+		t.Fatalf("the binding changed through a returned part: %v", bound.Bindings())
+	}
+	if !reflect.DeepEqual(bound.Scopes(), []any{[]byte("acme")}) {
+		t.Fatalf("the scope changed through a returned part: %v", bound.Scopes())
+	}
 	opened, err := bound.Open(ctx, plan, sealed)
 	if err != nil || !reflect.DeepEqual(opened, rows) {
 		t.Fatalf("open through the same cipher: %v %v", err, opened)

@@ -119,9 +119,10 @@ func (cph *Cipher) copy() *Cipher {
 }
 
 // Scopes is the parts the cipher adds to every field's context as scopes,
-// in order. Empty for a cipher straight from [Client.Keyset].
+// in order. Empty for a cipher straight from [Client.Keyset]. Each part is
+// a copy: changing a returned []byte does not change the cipher.
 func (cph *Cipher) Scopes() []any {
-	return append([]any(nil), cph.extension...)
+	return ownedParts(cph.extension)
 }
 
 // Extension is the former name of [Cipher.Scopes].
@@ -130,9 +131,20 @@ func (cph *Cipher) Scopes() []any {
 func (cph *Cipher) Extension() []any { return cph.Scopes() }
 
 // Bindings is the parts the cipher binds every field to, in order. Empty
-// for a cipher with no [Cipher.Bind].
+// for a cipher with no [Cipher.Bind]. Each part is a copy, as for
+// [Cipher.Scopes].
 func (cph *Cipher) Bindings() []any {
-	return append([]any(nil), cph.bindings...)
+	return ownedParts(cph.bindings)
+}
+
+// ownedParts is a copy of parts whose byte slices are copies too, so
+// neither side can change the other's through a returned part.
+func ownedParts(parts []any) []any {
+	owned := make([]any, len(parts))
+	for i, part := range parts {
+		owned[i] = ownedPart(part)
+	}
+	return owned
 }
 
 // Context returns a cipher that names the context every row through it is
