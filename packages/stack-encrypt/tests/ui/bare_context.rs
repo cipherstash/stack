@@ -1,10 +1,10 @@
-//! The `_with_context` forms take anything that converts into a
-//! `NonEmpty<_>` — a `nonempty!(..)` literal, a `NonEmpty::new(..)?` value,
-//! a bare integer — and nothing unproven: a `&str` is not a context until it
-//! has been checked, so it is turned away at the call, not at a leaf. That
-//! holds on every path that reaches a leaf — a term, a struct record, a
-//! plaintext-derived record, a leaf opened directly — so the proof cannot be
-//! skipped by passing the raw value.
+//! A context converts from a `NonEmpty<_>`: a `nonempty!(..)` literal, a
+//! `NonEmpty::new(..)?` value, or a bare integer. It does not convert from
+//! anything unchecked. A `&str` is not a context until it has been checked,
+//! so `"..".into()` does not compile, and the value never reaches a leaf.
+//! This holds on every path to a leaf: a term, a struct record, a
+//! plaintext-derived record, and a leaf opened directly. So the check cannot
+//! be skipped by passing the raw value.
 use stack_encrypt::sem::EqualityTerm;
 
 use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipher, StackCipherText};
