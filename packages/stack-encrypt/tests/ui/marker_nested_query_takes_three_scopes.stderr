@@ -1,0 +1,14 @@
+error[E0277]: a query takes at most three scopes, and this field would take a fourth, `stack_encrypt::target::Scope<u64>`
+  --> tests/ui/marker_nested_query_takes_three_scopes.rs:73:10
+   |
+73 |         .field(EncryptedDesk::LABEL);
+   |          ^^^^^ a fourth record with a scope of its own
+   |
+   = help: the trait `stack_encrypt::marker::join_sealed::FourthScope` is not implemented for `stack_encrypt::target::Scope<u64>`
+   = note: the dynamic interface queries a field under more than three scopes
+help: the trait `stack_encrypt::marker::join_sealed::FourthScope` is implemented for `stack_encrypt::target::Scope<stack_encrypt::marker::join_sealed::Unnameable>`
+  --> src/marker.rs
+   |
+   |     impl FourthScope for super::Scope<Unnameable> {}
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `(stack_encrypt::target::Scope<u8>, stack_encrypt::target::Scope<u16>, stack_encrypt::target::Scope<u32>)` to implement `JoinScope<stack_encrypt::target::Scope<u64>>`

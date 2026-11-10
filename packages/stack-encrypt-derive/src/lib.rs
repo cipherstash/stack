@@ -133,7 +133,10 @@
 //! one index that answers it), or a nullable field of either
 //! (`Option<Encrypted<EqualityTerm>>`). A record field's marker reaches the
 //! inner record's markers under its own context:
-//! `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)`.
+//! `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)`. A nullable
+//! record field, `Option<EncryptedAddress>`, does the same. Where the inner
+//! record lists a scope of its own, the query takes each record's scope,
+//! outermost first.
 //!
 //! `#[stash(query = String)]` on a field states the type its queries take,
 //! so each of its marker's methods takes that type alone. The derive checks

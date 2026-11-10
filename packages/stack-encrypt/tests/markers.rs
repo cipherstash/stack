@@ -18,8 +18,8 @@ use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreBlockTerm, OreTerm};
 use stack_encrypt::target::{DecryptSource, EncryptTarget, NoScope, Scope};
 use stack_encrypt::testing::{scope, stored_scope};
 use stack_encrypt::{
-    assert_context, nonempty, DecryptFrom, EncryptInto, Encrypted, Error, Marker, StackCipher,
-    StackCipherText,
+    assert_context, nonempty, DecryptFrom, EncryptInto, Encrypted, Error, KeysetCipher, Marker,
+    PlanError, StackCipher, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -334,6 +334,64 @@ fn floor() -> Floor {
         hot: Some(desk(43)),
         lobby: Some(account().address),
     }
+}
+
+/// A record that stores a scope and a binding in the row.
+#[derive(Clone, Zeroize)]
+struct Locker {
+    tenant: u64,
+    id: u128,
+    code: String,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Locker, scope = "lockers", scope(field = "tenant"), bind(field = "id"))]
+#[allow(dead_code)]
+struct EncryptedLocker {
+    #[stash(passthrough)]
+    tenant: u64,
+    #[stash(passthrough)]
+    id: u128,
+    code: Encrypted<EqualityTerm>,
+}
+
+/// A record with a caller scope and a caller binding. It holds a record
+/// with a stored scope and binding, a nullable one, and a nullable record
+/// with a stored binding and no scope.
+#[derive(Clone, Zeroize)]
+struct Gym {
+    locker: Locker,
+    spare: Option<Locker>,
+    tag: Option<Tag>,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Gym, scope = "gyms", scope(region: String), bind(row: u128))]
+struct EncryptedGym {
+    locker: EncryptedLocker,
+    spare: Option<EncryptedLocker>,
+    tag: Option<EncryptedTag>,
+}
+
+fn locker(tenant: u64) -> Locker {
+    Locker {
+        tenant,
+        id: 99,
+        code: "1234".into(),
+    }
+}
+
+/// A record with no scope that holds a nullable record with a scope,
+/// which holds a record with none, which holds a nullable record with one.
+#[derive(Clone, Zeroize)]
+struct Plaza {
+    campus: Option<Campus>,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Plaza, scope = "plazas")]
+struct EncryptedPlaza {
+    campus: Option<EncryptedCampus>,
 }
 
 /// A record with block ORE fields, alone and beside an equality index.
@@ -1131,9 +1189,13 @@ mod a_marker_of_a_record_with_its_own_scope {
             .field(EncryptedFloor::DESK)
             .field(EncryptedDesk::LABEL);
         // Three records with a scope each.
-        let _: Scoped<_, (Scope<String>, Scope<u32>, Scope<u64>)> = EncryptedPark::WING
+        let three: Scoped<_, (Scope<String>, Scope<u32>, Scope<u64>)> = EncryptedPark::WING
             .field(EncryptedWing::DESK)
             .field(EncryptedDesk::LABEL);
+        assert_eq!(
+            EncryptedPark::contexts().get("wing.desk.label"),
+            three.contexts().single()
+        );
     }
 
     #[tokio::test]
@@ -1290,7 +1352,10 @@ mod a_marker_of_a_record_with_its_own_scope {
             .scope((Scope::new(String::new()), Scope::new(42u64)))
             .encrypt(&keyset)
             .await;
-        assert!(refused.is_err(), "an empty outer scope is refused");
+        assert!(
+            matches!(refused, Err(Error::Plan(PlanError::EmptyPart))),
+            "an empty outer scope is refused: {refused:?}"
+        );
         // The inner record's scope, where it is the one that can be empty.
         #[derive(Clone, Zeroize)]
         struct Stall {
@@ -1321,7 +1386,10 @@ mod a_marker_of_a_record_with_its_own_scope {
             .scope((Scope::new(42u64), Scope::new(String::new())))
             .encrypt(&keyset)
             .await;
-        assert!(refused.is_err(), "an empty inner scope is refused");
+        assert!(
+            matches!(refused, Err(Error::Plan(PlanError::EmptyPart))),
+            "an empty inner scope is refused: {refused:?}"
+        );
         assert_eq!(generates.load(Ordering::SeqCst), 0);
         assert_eq!(retrieves.load(Ordering::SeqCst), 0);
     }
@@ -1338,6 +1406,12 @@ mod a_marker_of_a_nullable_record {
         assert_eq!(
             EncryptedFloor::contexts().get("lobby.street"),
             street.contexts().single()
+        );
+        let hot: Marker<_, Encrypted<EqualityTerm>, Scope<u64>> =
+            EncryptedFloor::HOT.field(EncryptedDesk::LABEL);
+        assert_eq!(
+            EncryptedFloor::contexts().get("hot.label"),
+            hot.contexts().single()
         );
     }
 
@@ -1377,12 +1451,141 @@ mod a_marker_of_a_nullable_record {
         .await
         .unwrap();
         assert!(stored.hot.is_none() && stored.lobby.is_none());
-        // The query derives; the row stores nothing for it to match.
-        let _ = EncryptedFloor::LOBBY
+        // The query derives the term a present record stores: it does not
+        // depend on the row. This row stores nothing for it to match.
+        let present: EncryptedFloor = floor().encrypt_into(&keyset).await.unwrap();
+        let term = EncryptedFloor::LOBBY
             .field(EncryptedAddress::STREET)
             .eq("1 Main St")
             .encrypt(&keyset)
             .await
             .unwrap();
+        assert_eq!(term, present.lobby.as_ref().unwrap().street.terms);
+    }
+
+    #[tokio::test]
+    async fn reaches_a_nullable_record_inside_a_nullable_record() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedPlaza = Plaza {
+            campus: Some(Campus {
+                owner: 7,
+                floor: floor(),
+            }),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        // The campus's scope, then the desk's; the floor between lists none.
+        let label: Marker<_, Encrypted<EqualityTerm>, (Scope<u32>, Scope<u64>)> =
+            EncryptedPlaza::CAMPUS
+                .field(EncryptedCampus::FLOOR)
+                .field(EncryptedFloor::HOT)
+                .field(EncryptedDesk::LABEL);
+        assert_eq!(
+            EncryptedPlaza::contexts().get("campus.floor.hot.label"),
+            label.contexts().single()
+        );
+        let term = label
+            .eq("D-7")
+            .scope((Scope::new(7u32), Scope::new(43u64)))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let Some(campus) = &stored.campus else {
+            panic!("the campus is stored")
+        };
+        let Some(hot) = &campus.floor.hot else {
+            panic!("the desk is stored")
+        };
+        assert_eq!(term, hot.label.terms);
+    }
+}
+
+/// A binding is in no query context. Where a record stores or takes a
+/// binding beside a scope, at either level, a query takes the scopes alone
+/// and still derives the stored term.
+mod a_nested_marker_beside_a_binding {
+    use super::*;
+
+    async fn stored_gym(keyset: &KeysetCipher<'_, FakeDataKeySource>) -> EncryptedGym {
+        Gym {
+            locker: locker(5),
+            spare: Some(locker(6)),
+            tag: Some(Tag {
+                id: 3,
+                label: "fiction".into(),
+            }),
+        }
+        .encrypt_into_with_context(keyset, Scope::new(String::from("eu")).bind(77u128))
+        .await
+        .unwrap()
+    }
+
+    #[test]
+    fn takes_the_scopes_alone_and_shows_the_record_contexts() {
+        let code: Marker<_, Encrypted<EqualityTerm>, (Scope<String>, Scope<u64>)> =
+            EncryptedGym::LOCKER.field(EncryptedLocker::CODE);
+        assert_eq!(
+            EncryptedGym::contexts().get("locker.code"),
+            code.contexts().single()
+        );
+        let spare: Marker<_, Encrypted<EqualityTerm>, (Scope<String>, Scope<u64>)> =
+            EncryptedGym::SPARE.field(EncryptedLocker::CODE);
+        assert_eq!(
+            EncryptedGym::contexts().get("spare.code"),
+            spare.contexts().single()
+        );
+        // A record that stores a binding and no scope adds no scope.
+        let tag: Marker<_, Encrypted<EqualityTerm>, Scope<String>> =
+            EncryptedGym::TAG.field(EncryptedTag::LABEL);
+        assert_eq!(
+            EncryptedGym::contexts().get("tag.label"),
+            tag.contexts().single()
+        );
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_term_of_a_record_with_a_stored_binding() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored = stored_gym(&keyset).await;
+        let term = EncryptedGym::LOCKER
+            .field(EncryptedLocker::CODE)
+            .eq("1234")
+            .scope((Scope::new(String::from("eu")), Scope::new(5u64)))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.locker.code.terms);
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_term_of_a_nullable_record_with_a_stored_binding() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored = stored_gym(&keyset).await;
+        let Some(spare) = &stored.spare else {
+            panic!("the spare locker is stored")
+        };
+        let term = EncryptedGym::SPARE
+            .field(EncryptedLocker::CODE)
+            .eq("1234")
+            .scope((Scope::new(String::from("eu")), Scope::new(6u64)))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, spare.code.terms);
+        let Some(tag) = &stored.tag else {
+            panic!("the tag is stored")
+        };
+        let term = EncryptedGym::TAG
+            .field(EncryptedTag::LABEL)
+            .eq("fiction")
+            .scope(Scope::new(String::from("eu")))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, tag.label.terms);
     }
 }
