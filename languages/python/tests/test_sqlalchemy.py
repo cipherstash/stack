@@ -497,3 +497,34 @@ def test_a_string_naming_an_encrypted_column_that_is_not_selected_is_sorted_or_r
     assert sent[-1].split("ORDER BY", 1)[1].strip() == "eql_v4.ord_term(stages.seconds)"
     assert raised.value.code == "query_unsupported"
     assert "seconds" in raised.value.message
+
+
+def test_a_plaintext_label_with_an_encrypted_columns_name_is_left_alone(untouched):
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    @stackencrypt.model("heats")
+    class Heat(Base):
+        __tablename__ = "heats"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        rank: Mapped[Annotated[int, Passthrough]]
+        seconds: Mapped[Annotated[int, IntegerOrd]]
+
+    engine = create_engine("sqlite://")
+    sent = []
+    event.listen(engine, "before_cursor_execute", lambda conn, cur, sql, *a: sent.append(sql))
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE heats (id INTEGER PRIMARY KEY, rank INTEGER, seconds TEXT)")
+    configure_encryption(engine, [Heat])
+
+    with Session(engine) as session:
+        # The label "seconds" names the plaintext rank, so the sort is by rank.
+        session.execute(select(Heat.rank.label("seconds")).order_by("seconds"))
+        try:
+            session.execute(select(Heat.rank, Heat.seconds.label("rank")).order_by("rank"))
+        except Exception:
+            pass  # SQLite has no eql_v4 functions: only the SQL matters here.
+
+    assert sent[-2].split("ORDER BY", 1)[1].strip() == "seconds"
+    # Here the label "rank" names the encrypted column, so the sort is its term.
+    assert sent[-1].split("ORDER BY", 1)[1].strip() == "eql_v4.ord_term(heats.seconds)"
