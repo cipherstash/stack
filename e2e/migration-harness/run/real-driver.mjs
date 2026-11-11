@@ -368,7 +368,7 @@ export function createRealDriver({
           } catch (error) {
             throw Object.assign(
               Error('PostgreSQL Oracle snapshot failed', { cause: error }),
-              { infrastructure: true },
+              { infrastructure: isSnapshotInfrastructureError(error) },
             )
           }
           result.checks.push(
