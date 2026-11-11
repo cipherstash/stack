@@ -2115,6 +2115,17 @@ mod profile_client_key_tests {
         (dir, store)
     }
 
+    #[test]
+    fn the_temp_profile_directory_is_removed_when_dropped() {
+        let (dir, _store) = store_with_key_in_current_workspace();
+        let path = dir.0.clone();
+        assert!(path.exists());
+
+        drop(dir);
+
+        assert!(!path.exists(), "temp profile directory was left behind");
+    }
+
     #[tokio::test]
     async fn a_pinned_workspace_never_borrows_the_current_workspaces_client_key() {
         let (_dir, store) = store_with_key_in_current_workspace();
