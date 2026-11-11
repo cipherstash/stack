@@ -217,9 +217,9 @@ pass `.data`.
 
 | `failure.type` | Meaning / fix |
 |---|---|
-| `NOT_AUTHENTICATED` | No credentials found — set the `CS_*` variables, or run `npx stash auth login` for a dev profile |
+| `NOT_AUTHENTICATED` | No credentials found — set the `CS_*` variables, or run `npx stash auth login` for a dev profile. If `CS_WORKSPACE_CRN` is set, the dev profile must be logged in to *that* workspace (the CLI's current workspace doesn't count): log in to it, or unset `CS_WORKSPACE_CRN` |
 | `MISSING_WORKSPACE_CRN` | `CS_CLIENT_ACCESS_KEY` is set but `CS_WORKSPACE_CRN` isn't — the access-key path needs both |
-| `WORKSPACE_MISMATCH` (`expected` / `actual`) | The access key belongs to a different workspace than the CRN — you've mixed environments' credentials |
+| `WORKSPACE_MISMATCH` (`expected` / `actual`) | The access key (or dev-profile session) belongs to a different workspace than the CRN — you've mixed environments' credentials |
 | `INVALID_ACCESS_KEY` / `INVALID_CRN` | Malformed values — check for truncation/quoting in the secret store |
 | `EXPIRED_TOKEN` / `INVALID_GRANT` | The underlying session/JWT expired — for `OidcFederationStrategy`, check that `getJwt` returns a *fresh* token |
 | `ACCESS_DENIED` | CTS refused the exchange — membership, provider config, or (as an HTTP 402) billing |
@@ -399,12 +399,13 @@ client-side strategy model applies to apps behind the Proxy.
 ## Quick diagnosis
 
 1. **`NOT_AUTHENTICATED` locally** → `npx stash auth login` (dev profile),
-   or export the four `CS_*` variables.
+   or export the four `CS_*` variables. If `CS_WORKSPACE_CRN` is set, log in
+   to that workspace, or unset it.
 2. **Works locally, 401 in CI/production** → the deployed environment lacks
    the `CS_*` variables, or they're from the wrong workspace — mint with
    `stash env`, compare `CS_WORKSPACE_CRN`.
-3. **`WORKSPACE_MISMATCH`** → the access key and the CRN name different
-   workspaces; re-mint rather than mix-and-match.
+3. **`WORKSPACE_MISMATCH`** → the access key (or dev-profile session) and
+   the CRN name different workspaces; re-mint rather than mix-and-match.
 4. **`No OIDC provider found for issuer`** → add your IdP at
    dashboard.cipherstash.com → workspace → OIDC providers, and check the
    issuer URL matches the JWT's `iss` exactly.

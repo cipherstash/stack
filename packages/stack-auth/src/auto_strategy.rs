@@ -399,13 +399,16 @@ mod tests {
         }
 
         #[test]
+        #[cfg(feature = "http")] // saves a token, so the fallback would build a strategy
         fn crn_without_a_session_for_that_workspace_is_not_authenticated() {
             let dir = tempfile::tempdir().unwrap();
             let store = ProfileStore::new(dir.path());
-            store.init_workspace("AAAAAAAAAAAAAAAA").unwrap();
+            // The current workspace has a token; the CRN names another.
+            let current = write_token_store(dir.path());
+            drop(current);
+            let crn: Crn = "crn:ap-southeast-2.aws:AAAAAAAAAAAAAAAA".parse().unwrap();
 
-            // Current workspace has a token, but the CRN names another.
-            let result = AutoStrategy::detect_inner(None, Some(valid_crn()), Some(store), None);
+            let result = AutoStrategy::detect_inner(None, Some(crn), Some(store), None);
 
             assert!(matches!(result, Err(AuthError::NotAuthenticated(_))));
         }
