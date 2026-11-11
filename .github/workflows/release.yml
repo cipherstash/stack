@@ -497,6 +497,7 @@ jobs:
     # generated automatically by OIDC trusted publishing, are only accepted
     # from github-hosted runners — self-hosted runners are rejected with E422.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       id-token: write # npm OIDC trusted publishing
       contents: write # changesets commits and pushes the Version Packages branch
