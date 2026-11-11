@@ -55,3 +55,31 @@ for (const changed of [false, true]) {
       )
   })
 }
+
+test('Run rejects a rewritten duplicate Legacy Data row even when the original is last', async () => {
+  const current = structuredClone(baseline)
+  const rewritten = structuredClone(current.postgres[0])
+  rewritten.email.c = 'rewritten'
+  current.postgres.unshift(rewritten)
+  const report = await run({
+    id: 'duplicate-legacy',
+    manifest: { guideHash: 'guide' },
+    driver: {
+      provision: async () => {},
+      installUnmigrated: async () => {},
+      initializeLegacyData: async () => {},
+      snapshot: async () => {},
+      migrate: async () => ({ exitCode: 0 }),
+      friction: async () => [],
+      installAppHost: async () => {},
+      behaviour: async () => [
+        noRewrite(baseline, current),
+        ...requiredOracleChecks
+          .filter((id) => id !== 'no-rewrite.legacy-bytes')
+          .map((id) => ({ id, passed: true })),
+      ],
+    },
+  })
+  assert.equal(report.outcome, 'behaviour')
+  assert.equal(report.editorEligible, true)
+})
