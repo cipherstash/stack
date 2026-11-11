@@ -64,3 +64,27 @@ describe('cross-store suite prerequisites', () => {
     expect(runsWhen(crossover.if, contextWithFailure(database))).toBe(false)
   })
 })
+
+// The integration image is PostgreSQL 17. The upgrade example's dependency
+// preflight reads pg_constraint, whose contents changed in 18 (NOT NULL rows),
+// so the suite must keep running against 18 as well.
+describe('upgrade example on PostgreSQL 18', () => {
+  const db18 = steps.find((step) => step.id === 'db18')
+  const run18 = steps.find((step) => step.if?.includes('steps.db18.outcome'))
+
+  it('starts a digest-pinned PostgreSQL 18 after both bindings build', () => {
+    expect(db18?.run).toMatch(/postgres:18@sha256:[0-9a-f]{64}/)
+    for (const binding of bindings) {
+      expect(runsWhen(db18.if, contextWithFailure(binding))).toBe(false)
+    }
+  })
+
+  it('runs the upgrade suite against that database', () => {
+    expect(run18?.run).toContain('run test:protect-crossover')
+    expect(run18?.run).toContain('tests/protect-postgres-upgrade.e2e.test.ts')
+    expect(run18?.env?.DATABASE_URL).toBe(
+      '${{ steps.db18.outputs.database-url }}',
+    )
+    expect(runsWhen(run18.if, contextWithFailure(db18))).toBe(false)
+  })
+})
