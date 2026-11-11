@@ -40,13 +40,19 @@ class Base(DeclarativeBase):
 @stackencrypt.model("customers")
 class Customer(Base):
     __tablename__ = "customers"
+    # As schema.sql makes it. A btree, because PostgreSQL cannot make a hash
+    # index unique. It also serves the email search, so the SDK adds no
+    # index of its own on this term.
+    __table_args__ = (
+        sa.Index("customers_email_unique", sa.text("eql_v4.eq_term(email)"), unique=True),
+    )
 
     id: Mapped[Annotated[int, Ignore]] = mapped_column(
         sa.BigInteger, sa.Identity(always=True), primary_key=True
     )
     email: Mapped[Annotated[str, TextEq]]
     name: Mapped[Annotated[str, Text]]
-    plan: Mapped[Annotated[str, Passthrough]]
+    plan: Mapped[Annotated[str, Passthrough]] = mapped_column(sa.Text)
     created_at: Mapped[Annotated[datetime, Passthrough]] = mapped_column(
         sa.DateTime(timezone=True)
     )

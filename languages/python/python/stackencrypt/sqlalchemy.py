@@ -39,7 +39,21 @@ This module imports SQLAlchemy. The rest of the package does not.
 
 from typing import Annotated, Any, Callable, Dict, FrozenSet, List, Sequence, Tuple, Type
 
-from sqlalchemy import Index, String, Table, cast, event, false, func, inspect, literal, not_, or_
+from sqlalchemy import (
+    Index,
+    String,
+    Table,
+    UniqueConstraint,
+    cast,
+    event,
+    false,
+    func,
+    inspect,
+    literal,
+    not_,
+    or_,
+)
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Mapper, Session
 from sqlalchemy.orm.attributes import set_committed_value
@@ -166,6 +180,7 @@ def _add_indexes(mapper: Any, cls: type) -> None:
     table = mapper.local_table
     if not isinstance(table, Table):
         return
+    declared = {_index_term(expression) for index in table.indexes for expression in index.expressions}
     for column in table.columns:
         if not isinstance(column.type, EqlType):
             continue
@@ -176,7 +191,21 @@ def _add_indexes(mapper: Any, cls: type) -> None:
             name = f"ix_{table.name}_{column.name}_{kind}"
             if any(index.name == name for index in table.indexes):
                 continue
+            # The model declares an index on this term itself, such as a
+            # unique btree on eq_term: that one serves the search.
+            if f"eql_v4.{function}({column.name})" in declared:
+                continue
             Index(name, getattr(func.eql_v4, function)(column), postgresql_using=method)
+
+
+def _index_term(expression: Any) -> str:
+    """An index expression as SQL, with no spaces or quotes, such as
+    ``eql_v4.eq_term(email)``."""
+    try:
+        sql = str(expression.compile(dialect=postgresql.dialect()))
+    except Exception:  # an expression only its own dialect compiles
+        return ""
+    return "".join(sql.split()).replace('"', "").lower()
 
 
 def render_item(type_: str, obj: Any, autogen_context: Any) -> Any:
@@ -375,7 +404,22 @@ def _check(cls: type) -> Tuple[type, Cipher, FrozenSet[str]]:
     for field in cipher.declaration.fields:
         if field.marker is Passthrough:
             continue
-        column_type = mapper.columns[field.name].type
+        column = mapper.columns[field.name]
+        unique = column.unique or any(
+            isinstance(constraint, UniqueConstraint) and column in constraint.columns
+            for constraint in mapper.local_table.constraints
+        )
+        if unique:
+            raise DeclarationError(
+                "declaration_unique_column",
+                f"field {field.name!r} of {cls.__qualname__} is an encrypted column with a "
+                "unique constraint. Each EQL value contains new random ciphertext, so the "
+                "constraint never finds a duplicate. Use a unique index on its equality "
+                f"term instead: Index(..., text(\"eql_v4.eq_term({field.name})\"), unique=True) "
+                "in __table_args__.",
+                field=field.name,
+            )
+        column_type = column.type
         if not (isinstance(column_type, EqlType) and column_type.marker is field.marker):
             raise DeclarationError(
                 "declaration_column_type",

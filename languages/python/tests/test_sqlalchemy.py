@@ -90,6 +90,19 @@ def test_a_field_whose_column_has_another_name_is_refused(engine):
     assert "email_address" in error.message
 
 
+def test_a_unique_encrypted_column_is_refused(engine):
+    @stackencrypt.model("logins")
+    class Login(Base):
+        __tablename__ = "logins"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        email: Mapped[Annotated[str, TextEq]] = mapped_column(unique=True)
+
+    error = refused(engine, [Login])
+    assert error.code == "declaration_unique_column"
+    assert error.field == "email"
+    assert "eql_v4.eq_term(email)" in error.message
+
+
 def test_a_class_configured_twice_is_refused(engine):
     @stackencrypt.model("members")
     class Member(Base):
