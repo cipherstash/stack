@@ -7,11 +7,20 @@ import type { SteVecForm } from "./SteVecForm";
 
 /**
  * `public.eql_v3_json_search` — a SteVec encrypted-JSON document
- * (`{v, k, i, h, sv:[entry]}`, no root ciphertext — the root document
+ * (`{v, k, i, h, sv:[entry]}` plus an optional array-root flag `a`, no root ciphertext — the root document
  * ciphertext lives on the root sv entry). Strict. `k` is the `"sv"` form
  * discriminator (see [`SteVecForm`]); `h` is the document [`KeyHeader`],
  * stored once for the whole document (every entry encrypts under the
  * document's single data key, with per-entry nonces derived from the
  * entries' selectors).
  */
-export type SteVecDocument = { v: SchemaVersion, k: SteVecForm, i: Identifier, h: KeyHeader, sv: Array<SteVecEntry>, };
+export type SteVecDocument = { v: SchemaVersion, k: SteVecForm, i: Identifier, h: KeyHeader, sv: Array<SteVecEntry>, 
+/**
+ * Array-root marker. The SQL root validator allows it and the array
+ * accessors (`jsonb_array_length`, `jsonb_array_elements`, `->(doc, int)`)
+ * REQUIRE it (`eql_v3_internal.is_ste_vec_array`), so a document the
+ * database accepts must also parse here. Optional and non-nullable: SQL
+ * rejects `"a": null` (`jsonb_typeof(...) = 'boolean'`), so the schema
+ * and deserializer reject it too.
+ */
+a?: boolean, };

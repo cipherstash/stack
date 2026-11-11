@@ -80,7 +80,7 @@ impl JsonSchema for SteVecForm {
 }
 
 /// `public.eql_v3_json_search` — a SteVec encrypted-JSON document
-/// (`{v, k, i, h, sv:[entry]}`, no root ciphertext — the root document
+/// (`{v, k, i, h, sv:[entry]}` plus an optional array-root flag `a`, no root ciphertext — the root document
 /// ciphertext lives on the root sv entry). Strict. `k` is the `"sv"` form
 /// discriminator (see [`SteVecForm`]); `h` is the document [`KeyHeader`],
 /// stored once for the whole document (every entry encrypts under the
@@ -100,13 +100,37 @@ pub struct SteVecDocument {
     pub i: Identifier,
     pub h: KeyHeader,
     pub sv: Vec<SteVecEntry>,
+    /// Array-root marker. The SQL root validator allows it and the array
+    /// accessors (`jsonb_array_length`, `jsonb_array_elements`, `->(doc, int)`)
+    /// REQUIRE it (`eql_v3_internal.is_ste_vec_array`), so a document the
+    /// database accepts must also parse here. Optional and non-nullable: SQL
+    /// rejects `"a": null` (`jsonb_typeof(...) = 'boolean'`), so the schema
+    /// and deserializer reject it too.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_bool"
+    )]
+    #[schemars(with = "bool")]
+    #[ts(optional, type = "boolean")]
+    pub a: Option<bool>,
+}
+
+/// Deserialize an optional boolean that, when present, must be a real boolean.
+/// `Option<bool>`'s default deserializer maps JSON `null` to `None`; the SQL
+/// CHECKs reject `null` for `a`, so the wire types must too.
+fn deserialize_present_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    bool::deserialize(deserializer).map(Some)
 }
 
 /// `public.eql_v3_json_entry` — one sv element (returned by `->`). Carries a
 /// selector `s`, raw AEAD ciphertext `c` (see [`EntryCiphertext`] — the
 /// decryption unit is `h` + `s` + `c`, with the document `h` grafted onto
 /// extracted entries by `->`), an optional array-membership marker `a`
-/// (emitted only when true), and — for ordered (number/string) path entries
+/// (a boolean; producers emit it only when true), and — for ordered (number/string) path entries
 /// only — the `op` ordering term. Value entries (value-inclusive selectors)
 /// and non-orderable path entries are term-less: exact matching is selector
 /// presence, so no per-entry equality term exists (`hm` is retired). The
@@ -123,13 +147,20 @@ pub struct SteVecDocument {
 pub struct SteVecEntry {
     pub s: Selector,
     pub c: EntryCiphertext,
-    // `#[ts(optional = nullable)]` emits `a?: boolean | null` — ts-rs does NOT
+    // `#[ts(optional, type = "boolean")]` emits `a?: boolean` — ts-rs does NOT
     // infer optionality from serde `default`/`skip_serializing_if` (10.1: only an
-    // explicit `#[ts(optional)]`/`optional = nullable` does), so without this the
-    // TS binding would render `a` REQUIRED and drift from the JSON Schema, which
-    // excludes `a` from `required`. `= nullable` keeps the `| null`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional = nullable)]
+    // explicit `#[ts(optional)]` does), so without this the TS binding would
+    // render `a` REQUIRED and drift from the JSON Schema, which excludes `a`
+    // from `required`. Non-nullable: the SQL entry CHECK requires
+    // `jsonb_typeof(VALUE->'a') = 'boolean'`, so `"a": null` is rejected there
+    // and must not be advertised (or accepted) here.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_bool"
+    )]
+    #[schemars(with = "bool")]
+    #[ts(optional, type = "boolean")]
     pub a: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

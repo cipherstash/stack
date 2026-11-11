@@ -198,7 +198,9 @@ AS $$
       INTO ary
       FROM jsonb_array_elements(sv) AS elem;
 
-    RETURN ary;
+    -- array_agg over zero rows is NULL; an empty sv is an empty array, and
+    -- callers (array length / elements) loop over its bounds.
+    RETURN COALESCE(ary, '{}'::jsonb[]);
   END;
 $$ LANGUAGE plpgsql;
 
@@ -211,7 +213,10 @@ CREATE FUNCTION eql_v3_internal.is_ste_vec_array(val jsonb)
   SET search_path = pg_catalog, extensions, public
 AS $$
   BEGIN
-    IF val ? 'a' THEN
+    -- Guard the cast: a non-boolean `a` (e.g. 'maybe') would otherwise raise.
+    -- The document validator rejects one at storage time; raw jsonb callers
+    -- get "not an array" instead of a cast error.
+    IF jsonb_typeof(val->'a') = 'boolean' THEN
       RETURN (val->>'a')::boolean;
     END IF;
     RETURN false;
@@ -322,7 +327,9 @@ AS $$
   BEGIN
     result := false;
 
-    FOR idx IN 1..array_length(a, 1) LOOP
+    -- array_length('{}'::jsonb[], 1) is NULL, which a FOR bound rejects;
+    -- cardinality() is 0 for an empty array and NULL only for NULL (STRICT).
+    FOR idx IN 1..cardinality(a) LOOP
       _a := a[idx];
       result := result OR (eql_v3.selector(_a) = eql_v3.selector(b));
       EXIT WHEN result;
@@ -460,7 +467,9 @@ AS $$
   BEGIN
     IF eql_v3_internal.is_ste_vec_array(val) THEN
       sv := eql_v3.ste_vec(val);
-      RETURN array_length(sv, 1);
+      -- cardinality(), not array_length(sv, 1): the latter is NULL for an
+      -- empty sv, and an empty array has length 0.
+      RETURN cardinality(sv);
     END IF;
 
     RAISE 'cannot get array length of a non-array';
@@ -488,7 +497,7 @@ AS $$
     meta := eql_v3.meta_data(val);
     sv := eql_v3.ste_vec(val);
 
-    FOR idx IN 1..array_length(sv, 1) LOOP
+    FOR idx IN 1..cardinality(sv) LOOP
       item = sv[idx];
       RETURN NEXT (meta || item)::public.eql_v3_json_entry;
     END LOOP;
