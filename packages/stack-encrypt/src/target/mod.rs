@@ -186,7 +186,7 @@ mod tuples;
 pub(crate) use self::core::{bind_pending, seal_pending};
 pub use context::{
     AeadContext, Bind, BindPart, CallerContext, CheckedInput, DeclaredContext, ExpectedContext,
-    Extends, NoBind, NoScope, Parts, Scope, ScopePart, StoredParts,
+    Extends, NoBind, NoScope, Parts, Scope, ScopePart, Scopes, StoredParts,
 };
 pub use index::{
     indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock,

@@ -419,6 +419,15 @@ impl<T> Scope<T> {
             bind: Bind(value),
         }
     }
+    /// This scope, then the scope `value` of a record nested inside: the
+    /// input for a query on a field of a nested record, where both
+    /// records list a scope. See [`Scopes`].
+    pub fn scope<U>(self, value: U) -> Scopes<Scope<T>, Scope<U>> {
+        Scopes {
+            outer: self,
+            inner: Scope(value),
+        }
+    }
     /// The value.
     pub fn get(&self) -> &T {
         &self.0
@@ -426,6 +435,50 @@ impl<T> Scope<T> {
     /// The value.
     pub fn into_inner(self) -> T {
         self.0
+    }
+}
+
+/// The scopes of nested records, outermost record first.
+///
+/// A query on a field of a nested record needs one scope for each record
+/// that lists a scope. Build the value by chaining
+/// [`Scope::scope`], starting with the outermost record's scope:
+///
+/// ```
+/// use stack_encrypt::target::Scope;
+///
+/// let company_tenant = 7u64;
+/// let office_tenant = 42u64;
+/// let scopes = Scope::new(company_tenant).scope(office_tenant);
+/// // A third record's scope follows in the same way.
+/// let scopes = scopes.scope("floor-3");
+/// # let _ = scopes;
+/// ```
+///
+/// Pass the result to
+/// [`MarkedQuery::scope`](crate::marker::MarkedQuery::scope). You do not
+/// need to write this type's name: `Outer` is a [`Scope`] or another
+/// `Scopes`, and `Inner` is the [`Scope`] of the innermost record.
+///
+/// `Scopes` is different from a scope with several parts, such as
+/// `Scope::new(("eu", 42u64))`. That value is the scope of one record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Scopes<Outer, Inner> {
+    outer: Outer,
+    inner: Inner,
+}
+impl<Outer, Inner> Scopes<Outer, Inner> {
+    /// These scopes, then the scope `value` of a record nested one level
+    /// further in.
+    pub fn scope<U>(self, value: U) -> Scopes<Self, Scope<U>> {
+        Scopes {
+            outer: self,
+            inner: Scope(value),
+        }
+    }
+    /// The outer scopes and the innermost scope.
+    pub(crate) fn into_parts(self) -> (Outer, Inner) {
+        (self.outer, self.inner)
     }
 }
 

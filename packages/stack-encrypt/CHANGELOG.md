@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the field sits: `marker::Root<R>` for a field of the record `R`, or
   `marker::Nested<W>` for one reached through a record field. `T` is the
   field's target type. `C` is the type of the scopes a query takes:
-  `NoScope`, one `Scope<U>`, or a tuple of them for a field of a nested
+  `NoScope`, one `Scope<U>`, or `target::Scopes` for a field of a nested
   record.
   `P` is the type a query takes: `marker::TakesAny`, or `marker::Takes<V>`
   for a field marked `#[stash(query = V)]`.
@@ -35,11 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to match.
   - An inner record may list a scope of its own, such as
     `scope(field = "tenant")`. The query then takes one scope for each
-    record that lists one, together and outermost first:
-    `.scope((Scope::new(outer), Scope::new(inner)))` (`marker::JoinScope`).
-    Where one record lists a scope, `scope` takes that scope alone. A
-    query takes at most three scopes, and a fourth is a compile error that
-    says so.
+    record that lists one, outermost first. The new `Scope::scope`
+    chains them: `.scope(Scope::new(outer).scope(inner))`
+    (`marker::JoinScope`). The chain returns the new `target::Scopes`,
+    and any number of records can list a scope. Where one record lists a
+    scope, `scope` takes that scope alone.
   - `#[stash(query = String)]` states the type a field's queries take. The
     derive checks it against the plaintext struct's field.
   - A record that lists a scope, `scope(tenant: u64)` or a stored

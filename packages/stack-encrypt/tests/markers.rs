@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::marker::{Nested, Root, Takes, TakesAny};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreBlockTerm, OreTerm};
-use stack_encrypt::target::{DecryptSource, EncryptTarget, NoScope, Scope};
+use stack_encrypt::target::{DecryptSource, EncryptTarget, NoScope, Scope, Scopes};
 use stack_encrypt::testing::{scope, stored_scope};
 use stack_encrypt::{
     assert_context, nonempty, DecryptFrom, EncryptInto, Encrypted, Error, KeysetCipher, Marker,
@@ -319,6 +319,37 @@ struct Park {
 #[stash(struct = Park, scope = "parks", scope(region: String))]
 struct EncryptedPark {
     wing: EncryptedWing,
+}
+
+/// Four records deep, each with a scope of its own.
+#[derive(Clone, Zeroize)]
+struct Block {
+    owner: u16,
+    wing: Wing,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Block, scope = "blocks", scope(field = "owner"))]
+#[allow(dead_code)]
+struct EncryptedBlock {
+    #[stash(passthrough)]
+    owner: u16,
+    wing: EncryptedWing,
+}
+
+#[derive(Clone, Zeroize)]
+struct Estate {
+    owner: i64,
+    block: Block,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Estate, scope = "estates", scope(field = "owner"))]
+#[allow(dead_code)]
+struct EncryptedEstate {
+    #[stash(passthrough)]
+    owner: i64,
+    block: EncryptedBlock,
 }
 
 fn desk(tenant: u64) -> Desk {
@@ -1178,18 +1209,19 @@ mod a_marker_of_a_record_with_its_own_scope {
 
     #[test]
     fn takes_both_scopes_outermost_first() {
-        let label: Scoped<_, (Scope<String>, Scope<u64>)> =
+        let label: Scoped<_, Scopes<Scope<String>, Scope<u64>>> =
             EncryptedTower::DESK.field(EncryptedDesk::LABEL);
         assert_eq!(
             EncryptedTower::contexts().get("desk.label"),
             label.contexts().single()
         );
         // A record between the two that lists none adds no scope.
-        let _: Scoped<_, (Scope<u32>, Scope<u64>)> = EncryptedCampus::FLOOR
+        let _: Scoped<_, Scopes<Scope<u32>, Scope<u64>>> = EncryptedCampus::FLOOR
             .field(EncryptedFloor::DESK)
             .field(EncryptedDesk::LABEL);
         // Three records with a scope each.
-        let three: Scoped<_, (Scope<String>, Scope<u32>, Scope<u64>)> = EncryptedPark::WING
+        type Three = Scopes<Scopes<Scope<String>, Scope<u32>>, Scope<u64>>;
+        let three: Scoped<_, Three> = EncryptedPark::WING
             .field(EncryptedWing::DESK)
             .field(EncryptedDesk::LABEL);
         assert_eq!(
@@ -1231,7 +1263,7 @@ mod a_marker_of_a_record_with_its_own_scope {
         let label = EncryptedTower::DESK.field(EncryptedDesk::LABEL);
         let term = label
             .eq("D-7")
-            .scope((Scope::new(String::from("eu")), Scope::new(42u64)))
+            .scope(Scope::new(String::from("eu")).scope(42u64))
             .encrypt(&keyset)
             .await
             .unwrap();
@@ -1241,7 +1273,7 @@ mod a_marker_of_a_record_with_its_own_scope {
         for (region, tenant) in [("us", 42u64), ("eu", 43)] {
             let other = label
                 .eq("D-7")
-                .scope((Scope::new(String::from(region)), Scope::new(tenant)))
+                .scope(Scope::new(String::from(region)).scope(tenant))
                 .encrypt(&keyset)
                 .await
                 .unwrap();
@@ -1278,14 +1310,14 @@ mod a_marker_of_a_record_with_its_own_scope {
         let label = EncryptedRoom::DESK.field(EncryptedDesk::LABEL);
         let term = label
             .eq("D-7")
-            .scope((Scope::new(1u64), Scope::new(2u64)))
+            .scope(Scope::new(1u64).scope(2u64))
             .encrypt(&keyset)
             .await
             .unwrap();
         assert_eq!(term, stored.desk.label.terms);
         let swapped = label
             .eq("D-7")
-            .scope((Scope::new(2u64), Scope::new(1u64)))
+            .scope(Scope::new(2u64).scope(1u64))
             .encrypt(&keyset)
             .await
             .unwrap();
@@ -1307,11 +1339,47 @@ mod a_marker_of_a_record_with_its_own_scope {
             .field(EncryptedFloor::DESK)
             .field(EncryptedDesk::LABEL)
             .eq("D-7")
-            .scope((Scope::new(7u32), Scope::new(42u64)))
+            .scope(Scope::new(7u32).scope(42u64))
             .encrypt(&keyset)
             .await
             .unwrap();
         assert_eq!(term, stored.floor.desk.label.terms);
+    }
+
+    /// The number of scopes has no limit: each `field` call on a record
+    /// that lists a scope adds one.
+    #[tokio::test]
+    async fn derives_the_stored_term_under_four_scopes() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedEstate = Estate {
+            owner: 3,
+            block: Block {
+                owner: 5,
+                wing: Wing {
+                    owner: 7,
+                    desk: desk(42),
+                },
+            },
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        let label = EncryptedEstate::BLOCK
+            .field(EncryptedBlock::WING)
+            .field(EncryptedWing::DESK)
+            .field(EncryptedDesk::LABEL);
+        assert_eq!(
+            EncryptedEstate::contexts().get("block.wing.desk.label"),
+            label.contexts().single()
+        );
+        let term = label
+            .eq("D-7")
+            .scope(Scope::new(3i64).scope(5u16).scope(7u32).scope(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.block.wing.desk.label.terms);
     }
 
     #[tokio::test]
@@ -1331,11 +1399,7 @@ mod a_marker_of_a_record_with_its_own_scope {
             .field(EncryptedWing::DESK)
             .field(EncryptedDesk::LABEL)
             .eq("D-7")
-            .scope((
-                Scope::new(String::from("eu")),
-                Scope::new(7u32),
-                Scope::new(42u64),
-            ))
+            .scope(Scope::new(String::from("eu")).scope(7u32).scope(42u64))
             .encrypt(&keyset)
             .await
             .unwrap();
@@ -1349,7 +1413,7 @@ mod a_marker_of_a_record_with_its_own_scope {
         let label = EncryptedTower::DESK.field(EncryptedDesk::LABEL);
         let refused = label
             .eq("D-7")
-            .scope((Scope::new(String::new()), Scope::new(42u64)))
+            .scope(Scope::new(String::new()).scope(42u64))
             .encrypt(&keyset)
             .await;
         assert!(
@@ -1383,7 +1447,7 @@ mod a_marker_of_a_record_with_its_own_scope {
         let refused = EncryptedMarket::STALL
             .field(EncryptedStall::NAME)
             .eq("fruit")
-            .scope((Scope::new(42u64), Scope::new(String::new())))
+            .scope(Scope::new(42u64).scope(String::new()))
             .encrypt(&keyset)
             .await;
         assert!(
@@ -1477,7 +1541,7 @@ mod a_marker_of_a_nullable_record {
         .await
         .unwrap();
         // The campus's scope, then the desk's; the floor between lists none.
-        let label: Marker<_, Encrypted<EqualityTerm>, (Scope<u32>, Scope<u64>)> =
+        let label: Marker<_, Encrypted<EqualityTerm>, Scopes<Scope<u32>, Scope<u64>>> =
             EncryptedPlaza::CAMPUS
                 .field(EncryptedCampus::FLOOR)
                 .field(EncryptedFloor::HOT)
@@ -1488,7 +1552,7 @@ mod a_marker_of_a_nullable_record {
         );
         let term = label
             .eq("D-7")
-            .scope((Scope::new(7u32), Scope::new(43u64)))
+            .scope(Scope::new(7u32).scope(43u64))
             .encrypt(&keyset)
             .await
             .unwrap();
@@ -1524,13 +1588,13 @@ mod a_nested_marker_beside_a_binding {
 
     #[test]
     fn takes_the_scopes_alone_and_shows_the_record_contexts() {
-        let code: Marker<_, Encrypted<EqualityTerm>, (Scope<String>, Scope<u64>)> =
+        let code: Marker<_, Encrypted<EqualityTerm>, Scopes<Scope<String>, Scope<u64>>> =
             EncryptedGym::LOCKER.field(EncryptedLocker::CODE);
         assert_eq!(
             EncryptedGym::contexts().get("locker.code"),
             code.contexts().single()
         );
-        let spare: Marker<_, Encrypted<EqualityTerm>, (Scope<String>, Scope<u64>)> =
+        let spare: Marker<_, Encrypted<EqualityTerm>, Scopes<Scope<String>, Scope<u64>>> =
             EncryptedGym::SPARE.field(EncryptedLocker::CODE);
         assert_eq!(
             EncryptedGym::contexts().get("spare.code"),
@@ -1553,7 +1617,7 @@ mod a_nested_marker_beside_a_binding {
         let term = EncryptedGym::LOCKER
             .field(EncryptedLocker::CODE)
             .eq("1234")
-            .scope((Scope::new(String::from("eu")), Scope::new(5u64)))
+            .scope(Scope::new(String::from("eu")).scope(5u64))
             .encrypt(&keyset)
             .await
             .unwrap();
@@ -1571,7 +1635,7 @@ mod a_nested_marker_beside_a_binding {
         let term = EncryptedGym::SPARE
             .field(EncryptedLocker::CODE)
             .eq("1234")
-            .scope((Scope::new(String::from("eu")), Scope::new(6u64)))
+            .scope(Scope::new(String::from("eu")).scope(6u64))
             .encrypt(&keyset)
             .await
             .unwrap();

@@ -39,7 +39,7 @@ async fn query(cipher: &StackCipher<FakeDataKeySource>) {
     // Both scopes, outermost first.
     let _ = label
         .eq("D-7")
-        .scope((Scope::new(String::from("eu")), Scope::new(42u64)))
+        .scope(Scope::new(String::from("eu")).scope(42u64))
         .encrypt(&keyset)
         .await;
     // The scopes are missing.
@@ -53,14 +53,14 @@ async fn query(cipher: &StackCipher<FakeDataKeySource>) {
     // The inner record's scope first.
     let _ = label
         .eq("D-7")
-        .scope((Scope::new(42u64), Scope::new(String::from("eu"))))
+        .scope(Scope::new(42u64).scope(String::from("eu")))
         .encrypt(&keyset)
         .await;
     // The scopes are given twice.
     let _ = label
         .eq("D-7")
-        .scope((Scope::new(String::from("eu")), Scope::new(42u64)))
-        .scope((Scope::new(String::from("eu")), Scope::new(42u64)))
+        .scope(Scope::new(String::from("eu")).scope(42u64))
+        .scope(Scope::new(String::from("eu")).scope(42u64))
         .encrypt(&keyset)
         .await;
 }
