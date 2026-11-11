@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { object } from './record.mjs'
 
 /** Compare stored bytes through admin snapshots, without exporting their values.
  * @param {unknown} before @param {unknown} after
@@ -8,25 +9,29 @@ export function noRewrite(before, after) {
   function fields(snapshot, baseline = false) {
     /** @type {Map<string, unknown>} */
     const result = new Map()
-    if (!snapshot || typeof snapshot !== 'object')
-      throw Error('Invalid Legacy Data snapshot')
-    const data = Object.fromEntries(Object.entries(snapshot))
-    const item = data.dynamo?.Item
-    if (!Array.isArray(data.postgres))
-      throw Error('Missing Legacy Data snapshot')
-    for (const [key, value] of Object.entries(item ?? {}))
+    const data = object(snapshot)
+    const item = object(object(data.dynamo ?? {}).Item ?? {})
+    if (!Array.isArray(data.postgres) || data.postgres.length !== 1)
+      throw Error('Expected exactly one Legacy Data Postgres row')
+    for (const [key, value] of Object.entries(item))
       if (/__(source|hmac)$/.test(key))
-        result.set(`dynamo/${item.pk?.S ?? 'legacy'}/${key}`, value)
-    for (const row of data.postgres)
+        result.set(
+          `dynamo/${object(item.pk ?? {}).S ?? 'legacy'}/${key}`,
+          value,
+        )
+    for (const raw of data.postgres) {
+      const row = object(raw)
       for (const [column, payload] of Object.entries(row)) {
         if (column === 'pk' || !payload || typeof payload !== 'object') continue
+        const attributes = object(payload)
         for (const attribute of ['c', 'hm'])
-          if (attribute in payload)
+          if (attribute in attributes)
             result.set(
               `postgres/${row.pk}/${column}.${attribute}`,
-              Object.fromEntries(Object.entries(payload))[attribute],
+              attributes[attribute],
             )
       }
+    }
     if (baseline && !result.size)
       throw Error('Legacy Data snapshot contains no encrypted attributes')
     return result
@@ -51,14 +56,12 @@ export function noRewrite(before, after) {
 /** Validate the known Fixture App baseline before any Migrator invocation.
  * @param {unknown} snapshot */
 export function validateLegacySnapshot(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object')
-    throw Error('Missing Legacy Data snapshot')
-  const data = Object.fromEntries(Object.entries(snapshot))
-  const item = data.dynamo?.Item
-  const row = data.postgres?.find(
-    (/** @type {{pk:string}} */ row) => row.pk === 'legacy',
-  )
-  if (item?.pk?.S !== 'legacy' || !row)
+  const data = object(snapshot)
+  const item = object(object(data.dynamo).Item)
+  if (!Array.isArray(data.postgres) || data.postgres.length !== 1)
+    throw Error('Expected exactly one Legacy Data Postgres row')
+  const row = object(data.postgres[0])
+  if (object(item.pk).S !== 'legacy' || row.pk !== 'legacy')
     throw Error('Missing Legacy Data record')
   for (const column of [
     'email',
@@ -69,15 +72,17 @@ export function validateLegacySnapshot(snapshot) {
     'notes',
   ]) {
     if (
-      typeof item[`${column}__source`]?.S !== 'string' ||
-      (column !== 'notes' && typeof item[`${column}__hmac`]?.S !== 'string')
+      typeof object(item[`${column}__source`] ?? {}).S !== 'string' ||
+      (column !== 'notes' &&
+        typeof object(item[`${column}__hmac`] ?? {}).S !== 'string')
     )
       throw Error(`Incomplete Legacy Data DynamoDB column: ${column}`)
   }
   for (const column of ['email', 'age', 'notes']) {
+    const attributes = object(row[column] ?? {})
     if (
-      typeof row[column]?.c !== 'string' ||
-      (column !== 'notes' && typeof row[column]?.hm !== 'string')
+      typeof attributes.c !== 'string' ||
+      (column !== 'notes' && typeof attributes.hm !== 'string')
     )
       throw Error(`Incomplete Legacy Data Postgres column: ${column}`)
   }

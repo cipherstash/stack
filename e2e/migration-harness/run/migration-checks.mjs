@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { satisfies, valid } from 'semver'
 import ts from 'typescript'
 import { noRewrite } from './no-rewrite.mjs'
+import { object } from './record.mjs'
 
 export const requiredOracleChecks = [
   'no-rewrite.legacy-bytes',
@@ -14,13 +15,6 @@ export const requiredOracleChecks = [
 const legacyPackage =
   /@cipherstash\/(?:protect-dynamodb|protect|schema)(?![\w-])/
 const hostSetting = /^(CS_CTS_HOST|CS_ZEROKMS_HOST)$/
-
-/** @param {unknown} value @returns {Record<string, unknown>} */
-function object(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw Error('Expected a stored record or package object')
-  return Object.fromEntries(Object.entries(value))
-}
 
 /** Compatibility entry point for check-level callers.
  * @param {unknown} before @param {unknown} after @returns {import('../types.js').OracleCheck} */
