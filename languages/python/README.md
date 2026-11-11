@@ -126,7 +126,7 @@ To size the `LIMIT`, call `q.target_limit(want, rows=..., histogram=...)`. It re
 
 A `MatchQuery` keeps the search text, because `verify` needs it. Python cannot wipe a `str`, so the text stays in memory until Python frees the object. `repr` does not show it.
 
-## Encrypt only some fields
+## Encrypt or decrypt only some fields
 
 To update one column, you do not need a whole model. `cipher.encrypt_rows` takes a list of dicts from field name to value. Each dict can contain only some of the declared fields. For example, `cipher.encrypt_rows([{"email": "b@example.com", "id": 1}])` returns `[{"email": '{"c": ...}', "id": 1}]`.
 
@@ -135,6 +135,8 @@ To update one column, you do not need a whole model. `cipher.encrypt_rows` takes
 - Every row in one call must contain the same declared fields. Then one call sends one batch of key requests.
 
 The values are checked as `encrypt` checks them. A row that is not a mapping raises `InvalidValueError` with the code `value_row_shape`. So do rows that contain different declared fields.
+
+`cipher.decrypt_rows` is the reverse. It takes dicts of stored values that contain some of the declared fields, and returns dicts with the plaintext. Other keys are kept unchanged. It follows the same rules, and raises the same errors as `decrypt`. A row that is not a mapping raises `DecryptError` with the code `decrypt_row_shape`. So do rows that contain different declared fields.
 
 ## Declare a SQLAlchemy relationship
 
