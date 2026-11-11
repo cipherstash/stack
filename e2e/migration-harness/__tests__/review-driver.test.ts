@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -505,10 +505,7 @@ async function migratedFiles() {
   }
   await writeFile(join(workspace, 'package.json'), JSON.stringify(manifest))
   await writeFile(join(workspace, 'package-lock.json'), JSON.stringify(lock))
-  await writeFile(
-    join(installedWorkspace, 'package-lock.json'),
-    JSON.stringify(lock),
-  )
+  await cp(workspace, installedWorkspace, { recursive: true })
   return {
     workspace,
     installedWorkspace,
