@@ -21,86 +21,15 @@ mod common;
 use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 
-use eql_bindings::encryption::targets::{self as eql_targets, Target};
+use eql_bindings::encryption::targets as eql_targets;
+use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument};
 use eql_bindings::Identifier;
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::{
-    self, record, Scope, TargetDescriptor, TargetError, TargetResolver, ValueFrame,
-};
+use stack_encrypt::dynamic::{self, record, Scope, TargetError, ValueFrame};
 use stack_encrypt::json::{JsonDocument, JsonOptions, JsonQuery};
 use stack_encrypt::target::{ExpectedContext, Layout};
-use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
-
-/// eql-bindings' table as the engine's resolver, as the Go guest installs
-/// it (`languages/golang/encrypt/guest/src/targets.rs`).
-struct Eql;
-
-fn describe(target: &Target) -> TargetDescriptor {
-    let descriptor = TargetDescriptor::new(
-        target.name,
-        target.family,
-        target.suffix,
-        target.plaintext_kind(),
-        target.sql_domain,
-        target.indexes.iter().map(|key| (*key).to_owned()).collect(),
-        target.query.map(str::to_owned),
-        target.query_sql_domain.map(str::to_owned),
-        target.producible,
-        target.reason.map(str::to_owned),
-    );
-    match target.leaf_query_sql_domain() {
-        Some(domain) => descriptor.with_leaf_query_sql_domain(domain),
-        None => descriptor,
-    }
-}
-
-/// As the guest converts: a document refusal keeps its code.
-fn convert(error: eql_targets::TargetError) -> TargetError {
-    match error {
-        eql_targets::TargetError::Json { target, source } => TargetError::Json {
-            name: String::new(),
-            target: target.to_owned(),
-            reason: source.code(),
-        },
-        other => TargetError::Other(Box::new(other)),
-    }
-}
-
-impl TargetResolver for Eql {
-    fn targets(&self) -> Vec<TargetDescriptor> {
-        eql_targets::targets().iter().map(describe).collect()
-    }
-    fn encrypt<'a, K: 'static>(
-        &self,
-        name: &str,
-        options: Option<&dynamic::TargetOptions>,
-        keyset: &'a KeysetCipher<'_, K>,
-        label: &Label,
-        plaintext: ValueFrame,
-    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::encrypt_with(name, options, keyset, label, plaintext).map_err(convert)
-    }
-    fn decrypt<'a, K: 'static>(
-        &self,
-        name: &str,
-        cipher: &'a StackCipher<K>,
-        label: &Label,
-        stored: &[u8],
-    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
-        eql_targets::decrypt(name, cipher, label, stored).map_err(convert)
-    }
-    fn query<'a, K: 'static>(
-        &self,
-        name: &str,
-        index: &stack_encrypt::target::IndexSpec,
-        keyset: &'a KeysetCipher<'_, K>,
-        label: &Label,
-        plaintext: ValueFrame,
-    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::query(name, index, keyset, label, plaintext).map_err(convert)
-    }
-}
+use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty};
 
 /// The options the documents are sealed under on both paths.
 fn options() -> JsonOptions {
@@ -127,7 +56,7 @@ fn plan() -> record::Plan {
         dynamic::frame::serde::to_vec(&wire)
             .unwrap()
             .as_protected_ref(),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap()
 }
@@ -237,7 +166,7 @@ async fn a_batch_of_documents_round_trips_in_one_request() {
         .iter()
         .map(|text| BTreeMap::from([("profile", text.as_str())]))
         .collect();
-    let sealed = record::encrypt_with(&keyset, frame(&source), &plan, &Eql)
+    let sealed = record::encrypt_with(&keyset, frame(&source), &plan, &EqlTargets)
         .unwrap()
         .await
         .unwrap();
@@ -246,7 +175,7 @@ async fn a_batch_of_documents_round_trips_in_one_request() {
         1,
         "every document's key in one request"
     );
-    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &Eql)
+    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &EqlTargets)
         .unwrap()
         .await
         .unwrap();
@@ -274,7 +203,7 @@ async fn the_data_plan_and_the_typed_layout_agree() {
     for document in documents() {
         let text = document.to_string();
         let source = BTreeMap::from([("profile", text.as_str())]);
-        let sealed = record::encrypt_with(&keyset, frame(&source), &plan, &Eql)
+        let sealed = record::encrypt_with(&keyset, frame(&source), &plan, &EqlTargets)
             .unwrap()
             .await
             .unwrap();
@@ -320,7 +249,7 @@ async fn the_data_plan_and_the_typed_layout_agree() {
                 )),
             )]),
         )]);
-        let opened = record::decrypt_with(Scope::Client(&cipher), record, &plan, None, &Eql)
+        let opened = record::decrypt_with(Scope::Client(&cipher), record, &plan, None, &EqlTargets)
             .unwrap()
             .await
             .unwrap();
@@ -347,7 +276,7 @@ async fn a_sql_null_stores_no_document() {
         BTreeMap::new(),
         BTreeMap::from([("profile", Some("null"))]),
     ];
-    let sealed = record::encrypt_with(&keyset, frame(&rows), &plan, &Eql)
+    let sealed = record::encrypt_with(&keyset, frame(&rows), &plan, &EqlTargets)
         .unwrap()
         .await
         .unwrap();
@@ -364,7 +293,7 @@ async fn a_sql_null_stores_no_document() {
         })
         .collect();
     assert_eq!(stores_profile, [true, false, false, true]);
-    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &Eql)
+    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &EqlTargets)
         .unwrap()
         .await
         .unwrap();
@@ -401,7 +330,7 @@ async fn a_document_does_not_open_under_another_column() {
         &keyset,
         frame(BTreeMap::from([("profile", text.as_str())])),
         &plan(),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap()
     .await
@@ -420,11 +349,11 @@ async fn a_document_does_not_open_under_another_column() {
         }))
         .unwrap())
         .as_protected_ref(),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap();
     calls.lock().unwrap().retrieve.clear();
-    let refused = record::decrypt_with(Scope::Client(&cipher), sealed, &other, None, &Eql)
+    let refused = record::decrypt_with(Scope::Client(&cipher), sealed, &other, None, &EqlTargets)
         .unwrap()
         .await;
     assert!(
@@ -449,7 +378,7 @@ async fn text_that_is_not_a_document_is_refused_before_any_key() {
         let text = case["text"].as_str().unwrap();
         let code = case["reason"].as_str().unwrap();
         let source = BTreeMap::from([("profile", text)]);
-        let error = match record::encrypt_with(&keyset, frame(&source), &plan, &Eql) {
+        let error = match record::encrypt_with(&keyset, frame(&source), &plan, &EqlTargets) {
             Err(error) => error,
             Ok(_) => panic!("{text:?} was accepted"),
         };
@@ -465,7 +394,7 @@ async fn text_that_is_not_a_document_is_refused_before_any_key() {
     }
     // A value of another kind is not a document either.
     let source = BTreeMap::from([("profile", 7u32)]);
-    assert!(record::encrypt_with(&keyset, frame(&source), &plan, &Eql).is_err());
+    assert!(record::encrypt_with(&keyset, frame(&source), &plan, &EqlTargets).is_err());
     assert!(
         calls.lock().unwrap().generate.is_empty(),
         "no key was requested"
@@ -517,7 +446,7 @@ async fn data_term(
         "profile",
         dynamic::Op::parse(operator).unwrap(),
         input(entries),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap()
     .await
@@ -539,11 +468,12 @@ fn containment(operand: Value) -> JsonQuery {
 }
 
 /// The operators a document field answers, with the input each takes:
-/// the orderings at a path only when the field orders a path.
+/// the orderings at a path and `element_match` only when the field orders
+/// a path, and `match` on every field.
 #[test]
 fn a_document_field_answers_the_json_operators() {
     let names = |plan: &record::Plan| -> Vec<(&'static str, &'static str)> {
-        dynamic::field_operators(plan, "profile", &Eql)
+        dynamic::field_operators(plan, "profile", &EqlTargets)
             .unwrap()
             .into_iter()
             .map(|(op, index)| {
@@ -567,6 +497,8 @@ fn a_document_field_answers_the_json_operators() {
             ("subtree", "path_bound"),
             ("children", "path"),
             ("child_count", "path"),
+            ("element_match", "path_predicates"),
+            ("match", "predicate"),
         ]
     );
     let unordered = record::plan_with(
@@ -575,7 +507,7 @@ fn a_document_field_answers_the_json_operators() {
         }))
         .unwrap())
         .as_protected_ref(),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap();
     assert_eq!(
@@ -590,9 +522,10 @@ fn a_document_field_answers_the_json_operators() {
             "selector",
             "subtree",
             "children",
-            "child_count"
+            "child_count",
+            "match"
         ],
-        "no ordering without an ordered path"
+        "no ordering and no `element_match` without an ordered path"
     );
 }
 
@@ -787,7 +720,7 @@ fn a_json_operator_refuses_what_it_cannot_answer() {
             "profile",
             dynamic::Op::parse(operator).unwrap(),
             input(entries),
-            &Eql,
+            &EqlTargets,
         )
     };
     let reason = |operator: &str, entries: &[(&str, Value)]| {
@@ -849,8 +782,8 @@ fn a_json_operator_refuses_what_it_cannot_answer() {
         assert_eq!(reason(operator, &entries), "engine", "{operator}");
     }
     // `eq` and friends are not a document's operators.
-    let error =
-        dynamic::check_query(&plan, "profile", dynamic::Op::Eq, input(&[]), &Eql).unwrap_err();
+    let error = dynamic::check_query(&plan, "profile", dynamic::Op::Eq, input(&[]), &EqlTargets)
+        .unwrap_err();
     assert_eq!(error.reason(), Some(Reason::OperatorNotAnswered));
 }
 
@@ -925,7 +858,7 @@ async fn open(
     )
     .unwrap();
     let rows = frame(&groups);
-    let opened = dynamic::json_open(keyset, plan, "profile", request, rows, &Eql)
+    let opened = dynamic::json_open(keyset, plan, "profile", request, rows, &EqlTargets)
         .unwrap()
         .await?;
     let groups: Vec<Vec<serde_bytes_like::Bytes>> =
@@ -959,7 +892,7 @@ async fn reads_open_against_the_request_that_prepared_them() {
             &keyset,
             frame(BTreeMap::from([("profile", text.as_str())])),
             &plan,
-            &Eql,
+            &EqlTargets,
         )
         .unwrap()
         .await

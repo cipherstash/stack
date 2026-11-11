@@ -1,13 +1,14 @@
 //! The compiled predicate end to end: documents sealed by Stack Encrypt's
 //! JSON index, jsonpath predicates compiled by the `match` operator through
-//! a data plan over eql-bindings' target table, with a resolver that names
-//! the compiled predicate domain ([`Eql`]; the Go guest's does not yet),
+//! a data plan over eql-bindings' target table, with eql-bindings' own
+//! resolver ([`EqlTargets`]), which names the compiled predicate domain,
 //! and `eql_v4.json_tree_match` and `@@` over the stored column,
 //! against PostgreSQL's own `jsonb_path_match` over the plaintexts and
 //! against the WHERE a hand writes from the operators the leaves stand for.
 
-use super::elements::{derive, eql_text, frame_of, Eql};
+use super::elements::{derive, eql_text, frame_of};
 use super::*;
+use eql_bindings::encryption::EqlTargets;
 use stack_encrypt::AsProtectedRef as _;
 
 use stack_encrypt::dynamic::{self, record, Op, Operand};
@@ -40,7 +41,7 @@ fn people_plan() -> record::Plan {
         dynamic::frame::serde::to_vec(&wire)
             .unwrap()
             .as_protected_ref(),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap()
 }
@@ -264,7 +265,7 @@ fn postgres_a_compiled_predicate_answers_as_its_operators() {
             "profile",
             Op::Match,
             frame_of(&json!({"predicate": text})),
-            &Eql,
+            &EqlTargets,
         )
         .unwrap_err();
         let payload = stack_encrypt::ErrorPayload::payload(&error);
@@ -276,7 +277,7 @@ fn postgres_a_compiled_predicate_answers_as_its_operators() {
         "profile",
         Op::Match,
         frame_of(&json!({"predicate": "$.height > 1"})),
-        &Eql,
+        &EqlTargets,
     )
     .unwrap_err();
     assert!(

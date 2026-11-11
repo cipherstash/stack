@@ -476,6 +476,38 @@ mod the_table {
         }
     }
 
+    /// The shared resolver lists the catalog's types and no other: each
+    /// scalar domain as its struct name, then each document family's
+    /// stored type, in catalog order. A program that installs it holds
+    /// every EQL type the catalog has.
+    #[test]
+    fn the_resolver_lists_the_catalogs_types_in_order() {
+        use stack_encrypt::dynamic::TargetResolver as _;
+        let catalog: Vec<String> = stored_domains()
+            .iter()
+            .map(|(family, domain)| domain.rust_struct_name(family.name))
+            .chain(eql_domains::DOCUMENT_FAMILIES.iter().map(|family| {
+                family
+                    .domain(eql_domains::DocumentRole::Stored)
+                    .unwrap()
+                    .name
+                    .to_owned()
+            }))
+            .collect();
+        let resolver = eql_bindings::encryption::EqlTargets;
+        let listed: Vec<String> = resolver.targets().into_iter().map(|t| t.name).collect();
+        assert_eq!(listed, catalog);
+        // A plan may name exactly the types the table marks producible.
+        for row in targets::targets() {
+            assert_eq!(
+                resolver.resolve(row.name).is_ok(),
+                row.producible,
+                "{}",
+                row.name
+            );
+        }
+    }
+
     #[test]
     fn names_every_stored_catalog_domain_in_order() {
         let all = targets::targets();

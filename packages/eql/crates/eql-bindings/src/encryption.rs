@@ -101,6 +101,12 @@ pub mod query;
 #[cfg(feature = "targets")]
 pub mod targets;
 
+// The EQL types as Stack Encrypt's resolver (`targets` feature).
+#[cfg(feature = "targets")]
+mod resolver;
+#[cfg(feature = "targets")]
+pub use resolver::EqlTargets;
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, MatchTerms, TermError, Tokenizer,
