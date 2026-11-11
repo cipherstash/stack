@@ -18,7 +18,7 @@
 //! cause and the fix.
 //!
 //! `tests/docker-compose.yml` provisions the capacity (`-c
-//! max_locks_per_transaction=1024`); this asserts the database under test
+//! max_locks_per_transaction=1536`); this asserts the database under test
 //! actually has it.
 
 use anyhow::Result;
@@ -72,7 +72,7 @@ async fn lock_table_fits_concurrent_uninstalls() -> Result<()> {
          `53200 out of shared memory` in whichever unrelated tests happen to run \
          alongside an uninstall.\n\
          \n\
-         Fix: tests/docker-compose.yml sets `-c max_locks_per_transaction=1024`. \
+         Fix: tests/docker-compose.yml sets `-c max_locks_per_transaction=1536`. \
          A container created before that change keeps the old setting, so recreate it:\n\
          \n    mise run postgres:down && mise run postgres:up postgres-17\n"
     );
