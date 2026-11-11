@@ -21,6 +21,13 @@ export interface OracleCheck {
   cause?: string
 }
 export interface MigratorResult {
+  runtime?: {
+    provider: 'claude-code'
+    version: string
+    model: string
+    numTurns: number
+    permissionMode: 'acceptEdits'
+  }
   exitCode: number
   limit?: string
   toolCalls?: Array<{ id: string; exitCode: number }>

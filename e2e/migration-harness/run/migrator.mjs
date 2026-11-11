@@ -62,6 +62,8 @@ export async function runMigrator({
         pending = 0
       /** @type {string|undefined} */
       let limit
+      /** @type {import('../types.js').MigratorResult['runtime']} */
+      let runtime
       /** @type {Error|undefined} */
       let failure
       let queue = Promise.resolve()
@@ -131,6 +133,45 @@ export async function runMigrator({
             invalid('invalid JSON')
             return
           }
+          if (request?.method === 'runtime') {
+            const value = request.runtime
+            if (
+              runtime ||
+              !value ||
+              value.provider !== 'claude-code' ||
+              value.permissionMode !== 'acceptEdits' ||
+              !Number.isSafeInteger(value.numTurns) ||
+              value.numTurns < 0 ||
+              ![value.model, value.version].every(
+                (item) =>
+                  typeof item === 'string' &&
+                  item.length > 0 &&
+                  item.length <= 256,
+              ) ||
+              Object.keys(request).some(
+                (key) => !['method', 'runtime'].includes(key),
+              ) ||
+              Object.keys(value).some(
+                (key) =>
+                  ![
+                    'provider',
+                    'permissionMode',
+                    'numTurns',
+                    'model',
+                    'version',
+                  ].includes(key),
+              )
+            ) {
+              invalid('invalid or duplicate runtime metadata')
+              return
+            }
+            runtime = value
+            if (value.numTurns > maxModelTurns) {
+              limit = 'model turn limit reached'
+              terminate()
+            }
+            continue
+          }
           if (
             request?.method !== 'exec' ||
             typeof request.id !== 'string' ||
@@ -194,6 +235,7 @@ export async function runMigrator({
           exitCode: limit ? 124 : (code ?? 1),
           limit,
           toolCalls: [...toolCalls],
+          ...(runtime ? { runtime } : {}),
           stdout,
           stderr,
         })

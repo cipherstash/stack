@@ -157,3 +157,34 @@ test('broker preserves an infrastructure failure from isolated execution', async
     }),
   ).rejects.toBe(failure)
 })
+
+test('broker rejects invalid or duplicate runtime metadata without treating it as a tool', async () => {
+  const runtime = {
+    provider: 'claude-code',
+    version: '2.1.300',
+    model: 'resolved-sonnet',
+    numTurns: 1,
+    permissionMode: 'acceptEdits',
+  }
+  for (const messages of [
+    [{ method: 'runtime', runtime: { ...runtime, numTurns: -1 } }],
+    [{ method: 'runtime', runtime: { ...runtime, apiKey: 'not-exportable' } }],
+    [
+      { method: 'runtime', runtime },
+      { method: 'runtime', runtime },
+    ],
+  ]) {
+    const execute = vi.fn(async () => result)
+    await expect(
+      runMigrator({
+        command: await adapter(
+          `process.stdout.write(${JSON.stringify(`${messages.map((message) => JSON.stringify(message)).join('\n')}\n`)});setTimeout(()=>{},10000)`,
+        ),
+        execute,
+        stop: async () => {},
+        timeoutMs: 1000,
+      }),
+    ).rejects.toThrow('invalid or duplicate runtime metadata')
+    expect(execute).not.toHaveBeenCalled()
+  }
+})
