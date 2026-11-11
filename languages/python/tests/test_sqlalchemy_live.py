@@ -7,6 +7,7 @@ as ``test_encrypt_live.py`` does. Each test makes its own tables in a schema
 of its own, and drops the schema afterwards.
 """
 
+import decimal
 import uuid
 from typing import Annotated, Optional
 
@@ -16,7 +17,7 @@ from sqlalchemy import ForeignKey, and_, create_engine, delete, func, not_, or_,
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
 import stackencrypt
-from stackencrypt import Ignore, IntegerOrd, MatchQuery, Passthrough, QueryError, Text, TextEq, TextMatch, _engine
+from stackencrypt import Ignore, IntegerOrd, MatchQuery, NumericOrd, Passthrough, QueryError, Text, TextEq, TextMatch, _engine
 from stackencrypt.sqlalchemy import configure_encryption, eql_type_map
 
 pytestmark = [*LIVE, needs_database]
@@ -79,6 +80,15 @@ class Guide(Base):
     bio: Mapped[Annotated[str, TextMatch]]
 
 
+@stackencrypt.model("runs")
+class Run(Base):
+    __tablename__ = "runs"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    label: Mapped[Annotated[str, Passthrough]]
+    average_hr: Mapped[Annotated[Optional[int], IntegerOrd]]
+    pace: Mapped[Annotated[Optional[decimal.Decimal], NumericOrd]]
+
+
 @stackencrypt.model("players")
 class Player(Base):
     __tablename__ = "players"
@@ -100,7 +110,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))
     Base.metadata.create_all(engine)
-    configure_encryption(engine, [Customer, Order, Player, Profile, Venue, Trip, Guide])
+    configure_encryption(engine, [Customer, Order, Player, Profile, Venue, Trip, Guide, Run])
     yield engine
     with engine.begin() as conn:
         conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
@@ -110,7 +120,7 @@ def engine():
 @pytest.fixture(autouse=True)
 def empty(engine):
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE orders, customers, players, profiles, venues, guides, trips RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE orders, customers, players, profiles, venues, guides, trips, runs RESTART IDENTITY"))
 
 
 def stored(engine, sql):
@@ -527,3 +537,68 @@ def test_an_or_across_an_outer_join_fails_the_branch_of_a_missing_object(engine)
 
     # Morning run has no guide: its Guide branch fails, and its name keeps it.
     assert found == [("Morning run", None), ("Hill walk", "Mountain leader")]
+
+
+# ORDER BY an encrypted column with an order index.
+
+RUNS = [
+    ("a", 150, decimal.Decimal("5.30")),
+    ("b", None, decimal.Decimal("4.75")),
+    ("c", 120, None),
+    ("d", 175, decimal.Decimal("6.10")),
+    ("e", 98, decimal.Decimal("4.80")),
+]
+
+
+def labels(engine, *order):
+    with Session(engine) as session:
+        return [r.label for r in session.scalars(select(Run).order_by(*order))]
+
+
+@pytest.fixture
+def runs(engine):
+    with Session(engine) as session:
+        session.add_all([Run(label=l, average_hr=hr, pace=p) for l, hr, p in RUNS])
+        session.commit()
+
+
+def test_order_by_an_integer_ord_column(engine, runs):
+    assert labels(engine, Run.average_hr.asc().nulls_last()) == ["e", "c", "a", "d", "b"]
+    assert labels(engine, Run.average_hr.desc().nulls_last()) == ["d", "a", "c", "e", "b"]
+
+
+def test_order_by_a_numeric_ord_column(engine, runs):
+    assert labels(engine, Run.pace.asc().nulls_last()) == ["b", "e", "a", "d", "c"]
+    assert labels(engine, Run.pace.desc().nulls_last()) == ["d", "a", "e", "b", "c"]
+
+
+def test_nulls_first_puts_the_missing_values_first(engine, runs):
+    assert labels(engine, Run.average_hr.asc().nulls_first())[0] == "b"
+    assert labels(engine, Run.pace.desc().nulls_first())[0] == "c"
+
+
+def test_order_by_with_a_limit_pages_in_order(engine, runs):
+    with Session(engine) as session:
+        page = session.scalars(
+            select(Run).order_by(Run.average_hr.desc().nulls_last()).limit(2).offset(1)
+        ).all()
+    assert [r.label for r in page] == ["a", "c"]
+
+
+
+def test_a_bare_order_by_and_sqlalchemy_asc_sort_by_the_plaintext(engine, runs):
+    from sqlalchemy import asc, desc
+
+    assert labels(engine, Run.average_hr) == ["e", "c", "a", "d", "b"]
+    assert labels(engine, asc(Run.pace)) == ["b", "e", "a", "d", "c"]
+    assert labels(engine, desc(Run.average_hr).nulls_last()) == ["d", "a", "c", "e", "b"]
+
+
+def test_an_order_by_on_a_connection_sorts_by_the_plaintext(engine, runs):
+    table = Run.__table__
+    with engine.connect() as conn:
+        found = conn.execute(select(table.c.label).order_by(table.c.average_hr.asc().nulls_last())).scalars().all()
+        bare = conn.execute(select(table.c.label).order_by(table.c.pace)).scalars().all()
+
+    assert found == ["e", "c", "a", "d", "b"]
+    assert bare == ["b", "e", "a", "d", "c"]

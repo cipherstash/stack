@@ -81,7 +81,8 @@ The allowed operators are:
 - `==`, `<`, `<=`, `>`, and `>=`. Each one sends a query term made by the `Cipher` method of the same meaning.
 - `!=`, as `NOT (col = term)`.
 - `in_` and `not_in` with a list, as one equality term for each value, joined with `OR`.
-- `is_(None)`, `is_not(None)`, `asc()`, and `desc()`. These send no value.
+- `is_(None)` and `is_not(None)`. These send no value.
+- The sort operators, which sort by the order term (Decision 9).
 
 The comparisons answer ADR-0002's open question. On the ORM, the field is named by the class attribute, such as `Customer.email`. The column type reads the attribute's name and calls the `Cipher` with it.
 
@@ -170,6 +171,30 @@ The database applies a `LIMIT` before the hook removes rows. So `.limit(10)` can
 
 A never returns a row that does not hold the text. B or C can come later, if an app needs exact page sizes.
 
+## Decision 9: sort by the order term
+
+A bare `ORDER BY col` on an EQL v4 column sorts in a wrong order, with no error. On values 98, 120, 150, and 175 in an `IntegerOrd` column, it gave 98, 150, 175, 120. A sort with new ciphertext gave another order.
+
+The cause is in EQL v4. It defines `<` and the other comparisons for its column types. But a sort needs a default sort order for the type, and the EQL domains have none. So PostgreSQL sorts the stored JSON. The same test gave the same wrong order with the EQL v4 on the `next` branch as of 2026-11-11. `main` has no EQL v4. The EQL docs say a bare `ORDER BY col` works, but they were written for EQL v3.
+
+`ORDER BY eql_v4.ord_term(col)` sorts by the plaintext. The EQL docs also recommend that form for v3, because only that form uses the index (`packages/eql/docs/reference/database-indexes.md`, "The sort-key trap").
+
+### The options
+
+| Option | Result | Cost |
+|---|---|---|
+| A. Fix it in EQL | A bare sort works for every SDK and for SQL written by hand. | An EQL change and release. |
+| **B. Sort by the order term in the layer (chosen)** | It works now, and the sort uses the SDK's index. | The layer works around EQL. Go, TypeScript, and SQL written by hand still get the wrong order. |
+| C. A test marked as an expected failure | Nothing changes yet. | Sorts through the layer stay wrong. |
+
+### What B does
+
+- `.asc()`, `.desc()`, `.nulls_first()`, and `.nulls_last()` on an encrypted column sort by `eql_v4.ord_term(col)`, or `eql_v4.ord_term_ore(col)` for an `ore_block` marker.
+- A bare `order_by(col)` and `sqlalchemy.asc(col)` do not go through the column type's operators. So the hooks rewrite the `ORDER BY` of each `select`: the session hook for an ORM query, and the engine hook for a query on a connection.
+- Sorting a column with no order index raises `QueryError` with `query_unsupported`. Before, it gave the order of the stored JSON, with no error.
+
+If EQL gains a sort order for its v4 column types, the rewrite can stay. The order term is also the form that uses the index.
+
 ## What was run
 
 - `tests/test_sqlalchemy.py` and `tests/test_sqlalchemy_migrations.py` run without credentials. They cover the checks, the refused operators, the indexes, and the Alembic rendering.
@@ -189,3 +214,4 @@ A never returns a row that does not hold the text. B or C can come later, if an 
 - Exact page sizes for `.match()` with a `LIMIT`: option B or C of Decision 8.
 - The reverse migration of a change to an EQL type.
 - Installing EQL from a migration.
+- A sort order for the EQL v4 column types in EQL itself, option A of Decision 9.

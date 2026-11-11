@@ -303,3 +303,62 @@ def test_a_passthrough_value_is_checked_on_a_flush(untouched):
     assert raised.value.field == "at"
     with engine.connect() as conn:
         assert conn.exec_driver_sql("SELECT count(*) FROM trips").scalar() == 0
+
+
+# ORDER BY an encrypted column.
+
+
+def order_sql(statement):
+    from sqlalchemy.dialects import postgresql
+
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+    return " ".join(sql.split("ORDER BY", 1)[1].split())
+
+
+def test_asc_and_desc_on_an_order_column_sort_by_its_order_term(scores, untouched):
+    assert order_sql(select(Score).order_by(Score.level.asc())) == "eql_v4.ord_term(scores.level) ASC"
+    assert order_sql(select(Score).order_by(Score.level.desc().nulls_last())) == (
+        "eql_v4.ord_term(scores.level) DESC NULLS LAST"
+    )
+
+
+def test_sorting_a_column_with_no_order_index_is_refused(scores, untouched):
+    with pytest.raises(QueryError) as raised:
+        Score.note.asc()
+    assert raised.value.code == "query_unsupported"
+    assert "order index" in raised.value.message
+
+
+def test_a_bare_order_by_is_sorted_by_the_order_term_in_a_session(untouched):
+    from sqlalchemy import asc
+    from sqlalchemy.orm import Session
+
+    @stackencrypt.model("laps")
+    class Lap(Base):
+        __tablename__ = "laps"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        seconds: Mapped[Annotated[int, IntegerOrd]]
+        note: Mapped[Annotated[str, Text]]
+
+    engine = create_engine("sqlite://")
+    seen = []
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        seen.append(statement)
+
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE laps (id INTEGER PRIMARY KEY, seconds TEXT, note TEXT)")
+    configure_encryption(engine, [Lap])
+
+    with Session(engine) as session:
+        for statement in (select(Lap).order_by(Lap.seconds), select(Lap).order_by(asc(Lap.seconds))):
+            try:
+                session.execute(statement)
+            except Exception:
+                pass  # SQLite has no eql_v4 functions: only the SQL matters here.
+        with pytest.raises(QueryError) as raised:
+            session.execute(select(Lap).order_by(Lap.note))
+    assert all("ORDER BY eql_v4.ord_term(laps.seconds)" in sql for sql in seen[-2:]), seen
+    assert raised.value.code == "query_unsupported"
