@@ -2,12 +2,12 @@
 //! suite's concurrent `DROP ... CASCADE` load.
 //!
 //! Why this exists: the shipped uninstaller drops both `eql_v3` schemas with
-//! `DROP ... CASCADE`. That takes a lock on every one of the ~5,700 objects it
+//! `DROP ... CASCADE`. That takes a lock on every one of the ~8,550 objects it
 //! removes and holds them until the transaction commits — `sqlx::raw_sql` sends
 //! the whole script as ONE implicit transaction. `max_locks_per_transaction` is
 //! not a per-transaction cap; it sizes the *cluster-wide* shared lock table as
 //! `max_locks_per_transaction * max_connections`. At the stock 64 * 100 = 6,400
-//! slots a single uninstall already holds ~89% of the table, so two overlapping
+//! slots a single uninstall already exceeds the whole table, so two overlapping
 //! ones exhaust it — and the backends that then fail with `53200 out of shared
 //! memory` are mostly INNOCENT tests that were merely installing EQL.
 //!
@@ -25,17 +25,17 @@ use anyhow::Result;
 use eql_tests::property::connect_pool;
 
 /// Locks held by one full run of the shipped uninstaller, measured against the
-/// v3 surface (`DROP ... CASCADE` over ~5,682 objects, plus catalog locks).
+/// v3 surface (`DROP ... CASCADE` over ~8,550 objects, plus catalog locks).
 /// This grows as the catalog grows — it is a measured floor, not a constant of
 /// nature.
-const LOCKS_PER_UNINSTALL: i64 = 5_700;
+const LOCKS_PER_UNINSTALL: i64 = 8_600;
 
 /// Worst-case simultaneous uninstalls: nextest runs one test per core, and CI
 /// runners have 16. Every one of those slots could be an uninstall-heavy test.
 const WORST_CASE_CONCURRENT_UNINSTALLS: i64 = 16;
 
-/// The capacity the suite needs: ~91k slots. The compose setting (1024 * 100 =
-/// 102,400) clears this; the stock default (6,400) misses it by ~14x.
+/// The capacity the suite needs: ~138k slots. The compose setting (1536 * 100 =
+/// 153,600) clears this; the stock default (6,400) misses it by ~24x.
 const MIN_LOCK_TABLE_CAPACITY: i64 = LOCKS_PER_UNINSTALL * WORST_CASE_CONCURRENT_UNINSTALLS;
 
 /// Read an integer GUC. Both settings are plain integers with no unit, so
