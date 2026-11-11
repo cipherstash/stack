@@ -109,3 +109,255 @@ AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b) $$;
 CREATE FUNCTION eql_v3.gte(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b) $$;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_eq and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_eq left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_real_eq, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_real_eq and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_eq (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_eq right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_real_ord_ope, b public.eql_v3_real_eq)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_real_ord_ope and public.eql_v3_real_eq'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_eq and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_eq left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_real_eq, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_real_eq and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_eq (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_eq right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_real_ord_ope, b public.eql_v3_real_eq)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_real_ord_ope and public.eql_v3_real_eq'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord_ore left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_real_ord_ore, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord_ore right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord_ore)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord_ore left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_real_ord_ore, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord_ore right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord_ore)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord_ore left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.lt(a public.eql_v3_real_ord_ore, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord_ore right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.lt(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord_ore)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord_ore left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.lte(a public.eql_v3_real_ord_ore, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord_ore right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.lte(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord_ore)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord_ore left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.gt(a public.eql_v3_real_ord_ore, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord_ore right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.gt(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord_ore)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord_ore left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.gte(a public.eql_v3_real_ord_ore, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.eql_v3_real_ord_ore and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord_ore right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.gte(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord_ore)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord_ore'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_real_ord, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_real_ord and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_real_ord, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_real_ord and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.lt(a public.eql_v3_real_ord, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'public.eql_v3_real_ord and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.lt(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.lte(a public.eql_v3_real_ord, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'public.eql_v3_real_ord and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.lte(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<=', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.gt(a public.eql_v3_real_ord, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'public.eql_v3_real_ord and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.gt(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: public.eql_v3_real_ord and eql_v3.query_real_ord_ope (mismatched query domain).
+--! @param a public.eql_v3_real_ord left operand
+--! @param b eql_v3.query_real_ord_ope right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.gte(a public.eql_v3_real_ord, b eql_v3.query_real_ord_ope)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'public.eql_v3_real_ord and eql_v3.query_real_ord_ope'; END; $$
+LANGUAGE plpgsql;
+
+--! @brief Unsupported operator blocker for eql_v3.query_real_ord_ope: eql_v3.query_real_ord_ope and public.eql_v3_real_ord (mismatched query domain).
+--! @param a eql_v3.query_real_ord_ope left operand
+--! @param b public.eql_v3_real_ord right operand
+--! @return boolean never returned — the function always raises
+CREATE FUNCTION eql_v3_internal.gte(a eql_v3.query_real_ord_ope, b public.eql_v3_real_ord)
+RETURNS boolean IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '>=', 'eql_v3.query_real_ord_ope and public.eql_v3_real_ord'; END; $$
+LANGUAGE plpgsql;
