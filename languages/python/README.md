@@ -172,10 +172,11 @@ with Session(engine) as session:
 
 - **Writes:** each INSERT or UPDATE on a listed table is encrypted with one batch of key requests for all its rows.
 - **Reads:** the objects a query loads are decrypted with one batch for each class. This includes relationship loads, and attributes read again after a commit.
-- Only encrypted fields are changed. A passthrough field is stored as SQLAlchemy writes it.
+- Only encrypted fields are changed. A passthrough field is checked as `encrypt` checks it, then stored unchanged. For example, a `datetime` with no time zone raises `InvalidValueError` with `value_naive_datetime`.
 
 - **Search:** `==`, `<`, `<=`, `>`, and `>=` on an encrypted field compare it with a query term, as `cipher.eq` and `cipher.gte` make. The field's marker must support the operator. For example, `Customer.level >= 3` works, and `Customer.email > x` raises `QueryError` with `query_unsupported`.
-- **Other operators** that would send a value, such as `like`, `in_`, `!=`, and `between`, raise `QueryError` with `query_unsupported` when you build the query. The value would reach the database as plaintext, and could never match. `is_(None)`, `is_not(None)`, `asc()`, and `desc()` send no value, so they work.
+- `!=`, `in_([...])`, and `not_in([...])` work where `==` does. `!=` becomes `NOT (col = term)`. `in_` becomes one equality for each value, joined with `OR`.
+- **Other operators** that would send a value, such as `like`, `contains`, `between`, and `in_` with a subquery, raise `QueryError` with `query_unsupported` when you build the query. The value would reach the database as plaintext, and could never match. `is_(None)`, `is_not(None)`, `asc()`, and `desc()` send no value, so they work.
 - A comparison on a class that is not configured raises `QueryError` with `query_not_configured`.
 
 Each class must be declared with `stackencrypt.model` and mapped by SQLAlchemy. `configure_encryption` refuses a class with `DeclarationError` in these cases:

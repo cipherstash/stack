@@ -197,3 +197,31 @@ def test_an_order_search_on_an_equality_field_is_unsupported(engine):
     with pytest.raises(QueryError) as raised:
         select(Customer).where(Customer.email > "a@example.com")
     assert raised.value.code == "query_unsupported"
+
+
+def test_not_equal_and_in_find_the_right_rows(engine):
+    with Session(engine) as session:
+        session.add_all(
+            [Customer(email=f"{name}@example.com", name=name, plan="free") for name in ("ann", "bob", "cy")]
+        )
+        session.commit()
+    with Session(engine) as session:
+        def names(*where):
+            return sorted(c.name for c in session.scalars(select(Customer).where(*where)))
+
+        assert names(Customer.email != "bob@example.com") == ["ann", "cy"]
+        assert names(Customer.email.in_(["ann@example.com", "cy@example.com"])) == ["ann", "cy"]
+        assert names(Customer.email.not_in(["ann@example.com"])) == ["bob", "cy"]
+        assert names(Customer.email.in_([])) == []
+
+
+def test_an_update_of_a_passthrough_field_only_makes_no_key_request(engine):
+    add_ann(engine)  # warms up the client
+    with Session(engine) as session:
+        ann = session.scalars(select(Customer)).one()
+        ann.plan = "pro"
+        before = _engine.request_count()
+        session.commit()
+        assert _engine.request_count() - before == 0
+    with Session(engine) as session:
+        assert session.scalars(select(Customer)).one().plan == "pro"

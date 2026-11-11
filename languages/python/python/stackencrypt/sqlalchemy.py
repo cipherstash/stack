@@ -17,8 +17,9 @@ query decrypts them. The app reads and writes plaintext attributes.
   plaintext is set with ``set_committed_value``, so the objects are not
   marked as changed.
 
-Only the sealed fields go through the hooks. A passthrough field is stored
-as SQLAlchemy writes it.
+On a write, every declared field goes through ``encrypt_rows``, so a
+passthrough value is checked as ``encrypt`` checks it, and stored unchanged.
+On a read, only the encrypted fields are decrypted.
 
 - Indexes: a mapped class's table gets a database index for each EQL index
   of each encrypted column, such as ``hash (eql_v4.eq_term(email))`` for ``TextEq``.
@@ -38,7 +39,7 @@ This module imports SQLAlchemy. The rest of the package does not.
 
 from typing import Annotated, Any, Callable, Dict, FrozenSet, List, Sequence, Tuple, Type
 
-from sqlalchemy import Index, String, Table, cast, event, func, inspect, literal
+from sqlalchemy import Index, String, Table, cast, event, false, func, inspect, literal, not_, or_
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Mapper, Session
 from sqlalchemy.orm.attributes import set_committed_value
@@ -46,6 +47,7 @@ from sqlalchemy.sql import operators
 from sqlalchemy.sql.dml import Insert, Update
 from sqlalchemy.types import UserDefinedType
 
+import stackencrypt
 from stackencrypt import _eql
 from stackencrypt._cipher import Cipher
 from stackencrypt._declaration import _KIND_TYPES
@@ -79,8 +81,18 @@ class EqlType(UserDefinedType):  # type: ignore[type-arg]
 
     class comparator_factory(UserDefinedType.Comparator):  # type: ignore[type-arg]
         def operate(self, op: Any, *other: Any, **kwargs: Any) -> Any:
-            if op in _NO_VALUE or (op is operators.eq and other == (None,)):
+            if op in _NO_VALUE or (op in (operators.eq, operators.ne) and other == (None,)):
                 return super().operate(op, *other, **kwargs)
+            if op is operators.ne and len(other) == 1:
+                # NOT (col = term): a NULL column matches neither, as with !=.
+                return not_(self.operate(operators.eq, other[0]))
+            if op in (operators.in_op, operators.not_in_op) and len(other) == 1:
+                values = other[0]
+                if not isinstance(values, (list, tuple, set, frozenset)):
+                    raise _refused(self.expr, op)
+                # One equality term for each value. An empty list matches no row.
+                found = or_(false(), *[self.operate(operators.eq, value) for value in values])
+                return found if op is operators.in_op else not_(found)
             method = _COMPARISONS.get(op)
             if method is None or len(other) != 1:
                 raise _refused(self.expr, op)
@@ -176,7 +188,10 @@ def render_item(type_: str, obj: Any, autogen_context: Any) -> Any:
     if type_ == "type" and isinstance(obj, EqlType):
         autogen_context.imports.add("import stackencrypt")
         autogen_context.imports.add("import stackencrypt.sqlalchemy")
-        return f"stackencrypt.sqlalchemy.EqlType(stackencrypt.{obj.marker.__name__})"
+        name = obj.marker.__name__
+        # A marker the package does not export, such as Json, is in _eql.
+        module = "stackencrypt" if hasattr(stackencrypt, name) else "stackencrypt._eql"
+        return f"stackencrypt.sqlalchemy.EqlType({module}.{name})"
     return False
 
 
@@ -384,7 +399,9 @@ def _encrypter(tables: Dict[str, Tuple[Cipher, FrozenSet[str]]]) -> Any:
         cipher, sealed = configured
         rows = [dict(row) for row in multiparams] if multiparams else [dict(params or {})]
         _refuse_inline_values(conn, clause, sealed, rows)
-        names = sealed.intersection(rows[0])
+        # Passthrough fields too: encrypt_rows checks them as encrypt does,
+        # and returns them unchanged.
+        names = _declared(cipher).intersection(rows[0])
         if not names:
             return clause, multiparams, params
         encrypted = cipher.encrypt_rows([{name: row[name] for name in names} for row in rows])
@@ -395,6 +412,10 @@ def _encrypter(tables: Dict[str, Tuple[Cipher, FrozenSet[str]]]) -> Any:
         return clause, multiparams, rows[0]
 
     return encrypt_parameters
+
+
+def _declared(cipher: Cipher) -> FrozenSet[str]:
+    return frozenset(field.name for field in cipher.declaration.fields)
 
 
 def _refuse_inline_values(conn, clause, sealed: FrozenSet[str], rows: List[Dict[str, Any]]) -> None:  # type: ignore[no-untyped-def]

@@ -123,6 +123,18 @@ def test_render_item_adds_the_imports_the_type_needs():
     assert {"import stackencrypt", "import stackencrypt.sqlalchemy"} <= autogen.imports
 
 
+def test_render_item_names_a_marker_the_package_does_not_export_by_its_module():
+    # Json is in _eql only: no model can declare it yet.
+    autogen = AutogenContext(MigrationContext.configure(dialect_name="postgresql"))
+
+    rendered = render_item("type", EqlType(_eql.Json), autogen)
+
+    assert rendered == "stackencrypt.sqlalchemy.EqlType(stackencrypt._eql.Json)"
+    namespace = {}
+    exec("import stackencrypt\nimport stackencrypt.sqlalchemy\nt = " + rendered, namespace)
+    assert namespace["t"].marker is _eql.Json
+
+
 def test_render_item_leaves_other_items_to_alembic():
     autogen = AutogenContext(MigrationContext.configure(dialect_name="postgresql"))
 

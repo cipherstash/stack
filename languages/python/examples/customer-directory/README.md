@@ -60,8 +60,6 @@ The app calls `configure_encryption(engine, [Customer])` once, at start-up. Afte
 
 The base class sets `type_annotation_map = eql_type_map`, so the model names no SQL types. `schema.sql` still creates the table, not SQLAlchemy.
 
-The hooks check only the encrypted fields. So `CustomerBody` declares `created_at` as Pydantic's `AwareDatetime`. That type refuses a time with no time zone.
-
 ## Run the tests
 
 The tests use the real ZeroKMS service and the example's PostgreSQL. They run against both apps. They empty the `customers` table. CI does not run them.

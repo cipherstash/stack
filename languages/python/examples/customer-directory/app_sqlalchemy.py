@@ -16,7 +16,7 @@ import stackencrypt
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from psycopg.errors import UniqueViolation
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from stackencrypt import Ignore, Passthrough, Text, TextEq
@@ -69,9 +69,7 @@ class CustomerBody(BaseModel):
     email: str
     name: str
     plan: str
-    # Aware: the hooks check only the encrypted fields, so a passthrough
-    # datetime with no time zone is refused here.
-    created_at: AwareDatetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class Search(BaseModel):
