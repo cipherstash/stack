@@ -1,6 +1,6 @@
 """The query methods before any request: the field checks and the value checks.
 
-``eq``, ``lt``, ``lte``, ``gt`` and ``gte`` (ADR-0003). A name that is not a
+``eq``, ``lt``, ``lte``, ``gt``, ``gte`` and ``matches`` (ADR-0003). A name that is not a
 declared field, a field that does not support the operator, and a value that
 does not fit are all refused before the shared client is built.
 So these tests need fake credentials only, and make no request. The live
@@ -179,8 +179,32 @@ def test_the_message_never_contains_the_value(untouched):
 
 
 @pytest.mark.parametrize(
+    ("field", "value", "marker"),
+    [("email", "a@example.com", "TextEq"), ("level", 3, "IntegerOrd")],
+)
+def test_a_field_with_no_match_index_answers_no_matches(untouched, field, value, marker):
+    error = refused(field, value, op="matches")
+    assert error.code == "query_unsupported"
+    assert error.reason == marker
+    assert "does not support matches" in error.message
+    assert "Fields that support matches: 'notes'." in error.message
+
+
+def test_matches_takes_text_only(untouched):
+    error = refused("notes", 3, InvalidValueError, op="matches")
+    assert error.code == "value_wrong_type"
+    assert error.field == "notes"
+
+
+def test_matches_message_never_contains_the_text(untouched):
+    error = refused("email", "zebracorn", op="matches")
+    assert "zebracorn" not in str(error)
+
+
+@pytest.mark.parametrize(
     ("op", "field", "value"),
-    [("eq", "email", "a@example.com")] + [(op, "level", 3) for op in ORDER],
+    [("eq", "email", "a@example.com"), ("matches", "notes", "hello")]
+    + [(op, "level", 3) for op in ORDER],
 )
 def test_a_query_that_passes_every_check_reaches_the_engine(op, field, value):
     # Refused later by the engine for want of a client key, not by the

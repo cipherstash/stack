@@ -8,7 +8,7 @@ query terms.
 """
 
 from stackencrypt import _engine, _eql
-from stackencrypt._cipher import Cipher
+from stackencrypt._cipher import Cipher, MatchQuery
 from stackencrypt._declaration import model
 # The markers for the EQL types the engine produces today. `_eql.__all__`
 # lists them; a marker the engine cannot produce yet stays in `_eql` only.
@@ -35,6 +35,7 @@ __all__ = [
     "DecryptError",
     "Ignore",
     "InvalidValueError",
+    "MatchQuery",
     "Passthrough",
     "QueryError",
     "StashError",

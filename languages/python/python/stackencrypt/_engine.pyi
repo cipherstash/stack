@@ -46,6 +46,22 @@ def operators(plan: Plan, field: str) -> List[str]:
     ``field``, from the plan, with no request. A passthrough field has
     none."""
 
+def verify(plan: Plan, field: str, text: str, values: List[str]) -> List[bool]:
+    """For each value, whether it holds every token of the match text
+    ``text`` on the match field ``field``. No key and no request."""
+
+def target_limit(
+    plan: Plan,
+    field: str,
+    term: str,
+    want: int,
+    rows: int,
+    histogram: Optional[List[Tuple[int, int]]] = None,
+    confidence: Optional[float] = None,
+) -> Optional[int]:
+    """The rows to fetch so that ``want`` of them verify, or ``None`` when
+    no finite number can be promised. No key and no request."""
+
 def client_builds() -> int:
     """How many times the shared engine client has been built. For tests."""
 

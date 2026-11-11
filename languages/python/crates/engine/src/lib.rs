@@ -113,6 +113,8 @@ fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(decrypt::decrypt, module)?)?;
     module.add_function(wrap_pyfunction!(query::query, module)?)?;
     module.add_function(wrap_pyfunction!(query::operators, module)?)?;
+    module.add_function(wrap_pyfunction!(query::verify, module)?)?;
+    module.add_function(wrap_pyfunction!(query::target_limit, module)?)?;
     module.add_function(wrap_pyfunction!(encrypt::client_builds, module)?)?;
     module.add_function(wrap_pyfunction!(encrypt::request_count, module)?)?;
     module.add_function(wrap_pyfunction!(encrypt::requests, module)?)?;
