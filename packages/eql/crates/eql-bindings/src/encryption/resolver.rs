@@ -1,6 +1,8 @@
-//! The EQL types as Stack Encrypt's resolver: [`EqlTargets`], and the two
-//! conversions it is built from. The module is private, so the type's own
-//! documentation is what a reader sees.
+//! [`EqlTargets`] gives the EQL types to Stack Encrypt. This module also
+//! has the two conversions that `EqlTargets` uses.
+//!
+//! This module is private. Readers of the published docs only read the
+//! documentation on `EqlTargets`.
 
 use stack_encrypt::dynamic::{self, TargetDescriptor, TargetOptions, TargetResolver, ValueFrame};
 use stack_encrypt::target::IndexSpec;
@@ -8,17 +10,20 @@ use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 
 use super::targets::{self, decrypt, encrypt_with, query, Target, TargetError};
 
-/// Every EQL type this crate defines, as Stack Encrypt's resolver.
+/// Gives Stack Encrypt every EQL type that this crate defines.
 ///
-/// Stack Encrypt's dynamic interface runs a plan that arrives as data. A
-/// field of that plan may name an EQL type, such as `"TextEq"`. Stack
-/// Encrypt does not depend on this crate, so a program gives it the EQL
-/// types through a [`TargetResolver`]. `EqlTargets` is that resolver. It
-/// holds every type in [`targets`](super::targets::targets), and runs a
-/// named type through [`encrypt_with`], [`decrypt`] and [`query`].
+/// The dynamic interface of Stack Encrypt runs a plan that arrives as
+/// data. A field of that plan can name an EQL type, such as `"TextEq"`.
+/// Stack Encrypt does not depend on this crate, so your program passes the
+/// EQL types to Stack Encrypt through a [`TargetResolver`]. `EqlTargets`
+/// is that resolver.
 ///
-/// Pass `&EqlTargets` wherever the dynamic interface takes a resolver, such
-/// as `stack_encrypt::dynamic::record::plan_with`.
+/// `EqlTargets` lists every type in [`targets`](super::targets::targets).
+/// For a type that a plan names, `EqlTargets` calls [`encrypt_with`],
+/// [`decrypt`], or [`query`].
+///
+/// Pass `&EqlTargets` wherever the dynamic interface accepts a resolver,
+/// such as `stack_encrypt::dynamic::record::plan_with`.
 ///
 /// ```
 /// use eql_bindings::encryption::EqlTargets;
@@ -30,9 +35,9 @@ use super::targets::{self, decrypt, encrypt_with, query, Target, TargetError};
 /// # Ok::<(), stack_encrypt::dynamic::TargetError>(())
 /// ```
 ///
-/// The resolver sees a type's name and a field's label. It never sees the
-/// field's name, so a refusal leaves the field name empty and the engine
-/// fills it in.
+/// Stack Encrypt passes the resolver a type's name and a field's label,
+/// and never the field's name. An error from the resolver therefore has
+/// an empty field name, and Stack Encrypt adds the name.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EqlTargets;
 
@@ -77,17 +82,17 @@ impl TargetResolver for EqlTargets {
     }
 }
 
-/// A row of the target table as the engine's descriptor. The two have one
-/// wire format.
+/// Converts a row of the target table to the descriptor that Stack
+/// Encrypt uses. The row and the descriptor have the same wire format.
 ///
-/// The descriptor also carries what the engine needs and the wire does
-/// not:
+/// The descriptor also contains two things that Stack Encrypt needs and
+/// the wire format leaves out:
 ///
-/// - the match options, for a type with a match index. The engine answers
-///   `matches` through the type only when it knows them;
-/// - the three query domains of a type that stores a JSON document. An
-///   ordering at a path binds as the leaf operand, `element_match` as the
-///   elements operand, and `match` as the predicate operand.
+/// - The match options, for a type with a match index. Stack Encrypt runs
+///   `matches` through the type only when the descriptor has them.
+/// - The three query domains, for a type that stores a JSON document. An
+///   ordering at a path uses the leaf domain. `element_match` uses the
+///   elements domain. `match` uses the predicate domain.
 impl From<&Target> for TargetDescriptor {
     fn from(target: &Target) -> Self {
         let mut descriptor = TargetDescriptor::new(
@@ -118,14 +123,19 @@ impl From<&Target> for TargetDescriptor {
     }
 }
 
-/// A refusal of this crate as the engine's. The field name is left empty:
-/// the engine fills it in, since the resolver never sees it.
+/// Converts an error of this crate to the error type of Stack Encrypt.
 ///
-/// No variant carries a byte of a plaintext or of a stored value. A value
-/// that is not a JSON document keeps the engine's code for what was wrong.
-/// A stored value that does not parse keeps the parser's kind and position
-/// and not its message, because `serde_json` quotes the input it refused,
-/// and that input is stored ciphertext.
+/// The field name is left empty. Stack Encrypt adds the name, because the
+/// resolver never receives it.
+///
+/// No variant contains any byte of a plaintext or of a stored value:
+///
+/// - For a value that is not a JSON document, the error keeps the code
+///   that Stack Encrypt gave for the fault.
+/// - For a stored value that does not parse, the error keeps the kind and
+///   position that the parser reported, and drops the parser's message.
+///   `serde_json` quotes the input it refused in that message, and the
+///   input is stored ciphertext.
 impl From<TargetError> for dynamic::TargetError {
     fn from(error: TargetError) -> Self {
         match error {
@@ -162,12 +172,19 @@ impl From<TargetError> for dynamic::TargetError {
                 target: target.to_owned(),
                 reason: stack_encrypt::diagnostic::describe_json_error(&source),
             },
-            // The engine refuses each of these before it calls the
-            // resolver: it derives a document's queries itself, asks a query
-            // only through an index the type carries, and refuses options on
-            // a type with no JSON index when it builds the plan. Reaching
-            // one is the engine's failure, not the caller's input. Each is
-            // named, so a variant added later must be placed by hand.
+            // Stack Encrypt refuses each of these before it calls the
+            // resolver:
+            //
+            // - Stack Encrypt derives the queries of a document itself.
+            // - Stack Encrypt only asks for a query through an index that
+            //   the type has.
+            // - Stack Encrypt refuses options on a type with no JSON index
+            //   when it builds the plan.
+            //
+            // If the resolver returns one of these, the fault is in Stack
+            // Encrypt, not in the caller's input. The match names each
+            // variant, so that a variant added later does not compile
+            // until someone decides where it goes.
             error @ (TargetError::DocumentQuery { .. }
             | TargetError::NoIndex { .. }
             | TargetError::Options { .. }) => Self::Other(Box::new(error)),

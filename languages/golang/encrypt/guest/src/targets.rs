@@ -3,16 +3,19 @@
 //! target fields through. The two names below are cfg-dependent, so they
 //! are code spans, not links: a doc build of either feature set resolves.
 //!
-//! Two builds of this crate, one resolver each (ADR-0007, amended
-//! 2026-10-06). With the `eql` feature, [`Resolver`] is `eql-bindings`'
-//! own resolver (`eql_bindings::encryption::EqlTargets`): `se_targets`
-//! lists every EQL type the catalog has, and a plan field naming a
-//! producible one (`TextEq`) is run through that type's own plan, in the
-//! same ZeroKMS request as the rest of the record. Without it,
-//! [`Resolver`] is the engine's `NoTargets`
-//! (`stack_encrypt::dynamic::NoTargets`): `se_targets` lists nothing, and
-//! a plan that names a target is refused when it is parsed — at
-//! `se_plan_check`, before any value crosses.
+//! This crate has two builds. Each build has one resolver (ADR-0007,
+//! amended 2026-10-06).
+//!
+//! - With the `eql` feature, [`Resolver`] is the resolver from
+//!   `eql-bindings`, `eql_bindings::encryption::EqlTargets`. `se_targets`
+//!   lists every EQL type in the catalog. A plan field can name any type
+//!   that the build can produce, such as `TextEq`. The build encrypts that
+//!   field with the type's own plan, in the same ZeroKMS request as the
+//!   rest of the record.
+//! - Without the feature, [`Resolver`] is `NoTargets` from Stack Encrypt,
+//!   `stack_encrypt::dynamic::NoTargets`. `se_targets` lists nothing.
+//!   `se_plan_check` refuses a plan that names a type when it parses the
+//!   plan, before the guest receives any value.
 //!
 //! The Go module embeds both: `encrypt` the build without EQL types,
 //! `encrypt/eql` the build with them, registered on import, so a program
