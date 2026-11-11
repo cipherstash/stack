@@ -94,3 +94,47 @@ test.each([
     expect(() => isolation.drain()).toThrow(/limit/i)
   },
 )
+
+test('default frame budget accepts the supervisor maximum one-MiB stderr payload', async () => {
+  // supervise.py reads up to 1 MiB of diagnostics and emits one base64 frame.
+  const stderr = 'x'.repeat(1024 * 1024)
+  spawnDocker.mockImplementation((_bin, args: string[]) => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: { end: vi.fn() },
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+    })
+    setImmediate(() => {
+      if (args[0] === 'run' && args.includes('-i')) {
+        for (const frame of [
+          { kind: 'stderr', data: Buffer.from(stderr).toString('base64') },
+          {
+            kind: 'actor-exit',
+            actor: 'stderr-probe',
+            stage: 'command',
+            exitCode: 0,
+          },
+          { kind: 'stream-end' },
+          { kind: 'exit', exitCode: 0 },
+        ])
+          child.stdout.write(`${JSON.stringify(frame)}\n`)
+      }
+      child.stdout.end()
+      child.stderr.end()
+      child.emit('close', 0)
+    })
+    return child
+  })
+  const isolation = createIsolation()
+  await expect(
+    isolation.exec({
+      actor: 'stderr-probe',
+      workspace: '/synthetic-workspace',
+      command: ['true'],
+      probe: true,
+    }),
+  ).resolves.toMatchObject({ exitCode: 0, stderr })
+  expect(spawnDocker.mock.calls.some(([, args]) => args[0] === 'kill')).toBe(
+    false,
+  )
+})

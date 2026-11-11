@@ -47,7 +47,8 @@ export function createIsolation({
     outputBytes: 16 * 1024 * 1024,
     eventCount: 250_000,
     eventBytes: 64 * 1024 * 1024,
-    frameBytes: 64 * 1024,
+    // supervise.py emits up to 1 MiB of stderr in one base64 JSON frame.
+    frameBytes: 2 * 1024 * 1024,
     ...limits,
   }
   if (
