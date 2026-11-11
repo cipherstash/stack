@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use crate::secret_buf::SecretBuf;
 use crate::{ProfileData, ProfileError};
 
 const CS_CONFIG_PATH_ENV: &str = "CS_CONFIG_PATH";
@@ -291,8 +292,12 @@ impl ProfileStore {
         Self::validate_filename(filename)?;
         std::fs::create_dir_all(&self.dir)?;
         let path = self.dir.join(filename);
-        let json = serde_json::to_string_pretty(value)?;
-        Self::write_to_path(&path, &json, _mode)
+        // The serialised form of a profile can carry secrets (`auth.json`'s
+        // tokens, `secretkey.json`'s key), so it is built in a buffer that is
+        // wiped on drop and on every reallocation, never in a plain `String`.
+        let mut json = SecretBuf::new();
+        serde_json::to_writer_pretty(&mut json, value)?;
+        Self::write_to_path(&path, json.as_bytes(), _mode)
     }
 
     /// Atomically write JSON content to an absolute path, optionally setting
@@ -324,7 +329,7 @@ impl ProfileStore {
     /// processes won't trip this — but to defend against third-party
     /// readers we retry the rename a handful of times with brief backoff
     /// before giving up.
-    fn write_to_path(path: &Path, json: &str, _mode: Option<u32>) -> Result<(), ProfileError> {
+    fn write_to_path(path: &Path, json: &[u8], _mode: Option<u32>) -> Result<(), ProfileError> {
         use std::io::Write;
 
         let parent = path.parent().ok_or_else(|| {
@@ -363,7 +368,7 @@ impl ProfileStore {
                 }
                 opts.open(&tmp_path)?
             };
-            file.write_all(json.as_bytes())?;
+            file.write_all(json)?;
             file.sync_all()?;
             drop(file);
 
@@ -451,9 +456,28 @@ impl ProfileStore {
     pub fn load<T: DeserializeOwned>(&self, filename: &str) -> Result<T, ProfileError> {
         Self::validate_filename(filename)?;
         let path = self.dir.join(filename);
-        match std::fs::read_to_string(&path) {
+        // Read into a buffer wiped on drop and on growth: the file may hold
+        // secrets (see `write`). `fs::read` would not do: it reallocates, and
+        // frees an unwiped copy, whenever the file's metadata under-reports
+        // its length.
+        //
+        // serde_json still decodes a string containing escape sequences
+        // through a scratch buffer of its own, which it does not wipe. Tokens
+        // and keys are base64 or JWTs, which need no escaping, so that path
+        // is not taken for them.
+        match std::fs::File::open(&path).and_then(SecretBuf::read_from) {
             Ok(contents) => {
-                let value: T = serde_json::from_str(&contents)?;
+                // Validate the whole file as UTF-8 first, as `read_to_string`
+                // did: `from_slice` skips the bytes of fields it ignores, so
+                // it would accept invalid UTF-8 in an unknown field. This
+                // borrows the buffer, so it makes no copy.
+                let text = std::str::from_utf8(contents.as_bytes()).map_err(|_| {
+                    ProfileError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "profile file is not valid UTF-8",
+                    ))
+                })?;
+                let value: T = serde_json::from_str(text)?;
                 Ok(value)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -619,6 +643,32 @@ mod tests {
 
         let err = store.load::<TestData>("missing.json").unwrap_err();
         assert!(matches!(err, ProfileError::NotFound { .. }));
+    }
+
+    fn assert_invalid_utf8_is_an_io_error(contents: &[u8]) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfileStore::new(dir.path());
+        std::fs::write(dir.path().join("data.json"), contents).unwrap();
+
+        let err = store.load::<TestData>("data.json").unwrap_err();
+        assert!(
+            matches!(&err, ProfileError::Io(e) if e.kind() == std::io::ErrorKind::InvalidData),
+            "a non-UTF-8 file should be an InvalidData I/O error, as before; got {err:?}"
+        );
+    }
+
+    #[test]
+    fn load_rejects_invalid_utf8_in_a_known_field() {
+        assert_invalid_utf8_is_an_io_error(b"{\"name\": \"\xff\", \"value\": 1}");
+    }
+
+    #[test]
+    fn load_rejects_invalid_utf8_in_an_unknown_field() {
+        // serde_json skips an ignored field's bytes without validating them,
+        // so this file would load if UTF-8 were left to the parser.
+        assert_invalid_utf8_is_an_io_error(
+            b"{\"name\": \"ok\", \"value\": 1, \"extra\": \"\xff\"}",
+        );
     }
 
     #[test]

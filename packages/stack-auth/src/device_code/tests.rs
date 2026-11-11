@@ -423,16 +423,13 @@ async fn test_poll_for_token_authorization_pending_then_success() {
     let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
-    mocks.mock(|when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("authorization_pending"));
-    });
+    mock_token_errors(&mut mocks, "authorization_pending", 2);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
 
     // Use tokio::join! so the swap future can borrow server.mocks() directly
     // (the shared RwLock) rather than cloning the MockSet.
-    // First poll at T=5s returns "authorization_pending".
+    // Polls at T=0s and T=5s return "authorization_pending".
     // At T=6s the mock is swapped. Second poll at T=10s returns success.
     let (result, _) = tokio::join!(pending.poll_for_token(), async {
         tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
@@ -456,10 +453,7 @@ async fn test_poll_for_token_slow_down_then_success() {
     let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
-    mocks.mock(|when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("slow_down"));
-    });
+    mock_token_errors(&mut mocks, "slow_down", 2);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
 
@@ -502,16 +496,199 @@ async fn test_poll_for_token_slow_down_increases_interval() {
             "expires_in": 12
         }));
     });
-    mocks.mock(|when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("slow_down"));
-    });
+    mock_token_errors(&mut mocks, "slow_down", 2);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
 
     let err = pending.poll_for_token().await.unwrap_err();
 
     assert!(matches!(err, AuthError::TokenExpired(_)));
+}
+
+/// Answer the token endpoint with `error` for at most `polls` requests,
+/// then with `access_denied`. A test whose server never stops answering
+/// `authorization_pending` or `slow_down` would spin forever if polling
+/// stopped waiting between requests (paused time only advances when the
+/// runtime is idle); the cap turns that into a fast failure instead.
+fn mock_token_errors(mocks: &mut MockSet, error: &'static str, polls: usize) {
+    mocks.mock_with_options(1, Some(polls), move |when, then| {
+        when.post().path("/oauth/device/token");
+        then.bad_request().json(error_json(error));
+    });
+    mocks.mock_with_options(2, None, |when, then| {
+        when.post().path("/oauth/device/token");
+        then.bad_request().json(error_json("access_denied"));
+    });
+}
+
+fn device_code_json_expiring_in(expires_in: u64) -> serde_json::Value {
+    let mut json = device_code_json();
+    json["expires_in"] = expires_in.into();
+    json
+}
+
+/// A server-supplied device-code lifetime past the cap is clamped, so the
+/// poll deadline (`Instant::now() + expires_in`) cannot overflow and panic.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_clamps_an_oversized_device_code_lifetime() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/code");
+        then.json(device_code_json_expiring_in(u64::MAX));
+    });
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/token");
+        then.json(token_json());
+    });
+    let server = start_server(mocks).await;
+
+    let pending = begin_pending(&server, &dir).await;
+    assert_eq!(
+        pending.expires_in(),
+        3_600,
+        "an oversized device-code lifetime must be clamped to one hour"
+    );
+
+    let token = pending
+        .poll_for_token()
+        .await
+        .expect("polling must not panic on an oversized device-code lifetime");
+    assert!(!token.is_expired());
+}
+
+/// The clamped deadline is still enforced: once it passes, polling stops
+/// with `TokenExpired` rather than running for as long as the server said.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_expires_at_the_clamped_deadline() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/code");
+        then.json(device_code_json_expiring_in(u64::MAX));
+    });
+    mock_token_errors(&mut mocks, "authorization_pending", 721);
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+    let started = tokio::time::Instant::now();
+
+    let err = pending.poll_for_token().await.unwrap_err();
+
+    assert!(matches!(err, AuthError::TokenExpired(_)));
+    let elapsed = started.elapsed().as_secs();
+    assert!(
+        (MAX_DEVICE_CODE_LIFETIME_SECS..MAX_DEVICE_CODE_LIFETIME_SECS + 10).contains(&elapsed),
+        "polling should stop at the one-hour cap; stopped after {elapsed}s"
+    );
+}
+
+fn mock_pending_for(mocks: &mut MockSet, expires_in: u64, polls: usize) {
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/code");
+        then.json(device_code_json_expiring_in(expires_in));
+    });
+    mock_token_errors(mocks, "authorization_pending", polls);
+}
+
+/// The lifetime runs from when the code was received, not from when
+/// polling starts: a caller that waits past it gets no fresh window.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_counts_the_lifetime_from_begin() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mock_pending_for(&mut mocks, 900, 1);
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+
+    tokio::time::advance(tokio::time::Duration::from_secs(901)).await;
+    let started = tokio::time::Instant::now();
+    let err = pending.poll_for_token().await.unwrap_err();
+
+    assert!(matches!(err, AuthError::TokenExpired(_)));
+    assert_eq!(
+        started.elapsed().as_secs(),
+        0,
+        "an already-expired code must not be polled for another window"
+    );
+}
+
+/// Polling stops at the deadline itself, not at the first poll after it.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_does_not_sleep_past_the_deadline() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    // Polls at T=0 and T=5; the next would be T=10, past the 7s deadline.
+    mock_pending_for(&mut mocks, 7, 2);
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+    let started = tokio::time::Instant::now();
+
+    let err = pending.poll_for_token().await.unwrap_err();
+
+    assert!(matches!(err, AuthError::TokenExpired(_)));
+    assert_eq!(
+        started.elapsed().as_secs(),
+        7,
+        "polling should stop at the deadline, not sleep past it"
+    );
+}
+
+/// Polling waits the interval between requests: the server allows exactly
+/// the polls that fit before the deadline, so one more fails the test.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_waits_the_interval_between_polls() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/code");
+        then.json(device_code_json_expiring_in(12));
+    });
+    // Polls at T=0, 5 and 10; the next would be T=15, past the deadline.
+    mock_token_errors(&mut mocks, "authorization_pending", 3);
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+    let started = tokio::time::Instant::now();
+
+    let err = pending.poll_for_token().await.unwrap_err();
+
+    assert!(
+        matches!(err, AuthError::TokenExpired(_)),
+        "expected the deadline to end polling after three polls, got {err:?}"
+    );
+    assert_eq!(started.elapsed().as_secs(), 12);
+}
+
+/// A server-supplied token lifetime past the cap is clamped on the
+/// device-code path too, rather than wrapping `now + expires_in` to a
+/// timestamp in the past.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_clamps_an_oversized_token_lifetime() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mock_code_endpoint(&mut mocks);
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/token");
+        then.json(serde_json::json!({
+            "access_token": test_access_token(),
+            "token_type": "Bearer",
+            "expires_in": u64::MAX
+        }));
+    });
+    let server = start_server(mocks).await;
+
+    let token = begin_pending(&server, &dir)
+        .await
+        .poll_for_token()
+        .await
+        .unwrap();
+
+    let max = crate::token::MAX_TOKEN_LIFETIME_SECS;
+    assert!(!token.is_expired(), "the token must not wrap to expired");
+    assert!(
+        (max - 2..=max).contains(&token.expires_in()),
+        "token lifetime should be clamped; got {}",
+        token.expires_in()
+    );
 }
 
 // ---- ensure_trailing_slash / URL join tests ----
