@@ -24,21 +24,23 @@
 //! keys (required by every scalar domain CHECK, mirroring `ENVELOPE_KEYS` in
 //! `eql-domains`): `v`, `i`, `c`. Then the domain's required term keys — `hm`
 //! for `_eq`, `op` for `_ord`/`_ord_ope`, `ob` for `_ord_ore`, `bf` for
-//! `_match`, none for
-//! storage-only. `Option` does not appear in the generated scalar structs: the
+//! `_match` (and, alongside the ordering term, for the `_search` domains),
+//! none for storage-only. `Option` does not appear in the generated scalar structs: the
 //! capability **is** the type identity. Hold a [`integer::IntegerEq`] and `hm` is
 //! present, guaranteed by the Rust type and (SQL-side) by the domain CHECK. A
 //! missing term key is a deserialization error — the Rust analogue of the CHECK
 //! constraint.
 //!
 //! One exception to "the ordering term alone": `text`'s ordered domains carry **both**
-//! `hm` and the ordering term (`text_ord`/`text_ord_ope`/`text_search` carry
-//! `hm` + `op`; `text_ord_ore`/`text_search_ore` carry `hm` + `ob`), where the non-text
+//! `hm` and the ordering term (`text_ord`/`text_ord_ope` carry `hm` + `op`;
+//! `text_ord_ore` carries `hm` + `ob`; `text_search` carries `hm` + `op` +
+//! `bf`; `text_search_ore` carries `hm` + `ob` + `bf`), where the non-text
 //! ordered domains carry the ordering term alone. Text routes `=`/`<>`
 //! through `hm` rather than the ordering term because lexicographic ORE/OPE
 //! over text is not equality-lossless, so equality needs the HMAC. The
 //! generated struct doc surfaces this structurally — its required-keys line
-//! lists `hm` `op` (or `hm` `ob`) rather than just the ordering key.
+//! lists `hm` `op` (or `hm` `ob`, plus `bf` for the `_search` domains) rather than
+//! just the ordering key.
 //!
 //! The generated flat-scalar types are also **strict**: every scalar struct is
 //! `#[serde(deny_unknown_fields)]`, so a payload carrying keys outside the
