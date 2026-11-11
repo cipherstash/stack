@@ -4,6 +4,7 @@ date: 2026-10-16
 accepted: 2026-10-27, by the review on PR #1284; the status edit rode with the first implementation PR, as the spec (#1341) says
 extends: ADR-0007, ADR-0008 (packages/stack-encrypt/docs/adr)
 ticket: the Python SDK discovery ticket, backlog item 1 (its 15 October 2026 amendment)
+amended_by: "Amendment, 2026-11-11: a field can be Optional"
 ---
 
 # A declaration is checked when Python defines the class, by construction
@@ -503,3 +504,30 @@ file and a hand-written one reports the class's module.
   shapes) and 1.3 (typing the encrypted output).
   This ADR takes `Annotated` as the input they compare against, which is
   decision 5's default.
+
+## Amendment, 2026-11-11: a field can be Optional
+
+The decorator now accepts `Optional[T]` inside the `Annotated`, as in `Annotated[Optional[str], TextEq]`. It also accepts `T | None`. Before this, it refused them with `declaration_type_mismatch`.
+
+An app that ports a schema has many nullable columns. Without `Optional`, it could only write `Annotated[str, TextEq]` on a nullable column. That type hint was wrong, and `encrypt` still refused `None` with `value_none`. So a row with a missing value could not be stored at all.
+
+A field declared `Optional` can be missing:
+
+- `encrypt` writes `None` as a missing value. The plan gives the field `"null": "sql"`, so the engine stores nothing for it, and the column holds SQL `NULL`.
+- `decrypt` reads SQL `NULL` back as `None`.
+- A passthrough `None` is stored as a null.
+- A query term cannot be made for `None`. It raises `value_none`, and the message points to `IS NULL`.
+
+A field without `Optional` still refuses `None`, so the check still runs when the class statement runs and before any request.
+
+### Why `"sql"` and not `"sealed"`
+
+The engine has two ways to store a missing value (`packages/stack-encrypt/src/dynamic/record.rs`, `NullMode`):
+
+- `"sql"` stores nothing. The column shows which rows have no value. Any EQL type can use it.
+- `"sealed"` encrypts the missing value like a value, so the column does not show which rows have none. It works only for a fixed-width type, such as a number or a date, with an equality index alone.
+
+`Optional` means `"sql"`. It is what a nullable column means in a normal table, and it works for every marker, text included. An app that stores a placeholder, such as an empty string, in place of `None` shows the same thing: with an equality index, every placeholder row has the same term. `"sealed"` can come later, as an option a fixed-width field asks for.
+
+The Go SDK declares a nullable field as a pointer, with a `null=sql` or `null=sealed` tag, and refuses a pointer with no tag (`languages/golang/encrypt/gensupport/declaration.go`). Python needs no tag for the common case, because `Optional` already says the field can be missing.
+

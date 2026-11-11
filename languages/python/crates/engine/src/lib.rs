@@ -45,11 +45,15 @@ fn build_info() -> (&'static str, &'static str) {
 /// accepts the plan, or its refusal as `(code, message, field, reason)`. The
 /// Python side raises it as a `DeclarationError`.
 #[pyfunction]
-fn check_plan(table: &str, fields: Vec<(String, Option<String>)>) -> Option<RefusalTuple> {
+fn check_plan(table: &str, fields: Vec<(String, Option<String>, bool)>) -> Option<RefusalTuple> {
     let fields: Vec<(&str, Column<'_>)> = fields
         .iter()
-        .map(|(name, eql_type)| {
-            let column = eql_type.as_deref().map_or(Column::Passthrough, Column::Eql);
+        .map(|(name, eql_type, nullable)| {
+            let column = match (eql_type.as_deref(), nullable) {
+                (Some(eql_type), true) => Column::NullableEql(eql_type),
+                (Some(eql_type), false) => Column::Eql(eql_type),
+                (None, _) => Column::Passthrough,
+            };
             (name.as_str(), column)
         })
         .collect();

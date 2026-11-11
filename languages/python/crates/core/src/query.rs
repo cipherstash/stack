@@ -243,6 +243,7 @@ mod tests {
             vec![Field {
                 name: "level".to_owned(),
                 eql: Some(("IntegerOrd".to_owned(), Kind::Int32)),
+                nullable: false,
             }],
         )
         .unwrap()
@@ -294,6 +295,7 @@ mod tests {
             vec![Field {
                 name: "notes".to_owned(),
                 eql: Some(("TextMatch".to_owned(), Kind::String)),
+                nullable: false,
             }],
         )
         .unwrap()
@@ -409,6 +411,7 @@ mod tests {
                 vec![Field {
                     name: "rank".to_owned(),
                     eql: Some((eql.to_owned(), kind)),
+                    nullable: false,
                 }],
             )
             .unwrap();

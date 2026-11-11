@@ -18,6 +18,10 @@ use crate::targets;
 pub enum Column<'a> {
     /// A field sealed as the EQL type of this name, such as `TextEq`.
     Eql(&'a str),
+    /// As [`Column::Eql`], for a field that can be missing. The engine
+    /// stores nothing for a null (`"null": "sql"`), so the column holds SQL
+    /// `NULL`, and opens a missing value as a null.
+    NullableEql(&'a str),
     /// A field stored as it is.
     Passthrough,
 }
@@ -90,10 +94,20 @@ struct Spec<'a> {
 
 impl Serialize for Spec<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut spec = serializer.serialize_struct("Spec", 2)?;
+        // The frame needs each container's exact length.
+        let len = if matches!(self.column, Column::NullableEql(_)) {
+            3
+        } else {
+            2
+        };
+        let mut spec = serializer.serialize_struct("Spec", len)?;
         spec.serialize_field("context", &self.context)?;
         match self.column {
             Column::Eql(name) => spec.serialize_field("target", name)?,
+            Column::NullableEql(name) => {
+                spec.serialize_field("target", name)?;
+                spec.serialize_field("null", "sql")?;
+            }
             Column::Passthrough => spec.serialize_field("outputs", &["passthrough"])?,
         }
         spec.end()

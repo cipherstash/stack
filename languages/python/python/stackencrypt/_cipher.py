@@ -409,6 +409,7 @@ def _build_plan(declaration: Declaration, fields: Sequence[DeclaredField]) -> ob
                 None if field.marker is Passthrough else field.marker.name,
                 None if field.marker is Passthrough else field.marker.plaintext,
                 field.value_type,
+                field.nullable,
             )
             for field in fields
         ],

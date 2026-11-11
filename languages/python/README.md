@@ -87,6 +87,25 @@ A passthrough `datetime` field needs a `timestamptz` column. psycopg reads a `ti
 
 `decrypt` checks every row before it sends anything. A value stored under another table or column raises `DecryptError` with the code `decrypt_foreign_row`. A passthrough value of another type than the field declares raises `InvalidValueError`. When any row fails, `decrypt` returns no instances.
 
+## A field that can be missing
+
+Declare a field that can be `None` with `Optional` inside the `Annotated`:
+
+```text
+city: Annotated[Optional[str], TextEq]
+visits: Annotated[Optional[int], Passthrough]
+```
+
+`str | None` works too, from Python 3.10. Put `Optional` inside the `Annotated`, not around it. `Optional[Annotated[str, TextEq]]` raises `DeclarationError` with `declaration_marker_not_outermost`.
+
+`encrypt` gives `None` for a missing value, and the column stores SQL `NULL`. `decrypt` reads SQL `NULL` back as `None`. So a column for an `Optional` field must allow `NULL`.
+
+A missing value is not encrypted. Anyone who can read the table can see which rows have no value in that column. They cannot see the values that are there.
+
+A query term cannot be made for `None`. `cipher.eq("city", None)` raises `InvalidValueError` with `value_none`. Search for missing values with `WHERE city IS NULL`.
+
+A field without `Optional` still refuses `None`, with `value_none`.
+
 ## Search by equality
 
 `cipher.eq` takes a field's name and a value, and returns a query term as a `str`. Cast the term to the field's query type in the SQL:
@@ -168,7 +187,7 @@ with Session(engine) as session:
     customer.email                                     # "a@example.com"
 ```
 
-`eql_type_map` gives each encrypted field its EQL column type, such as `public.eql_v4_text_eq` for `TextEq`. So a column needs no type of its own. `Base.metadata.create_all(engine)` creates the EQL columns.
+`eql_type_map` gives each encrypted field its EQL column type, such as `public.eql_v4_text_eq` for `TextEq`. So a column needs no type of its own. `Base.metadata.create_all(engine)` creates the EQL columns. A field declared `Mapped[Annotated[Optional[str], TextEq]]` gets the same type, and SQLAlchemy makes its column nullable.
 
 - **Writes:** each INSERT or UPDATE on a listed table is encrypted with one batch of key requests for all its rows.
 - **Reads:** the objects a query loads are decrypted with one batch for each class. This includes relationship loads, and attributes read again after a commit. A session query of columns, such as `session.execute(select(Customer.email, Customer.plan))`, is decrypted too.

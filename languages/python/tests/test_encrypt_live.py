@@ -14,7 +14,7 @@ import decimal
 import json
 import math
 import struct
-from typing import Annotated, List, NamedTuple
+from typing import Annotated, List, NamedTuple, Optional
 
 import attrs
 import pydantic
@@ -606,3 +606,40 @@ def test_decrypt_rows_of_100_rows_with_one_field_make_one_key_request():
 
     assert _engine.request_count() - before == 1
     assert opened[99] == {"email": "user99@example.com"}
+
+
+@stackencrypt.model("places")
+@dataclasses.dataclass
+class Place:
+    name: Annotated[str, TextEq]
+    city: Annotated[Optional[str], TextEq]
+    visits: Annotated[Optional[int], Passthrough]
+
+
+@needs_database
+def test_none_in_an_optional_field_is_stored_as_null_and_decrypts_as_none():
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg.rows import dict_row
+
+    places = Cipher(Place)
+    rows = places.encrypt([Place("a", None, None), Place("b", "Leeds", 3)])
+
+    assert rows[0]["city"] is None and rows[0]["visits"] is None
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "CREATE TEMPORARY TABLE places (name public.eql_v4_text_eq NOT NULL, "
+            "city public.eql_v4_text_eq, visits int)"
+        )
+        for row in rows:
+            cur.execute("INSERT INTO places VALUES (%(name)s, %(city)s, %(visits)s)", row)
+        cur.execute("SELECT count(*) AS n FROM places WHERE city IS NULL")
+        assert cur.fetchone()["n"] == 1
+        cur.execute(
+            "SELECT * FROM places WHERE city = %s::eql_v4.query_text_eq", (places.eq("city", "Leeds"),)
+        )
+        leeds = places.decrypt(cur.fetchall())
+        cur.execute("SELECT * FROM places ORDER BY visits NULLS FIRST")
+        both = places.decrypt(cur.fetchall())
+
+    assert [dataclasses.astuple(p) for p in leeds] == [("b", "Leeds", 3)]
+    assert [dataclasses.astuple(p) for p in both] == [("a", None, None), ("b", "Leeds", 3)]

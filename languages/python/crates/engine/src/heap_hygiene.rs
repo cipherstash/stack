@@ -209,18 +209,21 @@ fn plan(py: Python<'_>) -> Plan {
                 Some("TextEq".into()),
                 Some("string".into()),
                 text(),
+                false,
             ),
             (
                 "note".into(),
                 Some("Text".into()),
                 Some("string".into()),
                 text(),
+                false,
             ),
             (
                 "amount".into(),
                 Some("NumericEq".into()),
                 Some("decimal".into()),
                 decimal,
+                false,
             ),
         ],
     )
@@ -397,6 +400,7 @@ fn verify_frees_no_copy_of_the_plaintext_unwiped() {
                 Some("TextMatch".into()),
                 Some("string".into()),
                 py.get_type::<PyString>(),
+                false,
             )],
         )
         .unwrap();

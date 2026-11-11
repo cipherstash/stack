@@ -7,7 +7,7 @@ test connects to. The hooks run against PostgreSQL in
 """
 
 import dataclasses
-from typing import Annotated
+from typing import Annotated, Optional
 
 import pytest
 from sqlalchemy import String, create_engine, select
@@ -173,10 +173,28 @@ def test_the_type_map_gives_every_declarable_marker_its_eql_type():
     declarable = [m for m in _eql.TYPES if m.producible and m.plaintext != "json"]
     assert declarable
     for marker in declarable:
-        [column_type] = [t for hint, t in eql_type_map.items() if hint.__metadata__ == (marker,)]
-        assert isinstance(column_type, EqlType)
-        assert column_type.marker is marker
-        assert column_type.get_col_spec() == marker.sql_domain
+        # Two hints for each marker: the value type, and Optional of it.
+        types = [t for hint, t in eql_type_map.items() if hint.__metadata__ == (marker,)]
+        assert len(types) == 2
+        for column_type in types:
+            assert isinstance(column_type, EqlType)
+            assert column_type.marker is marker
+            assert column_type.get_col_spec() == marker.sql_domain
+
+
+def test_an_optional_field_gets_a_nullable_eql_column():
+    @stackencrypt.model("places")
+    class Place(Base):
+        __tablename__ = "places"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        name: Mapped[Annotated[str, TextEq]]
+        city: Mapped[Annotated[Optional[str], TextEq]]
+        note: Mapped[Annotated[Optional[str], Passthrough]]
+
+    columns = Place.__table__.c
+    assert (repr(columns.city.type), columns.city.nullable) == ("EqlType(TextEq)", True)
+    assert columns.name.nullable is False
+    assert columns.note.nullable is True
 
 
 def test_a_column_of_another_type_is_refused(engine):

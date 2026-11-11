@@ -81,6 +81,10 @@ impl Kind {
 /// A host value, already read by exact type, as the engine takes it.
 #[derive(Clone, Copy, Debug)]
 pub enum Value<'a> {
+    /// A missing value: Python's `None`, for a field declared `Optional`.
+    /// The frame carries it as a null. A nullable EQL field stores nothing
+    /// for it, so its column holds SQL `NULL` (`"null": "sql"`).
+    Null,
     Text(&'a str),
     /// Any Python `int` that fits; one that does not is refused by the
     /// extension as out of range before it gets here.
@@ -162,6 +166,7 @@ pub fn scalar(
         width(i).map(Physical::Int).ok_or(Misfit::OutOfRange)
     };
     Ok(match (kind, value) {
+        (_, Value::Null) => (None, Physical::Null),
         (Some(Kind::String), Value::Text(s)) | (None, Value::Text(s)) => (None, Physical::Text(s)),
         (Some(Kind::Int16), Value::Int(i)) => {
             (None, int(i, |i| i16::try_from(i).ok().map(Int::I16))?)

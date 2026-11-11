@@ -10,8 +10,9 @@ import dataclasses
 import datetime
 import decimal
 import pickle
+import sys
 import uuid
-from typing import Annotated, ClassVar, Final, List, NamedTuple, Optional
+from typing import Annotated, ClassVar, Final, List, NamedTuple, Optional, Union
 
 import attrs
 import pydantic
@@ -449,7 +450,9 @@ def test_a_value_type_that_is_not_the_kinds_is_refused():
 @pytest.mark.parametrize(
     "value_type, marker",
     [
-        (Optional[str], TextEq),
+        (Optional[int], TextEq),
+        (Union[str, int], TextEq),
+        (Optional[Union[str, int]], TextEq),
         (bool, IntegerEq),
         (datetime.datetime, DateEq),
         (int, DoubleEq),
@@ -460,6 +463,26 @@ def test_a_value_type_must_be_exactly_the_kinds(value_type, marker):
 
     error = refusal(lambda: stackencrypt.model("users")(User))
     assert error.code == "declaration_type_mismatch"
+
+
+def test_an_optional_field_is_nullable():
+    @stackencrypt.model("users")
+    @dataclasses.dataclass
+    class User:
+        email: Annotated[str, TextEq]
+        city: Annotated[Optional[str], TextEq]
+        age: Annotated[Optional[int], Passthrough]
+
+    fields = {f.name: (f.value_type, f.nullable) for f in declaration_of(User).fields}
+    assert fields == {"email": (str, False), "city": (str, True), "age": (int, True)}
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="`T | None` is Python 3.10 and later")
+def test_a_union_with_none_is_nullable_too():
+    User = dataclasses.make_dataclass("User", [("city", Annotated[eval("str | None"), TextEq])])
+
+    [field] = declaration_of(stackencrypt.model("users")(User)).fields
+    assert (field.value_type, field.nullable) == (str, True)
 
 
 @pytest.mark.parametrize(

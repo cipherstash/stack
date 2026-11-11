@@ -459,6 +459,7 @@ pub(crate) mod tests {
         Field {
             name: name.to_owned(),
             eql: Some((eql.to_owned(), kind)),
+            nullable: false,
         }
     }
 
@@ -466,6 +467,7 @@ pub(crate) mod tests {
         Field {
             name: name.to_owned(),
             eql: None,
+            nullable: false,
         }
     }
 
@@ -533,6 +535,7 @@ pub(crate) mod tests {
                         row.passthrough(field, Value::Int(*i)).unwrap()
                     }
                     Column::Passthrough(other) => panic!("not an age: {other:?}"),
+                    Column::Null => panic!("no field here is nullable"),
                 }
             }
             rows.push(row);
@@ -716,5 +719,118 @@ pub(crate) mod tests {
 
         assert_eq!(refused.code, "decrypt_kind_mismatch", "{refused:?}");
         assert_eq!(refused.field.as_deref(), Some("email"));
+    }
+
+    /// `people` with a nullable sealed field and a nullable passthrough.
+    fn people() -> ModelPlan {
+        ModelPlan::new(
+            "people",
+            vec![
+                Field {
+                    name: "city".to_owned(),
+                    eql: Some(("TextEq".to_owned(), Kind::String)),
+                    nullable: true,
+                },
+                Field {
+                    name: "email".to_owned(),
+                    eql: Some(("TextEq".to_owned(), Kind::String)),
+                    nullable: false,
+                },
+                Field {
+                    name: "note".to_owned(),
+                    eql: None,
+                    nullable: true,
+                },
+            ],
+        )
+        .unwrap()
+    }
+
+    fn people_rows<'a>(rows: &[(Value<'a>, &'a str, Value<'a>)]) -> ValueFrame {
+        ValueFrame::of(Source(
+            rows.iter()
+                .map(|(city, email, note)| {
+                    vec![
+                        ("city", Some(Kind::String), *city),
+                        ("email", Some(Kind::String), Value::Text(email)),
+                        ("note", None, *note),
+                    ]
+                })
+                .collect(),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_null_in_a_nullable_field_is_stored_as_sql_null_and_opens_as_null() {
+        let cipher = cipher();
+        let plan = people();
+        let source = people_rows(&[
+            (Value::Null, "a@example.com", Value::Null),
+            (Value::Text("Leeds"), "b@example.com", Value::Text("hi")),
+        ]);
+
+        let stored = run(encrypt_with(&cipher.default_keyset(), &plan, source, 2)).unwrap();
+
+        assert!(matches!(stored[0][0], Column::Null));
+        assert!(matches!(
+            stored[0][2],
+            Column::Null | Column::Passthrough(Scalar::Null)
+        ));
+        assert!(matches!(stored[1][0], Column::Eql(_)));
+
+        let mut rows = Rows::default();
+        for columns in &stored {
+            let mut row = Row::new();
+            for (field, column) in plan.fields().iter().zip(columns) {
+                match column {
+                    Column::Eql(json) => row.eql(&plan, field, json.as_bytes()).unwrap(),
+                    Column::Passthrough(Scalar::Text(text)) => {
+                        row.passthrough(field, Value::Text(text)).unwrap()
+                    }
+                    // A passthrough is always in the row, as a null here.
+                    Column::Passthrough(Scalar::Null) => {
+                        row.passthrough(field, Value::Null).unwrap()
+                    }
+                    // A nullable EQL field's SQL NULL: no entry.
+                    Column::Null if field.eql.is_some() => {}
+                    Column::Null => row.passthrough(field, Value::Null).unwrap(),
+                    Column::Passthrough(other) => panic!("not a note: {other:?}"),
+                }
+            }
+            rows.push(row);
+        }
+        let opened = run(decrypt_with(&cipher, &plan, rows)).unwrap();
+
+        assert_eq!(
+            opened,
+            vec![
+                vec![
+                    Scalar::Null,
+                    Scalar::Text("a@example.com".to_owned()),
+                    Scalar::Null
+                ],
+                vec![
+                    Scalar::Text("Leeds".to_owned()),
+                    Scalar::Text("b@example.com".to_owned()),
+                    Scalar::Text("hi".to_owned()),
+                ],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_null_in_a_field_that_is_not_nullable_is_refused() {
+        let cipher = cipher();
+        let source = ValueFrame::of(Source(vec![vec![
+            ("city", Some(Kind::String), Value::Text("Leeds")),
+            ("email", Some(Kind::String), Value::Null),
+            ("note", None, Value::Text("hi")),
+        ]]))
+        .unwrap();
+
+        let refused = run(encrypt_with(&cipher.default_keyset(), &people(), source, 1));
+
+        assert!(refused.is_err(), "{refused:?}");
     }
 }
