@@ -4097,7 +4097,7 @@ dependencies = [
 
 [[package]]
 name = "stack-auth"
-version = "0.43.0"
+version = "0.43.1"
 dependencies = [
  "aquamarine",
  "base64 0.22.1",
@@ -4109,7 +4109,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sha2 0.10.9",
- "stack-profile 0.43.0",
+ "stack-profile 0.43.1",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -4124,7 +4124,7 @@ dependencies = [
 
 [[package]]
 name = "stack-encrypt"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64ct",
  "cllw-ore 0.5.0",
@@ -4145,7 +4145,7 @@ dependencies = [
 
 [[package]]
 name = "stack-encrypt-derive"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4154,11 +4154,12 @@ dependencies = [
 
 [[package]]
 name = "stack-kms"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base16ct",
  "base64ct",
  "blake3",
+ "cts-common 0.43.0",
  "futures",
  "miette",
  "opaque-debug",
@@ -4168,8 +4169,8 @@ dependencies = [
  "serde_json",
  "serdect",
  "sha2 0.10.9",
- "stack-auth 0.43.0",
- "stack-profile 0.43.0",
+ "stack-auth 0.43.1",
+ "stack-profile 0.43.1",
  "thiserror 1.0.69",
  "tracing",
  "url",
@@ -4196,7 +4197,7 @@ dependencies = [
 
 [[package]]
 name = "stack-profile"
-version = "0.43.0"
+version = "0.43.1"
 dependencies = [
  "dirs",
  "gethostname",

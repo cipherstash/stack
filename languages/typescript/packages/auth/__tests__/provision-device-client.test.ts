@@ -48,19 +48,21 @@ describe('provision device client (TypeScript / vitest)', () => {
     await server.close()
   })
 
-  it('creates secretkey.json on successful provisioning', async () => {
+  // A profile token's ZeroKMS claim is unverified, so provisioning only
+  // sends the bearer to a CipherStash-hosted ZeroKMS. This mock server is not
+  // one, so the binding cannot reach it: the success and 409 paths are
+  // covered by stack-auth's Rust tests through its transport seam, and here
+  // the binding must refuse before any request leaves.
+  it('refuses a token naming a ZeroKMS outside CipherStash, before sending it', async () => {
     server.mockCreateClientEndpoint()
     saveTestToken(profileDir, server.baseUrl)
 
     const r = await bindClientDevice()
-    if (r.failure) {
-      expect.unreachable(`bindClientDevice failed: ${r.failure.type}`)
-    }
 
-    const raw = readFileSync(join(workspaceDir(), 'secretkey.json'), 'utf-8')
-    const secretKey = JSON.parse(raw)
-    expect(secretKey.client_id).toBe('00000000-0000-0000-0000-000000000001')
-    expect(secretKey.client_key).toBe('dGVzdC1rZXktbWF0ZXJpYWw=')
+    expect(r.failure?.type).toBe('INVALID_TOKEN')
+    expect(r.failure?.error).toBeInstanceOf(Error)
+    expect(server.requestCount).toBe(0)
+    expect(existsSync(join(workspaceDir(), 'secretkey.json'))).toBe(false)
   })
 
   it('is a no-op when secretkey.json already exists', async () => {
@@ -82,27 +84,6 @@ describe('provision device client (TypeScript / vitest)', () => {
     const raw = readFileSync(join(workspaceDir(), 'secretkey.json'), 'utf-8')
     const secretKey = JSON.parse(raw)
     expect(secretKey.client_id).toBe('existing-id')
-  })
-
-  it('is a no-op on 409 conflict', async () => {
-    server.mockCreateClientConflict()
-    saveTestToken(profileDir, server.baseUrl)
-
-    const r = await bindClientDevice()
-    if (r.failure) {
-      expect.unreachable(`bindClientDevice failed: ${r.failure.type}`)
-    }
-
-    expect(existsSync(join(workspaceDir(), 'secretkey.json'))).toBe(false)
-  })
-
-  it('fails on server error', async () => {
-    // No mock endpoint — server will return an error for unmatched route.
-    saveTestToken(profileDir, server.baseUrl)
-
-    const r = await bindClientDevice()
-    expect(r.failure).toBeTruthy()
-    expect(r.failure?.error).toBeInstanceOf(Error)
   })
 
   it('fails with STORE_ERROR when auth token is missing', async () => {

@@ -29,7 +29,6 @@
 //! are reclaimed via the registry (which the ABI's `se_dealloc` also wipes).
 
 use std::convert::Infallible;
-use std::sync::Mutex;
 
 use stack_auth::{AuthError, AuthStrategy, CustomError, SecretToken, ServiceToken};
 use stack_guest_abi::buffers;
@@ -51,23 +50,11 @@ extern "C" {
 /// import. The host call is synchronous from the guest's perspective, so
 /// `send` resolves immediately — `block_on` in the ABI layer never parks.
 ///
-/// The endpoint is pinned at init when the cipher config named one;
-/// otherwise it is discovered by `StackKms` from the access token's
-/// `services` claim through [`ensure_base_url`](Self::ensure_base_url) —
-/// the first value wins, per the trait's contract.
+/// The endpoint is fixed at init when the cipher config named one;
+/// otherwise each request goes to the endpoint `StackKms` resolved from the
+/// access token's `services` claim and passes to [`send`](Self::send).
 pub struct WasiHostConnection {
-    base: Mutex<Option<ZeroKmsEndpoint>>,
-}
-
-impl WasiHostConnection {
-    fn base(&self) -> std::sync::MutexGuard<'_, Option<ZeroKmsEndpoint>> {
-        // Wasm is single-threaded: a poisoned lock can only mean a previous
-        // panic already aborted the instance, so this is unreachable —
-        // recover rather than add a second panic path.
-        self.base
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
+    base: Option<ZeroKmsEndpoint>,
 }
 
 impl ZeroKMSConnectionInit for WasiHostConnection {
@@ -75,28 +62,20 @@ impl ZeroKMSConnectionInit for WasiHostConnection {
     type Error = Infallible;
 
     fn init(opts: Self::ConnectionOpts) -> Result<Self, Infallible> {
-        Ok(Self {
-            base: Mutex::new(opts),
-        })
+        Ok(Self { base: opts })
     }
 }
 
 impl ZeroKMSConnection for WasiHostConnection {
-    fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
-        let mut base = self.base();
-        if base.is_none() {
-            *base = Some(url);
-        }
-    }
-
     fn has_base_url(&self) -> bool {
-        self.base().is_some()
+        self.base.is_some()
     }
 
     async fn send<Request: ViturRequest>(
         &self,
         request: Request,
         access_token: &str,
+        endpoint: Option<&ZeroKmsEndpoint>,
     ) -> Result<Request::Response, ViturRequestError> {
         // Defence in depth, shared verbatim with `HttpConnection`:
         // `StackKms::get_token` resolves the endpoint (or fails with
@@ -107,8 +86,9 @@ impl ZeroKMSConnection for WasiHostConnection {
         // caller from mistaking a missing endpoint for a 401 and refreshing
         // in a loop.
         let url = self
-            .base()
+            .base
             .as_ref()
+            .or(endpoint)
             .map(|base| base.request_url(Request::ENDPOINT))
             .ok_or_else(|| {
                 ViturRequestError::prepare(

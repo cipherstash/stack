@@ -4,15 +4,16 @@ use url::Url;
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
 
-use crate::{AuthError, SecretToken};
+use crate::{AuthError, HostedZeroKmsEndpoint, SecretToken};
 
 /// A CipherStash service token returned by an [`AuthStrategy`](crate::AuthStrategy).
 ///
 /// Wraps a bearer credential ([`SecretToken`]) together with eagerly decoded
 /// JWT claims that are used for service discovery. The JWT is decoded (but
-/// **not** signature-verified) using [`cts_common::claims::ClientClaims`], so
-/// only CipherStash-issued service tokens (from CTS or the access-key exchange)
-/// will have their claims resolved.
+/// **not** signature-verified) using [`cts_common::claims::ClientClaims`].
+/// Any token matching that schema can have its claims resolved, including
+/// one planted in a profile store. Hosted endpoint validation constrains
+/// where such a token can send credentials; it does not authenticate it.
 ///
 /// # Decoded claims
 ///
@@ -20,6 +21,8 @@ use crate::{AuthError, SecretToken};
 /// * `workspace_id()` — the workspace identifier from the token.
 /// * `issuer()` — the `iss` URL, i.e. the CTS host for this workspace.
 /// * `zerokms_url()` — the ZeroKMS endpoint from the `services` claim.
+/// * `hosted_zerokms_endpoint()` — the validated hosted destination to use
+///   before sending credentials to a claim-selected endpoint.
 ///
 /// For non-JWT tokens (e.g. static test tokens) or JWTs that don't match
 /// the CipherStash claims schema, these methods return
@@ -42,6 +45,7 @@ struct DecodedClaims {
     workspace: WorkspaceId,
     issuer: Url,
     services: Services,
+    hosted_zerokms: Result<HostedZeroKmsEndpoint, &'static str>,
 }
 
 impl ServiceToken {
@@ -152,6 +156,8 @@ impl ServiceToken {
     ///
     /// CTS-issued JWTs include a `services` claim containing a map of service
     /// type to endpoint URL. This method looks up the `zerokms` entry.
+    /// The returned URL is untrusted. Use [`hosted_zerokms_endpoint`](Self::hosted_zerokms_endpoint)
+    /// before sending a bearer credential to a destination chosen by a claim.
     ///
     /// # Errors
     ///
@@ -168,6 +174,26 @@ impl ServiceToken {
             })
     }
 
+    /// Return the validated CipherStash-hosted ZeroKMS destination.
+    ///
+    /// Validation is cached when this token is decoded. Both device
+    /// provisioning and KMS discovery use this accessor before sending a
+    /// bearer credential. It does not verify the token's signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::InvalidToken`] when claims cannot be decoded,
+    /// ZeroKMS is missing, or the endpoint is not a supported hosted service.
+    pub fn hosted_zerokms_endpoint(&self) -> Result<&HostedZeroKmsEndpoint, AuthError> {
+        let decoded = self.decoded.as_ref().map_err(|reason| {
+            AuthError::InvalidToken(crate::error::InvalidToken(reason.clone()))
+        })?;
+        decoded
+            .hosted_zerokms
+            .as_ref()
+            .map_err(|reason| AuthError::InvalidToken(crate::error::InvalidToken((*reason).into())))
+    }
+
     /// Attempt to decode the JWT claims from the token string.
     ///
     /// NOTE: This does not verify the token signature or validate any claims,
@@ -179,11 +205,21 @@ impl ServiceToken {
             .parse()
             .map_err(|e| format!("iss claim is not a valid URL: {e}"))?;
 
+        let hosted_zerokms = claims
+            .services
+            .get(ServiceType::ZeroKms)
+            .ok_or("Token does not include a ZeroKMS endpoint in the services claim")
+            .and_then(|url| {
+                HostedZeroKmsEndpoint::new(url.clone()).map_err(|_| {
+                    "Token does not name a supported CipherStash-hosted ZeroKMS endpoint"
+                })
+            });
         Ok(DecodedClaims {
             subject: claims.sub,
             workspace: claims.workspace,
             issuer,
             services: claims.services,
+            hosted_zerokms,
         })
     }
 }
@@ -315,6 +351,56 @@ mod tests {
             token.zerokms_url().unwrap().as_str(),
             "http://localhost:3002/"
         );
+    }
+
+    mod given_a_hosted_zerokms_claim {
+        use super::*;
+
+        #[test]
+        fn returns_the_same_cached_validated_endpoint() {
+            let jwt = make_jwt(
+                "https://cts.example.com/",
+                services_with_zerokms("https://us-east-1.aws.zerokms.cipherstashmanaged.net/"),
+            );
+            let token = ServiceToken::new(SecretToken::new(jwt));
+            let first = token.hosted_zerokms_endpoint().unwrap();
+            let again = token.hosted_zerokms_endpoint().unwrap();
+            assert!(
+                std::ptr::eq(first, again),
+                "validation is cached on the decoded token"
+            );
+            assert_eq!(
+                first.region().identifier(),
+                "us-east-1.aws",
+                "the validated endpoint carries its region"
+            );
+        }
+    }
+
+    mod given_an_untrusted_zerokms_claim {
+        use super::*;
+
+        #[test]
+        fn refuses_the_validated_accessor_without_exposing_the_claim() {
+            for url in [
+                "https://marker.example/",
+                "http://us-east-1.aws.viturhosted.net/",
+                "https://marker@us-east-1.aws.viturhosted.net/",
+                "https://us-east-1.aws.viturhosted.net/?marker=secret",
+            ] {
+                let jwt = make_jwt("https://cts.example.com/", services_with_zerokms(url));
+                let token = ServiceToken::new(SecretToken::new(jwt));
+                let error = token.hosted_zerokms_endpoint().unwrap_err();
+                assert!(
+                    matches!(error, AuthError::InvalidToken(_)),
+                    "untrusted endpoints are invalid tokens"
+                );
+                assert!(
+                    !error.to_string().contains("marker"),
+                    "errors must not expose claim content"
+                );
+            }
+        }
     }
 
     #[test]

@@ -42,33 +42,36 @@ pub trait ZeroKMSConnectionInit {
 /// unbounded on wasm32 — reqwest's fetch-backed response futures aren't
 /// `Send`, and edge runtimes are single-threaded anyway.
 pub trait ZeroKMSConnection: ZeroKMSConnectionInit {
+    /// Send `request` with `access_token` as its bearer credential.
+    ///
+    /// `endpoint` is the ZeroKMS [`StackKms`](crate::StackKms) resolved from
+    /// the token's `services` claim, and is `Some` only while
+    /// [`has_base_url`](Self::has_base_url) is `false`. A connection with an
+    /// endpoint of its own uses that and ignores this one; a connection with
+    /// neither cannot build a request URL and should fail with a *prepare*
+    /// error ([`BaseUrlUnresolved`]), so a caller does not mistake it for a
+    /// 401 and refresh in a loop.
+    ///
+    /// The endpoint travels with each request rather than being stored on the
+    /// connection: `StackKms` keeps one only after ZeroKMS has accepted a
+    /// token sent there, so a token it refuses cannot fix the endpoint every
+    /// later request goes to.
     fn send<Request: ViturRequest>(
         &self,
         request: Request,
         access_token: &str,
+        endpoint: Option<&ZeroKmsEndpoint>,
     ) -> impl Future<Output = Result<Request::Response, ViturRequestError>> + crate::MaybeSend;
 
-    /// Record the ZeroKMS endpoint if none is known yet.
+    /// Whether the connection was given its ZeroKMS endpoint at init.
     ///
-    /// [`StackKms`](crate::StackKms) calls this with the endpoint named by the
-    /// access token's `services` claim the first time it holds a token.
+    /// While this is `false`, [`StackKms`](crate::StackKms) resolves the
+    /// endpoint from each access token's `services` claim and passes it to
+    /// [`send`](Self::send). It is asked once, when the client is built.
     ///
-    /// Endpoint discovery is `StackKms` policy, not something every transport
-    /// needs: the default is a no-op, paired with a `has_base_url` of `true`,
-    /// which is correct for a transport that does not build URLs from a base
-    /// (it dispatches on the request's endpoint name) or that was pinned at
-    /// init. A transport that *does* want discovery must override **both**,
-    /// and its `ensure_base_url` must keep the first value it is given — an
-    /// endpoint pinned at init must not be overridden by a later token.
-    fn ensure_base_url(&self, _url: ZeroKmsEndpoint) {}
-
-    /// Whether an endpoint is known, either from init or from a previous
-    /// [`ensure_base_url`](Self::ensure_base_url). While this is `false`,
-    /// [`send`](Self::send) cannot build a request URL.
-    ///
-    /// Defaults to `true`: a transport that needs no base URL always has
-    /// everything it needs, so `StackKms` never tries to resolve one from a
-    /// token. Override alongside [`ensure_base_url`](Self::ensure_base_url).
+    /// Defaults to `true`, which is correct for a transport that does not
+    /// build URLs from a base (it dispatches on the request's endpoint name)
+    /// or that was configured with one: `StackKms` never consults the claim.
     fn has_base_url(&self) -> bool {
         true
     }

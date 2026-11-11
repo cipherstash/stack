@@ -404,7 +404,9 @@ func clientKeyFromProfile(ctx context.Context, profile *auth.ProfileStore, noPro
 
 // zerokmsEndpoint is the endpoint NewClient pins, in stack-kms's order: the
 // explicit URL, else the first of CS_ZEROKMS_HOST and CS_VITUR_HOST that is
-// set, else none (the token's services claim decides on first use). A set
+// set, else none (the token's services claim decides on first use, and may
+// only name a CipherStash-hosted ZeroKMS: https://<region>.<provider>.viturhosted.net
+// or https://<region>.<provider>.zerokms.cipherstashmanaged.net). A set
 // variable that is not a usable endpoint is an error, not a fall-through:
 // falling through would send key operations somewhere the operator did not
 // configure. The guest validates the URL in full; this check exists to name
