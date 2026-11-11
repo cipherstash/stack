@@ -34,6 +34,10 @@ On a read, only the encrypted fields are decrypted.
   the result. The match must be a condition of the WHERE joined with AND,
   or a branch of an ``or_`` of match searches only. Anything else raises
   ``QueryError``. A LIMIT can return fewer rows than it names.
+- Sorting: ``order_by`` on an encrypted column sorts by its order term, such
+  as ``eql_v4.ord_term(col)``, in both hooks. A bare ``ORDER BY col`` on an
+  EQL v4 column sorts the stored JSON, in a wrong order (ADR-0004, decision
+  9). A column with no order index cannot be sorted.
 - Search: the column type that ``eql_type_map`` gives each encrypted field
   turns ``==``, ``<``, ``<=``, ``>`` and ``>=`` into a comparison with a query
   term, made by ``Cipher.eq``, ``lt``, ``lte``, ``gt`` or ``gte``. Any other
@@ -66,6 +70,8 @@ from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import operators, visitors
 from sqlalchemy.sql.elements import BooleanClauseList, Grouping
 from sqlalchemy.sql.dml import Insert, Update
+from sqlalchemy.sql.functions import FunctionElement
+from sqlalchemy.sql.selectable import Select
 from sqlalchemy.types import UserDefinedType
 
 import stackencrypt
@@ -102,6 +108,10 @@ class EqlType(UserDefinedType):  # type: ignore[type-arg]
 
     class comparator_factory(UserDefinedType.Comparator):  # type: ignore[type-arg]
         def operate(self, op: Any, *other: Any, **kwargs: Any) -> Any:
+            if op in _SORTS:
+                # Sorted by the order term: EQL v4 gives its column types no
+                # sort order of their own (see _sort_key).
+                return getattr(_sort_key(self.expr), _SORTS[op])()
             if op in _NO_VALUE or (op in (operators.eq, operators.ne) and other == (None,)):
                 return super().operate(op, *other, **kwargs)
             if op is operators.ne and len(other) == 1:
@@ -179,16 +189,18 @@ _MATCH = "stackencrypt_match"
 _VERIFIED = "stackencrypt_match_verified"
 
 # The operators that send no value to the database.
-_NO_VALUE = frozenset(
-    {
-        operators.is_,
-        operators.is_not,
-        operators.asc_op,
-        operators.desc_op,
-        operators.nulls_first_op,
-        operators.nulls_last_op,
-    }
-)
+_NO_VALUE = frozenset({operators.is_, operators.is_not})
+
+# The sort operators, and the method that applies each to a sort key.
+_SORTS = {
+    operators.asc_op: "asc",
+    operators.desc_op: "desc",
+    operators.nulls_first_op: "nulls_first",
+    operators.nulls_last_op: "nulls_last",
+}
+
+# The order term for each kind of order index.
+_ORDER_TERMS = {"ope": "ord_term", "ore_block": "ord_term_ore"}
 
 # The database index for each kind of EQL index: the EQL function the index
 # is on, and the index method.
@@ -472,6 +484,11 @@ def _encrypter(tables: Dict[str, Tuple[Cipher, FrozenSet[str]]]) -> Any:
             if matches:
                 column, _ = matches[0]._annotations[_MATCH]
                 raise _match_refused(column, "is not run through a session.")
+        if isinstance(clause, Select):
+            # An ORM select is rewritten in the session hook.
+            if clause._propagate_attrs.get("compile_state_plugin") != "orm":
+                clause = _sorted_by_terms(clause)
+            return clause, multiparams, params
         if not isinstance(clause, (Insert, Update)):
             return clause, multiparams, params
         configured = tables.get(getattr(clause.table, "name", None))
@@ -539,6 +556,7 @@ def _decrypt_loaded(state: Any) -> Any:
     if not state.is_select:
         return None
     searches = _checked_matches(state.statement, matches)
+    state.statement = _sorted_by_terms(state.statement)
     # Freezing reads every row, so every load and refresh event has fired.
     options = {_VERIFIED: True} if searches else {}
     result = state.invoke_statement(execution_options=options).freeze()
@@ -750,6 +768,55 @@ def _term(column: Any, method: str, value: object) -> Any:
     cast to the column marker's query type."""
     term = getattr(_cipher_of(column), method)(column.key, value)
     return cast(literal(term, String()), _QueryType(column.type.marker.query_sql_domain))
+
+
+def _sort_key(column: Any) -> Any:
+    """What to sort an encrypted column by: its order term, such as
+    ``eql_v4.ord_term(col)``. Raises ``QueryError`` for a column with no
+    order index.
+
+    A bare ``ORDER BY col`` sorts EQL v4 values in a wrong order, with no
+    error: the EQL column types have no sort order of their own, so
+    PostgreSQL sorts the stored JSON. The order term sorts by the
+    plaintext, and the index on it serves the sort."""
+    function = next(
+        (_ORDER_TERMS[kind] for kind in column.type.marker.indexes if kind in _ORDER_TERMS), None
+    )
+    if function is None:
+        raise QueryError(
+            "query_unsupported",
+            f"the encrypted column {_column_name(column)} has no order index, so it cannot "
+            f"be sorted. Its marker, {column.type.marker.__name__}, has the indexes "
+            f"{list(column.type.marker.indexes)}. Use a marker with an order index, such as "
+            "IntegerOrd or TextOrd.",
+            field=getattr(column, "key", None),
+            reason="order",
+        )
+    return getattr(func.eql_v4, function)(column)
+
+
+def _sorted_by_terms(statement: Any) -> Any:
+    """``statement`` with each encrypted column in its ORDER BY replaced by
+    its order term. A bare ``order_by(col)``, or ``sqlalchemy.asc(col)``,
+    does not go through the column type's operators, so the hooks rewrite
+    it here."""
+    clauses = getattr(statement, "_order_by_clauses", ())
+    if not clauses:
+        return statement
+
+    def replace(element: Any) -> Any:
+        if isinstance(element, FunctionElement) and getattr(element, "name", None) in _ORDER_TERMS.values():
+            return element  # already a sort key: not opened again
+        if isinstance(getattr(element, "type", None), EqlType) and isinstance(
+            getattr(element, "table", None), Table
+        ):
+            return _sort_key(element)
+        return None
+
+    rewritten = [visitors.replacement_traverse(clause, {}, replace) for clause in clauses]
+    if all(new is old for new, old in zip(rewritten, clauses)):
+        return statement
+    return statement.order_by(None).order_by(*rewritten)
 
 
 def _cipher_of(column: Any) -> Cipher:
