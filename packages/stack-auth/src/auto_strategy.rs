@@ -217,11 +217,9 @@ impl AutoStrategyBuilder {
         // Merge explicit values with env vars (explicit wins)
         // Wrapped as soon as it is read, so this copy is wiped on drop. The
         // process environment keeps its own copy, which is beyond our reach.
-        let access_key = self.access_key.or_else(|| {
-            std::env::var("CS_CLIENT_ACCESS_KEY")
-                .ok()
-                .map(SecretToken::new)
-        });
+        let access_key = self
+            .access_key
+            .or_else(|| access_key_from_env(std::env::var("CS_CLIENT_ACCESS_KEY")));
 
         let crn = match self.crn {
             Some(crn) => Some(crn),
@@ -267,6 +265,25 @@ impl AuthStrategy for &AutoStrategy {
             AutoStrategy::AccessKey(inner) => inner.get_token().await,
             AutoStrategy::DeviceSession(inner) => inner.get_token().await,
         }
+    }
+}
+
+/// Wrap an access key read from the environment, wiping it if it is unusable.
+///
+/// A value that is not valid UTF-8 comes back as [`VarError::NotUnicode`],
+/// which owns the whole key. It cannot be a valid access key, so it is
+/// treated as unset, as before; but it is wiped first rather than dropped,
+/// since it is still a credential.
+///
+/// [`VarError::NotUnicode`]: std::env::VarError::NotUnicode
+fn access_key_from_env(value: Result<String, std::env::VarError>) -> Option<SecretToken> {
+    match value {
+        Ok(key) => Some(SecretToken::new(key)),
+        Err(std::env::VarError::NotUnicode(key)) => {
+            drop(zeroize::Zeroizing::new(key.into_encoded_bytes()));
+            None
+        }
+        Err(std::env::VarError::NotPresent) => None,
     }
 }
 
@@ -454,6 +471,28 @@ mod tests {
                 .detect();
 
             assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
+        }
+    }
+
+    mod access_key_from_env {
+        use super::super::access_key_from_env;
+        use std::env::VarError;
+
+        #[test]
+        fn wraps_a_set_value() {
+            let key = access_key_from_env(Ok("CSAKid.secret".to_string())).unwrap();
+            assert_eq!(key.as_str(), "CSAKid.secret");
+        }
+
+        #[test]
+        fn treats_an_unset_value_as_absent() {
+            assert!(access_key_from_env(Err(VarError::NotPresent)).is_none());
+        }
+
+        #[test]
+        fn treats_a_non_utf8_value_as_absent() {
+            let value = std::ffi::OsString::from("CSAKid.secret");
+            assert!(access_key_from_env(Err(VarError::NotUnicode(value))).is_none());
         }
     }
 }
