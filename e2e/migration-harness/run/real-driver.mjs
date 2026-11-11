@@ -10,6 +10,7 @@ import { migrationChecks } from './migration-checks.mjs'
 import { runMigrator } from './migrator.mjs'
 import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
+import { isSnapshotInfrastructureError } from './snapshot-errors.mjs'
 import { resolveStack } from './stack-source.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
@@ -344,7 +345,7 @@ export function createRealDriver({
         } catch (error) {
           throw Object.assign(
             new Error('Oracle snapshot read failed', { cause: error }),
-            { infrastructure: true },
+            { infrastructure: isSnapshotInfrastructureError(error) },
           )
         }
         const comparison = noRewrite(legacySnapshot, current)

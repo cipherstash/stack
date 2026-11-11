@@ -1,6 +1,6 @@
 # Migration Harness
 
-A Loop that tests an upgrade guide by having agents follow it. A Migrator upgrades a Protect.js application using only the guide, an Oracle judges the result, and an Editor revises the guide from what went wrong.
+A harness that tests an upgrade guide by having agents follow it. A Migrator upgrades a Protect.js application using only the guide, an Oracle judges the result, and an Editor revises the guide from what went wrong.
 
 ## Language
 
@@ -21,11 +21,11 @@ One or more Runs against a single revision of the guide, followed by at most one
 _Avoid_: round, cycle
 
 **Migrator**:
-The agent responsible for upgrading the Fixture App using the guide.
+The agent responsible for upgrading the Fixture App using the guide, without access to the Oracle or Reference Migration.
 _Avoid_: subject, worker, executor
 
 **Oracle**:
-The deterministic checks of the migrated Fixture App's behaviour, stored data and migration completeness.
+The deterministic, agent-free checks of the migrated Fixture App's behaviour, stored data and migration completeness, hidden from the Migrator.
 _Avoid_: grader, judge, evaluator
 
 **App Host**:
@@ -37,7 +37,7 @@ The agent that revises the guide from eligible Run Reports in Iteration Results.
 _Avoid_: improver, reviewer, author
 
 **Reference Migration**:
-A known-correct upgrade of the Fixture App used to establish that the Oracle can be passed.
+A known-correct upgrade of the Fixture App used to establish that the Oracle can be passed, hidden from both Migrator and Editor.
 _Avoid_: golden app, solution, answer key
 
 **Friction Log**:
