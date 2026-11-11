@@ -4,7 +4,19 @@ It checks the class and the credentials, and builds the model's plan once.
 ``encrypt``, ``decrypt`` and the query methods are here.
 """
 
-from typing import Dict, Generic, List, Mapping, Optional, Sequence, Tuple, Type, TypeVar
+from types import SimpleNamespace
+from typing import (
+    Dict,
+    FrozenSet,
+    Generic,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    TypeVar,
+)
 
 from stackencrypt import _engine
 from stackencrypt._markers import Passthrough
@@ -14,7 +26,12 @@ from stackencrypt._declaration import (
     check_unchanged,
     declaration_of,
 )
-from stackencrypt._errors import AuthenticationError, DeclarationError, QueryError
+from stackencrypt._errors import (
+    AuthenticationError,
+    DeclarationError,
+    InvalidValueError,
+    QueryError,
+)
 
 
 T = TypeVar("T")
@@ -48,18 +65,11 @@ class Cipher(Generic[T]):
             raise AuthenticationError(code, message, field=field, reason=reason)
         self._cls = cls
         self._declaration = declaration
-        self._plan = _engine.build_plan(
-            declaration.table,
-            [
-                (
-                    field.name,
-                    None if field.marker is Passthrough else field.marker.name,
-                    None if field.marker is Passthrough else field.marker.plaintext,
-                    field.value_type,
-                )
-                for field in declaration.fields
-            ],
-        )
+        self._plan = _build_plan(declaration, declaration.fields)
+        self._planned = frozenset(field.name for field in declaration.fields)
+        # encrypt_rows's plans, one for each set of fields it has seen. Two
+        # threads may build the same plan at once; either one is kept.
+        self._row_plans: Dict[FrozenSet[str], object] = {}
 
     def encrypt(self, models: Sequence[object]) -> List[Dict[str, object]]:
         """Encrypt ``models``, instances of the declared class.
@@ -74,6 +84,56 @@ class Cipher(Generic[T]):
         request is made. An empty list makes no request at all.
         """
         return _engine.encrypt(self._plan, list(models))
+
+    def encrypt_rows(self, rows: Sequence[Mapping[str, object]]) -> List[Dict[str, object]]:
+        """Encrypt ``rows``, mappings from field name to value, that may
+        hold only some of the declared fields::
+
+            users.encrypt_rows([{"email": "a@example.com", "users_id": 1}])
+
+        Returns one new dict per row. Each declared field's value is
+        replaced as ``encrypt`` writes it: EQL JSON as a ``str`` for a
+        sealed field, and the value itself for a passthrough field. Every
+        other key, such as an ``Ignore`` field or a key that SQLAlchemy adds
+        for a ``WHERE``, is kept unchanged.
+
+        Every row must hold the same declared fields, so that one call
+        sends one batch of key requests. Rows that hold none are returned
+        unchanged with no request.
+
+        Every value is checked first, as ``encrypt`` checks it. A row that
+        is not a mapping, or that holds other declared fields than row 0,
+        raises ``InvalidValueError`` with the code ``value_row_shape``. No
+        request is made when any row fails. The input rows are not changed.
+        """
+        rows = list(rows)
+        names: Optional[FrozenSet[str]] = None
+        for at, row in enumerate(rows):
+            if not isinstance(row, Mapping):
+                raise InvalidValueError(
+                    "value_row_shape",
+                    f"row {at} is a {type(row).__name__}, not a mapping of field names to values.",
+                )
+            these = frozenset(name for name in row if name in self._planned)
+            if names is None:
+                names = these
+            elif these != names:
+                raise InvalidValueError(
+                    "value_row_shape",
+                    f"row {at} holds other declared fields than row 0. "
+                    f"Row 0 holds {sorted(names)}; row {at} holds {sorted(these)}. "
+                    "Encrypt rows with different fields in separate calls.",
+                )
+        if not names:
+            return [dict(row) for row in rows]
+        plan = self._row_plans.get(names)
+        if plan is None:
+            fields = [field for field in self._declaration.fields if field.name in names]
+            plan = self._row_plans[names] = _build_plan(self._declaration, fields)
+        sealed = _engine.encrypt(
+            plan, [SimpleNamespace(**{name: row[name] for name in names}) for row in rows]
+        )
+        return [{**row, **columns} for row, columns in zip(rows, sealed)]
 
     def decrypt(self, rows: Sequence[Mapping[str, object]]) -> List[T]:
         """Decrypt ``rows`` into instances of the declared class.
@@ -291,4 +351,20 @@ def _not_decorated(cls: object) -> DeclarationError:
         "declaration_not_decorated",
         f"class {cls.__name__!r} is not declared. {detail} Apply "
         f'@stackencrypt.model("...") to {cls.__name__!r} itself.',
+    )
+
+
+def _build_plan(declaration: Declaration, fields: Sequence[DeclaredField]) -> object:
+    """The engine's plan for ``fields`` of ``declaration``, in their order."""
+    return _engine.build_plan(
+        declaration.table,
+        [
+            (
+                field.name,
+                None if field.marker is Passthrough else field.marker.name,
+                None if field.marker is Passthrough else field.marker.plaintext,
+                field.value_type,
+            )
+            for field in fields
+        ],
     )

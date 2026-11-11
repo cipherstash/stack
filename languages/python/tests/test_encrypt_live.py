@@ -24,7 +24,16 @@ from sqlalchemy import ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 import stackencrypt
-from stackencrypt import Cipher, DecryptError, Ignore, IntegerOrd, Passthrough, TextEq, TextMatch
+from stackencrypt import (
+    Cipher,
+    DecryptError,
+    Ignore,
+    IntegerOrd,
+    Passthrough,
+    Text,
+    TextEq,
+    TextMatch,
+)
 from stackencrypt import _engine, _eql
 
 pytestmark = LIVE
@@ -507,3 +516,58 @@ def test_nan_infinity_and_negative_zero_round_trip(value):
         else:
             assert opened == value
             assert math.copysign(1.0, opened) == math.copysign(1.0, value)
+
+
+@stackencrypt.model("people")
+@dataclasses.dataclass
+class Person:
+    email: Annotated[str, TextEq]
+    name: Annotated[str, Text]
+    age: Annotated[int, Passthrough]
+
+
+@needs_database
+def test_a_row_updated_with_some_fields_decrypts_and_searches_with_the_full_model():
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg.rows import dict_row
+
+    people = Cipher(Person)
+    [row] = people.encrypt([Person(email="old@example.com", name="Ann", age=30)])
+    # As an UPDATE statement's parameters: one declared field, and the key
+    # SQLAlchemy adds for the WHERE.
+    [change] = people.encrypt_rows([{"email": "new@example.com", "people_id": 1}])
+
+    assert set(change) == {"email", "people_id"}
+    assert change["people_id"] == 1
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "CREATE TEMPORARY TABLE people (id int PRIMARY KEY, "
+            "email public.eql_v4_text_eq, name public.eql_v4_text, age int)"
+        )
+        cur.execute(
+            "INSERT INTO people (id, email, name, age) VALUES (1, %s, %s, %s)",
+            (row["email"], row["name"], row["age"]),
+        )
+        cur.execute(
+            "UPDATE people SET email = %(email)s WHERE id = %(people_id)s", change
+        )
+        cur.execute(
+            "SELECT email, name, age FROM people WHERE email = %s::eql_v4.query_text_eq",
+            (people.eq("email", "new@example.com"),),
+        )
+        found = people.decrypt(cur.fetchall())
+
+    assert [dataclasses.astuple(person) for person in found] == [("new@example.com", "Ann", 30)]
+
+
+def test_100_rows_with_one_field_make_one_key_request():
+    people = Cipher(Person)
+    # The first call in the process may load the keyset. Warm the client up
+    # first, so the count below is the key requests alone.
+    people.encrypt_rows([{"email": "warm@example.com"}])
+    before = _engine.request_count()
+
+    rows = people.encrypt_rows([{"email": f"user{i}@example.com"} for i in range(100)])
+
+    assert _engine.request_count() - before == 1
+    assert len(rows) == 100
