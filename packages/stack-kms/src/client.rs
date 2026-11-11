@@ -14,7 +14,7 @@ use vitaminc::random::{Generatable, SafeRand};
 #[cfg(feature = "http")]
 use crate::connection::HttpConnection;
 use crate::connection::ZeroKMSConnection;
-use crate::endpoint::{InvalidEndpoint, ZeroKmsEndpoint};
+use crate::endpoint::{HostedEndpoint, InvalidEndpoint, ZeroKmsEndpoint};
 use crate::errors::{Error, GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 use crate::futures::map_async_chunked;
 use crate::key::{ClientKey, DataKey, DataKeyWithTag, IndexKey};
@@ -414,7 +414,7 @@ pub struct StackKms<C, Conn = HttpConnection> {
     client_key: ClientKey,
     /// `None` when the connection was given its endpoint at init; otherwise
     /// the endpoint the first token's `services` claim named, once known.
-    discovered: Option<OnceLock<ZeroKmsEndpoint>>,
+    discovered: Option<OnceLock<HostedEndpoint>>,
 }
 
 /// `StackKms` owns the transport [`Client`], a [`stack_auth`] credential
@@ -428,7 +428,7 @@ pub struct StackKms<C, Conn> {
     client_key: ClientKey,
     /// `None` when the connection was given its endpoint at init; otherwise
     /// the endpoint the first token's `services` claim named, once known.
-    discovered: Option<OnceLock<ZeroKmsEndpoint>>,
+    discovered: Option<OnceLock<HostedEndpoint>>,
 }
 
 impl<C, Conn> StackKms<C, Conn>
@@ -452,7 +452,7 @@ where
     /// ZeroKMS endpoint is taken from the access token's `services` claim on
     /// first use unless the connection already knows one. A claimed endpoint
     /// must be CipherStash-hosted, and every later token must name the same
-    /// one; whether the connection already knows one is decided here, once.
+    /// region; whether the connection already knows one is decided here, once.
     pub fn connect(
         opts: ClientOpts<Conn::ConnectionOpts>,
         credentials: C,
@@ -483,9 +483,13 @@ where
     ///
     /// * the claim may only name a CipherStash-hosted ZeroKMS
     ///   ([`ZeroKmsEndpoint::from_services_claim`]), and
-    /// * every later token must name the endpoint the first one did. A token
-    ///   naming another is refused rather than sent to the pinned endpoint,
-    ///   and it cannot move the pin.
+    /// * every later token must name the same region as the first one did.
+    ///   A token for another region is refused rather than sent to the
+    ///   pinned endpoint, and it cannot move the pin. A token naming the
+    ///   same region on the other hosted domain is accepted and still sent
+    ///   to the pinned endpoint: both domains serve that region's ZeroKMS
+    ///   while CipherStash moves between them, and refusing would fail
+    ///   every call on a long-lived client when CTS switches domain.
     async fn get_token(&self) -> Result<stack_auth::ServiceToken, Error> {
         let token = (&self.credentials).get_token().await?;
         // Configured explicitly: the claim is not consulted.
@@ -496,13 +500,15 @@ where
         let pinned = discovered.get_or_init(|| {
             tracing::debug!(
                 target: "stack_kms",
-                endpoint = %claimed,
+                endpoint = %claimed.endpoint,
                 "resolved ZeroKMS endpoint from the token's services claim"
             );
-            self.client.connection().ensure_base_url(claimed.clone());
+            self.client
+                .connection()
+                .ensure_base_url(claimed.endpoint.clone());
             claimed.clone()
         });
-        if *pinned != claimed {
+        if pinned.region != claimed.region {
             return Err(InvalidEndpoint::Mismatch.into());
         }
         Ok(token)
@@ -916,6 +922,62 @@ mod tests {
                 1,
                 "the endpoint is handed to the connection once"
             );
+        }
+
+        /// CipherStash serves each region's ZeroKMS under both hosted domains
+        /// while it moves from `viturhosted.net` to
+        /// `zerokms.cipherstashmanaged.net`. When CTS starts issuing the new
+        /// name, a long-lived client pinned to the old one must keep working:
+        /// refusing would fail every call until the process restarted.
+        #[tokio::test]
+        async fn a_later_token_for_the_same_region_on_the_other_hosted_domain_is_accepted() {
+            const SYDNEY_NEW: &str = "https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net/";
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some(SYDNEY)), jwt(Some(SYDNEY_NEW)), jwt(Some(SYDNEY))]),
+            );
+            kms.get_token().await.expect("first token pins Sydney");
+            kms.get_token()
+                .await
+                .expect("same region on the new domain is the same ZeroKMS");
+            kms.get_token().await.expect("and back again");
+            assert_eq!(
+                pinned(&kms).as_deref(),
+                Some(SYDNEY),
+                "the endpoint in use does not move"
+            );
+            assert_eq!(*kms.client.connection().calls.lock().unwrap(), 1);
+        }
+
+        #[tokio::test]
+        async fn the_domain_move_works_in_both_directions() {
+            const VIRGINIA_OLD: &str = "https://us-east-1.aws.viturhosted.net/";
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some(VIRGINIA)), jwt(Some(VIRGINIA_OLD))]),
+            );
+            kms.get_token().await.expect("first token pins Virginia");
+            kms.get_token()
+                .await
+                .expect("same region on the old domain is the same ZeroKMS");
+            assert_eq!(pinned(&kms).as_deref(), Some(VIRGINIA));
+        }
+
+        #[tokio::test]
+        async fn another_region_is_refused_on_either_domain() {
+            for other in [
+                "https://us-east-1.aws.viturhosted.net/",
+                "https://us-east-1.aws.zerokms.cipherstashmanaged.net/",
+            ] {
+                let kms = kms(None, Tokens::new([jwt(Some(SYDNEY)), jwt(Some(other))]));
+                kms.get_token().await.expect("first token pins Sydney");
+                let err = kms.get_token().await.expect_err(other);
+                assert!(
+                    matches!(err, Error::InvalidEndpoint(InvalidEndpoint::Mismatch)),
+                    "{other}: {err:?}"
+                );
+                assert_eq!(pinned(&kms).as_deref(), Some(SYDNEY));
+            }
         }
 
         #[tokio::test]

@@ -59,11 +59,14 @@ pub enum InvalidEndpoint {
     )]
     NotHosted(String),
 
-    /// A token's `services` claim named a different ZeroKMS endpoint from the
-    /// one this client resolved from an earlier token. The client refuses to
-    /// send the token anywhere but the endpoint it already uses, and refuses
-    /// to move to the new one.
-    #[error("the token names a different ZeroKMS endpoint from the one this client already uses")]
+    /// A token's `services` claim named a ZeroKMS in a different region from
+    /// the one this client resolved from an earlier token. The client refuses
+    /// to send the token anywhere but the endpoint it already uses, and
+    /// refuses to move to the new one. The same region on the other hosted
+    /// domain is not a mismatch: both domains serve that region's ZeroKMS.
+    #[error(
+        "the token names a ZeroKMS in a different region from the one this client already uses"
+    )]
     #[diagnostic(
         code(stack_kms::endpoint_mismatch),
         help("A client resolves its ZeroKMS endpoint from the first token it holds. Use a separate client for each region's credentials, or configure the endpoint explicitly (`CS_ZEROKMS_HOST`).")
@@ -92,17 +95,32 @@ impl stack_auth::ErrorPayload for InvalidEndpoint {
 /// the list lives here.
 const HOSTED_ZEROKMS_DOMAINS: &[&str] = &["viturhosted.net", "zerokms.cipherstashmanaged.net"];
 
-/// Whether `host` is `<region>.<provider>.<domain>` for a hosted domain and a
-/// region CipherStash runs. `host` comes from a parsed [`Url`], so it is
-/// already lowercase and IDNA-normalised.
-fn is_hosted_zerokms(host: &str) -> bool {
-    HOSTED_ZEROKMS_DOMAINS.iter().any(|domain| {
+/// The region of `host` when it is `<region>.<provider>.<domain>` for a
+/// hosted domain and a region CipherStash runs. `host` comes from a parsed
+/// [`Url`], so it is already lowercase and IDNA-normalised.
+fn hosted_zerokms_region(host: &str) -> Option<cts_common::Region> {
+    HOSTED_ZEROKMS_DOMAINS.iter().find_map(|domain| {
         host.strip_suffix(domain)
             .and_then(|prefix| prefix.strip_suffix('.'))
             // Exactly two labels: `<region>.<provider>`.
             .filter(|region| region.matches('.').count() == 1)
-            .is_some_and(|region| cts_common::Region::new(region).is_ok())
+            .and_then(|region| cts_common::Region::new(region).ok())
     })
+}
+
+/// A CipherStash-hosted ZeroKMS endpoint named by a token's `services`
+/// claim, with the region its host names.
+///
+/// Each region's ZeroKMS is served under every domain in
+/// `HOSTED_ZEROKMS_DOMAINS` while CipherStash moves from `viturhosted.net`
+/// to `zerokms.cipherstashmanaged.net`, so two claims for the same region
+/// name the same service. Compare claims by [`region`](Self::region), not
+/// by URL: a client pinned to one domain must keep working when CTS starts
+/// issuing the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HostedEndpoint {
+    pub(crate) endpoint: ZeroKmsEndpoint,
+    pub(crate) region: cts_common::Region,
 }
 
 /// A validated ZeroKMS base URL.
@@ -178,17 +196,15 @@ impl ZeroKmsEndpoint {
     ///
     /// Whatever [`new`](Self::new) refuses, and
     /// [`InvalidEndpoint::NotHosted`] for a usable URL on any other host.
-    pub(crate) fn from_services_claim(url: Url) -> Result<Self, InvalidEndpoint> {
+    pub(crate) fn from_services_claim(url: Url) -> Result<HostedEndpoint, InvalidEndpoint> {
         let endpoint = Self::new(url)?;
         let url = endpoint.as_url();
-        let hosted = url.scheme() == "https"
-            && url.port().is_none()
-            && url.path() == "/"
-            && url.host_str().is_some_and(is_hosted_zerokms);
-        if hosted {
-            Ok(endpoint)
-        } else {
-            Err(InvalidEndpoint::NotHosted(endpoint.0.into()))
+        let region = (url.scheme() == "https" && url.port().is_none() && url.path() == "/")
+            .then(|| url.host_str().and_then(hosted_zerokms_region))
+            .flatten();
+        match region {
+            Some(region) => Ok(HostedEndpoint { endpoint, region }),
+            None => Err(InvalidEndpoint::NotHosted(endpoint.0.into())),
         }
     }
 
@@ -388,7 +404,7 @@ mod tests {
     }
 
     fn claimed(s: &str) -> Result<ZeroKmsEndpoint, InvalidEndpoint> {
-        ZeroKmsEndpoint::from_services_claim(Url::parse(s).unwrap())
+        ZeroKmsEndpoint::from_services_claim(Url::parse(s).unwrap()).map(|h| h.endpoint)
     }
 
     /// The endpoint a token's `services` claim may name: only CipherStash's
@@ -404,6 +420,48 @@ mod tests {
                     assert_eq!(claimed(&s).map(|e| e.to_string()), Ok(s.clone()), "{s}");
                 }
             }
+        }
+
+        /// The contract with CTS: whatever `cts-common` builds for the
+        /// `services` claim must be accepted. If a `cts-common` bump moves
+        /// ZeroKMS to a domain this crate does not list, this fails at bump
+        /// time instead of every customer's client failing in production.
+        #[test]
+        fn accepts_every_endpoint_cts_issues() {
+            use cts_common::{ServiceDiscovery, ZeroKmsServiceDiscovery};
+            for region in cts_common::Region::all() {
+                let issued = ZeroKmsServiceDiscovery::endpoint(region).unwrap();
+                assert_eq!(
+                    ZeroKmsEndpoint::from_services_claim(issued.clone())
+                        .map(|h| (h.endpoint.to_string(), h.region)),
+                    Ok((issued.to_string(), region)),
+                    "{issued}"
+                );
+            }
+        }
+
+        #[test]
+        fn rejects_the_cts_hosts_on_both_domains() {
+            for s in [
+                "https://us-east-1.aws.auth.viturhosted.net/",
+                "https://us-east-1.aws.cts.cipherstashmanaged.net/",
+            ] {
+                assert!(
+                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted(_))),
+                    "{s}: {:?}",
+                    claimed(s)
+                );
+            }
+        }
+
+        #[test]
+        fn names_the_same_region_on_both_hosted_domains() {
+            let parse = |s: &str| ZeroKmsEndpoint::from_services_claim(Url::parse(s).unwrap());
+            let old = parse("https://ap-southeast-2.aws.viturhosted.net/").unwrap();
+            let new = parse("https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net/").unwrap();
+            assert_ne!(old.endpoint, new.endpoint);
+            assert_eq!(old.region, new.region);
+            assert_eq!(old.region.identifier(), "ap-southeast-2.aws");
         }
 
         #[test]
