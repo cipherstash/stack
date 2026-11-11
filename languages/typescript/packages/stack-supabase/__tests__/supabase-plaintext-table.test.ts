@@ -262,10 +262,11 @@ describe('plaintext table rows that carry ciphertext', () => {
 
       expect(error?.message).toContain('"[0].meta"')
       expect(error?.message).not.toContain('ssn-078-05-1120')
-      // The message reaches the logger too, so the log must not carry it either.
+      // The log names the failure's kind, never the message (CIP-5161), so it
+      // carries neither the key nor the row path.
       expect(logged).toHaveBeenCalled()
       for (const args of logged.mock.calls) {
-        expect(args.join(' ')).toContain('"[0].meta"')
+        expect(args.join(' ')).toContain('DecryptionError')
         expect(args.join(' ')).not.toContain('ssn-078-05-1120')
       }
     } finally {
