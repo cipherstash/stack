@@ -48,8 +48,8 @@ with tempfile.TemporaryDirectory() as directory:
             self.stdin = io.BytesIO()
             self.stdout = tempfile.TemporaryFile()
             streams.append(self.stdout)
-            calls = current.get('calls', []) + ['+++ exited with 0 +++']
-            self.stderr = io.BytesIO(('\n'.join('[pid 42] ' + call for call in calls) + '\n').encode())
+            calls = current.get('trace', ['[pid 42] ' + call for call in current.get('calls', [])] + ['[pid 42] +++ exited with 0 +++'])
+            self.stderr = io.BytesIO(('\n'.join(calls) + '\n').encode())
         def poll(self): return 0
         def wait(self): return 0
     with patch('os.open', open_fd), patch('os.dup2'), patch('builtins.open', open_file), patch('subprocess.Popen', Process), patch('os.killpg'):
@@ -62,6 +62,7 @@ print(json.dumps(frames))
 interface Frame {
   kind: string
   data?: string
+  error?: string
   event?: {
     operation: string
     resource: string
@@ -71,7 +72,12 @@ interface Frame {
 }
 
 async function observe(
-  invocations: Array<{ stage: string; stderr?: string; calls?: string[] }>,
+  invocations: Array<{
+    stage: string
+    stderr?: string
+    calls?: string[]
+    trace?: string[]
+  }>,
   env: Record<string, string> = {},
 ): Promise<Frame[]> {
   const { stdout } = await exec('python3', [
@@ -154,4 +160,80 @@ test('redacting a database password in a resource preserves a forbidden access d
     result: 'denied',
   })
   expect(JSON.stringify(frames)).not.toContain(password)
+})
+
+// strace 6.1's non-leader exec format: tests/threads-execve.c and src/strace.c.
+test('observer joins exec continuation after a non-leader thread takes the process PID', async () => {
+  const frames = await observe([
+    {
+      stage: 'command',
+      trace: [
+        '[pid 43] execve("/usr/bin/node", ["node"], 0x1 /* 1 var */ <pid changed to 42 ...>',
+        '[pid 42] +++ superseded by execve in pid 43 +++',
+        '[pid 42] <... execve resumed>) = 0',
+        '[pid 42] +++ exited with 0 +++',
+      ],
+    },
+  ])
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  expect(frames.find((frame) => frame.kind === 'event')?.event).toMatchObject({
+    operation: 'execve',
+    resource: '/usr/bin/node',
+    result: 'success',
+  })
+  expect(frames.some((frame) => frame.kind === 'actor-exit')).toBe(true)
+})
+
+test('observer transfers an interleaved unfinished exec and preserves forbidden access evidence', async () => {
+  const frames = await observe([
+    {
+      stage: 'command',
+      trace: [
+        '[pid 43] execve("/protected/tool", ["tool"], 0x1 /* 1 var */ <unfinished ...>',
+        '[pid 42] +++ superseded by execve in pid 43 +++',
+        '[pid 42] <... execve resumed>) = 0',
+        '[pid 42] +++ exited with 0 +++',
+      ],
+    },
+  ])
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  expect(frames.find((frame) => frame.kind === 'event')?.event).toMatchObject({
+    operation: 'execve',
+    resource: '/protected/tool',
+    decision: 'forbidden',
+    result: 'success',
+  })
+})
+
+test.each([
+  [
+    'unmatched ptrace syscall continuation',
+    ['[pid 42] <... openat resumed>) = 3</workspace/file>'],
+  ],
+  [
+    'mismatched ptrace syscall continuation',
+    [
+      '[pid 42] openat(AT_FDCWD, "/workspace/file", O_RDONLY <unfinished ...>',
+      '[pid 42] <... execve resumed>) = 0',
+    ],
+  ],
+  [
+    'missing ptrace exec PID transition',
+    [
+      '[pid 42] +++ superseded by execve in pid 43 +++',
+      '[pid 42] <... execve resumed>) = 0',
+    ],
+  ],
+  [
+    'ptrace observer ended without the actor exit record',
+    [
+      '[pid 42] openat(AT_FDCWD, "/workspace/file", O_RDONLY) = 3</workspace/file>',
+    ],
+  ],
+])('observer still fails closed on %s', async (message, trace) => {
+  const frames = await observe([{ stage: 'command', trace }])
+  expect(frames).toContainEqual({
+    kind: 'stream-error',
+    error: expect.stringContaining(message),
+  })
 })
