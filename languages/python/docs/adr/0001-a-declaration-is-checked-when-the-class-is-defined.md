@@ -4,7 +4,7 @@ date: 2026-10-16
 accepted: 2026-10-27, by the review on PR #1284; the status edit rode with the first implementation PR, as the spec (#1341) says
 extends: ADR-0007, ADR-0008 (packages/stack-encrypt/docs/adr)
 ticket: the Python SDK discovery ticket, backlog item 1 (its 15 October 2026 amendment)
-amended_by: "Amendment, 2026-11-11: a field can be Optional"
+amended_by: "Amendments, 2026-11-11: a field can be Optional; a relationship needs no marker"
 ---
 
 # A declaration is checked when Python defines the class, by construction
@@ -530,4 +530,18 @@ The engine has two ways to store a missing value (`packages/stack-encrypt/src/dy
 `Optional` means `"sql"`. It is what a nullable column means in a normal table, and it works for every marker, text included. An app that stores a placeholder, such as an empty string, in place of `None` shows the same thing: with an equality index, every placeholder row has the same term. `"sealed"` can come later, as an option a fixed-width field asks for.
 
 The Go SDK declares a nullable field as a pointer, with a `null=sql` or `null=sealed` tag, and refuses a pointer with no tag (`languages/golang/encrypt/gensupport/declaration.go`). Python needs no tag for the common case, because `Optional` already says the field can be missing.
+
+## Amendment, 2026-11-11: a relationship needs no marker
+
+The decorator now leaves out a SQLAlchemy relationship, such as `books: Mapped[list["Book"]] = relationship()`. It needs no marker, and its hint is not resolved.
+
+Before this, Rule A applied to every annotated attribute of a SQLAlchemy class. A relationship could not be marked `Ignore` if it was a list: SQLAlchemy reads the type directly inside `Mapped[...]`, not inside `Annotated`. So an app had to remove the annotation, and a type checker no longer knew the type. The hint also had to resolve when the decorator ran, so the target class had to be defined first. Endurain's `User` class has 13 such relationships.
+
+A relationship is never a column, so leaving it out cannot store plaintext. Rule A still holds for every column: a column with no marker still raises `declaration_no_marker`. So leaving out a column is never a silent choice.
+
+The decorator finds the relationships in the class's SQLAlchemy mapper, `__mapper__._props`. SQLAlchemy maps a declarative class when its class statement runs, so the mapper lists them before the decorator runs, and before the classes they name exist. `_props` is a private attribute. If it is missing, nothing is left out, and Rule A refuses an unmarked relationship as before.
+
+### What was not done
+
+A class-level option, such as `unmarked=Passthrough`, would store every unmarked column as it is. It would save marking many columns `Passthrough` or `Ignore`. But a sensitive column that someone forgot to mark would then be stored as plaintext, with no error. That breaks Rule A, so it was not added.
 

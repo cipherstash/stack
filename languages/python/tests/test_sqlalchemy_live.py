@@ -9,7 +9,7 @@ of its own, and drops the schema afterwards.
 
 import decimal
 import uuid
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional
 
 import pytest
 from _live import DATABASE_URL, LIVE, needs_database
@@ -34,7 +34,8 @@ class Customer(Base):
     email: Mapped[Annotated[str, TextEq]]
     name: Mapped[Annotated[str, Text]]
     plan: Mapped[Annotated[str, Passthrough]]
-    orders = relationship("Order", back_populates="customer")  # a list of Order
+    # A relationship needs no marker: it is never a column.
+    orders: Mapped[List["Order"]] = relationship(back_populates="customer")
 
 
 @stackencrypt.model("orders")
@@ -43,7 +44,7 @@ class Order(Base):
     id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
     customer_id: Mapped[Annotated[int, Ignore]] = mapped_column(ForeignKey("customers.id"))
     note: Mapped[Annotated[str, Text]]
-    customer: Mapped[Annotated["Customer", Ignore]] = relationship(back_populates="orders")
+    customer: Mapped["Customer"] = relationship(back_populates="orders")
 
 
 @stackencrypt.model("profiles")
