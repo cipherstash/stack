@@ -48,5 +48,23 @@ export async function resolveStack({ source, root, output }) {
     !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version)
   )
     throw Error('Could not resolve exact Stack version')
-  return { version, install: version }
+  const ffiAnswer = JSON.parse(
+    (
+      await exec('npm', [
+        'view',
+        `@cipherstash/stack@${version}`,
+        'dependencies.@cipherstash/protect-ffi',
+        '--json',
+      ])
+    ).stdout,
+  )
+  // npm 12 wraps even an exact version's field in an array; older npm does not.
+  const ffiRange = Array.isArray(ffiAnswer)
+    ? ffiAnswer.length === 1
+      ? ffiAnswer[0]
+      : undefined
+    : ffiAnswer
+  if (typeof ffiRange !== 'string' || !ffiRange)
+    throw Error('Could not resolve Stack FFI dependency')
+  return { version, install: version, ffiRange }
 }
