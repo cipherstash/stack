@@ -142,14 +142,13 @@ export async function createExample(sql: postgres.Sql, table: string) {
     tx: postgres.TransactionSql,
     allowTargetIndexes: boolean,
   ) {
-    // PostgreSQL 18 records NOT NULL constraints in pg_constraint, including the
-    // primary key's implicit one. Permit only that first-column obligation;
-    // pg_attribute also catches customer NOT NULL declarations on PostgreSQL 17.
-    // Source NOT NULL breaks target-only writes; target NOT NULL must survive rollback.
     const dependencies = await tx`SELECT
       EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = ${table}::regclass AND NOT tgisinternal)
       OR EXISTS (SELECT 1 FROM pg_constraint WHERE (conrelid = ${table}::regclass OR confrelid = ${table}::regclass)
-        AND NOT (conrelid = ${table}::regclass AND contype IN ('p', 'n') AND conkey = ARRAY[1]::smallint[]))
+        -- PostgreSQL 18 also lists the primary key column's NOT NULL here.
+        AND NOT (contype IN ('p', 'n') AND conrelid = ${table}::regclass AND conkey = ARRAY[1]::smallint[]))
+      -- PostgreSQL 17 and earlier keep NOT NULL out of pg_constraint, so read
+      -- it from the column on every version.
       OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = ${table}::regclass
         AND attnum > 1 AND NOT attisdropped AND attnotnull)
       OR EXISTS (SELECT 1 FROM pg_index ix JOIN pg_class idx ON idx.oid = ix.indexrelid
