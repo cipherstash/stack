@@ -299,6 +299,152 @@ test('F5 checks legacy ciphertext after reads and before mutations', async () =>
   expect(mutationBeforeSnapshot).toBe(false)
 })
 
+test.each([
+  [
+    'dropped table',
+    Object.assign(Error('missing table'), { code: '42P01' }),
+    'behaviour',
+  ],
+  [
+    'renamed column',
+    Object.assign(Error('missing column'), { code: '42703' }),
+    'behaviour',
+  ],
+  [
+    'invalid payload cast',
+    Object.assign(Error('invalid cast'), { code: '42846' }),
+    'behaviour',
+  ],
+  [
+    'deleted DynamoDB table',
+    Object.assign(Error('missing table'), {
+      name: 'ResourceNotFoundException',
+    }),
+    'behaviour',
+  ],
+  [
+    'unknown snapshot failure',
+    Error('unrecognized snapshot failure'),
+    'behaviour',
+  ],
+  [
+    'refused connection',
+    Object.assign(Error('connection refused'), { code: 'ECONNREFUSED' }),
+    'infrastructure',
+  ],
+  [
+    'reset connection',
+    Object.assign(Error('connection reset'), { code: 'ECONNRESET' }),
+    'infrastructure',
+  ],
+  [
+    'connection timeout',
+    Object.assign(Error('connection timed out'), { code: 'ETIMEDOUT' }),
+    'infrastructure',
+  ],
+  [
+    'broken socket pipe',
+    Object.assign(Error('broken pipe'), { code: 'EPIPE' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres.js closed connection',
+    Object.assign(Error('connection closed'), { code: 'CONNECTION_CLOSED' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres connection loss',
+    Object.assign(Error('connection failure'), { code: '08006' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres shutdown',
+    Object.assign(Error('admin shutdown'), { code: '57P01' }),
+    'infrastructure',
+  ],
+  [
+    'fetch transport failure',
+    new TypeError('fetch failed', {
+      cause: Object.assign(Error('socket closed'), { code: 'UND_ERR_SOCKET' }),
+    }),
+    'infrastructure',
+  ],
+] as const)(
+  'post-read snapshot classifies %s',
+  async (_scenario, error, outcome) => {
+    const { driver, calls } = await setup()
+    const baseline = await observed.snapshot()
+    observed.snapshot
+      .mockResolvedValueOnce(baseline)
+      .mockRejectedValueOnce(error)
+    try {
+      const report = await run({
+        id: 'post-read-snapshot',
+        manifest: { guideHash: 'guide' },
+        driver: {
+          ...driver,
+          provision: async () => {},
+          migrate: async () => ({ exitCode: 0 }),
+          friction: async () => [],
+        },
+      })
+      expect(report.outcome).toBe(outcome)
+      expect(report.editorEligible).toBe(outcome === 'behaviour')
+      expect(calls).toContain('findPostgresAge')
+      expect(
+        report.stages.find((stage) => stage.name === 'behaviour')?.status,
+      ).toBe('failed')
+    } finally {
+      await driver.close()
+    }
+  },
+)
+
+test.each([
+  [Object.assign(Error('missing table'), { code: '42P01' }), 'behaviour'],
+  [
+    Object.assign(Error('missing DynamoDB table'), {
+      name: 'ResourceNotFoundException',
+    }),
+    'behaviour',
+  ],
+  [
+    Object.assign(Error('connection lost'), { code: '08006' }),
+    'infrastructure',
+  ],
+] as const)(
+  'Mutation Data inspection classifies %s',
+  async (error, outcome) => {
+    const { driver, calls } = await setup()
+    const baseline = await observed.snapshot()
+    observed.snapshot
+      .mockResolvedValueOnce(baseline)
+      .mockResolvedValueOnce(baseline)
+      .mockRejectedValueOnce(error)
+    try {
+      const report = await run({
+        id: 'mutation-snapshot',
+        manifest: { guideHash: 'guide' },
+        driver: {
+          ...driver,
+          provision: async () => {},
+          migrate: async () => ({ exitCode: 0 }),
+          friction: async () => [],
+        },
+      })
+      expect(report.outcome).toBe(outcome)
+      expect(report.editorEligible).toBe(outcome === 'behaviour')
+      expect(observed.snapshot).toHaveBeenLastCalledWith('mutation')
+      expect(calls).toContain('setActive')
+      expect(calls.slice(calls.lastIndexOf('setActive'))).not.toContain(
+        'copyToPostgres',
+      )
+    } finally {
+      await driver.close()
+    }
+  },
+)
+
 test('F12 disposes stores even when the isolation supervisor fails to stop', async () => {
   const { driver } = await setup({ stopFails: true })
   await expect(driver.close()).rejects.toThrow('supervisor stop failed')

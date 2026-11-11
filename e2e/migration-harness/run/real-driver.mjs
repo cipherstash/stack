@@ -15,6 +15,7 @@ import {
   validatePostgresBaseline,
 } from './postgres-oracle.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
+import { isSnapshotInfrastructureError } from './snapshot-errors.mjs'
 import { resolveStack } from './stack-source.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
@@ -367,7 +368,7 @@ export function createRealDriver({
           } catch (error) {
             throw Object.assign(
               Error('PostgreSQL Oracle snapshot failed', { cause: error }),
-              { infrastructure: true },
+              { infrastructure: isSnapshotInfrastructureError(error) },
             )
           }
           result.checks.push(
@@ -396,7 +397,7 @@ export function createRealDriver({
             } catch (error) {
               throw Object.assign(
                 new Error('Mutation Data inspection failed', { cause: error }),
-                { infrastructure: true },
+                { infrastructure: isSnapshotInfrastructureError(error) },
               )
             }
           },
@@ -407,7 +408,7 @@ export function createRealDriver({
         } catch (error) {
           throw Object.assign(
             new Error('Oracle snapshot read failed', { cause: error }),
-            { infrastructure: true },
+            { infrastructure: isSnapshotInfrastructureError(error) },
           )
         }
         const comparison = noRewrite(legacySnapshot, current)
