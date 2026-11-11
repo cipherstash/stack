@@ -169,6 +169,10 @@ impl DeviceCodeStrategy {
             verification_uri: code.verification_uri,
             verification_uri_complete: code.verification_uri_complete,
             expires_in,
+            // Fixed now, when the code is issued, so a caller that waits
+            // before polling does not get a fresh window. `expires_in` is
+            // clamped above, so this cannot overflow.
+            deadline: tokio::time::Instant::now() + tokio::time::Duration::from_secs(expires_in),
             profile_dir: self.profile_dir.clone(),
             device_identity: self.device_identity.clone(),
         })
@@ -280,6 +284,9 @@ pub struct PendingDeviceCode {
     /// How many seconds the device code remains valid, clamped to
     /// [`MAX_DEVICE_CODE_LIFETIME_SECS`].
     expires_in: u64,
+    /// When the device code expires: when it was received plus `expires_in`.
+    /// Polling stops here, including mid-request and mid-sleep.
+    deadline: tokio::time::Instant,
     /// Profile directory override. Falls back to `~/.cipherstash`.
     profile_dir: Option<PathBuf>,
     /// Device identity to associate with the token.
@@ -302,10 +309,12 @@ impl PendingDeviceCode {
         &self.verification_uri_complete
     }
 
-    /// How many seconds the device code remains valid.
+    /// How many seconds the device code was valid for when it was issued.
     ///
-    /// This is the server's `expires_in`, capped at one hour: polling stops
-    /// at that point even if the server claimed a longer lifetime.
+    /// This is the server's `expires_in`, capped at one hour. The lifetime
+    /// runs from when [`begin`](DeviceCodeStrategy::begin) received the
+    /// code, not from when polling starts: polling stops at that point even
+    /// if the server claimed a longer lifetime.
     pub fn expires_in(&self) -> u64 {
         self.expires_in
     }
@@ -332,8 +341,7 @@ impl PendingDeviceCode {
     pub async fn poll_for_token(self) -> Result<Token, AuthError> {
         let transport = bundled_transport();
         let mut interval = tokio::time::Duration::from_secs(5);
-        let deadline =
-            tokio::time::Instant::now() + tokio::time::Duration::from_secs(self.expires_in);
+        let deadline = self.deadline;
 
         tracing::debug!(
             url = %self.token_url,
@@ -347,16 +355,22 @@ impl PendingDeviceCode {
                 return Err(AuthError::TokenExpired(crate::error::TokenExpired));
             }
 
-            let resp = transport::post_form(
-                &transport,
-                self.token_url.clone(),
-                &TokenRequest {
-                    client_id: &self.client_id,
-                    device_code: &self.device_code,
-                    grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-                },
+            // A response that arrives after the deadline is dropped rather
+            // than saved: the code has expired, whatever the server says.
+            let resp = tokio::time::timeout_at(
+                deadline,
+                transport::post_form(
+                    &transport,
+                    self.token_url.clone(),
+                    &TokenRequest {
+                        client_id: &self.client_id,
+                        device_code: &self.device_code,
+                        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+                    },
+                ),
             )
-            .await?;
+            .await
+            .map_err(|_| AuthError::TokenExpired(crate::error::TokenExpired))??;
 
             if resp.is_success() {
                 tracing::debug!("token received");
@@ -433,7 +447,9 @@ impl PendingDeviceCode {
                 }
             }
 
-            tokio::time::sleep(interval).await;
+            // Wake at the deadline rather than sleeping past it; the check at
+            // the top of the loop then reports the expiry.
+            tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + interval)).await;
         }
     }
 }

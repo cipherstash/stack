@@ -578,6 +578,60 @@ async fn test_poll_for_token_expires_at_the_clamped_deadline() {
     );
 }
 
+fn mock_pending_forever(mocks: &mut MockSet, expires_in: u64) {
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/code");
+        then.json(device_code_json_expiring_in(expires_in));
+    });
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/token");
+        then.bad_request().json(error_json("authorization_pending"));
+    });
+}
+
+/// The lifetime runs from when the code was received, not from when
+/// polling starts: a caller that waits past it gets no fresh window.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_counts_the_lifetime_from_begin() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mock_pending_forever(&mut mocks, 900);
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+
+    tokio::time::advance(tokio::time::Duration::from_secs(901)).await;
+    let started = tokio::time::Instant::now();
+    let err = pending.poll_for_token().await.unwrap_err();
+
+    assert!(matches!(err, AuthError::TokenExpired(_)));
+    assert_eq!(
+        started.elapsed().as_secs(),
+        0,
+        "an already-expired code must not be polled for another window"
+    );
+}
+
+/// Polling stops at the deadline itself, not at the first poll after it.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_does_not_sleep_past_the_deadline() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    // Polls at T=0 and T=5; the next would be T=10, past the 7s deadline.
+    mock_pending_forever(&mut mocks, 7);
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+    let started = tokio::time::Instant::now();
+
+    let err = pending.poll_for_token().await.unwrap_err();
+
+    assert!(matches!(err, AuthError::TokenExpired(_)));
+    assert_eq!(
+        started.elapsed().as_secs(),
+        7,
+        "polling should stop at the deadline, not sleep past it"
+    );
+}
+
 /// A server-supplied token lifetime past the cap is clamped on the
 /// device-code path too, rather than wrapping `now + expires_in` to a
 /// timestamp in the past.

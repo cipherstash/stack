@@ -467,7 +467,17 @@ impl ProfileStore {
         // is not taken for them.
         match std::fs::File::open(&path).and_then(SecretBuf::read_from) {
             Ok(contents) => {
-                let value: T = serde_json::from_slice(contents.as_bytes())?;
+                // Validate the whole file as UTF-8 first, as `read_to_string`
+                // did: `from_slice` skips the bytes of fields it ignores, so
+                // it would accept invalid UTF-8 in an unknown field. This
+                // borrows the buffer, so it makes no copy.
+                let text = std::str::from_utf8(contents.as_bytes()).map_err(|_| {
+                    ProfileError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "profile file is not valid UTF-8",
+                    ))
+                })?;
+                let value: T = serde_json::from_str(text)?;
                 Ok(value)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -635,19 +645,29 @@ mod tests {
         assert!(matches!(err, ProfileError::NotFound { .. }));
     }
 
-    #[test]
-    fn load_reports_a_non_utf8_file_as_a_json_error() {
-        // Reading through `SecretBuf` leaves UTF-8 validation to serde_json,
-        // so a file of invalid bytes is malformed JSON, like any other
-        // unparseable file, rather than an I/O error.
+    fn assert_invalid_utf8_is_an_io_error(contents: &[u8]) {
         let dir = tempfile::tempdir().unwrap();
         let store = ProfileStore::new(dir.path());
-        std::fs::write(dir.path().join("data.json"), b"{\"name\": \"\xff\"}").unwrap();
+        std::fs::write(dir.path().join("data.json"), contents).unwrap();
 
         let err = store.load::<TestData>("data.json").unwrap_err();
         assert!(
-            matches!(err, ProfileError::Json(_)),
-            "a non-UTF-8 file should be a JSON error; got {err:?}"
+            matches!(&err, ProfileError::Io(e) if e.kind() == std::io::ErrorKind::InvalidData),
+            "a non-UTF-8 file should be an InvalidData I/O error, as before; got {err:?}"
+        );
+    }
+
+    #[test]
+    fn load_rejects_invalid_utf8_in_a_known_field() {
+        assert_invalid_utf8_is_an_io_error(b"{\"name\": \"\xff\", \"value\": 1}");
+    }
+
+    #[test]
+    fn load_rejects_invalid_utf8_in_an_unknown_field() {
+        // serde_json skips an ignored field's bytes without validating them,
+        // so this file would load if UTF-8 were left to the parser.
+        assert_invalid_utf8_is_an_io_error(
+            b"{\"name\": \"ok\", \"value\": 1, \"extra\": \"\xff\"}",
         );
     }
 

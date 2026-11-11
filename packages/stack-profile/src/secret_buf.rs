@@ -85,7 +85,12 @@ impl SecretBuf {
             return Ok(());
         }
         let capacity = needed.max(self.0.capacity().saturating_mul(2));
-        let mut grown = Zeroizing::new(Vec::with_capacity(capacity));
+        // `try_reserve_exact`, not `Vec::with_capacity`: an oversized input
+        // must come back as an error, not abort the process.
+        let mut grown = Zeroizing::new(Vec::new());
+        grown
+            .try_reserve_exact(capacity)
+            .map_err(|_| std::io::ErrorKind::OutOfMemory)?;
         grown.extend_from_slice(&self.0);
         // The old buffer is dropped here, and `Zeroizing` wipes it.
         self.0 = grown;
@@ -190,6 +195,15 @@ mod tests {
             INITIAL_CAPACITY,
             "a profile-sized file should be read without growing the buffer"
         );
+    }
+
+    #[test]
+    fn reserve_returns_an_error_instead_of_aborting() {
+        let mut buf = SecretBuf::with_capacity(1);
+        buf.write_all(b"x").unwrap();
+        let err = buf.reserve(isize::MAX as usize).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::OutOfMemory);
+        assert_eq!(buf.as_bytes(), b"x", "a failed reserve keeps the contents");
     }
 
     #[test]
