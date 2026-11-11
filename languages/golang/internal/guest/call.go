@@ -50,20 +50,34 @@ type Exports struct {
 	LastError api.Function
 }
 
-// AllocWrite stages data into a fresh guest buffer.
-func (e Exports) AllocWrite(ctx context.Context, m api.Module, data []byte) (Buf, error) {
+// alloc asks the guest's se_alloc for n bytes. It is the one allocation
+// sequence behind AllocWrite and Place, so the two cannot drift on the
+// bound, the result's shape or the null-pointer check.
+func alloc(ctx context.Context, fn api.Function, n int) (Buf, error) {
 	// se_alloc takes an i32: a longer length would reach the guest
 	// truncated to its low 32 bits.
-	if uint64(len(data)) > math.MaxUint32 {
+	if uint64(n) > math.MaxUint32 {
 		return Buf{}, errors.New("cipherstash: buffer exceeds the guest's 4 GiB address space")
 	}
-	res, err := e.Alloc.Call(ctx, uint64(len(data)))
+	res, err := fn.Call(ctx, uint64(n))
 	if err != nil {
 		return Buf{}, fmt.Errorf("%w: guest alloc: %w", ErrTrap, err)
 	}
-	b := Buf{Ptr: api.DecodeU32(res[0]), Len: uint32(len(data))} //nolint:gosec // bounded above
+	if len(res) == 0 {
+		return Buf{}, errors.New("cipherstash: guest allocation returned no pointer")
+	}
+	b := Buf{Ptr: api.DecodeU32(res[0]), Len: uint32(n)} //nolint:gosec // bounded above
 	if b.Ptr == 0 {
 		return Buf{}, errors.New("cipherstash: guest allocation failed")
+	}
+	return b, nil
+}
+
+// AllocWrite stages data into a fresh guest buffer.
+func (e Exports) AllocWrite(ctx context.Context, m api.Module, data []byte) (Buf, error) {
+	b, err := alloc(ctx, e.Alloc, len(data))
+	if err != nil {
+		return Buf{}, err
 	}
 	if len(data) > 0 && !m.Memory().Write(b.Ptr, data) {
 		e.Free(ctx, b)
@@ -95,21 +109,15 @@ func (e Exports) Free(ctx context.Context, b Buf) {
 // buffer, because se_dealloc is not callable from an import; the guest's
 // registry frees the zeroed bytes at shutdown.
 func Place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte) bool {
-	alloc := m.ExportedFunction("se_alloc")
-	if alloc == nil {
+	fn := m.ExportedFunction("se_alloc")
+	if fn == nil {
 		return false
 	}
-	if uint64(len(data)) > math.MaxUint32 {
+	b, err := alloc(ctx, fn, len(data))
+	if err != nil {
 		return false
 	}
-	res, err := alloc.Call(ctx, uint64(len(data)))
-	if err != nil || len(res) == 0 {
-		return false
-	}
-	ptr := api.DecodeU32(res[0])
-	if ptr == 0 {
-		return false
-	}
+	ptr := b.Ptr
 	length := uint32(len(data)) //nolint:gosec // bounded above
 	mem := m.Memory()
 	if len(data) > 0 && !mem.Write(ptr, data) {

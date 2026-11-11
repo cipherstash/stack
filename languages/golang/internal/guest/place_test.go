@@ -37,8 +37,8 @@ func TestPlaceHandsTheGuestTheBuffer(t *testing.T) {
 }
 
 // When an out-slot cannot be written the guest never learns of the buffer,
-// so Place must zeroize and release it itself: the data written before the
-// slot failed must not stay in guest memory.
+// so Place must zeroize it in place and clear the pointer slot: the data
+// written before the slot failed must not stay in guest memory.
 func TestPlaceWipesTheBufferWhenASlotWriteFails(t *testing.T) {
 	ctx := context.Background()
 	const outOfRange = 1 << 16 // the end of the stub's one page
