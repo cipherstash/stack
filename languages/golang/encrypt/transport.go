@@ -91,8 +91,9 @@ func (t *transport) send(ctx context.Context, m api.Module,
 	defer wipe(respBody)
 	if !guest.Place(ctx, m, respHeadersPtrOut, respHeadersLenOut, respHeaders) ||
 		!guest.Place(ctx, m, respBodyPtrOut, respBodyLenOut, respBody) {
-		// The guest reclaims whatever was placed and refuses an unplaced
-		// slot as an unregistered buffer; nothing more this side can do.
+		// The guest reclaims whatever was placed. An unplaced slot reads as
+		// (null, 0), which the guest takes as an empty buffer, so the
+		// failure rides on the status; nothing more this side can do.
 		return transportFailed
 	}
 	return status
