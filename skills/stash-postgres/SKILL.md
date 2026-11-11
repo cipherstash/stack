@@ -107,7 +107,7 @@ public.eql_v3_timestamp_ord →  eql_v3.query_timestamp_ord
 
 Use the query domain of the column's *own* domain. Pairing a column with a
 different domain's query operand (for example `public.eql_v3_text_ord` with
-`eql_v3.query_text_eq`) raises `operator = is not supported between ...: use the
+`eql_v3.query_text_eq`) raises `operator = is not supported for ...: use the
 query domain that matches the column` rather than returning no rows. This
 guard covers the comparison operators (`=`, `<>`, `<`, `<=`, `>`, `>=`, `@@`)
 that both the column and the wrong query domain support, within one type
