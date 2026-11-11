@@ -7,9 +7,12 @@ vi.mock('node:child_process', () => ({ spawn: spawnDocker }))
 
 import { createIsolation } from '../isolation.mjs'
 
+let missingGit = false
+
 type Options = { env?: Record<string, string> }
 
 beforeEach(() => {
+  missingGit = false
   let proofNetwork = ''
   const live = new Map<
     string,
@@ -71,7 +74,14 @@ beforeEach(() => {
         }
         const frame = (value: Record<string, unknown>) =>
           child.stdout.write(`${JSON.stringify(value)}\n`)
-        if (actor === 'startup-probe') {
+        if (actor === 'git-tool-probe') {
+          frame({
+            kind: 'stdout',
+            data: Buffer.from(missingGit ? '' : 'git version 2.39.5').toString(
+              'base64',
+            ),
+          })
+        } else if (actor === 'startup-probe') {
           frame({ kind: 'event', event: { actor, result: 'denied' } })
           frame({
             kind: 'stdout',
@@ -109,9 +119,11 @@ beforeEach(() => {
             kind: 'actor-exit',
             actor,
             stage: 'command',
-            exitCode: ['startup-probe', 'assigned-network-probe'].includes(
-              actor,
-            )
+            exitCode: [
+              'startup-probe',
+              'assigned-network-probe',
+              ...(missingGit ? [] : ['git-tool-probe']),
+            ].includes(actor)
               ? 0
               : 1,
           })
@@ -120,7 +132,11 @@ beforeEach(() => {
         // App Host failed before receiving any application call.
         frame({
           kind: 'exit',
-          exitCode: ['startup-probe', 'assigned-network-probe'].includes(actor)
+          exitCode: [
+            'startup-probe',
+            'assigned-network-probe',
+            ...(missingGit ? [] : ['git-tool-probe']),
+          ].includes(actor)
             ? 0
             : 1,
         })
@@ -262,3 +278,12 @@ test.each(['cancel-stream-error', 'cancel-malformed'])(
     expect(() => isolation.drain()).toThrow()
   },
 )
+
+test('capability proof rejects an image without the Git tool needed to capture migration diffs', async () => {
+  missingGit = true
+  const isolation = createIsolation()
+  await expect(isolation.prove()).rejects.toMatchObject({
+    infrastructure: true,
+    message: expect.stringContaining('Git'),
+  })
+})
