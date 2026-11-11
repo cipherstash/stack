@@ -129,19 +129,34 @@ Reads do not check passthrough values, as `decrypt_rows` reads only the encrypte
 Removing rows after the query is right only in some places. So `.match()` works only when all three of these are true:
 
 1. The statement is a `select` run through a session.
-2. The match is a condition of the `WHERE`, joined with `AND` if there are others.
+2. The match is a condition of the `WHERE`, joined with `AND` if there are others. Or it is a branch of an `or_` whose branches are all match searches, or `and_` of them (see "An `or_` of match searches" below).
 3. The result includes whole objects of the class, so the column is loaded.
 
 Anything else raises `QueryError` with `query_unsupported` before the query is sent:
 
 | Use | Why it is refused |
 |---|---|
-| In `or_(...)` | A row kept by the other condition would be removed. |
+| In an `or_` with a condition that is not a match search | A row kept by the other condition would be removed. |
 | In `not_(...)` | The rows to keep are the false matches, which the hook cannot find. |
 | `select(Profile.plan)` | The matched column is not in the result, so `verify` cannot run. |
 | `func.count()` | The count includes the false matches. |
 | `update` or `delete` | The false matches would be changed in the database. |
 | A query on a connection | No hook can remove rows from its result. |
+
+### An `or_` of match searches
+
+A search box that looks in several text fields is an `or_` of match searches, such as `or_(Activity.name.match(q), Activity.town.match(q))`. The hook accepts an `or_` whose branches are all match searches, or `and_` of them. It keeps a row if any branch passes `verify`. A branch on a field that is NULL fails for that row.
+
+This gives exactly the rows that `verify` would keep over the whole table. A match search never leaves out a row that `verify` would keep:
+
+- `verify` keeps a value only if it contains every 3-character token of the search text.
+- Each of those tokens sets bits in the value's stored Bloom filter, so `@@` returns the row.
+
+So the database returns every row that any branch would keep, plus some false matches. `verify` on each branch removes the false matches.
+
+An `or_` with any other condition is still refused. When the match branch fails `verify`, the hook cannot tell whether the other condition kept the row. A match under `not_` is still refused, inside an `or_` or around one.
+
+Each branch can add false matches before a `LIMIT`. So with a wide `or_`, a page is short more often.
 
 ### A LIMIT can return fewer rows
 

@@ -12,7 +12,7 @@ from typing import Annotated, Optional
 
 import pytest
 from _live import DATABASE_URL, LIVE, needs_database
-from sqlalchemy import ForeignKey, create_engine, delete, func, not_, or_, select, text, update
+from sqlalchemy import ForeignKey, and_, create_engine, delete, func, not_, or_, select, text, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
 import stackencrypt
@@ -62,6 +62,15 @@ class Venue(Base):
     visits: Mapped[Annotated[Optional[int], Passthrough]]
 
 
+@stackencrypt.model("trips")
+class Trip(Base):
+    __tablename__ = "trips"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    name: Mapped[Annotated[str, TextMatch]]
+    town: Mapped[Annotated[str, TextMatch]]
+    city: Mapped[Annotated[Optional[str], TextMatch]]
+
+
 @stackencrypt.model("players")
 class Player(Base):
     __tablename__ = "players"
@@ -83,7 +92,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))
     Base.metadata.create_all(engine)
-    configure_encryption(engine, [Customer, Order, Player, Profile, Venue])
+    configure_encryption(engine, [Customer, Order, Player, Profile, Venue, Trip])
     yield engine
     with engine.begin() as conn:
         conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
@@ -93,7 +102,7 @@ def engine():
 @pytest.fixture(autouse=True)
 def empty(engine):
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE orders, customers, players, profiles, venues RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE orders, customers, players, profiles, venues, trips RESTART IDENTITY"))
 
 
 def stored(engine, sql):
@@ -403,3 +412,91 @@ def test_an_optional_field_can_be_set_to_none_and_back(engine):
         session.commit()
     with Session(engine) as session:
         assert session.scalars(select(Venue).where(Venue.city == "Bath")).one().name == "hall"
+
+
+# An or_ whose branches are all match searches.
+
+TRIPS = [
+    ("Morning run", "Hove", "Brighton"),
+    ("Evening ride", "Leeds", None),
+    ("Hill walk", "Keswick", "Carlisle"),
+]
+
+
+def add_trips(engine):
+    with Session(engine) as session:
+        session.add_all([Trip(name=n, town=t, city=c) for n, t, c in TRIPS])
+        session.commit()
+
+
+def names(engine, *where):
+    with Session(engine) as session:
+        return sorted(t.name for t in session.scalars(select(Trip).where(*where)))
+
+
+def any_field(text):
+    return or_(Trip.name.match(text), Trip.town.match(text), Trip.city.match(text))
+
+
+def test_an_or_of_matches_returns_the_rows_that_hold_the_text_in_any_field(engine):
+    add_trips(engine)
+
+    assert names(engine, any_field("run")) == ["Morning run"]
+    assert names(engine, any_field("leeds")) == ["Evening ride"]
+    assert names(engine, any_field("brighton")) == ["Morning run"]
+    assert names(engine, any_field("hove")) == ["Morning run"]
+
+
+def test_a_null_field_fails_its_branch_only(engine):
+    add_trips(engine)
+
+    # Evening ride has no city; its town still matches.
+    assert names(engine, or_(Trip.city.match("leeds"), Trip.town.match("leeds"))) == ["Evening ride"]
+
+
+def test_a_branch_can_be_an_and_of_matches(engine):
+    add_trips(engine)
+
+    where = or_(and_(Trip.name.match("hill"), Trip.town.match("keswick")), Trip.city.match("brighton"))
+    assert names(engine, where) == ["Hill walk", "Morning run"]
+
+
+def test_a_false_match_in_one_branch_is_removed_and_another_branch_keeps_the_row(engine, monkeypatch):
+    add_trips(engine)
+    verify = MatchQuery.verify
+    # A false match of the Bloom filter cannot be made on purpose. So verify
+    # refuses Hove as a town: Morning run must then be kept by its name.
+    monkeypatch.setattr(
+        MatchQuery, "verify", lambda q, values: [v != "Hove" and ok for v, ok in zip(values, verify(q, values))]
+    )
+
+    assert names(engine, or_(Trip.town.match("hove"), Trip.name.match("run"))) == ["Morning run"]
+    assert names(engine, or_(Trip.town.match("hove"), Trip.name.match("walk"))) == ["Hill walk"]
+
+
+def test_two_or_groups_joined_with_and_keep_the_rows_that_pass_both(engine):
+    add_trips(engine)
+
+    where = (
+        or_(Trip.name.match("run"), Trip.name.match("ride")),
+        or_(Trip.town.match("leeds"), Trip.city.match("carlisle")),
+    )
+    assert names(engine, *where) == ["Evening ride"]
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        lambda: or_(Trip.name.match("run"), Trip.id == 1),
+        lambda: or_(not_(Trip.name.match("run")), Trip.town.match("hove")),
+        lambda: not_(or_(Trip.name.match("run"), Trip.town.match("hove"))),
+        lambda: or_(and_(Trip.name.match("run"), Trip.id == 1), Trip.town.match("hove")),
+    ],
+    ids=["mixed", "not-in-a-branch", "or-in-a-not", "mixed-and-in-a-branch"],
+)
+def test_an_or_that_is_not_only_matches_is_refused(engine, where):
+    add_trips(engine)
+    with Session(engine) as session, pytest.raises(QueryError) as raised:
+        session.execute(select(Trip).where(where()))
+    assert raised.value.code == "query_unsupported"
+    assert "A match index can return rows" in raised.value.message

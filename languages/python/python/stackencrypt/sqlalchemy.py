@@ -30,9 +30,10 @@ On a read, only the encrypted fields are decrypted.
   column to an EQL type as an ALTER with a USING cast.
 - Match: ``.match(text)`` on a field with a match index is ``col @@ term``.
   The session hook runs ``verify`` on the rows and removes those that fail.
-  It works only in a session's select, as a condition of the WHERE joined
-  with AND, with whole objects of the class in the result. Anything else
-  raises ``QueryError``. A LIMIT can return fewer rows than it names.
+  It works only in a session's select, with whole objects of the class in
+  the result. The match must be a condition of the WHERE joined with AND,
+  or a branch of an ``or_`` of match searches only. Anything else raises
+  ``QueryError``. A LIMIT can return fewer rows than it names.
 - Search: the column type that ``eql_type_map`` gives each encrypted field
   turns ``==``, ``<``, ``<=``, ``>`` and ``>=`` into a comparison with a query
   term, made by ``Cipher.eq``, ``lt``, ``lte``, ``gt`` or ``gte``. Any other
@@ -63,7 +64,7 @@ from sqlalchemy.engine import Engine, Row
 from sqlalchemy.orm import Mapper, Session
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import operators, visitors
-from sqlalchemy.sql.elements import BooleanClauseList
+from sqlalchemy.sql.elements import BooleanClauseList, Grouping
 from sqlalchemy.sql.dml import Insert, Update
 from sqlalchemy.types import UserDefinedType
 
@@ -567,28 +568,31 @@ def _decrypt_loaded(state: Any) -> Any:
     return result()
 
 
-def _checked_matches(statement: Any, matches: List[Any]) -> List[Tuple[int, str, Any]]:
-    """For each match search: the result position of its class's objects,
-    the field, and the ``MatchQuery``. Raises ``QueryError`` for a search
-    whose rows cannot be verified."""
+# A match search the hook verifies: the result position of its class's
+# objects, the field, and the MatchQuery.
+_Search = Tuple[int, str, Any]
+# A condition of the WHERE, joined to the others with AND: an OR of
+# branches, each an AND of searches. A plain match is one branch of one.
+_Condition = List[List[_Search]]
+
+
+def _checked_matches(statement: Any, matches: List[Any]) -> List[_Condition]:
+    """The match searches of ``statement``, as conditions the hook can
+    verify. Raises ``QueryError`` for a search whose rows cannot be
+    verified.
+
+    A search can be verified when it is a condition of the WHERE joined
+    with AND, or a branch of an ``or_`` whose branches are all match
+    searches or ``and_`` of them. A row that passes ``verify`` always
+    passes ``@@``, so the database returns every row such an ``or_``
+    keeps, and ``verify`` on each branch removes the rest."""
     if not matches:
         return []
-    # The conditions as the app passed them to where(), with each and_()
-    # opened. `whereclause` would join copies of them.
-    pending = list(getattr(statement, "_where_criteria", ()) or [statement.whereclause])
-    top = set()
-    while pending:
-        condition = pending.pop()
-        if isinstance(condition, BooleanClauseList) and condition.operator is operators.and_:
-            pending.extend(condition.clauses)
-        else:
-            top.add(id(condition))
     descriptions = statement.column_descriptions
-    searches = []
-    for match in matches:
+    placed: Dict[int, _Search] = {}
+
+    def search(match: Any) -> _Search:
         column, query = match._annotations[_MATCH]
-        if id(match) not in top:
-            raise _match_refused(column, "is not a condition of the WHERE joined with AND.")
         cls = next((c for c, (cipher, _) in _CONFIGURED.items() if cipher is _cipher_of(column)), None)
         at = next(
             (
@@ -600,8 +604,59 @@ def _checked_matches(statement: Any, matches: List[Any]) -> List[Tuple[int, str,
         )
         if at is None:
             raise _match_refused(column, "has no whole objects of its class in the result.")
-        searches.append((at, column.key, query))
-    return searches
+        placed[id(match)] = (at, column.key, query)
+        return placed[id(match)]
+
+    conditions: List[_Condition] = []
+    # The conditions as the app passed them to where(), with each and_()
+    # opened. `whereclause` would join copies of them.
+    for condition in _joined(list(getattr(statement, "_where_criteria", ()) or [statement.whereclause]), operators.and_):
+        if _is_match(condition):
+            conditions.append([[search(condition)]])
+            continue
+        branches = _joined([condition], operators.or_) if _is_bool(condition, operators.or_) else None
+        if branches is None:
+            continue
+        ands = [_joined([branch], operators.and_) for branch in branches]
+        if all(part and all(_is_match(match) for match in part) for part in ands):
+            conditions.append([[search(match) for match in part] for part in ands])
+    for match in matches:
+        if id(match) not in placed:
+            column, _ = match._annotations[_MATCH]
+            raise _match_refused(
+                column,
+                "is not a condition of the WHERE joined with AND, or a branch of an or_ "
+                "of match searches only.",
+            )
+    return conditions
+
+
+def _ungrouped(element: Any) -> Any:
+    while isinstance(element, Grouping):
+        element = element.element
+    return element
+
+
+def _is_bool(element: Any, operator: Any) -> bool:
+    return isinstance(element, BooleanClauseList) and element.operator is operator
+
+
+def _is_match(element: Any) -> bool:
+    return _MATCH in getattr(element, "_annotations", {})
+
+
+def _joined(elements: List[Any], operator: Any) -> List[Any]:
+    """``elements`` with each group removed, and each clause list of
+    ``operator`` opened into its clauses, at any depth."""
+    out = []
+    pending = list(reversed(elements))
+    while pending:
+        element = _ungrouped(pending.pop())
+        if _is_bool(element, operator):
+            pending.extend(reversed(list(element.clauses)))
+        else:
+            out.append(element)
+    return out
 
 
 def _item(row: Any, at: int) -> Any:
@@ -610,17 +665,31 @@ def _item(row: Any, at: int) -> Any:
     return row[at] if isinstance(row, (tuple, Row)) else row
 
 
-def _verify(searches: List[Tuple[int, str, Any]], result: Any) -> Any:
-    """Keep the rows whose objects hold the text of every match search."""
+def _verify(conditions: List[_Condition], result: Any) -> Any:
+    """Keep the rows that pass every condition: for each, at least one
+    branch whose match searches all pass ``verify``. A field that is NULL
+    fails its search."""
     rows = list(result.data)
-    keep = [True] * len(rows)
-    for at, field, query in searches:
-        values = [getattr(_item(row, at), field) for row in rows]
-        present = [i for i, value in enumerate(values) if value is not None]
-        for i in set(range(len(rows))) - set(present):
-            keep[i] = False
-        for i, ok in zip(present, query.verify([values[i] for i in present])):
-            keep[i] = keep[i] and ok
+    passed: Dict[int, List[bool]] = {}
+
+    def results(search: _Search) -> List[bool]:
+        if id(search) not in passed:
+            at, field, query = search
+            values = [getattr(_item(row, at), field) for row in rows]
+            present = [i for i, value in enumerate(values) if value is not None]
+            ok = [False] * len(rows)
+            for i, verified in zip(present, query.verify([values[i] for i in present])):
+                ok[i] = verified
+            passed[id(search)] = ok
+        return passed[id(search)]
+
+    keep = [
+        all(
+            any(all(results(search)[i] for search in branch) for branch in condition)
+            for condition in conditions
+        )
+        for i in range(len(rows))
+    ]
     # with_new_rows takes one tuple for each row, whatever the shape it keeps.
     return result.with_new_rows(
         [row if isinstance(row, (tuple, Row)) else (row,) for row, kept in zip(rows, keep) if kept]
