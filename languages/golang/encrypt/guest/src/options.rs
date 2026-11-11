@@ -239,10 +239,13 @@ impl KeysetSelector {
     }
 }
 
-/// The [`CipherRef`] a decrypt-side selector names: the client for
-/// `{"any"}`, which opens a leaf sealed under any of its keysets, or one
-/// keyset's cipher, which opens only its own and refuses the rest before
-/// any key is retrieved.
+/// Returns the [`CipherRef`] for the keyset selector of a decrypt call.
+///
+/// - For `{"any"}`, the result is the client. The client opens a leaf
+///   sealed under any of its keysets.
+/// - For one keyset, the result is that keyset's cipher. That cipher only
+///   opens leaves from its own keyset. The cipher refuses any other leaf
+///   before it retrieves any key.
 pub async fn scope_for<'c, K>(
     cipher: &'c StackCipher<K>,
     selector: &KeysetSelector,

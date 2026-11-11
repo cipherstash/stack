@@ -51,8 +51,9 @@
 //!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats),
 //!   and [`field_operators`], the operators a plan field answers, for a
 //!   generator to ask before the program runs.
-//! * [`CipherRef`](crate::CipherRef) — which cipher an opening operation
-//!   decrypts through: `&cipher`, or `&keyset` for one keyset alone.
+//! * [`CipherRef`](crate::CipherRef) — the cipher that a decrypt
+//!   operation runs through. Pass `&cipher`, or pass `&keyset` to limit
+//!   the operation to one keyset.
 //!
 //! # What is not here
 //!

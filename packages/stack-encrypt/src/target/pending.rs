@@ -87,32 +87,45 @@ pub struct Pending<'a, T, K> {
     fulfil: FulfilBox<'a, T>,
 }
 
-/// What a [`Pending`] is built through: a borrowed connection, and the
-/// keyset it is confined to, if any.
+/// The cipher that a [`Pending`] operation runs through: a borrowed
+/// client, and the ID of one keyset if the operation is limited to it.
 ///
-/// Build one from a reference to a [`StackCipher`], or from a
-/// [`KeysetCipher`], borrowed or owned. The entry points that can run
-/// through either cipher take `impl Into<CipherRef>`. These are the decrypt
-/// entry points, such as [`DecryptFrom::decrypt_from`](super::DecryptFrom::decrypt_from)
-/// and `dynamic::record::decrypt`, and the [`Pending`] constructors. So a
-/// caller passes `&cipher` or `&keyset` and does not name this type. An
-/// entry point that encrypts needs a keyset to generate keys under, so it
-/// takes a [`KeysetCipher`] and not a `CipherRef`.
+/// # How to pass one
 ///
-/// A `CipherRef` built from a [`KeysetCipher`] keeps the keyset's ID and
-/// the connection, not the handle. So it lives as long as the connection,
-/// even when the handle is a temporary value.
+/// You do not need to name this type. Each entry point that can run
+/// through either cipher accepts `impl Into<CipherRef>`, so pass `&cipher`
+/// or `&keyset`. These entry points are:
 ///
-/// - A reference to a [`StackCipher`] is confined to no keyset. It opens a
-///   leaf sealed under any keyset the client can use. It cannot generate a
-///   key ([`Error::NoKeyset`]).
-/// - A reference to a [`KeysetCipher`] is confined to that keyset. It
-///   refuses a leaf from another keyset before any key is retrieved
-///   ([`Error::ForeignKeyset`]).
+/// - the decrypt entry points, such as
+///   [`DecryptFrom::decrypt_from`](super::DecryptFrom::decrypt_from) and
+///   `dynamic::record::decrypt`
+/// - the [`Pending`] constructors
 ///
-/// There is no other way to build one. So the keyset a `CipherRef` names
-/// is one the cipher loaded from ZeroKMS, and the two refusals above hold
-/// for every pending.
+/// An entry point that encrypts needs a keyset to generate keys under.
+/// That entry point accepts a [`KeysetCipher`], and not a `CipherRef`.
+///
+/// # What each reference can do
+///
+/// A `CipherRef` comes from a reference to a [`StackCipher`], or from a
+/// [`KeysetCipher`], borrowed or owned:
+///
+/// - A reference to a [`StackCipher`] is limited to no keyset. The
+///   operation opens a leaf sealed under any keyset the client can use.
+///   The operation cannot generate a key ([`Error::NoKeyset`]).
+/// - A [`KeysetCipher`] limits the operation to that keyset. The
+///   operation refuses a leaf from another keyset before it retrieves any
+///   key ([`Error::ForeignKeyset`]).
+///
+/// No other conversion makes a `CipherRef`. The keyset in a `CipherRef`
+/// is therefore one that the cipher loaded from ZeroKMS, and both rules
+/// above apply to every [`Pending`].
+///
+/// # Lifetime
+///
+/// A `CipherRef` made from a [`KeysetCipher`] keeps the keyset's ID and
+/// the borrowed client, and does not keep the `KeysetCipher`. The
+/// `CipherRef` is valid for as long as the client is, even when the
+/// `KeysetCipher` is a temporary value.
 ///
 /// ```
 /// use stack_encrypt::kms::FakeDataKeySource;
@@ -135,13 +148,14 @@ pub struct CipherRef<'c, K> {
 }
 
 impl<'c, K> CipherRef<'c, K> {
-    /// The connection the pending settles through.
+    /// The client that the pending operation runs through.
     pub(crate) fn cipher(&self) -> &'c StackCipher<K> {
         self.cipher
     }
 
-    /// The ID of the keyset this reference is confined to. `None` for a
-    /// reference to a [`StackCipher`], which is confined to no keyset.
+    /// Returns the ID of the keyset that this reference is limited to.
+    /// Returns `None` for a reference to a [`StackCipher`]. That
+    /// reference is limited to no keyset.
     pub fn keyset_id(&self) -> Option<Uuid> {
         self.keyset
     }
