@@ -170,9 +170,13 @@ impl Refresher for DeviceSessionRefresher {
                 self.credential_consumed
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 if let Some(store) = &self.store {
-                    if let Err(clear_err) = store.clear_profile::<Token>() {
+                    // A spent credential left on disk can be replayed by the
+                    // next process, so a failure to clear it is the error the
+                    // caller sees, not the mismatch.
+                    store.clear_profile::<Token>().map_err(|clear_err| {
                         tracing::error!(%clear_err, "failed to clear a consumed session");
-                    }
+                        AuthError::from(clear_err)
+                    })?;
                 }
             }
             return Err(err);
@@ -535,6 +539,58 @@ mod tests {
             counter.load(Ordering::SeqCst),
             1,
             "the issuer must see exactly one exchange"
+        );
+    }
+
+    /// If the spent session cannot be removed, the caller must hear that, not
+    /// only the mismatch: the credential is still on disk to be replayed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_spent_session_that_cannot_be_cleared_is_reported() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.json(serde_json::json!({
+                "access_token": crate::test_support::jwt_with_workspace("AAAAAAAAAAAAAAAA"),
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": "rotated-refresh"
+            }));
+        });
+        let server = start_server(mocks).await;
+        let dir = tempfile::tempdir().unwrap();
+        let refresher = refresher_with_disk_token(
+            &dir,
+            server.url(""),
+            token_on_disk("own-access", "spent-refresh"),
+        )
+        .pinned_to(Some(WorkspaceId::try_from(WORKSPACE_ID).unwrap()));
+
+        // A directory where the profile file should be: unlink fails.
+        fn find(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+            for entry in std::fs::read_dir(dir).ok()? {
+                let path = entry.ok()?.path();
+                if path.is_dir() {
+                    if let Some(found) = find(&path) {
+                        return Some(found);
+                    }
+                } else if path.file_name().is_some_and(|n| n == Token::FILENAME) {
+                    return Some(path);
+                }
+            }
+            None
+        }
+        let profile = find(dir.path()).expect("the saved profile");
+        std::fs::remove_file(&profile).unwrap();
+        std::fs::create_dir(&profile).unwrap();
+
+        let err = refresher
+            .refresh(&SecretToken::new("spent-refresh"))
+            .await
+            .unwrap_err();
+        assert!(
+            !matches!(err, AuthError::WorkspaceMismatch(_)),
+            "the clear failure must surface, got {err:?}"
         );
     }
 
