@@ -9,13 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Field markers** (#1486, #1590, #1596). `#[derive(EncryptTarget)]` on
+- **Field markers** (#1486, #1590, #1596, #1600). `#[derive(EncryptTarget)]` on
   a `struct = ..` record emits one `Marker` per derived field. It is an
   associated constant named after the field in upper case:
   `EncryptedUser::EMAIL`. A marker is `Marker<W, T, C, P>`. `W` is where
   the field sits: `marker::Root<R>` for a field of the record `R`, or
   `marker::Nested<W>` for one reached through a record field. `T` is the
-  field's target type. `C` is the scope the record's caller supplies.
+  field's target type. `C` is the type of the scopes a query takes:
+  `NoScope`, one `Scope<U>`, or `target::Scopes` for a field of a nested
+  record.
   `P` is the type a query takes: `marker::TakesAny`, or `marker::Takes<V>`
   for a field marked `#[stash(query = V)]`.
   - Its methods are one per operator the field's indexes answer, checked
@@ -26,15 +28,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `op::OperatorAnswer`. An operator no index answers, or two answer, has
     no method. An `Option<..>` field has the methods a present value has.
   - `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)` is the
-    inner field's marker under the outer field's context. It takes the
-    outer record's scope. `field` accepts only a marker of the inner record.
+    inner field's marker under the outer field's context. `field` accepts
+    only a marker of the inner record.
+  - A nullable record field, `Option<EncryptedAddress>`, has the same
+    `field` (`marker::Holds`). A row whose field is `None` stores nothing
+    to match.
+  - An inner record may list a scope of its own, such as
+    `scope(field = "tenant")`. The query then takes one scope for each
+    record that lists one, outermost first. The new `Scope::scope`
+    chains them: `.scope(Scope::new(outer).scope(inner))`
+    (`marker::JoinScope`). The chain returns the new `target::Scopes`,
+    and any number of records can list a scope. Where one record lists a
+    scope, `scope` takes that scope alone.
   - `#[stash(query = String)]` states the type a field's queries take. The
     derive checks it against the plaintext struct's field.
-  - A record that lists a caller scope, `scope(tenant: u64)`, gives a
-    query with no `encrypt` until `.scope(..)` is given once, with a
-    `Scope<u64>`. A record with no caller scope gives a query that is
-    ready at once. The query has no `bind` method, and ends with
-    `.encrypt(&keyset)`. The output is the index's query term.
+  - A record that lists a scope, `scope(tenant: u64)` or a stored
+    `scope(field = "tenant")` over a `u64`, gives a query with no `encrypt`
+    until `.scope(..)` is given once, with a `Scope<u64>`. A record with no
+    scope gives a query that is ready at once. The query has no `bind`
+    method, and ends with `.encrypt(&keyset)`. The output is the index's
+    query term.
   - A query from a marker derives under the declaration the derive wrote,
     so it is the stored term. No plan is written by hand beside the
     record. A method takes its value by value, and a string literal as

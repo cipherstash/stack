@@ -1,7 +1,6 @@
 //! A record field's marker reaches the markers of the record it holds and
 //! no other: a marker of another record would derive under a context no
-//! stored value has. The inner record must list no scope of its own,
-//! since a query of it would take two.
+//! stored value has. A nullable record field is the same.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::EncryptTarget;
 use stack_encrypt::Encrypted;
@@ -13,16 +12,10 @@ struct Address {
 }
 
 #[derive(Clone, Zeroize)]
-struct Office {
-    tenant: u64,
-    street: String,
-}
-
-#[derive(Clone, Zeroize)]
 struct Account {
     email: String,
     address: Address,
-    office: Office,
+    second: Option<Address>,
 }
 
 #[derive(EncryptTarget)]
@@ -32,25 +25,18 @@ struct EncryptedAddress {
 }
 
 #[derive(EncryptTarget)]
-#[stash(struct = Office, scope = "offices", scope(field = "tenant"))]
-struct EncryptedOffice {
-    #[stash(passthrough)]
-    tenant: u64,
-    street: Encrypted<EqualityTerm>,
-}
-
-#[derive(EncryptTarget)]
 #[stash(struct = Account, scope = "accounts")]
 struct EncryptedAccount {
     email: Encrypted<EqualityTerm>,
     address: EncryptedAddress,
-    office: EncryptedOffice,
+    second: Option<EncryptedAddress>,
 }
 
 fn main() {
     let _ = EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET);
     // A marker of the outer record, not of the record the field holds.
     let _ = EncryptedAccount::ADDRESS.field(EncryptedAccount::EMAIL);
-    // The inner record stores a scope of its own.
-    let _ = EncryptedAccount::OFFICE.field(EncryptedOffice::STREET);
+    let _ = EncryptedAccount::SECOND.field(EncryptedAddress::STREET);
+    // A marker of the outer record, on a nullable record field.
+    let _ = EncryptedAccount::SECOND.field(EncryptedAccount::EMAIL);
 }

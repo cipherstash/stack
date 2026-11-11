@@ -1,0 +1,57 @@
+error[E0599]: no method named `encrypt` found for struct `MarkedQuery<Encrypted<EqualityTerm>, stack_encrypt::op::Eq, std::string::String, Needs<Scopes<stack_encrypt::target::Scope<std::string::String>, stack_encrypt::target::Scope<u64>>>>` in the current scope
+  --> tests/ui/marker_nested_query_needs_each_scope.rs:46:29
+   |
+46 |     let _ = label.eq("D-7").encrypt(&keyset).await;
+   |                             ^^^^^^^
+   |
+help: there is a method `encrypt_into` with a similar name
+   |
+46 |     let _ = label.eq("D-7").encrypt_into(&keyset).await;
+   |                                    +++++
+
+error[E0308]: mismatched types
+  --> tests/ui/marker_nested_query_needs_each_scope.rs:50:16
+   |
+50 |         .scope(Scope::new(String::from("eu")))
+   |          ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Scopes<Scope<String>, Scope<u64>>`, found `Scope<String>`
+   |          |
+   |          arguments to this method are incorrect
+   |
+   = note: expected struct `Scopes<stack_encrypt::target::Scope<std::string::String>, stack_encrypt::target::Scope<u64>>`
+              found struct `stack_encrypt::target::Scope<std::string::String>`
+note: method defined here
+  --> src/marker.rs
+   |
+   |     pub fn scope(mut self, scope: C) -> MarkedQuery<T, Op, In, Ready> {
+   |            ^^^^^
+
+error[E0308]: mismatched types
+  --> tests/ui/marker_nested_query_needs_each_scope.rs:56:16
+   |
+56 |         .scope(Scope::new(42u64).scope(String::from("eu")))
+   |          ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Scopes<Scope<String>, Scope<u64>>`, found `Scopes<Scope<u64>, Scope<String>>`
+   |          |
+   |          arguments to this method are incorrect
+   |
+   = note: expected struct `Scopes<stack_encrypt::target::Scope<std::string::String>, stack_encrypt::target::Scope<u64>>`
+              found struct `Scopes<stack_encrypt::target::Scope<u64>, stack_encrypt::target::Scope<std::string::String>>`
+note: method defined here
+  --> src/marker.rs
+   |
+   |     pub fn scope(mut self, scope: C) -> MarkedQuery<T, Op, In, Ready> {
+   |            ^^^^^
+
+error[E0599]: no method named `scope` found for struct `MarkedQuery<Encrypted<EqualityTerm>, stack_encrypt::op::Eq, std::string::String>` in the current scope
+  --> tests/ui/marker_nested_query_needs_each_scope.rs:63:10
+   |
+60 |       let _ = label
+   |  _____________-
+61 | |         .eq("D-7")
+62 | |         .scope(Scope::new(String::from("eu")).scope(42u64))
+63 | |         .scope(Scope::new(String::from("eu")).scope(42u64))
+   | |         -^^^^^ method not found in `MarkedQuery<Encrypted<EqualityTerm>, stack_encrypt::op::Eq, std::string::String>`
+   | |_________|
+   |
+   |
+   = note: the method was found for
+           - `MarkedQuery<T, Op, In, Needs<C>>`
