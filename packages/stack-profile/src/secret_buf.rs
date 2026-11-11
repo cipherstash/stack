@@ -54,9 +54,11 @@ impl SecretBuf {
                 buf.reserve(READ_CHUNK)?;
             }
             let filled = buf.0.len();
-            // Exactly up to capacity, so this does not reallocate.
-            let capacity = buf.0.capacity();
-            buf.0.resize(capacity, 0);
+            // At most one chunk, so each read zero-fills a bounded window
+            // rather than the whole spare tail; and never past the
+            // capacity, so this does not reallocate.
+            let window_end = buf.0.capacity().min(filled + READ_CHUNK);
+            buf.0.resize(window_end, 0);
             let result = reader.read(&mut buf.0[filled..]);
             buf.0.truncate(filled + *result.as_ref().unwrap_or(&0));
             match result {
@@ -204,6 +206,44 @@ mod tests {
         let err = buf.reserve(isize::MAX as usize).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::OutOfMemory);
         assert_eq!(buf.as_bytes(), b"x", "a failed reserve keeps the contents");
+    }
+
+    /// Records the largest slice it is asked to fill, and fills at most
+    /// 1 KiB of it, the way a pipe or network filesystem can.
+    struct ShortReads {
+        bytes: Vec<u8>,
+        pos: usize,
+        largest_window: usize,
+    }
+
+    impl Read for &mut ShortReads {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            self.largest_window = self.largest_window.max(out.len());
+            let n = out.len().min(1024).min(self.bytes.len() - self.pos);
+            out[..n].copy_from_slice(&self.bytes[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn read_from_zero_fills_at_most_one_chunk_per_read() {
+        // Each read zero-fills the window it reads into. If the window were
+        // all the spare capacity, short reads into a large buffer would
+        // re-zero its whole tail every time: quadratic in the file size.
+        let payload = payload(64 * 1024);
+        let mut reader = ShortReads {
+            bytes: payload.clone(),
+            pos: 0,
+            largest_window: 0,
+        };
+        let buf = SecretBuf::read_from(&mut reader).unwrap();
+        assert_eq!(buf.as_bytes(), payload.as_slice());
+        assert!(
+            reader.largest_window <= READ_CHUNK,
+            "each read should fill at most {READ_CHUNK} bytes; one was offered {}",
+            reader.largest_window
+        );
     }
 
     #[test]
