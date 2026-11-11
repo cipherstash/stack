@@ -3,11 +3,32 @@ package guest_test
 import (
 	"bytes"
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 )
+
+// allocCounter counts the calls the stub guest's se_alloc receives, from the
+// host side, so a test can tell "refused before allocating" from "allocated
+// and left the buffer untouched".
+type allocCounter struct{ calls atomic.Int32 }
+
+func (c *allocCounter) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
+	if names := def.ExportNames(); len(names) > 0 && names[0] == "se_alloc" {
+		return c
+	}
+	return nil
+}
+
+func (c *allocCounter) Before(context.Context, api.Module, api.FunctionDefinition, []uint64, experimental.StackIterator) {
+	c.calls.Add(1)
+}
+func (*allocCounter) After(context.Context, api.Module, api.FunctionDefinition, []uint64) {}
+func (*allocCounter) Abort(context.Context, api.Module, api.FunctionDefinition, error)    {}
 
 // allocAt is where the stub guest's se_alloc places every buffer.
 const allocAt = 4096
@@ -18,12 +39,18 @@ func TestPlaceHandsTheGuestTheBuffer(t *testing.T) {
 	ctx := context.Background()
 	rt := wazero.NewRuntime(ctx)
 	defer func() { _ = rt.Close(ctx) }()
-	m, err := rt.InstantiateWithConfig(ctx, stubGuest(0, nil, withLastError), wazero.NewModuleConfig())
+	counter := &allocCounter{}
+	m, err := rt.InstantiateWithConfig(experimental.WithFunctionListenerFactory(ctx, counter), stubGuest(0, nil, withLastError), wazero.NewModuleConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !guest.Place(ctx, m, 64, 68, []byte("secret")) {
 		t.Fatal("Place failed on valid slots")
+	}
+	// The counter is only evidence of "never allocated" if it sees an
+	// allocation when there is one.
+	if n := counter.calls.Load(); n != 1 {
+		t.Fatalf("se_alloc was called %d times, want 1", n)
 	}
 	got, _ := m.Memory().Read(allocAt, 6)
 	if string(got) != "secret" {
@@ -53,7 +80,8 @@ func TestPlaceRefusesAnOutOfRangeSlotBeforeAllocating(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			rt := wazero.NewRuntime(ctx)
 			defer func() { _ = rt.Close(ctx) }()
-			m, err := rt.InstantiateWithConfig(ctx, stubGuest(0, nil, withLastError), wazero.NewModuleConfig())
+			counter := &allocCounter{}
+			m, err := rt.InstantiateWithConfig(experimental.WithFunctionListenerFactory(ctx, counter), stubGuest(0, nil, withLastError), wazero.NewModuleConfig())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,6 +89,9 @@ func TestPlaceRefusesAnOutOfRangeSlotBeforeAllocating(t *testing.T) {
 			m.Memory().Write(allocAt, sentinel)
 			if guest.Place(ctx, m, slots[0], slots[1], []byte("secret")) {
 				t.Fatal("Place succeeded with an out-of-range slot")
+			}
+			if n := counter.calls.Load(); n != 0 {
+				t.Fatalf("se_alloc was called %d times, want 0", n)
 			}
 			got, _ := m.Memory().Read(allocAt, 6)
 			if !bytes.Equal(got, sentinel) {

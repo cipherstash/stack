@@ -113,9 +113,13 @@ func Place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte
 		return false
 	}
 	mem := m.Memory()
-	// Four bytes each; uint64 so a slot near 4 GiB cannot wrap.
-	size := uint64(mem.Size())
-	if uint64(ptrOut)+4 > size || uint64(lenOut)+4 > size {
+	// Probe each slot by reading it rather than comparing against
+	// mem.Size(): Size reports zero for a full 4 GiB memory (65536 pages),
+	// which would refuse every placement.
+	if _, ok := mem.ReadUint32Le(ptrOut); !ok {
+		return false
+	}
+	if _, ok := mem.ReadUint32Le(lenOut); !ok {
 		return false
 	}
 	b, err := alloc(ctx, fn, uint64(len(data)))
