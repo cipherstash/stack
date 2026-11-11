@@ -122,6 +122,21 @@ test('Postgres driver seeds both independent v2 Store Sets and snapshots only Or
     expect(writes).toHaveLength(6)
     expect(new Set(writes.map((write) => write.database)).size).toBe(2)
     expect(observed.snapshot).toHaveBeenCalledExactlyOnceWith('oracle')
+    for (const [code, infrastructure] of [
+      ['42P01', false],
+      ['42703', false],
+      ['ECONNRESET', true],
+      ['08006', true],
+    ] as const) {
+      await driver.installAppHost()
+      observed.snapshot.mockImplementationOnce(() => {
+        throw Object.assign(Error('Snapshot read failed'), { code })
+      })
+      await expect(driver.behaviour()).rejects.toMatchObject({
+        message: 'PostgreSQL Oracle snapshot failed',
+        infrastructure,
+      })
+    }
   } finally {
     await driver.close()
     await rm(output, { recursive: true, force: true })
