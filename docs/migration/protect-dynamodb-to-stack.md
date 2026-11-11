@@ -313,7 +313,7 @@ The conversion performs these steps in one transaction:
 5. Create functional equality indexes on `eql_v3.eq_term(email_v3)` and `eql_v3.eq_term(age_v3)`.
 6. Read and decrypt the target values with Stack, compare plaintext and retained bytes against the source, then commit. A failed check rolls back the added columns and indexes too.
 
-The script below is the core of the tested [executable migration](https://github.com/cipherstash/stack/blob/main/e2e/migration-guide/postgres.ts), for the `customers` table above. `client` and `customers` are the Stack client and schema from step 2. `legacy` is a Protect 10.2.1 client built from the original `csTable` declarations, so the source is decrypted by the build that wrote it; install it beside Stack for the duration of the script (the tested example does the same). The full example also runs the step 1 dependency preflight (constraints, secondary indexes, views, triggers, policies, inheritance) right after the lock; do not skip it.
+The script below is the core of the tested [executable migration](https://github.com/cipherstash/stack/blob/main/e2e/migration-guide/postgres.ts), for the `customers` table above. `client` and `customers` are the Stack client and schema from step 2. The script decrypts the source v2 envelopes with Stack's `client.decrypt`, which accepts Protect-written v2 payloads, so no Protect client is needed after step 2 removed it (`postgres-upgrade › decrypts every Protect-written v2 source envelope with Stack to the same plaintext as Protect`). The executable example additionally cross-checks each source value with the preserved Protect build; keeping that old build for rollback (step 1) is unchanged. The full example also runs the step 1 dependency preflight (constraints, secondary indexes, views, triggers, policies, inheritance) right after the lock; do not skip it.
 
 ```typescript
 import postgres from 'postgres'
@@ -350,7 +350,7 @@ await sql.begin(async (tx) => {
           p.ob != null || p.bf != null ||
           (column === 'notes' ? p.hm != null : typeof p.hm !== 'string'))
         throw new Error(`Unsupported legacy payload in ${column}`)
-      const plain = ok(await legacy.decrypt(p), 'decrypt source')
+      const plain = ok(await client.decrypt(p), 'decrypt source')
       if (column === 'age' ? !Number.isSafeInteger(plain) : typeof plain !== 'string')
         throw new Error(`Unsupported plaintext in ${column}`)
       if (column === 'notes') continue
@@ -388,7 +388,7 @@ await sql.begin(async (tx) => {
       const after = converted[i][column]
       if (after.c !== before.c || (after.hm ?? null) !== (before.hm ?? null) ||
           ok(await client.decrypt(after), 'decrypt target') !==
-            ok(await legacy.decrypt(before), 'decrypt source'))
+            ok(await client.decrypt(before), 'decrypt source'))
         throw new Error(`Conversion verification failed in ${column}`)
     }
   }

@@ -1,6 +1,9 @@
+import { csColumn, csTable } from '@cipherstash/protect'
+import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
 import { installEqlV3 } from '@cipherstash/test-kit/install'
 import postgres from 'postgres'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { legacyProtect, ok } from '../migration-guide/legacy.ts'
 import { createExample } from '../migration-guide/postgres.ts'
 import { authConfigured } from './helpers/legacy-protect'
 
@@ -72,6 +75,38 @@ describe('Protect Postgres v2 to Stack v3', () => {
     expect(
       await sql`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${sql(table)} ORDER BY pk`,
     ).toEqual(before)
+  }, 120_000)
+
+  // Evidence for decrypting the source without Protect during conversion. The
+  // envelopes are the real Protect 10.2.1 writes read back from the
+  // eql_v2_encrypted columns, not fixtures minted by Stack's own protect-ffi.
+  it('decrypts every Protect-written v2 source envelope with Stack to the same plaintext as Protect', async () => {
+    const legacySchema = csTable('customers', {
+      email: csColumn('email').equality(),
+      age: csColumn('age').dataType('number').equality(),
+      notes: csColumn('notes'),
+    })
+    const schema = encryptedTable('customers', {
+      email: types.TextEq('email'),
+      age: types.IntegerEq('age'),
+      notes: types.Text('notes'),
+    })
+    const legacy = await legacyProtect([legacySchema])
+    const stack = await Encryption({ schemas: [schema] })
+    const rows =
+      await sql`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${sql(table)} ORDER BY pk`
+    expect(rows.map((row) => row.pk)).toEqual(app.corpus.map((row) => row.pk))
+    for (const [i, row] of rows.entries()) {
+      for (const column of ['email', 'age', 'notes'] as const) {
+        const payload = row[column]
+        expect(payload.v).toBe(2)
+        expect(payload.k).toBe('ct')
+        const fromProtect = ok(await legacy.decrypt(payload), 'protect decrypt')
+        const fromStack = ok(await stack.decrypt(payload), 'stack decrypt')
+        expect(fromStack).toStrictEqual(fromProtect)
+        expect(fromStack).toStrictEqual(app.corpus[i][column])
+      }
+    }
   }, 120_000)
 
   it('reads and queries fresh Stack writes beside legacy rows and refuses stale rollback', async () => {
