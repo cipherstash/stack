@@ -4,7 +4,7 @@ use tracing::warn;
 use stack_profile::ProfileStore;
 
 use crate::auto_refresh::AutoRefresh;
-use crate::device_session_refresher::DeviceSessionRefresher;
+use crate::device_session_refresher::{ensure_workspace, DeviceSessionRefresher};
 use crate::transport::{self, SharedTransport};
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, HttpTransport, ServiceToken, Token};
 
@@ -258,6 +258,7 @@ impl DeviceSessionStrategyBuilder {
                 e
             })
             .ok();
+        ensure_workspace(&token, expected_workspace)?;
         let region_id = region.identifier();
         let device_instance_id = token.device_instance_id().map(String::from);
         token.set_region(&region_id);
@@ -286,6 +287,9 @@ impl DeviceSessionStrategyBuilder {
         expected_workspace: Option<WorkspaceId>,
     ) -> Result<DeviceSessionStrategy, AuthError> {
         let token: Token = ws_store.load_profile()?;
+        // Before `AutoRefresh` can see it: refreshing another workspace's
+        // session would consume that session's refresh credential.
+        ensure_workspace(&token, expected_workspace)?;
 
         let region_str = token
             .region()
@@ -377,27 +381,28 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn get_token_rejects_a_token_from_another_workspace() {
+    /// A session for another workspace is refused when the strategy is built,
+    /// before `AutoRefresh` exists: a near-expiry one would otherwise be
+    /// refreshed on the first `get_token`, consuming a credential that
+    /// belongs to someone else.
+    #[test]
+    fn build_rejects_a_session_from_another_workspace() {
         let region = Region::aws("ap-southeast-2").expect("valid region");
         let token = jwt_token(claims_with_workspace("7366ITCXSAPCH5TN"));
         let other: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
             .parse()
             .expect("valid crn");
 
-        let strategy = DeviceSessionStrategy::with_token(region, "my-client", token)
+        // The base URL is unreachable: nothing may be sent.
+        let result = DeviceSessionStrategy::with_token(region, "my-client", token)
             .base_url(base_url())
             .workspace_crn(&other)
-            .build()
-            .expect("build should succeed");
+            .build();
 
-        let err = (&strategy)
-            .get_token()
-            .await
-            .expect_err("a token for another workspace must be rejected");
         assert!(
-            matches!(err, AuthError::WorkspaceMismatch(_)),
-            "expected WorkspaceMismatch, got {err:?}"
+            matches!(result, Err(AuthError::WorkspaceMismatch(_))),
+            "a session for another workspace must be refused at build, got {:?}",
+            result.err()
         );
     }
 

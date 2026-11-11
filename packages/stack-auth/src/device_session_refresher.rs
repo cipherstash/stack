@@ -55,20 +55,31 @@ impl DeviceSessionRefresher {
     }
 
     fn check_workspace(&self, token: &Token) -> Result<(), AuthError> {
-        let Some(expected) = self.expected_workspace else {
-            return Ok(());
-        };
-        let token_workspace = token.workspace_id()?;
-        if token_workspace != expected {
-            return Err(AuthError::WorkspaceMismatch(
-                crate::error::WorkspaceMismatch {
-                    expected_workspace: expected,
-                    token_workspace,
-                },
-            ));
-        }
-        Ok(())
+        ensure_workspace(token, self.expected_workspace)
     }
+}
+
+/// Refuse `token` unless it is for `expected` (no pin: accept it). Used on
+/// the session a strategy starts from as well as on refreshed tokens, so a
+/// session for another workspace never reaches `AutoRefresh`, whose refresh
+/// would consume that session's credential.
+pub(crate) fn ensure_workspace(
+    token: &Token,
+    expected: Option<WorkspaceId>,
+) -> Result<(), AuthError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let token_workspace = token.workspace_id()?;
+    if token_workspace != expected {
+        return Err(AuthError::WorkspaceMismatch(
+            crate::error::WorkspaceMismatch {
+                expected_workspace: expected,
+                token_workspace,
+            },
+        ));
+    }
+    Ok(())
 }
 
 impl Refresher for DeviceSessionRefresher {
