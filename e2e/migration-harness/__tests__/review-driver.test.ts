@@ -9,6 +9,7 @@ import { legacy } from '../run/behaviour.mjs'
 import { migrationChecks, noRewriteCheck } from '../run/migration-checks.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
+import { dynamoSnapshotError } from '../run/snapshot-errors.mjs'
 import type { IsolationOptions } from '../types.js'
 
 const observed = vi.hoisted(() => ({
@@ -315,13 +316,9 @@ test.each([
     Object.assign(Error('invalid cast'), { code: '42846' }),
     'behaviour',
   ],
-  [
-    'deleted DynamoDB table',
-    Object.assign(Error('missing table'), {
-      name: 'ResourceNotFoundException',
-    }),
-    'behaviour',
-  ],
+  ['deleted DynamoDB table', dynamoSnapshotError(400), 'behaviour'],
+  ['DynamoDB service unavailable', dynamoSnapshotError(503), 'infrastructure'],
+  ['DynamoDB throttling', dynamoSnapshotError(429), 'infrastructure'],
   [
     'unknown snapshot failure',
     Error('unrecognized snapshot failure'),

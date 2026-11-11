@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import postgres from 'postgres'
+import { dynamoSnapshotError } from './snapshot-errors.mjs'
 import { provisionPostgres } from './stores.mjs'
 
 const exec = promisify(execFile)
@@ -358,8 +359,7 @@ export async function createStoreSet({
           ConsistentRead: true,
         }),
       })
-      if (!response.ok)
-        throw Error(`Dynamo snapshot failed: ${response.status}`)
+      if (!response.ok) throw dynamoSnapshotError(response.status)
       return {
         dynamo: await response.json(),
         postgres:

@@ -82,4 +82,21 @@ test('Run rejects a rewritten duplicate Legacy Data row even when the original i
   })
   assert.equal(report.outcome, 'behaviour')
   assert.equal(report.editorEligible, true)
+  const check = report.evidence.find(
+    (e) => e.checkId === 'no-rewrite.legacy-bytes',
+  )
+  assert.ok(check, 'a malformed current snapshot still reports the check')
+  assert.equal(Object(check.payload).passed, false)
+})
+
+test('a deleted Legacy Data row is a failed check, while a malformed baseline still throws', () => {
+  const current = structuredClone(baseline)
+  current.postgres = []
+  const check = noRewrite(baseline, current)
+  assert.equal(check.id, 'no-rewrite.legacy-bytes')
+  assert.equal(check.passed, false)
+  assert.throws(
+    () => noRewrite(current, baseline),
+    /exactly one Legacy Data Postgres row/,
+  )
 })
