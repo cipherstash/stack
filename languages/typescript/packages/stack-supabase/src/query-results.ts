@@ -180,18 +180,8 @@ export async function decryptResults<T extends object, TData = T[]>(
 
   // If there's an error from Supabase, pass it through
   if (result.error) {
-    return {
-      data: null,
-      error: {
-        message: result.error.message,
-        details: result.error.details,
-        hint: result.error.hint,
-        code: result.error.code,
-      },
-      count: result.count ?? null,
-      status: result.status,
-      statusText: result.statusText,
-    }
+    const { message, details, hint, code } = result.error
+    return { ...respond(null), error: { message, details, hint, code } }
   }
 
   // No data to decrypt

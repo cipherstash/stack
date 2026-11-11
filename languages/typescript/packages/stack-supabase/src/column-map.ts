@@ -154,6 +154,10 @@ export class ColumnMap {
   private readonly dbToProp: Record<string, string>
   /** Column builders keyed by BOTH property name and DB name. */
   private readonly v3Columns: Record<string, V3ColumnLike>
+  /** False for a plaintext table, which the encrypt and decrypt steps must keep
+   * away from the encryption client. Read from {@link tableHasEncryptedColumns},
+   * the same rule `create.ts` uses to choose what `Encryption` receives. */
+  readonly hasEncryptedColumns: boolean
 
   constructor(
     tableName: string,
@@ -210,12 +214,7 @@ export class ColumnMap {
     }
 
     this.encryptedColumnNames = Object.keys(this.v3Columns)
-  }
-
-  /** False for a plaintext table, which the encrypt and decrypt steps must keep
-   * away from the encryption client (see {@link tableHasEncryptedColumns}). */
-  get hasEncryptedColumns(): boolean {
-    return this.encryptedColumnNames.length > 0
+    this.hasEncryptedColumns = tableHasEncryptedColumns(table)
   }
 
   /** Resolve a JS property name to its DB column name. `Object.hasOwn` guards
