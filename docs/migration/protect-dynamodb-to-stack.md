@@ -30,7 +30,7 @@ pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=
 
 The native build needs the repository's Rust toolchain and trusted mise configuration. These commands are for maintainers verifying the guide; a customer installing Stack from npm receives prebuilt binaries. The crossover task also runs the PostgreSQL upgrade and executable DynamoDB example. Credentialed tests fail if configuration is missing; a skipped or unrun suite is not migration evidence.
 
-The [executable examples](../../e2e/migration-guide/README.md) use npm and the pinned customer packages. Run them on disposable data. The DynamoDB example uses in-memory item persistence and exercises legacy reads, new writes, normalization, bigint serialization and boolean updates (`example › runs the npm DynamoDB example through legacy reads, new writes and boolean updates`). It is not an AWS deployment test.
+The [executable examples](https://github.com/cipherstash/stack/blob/main/e2e/migration-guide/README.md) use npm and the pinned customer packages. Run them on disposable data. The DynamoDB example uses in-memory item persistence and exercises legacy reads, new writes, normalization, bigint serialization and boolean updates (`example › runs the npm DynamoDB example through legacy reads, new writes and boolean updates`). It is not an AWS deployment test.
 
 ## Why the supported scalar attributes need no re-encryption
 
@@ -64,7 +64,21 @@ npm install --save-exact @cipherstash/stack@1.2.1
 
 If the app's `package.json` also declares `@cipherstash/schema` or `@cipherstash/protect-ffi` directly, remove those with `npm uninstall`. Commit the resulting package manifest and lockfile. Stack retains its own newer FFI dependency; do not remove that transitive dependency.
 
-Stack needs Node.js 22 or later. It reads the same four `CS_*` variables from the environment, so retain the same workspace and key access used to write the data. If the app passed credentials explicitly to Protect, populate these environment variables or configure the equivalent Stack credentials. If the app passed a `keyset` to `protect()`, pass the same keyset to `Encryption` as `config.keyset`. A client bound to a different keyset either fails to decrypt or, if it was granted the old keyset, decrypts but mints terms that match no existing `__hmac`. Keysets are untested by these suites.
+Stack needs Node.js 22 or later. It reads the same four `CS_*` variables from the environment, so retain the same workspace and key access used to write the data. If the app passed credentials explicitly to Protect, populate these environment variables or pass the same four values to `Encryption` as `config`:
+
+```typescript
+const client = await Encryption({
+  schemas: [users],
+  config: {
+    workspaceCrn: env.CS_WORKSPACE_CRN,
+    clientId: env.CS_CLIENT_ID,
+    clientKey: env.CS_CLIENT_KEY,
+    accessKey: env.CS_CLIENT_ACCESS_KEY,
+  },
+})
+```
+
+If the app passed a `keyset` to `protect()`, pass the same keyset to `Encryption` as `config.keyset`. A client bound to a different keyset either fails to decrypt or, if it was granted the old keyset, decrypts but mints terms that match no existing `__hmac`. Keysets are untested by these suites.
 
 Stack finds its service endpoints from `CS_WORKSPACE_CRN`. Protect 10.2.1 did not: outside `ap-southeast-2` it needed `CS_CTS_HOST` and `CS_ZEROKMS_HOST` set explicitly. Stack still honours both variables when they are set, so remove them from ordinary managed deployments. Keep them only for a deliberately configured private or custom endpoint, and check that endpoint before relying on it.
 
@@ -280,13 +294,17 @@ const customers = encryptedTable('customers', {
 const client = await Encryption({ schemas: [customers] })
 ```
 
+If the application receives its credentials other than through `process.env`, pass them as `config`, as shown in DynamoDB step 2.
+
 Configure reads and writes to use the `_v3` physical columns after cutover, while passing the original logical schema above to the encryption client. Handle every SDK `{ failure }` before using `{ data }`.
 
 ### 3. Stop writes and convert
 
 This first procedure requires a **write-maintenance window**. Stop all application, background and administrative writers; a transaction's table lock alone does not stop an old writer from resuming immediately after commit. Keep writes paused through verification and the rollback decision.
 
-The [executable migration](../../e2e/migration-guide/postgres.ts) performs these steps in one transaction:
+Run the conversion as a one-off script during the window, not at application startup. An application that alters its own schema on boot repeats DDL on every deploy and takes an `ACCESS EXCLUSIVE` lock while other instances are starting.
+
+The conversion performs these steps in one transaction:
 
 1. Lock the source table and reject unsupported structure/dependencies before DDL.
 2. Validate each legacy envelope and plaintext against the supported mappings. Recompute supported equality terms with Stack and compare them to the stored terms; fail on disagreement.
@@ -294,6 +312,90 @@ The [executable migration](../../e2e/migration-guide/postgres.ts) performs these
 4. Build a new envelope `{ v: 3, i: originalIdentity, c: originalCiphertext, hm: originalEqualityTerm }`; omit `hm` for storage-only text. This is a tested envelope reconstruction, not a universal version-field replacement. Never copy unknown term fields into another domain.
 5. Create functional equality indexes on `eql_v3.eq_term(email_v3)` and `eql_v3.eq_term(age_v3)`.
 6. Read and decrypt the target values with Stack, compare plaintext and retained bytes against the source, then commit. A failed check rolls back the added columns and indexes too.
+
+The script below is the core of the tested [executable migration](https://github.com/cipherstash/stack/blob/main/e2e/migration-guide/postgres.ts), for the `customers` table above. `client` and `customers` are the Stack client and schema from step 2. `legacy` is a Protect 10.2.1 client built from the original `csTable` declarations, so the source is decrypted by the build that wrote it; install it beside Stack for the duration of the script (the tested example does the same). The full example also runs the step 1 dependency preflight (constraints, secondary indexes, views, triggers, policies, inheritance) right after the lock; do not skip it.
+
+```typescript
+import postgres from 'postgres'
+
+const sql = postgres(process.env.DATABASE_URL)
+const columns = ['email', 'age', 'notes'] as const
+function ok(result, step) {
+  if (result.failure) throw new Error(`${step}: ${result.failure.message}`)
+  return result.data
+}
+
+await sql.begin(async (tx) => {
+  // 1. Lock, then refuse any shape other than pk plus the three v2 columns.
+  await tx`LOCK TABLE customers IN ACCESS EXCLUSIVE MODE`
+  const shape = await tx`SELECT attname, atttypid::regtype::text AS type
+    FROM pg_attribute WHERE attrelid = 'customers'::regclass
+      AND attnum > 0 AND NOT attisdropped ORDER BY attnum`
+  if (JSON.stringify(shape.map((a) => [a.attname, a.type])) !== JSON.stringify([
+    ['pk', 'text'], ['email', 'eql_v2_encrypted'],
+    ['age', 'eql_v2_encrypted'], ['notes', 'eql_v2_encrypted'],
+  ])) throw new Error('Unsupported columns')
+  // (Run the dependency preflight here.)
+
+  // 2. Validate every envelope and recompute its equality term with Stack.
+  const rows = await tx`SELECT pk, email::jsonb AS email, age::jsonb AS age,
+    notes::jsonb AS notes FROM customers ORDER BY pk`
+  if (rows.length === 0) throw new Error('Empty source')
+  for (const row of rows) {
+    for (const column of columns) {
+      const p = row[column]
+      if (p?.v !== 2 || p.k !== 'ct' || typeof p.c !== 'string' ||
+          p.i?.t !== 'customers' || p.i?.c !== column ||
+          Object.keys(p).some((k) => !['v', 'k', 'i', 'c', 'hm', 'ob', 'bf'].includes(k)) ||
+          p.ob != null || p.bf != null ||
+          (column === 'notes' ? p.hm != null : typeof p.hm !== 'string'))
+        throw new Error(`Unsupported legacy payload in ${column}`)
+      const plain = ok(await legacy.decrypt(p), 'decrypt source')
+      if (column === 'age' ? !Number.isSafeInteger(plain) : typeof plain !== 'string')
+        throw new Error(`Unsupported plaintext in ${column}`)
+      if (column === 'notes') continue
+      const term = ok(await client.encryptQuery(plain, {
+        table: customers, column: customers[column],
+      }), 'recompute term')
+      if (term?.hm !== p.hm) throw new Error(`Equality term mismatch in ${column}`)
+    }
+  }
+
+  // 3. Add the target columns.
+  await tx`ALTER TABLE customers
+    ADD COLUMN email_v3 public.eql_v3_text_eq,
+    ADD COLUMN age_v3 public.eql_v3_integer_eq,
+    ADD COLUMN notes_v3 public.eql_v3_text`
+
+  // 4. Rebuild only the envelope; ciphertext and equality term are copied unchanged.
+  for (const column of columns) {
+    await tx`UPDATE customers SET ${tx(`${column}_v3`)} = jsonb_build_object(
+      'v', 3, 'i', ${tx(column)}::jsonb->'i', 'c', ${tx(column)}::jsonb->'c'
+    ) || CASE WHEN ${column} = 'notes' THEN '{}'::jsonb
+      ELSE jsonb_build_object('hm', ${tx(column)}::jsonb->'hm') END`
+  }
+
+  // 5. Index the equality terms.
+  await tx`CREATE INDEX customers_email_v3_idx ON customers (eql_v3.eq_term(email_v3))`
+  await tx`CREATE INDEX customers_age_v3_idx ON customers (eql_v3.eq_term(age_v3))`
+
+  // 6. Verify through Stack before committing; any throw rolls back the DDL too.
+  const converted = await tx`SELECT pk, email_v3::jsonb AS email, age_v3::jsonb AS age,
+    notes_v3::jsonb AS notes FROM customers ORDER BY pk`
+  for (let i = 0; i < rows.length; i++) {
+    for (const column of columns) {
+      const before = rows[i][column]
+      const after = converted[i][column]
+      if (after.c !== before.c || (after.hm ?? null) !== (before.hm ?? null) ||
+          ok(await client.decrypt(after), 'decrypt target') !==
+            ok(await legacy.decrypt(before), 'decrypt source'))
+        throw new Error(`Conversion verification failed in ${column}`)
+    }
+  }
+})
+await sql`ANALYZE customers`
+await sql.end()
+```
 
 Only the envelope and database structure change for these proven mappings; the ciphertext and equality terms are copied unchanged. Do not generalize this to other capabilities or to v4 (`postgres-upgrade › migrates actual v2 columns, preserves ciphertext and queries, and rolls back before writes resume`).
 
@@ -332,7 +434,7 @@ In rehearsal, test fresh Stack writes beside migrated rows, reads, lookups and u
 
 ### Reproduce the PostgreSQL example
 
-Use the [npm example instructions](../../e2e/migration-guide/README.md) with a disposable database containing both EQL generations. `seed` creates a new table and refuses an existing one; `migrate` validates and creates targets; `verify` reads them; `rollback` demonstrates recovery before writes; `write` demonstrates why that recovery boundary closes. No step drops or reinstalls an EQL schema.
+Use the [npm example instructions](https://github.com/cipherstash/stack/blob/main/e2e/migration-guide/README.md) with a disposable database containing both EQL generations. `seed` creates a new table and refuses an existing one; `migrate` validates and creates targets; `verify` reads them; `rollback` demonstrates recovery before writes; `write` demonstrates why that recovery boundary closes. No step drops or reinstalls an EQL schema.
 
 ## Optional: moving values between DynamoDB and Postgres
 
