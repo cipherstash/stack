@@ -310,13 +310,48 @@ describe('getCtsToken(): the 2xx paths are unchanged', () => {
     })
   })
 
-  it('still rejects on a 2xx whose body is not JSON', async () => {
-    // Pinned as-is, NOT fixed here: a 200 with an unparseable body throws out of
-    // `fetchCtsToken` today, and the refusal fix deliberately leaves the 2xx
-    // path alone. Recorded so a later change to it is a decision rather than an
-    // accident.
+  it('reports a 2xx whose body is not JSON as a failure', async () => {
+    // This used to throw out of `fetchCtsToken`, which in middleware is a 500
+    // on every matched route. A success body is now validated like any other
+    // input crossing into the session cookie.
     vi.stubGlobal('fetch', ctsResponds(200, 'not json at all'))
 
-    await expect(getCtsToken('a-user-jwt')).rejects.toThrow()
+    const result = await getCtsToken('a-user-jwt')
+
+    expect(result.success).toBe(false)
+    expect(result.ctsToken).toBeUndefined()
+    expect(result.error).toContain('200')
+  })
+
+  it.each([
+    ['an array', '[]'],
+    ['a missing accessToken', '{"expiry":1900000000}'],
+    ['an empty accessToken', '{"accessToken":"","expiry":1900000000}'],
+    ['a string expiry', '{"accessToken":"t","expiry":"1900000000"}'],
+    ['a non-finite expiry', '{"accessToken":"t","expiry":1e999}'],
+  ])('reports a 2xx carrying %s as a failure', async (_label, body) => {
+    vi.stubGlobal('fetch', ctsResponds(200, body, 'application/json'))
+
+    const result = await getCtsToken('a-user-jwt')
+
+    expect(result.success).toBe(false)
+    expect(result.ctsToken).toBeUndefined()
+  })
+
+  it('narrows the success branch to a token', async () => {
+    vi.stubGlobal('fetch', ctsIssuesToken())
+
+    const result = await getCtsToken('a-user-jwt')
+
+    // A type-level assertion as much as a runtime one: with \`success\` typed
+    // \`boolean\` on both arms, \`result.ctsToken\` is \`CtsToken | undefined\`
+    // here and this does not compile.
+    if (result.success) {
+      const token: { accessToken: string; expiry: number } = result.ctsToken
+      expect(token.accessToken).toBe('cts-token')
+    } else {
+      const error: string = result.error
+      expect.unreachable(error)
+    }
   })
 })

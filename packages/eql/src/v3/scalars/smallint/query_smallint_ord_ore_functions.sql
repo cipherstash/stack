@@ -20,7 +20,7 @@ AS $$ SELECT eql_v3_internal.ore_block_256(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a public.eql_v3_smallint_ord_ore, b eql_v3.query_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) = eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a eql_v3.query_smallint_ord_ore
@@ -28,7 +28,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) = eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a eql_v3.query_smallint_ord_ore, b public.eql_v3_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) = eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a public.eql_v3_smallint_ord_ore
@@ -36,7 +36,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) = eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a public.eql_v3_smallint_ord_ore, b eql_v3.query_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) <> eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<>) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a eql_v3.query_smallint_ord_ore
@@ -44,7 +44,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) <> eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a eql_v3.query_smallint_ord_ore, b public.eql_v3_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) <> eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<>) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a public.eql_v3_smallint_ord_ore
@@ -52,7 +52,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) <> eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a public.eql_v3_smallint_ord_ore, b eql_v3.query_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) < eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a eql_v3.query_smallint_ord_ore
@@ -60,7 +60,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) < eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a eql_v3.query_smallint_ord_ore, b public.eql_v3_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) < eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a public.eql_v3_smallint_ord_ore
@@ -68,7 +68,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) < eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a public.eql_v3_smallint_ord_ore, b eql_v3.query_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) <= eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a eql_v3.query_smallint_ord_ore
@@ -76,7 +76,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) <= eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a eql_v3.query_smallint_ord_ore, b public.eql_v3_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) <= eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a public.eql_v3_smallint_ord_ore
@@ -84,7 +84,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) <= eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a public.eql_v3_smallint_ord_ore, b eql_v3.query_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) > eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a eql_v3.query_smallint_ord_ore
@@ -92,7 +92,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) > eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a eql_v3.query_smallint_ord_ore, b public.eql_v3_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) > eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a public.eql_v3_smallint_ord_ore
@@ -100,7 +100,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) > eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a public.eql_v3_smallint_ord_ore, b eql_v3.query_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) >= eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_smallint_ord_ore.
 --! @param a eql_v3.query_smallint_ord_ore
@@ -108,7 +108,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) >= eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a eql_v3.query_smallint_ord_ore, b public.eql_v3_smallint_ord_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) >= eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Unsupported operator blocker for eql_v3.query_smallint_ord_ore: public.eql_v3_smallint_eq and eql_v3.query_smallint_ord_ore (mismatched query domain).
 --! @param a public.eql_v3_smallint_eq left operand

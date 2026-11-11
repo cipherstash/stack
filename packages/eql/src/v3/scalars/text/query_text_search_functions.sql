@@ -36,7 +36,7 @@ AS $$ SELECT eql_v3_internal.bloom_filter(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a public.eql_v3_text_search, b eql_v3.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.=) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a eql_v3.query_text_search
@@ -44,7 +44,7 @@ AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a eql_v3.query_text_search, b public.eql_v3_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.=) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a public.eql_v3_text_search
@@ -52,7 +52,7 @@ AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a public.eql_v3_text_search, b eql_v3.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a eql_v3.query_text_search
@@ -60,7 +60,7 @@ AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a eql_v3.query_text_search, b public.eql_v3_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a public.eql_v3_text_search
@@ -68,7 +68,7 @@ AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a public.eql_v3_text_search, b eql_v3.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a eql_v3.query_text_search
@@ -76,7 +76,7 @@ AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a eql_v3.query_text_search, b public.eql_v3_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a public.eql_v3_text_search
@@ -84,7 +84,7 @@ AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a public.eql_v3_text_search, b eql_v3.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<=) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a eql_v3.query_text_search
@@ -92,7 +92,7 @@ AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a eql_v3.query_text_search, b public.eql_v3_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<=) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a public.eql_v3_text_search
@@ -100,7 +100,7 @@ AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a public.eql_v3_text_search, b eql_v3.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a eql_v3.query_text_search
@@ -108,7 +108,7 @@ AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a eql_v3.query_text_search, b public.eql_v3_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a public.eql_v3_text_search
@@ -116,7 +116,7 @@ AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a public.eql_v3_text_search, b eql_v3.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a eql_v3.query_text_search
@@ -124,7 +124,7 @@ AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a eql_v3.query_text_search, b public.eql_v3_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a public.eql_v3_text_search
@@ -132,7 +132,7 @@ AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.matches(a public.eql_v3_text_search, b eql_v3.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v3.match_term(b)) > 0 OR cardinality(eql_v3.match_term(a)) = 0) $$;
+AS $$ SELECT eql_v3.match_term(a) OPERATOR(pg_catalog.@>) eql_v3.match_term(b) AND (pg_catalog.cardinality(eql_v3.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality(eql_v3.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_search.
 --! @param a eql_v3.query_text_search
@@ -140,7 +140,7 @@ AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v
 --! @return boolean
 CREATE FUNCTION eql_v3.matches(a eql_v3.query_text_search, b public.eql_v3_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v3.match_term(b)) > 0 OR cardinality(eql_v3.match_term(a)) = 0) $$;
+AS $$ SELECT eql_v3.match_term(a) OPERATOR(pg_catalog.@>) eql_v3.match_term(b) AND (pg_catalog.cardinality(eql_v3.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality(eql_v3.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Unsupported operator blocker for eql_v3.query_text_search: public.eql_v3_text_eq and eql_v3.query_text_search (mismatched query domain).
 --! @param a public.eql_v3_text_eq left operand

@@ -463,6 +463,18 @@ Project the column raw.
 payload (1–2 KB per row) and spills. Group on the extractor —
 `GROUP BY eql_v3.eq_term(email)` — which is small and deterministic.
 
+**`public` off the `search_path`.** The operators on encrypted columns are
+created in `public`. Inside a function pinned to `SET search_path = ''` (the
+hardening Supabase recommends for `SECURITY DEFINER` functions), or under a
+role whose path omits `public`, a bare `col < $1` never finds them — Postgres
+falls back to the built-in `jsonb` operator, which compares the ciphertext and
+returns a wrong answer without an error. There, call the function form
+(`eql_v3.lt(col, $1::eql_v3.query_integer_ord)`) or name the operator's schema
+(`col OPERATOR(public.<) $1::eql_v3.query_integer_ord`), and write the column
+domains as `public.eql_v3_…`. Both forms still use the functional index. On
+`_ord_ore` columns they need an EQL release newer than 3.0.6: earlier ones compared
+those values byte-wise in this setting too.
+
 **Predicates are not indexes.** Everything here works without an index and
 sequential-scans. Adding the functional index over the extractor is a separate
 step — see `stash-indexing`.
