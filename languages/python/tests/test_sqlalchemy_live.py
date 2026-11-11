@@ -12,11 +12,11 @@ from typing import Annotated
 
 import pytest
 from _live import DATABASE_URL, LIVE, needs_database
-from sqlalchemy import ForeignKey, create_engine, select, text
+from sqlalchemy import ForeignKey, create_engine, delete, func, not_, or_, select, text, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
 import stackencrypt
-from stackencrypt import Ignore, IntegerOrd, Passthrough, QueryError, Text, TextEq, _engine
+from stackencrypt import Ignore, IntegerOrd, MatchQuery, Passthrough, QueryError, Text, TextEq, TextMatch, _engine
 from stackencrypt.sqlalchemy import configure_encryption, eql_type_map
 
 pytestmark = [*LIVE, needs_database]
@@ -45,6 +45,14 @@ class Order(Base):
     customer: Mapped[Annotated["Customer", Ignore]] = relationship(back_populates="orders")
 
 
+@stackencrypt.model("profiles")
+class Profile(Base):
+    __tablename__ = "profiles"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    bio: Mapped[Annotated[str, TextMatch]]
+    plan: Mapped[Annotated[str, Passthrough]]
+
+
 @stackencrypt.model("players")
 class Player(Base):
     __tablename__ = "players"
@@ -66,7 +74,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))
     Base.metadata.create_all(engine)
-    configure_encryption(engine, [Customer, Order, Player])
+    configure_encryption(engine, [Customer, Order, Player, Profile])
     yield engine
     with engine.begin() as conn:
         conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
@@ -76,7 +84,7 @@ def engine():
 @pytest.fixture(autouse=True)
 def empty(engine):
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE orders, customers, players RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE orders, customers, players, profiles RESTART IDENTITY"))
 
 
 def stored(engine, sql):
@@ -261,3 +269,93 @@ def test_a_core_query_on_a_connection_returns_eql_values(engine):
     assert "ann@example.com" not in str(email)
     [opened] = stackencrypt.Cipher(Customer).decrypt_rows([{"email": email}])
     assert opened == {"email": "ann@example.com"}
+
+
+# .match() on a TextMatch field.
+
+BIOS = ["Alice Smith", "Natalie Wood", "Bob Jones"]
+
+
+def add_profiles(engine):
+    with Session(engine) as session:
+        session.add_all([Profile(bio=bio, plan="free") for bio in BIOS])
+        session.commit()
+
+
+def test_a_match_search_returns_the_rows_that_hold_the_text(engine):
+    add_profiles(engine)
+    with Session(engine) as session:
+        found = session.scalars(select(Profile).where(Profile.bio.match("ali"))).all()
+
+    assert sorted(p.bio for p in found) == ["Alice Smith", "Natalie Wood"]
+
+
+def test_rows_that_fail_verify_are_dropped(engine, monkeypatch):
+    add_profiles(engine)
+    verify = MatchQuery.verify
+    # A false match of the Bloom filter cannot be made on purpose. So
+    # verify refuses one row that the database returns.
+    monkeypatch.setattr(
+        MatchQuery, "verify", lambda q, values: [v != "Natalie Wood" and ok for v, ok in zip(values, verify(q, values))]
+    )
+    with Session(engine) as session:
+        found = session.scalars(
+            select(Profile).where(Profile.bio.match("ali"), Profile.plan == "free")
+        ).all()
+
+    assert [p.bio for p in found] == ["Alice Smith"]
+
+
+def test_a_limit_can_return_fewer_rows_than_match(engine, monkeypatch):
+    add_profiles(engine)
+    verify = MatchQuery.verify
+    monkeypatch.setattr(
+        MatchQuery, "verify", lambda q, values: [v != "Alice Smith" and ok for v, ok in zip(values, verify(q, values))]
+    )
+    with Session(engine) as session:
+        found = session.scalars(
+            select(Profile).where(Profile.bio.match("ali")).order_by(Profile.id).limit(1)
+        ).all()
+
+    # The database's one row was Alice, which verify refused. Natalie also
+    # matches, but was past the limit.
+    assert found == []
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        lambda: select(Profile).where(or_(Profile.bio.match("ali"), Profile.plan == "pro")),
+        lambda: select(Profile).where(not_(Profile.bio.match("ali"))),
+        lambda: select(Profile.plan).where(Profile.bio.match("ali")),
+        lambda: select(func.count()).select_from(Profile).where(Profile.bio.match("ali")),
+        lambda: update(Profile).where(Profile.bio.match("ali")).values(plan="pro"),
+        lambda: delete(Profile).where(Profile.bio.match("ali")),
+    ],
+    ids=["in-an-or", "in-a-not", "object-not-selected", "count", "update", "delete"],
+)
+def test_a_match_that_rows_cannot_be_checked_for_is_refused(engine, statement):
+    add_profiles(engine)
+    with Session(engine) as session, pytest.raises(QueryError) as raised:
+        session.execute(statement())
+    assert raised.value.code == "query_unsupported"
+    assert "A match index can return rows" in raised.value.message
+    assert "ali" not in str(raised.value)
+    with Session(engine) as session:
+        assert sorted((p.bio, p.plan) for p in session.scalars(select(Profile))) == sorted(
+            (bio, "free") for bio in BIOS
+        )
+
+
+def test_a_match_on_a_connection_is_refused(engine):
+    add_profiles(engine)
+    with engine.connect() as conn, pytest.raises(QueryError) as raised:
+        conn.execute(select(Profile.__table__).where(Profile.bio.match("ali")))
+    assert raised.value.code == "query_unsupported"
+    assert "is not run through a session" in raised.value.message
+
+
+def test_a_match_on_a_field_with_no_match_index_is_unsupported(engine):
+    with pytest.raises(QueryError) as raised:
+        Customer.email.match("ali")
+    assert raised.value.code == "query_unsupported"

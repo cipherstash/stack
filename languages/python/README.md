@@ -176,6 +176,7 @@ with Session(engine) as session:
 
 - **Search:** `==`, `<`, `<=`, `>`, and `>=` on an encrypted field compare it with a query term, as `cipher.eq` and `cipher.gte` make. The field's marker must support the operator. For example, `Customer.level >= 3` works, and `Customer.email > x` raises `QueryError` with `query_unsupported`.
 - `!=`, `in_([...])`, and `not_in([...])` work where `==` does. `!=` becomes `NOT (col = term)`. `in_` becomes one equality for each value, joined with `OR`.
+- `.match(text)` on a field whose marker has a match index, such as `TextMatch`, is a match search: `col @@ term`. A match index can return rows that do not hold the text. So after the query, the SDK runs `verify` on each row and removes the rows that fail. The app gets only rows that hold every 3-character piece of the text.
 - **Other operators** that would send a value, such as `like`, `contains`, `between`, and `in_` with a subquery, raise `QueryError` with `query_unsupported` when you build the query. The value would reach the database as plaintext, and could never match. `is_(None)`, `is_not(None)`, `asc()`, and `desc()` send no value, so they work.
 - A comparison on a class that is not configured raises `QueryError` with `query_not_configured`.
 
@@ -238,7 +239,8 @@ These are not handled by the hooks yet:
 These are not handled yet:
 
 - A query run on a connection, not a session, returns EQL values, not plaintext. Examples are `conn.execute(select(...))` and `conn.execute(text("SELECT ..."))`. Use `cipher.decrypt_rows` on its rows. A connection has no hook that can change a result.
-- A match search, `matches`, is not supported through the ORM yet. Use `cipher.matches`, as in "Search by match".
+- `.match()` works only in a `select` run through a session. The match must be a condition of the `WHERE`, joined with `AND` if there are others. The result must include whole objects of the class, such as `select(Profile)`. Any other use raises `QueryError` with `query_unsupported` before the query is sent. Examples are `or_(...)`, `not_(...)`, `select(Profile.plan)`, `func.count()`, `update`, `delete`, and a query on a connection. Each one would return, count, or change rows that do not hold the text.
+- With `.match()`, a `LIMIT` can return fewer rows than it names, even when more rows match. The database applies the limit before the SDK removes the rows that fail `verify`.
 - A query result is read in full before it is returned, so that its objects can be decrypted in one batch. A query that streams its rows does not stream.
 
 ## Declare a SQLAlchemy relationship
