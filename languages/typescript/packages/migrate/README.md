@@ -2,9 +2,9 @@
 
 Primitives for safely and resumably migrating existing plaintext columns to concrete EQL v3 `eql_v3_*` domains in production PostgreSQL databases.
 
-The package backs `stash encrypt backfill` and `stash encrypt drop`, and the reverse lifecycle `stash decrypt` uses to move columns back to plaintext. You can also embed `runBackfill()` in a worker or cron job when a large migration should not run inside a CLI process.
+The package backs `stash encrypt backfill` and `stash encrypt drop`, and the reverse column migrations that `stash decrypt` runs to move columns back to plaintext. You can also embed `runBackfill()` in a worker or cron job when a large migration should not run inside a CLI process.
 
-## Lifecycle
+## Column migration phases
 
 ```text
 schema-added → dual-writing → backfilling → backfilled → dropped
@@ -12,7 +12,7 @@ schema-added → dual-writing → backfilling → backfilled → dropped
 
 EQL v3 has no configuration table and no rename cut-over. The application switches to the encrypted column by name after backfill, then drops the original plaintext column after verifying coverage. State is tracked in the append-only `cipherstash.cs_migrations` table installed by `stash eql install`.
 
-The reverse lifecycle (`stash decrypt`) runs on the same engine and records its own phases, keyed by the ENCRYPTED column so they never share a timeline with the forward history:
+A reverse column migration (`stash decrypt`) runs on the same engine and records its own phases, keyed by the ENCRYPTED column so they never share a timeline with the forward history:
 
 ```text
 decrypt-dual-writing → decrypting → decrypted → encrypted-dropped

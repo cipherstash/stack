@@ -54,12 +54,14 @@ that read matches the leaf inside its group. Both
 entries serve legacy reads — the default `@cipherstash/stack` one and
 `@cipherstash/stack/wasm-inline`.
 
-There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and no data migration is required. Items written by `@cipherstash/protect-dynamodb` (6.x) keep working as stored: Stack decrypts their `__source` attributes as they are, and `encryptQuery` mints the same `__hmac` they carry, so existing equality lookups still match. Keep each property key and DB column name the same, and map each v2 equality column to an `Eq` domain (`TextEq`, `IntegerEq`, `BigintEq`, …) — an `Ord` domain mints no equality term. Re-encrypting items with the v3 schema is optional. Plan for these differences:
+DynamoDB has no EQL extension to install or schema to alter. Compatibility tests cover `@cipherstash/protect@10.2.1` with `@cipherstash/protect-dynamodb@6.0.1`, using the default keyset and no lock context. For the tested top-level scalar equality columns and unindexed text, Stack reads the existing `__source` without re-encryption. Text and numeric equality terms stay compatible when the schema and normalization match. Other Protect versions, nested attributes, custom keysets and lock contexts need separate verification before relying on this upgrade path.
 
-- A v3 `Boolean` mints no equality term, so a boolean `__hmac` that protect-dynamodb stored can no longer be queried. Re-encrypting does not bring it back; filter on a plaintext attribute instead.
+Keep each property key the same and map supported text and numeric equality columns to an `Eq` domain (`TextEq`, `IntegerEq`, `DoubleEq`, `BigintEq`, …); use `DoubleEq` for fractional numbers. Keeping DB column names unchanged is simplest. Plan for these differences:
+
+- A v3 `Boolean` mints no equality term, so a boolean `__hmac` that protect-dynamodb stored can no longer be queried. Re-encrypting does not bring it back; redesign the lookup before deploying. A plaintext replacement exposes the value, so use it only if that exposure is acceptable for the field. Populating a replacement attribute on existing items requires a separate backfill.
 - When Stack updates an attribute in place and its v3 domain writes no `__hmac` (`Boolean`, an `Ord` domain, or a storage-only domain such as `Text`), `REMOVE` the stale `<attr>__hmac` in the same `UpdateItem`. Otherwise an equality lookup on the old value still matches the item.
 - A v2 `downcase` filter has no v3 equivalent, so the app now normalizes on both sides. Lowercase the value before `encryptQuery` and the stored `__hmac` matches. Lowercase it before every write too: Stack hashes a mixed-case value such as `Ada@Example.com` case-sensitively, so a lowercase query silently misses it. Lowercasing on write means the stored ciphertext no longer keeps the original casing (protect-dynamodb's did). If the app needs it, write the original to a separate attribute (for example `emailDisplay: types.Text('emailDisplay')`) and keep the lowercased one for lookups.
-- A v2 `dataType('json')` attribute was stored as a scalar ciphertext, not a `types.Json` document, and does not decrypt through the adapter as `types.Json`.
+- A v2 `dataType('json')` attribute was stored as a scalar ciphertext, not a `types.Json` document, and does not decrypt through the adapter as `types.Json`. Backfill it by wrapping its `__source` in a v2 scalar envelope (`{ v: 2, k: 'ct', i: { t: legacyTableName, c: legacyColumnName }, c: source }`), decrypting with the encryption client's `decrypt`, then encrypting the plaintext with `types.Json` and persisting the replacement attributes. Preserve item keys and other attributes, guard concurrent writes, and plan rollback: Protect's original JSON schema cannot read the rewritten representation.
 
 The client must be built for the table. Build the client with the same v3 table you hand to `encryptedDynamoDB` — `Encryption({ schemas: [users] })` returns the typed v3 client for a concrete v3 schema set. Passing a v3 table to a client that never registered it (a client built for a different schema set) throws a clear error naming the table on the first operation, instead of failing later with an opaque FFI deserialization error.
 
@@ -532,16 +534,9 @@ const result = await encryptionClient.encryptQuery(
 // producing a malformed key condition rather than a clear error.
 if (result.failure) throw new Error(result.failure.message)
 const hmac = hmacOf(result.data)  // Use this in DynamoDB key conditions (`hmacOf`: see "Encrypted Partition Key")
-
-// EQL v2 — pass queryType explicitly (`usersV2` is the legacy table declared
-// in the v2 read section above; `users` is the v3 one and infers its queryType):
-const v2Result = await encryptionClient.encryptQuery(
-  "search-value",
-  { table: usersV2, column: usersV2.email, queryType: "equality" }
-)
-if (v2Result.failure) throw new Error(v2Result.failure.message)
-const v2Hmac = hmacOf(v2Result.data)
 ```
+
+For compatible legacy scalar equality attributes, use the same v3 query above against the existing `__hmac`. Legacy reads use the v3 table and the read options described in "Reading Existing EQL v2 Items".
 
 > On a `types.TextSearch` column `encryptQuery` returns `hm` alongside ordering
 > and bloom-filter terms regardless of `queryType`. Only `hm` is meaningful for

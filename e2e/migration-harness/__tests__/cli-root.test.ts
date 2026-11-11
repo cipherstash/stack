@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { expect, test, vi } from 'vitest'
+import { requiredOracleChecks } from '../run/migration-checks.mjs'
 
 const observed = vi.hoisted(() => ({ root: '' }))
 vi.mock('../run/real-driver.mjs', () => ({
@@ -18,7 +19,10 @@ vi.mock('../run/real-driver.mjs', () => ({
       migrate: async () => ({ exitCode: 0 }),
       friction: async () => [],
       installAppHost: async () => {},
-      behaviour: async () => [{ id: 'behaviour.cli', passed: true }],
+      behaviour: async () => [
+        { id: 'behaviour.cli', passed: true },
+        ...requiredOracleChecks.map((id) => ({ id, passed: true })),
+      ],
       close: async () => {},
     }
   },

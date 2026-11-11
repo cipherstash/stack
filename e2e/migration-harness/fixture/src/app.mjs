@@ -32,7 +32,19 @@ function publicCustomer(model) {
   return model
 }
 
-async function legacyClient(env) {
+let legacyClientQueue = Promise.resolve()
+
+function legacyClient(env) {
+  // Protect reads global host settings; keep each override until restoration.
+  const client = legacyClientQueue.then(() => initializeLegacyClient(env))
+  legacyClientQueue = client.then(
+    () => {},
+    () => {},
+  )
+  return client
+}
+
+async function initializeLegacyClient(env) {
   for (const key of [
     'CS_WORKSPACE_CRN',
     'CS_CLIENT_ID',

@@ -19,19 +19,22 @@ export async function prepareWorkspace({
   )
   await writeFile(resolve(workspace, 'package.json'), template)
   await cp(guide, resolve(workspace, 'migration-guide.md'))
-  const readme = await readFile(resolve(workspace, 'README.md'), 'utf8')
-  await writeFile(
-    resolve(workspace, 'README.md'),
-    readme
-      .replace(
-        'Record unclear instructions and failed approaches in `friction.md`.',
-        `Write a JSON Friction Log to HARNESS_FRICTION_LOG (${frictionPath}). Use [] for no friction. Each item has section (input guide heading slug), issue (lowercase ASCII hyphenated slug), actionable (boolean), description and workaround (strings).`,
-      )
-      .replace(
-        'use the harness acceptance command for those checks.',
-        'exercise the public API against your assigned stores for those checks.',
-      ),
+  let readme = await readFile(resolve(workspace, 'README.md'), 'utf8')
+  /** @param {string} from @param {string} to */
+  function replace(from, to) {
+    if (!readme.includes(from))
+      throw Error('Fixture README is missing required harness instructions')
+    readme = readme.replace(from, () => to)
+  }
+  replace(
+    'Record unclear instructions and failed approaches in `friction.md`.',
+    `Write a JSON Friction Log to HARNESS_FRICTION_LOG (${frictionPath}). Use [] for no friction. Each item has section (input guide heading slug), issue (lowercase ASCII hyphenated slug), actionable (boolean), description and workaround (strings).`,
   )
+  replace(
+    'use the harness acceptance command for those checks.',
+    'exercise the public API against your assigned stores for those checks.',
+  )
+  await writeFile(resolve(workspace, 'README.md'), readme)
   await exec('git', ['init', '-q'], { cwd: workspace })
   await exec('git', ['add', '.'], { cwd: workspace })
   await exec(

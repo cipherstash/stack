@@ -458,9 +458,11 @@ jobs:
       # nothing in `e2e/tests/**` loads the WASM build (the Deno smoke test that
       # does lives in `e2e/wasm/` and runs in `wasm-e2e-tests`).
       - name: Build the protect-ffi binding
+        id: ffi-binding
         uses: ./.github/actions/build-ffi-binding
 
       - name: Build the @cipherstash/auth binding
+        id: auth-binding
         uses: ./.github/actions/build-auth-binding
 
       # Run the standalone `e2e/` workspace via turbo so the `^build`
@@ -485,11 +487,12 @@ jobs:
       # `integration-db` gives this job its own compose project and ephemeral
       # port; the suite installs EQL v3 itself through the real
       # `stash eql install`. Loose env mode for the same reason as above.
-      # `!cancelled()` on both steps: the suite is independent of the
-      # protect-dynamodb step above, so a failure there must not hide it.
+      # The suite is independent of the preceding test suites, but still
+      # requires both native bindings. A failed build must not start the DB
+      # and produce a second set of missing-binding errors.
       - name: Start postgres
         id: db
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.ffi-binding.outcome == 'success' && steps.auth-binding.outcome == 'success' }}
         uses: ./.github/actions/integration-db
         with:
           db: postgres
@@ -512,6 +515,38 @@ jobs:
       - name: Stop postgres
         if: always() && env.CS_COMPOSE_PROJECT != ''
         run: docker compose -p "$CS_COMPOSE_PROJECT" -f "$CS_COMPOSE_FILE" down -v
+
+      # The integration image above is PostgreSQL 17. PostgreSQL 18 records
+      # NOT NULL constraints in pg_constraint, including the one on a primary
+      # key's column, so the upgrade example's dependency preflight sees a
+      # different catalogue there. No postgres-eql image exists for 18; the
+      # upgrade suite installs EQL v2.2.1 and v3 itself, so the official image
+      # (pinned by digest) is enough.
+      - name: Start PostgreSQL 18
+        id: db18
+        if: ${{ !cancelled() && steps.ffi-binding.outcome == 'success' && steps.auth-binding.outcome == 'success' }}
+        run: |
+          docker run -d --name pg18-upgrade -e POSTGRES_PASSWORD=password \
+            -p 127.0.0.1::5432 \
+            postgres:18@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+          # Probe over TCP: the init-time server listens on the socket only.
+          for _ in $(seq 1 60); do
+            docker exec pg18-upgrade pg_isready -h 127.0.0.1 -U postgres -q && break
+            sleep 1
+          done
+          docker exec pg18-upgrade pg_isready -h 127.0.0.1 -U postgres
+          port="$(docker port pg18-upgrade 5432/tcp | head -n1 | sed 's/.*://')"
+          echo "database-url=postgres://postgres:password@127.0.0.1:${port}/postgres" >> "$GITHUB_OUTPUT"
+
+      - name: Run the Postgres upgrade example on PostgreSQL 18
+        if: ${{ !cancelled() && steps.db18.outcome == 'success' }}
+        run: pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=loose -- tests/protect-postgres-upgrade.e2e.test.ts
+        env:
+          DATABASE_URL: ${{ steps.db18.outputs.database-url }}
+
+      - name: Stop PostgreSQL 18
+        if: always() && steps.db18.outcome != 'skipped'
+        run: docker rm -f pg18-upgrade || true
 
   # Verifies @cipherstash/stack/wasm-inline works under Deno — i.e. the
   # WASM build of protect-ffi 0.26+ and auth 0.40+ can round-trip an

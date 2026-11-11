@@ -2,4 +2,4 @@
 'stash': patch
 ---
 
-The `stash-dynamodb` skill no longer tells you to re-encrypt items written by `@cipherstash/protect-dynamodb` when moving to Stack. Those items decrypt and stay queryable as stored, so re-encrypting is optional. The skill now lists the differences to plan for: boolean equality lookups, removing a stale `__hmac` on in-place updates, `downcase` filters (normalize on write as well as on query), and legacy `dataType('json')` attributes. It also says when `{ storedEqlVersion: 2 }` is needed: for a grouped v2 field declared by its bare leaf name, not for top-level scalar items.
+The `stash-dynamodb` skill now scopes the no-re-encryption upgrade to the tested top-level scalar equality columns and unindexed text written by `@cipherstash/protect-dynamodb@6.0.1`. It explains boolean lookup changes and the privacy cost of a plaintext replacement, stale `__hmac` removal, `downcase` normalization, and the required legacy JSON backfill with its rollback limit. It also clarifies legacy v2 reads and queries using current v3 schemas.

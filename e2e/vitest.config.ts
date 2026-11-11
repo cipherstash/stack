@@ -15,6 +15,8 @@ export default defineConfig({
       '**/node_modules/**',
       'tests/protect-dynamodb-compat.e2e.test.ts',
       'tests/protect-crossover.e2e.test.ts',
+      'tests/protect-postgres-upgrade.e2e.test.ts',
+      'tests/protect-guide-example.e2e.test.ts',
     ],
     pool: 'forks',
     testTimeout: 30_000,

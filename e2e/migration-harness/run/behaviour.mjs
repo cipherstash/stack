@@ -112,7 +112,12 @@ export async function behaviour(call) {
       await check('behaviour.fresh-write', async () => {
         equal(await call('get', [fresh.pk]), null)
         await call('put', [fresh])
-        equal(await call('get', [fresh.pk]), fresh)
+        const actual = await call('get', [fresh.pk])
+        if (!isDeepStrictEqual(actual, fresh))
+          equal(actual, {
+            ...fresh,
+            emailLower: fresh.emailLower.toLowerCase(),
+          })
       })
       await check('behaviour.downcase-new-write-lookup', async () => {
         if (

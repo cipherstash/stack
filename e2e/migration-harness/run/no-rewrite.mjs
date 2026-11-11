@@ -16,7 +16,7 @@ export function noRewrite(before, after) {
       throw Error('Missing Legacy Data snapshot')
     for (const [key, value] of Object.entries(item ?? {}))
       if (/__(source|hmac)$/.test(key))
-        result.set(`dynamo/${item.pk.S}/${key}`, value)
+        result.set(`dynamo/${item.pk?.S ?? 'legacy'}/${key}`, value)
     for (const row of data.postgres)
       for (const [column, payload] of Object.entries(row)) {
         if (column === 'pk' || !payload || typeof payload !== 'object') continue

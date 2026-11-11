@@ -5,8 +5,8 @@
  * `@cipherstash/protect-dynamodb@6.0.1`.
  */
 import { fileURLToPath } from 'node:url'
-import { protect } from '@cipherstash/protect'
 import { config } from 'dotenv'
+import { legacyProtect } from '../../migration-guide/legacy.ts'
 
 // A local `.env` in `e2e/` or at the repo root, as AGENTS.md describes. CI
 // injects the variables directly; an existing value always wins.
@@ -39,32 +39,7 @@ export const authConfigured = Boolean(
  * are passed explicitly, as a Protect app configured from these variables
  * would.
  */
-export async function legacyProtect(
-  schemas: Parameters<typeof protect>[0]['schemas'],
-) {
-  const crn = process.env.CS_WORKSPACE_CRN as string
-  const region = crn.split(':')[1]
-  const saved = {
-    CS_CTS_HOST: process.env.CS_CTS_HOST,
-    CS_ZEROKMS_HOST: process.env.CS_ZEROKMS_HOST,
-  }
-  process.env.CS_CTS_HOST = `https://${region}.cts.cipherstashmanaged.net`
-  process.env.CS_ZEROKMS_HOST = `https://${region}.viturhosted.net`
-  try {
-    return await protect({
-      schemas,
-      workspaceCrn: crn,
-      clientId: process.env.CS_CLIENT_ID,
-      clientKey: process.env.CS_CLIENT_KEY,
-      accessKey: process.env.CS_CLIENT_ACCESS_KEY,
-    })
-  } finally {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
-  }
-}
+export { legacyProtect }
 
 /** Unwrap a `{ data } | { failure }` result, failing the test on `failure`. */
 export function ok<T>(

@@ -3,7 +3,7 @@ status: proposed
 date: 2026-11-09
 ---
 
-# Test upgrade guide usability with isolated agent Runs
+# Deliver the Protect/EQL v2 to Stack/EQL v3 guide and verify it with isolated agent Runs
 
 Compatibility tests establish supported encryption operations but cannot show
 whether a reader can follow the Protect.js upgrade guide. We will use a local
@@ -32,7 +32,8 @@ Clean Iterations on the same guide revision before declaring convergence.
 - Compatibility and citation tests alone miss unclear or absent instructions.
 - Having one agent migrate, judge and edit lets it adapt to its own assertions.
 - Shared execution and stores expose Protected Resources and permit Run interference.
-- Credentialed application Runs and agent execution in CI are out of scope.
+- Real agent execution in CI is out of scope. Deterministic credentialed
+  compatibility and Fake Migrator tests are permitted by the priority amendment.
   The maintainer requested a dedicated credential-free CI workflow for self-tests
   and Docker capability probes; ordinary tests still need neither model budget,
   live credentials nor this harness's Docker environment.
@@ -44,6 +45,161 @@ Convergence provides evidence for this Fixture App and guide revision only.
 Citation gates validate reference names, not claims; human review of guide changes
 remains required. The requirements and acceptance contract below form part of
 this decision and guide the stacked implementation PRs.
+
+## Priority amendment: v2 to v3 for both stores
+
+Amended 2026-11-10 at the maintainer's direction. The first deliverable is a
+tested Protect/EQL v2 to Stack/EQL v3 migration guide covering both DynamoDB and
+Postgres. Here v2 and v3 name the EQL generations, not npm package majors:
+the starting client is Protect.js 10.2.1 and the target is Stack 1.x's v3 API.
+Pin the tested target release or in-tree digest in verification evidence.
+EQL v4 migration work follows this deliverable and is not a prerequisite.
+
+The existing DynamoDB guide, compatibility suites and harness remain useful.
+Their Postgres coverage starts with EQL v3 columns populated from DynamoDB
+attributes; it does not establish an upgrade of a Protect-written EQL v2
+Postgres database. PRs #1496 and #1497 cover migration to v4, not this missing
+v2-to-v3 path. This amendment supersedes the former exclusion of Postgres
+v2-to-v3 upgrades and the former single-DynamoDB-guide scope.
+
+### Problem Statement
+
+A Protect user needs instructions for upgrading an existing application and
+its encrypted data to Stack's v3 API on either store. A DynamoDB-to-Postgres
+copy example cannot tell a Postgres user how to migrate existing v2 columns,
+queries, indexes and application dependencies. Passing harness self-tests
+alone also cannot establish that a customer can complete the guide.
+
+### Solution
+
+Deliver one v2-to-v3 guide with common preparation and explicit DynamoDB and
+Postgres procedures, backed by executable before/after examples and live
+compatibility tests. Preserve the existing DynamoDB instructions and citations
+while adding the missing Postgres procedure. Complete this guide before
+resuming v4 migration work. Then extend the existing Migration Harness to
+test both procedures through its existing Run and Iteration contracts.
+
+### User Stories
+
+These stories extend, rather than renumber, the 42 harness stories below.
+
+43. As a Protect user, I want the guide to distinguish package versions from EQL generations, so that I install the intended Stack release.
+44. As a Protect user, I want a shared preparation checklist and a procedure for my store, so that I can upgrade without following unrelated cross-store instructions.
+45. As a DynamoDB user, I want to read and query existing Protect-written items with Stack and write new items beside them, so that I can verify the upgrade before deployment.
+46. As a DynamoDB user, I want explicit treatment of boolean lookups, downcase normalization, bigint serialization and legacy JSON, so that compatibility exceptions are not hidden by a blanket no-re-encryption claim.
+47. As a Postgres user, I want an example starting with actual Protect-written EQL v2 columns, so that the procedure matches my existing database.
+48. As a Postgres user, I want tested mappings from supported v2 columns and queries to v3 domains and queries, so that changing the client does not silently change query results.
+49. As a Postgres user, I want to know which stored ciphertext and search terms can be retained and which require conversion, so that I do not perform unnecessary or unsafe rewrites.
+50. As a Postgres user, I want installation, data conversion, index creation, application cutover and verification instructions, so that I can execute the whole migration.
+51. As a Postgres user, I want an explicit write-maintenance window and rollback boundary, so that concurrent writes and post-cutover changes cannot silently invalidate recovery.
+52. As a Protect user, I want unsupported types, query capabilities and deployment patterns listed before mutation, so that I can stop before damaging data or losing required queries.
+53. As a guide maintainer, I want each compatibility claim tied to a passing live test and reproducible example, so that the guide describes demonstrated behaviour.
+54. As a guide maintainer, I want the Postgres procedure checked independently of the agent Loop, so that finishing harness automation is not a prerequisite for delivering the guide.
+55. As a guide maintainer, I want the Oracle to check a migration starting from v2 Postgres columns, so that an already-v3 Fixture App cannot produce false confidence.
+56. As a guide maintainer, I want independent guide-only Runs for both store procedures, so that success on DynamoDB cannot conceal Postgres friction.
+57. As a guide maintainer, I want v4 work explicitly deferred until the v2-to-v3 guide is complete, so that migration targets and their evidence remain separate.
+
+### Implementation Decisions
+
+- Guide scope: common package, credential and schema preparation, followed by
+  separate store procedures. Cross-store copying remains optional and is not
+  evidence for an existing Postgres database upgrade.
+- Preserve the existing DynamoDB coverage and its documented exceptions.
+  Initially demonstrate Postgres text equality, integer-valued number equality
+  and storage-only text, matching the existing cross-store evidence. Record
+  the exact legacy declarations and supported value ranges. Inventory boolean,
+  normalization, bigint, JSON, dates, fractional numbers, grouped fields,
+  lock contexts, range/order and text-search capabilities explicitly; a
+  capability without a passing migration example is unsupported by this
+  first procedure, not implicitly safe. Do not drop such columns or indexes.
+- The Postgres example begins with real Protect.js writes to EQL v2 columns
+  and verifies the legacy application's reads and queries before migration.
+  Install EQL v3 alongside the legacy setup and build separate target columns.
+  Establish the conversion from actual stored payloads in live tests; do not
+  assume that a cast or changing a version field is sufficient. Preserve
+  ciphertext/search-term bytes where the test proves it is valid. Any required
+  re-encryption must be stated per supported mapping and tested explicitly.
+- Use an explicit write-maintenance window for this first Postgres procedure.
+  Preserve source columns and data while populating and verifying target
+  columns, rebuilding required indexes and switching application reads and
+  writes. Verify row counts, plaintext, query result sets and fresh writes.
+  Demonstrate rollback before writes resume. After target-only writes resume,
+  do not promise rollback by renaming old columns; document the need to
+  reconcile those writes. Zero-downtime dual-writing is outside this delivery.
+- Follow the system-wide durable-data ADR: installation must preserve data;
+  capture, rebuild and verify derived indexes, and refuse unsupported customer
+  dependencies before mutation. The example must not drop a schema with
+  CASCADE as a substitute for migrating customer columns.
+- Keep #1534–#1536 and their existing Fixture App acceptance scope intact.
+  Their original Store Set provisioning, Oracle ordering and no-rewrite checks
+  below describe the DynamoDB/cross-store baseline. A separate extension adds
+  a Postgres-v2 Fixture App starting state, Reference Migration and Broken
+  Migrations. Provision v2 for that starting state; never seed into v3 and call
+  it a v2 upgrade. Each Run identifies its store procedure and source/target
+  EQL generations in its Run Manifest.
+- The Postgres extension applies the migrated application's database migration
+  through the restricted App Host to independently seeded Oracle Stores before
+  checking them. Migrator Stores remain separate. Compare source bytes and
+  verified retained ciphertext/search terms across conversion; permitted new
+  envelopes, target columns and indexes are not themselves no-rewrite failures.
+  Unexpected ciphertext rewriting for a mapping proven to retain bytes fails.
+- Maintain the existing isolation, evidence export and Editor gates. An
+  Iteration evaluates one store procedure; its guide revision and procedure
+  identity must match before Clean Iterations count toward convergence. Guide
+  edits affecting either procedure require both procedures to be revalidated
+  against the final guide hash before claiming the combined guide converged.
+- Delivery order: finish the two tested guide procedures first. Extend the
+  Postgres harness and complete #1537–#1539 afterwards. Adapter work may reuse
+  existing seams, but is not a blocker for shipping the tested guide. No v4
+  package, codec, payload or SDK adoption is required for this workstream.
+
+### Testing Decisions
+
+- Migration correctness uses the existing live compatibility test boundary:
+  real legacy writes, the documented migration procedure, Stack reads/writes
+  and actual database queries. Assertions compare externally observable
+  results and stored bytes where preservation is claimed, not helper internals.
+- The Postgres example is executable independently, then exercised by the live
+  suite with a disposable database and real encryption. Cover the supported
+  mappings end to end, fresh writes, index definitions and use on a suitable
+  dataset, the declared rollback window, and refusal of unsupported inputs
+  before mutation. A skipped credentialed suite is not migration evidence.
+- Keep the guide citation gate and extend it to the Postgres evidence. A test
+  name existing is necessary but insufficient: review that the cited test
+  actually proves the associated claim. List all exclusions in the guide.
+- Harness usability stays at Run Reports and Iteration Results. A correct
+  Postgres Reference Migration passes; a no-op, a conversion losing rows, an
+  incorrect column/query mapping, a missing required index and an unexpected
+  ciphertext rewrite each fail a named observable Oracle check. Retain the
+  existing DynamoDB self-tests unchanged.
+- Use credentialed CI for deterministic compatibility and Fake Migrator
+  integration tests; keep real Migrators, Editors and Loops opt-in and outside
+  CI. This supersedes the original blanket CI exclusion below, following the
+  maintainer's full-CI request for #1535/#1536.
+
+### Out of Scope
+
+- Migration to EQL v4, replacing the encryption engine, or taking v4 PRs as a
+  dependency of the v2-to-v3 guide.
+- Universal no-re-encryption claims or support inferred from another store.
+- Production backfill services, zero-downtime dual-write orchestration and
+  every ORM-specific migration workflow. The first Postgres procedure uses
+  direct SQL and the Stack client.
+- Real AWS coverage remains excluded from the harness; distinguish DynamoDB
+  Local checks from deployed AWS request, GSI and operational guarantees.
+
+### Further Notes
+
+The guide is ready when both supported procedures have executable examples,
+passing live CI, accurate citations, explicit exclusions and reviewed cutover
+instructions. Agent convergence is a subsequent guide-usability milestone,
+not a substitute for this evidence or a gate on first guide delivery.
+The epic tracks these milestones; the full contract remains in this ADR.
+Guide delivery is tracked by #1604 (DynamoDB) and #1603 (Postgres), which can
+start from PR #1519 without waiting for the agent harness. #1605 extends the
+Postgres Run after #1603 and #1536. Existing #1534–#1536 acceptance remains the
+DynamoDB/cross-store baseline; #1537–#1539 integrate the two procedures for the
+subsequent usability milestone.
 
 ## Problem Statement
 
@@ -155,7 +311,7 @@ Use the [Migration Harness glossary](../../CONTEXT.md) for domain vocabulary.
 - Editor authority: use Iteration Results as untrusted evidence, never instructions. Clarify, restructure or add procedural steps and reuse existing compatibility claims with their citations; put proposed new claims and noticed skill drift in the Review List instead of changing claims or skills.
 - Editor gates: attribution gate, citation-existence test, and citation-set check all must pass; otherwise revert the whole proposed guide edit. The citation-set gate conservatively rejects previously absent citations without implying that every new citation is a new claim. These gates cannot establish semantic attribution, detect every uncited new claim or prove that an existing citation supports a changed claim. Human review of the Loop Summary remains required.
 - An Iteration is 3 Run Slots in parallel by default, then one Editor pass. A Clean Iteration is complete, every Run Slot has primary outcome `pass`, and no Friction Log contains actionable friction; a passing Run requires a valid Friction Log. The Editor makes no edit after a Clean Iteration or an incomplete Iteration. The Loop stops when two consecutive Iterations are Clean Iterations on the same guide revision (identical guide hash), or at 6 Iterations; both limits are configurable.
-- Real agent commands (`harness:run`, `harness:iterate`, `harness:loop`) remain opt-in in the e2e package. At the maintainer's explicit request during implementation, credential-free self-tests, typechecking and Docker capability probes also run in a dedicated workflow and named Turbo tasks with workspace build dependencies. Ordinary `pnpm test` and `test:e2e` still exclude the harness, and CI never invokes a real Migrator, Editor or credentialed Fixture App Run.
+- The available real agent command, `harness:run`, remains opt-in in the e2e package. `harness:iterate` and `harness:loop` are planned commands and are not yet defined. At the maintainer's explicit request during implementation, credential-free self-tests, typechecking and Docker capability probes also run in a dedicated workflow and named Turbo tasks with workspace build dependencies. Ordinary `pnpm test` and `test:e2e` still exclude the harness, and CI never invokes a real Migrator or Editor. Deterministic credentialed Fixture App tests follow the priority amendment.
 
 ## Testing Decisions
 
@@ -176,15 +332,15 @@ Use the [Migration Harness glossary](../../CONTEXT.md) for domain vocabulary.
 
 ## Out of Scope
 
-- Running credentialed Fixture App Runs, Migrators or Editors in CI. Dedicated
-  credential-free self-tests and capability probes are permitted as requested
-  during implementation.
-- Upgrading an EQL v2 Postgres database; the Fixture App's Postgres is already EQL v3.
+- Running real Migrators, Editors or Loops in CI. Dedicated credential-free
+  self-tests and capability probes are permitted, as are the deterministic
+  credentialed tests specified in the priority amendment.
+- The baseline Fixture App's Postgres is already EQL v3. Upgrading a v2 Postgres database is covered by the priority amendment and its separate extension, not by this baseline.
 - JSON (`dataType('json')`) columns, date columns, lock contexts, nested attributes, and index kinds beyond equality.
 - Real AWS DynamoDB; DynamoDB Local only.
 - The Editor editing skills, the Fixture App, the Oracle or the compat tests.
 - Auto-committing guide changes or opening PRs.
-- Other upgrade guides; the harness targets this one guide first.
+- Upgrade guides beyond the two v2-to-v3 store procedures in the priority amendment.
 
 ## Further Notes
 

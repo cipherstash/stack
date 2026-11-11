@@ -367,12 +367,12 @@ describe('cross-store: DynamoDB <-> Postgres with no re-encryption', () => {
       expect(payloads.email.v).toBe(2)
     })
 
-    it('becomes a DynamoDB item Stack 1.x decrypts, identical to what protect-dynamodb wrote', async () => {
+    it('becomes a DynamoDB item Stack 1.x decrypts with the legacy email equality term', async () => {
       const item = rowToItem(model.pk, payloads)
       expect(
         ok(await stack.decryptModel(item, users), 'stack decryptModel'),
       ).toEqual(model)
-      // protect-dynamodb's write path is exactly this copy.
+      // The copied email term matches protect-dynamodb's equality query.
       expect(item.email__hmac).toBe(
         ok(
           await legacy.createSearchTerms([
