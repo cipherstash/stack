@@ -334,7 +334,7 @@ export function createRealDriver({
             } catch (error) {
               throw Object.assign(
                 new Error('Mutation Data inspection failed', { cause: error }),
-                { infrastructure: true },
+                { infrastructure: isSnapshotInfrastructureError(error) },
               )
             }
           },

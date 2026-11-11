@@ -400,6 +400,51 @@ test.each([
   },
 )
 
+test.each([
+  [Object.assign(Error('missing table'), { code: '42P01' }), 'behaviour'],
+  [
+    Object.assign(Error('missing DynamoDB table'), {
+      name: 'ResourceNotFoundException',
+    }),
+    'behaviour',
+  ],
+  [
+    Object.assign(Error('connection lost'), { code: '08006' }),
+    'infrastructure',
+  ],
+] as const)(
+  'Mutation Data inspection classifies %s',
+  async (error, outcome) => {
+    const { driver, calls } = await setup()
+    const baseline = await observed.snapshot()
+    observed.snapshot
+      .mockResolvedValueOnce(baseline)
+      .mockResolvedValueOnce(baseline)
+      .mockRejectedValueOnce(error)
+    try {
+      const report = await run({
+        id: 'mutation-snapshot',
+        manifest: { guideHash: 'guide' },
+        driver: {
+          ...driver,
+          provision: async () => {},
+          migrate: async () => ({ exitCode: 0 }),
+          friction: async () => [],
+        },
+      })
+      expect(report.outcome).toBe(outcome)
+      expect(report.editorEligible).toBe(outcome === 'behaviour')
+      expect(observed.snapshot).toHaveBeenLastCalledWith('mutation')
+      expect(calls).toContain('setActive')
+      expect(calls.slice(calls.lastIndexOf('setActive'))).not.toContain(
+        'copyToPostgres',
+      )
+    } finally {
+      await driver.close()
+    }
+  },
+)
+
 test('F12 disposes stores even when the isolation supervisor fails to stop', async () => {
   const { driver } = await setup({ stopFails: true })
   await expect(driver.close()).rejects.toThrow('supervisor stop failed')
