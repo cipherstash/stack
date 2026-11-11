@@ -423,16 +423,13 @@ async fn test_poll_for_token_authorization_pending_then_success() {
     let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
-    mocks.mock(|when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("authorization_pending"));
-    });
+    mock_token_errors(&mut mocks, "authorization_pending", 2);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
 
     // Use tokio::join! so the swap future can borrow server.mocks() directly
     // (the shared RwLock) rather than cloning the MockSet.
-    // First poll at T=5s returns "authorization_pending".
+    // Polls at T=0s and T=5s return "authorization_pending".
     // At T=6s the mock is swapped. Second poll at T=10s returns success.
     let (result, _) = tokio::join!(pending.poll_for_token(), async {
         tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
@@ -456,10 +453,7 @@ async fn test_poll_for_token_slow_down_then_success() {
     let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
-    mocks.mock(|when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("slow_down"));
-    });
+    mock_token_errors(&mut mocks, "slow_down", 2);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
 
@@ -502,16 +496,29 @@ async fn test_poll_for_token_slow_down_increases_interval() {
             "expires_in": 12
         }));
     });
-    mocks.mock(|when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("slow_down"));
-    });
+    mock_token_errors(&mut mocks, "slow_down", 2);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
 
     let err = pending.poll_for_token().await.unwrap_err();
 
     assert!(matches!(err, AuthError::TokenExpired(_)));
+}
+
+/// Answer the token endpoint with `error` for at most `polls` requests,
+/// then with `access_denied`. A test whose server never stops answering
+/// `authorization_pending` or `slow_down` would spin forever if polling
+/// stopped waiting between requests (paused time only advances when the
+/// runtime is idle); the cap turns that into a fast failure instead.
+fn mock_token_errors(mocks: &mut MockSet, error: &'static str, polls: usize) {
+    mocks.mock_with_options(1, Some(polls), move |when, then| {
+        when.post().path("/oauth/device/token");
+        then.bad_request().json(error_json(error));
+    });
+    mocks.mock_with_options(2, None, |when, then| {
+        when.post().path("/oauth/device/token");
+        then.bad_request().json(error_json("access_denied"));
+    });
 }
 
 fn device_code_json_expiring_in(expires_in: u64) -> serde_json::Value {
@@ -560,10 +567,7 @@ async fn test_poll_for_token_expires_at_the_clamped_deadline() {
         when.post().path("/oauth/device/code");
         then.json(device_code_json_expiring_in(u64::MAX));
     });
-    mocks.mock(|when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("authorization_pending"));
-    });
+    mock_token_errors(&mut mocks, "authorization_pending", 721);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
     let started = tokio::time::Instant::now();
@@ -578,15 +582,12 @@ async fn test_poll_for_token_expires_at_the_clamped_deadline() {
     );
 }
 
-fn mock_pending_forever(mocks: &mut MockSet, expires_in: u64) {
+fn mock_pending_for(mocks: &mut MockSet, expires_in: u64, polls: usize) {
     mocks.mock(|when, then| {
         when.post().path("/oauth/device/code");
         then.json(device_code_json_expiring_in(expires_in));
     });
-    mocks.mock(|when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("authorization_pending"));
-    });
+    mock_token_errors(mocks, "authorization_pending", polls);
 }
 
 /// The lifetime runs from when the code was received, not from when
@@ -595,7 +596,7 @@ fn mock_pending_forever(mocks: &mut MockSet, expires_in: u64) {
 async fn test_poll_for_token_counts_the_lifetime_from_begin() {
     let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
-    mock_pending_forever(&mut mocks, 900);
+    mock_pending_for(&mut mocks, 900, 1);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
 
@@ -617,7 +618,7 @@ async fn test_poll_for_token_does_not_sleep_past_the_deadline() {
     let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     // Polls at T=0 and T=5; the next would be T=10, past the 7s deadline.
-    mock_pending_forever(&mut mocks, 7);
+    mock_pending_for(&mut mocks, 7, 2);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
     let started = tokio::time::Instant::now();
@@ -632,10 +633,8 @@ async fn test_poll_for_token_does_not_sleep_past_the_deadline() {
     );
 }
 
-/// Polling waits the interval between requests. The server answers
-/// `authorization_pending` for exactly as many polls as fit before the
-/// deadline and `access_denied` after that, so a loop that polls without
-/// waiting fails fast instead of spinning.
+/// Polling waits the interval between requests: the server allows exactly
+/// the polls that fit before the deadline, so one more fails the test.
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_waits_the_interval_between_polls() {
     let dir = TempDir::new().unwrap();
@@ -645,14 +644,7 @@ async fn test_poll_for_token_waits_the_interval_between_polls() {
         then.json(device_code_json_expiring_in(12));
     });
     // Polls at T=0, 5 and 10; the next would be T=15, past the deadline.
-    mocks.mock_with_options(1, Some(3), |when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("authorization_pending"));
-    });
-    mocks.mock_with_options(2, None, |when, then| {
-        when.post().path("/oauth/device/token");
-        then.bad_request().json(error_json("access_denied"));
-    });
+    mock_token_errors(&mut mocks, "authorization_pending", 3);
     let server = start_server(mocks).await;
     let pending = begin_pending(&server, &dir).await;
     let started = tokio::time::Instant::now();
