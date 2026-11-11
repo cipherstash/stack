@@ -1195,6 +1195,7 @@ source = { directory = "../../" }
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", marker = "extra == 'test'", specifier = ">=1.13" },
     { name = "attrs", marker = "extra == 'test'", specifier = ">=23" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'test'", specifier = ">=3.1" },
     { name = "pydantic", marker = "extra == 'test'", specifier = ">=2" },

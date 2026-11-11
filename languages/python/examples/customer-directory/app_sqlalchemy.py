@@ -2,9 +2,9 @@
 
 It uses the table of `app.py`, so the two apps share rows.
 
-A SQLAlchemy object contains plaintext, and the columns must receive
-ciphertext. So the app calls `encrypt` before an INSERT and `decrypt` after a
-SELECT. It does not use `Session`.
+`configure_encryption` makes the ORM encrypt and decrypt: a flush encrypts
+the encrypted fields, and a query decrypts the objects it loads. So the
+endpoints use `Session` as any SQLAlchemy app does, with no SDK calls.
 """
 
 import os
@@ -16,11 +16,11 @@ import stackencrypt
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from psycopg.errors import UniqueViolation
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.types import UserDefinedType
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from stackencrypt import Ignore, Passthrough, Text, TextEq
+from stackencrypt.sqlalchemy import configure_encryption, eql_type_map
 
 from errors import install_error_handlers, log_error, problem
 
@@ -32,20 +32,9 @@ engine = sa.create_engine(
 )
 
 
-class EqlType(UserDefinedType):
-    """An EQL column type. The tests fail with `sa.Text`, `sa.String`, or `sa.JSON`."""
-
-    cache_ok = True
-
-    def __init__(self, sql_name: str) -> None:
-        self.sql_name = sql_name
-
-    def get_col_spec(self, **kwargs) -> str:
-        return self.sql_name
-
-
 class Base(DeclarativeBase):
-    pass
+    # Gives each encrypted field its EQL column type, from its marker.
+    type_annotation_map = eql_type_map
 
 
 @stackencrypt.model("customers")
@@ -55,12 +44,16 @@ class Customer(Base):
     id: Mapped[Annotated[int, Ignore]] = mapped_column(
         sa.BigInteger, sa.Identity(always=True), primary_key=True
     )
-    email: Mapped[Annotated[str, TextEq]] = mapped_column(EqlType("public.eql_v4_text_eq"))
-    name: Mapped[Annotated[str, Text]] = mapped_column(EqlType("public.eql_v4_text"))
+    email: Mapped[Annotated[str, TextEq]]
+    name: Mapped[Annotated[str, Text]]
     plan: Mapped[Annotated[str, Passthrough]]
     created_at: Mapped[Annotated[datetime, Passthrough]] = mapped_column(
         sa.DateTime(timezone=True)
     )
+
+
+# Once for the process, before the first request.
+configure_encryption(engine, [Customer])
 
 
 def utc_now() -> datetime:
@@ -76,7 +69,9 @@ class CustomerBody(BaseModel):
     email: str
     name: str
     plan: str
-    created_at: datetime = Field(default_factory=utc_now)
+    # Aware: the hooks check only the encrypted fields, so a passthrough
+    # datetime with no time zone is refused here.
+    created_at: AwareDatetime = Field(default_factory=utc_now)
 
 
 class Search(BaseModel):
@@ -84,12 +79,6 @@ class Search(BaseModel):
 
     email: str
 
-
-# `id` is left out: the model marks it Ignore, and `decrypt` does not want it.
-COLUMNS = (Customer.email, Customer.name, Customer.plan, Customer.created_at)
-
-# One Cipher for the process: making one checks the model and the credentials.
-cipher = stackencrypt.Cipher(Customer)
 
 app = FastAPI(title="Customer directory (SQLAlchemy)")
 install_error_handlers(app)
@@ -105,28 +94,25 @@ def integrity_error(request: Request, error: IntegrityError) -> JSONResponse:
 
 @app.post("/customers", status_code=201, response_model=CustomerBody)
 def add_customer(body: CustomerBody) -> CustomerBody:
-    rows = cipher.encrypt([Customer(**body.model_dump())])
-    with engine.begin() as conn:
-        conn.execute(sa.insert(Customer.__table__), rows)
+    with Session(engine) as session:
+        session.add(Customer(**body.model_dump()))
+        session.commit()
     return body
 
 
 @app.post("/customers/search", response_model=CustomerBody)
 def find_customer(search: Search) -> Customer:
     # The email is in the body so that it stays out of URLs and access logs.
-    term = sa.literal(cipher.eq("email", search.email), sa.Text)
-    query = sa.select(*COLUMNS).where(
-        Customer.email == sa.cast(term, EqlType("eql_v4.query_text_eq"))
-    )
-    with engine.connect() as conn:
-        found: Optional[sa.RowMapping] = conn.execute(query).mappings().first()
+    query = sa.select(Customer).where(Customer.email == search.email)
+    with Session(engine) as session:
+        found: Optional[Customer] = session.scalars(query).first()
     if found is None:
         raise HTTPException(status_code=404, detail="No customer has this email.")
-    return cipher.decrypt([found])[0]
+    return found
 
 
 @app.get("/customers", response_model=List[CustomerBody])
 def list_customers(limit: int = Query(default=100, ge=1, le=500)) -> List[Customer]:
-    query = sa.select(*COLUMNS).order_by(Customer.id).limit(limit)
-    with engine.connect() as conn:
-        return cipher.decrypt(conn.execute(query).mappings().all())
+    query = sa.select(Customer).order_by(Customer.id).limit(limit)
+    with Session(engine) as session:
+        return list(session.scalars(query).all())

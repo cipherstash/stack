@@ -11,9 +11,9 @@ from datetime import datetime, timezone
 
 import psycopg
 import pytest
+import stackencrypt
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlalchemy.exc import DataError
 from sqlalchemy.orm import Session
 
 import app as psycopg_app
@@ -141,7 +141,12 @@ def test_an_unexpected_error_gives_a_fixed_500(client, module, monkeypatch, capl
     def fail(*args, **kwargs):
         raise RuntimeError(f"contains {EMAIL}")
 
-    monkeypatch.setattr(module.cipher, "encrypt", fail)
+    # The psycopg app calls encrypt. The SQLAlchemy app's flush calls
+    # encrypt_rows, on the Cipher that configure_encryption made.
+    if module is psycopg_app:
+        monkeypatch.setattr(module.cipher, "encrypt", fail)
+    else:
+        monkeypatch.setattr(stackencrypt.Cipher, "encrypt_rows", fail)
 
     with caplog.at_level(logging.INFO):
         response = client.post("/customers", json=customer())
@@ -179,17 +184,19 @@ def test_each_app_reads_what_the_other_wrote():
     assert (from_first.status_code, from_first.json()["name"]) == (200, NAME)
 
 
-def test_a_session_cannot_store_a_plaintext_object():
+def test_a_session_stores_an_object_encrypted():
     empty_the_table()
-    plaintext = sqlalchemy_app.Customer(
+    customer_object = sqlalchemy_app.Customer(
         email=EMAIL, name=NAME, plan="free", created_at=datetime.now(timezone.utc)
     )
 
-    with pytest.raises(DataError) as caught:
-        with Session(sqlalchemy_app.engine) as session:
-            session.add(plaintext)
-            session.commit()
+    with Session(sqlalchemy_app.engine, expire_on_commit=False) as session:
+        session.add(customer_object)
+        session.commit()
 
-    assert EMAIL not in str(caught.value)
+    # The object keeps its plaintext; the table holds EQL values.
+    assert (customer_object.email, customer_object.name) == (EMAIL, NAME)
     with psycopg.connect(DATABASE_URL) as conn:
-        assert conn.execute("SELECT count(*) FROM customers").fetchone() == (0,)
+        [(email, name)] = conn.execute("SELECT email::text, name::text FROM customers").fetchall()
+    assert EMAIL not in email
+    assert NAME not in name
