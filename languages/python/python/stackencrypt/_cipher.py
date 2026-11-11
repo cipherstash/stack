@@ -4,7 +4,7 @@ It checks the class and the credentials, and builds the model's plan once.
 ``encrypt``, ``decrypt`` and the query methods are here.
 """
 
-from typing import Dict, Generic, List, Mapping, Sequence, Type, TypeVar
+from typing import Dict, Generic, List, Mapping, Optional, Sequence, Tuple, Type, TypeVar
 
 from stackencrypt import _engine
 from stackencrypt._markers import Passthrough
@@ -149,6 +149,29 @@ class Cipher(Generic[T]):
         ``field``. SQL: ``>=``. See ``lt``."""
         return self._term("gte", field, value)
 
+    def matches(self, field: str, text: str) -> "MatchQuery":
+        """A match search for ``text`` on the field ``field``, whose marker
+        has a match index, such as ``TextMatch``::
+
+            q = users.matches("notes", "ali")
+            limit = q.target_limit(10, rows=row_count, histogram=histogram)
+            cur.execute(
+                "SELECT ... WHERE notes @@ %s::eql_v4.query_text_match LIMIT %s",
+                (q.term, limit),
+            )
+            people = users.decrypt(cur.fetchall())
+            keep = q.verify([p.notes for p in people])
+
+        A match search can return rows that do not hold the text. Decrypt
+        the rows, then keep those ``verify`` reports ``True``.
+
+        The returned object keeps ``text``, because ``verify`` needs it.
+        Python cannot wipe a ``str``, so the text stays in memory until
+        Python frees it. ``repr`` never shows it. The errors are those of
+        ``eq``.
+        """
+        return MatchQuery(self, field, text, self._term("matches", field, text))
+
     def _term(self, op: str, field: str, value: object) -> str:
         declared = next(
             (f for f in self._declaration.fields if f.name == field), None
@@ -194,6 +217,60 @@ class Cipher(Generic[T]):
 
     def __repr__(self) -> str:
         return f"Cipher({self._cls.__qualname__})"
+
+
+class MatchQuery:
+    """A match search on one field, made by ``Cipher.matches``.
+
+    ``term`` is the term as a ``str``. Cast it to the marker's
+    ``query_sql_domain`` and compare it with ``@@``. The object keeps the
+    search text for ``verify``. ``repr`` never shows the text.
+    """
+
+    __slots__ = ("_plan", "_field", "_text", "term")
+
+    def __init__(self, cipher: "Cipher[object]", field: str, text: str, term: str) -> None:
+        self._plan = cipher._plan
+        self._field = field
+        self._text = text
+        self.term = term
+
+    def target_limit(
+        self,
+        want: int,
+        *,
+        rows: int,
+        histogram: Optional[Sequence[Tuple[int, int]]] = None,
+        confidence: Optional[float] = None,
+    ) -> Optional[int]:
+        """How many rows to fetch so that ``want`` of them pass ``verify``,
+        at the confidence (0.99 by default): the number for the SQL
+        ``LIMIT``. ``None`` when no finite number can be promised: then
+        fetch page by page.
+
+        ``rows`` is the number of rows the search reads, such as the
+        table's row count. ``histogram`` is the set-bit counts of the stored
+        filters, as ``(bits, rows)`` pairs::
+
+            SELECT cardinality(eql_v4.match_term(notes)), count(*)
+            FROM users WHERE notes IS NOT NULL GROUP BY 1
+
+        Without a histogram, the result is ``None``. Makes no request.
+        """
+        pairs = None if histogram is None else [(int(b), int(r)) for b, r in histogram]
+        return _engine.target_limit(
+            self._plan, self._field, self.term, want, rows, pairs, confidence
+        )
+
+    def verify(self, values: Sequence[str]) -> List[bool]:
+        """For each decrypted value of the field, whether it holds every
+        3-character token of the search text, in the same order. Keep the
+        rows that are ``True``. This is not an exact substring check: the
+        tokens can be in any order. Makes no request."""
+        return _engine.verify(self._plan, self._field, self._text, list(values))
+
+    def __repr__(self) -> str:
+        return f"MatchQuery(field={self._field!r})"
 
 
 def _not_decorated(cls: object) -> DeclarationError:

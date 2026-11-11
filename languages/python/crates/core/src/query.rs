@@ -11,6 +11,7 @@
 pub use stack_encrypt::dynamic::OpSpec;
 use stack_encrypt::dynamic::{self, Operand};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
+use stack_encrypt::op::{Limit, Stats};
 use stack_encrypt::KeysetCipher;
 
 use crate::client;
@@ -75,6 +76,79 @@ where
     // A copy of the term's bytes, about a hundred: `QueryTerm` has no
     // accessor that gives up its operand.
     String::from_utf8(json.clone()).map_err(|_| engine_fault("the query term is not UTF-8"))
+}
+
+/// For each of `values`, a page of decrypted values of `field`, whether it
+/// holds every token of the match text `text`, in order. Runs in the engine
+/// with no key and no request. The rows reported `false` are the false
+/// positives of a match search.
+///
+/// # Errors
+///
+/// `query_unsupported` for a field that does not answer `matches`, or the
+/// engine's refusal.
+pub fn verify(
+    plan: &ModelPlan,
+    field: &str,
+    text: &str,
+    values: &[&str],
+) -> Result<Vec<bool>, Refusal> {
+    answers(plan, field, OpSpec::Matches)?;
+    dynamic::verify(
+        plan.plan(),
+        field,
+        OpSpec::Matches,
+        Typed(Some(Kind::String), Value::Text(text)),
+        values
+            .iter()
+            .map(|value| Typed(Some(Kind::String), Value::Text(value))),
+        &targets::resolver(),
+    )
+    .map_err(|error| plan::refusal(&error))
+}
+
+/// How many rows to fetch for the match term `term` on `field` so that,
+/// at the confidence, `want` of them pass [`verify`]: `None` when the
+/// engine cannot promise a finite number. `rows` is the rows the search
+/// scans. `histogram` is the stored filters' set-bit counts, as `(bits,
+/// rows)` pairs; without one, the limit is unbounded. `confidence` is
+/// 0.99 when `None`. Uses no key and makes no request.
+///
+/// # Errors
+///
+/// `query_unsupported` for a field that does not answer `matches`, or the
+/// engine's refusal of a term it would not derive.
+pub fn target_limit(
+    plan: &ModelPlan,
+    field: &str,
+    term: &str,
+    want: u64,
+    rows: u64,
+    histogram: Option<&[(u32, u64)]>,
+    confidence: Option<f64>,
+) -> Result<Option<u64>, Refusal> {
+    answers(plan, field, OpSpec::Matches)?;
+    let mut stats = match histogram {
+        Some(histogram) => Stats::measured(rows, histogram.iter().copied()),
+        None => Stats::declared(rows),
+    };
+    if let Some(confidence) = confidence {
+        stats = stats.with_confidence(confidence);
+    }
+    let limit = dynamic::target_limit(
+        plan.plan(),
+        field,
+        OpSpec::Matches,
+        term.as_bytes(),
+        want,
+        &stats,
+        &targets::resolver(),
+    )
+    .map_err(|error| plan::refusal(&error))?;
+    Ok(match limit {
+        Limit::Rows(rows) => Some(rows),
+        Limit::Unbounded => None,
+    })
 }
 
 /// The operators `field` answers, by their engine names, from the plan
@@ -212,6 +286,114 @@ mod tests {
             assert!(term.get("op").is_some(), "{op:?}: {term}");
             assert!(term.get("c").is_none(), "{op:?}: {term}");
         }
+    }
+
+    fn notes() -> ModelPlan {
+        ModelPlan::new(
+            "users",
+            vec![Field {
+                name: "notes".to_owned(),
+                eql: Some(("TextMatch".to_owned(), Kind::String)),
+            }],
+        )
+        .unwrap()
+    }
+
+    fn match_term(cipher: &StackCipher<FakeDataKeySource>, text: &str) -> String {
+        run(query_with(
+            &cipher.default_keyset(),
+            &notes(),
+            "notes",
+            OpSpec::Matches,
+            Kind::String,
+            Value::Text(text),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_match_term_is_a_filter_with_no_ciphertext() {
+        let term: serde_json::Value = serde_json::from_str(&match_term(&cipher(), "ali")).unwrap();
+        // `bf` is the Bloom filter EQL's `@@` compares.
+        assert!(
+            term["bf"].as_array().is_some_and(|bits| !bits.is_empty()),
+            "{term}"
+        );
+        assert!(term.get("c").is_none(), "{term}");
+    }
+
+    #[test]
+    fn verify_keeps_the_values_that_hold_every_token_of_the_text() {
+        let verified = verify(
+            &notes(),
+            "notes",
+            "ali",
+            &["Alice Smith", "Bob Jones", "Natalie"],
+        )
+        .unwrap();
+        assert_eq!(verified, [true, false, true]);
+    }
+
+    #[test]
+    fn verify_on_a_field_with_no_match_index_is_unsupported() {
+        let refused = verify(&users(), "email", "ali", &["alice"]).unwrap_err();
+        assert_eq!(refused.code, "query_unsupported");
+        assert_eq!(refused.field.as_deref(), Some("email"));
+    }
+
+    #[test]
+    fn with_no_histogram_the_limit_is_unbounded() {
+        let term = match_term(&cipher(), "ali");
+        let limit = target_limit(&notes(), "notes", &term, 10, 10_000, None, None).unwrap();
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn with_empty_stored_filters_the_limit_is_the_rows_wanted() {
+        // Every stored filter sets no bit, so no row passes by chance, and
+        // the fetch needs no margin.
+        let term = match_term(&cipher(), "ali");
+        let limit = target_limit(
+            &notes(),
+            "notes",
+            &term,
+            10,
+            10_000,
+            Some(&[(0, 10_000)]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(limit, Some(10));
+    }
+
+    #[test]
+    fn fuller_stored_filters_need_a_larger_fetch() {
+        let cipher = cipher();
+        let term = match_term(&cipher, "ali");
+        let sparse = target_limit(
+            &notes(),
+            "notes",
+            &term,
+            10,
+            10_000,
+            Some(&[(20, 10_000)]),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let full = target_limit(
+            &notes(),
+            "notes",
+            &term,
+            10,
+            10_000,
+            Some(&[(400, 10_000)]),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(sparse >= 10, "{sparse}");
+        assert!(full > sparse, "{full} <= {sparse}");
     }
 
     #[test]

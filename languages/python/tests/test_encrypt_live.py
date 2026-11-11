@@ -24,7 +24,7 @@ from sqlalchemy import ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 import stackencrypt
-from stackencrypt import Cipher, DecryptError, Ignore, IntegerOrd, Passthrough, TextEq
+from stackencrypt import Cipher, DecryptError, Ignore, IntegerOrd, Passthrough, TextEq, TextMatch
 from stackencrypt import _engine, _eql
 
 pytestmark = LIVE
@@ -326,6 +326,70 @@ def test_an_order_term_finds_the_rows_on_its_side(op):
         found = sorted(level.n for level in cipher.decrypt(cur.fetchall()))
 
     assert found == ORDER_FOUND[op]
+
+
+@stackencrypt.model("notes")
+@dataclasses.dataclass
+class Note:
+    body: Annotated[str, TextMatch]
+
+
+NOTES = ["Alice Smith", "Bob Jones", "Natalie Wood", "Carol King"]
+
+
+def _notes_table(cur, cipher):
+    cur.execute("CREATE TEMPORARY TABLE notes (body public.eql_v4_text_match)")
+    for row in cipher.encrypt([Note(body=body) for body in NOTES]):
+        cur.execute("INSERT INTO notes (body) VALUES (%s)", (row["body"],))
+
+
+@needs_database
+def test_a_match_search_and_verify_find_the_rows_that_hold_the_text():
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg.rows import dict_row
+
+    cipher = Cipher(Note)
+    q = cipher.matches("body", "ali")
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor(row_factory=dict_row) as cur:
+        _notes_table(cur, cipher)
+        cur.execute(
+            f"SELECT body FROM notes WHERE body @@ %s::{TextMatch.query_sql_domain}",
+            (q.term,),
+        )
+        candidates = cipher.decrypt(cur.fetchall())
+
+    bodies = [note.body for note in candidates]
+    kept = sorted(body for body, ok in zip(bodies, q.verify(bodies)) if ok)
+    # The server's answer can hold extra rows, but never misses a match.
+    assert {"Alice Smith", "Natalie Wood"} <= set(bodies)
+    assert kept == ["Alice Smith", "Natalie Wood"]
+
+
+@needs_database
+def test_target_limit_reads_a_measured_histogram():
+    psycopg = pytest.importorskip("psycopg")
+
+    cipher = Cipher(Note)
+    q = cipher.matches("body", "ali")
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        _notes_table(cur, cipher)
+        # The query in MatchQuery.target_limit's docstring.
+        cur.execute(
+            "SELECT cardinality(eql_v4.match_term(body)), count(*) FROM notes "
+            "WHERE body IS NOT NULL GROUP BY 1"
+        )
+        histogram = cur.fetchall()
+
+    assert q.target_limit(2, rows=len(NOTES)) is None
+    limit = q.target_limit(2, rows=len(NOTES), histogram=histogram)
+    assert isinstance(limit, int) and limit >= 2, limit
+
+
+def test_a_match_query_never_shows_its_text():
+    q = Cipher(Note).matches("body", "zebracorn")
+    assert "zebracorn" not in repr(q)
+    assert "zebracorn" not in str(q)
+    assert not hasattr(q, "__dict__")
 
 
 def test_100_queries_make_no_request():

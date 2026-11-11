@@ -116,6 +116,16 @@ The errors are the same as for `eq`. A `TextEq` field, for example, does not sup
 
 There is no `between` yet. For a range, use `gte` and `lte` together: `WHERE level >= %s::eql_v4.query_integer_ord AND level <= %s::eql_v4.query_integer_ord`.
 
+## Search by match
+
+A field whose marker has a match index, such as `TextMatch`, supports `matches`. It takes a field's name and the text to find, and returns a `MatchQuery`. Its `term` goes in the SQL with `@@`: `WHERE notes @@ %s::eql_v4.query_text_match`.
+
+A match search can return rows that do not hold the text. So decrypt the rows, then pass the field's values to `q.verify`. It returns one `bool` for each value, in order. Keep the rows that are `True`. `verify` checks that a value holds every 3-character piece of the text. The pieces can be in any order, so it is not an exact substring check.
+
+To size the `LIMIT`, call `q.target_limit(want, rows=..., histogram=...)`. It returns how many rows to fetch so that `want` of them pass `verify`, 99 times in 100. It returns `None` when it cannot promise a number. Then fetch page by page. Without a `histogram`, it always returns `None`. The method's docstring gives the SQL that reads the histogram.
+
+A `MatchQuery` keeps the search text, because `verify` needs it. Python cannot wipe a `str`, so the text stays in memory until Python frees the object. `repr` does not show it.
+
 ## Declare a SQLAlchemy relationship
 
 A SQLAlchemy relationship is not a column. Every annotated field needs a marker, so write a relationship in one of two ways:
@@ -194,7 +204,7 @@ A model field cannot be a `uuid.UUID`. The decorator refuses it with the code `d
 
 ## What is not supported yet
 
-- Match and range queries. The query methods are `eq`, `lt`, `lte`, `gt`, and `gte`.
+- Range queries with `between`. Use `gte` and `lte` together.
 - Encrypted JSON documents.
 - Lock contexts and identity-bound encryption.
 - More than one keyset, and a choice of keyset.

@@ -6,11 +6,13 @@
 //! Core checks the second again from the plan, before the client is built.
 
 use pyo3::prelude::*;
+use pyo3::types::PyList;
 use stackencrypt_core::query::{self as core, OpSpec};
 use stackencrypt_core::refusal::Refusal;
 
 use crate::encrypt::{field_value, Plan};
 use crate::errors::raise;
+use crate::values::Read;
 
 /// The query term for the operator named `operator` and `value` on the
 /// sealed field `field`.
@@ -46,6 +48,92 @@ pub fn query(
     let value = read.value();
     py.detach(|| core::query(&plan.plan, field, op, engine_kind, value))
         .map_err(|refused| raise(py, refused))
+}
+
+/// For each of `values`, decrypted values of the match field `field`,
+/// whether it holds every token of the match text `text`. Each value is
+/// read as `encrypt` reads the field's values. Runs with the GIL released,
+/// with no key and no request.
+#[pyfunction]
+pub fn verify(
+    py: Python<'_>,
+    plan: &Plan,
+    field: &str,
+    text: &Bound<'_, PyAny>,
+    values: &Bound<'_, PyList>,
+) -> PyResult<Vec<bool>> {
+    let found = plan
+        .plan
+        .fields()
+        .iter()
+        .zip(&plan.kinds)
+        .find(|(candidate, _)| candidate.name == field && candidate.eql.is_some());
+    let Some((declared, &kind)) = found else {
+        return Err(raise(py, not_sealed(field)));
+    };
+    let text = field_value(text, declared, kind)?.map_err(|refused| raise(py, refused))?;
+    let items: Vec<Bound<'_, PyAny>> = values.iter().collect();
+    let mut read: Vec<Read<'_>> = Vec::with_capacity(items.len());
+    for item in &items {
+        read.push(field_value(item, declared, kind)?.map_err(|refused| raise(py, refused))?);
+    }
+    let texts: Vec<&str> = read
+        .iter()
+        .map(as_text)
+        .collect::<Option<_>>()
+        .ok_or_else(|| raise(py, not_text(field)))?;
+    let Some(query) = as_text(&text) else {
+        return Err(raise(py, not_text(field)));
+    };
+    py.detach(|| core::verify(&plan.plan, field, query, &texts))
+        .map_err(|refused| raise(py, refused))
+}
+
+/// How many rows to fetch for the match term `term` on `field` so that
+/// `want` of them verify: `None` when no finite number can be promised.
+/// Uses no key and makes no request.
+#[pyfunction]
+#[pyo3(signature = (plan, field, term, want, rows, histogram=None, confidence=None))]
+#[allow(clippy::too_many_arguments)]
+pub fn target_limit(
+    py: Python<'_>,
+    plan: &Plan,
+    field: &str,
+    term: &str,
+    want: u64,
+    rows: u64,
+    histogram: Option<Vec<(u32, u64)>>,
+    confidence: Option<f64>,
+) -> PyResult<Option<u64>> {
+    core::target_limit(
+        &plan.plan,
+        field,
+        term,
+        want,
+        rows,
+        histogram.as_deref(),
+        confidence,
+    )
+    .map_err(|refused| raise(py, refused))
+}
+
+fn as_text<'r>(read: &'r Read<'_>) -> Option<&'r str> {
+    match read.value() {
+        stackencrypt_core::values::Value::Text(text) => Some(text),
+        _ => None,
+    }
+}
+
+fn not_text(field: &str) -> Refusal {
+    Refusal {
+        code: "stack_encrypt_unknown".to_owned(),
+        message: format!(
+            "field {field:?} reached the engine's verify, but it is not a text field. Cipher \
+             should have refused it. Report this message as a stackencrypt bug."
+        ),
+        field: Some(field.to_owned()),
+        reason: None,
+    }
 }
 
 /// The names of the operators the field `field` answers, from the plan
