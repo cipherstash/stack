@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest'
-import { behaviour, legacy, mutation } from '../run/behaviour.mjs'
+import { behaviour, fresh, legacy, mutation } from '../run/behaviour.mjs'
+import { requiredOracleChecks } from '../run/migration-checks.mjs'
 import { run } from '../run/run.mjs'
 
 // Model the documented plaintext API. Downcase applies to lookup terms, while
@@ -86,7 +87,10 @@ async function runApp(call: import('../run/behaviour.mjs').AppCall) {
       migrate: async () => ({ exitCode: 0 }),
       friction: async () => [],
       installAppHost: async () => {},
-      behaviour: async () => (await behaviour(call)).mutate(),
+      behaviour: async () => [
+        ...(await (await behaviour(call)).mutate()),
+        ...requiredOracleChecks.map((id) => ({ id, passed: true })),
+      ],
     },
   })
 }
@@ -98,6 +102,34 @@ test('D1 Run accepts fresh writes preserving source casing with normalized equal
   )
   expect(check?.payload).toEqual({ id: 'behaviour.fresh-write', passed: true })
   expect(report.outcome).toBe('pass')
+})
+
+test('F6 accepts a migrated app that lowercases only new emailLower plaintext', async () => {
+  const checks = await (
+    await behaviour(appChannel({ normalizeSources: true }))
+  ).mutate()
+  expect(checks.find((check) => check.id === 'behaviour.fresh-write')).toEqual({
+    id: 'behaviour.fresh-write',
+    passed: true,
+  })
+})
+
+test('F6 still rejects changes to other fields on a fresh record', async () => {
+  const channel = appChannel({ normalizeSources: true })
+  const checks = await (
+    await behaviour(async (method, args) => {
+      const actual = await channel(method, args)
+      return method === 'get' &&
+        args[0] === fresh.pk &&
+        actual &&
+        typeof actual === 'object'
+        ? { ...actual, email: 'unexpected@example.com' }
+        : actual
+    })
+  ).mutate()
+  expect(
+    checks.find((check) => check.id === 'behaviour.fresh-write')?.passed,
+  ).toBe(false)
 })
 
 test('D5 Run rejects copy methods that do nothing against seeded Mutation Data', async () => {

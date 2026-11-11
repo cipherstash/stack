@@ -2,7 +2,8 @@ import { cp, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 /** Harness-owned deterministic command substitute. The hidden reference is never mounted.
- * @param {{root:string,workspace:string,kind:string,stack:string}} options */
+ * @param {{root:string,workspace:string,kind:string,stack:string}} options
+ * @returns {Promise<import("../types.js").MigratorResult & {stdout:string,stderr:string}>} */
 export async function fakeMigrate({ root, workspace, kind, stack }) {
   const variants = [
     'reference',

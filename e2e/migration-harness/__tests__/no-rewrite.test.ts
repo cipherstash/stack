@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
+import { requiredOracleChecks } from '../run/migration-checks.mjs'
 import { noRewrite } from '../run/no-rewrite.mjs'
 import { run } from '../run/run.mjs'
 
@@ -34,7 +35,12 @@ for (const changed of [false, true]) {
         migrate: async () => ({ exitCode: 0 }),
         friction: async () => [],
         installAppHost: async () => {},
-        behaviour: async () => [noRewrite(baseline, current)],
+        behaviour: async () => [
+          noRewrite(baseline, current),
+          ...requiredOracleChecks
+            .filter((id) => id !== 'no-rewrite.legacy-bytes')
+            .map((id) => ({ id, passed: true })),
+        ],
       },
     })
     assert.equal(report.outcome, changed ? 'behaviour' : 'pass')

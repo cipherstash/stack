@@ -27,9 +27,21 @@ for (const rewrite of [false, true]) {
       const replacement =
         'async get(pk) { if (pk === "legacy") { const customer = await decrypt(await stores.get(pk)); await this.put(customer); }'
       const script = `import {readFile,writeFile} from "node:fs/promises"; const p="src/app.mjs"; let s=await readFile(p,"utf8"); s=s.replace("async get(pk) {", ${JSON.stringify(replacement)}); await writeFile(p,s); await writeFile("friction.json","[]")`
-      const command = rewrite
+      const tool = rewrite
         ? `node --input-type=module -e '${script}'`
         : `printf '[]' > friction.json`
+      const adapter = resolve(output, 'adapter.mjs')
+      await (await import('node:fs/promises')).writeFile(
+        adapter,
+        `
+        import {createInterface} from 'node:readline';
+        const lines=createInterface({input:process.stdin});
+        console.log(JSON.stringify({id:'fake',method:'exec',command:['sh','-c',${JSON.stringify(tool)}]}));
+        for await(const line of lines){ const response=JSON.parse(line); process.exitCode=response.result.exitCode; break; }
+        lines.close();
+      `,
+      )
+      const command = `node '${adapter}'`
       const driver = createRealDriver({
         id: `live-${Date.now()}-${rewrite}`,
         root: fileURLToPath(new URL('../../..', import.meta.url)),

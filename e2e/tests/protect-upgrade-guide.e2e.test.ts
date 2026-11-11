@@ -20,11 +20,13 @@ const guide = read('../../docs/migration/protect-dynamodb-to-stack.md')
 const suites = {
   compat: read('./protect-dynamodb-compat.e2e.test.ts'),
   crossover: read('./protect-crossover.e2e.test.ts'),
+  'postgres-upgrade': read('./protect-postgres-upgrade.e2e.test.ts'),
+  example: read('./protect-guide-example.e2e.test.ts'),
 } as const
 
-const citations = [...guide.matchAll(/`(compat|crossover) › ([^`]+)`/g)].map(
-  ([, suite, name]) => ({ suite: suite as keyof typeof suites, name }),
-)
+const citations = [
+  ...guide.matchAll(/`(compat|crossover|postgres-upgrade|example) › ([^`]+)`/g),
+].map(([, suite, name]) => ({ suite: suite as keyof typeof suites, name }))
 
 /** True when `name` is a string literal in `source`, in any quote style. */
 const isLiteral = (source: string, name: string) =>
@@ -32,11 +34,11 @@ const isLiteral = (source: string, name: string) =>
     source.includes(quoted),
   )
 
-describe('protect-dynamodb upgrade guide', () => {
+describe('Protect v2 to Stack v3 upgrade guide', () => {
   it('cites the suites at all', () => {
     expect(citations.length).toBeGreaterThan(20)
     expect(new Set(citations.map((c) => c.suite))).toEqual(
-      new Set(['compat', 'crossover']),
+      new Set(['compat', 'crossover', 'postgres-upgrade', 'example']),
     )
   })
 
@@ -78,11 +80,12 @@ describe('protect-dynamodb upgrade guide', () => {
   // transitive Protect dependency in the same command fails the whole step for
   // an app that only declared the two direct packages.
   it('removes only the packages an app declares directly', () => {
-    const removes = [...guide.matchAll(/^pnpm remove (.+)$/gm)].map(
+    const removes = [...guide.matchAll(/^npm uninstall (.+)$/gm)].map(
       ([, args]) => args.trim().split(/\s+/),
     )
     expect(removes).toEqual([
       ['@cipherstash/protect', '@cipherstash/protect-dynamodb'],
+      ['@cipherstash/protect'],
     ])
   })
 })

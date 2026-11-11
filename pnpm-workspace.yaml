@@ -50,7 +50,7 @@ catalogs:
     # groups both under `dev-dependencies` and will otherwise move one alone.
     '@vitest/coverage-v8': 4.1.12
   security:
-    '@clerk/nextjs': 7.9.20
+    '@clerk/nextjs': 7.9.23
     next: 15.5.28
     vite: 8.3.5
 

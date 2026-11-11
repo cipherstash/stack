@@ -1,6 +1,7 @@
 {
   "extends": "../tsconfig.json",
   "include": [
+    "migration-guide/**/*.ts",
     "tests/**/*.ts",
     "vitest.config.ts",
     "vitest.protect-compat.config.ts",

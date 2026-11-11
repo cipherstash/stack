@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { behaviour, legacy, mutation } from '../run/behaviour.mjs'
+import { requiredOracleChecks } from '../run/migration-checks.mjs'
 import { run } from '../run/run.mjs'
 
 test('Run observes Legacy Data before new writes and mutation through App Host channel', async () => {
@@ -76,13 +77,16 @@ test('Run observes Legacy Data before new writes and mutation through App Host c
       migrate: async () => ({ exitCode: 0 }),
       friction: async () => [],
       installAppHost: async () => {},
-      behaviour: async () => (await behaviour(call)).mutate(),
+      behaviour: async () => [
+        ...(await (await behaviour(call)).mutate()),
+        ...requiredOracleChecks.map((id) => ({ id, passed: true })),
+      ],
     },
   })
   assert.equal(report.outcome, 'pass')
   assert.equal(
     report.evidence.filter((e) => e.kind === 'oracle-check').length,
-    19,
+    19 + requiredOracleChecks.length,
   )
   assert.ok(methods.indexOf('put') > methods.indexOf('findPostgresAge'))
 })

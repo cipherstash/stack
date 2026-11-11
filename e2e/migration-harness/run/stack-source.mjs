@@ -26,10 +26,13 @@ export async function resolveStack({ source, root, output }) {
       typeof manifest.version !== 'string'
     )
       throw Error('Tarball is not @cipherstash/stack')
+    if (typeof manifest.dependencies?.['@cipherstash/protect-ffi'] !== 'string')
+      throw Error('Tarball has no FFI dependency')
     const destination = resolve(output, 'resolved-stack.tgz')
     if (tarball !== destination) await cp(tarball, destination)
     return {
       version: manifest.version,
+      ffiRange: manifest.dependencies?.['@cipherstash/protect-ffi'],
       digest,
       tarball: destination,
       install: 'file:./resolved-stack.tgz',
@@ -48,5 +51,17 @@ export async function resolveStack({ source, root, output }) {
     !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version)
   )
     throw Error('Could not resolve exact Stack version')
-  return { version, install: version }
+  const ffiRange = JSON.parse(
+    (
+      await exec('npm', [
+        'view',
+        `@cipherstash/stack@${version}`,
+        'dependencies.@cipherstash/protect-ffi',
+        '--json',
+      ])
+    ).stdout,
+  )
+  if (typeof ffiRange !== 'string' || !ffiRange)
+    throw Error('Could not resolve Stack FFI dependency')
+  return { version, install: version, ffiRange }
 }

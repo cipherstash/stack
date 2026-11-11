@@ -36,6 +36,23 @@ Some tests spawn the wizard binary, which runs an auth check before reaching the
 
 The CI job for this workspace exposes those env vars from repo secrets. Without them the wizard suite is skipped (the provider suite still runs).
 
+## Protect compatibility suites
+
+These live suites are excluded from the default run. From an installed repository checkout, build the native binding, then use Turbo to build the workspace dependencies and run each suite:
+
+```bash
+pnpm --filter @cipherstash/protect-ffi run build:native
+pnpm exec turbo run test:protect-compat --filter @cipherstash/e2e --env-mode=loose
+pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=loose
+```
+
+The native build needs the repository's Rust toolchain and trusted mise configuration. Both suites require `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY` in the environment, `e2e/.env` or the root `.env`; missing configuration fails the run rather than skipping it. The crossover suite also requires `DATABASE_URL` pointing to a disposable Postgres database where it can install EQL and create test tables.
+
+- `tests/protect-dynamodb-compat.e2e.test.ts` checks Protect.js → Stack reads, writes and equality terms using real encryption and in-memory DynamoDB item storage.
+- `tests/protect-crossover.e2e.test.ts` checks ciphertext and HMAC transfer between DynamoDB item objects and real Postgres rows. The same runner includes `tests/protect-postgres-upgrade.e2e.test.ts` and `tests/protect-guide-example.e2e.test.ts` for the Postgres upgrade and executable guide examples.
+
+See the [migration guide](../docs/migration/protect-dynamodb-to-stack.md) for the tested scope and limitations.
+
 ## Migration Harness
 
 The [Migration Harness](migration-harness/run/README.md) runs an isolated Fixture App upgrade and records a Run Report. Its self-tests and credential-free Docker probes use dedicated commands and a dedicated CI workflow; ordinary `pnpm test` and `test:e2e` do not invoke them. A real Run additionally needs CipherStash credentials. See the harness README for commands that build workspace dependencies first and for the remaining acceptance limitations.

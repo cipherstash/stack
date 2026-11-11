@@ -10,11 +10,13 @@ import tempfile
 import unittest
 
 DRIVER = Path(__file__).resolve().parents[1] / 'impact-gate.py'
-# lizard misses this function's closing brace (a ternary returning an object
-# literal after an arrow callback) and runs its span on into whatever follows.
-PICK = ('export function pick(xs: readonly string[], hint?: string) {\n'
-        '  const hinted = xs.find((c) => c === hint)\n'
-        "  return hinted ? { hinted, via: 'hint' } : null\n"
+# lizard 1.24.3 misses this function's closing brace (the `{` in the regex
+# literal) and runs its span on to the next `function`, over any top-level code
+# between them. 1.24.3 fixed the trigger these tests used before (a ternary
+# returning an object literal); when lizard fixes this one too, the tests
+# that use PICK fail and need a new trigger.
+PICK = ('export function pick(s: string) {\n'
+        '  return /\\{/.test(s)\n'
         '}\n')
 
 
@@ -118,19 +120,22 @@ class ImpactWorkflowTest(unittest.TestCase):
         self.assertNotIn('sha=', result.stdout)
 
     def test_marks_cost_drivers_whose_function_span_lizard_misread(self):
-        # lizard ends `pick` at the end of `after`: a ternary returning an
-        # object literal after an arrow callback loses the closing brace. Edits
-        # to `after` are then charged to `pick`, which the PR never touched.
+        # lizard runs `pick` on to `after` (see PICK), so the top-level code
+        # between them is charged to `pick`, which the PR never touched.
         def branches(name, arg, result):
             return (f'export function {name}({arg}: number): number {{\n'
                     + ''.join(f'  if ({arg} === {i}) return {i};\n' for i in range(200))
                     + f'  return {result}\n}}\n')
+
+        def checks(count):
+            return '\nexport const LIMIT = 10\n' + ''.join(
+                f'if (LIMIT === {i}) console.log({i})\n' for i in range(count))
+        after = '\nexport function after(x: number): number {\n  return x + 1\n}\n'
         self.commit('src/pick.ts', 'export function third(y: number): number {\n  return y\n}\n\n'
-                    + PICK + '\nexport function after(x: number): number {\n  return x + 1\n}\n')
+                    + PICK + checks(1) + after)
         self.run_driver('prepare')
         self.git('checkout', '-qb', 'feature')
-        self.commit('src/pick.ts', branches('third', 'y', 'y') + '\n' + PICK + '\n'
-                    + branches('after', 'x', 'x + 1'))
+        self.commit('src/pick.ts', branches('third', 'y', 'y') + '\n' + PICK + checks(200) + after)
         # The grade multiplies cost by files changed; the drivers table is only
         # printed above the warn percentile.
         for index in range(6):
@@ -177,17 +182,15 @@ class ImpactWorkflowTest(unittest.TestCase):
         self.assertEqual(self.load_driver().misread_functions([head], 'src/flat.ts'), set())
 
     def test_a_span_ending_on_a_one_line_declaration_swallows_it(self):
-        # lizard ends `path` on the next declaration's first line. That is
-        # harmless when only a signature is there, but a one-line declaration
-        # is there whole, so edits to it are charged to `path`.
-        path = ('export function path(segments: string[]): string {\n'
-                '  return `$.${segments.join(".")}`\n}\n\n')
-        self.commit('src/path.ts', path + 'export const LIMIT = 10\n')
-        self.commit('src/boundary.ts', path + 'export function next(x: number): number {\n'
+        # lizard ends `pick` (see PICK) on the next declaration's first line.
+        # That is harmless when only a signature is there, but a one-line
+        # declaration is there whole, so edits to it are charged to `pick`.
+        self.commit('src/path.ts', PICK + '\nexport const LIMIT = 10\n')
+        self.commit('src/boundary.ts', PICK + '\nexport function next(x: number): number {\n'
                     '  return x\n}\n')
         head = self.git('rev-parse', 'HEAD')
         driver = self.load_driver()
-        self.assertEqual(driver.misread_functions([head], 'src/path.ts'), {('', 'path')})
+        self.assertEqual(driver.misread_functions([head], 'src/path.ts'), {('', 'pick')})
         self.assertEqual(driver.misread_functions([head], 'src/boundary.ts'), set())
 
     def test_a_declaration_continued_on_the_next_line_is_not_whole(self):
@@ -214,9 +217,9 @@ class ImpactWorkflowTest(unittest.TestCase):
                 self.assertEqual(driver.declaration_lines('a.ts', source)[1], whole)
 
     def test_marks_a_function_above_a_removed_declaration(self):
-        # At the base, `pick`'s span swallows `gone`; the PR deletes `gone`.
-        self.commit('src/pick.ts', PICK + '\nexport function gone(x: number): number {\n'
-                    '  return x\n}\n\nexport function kept(y: number): number {\n  return y\n}\n')
+        # At the base, `pick`'s span swallows `GONE`; the PR deletes `GONE`.
+        self.commit('src/pick.ts', PICK + '\nexport const GONE = 1\n'
+                    '\nexport function kept(y: number): number {\n  return y\n}\n')
         base = self.git('rev-parse', 'HEAD')
         self.commit('src/pick.ts', PICK + '\nexport function kept(y: number): number {\n'
                     '  return y + 1\n}\n')
@@ -225,12 +228,14 @@ class ImpactWorkflowTest(unittest.TestCase):
         self.assertNotIn(('', 'kept'), found)
 
     def test_marks_a_function_above_appended_code(self):
-        # At the base `pick` ends the file; the PR appends after it.
+        # At the base `pick` ends the file; the PR appends a declaration and a
+        # function after it.
         self.commit('src/pick.ts', 'export function edited(y: number): number {\n  return y\n}\n\n'
                     + PICK)
         base = self.git('rev-parse', 'HEAD')
         self.commit('src/pick.ts', 'export function edited(y: number): number {\n  return y + 1\n}\n\n'
-                    + PICK + '\nexport function appended(x: number): number {\n  return x\n}\n')
+                    + PICK + '\nexport const LIMIT = 10\n'
+                    '\nexport function appended(x: number): number {\n  return x\n}\n')
         found = self.load_driver().misread_functions([base, 'HEAD'], 'src/pick.ts')
         self.assertIn(('', 'pick'), found)
         self.assertNotIn(('', 'edited'), found)

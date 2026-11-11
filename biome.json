@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
   "files": {
     "includes": [
       "**",
@@ -40,6 +40,8 @@
       "!languages/typescript/packages/profile/native.d.ts",
       "!languages/golang",
       "!**/*.grit",
+      "!**/*.yml",
+      "!**/*.yaml",
       "!**/*.generated.ts",
       "!**/contract.json",
       "!**/contract.d.ts",
@@ -63,6 +65,11 @@
     },
     "parser": {
       "unsafeParameterDecoratorsEnabled": true
+    }
+  },
+  "markdown": {
+    "formatter": {
+      "enabled": false
     }
   },
   "linter": {

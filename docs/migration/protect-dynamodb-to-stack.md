@@ -1,4 +1,13 @@
-# Upgrade from Protect.js to Stack on DynamoDB
+# Upgrade Protect/EQL v2 to Stack/EQL v3 on DynamoDB and PostgreSQL
+
+EQL (Encrypt Query Language) v2 and v3 identify data generations, **not npm package majors**. This guide targets Stack **1.2.1**, using `@cipherstash/stack/v3`. It does not migrate data to EQL v4.
+
+Choose the procedure for your existing store:
+
+- **DynamoDB:** follow the scalar compatibility explanation and steps 1–7 below.
+- **PostgreSQL with existing EQL v2 columns:** follow [PostgreSQL v2 → v3](#postgresql-v2--v3). Copying DynamoDB attributes into an already-v3 database is a separate optional example, not this database upgrade.
+
+For both procedures, inventory your schema and queries, retain access to the original workspace/keyset, take a recoverable backup, and rehearse on a disposable copy before deployment. Install Node.js 22 or later (22.18+ for the executable TypeScript examples). Keep the four `CS_*` credentials available, but do not commit them. The package upgrade and database conversion are separate steps; installing a new SDK does not change existing PostgreSQL column types.
 
 This guide moves an app from `@cipherstash/protect@10.2.1` and `@cipherstash/protect-dynamodb@6.0.1` to `@cipherstash/stack` 1.x. These versions also pull in `@cipherstash/protect-ffi@0.18.1` and `@cipherstash/schema@2.0.2`; the legacy versions are removed with Protect. Stack still depends on its own newer `@cipherstash/protect-ffi`.
 
@@ -8,6 +17,8 @@ Compatibility claims below cite their supporting tests, prefixed with the suite 
 
 - `compat` is `e2e/tests/protect-dynamodb-compat.e2e.test.ts`.
 - `crossover` is `e2e/tests/protect-crossover.e2e.test.ts`.
+- `postgres-upgrade` is `e2e/tests/protect-postgres-upgrade.e2e.test.ts`.
+- `example` is `e2e/tests/protect-guide-example.e2e.test.ts`.
 
 Both suites produce item objects with the real Protect.js versions above, installed from npm, and read them back with the in-tree Stack package (currently 1.2.1). They test live encryption, but do not contact DynamoDB: item persistence and HMAC matching are simulated in memory. The crossover suite also runs real Postgres inserts and SQL queries. This verifies adapter compatibility, not AWS expressions, GSI configuration or a deployed customer application. They run on every pull request in the `e2e-tests` job of `.github/workflows/tests.yml`. Both need `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY`, supplied in the environment, `e2e/.env` or the repository-root `.env`. The crossover suite also needs `DATABASE_URL` for a disposable Postgres database where it can install EQL and create tables. From an installed repository checkout, build the native binding and run through Turbo so workspace dependencies are built:
 
@@ -17,7 +28,9 @@ pnpm exec turbo run test:protect-compat --filter @cipherstash/e2e --env-mode=loo
 pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=loose
 ```
 
-The native build needs the repository's Rust toolchain and trusted mise configuration. These commands are for maintainers verifying the guide; a customer installing Stack from npm receives prebuilt binaries.
+The native build needs the repository's Rust toolchain and trusted mise configuration. These commands are for maintainers verifying the guide; a customer installing Stack from npm receives prebuilt binaries. The crossover task also runs the PostgreSQL upgrade and executable DynamoDB example. Credentialed tests fail if configuration is missing; a skipped or unrun suite is not migration evidence.
+
+The [executable examples](../../e2e/migration-guide/README.md) use npm and the pinned customer packages. Run them on disposable data. The DynamoDB example uses in-memory item persistence and exercises legacy reads, new writes, normalization, bigint serialization and boolean updates (`example › runs the npm DynamoDB example through legacy reads, new writes and boolean updates`). It is not an AWS deployment test.
 
 ## Why the supported scalar attributes need no re-encryption
 
@@ -45,17 +58,17 @@ Done when every column has a row in the mapping table in step 3, and every colum
 ### 2. Swap the packages
 
 ```bash
-pnpm remove @cipherstash/protect @cipherstash/protect-dynamodb
-pnpm add '@cipherstash/stack@^1.2.1'
+npm uninstall @cipherstash/protect @cipherstash/protect-dynamodb
+npm install --save-exact @cipherstash/stack@1.2.1
 ```
 
-If the app's `package.json` also declares `@cipherstash/schema` or `@cipherstash/protect-ffi` directly, remove those in a separate `pnpm remove`. Do not add them to the command above when they are only transitive: `pnpm remove` refuses a package the manifest does not declare and then removes nothing.
+If the app's `package.json` also declares `@cipherstash/schema` or `@cipherstash/protect-ffi` directly, remove those with `npm uninstall`. Commit the resulting package manifest and lockfile. Stack retains its own newer FFI dependency; do not remove that transitive dependency.
 
 Stack needs Node.js 22 or later. It reads the same four `CS_*` variables from the environment, so retain the same workspace and key access used to write the data. If the app passed credentials explicitly to Protect, populate these environment variables or configure the equivalent Stack credentials. If the app passed a `keyset` to `protect()`, pass the same keyset to `Encryption` as `config.keyset`. A client bound to a different keyset either fails to decrypt or, if it was granted the old keyset, decrypts but mints terms that match no existing `__hmac`. Keysets are untested by these suites.
 
 Stack finds its service endpoints from `CS_WORKSPACE_CRN`. Protect 10.2.1 did not: outside `ap-southeast-2` it needed `CS_CTS_HOST` and `CS_ZEROKMS_HOST` set explicitly. Stack still honours both variables when they are set, so remove them from ordinary managed deployments. Keep them only for a deliberately configured private or custom endpoint, and check that endpoint before relying on it.
 
-Done when `pnpm list --depth Infinity | grep cipherstash` shows `@cipherstash/stack` and its own dependencies (including its own newer `@cipherstash/protect-ffi`), and no `@cipherstash/protect@`, `@cipherstash/protect-dynamodb` or `@cipherstash/schema` line.
+Done when `npm ls --all` shows `@cipherstash/stack` and its own dependencies (including its own newer `@cipherstash/protect-ffi`), and no `@cipherstash/protect@`, `@cipherstash/protect-dynamodb` or `@cipherstash/schema` line.
 
 ### 3. Translate the schema
 
@@ -221,6 +234,106 @@ Deploy after the application-specific checks pass. For the tested scalar values,
 
 Rollback limitations: JSON converted to `types.Json` needs a separate reverse conversion or a reader that handles both formats; values outside the tested numeric range need independent verification; boolean items Stack wrote have no `__hmac`, so the Protect build cannot find them by boolean lookup; and lowercased `downcase` values stay lowercased.
 
+## PostgreSQL v2 → v3
+
+This procedure starts with **real Protect.js writes in `public.eql_v2_encrypted` columns**. It retains those source columns, builds v3 target columns and verifies both generations before application cutover. The executable example and live test use EQL v2 2.2.1 alongside the v3 SQL installed by the current CLI. They do not replace v2 data with newly generated v3 data before testing (`postgres-upgrade › migrates actual v2 columns, preserves ciphertext and queries, and rolls back before writes resume`).
+
+### Supported PostgreSQL mappings
+
+| Protect declaration | Target domain and Stack constructor | Supported input |
+|---|---|---|
+| `csColumn('email').equality()` | `public.eql_v3_text_eq`, `types.TextEq('email')` | Text without normalization filters |
+| `csColumn('age').dataType('number').equality()` | `public.eql_v3_integer_eq`, `types.IntegerEq('age')` | Safe whole-number JavaScript values; the example checks `Number.isSafeInteger` |
+| `csColumn('notes')` | `public.eql_v3_text`, `types.Text('notes')` | Storage-only text |
+
+The example uses logical identity `customers/email`, `customers/age` and `customers/notes` throughout. Physical target column names carry `_v3`; their encrypted identity does not. Do not apply this fixed example to different identities without adapting and testing them.
+
+**Stop and plan a separate migration** for boolean equality, downcase filters, bigint, JSON, dates, fractional numbers, grouped fields, lock contexts, range/order or text search. The DynamoDB mappings above do not establish PostgreSQL support for these cases. Null source values, additional columns and capabilities also fall outside this small example. Its preflight rejects them instead of dropping unrecognized data (`postgres-upgrade › refuses unsupported payload capabilities before changing source data or columns`).
+
+### 1. Prepare and inventory
+
+Record the source declarations, queries, row counts, constraints, indexes, views, triggers and policies. Establish that the old Protect build can decrypt and query the source data. Keep that build and its lockfile available for rollback.
+
+The executable example accepts one primary key and the three source columns above. It refuses secondary indexes, non-primary constraints, dependent views, user triggers, row-level security and inheritance. Those objects need a reviewed migration of their own before using this example. Do not drop them merely to make preflight pass (`postgres-upgrade › refuses customer views before changing source data or columns`).
+
+For an existing database, retain its v2 SQL installation. Install v3 alongside it using the current `stash eql install` against the rehearsed database. Do not uninstall v2 or drop its schemas during this procedure. Capture and verify existing indexes and dependencies around installation, as well as around data conversion.
+
+### 2. Prepare the new application
+
+Use an isolated release checkout so the old build remains runnable:
+
+```bash
+npm uninstall @cipherstash/protect
+npm install --save-exact @cipherstash/stack@1.2.1
+```
+
+Remove directly declared legacy schema/FFI dependencies as described in DynamoDB step 2. Preserve the original workspace and keyset. Remove the old managed endpoint overrides from the new application's environment, retaining deliberate private endpoint configuration only after checking it.
+
+```typescript
+import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
+
+const customers = encryptedTable('customers', {
+  email: types.TextEq('email'),
+  age: types.IntegerEq('age'),
+  notes: types.Text('notes'),
+})
+const client = await Encryption({ schemas: [customers] })
+```
+
+Configure reads and writes to use the `_v3` physical columns after cutover, while passing the original logical schema above to the encryption client. Handle every SDK `{ failure }` before using `{ data }`.
+
+### 3. Stop writes and convert
+
+This first procedure requires a **write-maintenance window**. Stop all application, background and administrative writers; a transaction's table lock alone does not stop an old writer from resuming immediately after commit. Keep writes paused through verification and the rollback decision.
+
+The [executable migration](../../e2e/migration-guide/postgres.ts) performs these steps in one transaction:
+
+1. Lock the source table and reject unsupported structure/dependencies before DDL.
+2. Validate each legacy envelope and plaintext against the supported mappings. Recompute supported equality terms with Stack and compare them to the stored terms; fail on disagreement.
+3. Add `email_v3`, `age_v3` and `notes_v3` with the domains above.
+4. Build a new envelope `{ v: 3, i: originalIdentity, c: originalCiphertext, hm: originalEqualityTerm }`; omit `hm` for storage-only text. This is a tested envelope reconstruction, not a universal version-field replacement. Never copy unknown term fields into another domain.
+5. Create functional equality indexes on `eql_v3.eq_term(email_v3)` and `eql_v3.eq_term(age_v3)`.
+6. Read and decrypt the target values with Stack, compare plaintext and retained bytes against the source, then commit. A failed check rolls back the added columns and indexes too.
+
+Only the envelope and database structure change for these proven mappings; the ciphertext and equality terms are copied unchanged. Do not generalize this to other capabilities or to v4 (`postgres-upgrade › migrates actual v2 columns, preserves ciphertext and queries, and rolls back before writes resume`).
+
+The example reads the small source table into memory and validates each value. It is not a resumable production backfill service. Rehearse duration, database lock time and key-service usage before choosing a maintenance window for your data size.
+
+### 4. Verify queries, indexes and cutover
+
+Compare source and target row counts, decrypted values, positive and negative equality query results and retained ciphertext/search-term bytes. An encryption-client success alone does not verify SQL querying.
+
+Use the v3 query function and matching query domain. With the `postgres` driver:
+
+```typescript
+const result = await client.encryptQuery('ada@example.com', {
+  table: customers, column: customers.email,
+})
+if (result.failure) throw new Error(result.failure.message)
+// Bind JSON, never interpolate a query value into SQL text.
+const term = JSON.parse(JSON.stringify(result.data))
+const rows = await sql`
+  SELECT pk FROM customers
+  WHERE eql_v3.eq(email_v3, ${sql.json(term)}::jsonb::eql_v3.query_text_eq)
+`
+```
+
+For age, use `eql_v3.query_integer_eq` and `age_v3`. Map selected physical columns back to logical properties before `decryptModel`, or decrypt each envelope individually. For new writes, encrypt against `customers` and bind each resulting logical value into its matching `_v3` column.
+
+Run `ANALYZE`, inspect index definitions and check representative query plans on a suitably sized dataset. The live suite checks that selective email and age queries use their functional indexes without disabling sequential scans (`postgres-upgrade › creates usable equality indexes on the converted columns`).
+
+In rehearsal, test fresh Stack writes beside migrated rows, reads, lookups and updates. The example's fresh-write step proves mixed old/new reads and queries, and causes its simple rollback to refuse (`postgres-upgrade › reads and queries fresh Stack writes beside legacy rows and refuses stale rollback`). In production, switch every reader and writer to the new application before resuming writes; keep the source columns and backup until the recovery window is closed.
+
+### 5. Rollback boundary
+
+**Before writes resume**, switch the application back to its preserved Protect build and original columns. The example's rollback checks source/target ciphertext and terms still match and refuses customer dependencies added since conversion, allowing only its own known target indexes. It then drops the target columns and their derived indexes without `CASCADE`. Legacy reads remain available. PostgreSQL can automatically drop same-table constraints and indexes with a column even without `CASCADE`, so dependency preflight is essential (`postgres-upgrade › refuses rollback that would discard a customer %s`). Stop on any dependency error rather than dropping customer objects.
+
+**After target-only writes resume**, the source columns are stale. Do not roll back by selecting or renaming them: new or updated data would be missing. Reconcile changes or restore through a separately rehearsed recovery procedure. The example rejects a fresh target-only row; it is not a general change journal and cannot prove that arbitrary application deletes or writes never occurred.
+
+### Reproduce the PostgreSQL example
+
+Use the [npm example instructions](../../e2e/migration-guide/README.md) with a disposable database containing both EQL generations. `seed` creates a new table and refuses an existing one; `migrate` validates and creates targets; `verify` reads them; `rollback` demonstrates recovery before writes; `write` demonstrates why that recovery boundary closes. No step drops or reinstalls an EQL schema.
+
 ## Optional: moving values between DynamoDB and Postgres
 
 For the tested text equality, integer equality and storage-only text columns, a value moves between DynamoDB and a Postgres EQL v3 column as a **copy** of two strings, in either direction, with no key and no re-encryption:
@@ -251,7 +364,7 @@ What the crossover suite proves:
 - protect-dynamodb items copied into Postgres are accepted by the column types (`crossover › the EQL v3 column domains accept the copied attributes`), arrive byte-for-byte (`crossover › stores the DynamoDB ciphertext and HMAC byte-for-byte`), decrypt with Stack (`crossover › Stack 1.x decrypts the Postgres rows`), and are found by SQL equality (`crossover › SQL equality queries find exactly the right rows`).
 - Copying back returns the original item exactly (`crossover › round trip DynamoDB → Postgres → DynamoDB returns the original item exactly`).
 - A Stack-written Postgres row copied into DynamoDB decrypts with Stack (`crossover › Stack 1.x encryptedDynamoDB decrypts the item`) and with protect-dynamodb 6.0.1 (`crossover › protect-dynamodb 6.0.1 decrypts the item too`), and carries the `__hmac` a native write would (`crossover › the item carries the same __hmac a native DynamoDB write would, so existing key conditions match it`).
-- Raw payloads from Protect's `encrypt` copy into both stores the same way (`crossover › becomes a DynamoDB item Stack 1.x decrypts, identical to what protect-dynamodb wrote`, `crossover › becomes a Postgres EQL v3 row that SQL finds and Stack 1.x decrypts`).
+- Raw payloads from Protect's `encrypt` copy into both stores the same way (`crossover › becomes a DynamoDB item Stack 1.x decrypts with the legacy email equality term`, `crossover › becomes a Postgres EQL v3 row that SQL finds and Stack 1.x decrypts`).
 
 ## Outside what the tests cover
 

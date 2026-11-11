@@ -42,7 +42,7 @@
     "test:scripts": "vitest run --config scripts/vitest.config.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.4",
     "@changesets/cli": "^2.31.1",
     "@changesets/parse": "0.4.3",
     "@types/node": "^22.20.5",

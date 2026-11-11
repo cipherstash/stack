@@ -19,13 +19,13 @@ const enabled =
   process.env.HARNESS_LIVE === '1' && keys.every((key) => process.env[key])
 const cases = [
   ['reference', 'pass', null],
-  ['noop', 'behaviour', 'migration.legacy-packages-absent'],
+  ['noop', 'behaviour', 'migration.protect-dependencies-absent'],
   ['downcase', 'behaviour', 'behaviour.downcase-new-write-lookup'],
   ['stale-hmac', 'behaviour', 'migration.active-hmac-absent'],
   ['bigint', 'behaviour', 'behaviour.balance-decimal-string'],
   ['rewrite', 'behaviour', 'no-rewrite.legacy-bytes'],
   ['missing-log', 'invalid-friction-log', null],
-  ['legacy-ffi', 'behaviour', 'migration.legacy-packages-absent'],
+  ['legacy-ffi', 'behaviour', 'migration.protect-ffi-version'],
   ['denied-app', 'pass', null],
   ['denied-lifecycle', 'pass', null],
   ['tree', 'pass', null],
