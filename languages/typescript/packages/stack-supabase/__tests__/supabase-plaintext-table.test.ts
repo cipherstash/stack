@@ -108,27 +108,27 @@ const auditRows = [
 const users = encryptedTable('users', { email: types.TextSearch('email') })
 const auditLog = encryptedTable('audit_log', {})
 
-function clientFor(
-  modeIntrospector: Introspector | null,
-  config: { databaseUrl: string } | { schemas: Record<string, AnyV3Table> },
+function clientFor<C>(
+  connect: (factory: EncryptionFactory, client: never) => Promise<C>,
 ) {
   return async (resultData: unknown) => {
     const encryption = registryEnforcingFactory()
     const supabase = createMockSupabase(resultData)
-    const es = await makeEncryptedSupabase(
-      encryption.factory,
-      modeIntrospector,
-    )(supabase.client as never, config as never)
+    const es = await connect(encryption.factory, supabase.client as never)
     return { es, encryption, supabase }
   }
 }
 
-const introspectedClient = clientFor(introspector, {
-  databaseUrl: 'postgres://x',
-})
-const declaredClient = clientFor(null, {
-  schemas: { users, audit_log: auditLog },
-})
+const introspectedClient = clientFor((factory, client) =>
+  makeEncryptedSupabase(factory, introspector)(client, {
+    databaseUrl: 'postgres://x',
+  }),
+)
+const declaredClient = clientFor((factory, client) =>
+  makeEncryptedSupabase(factory, null)(client, {
+    schemas: { users, audit_log: auditLog },
+  }),
+)
 
 describe.each([
   ['introspection mode', introspectedClient],

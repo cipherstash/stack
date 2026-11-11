@@ -146,6 +146,10 @@ export class ColumnMap {
    * Filters and select strings address columns by both, so recognition must
    * cover both. */
   readonly encryptedColumnNames: string[]
+  /** False for a plaintext table, which the encrypt and decrypt steps must keep
+   * away from the encryption client. Read from {@link tableHasEncryptedColumns},
+   * the same rule `create.ts` uses to choose what `Encryption` receives. */
+  readonly hasEncryptedColumns: boolean
 
   /** DB column name → JS property name — the inverse of {@link propToDb}, used
    * to expand `select('*')` back into property names. Null prototype: a DB
@@ -154,10 +158,6 @@ export class ColumnMap {
   private readonly dbToProp: Record<string, string>
   /** Column builders keyed by BOTH property name and DB name. */
   private readonly v3Columns: Record<string, V3ColumnLike>
-  /** False for a plaintext table, which the encrypt and decrypt steps must keep
-   * away from the encryption client. Read from {@link tableHasEncryptedColumns},
-   * the same rule `create.ts` uses to choose what `Encryption` receives. */
-  readonly hasEncryptedColumns: boolean
 
   constructor(
     tableName: string,
