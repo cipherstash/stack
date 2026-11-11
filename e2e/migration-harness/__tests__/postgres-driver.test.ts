@@ -199,7 +199,8 @@ test('Postgres driver inspects fresh stored envelopes after the application writ
     expect(
       events.slice(events.indexOf('put'), events.indexOf('put') + 3),
     ).toEqual(['put', 'snapshot', 'get'])
-    expect(observed.snapshot).toHaveBeenCalledTimes(3)
+    // Baseline, before and after the migrate(env) rerun, fresh write, final.
+    expect(observed.snapshot).toHaveBeenCalledTimes(5)
     expect(checks).toContainEqual(
       expect.objectContaining({
         id: 'migration.postgres-fresh-v3-storage',

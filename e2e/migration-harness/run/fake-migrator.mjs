@@ -73,6 +73,17 @@ export async function fakeMigrate({
         'async get(pk) { const value = await decrypt(await stores.get(pk)); if (pk === "legacy" && value) await this.put(value); return value },',
       )
     await writeFile(path, source)
+    if (postgres) {
+      // The conversion lives in its own entry point, run before createApp.
+      const migration = resolve(workspace, 'src/migrate.mjs')
+      await writeFile(
+        migration,
+        (await readFile(migration, 'utf8')).replace(
+          "const variant = 'reference'",
+          `const variant = '${kind}'`,
+        ),
+      )
+    }
     if (kind === 'stale-hmac') {
       const stores = resolve(workspace, 'src/stores.mjs')
       let text = await readFile(stores, 'utf8')
