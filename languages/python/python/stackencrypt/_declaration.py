@@ -263,10 +263,62 @@ def _class_changed(
 
 
 def _hints(cls: type) -> Dict[str, Any]:
-    try:
-        return get_type_hints(cls, include_extras=True)
-    except (NameError, TypeError) as error:
-        raise _hints_unresolved(cls, error) from error
+    """The class's resolved type hints, except its SQLAlchemy relationships.
+
+    A relationship's hint often names a class defined later, such as
+    ``Mapped[list["Gear"]]``, so it may not resolve yet. It is never a
+    column, so it needs no hint here (see ``_relationships``)."""
+    skip = _relationships(cls)
+    if not skip:
+        try:
+            return get_type_hints(cls, include_extras=True)
+        except (NameError, TypeError) as error:
+            raise _hints_unresolved(cls, error) from error
+    hints: Dict[str, Any] = {}
+    # As get_type_hints does: each base's own hints in its own namespaces,
+    # the class's own last, so that they win.
+    for base in reversed(cls.__mro__):
+        try:
+            own = _own_annotations(base)
+        except (NameError, TypeError) as error:
+            raise _hints_unresolved(cls, error) from error
+        module = sys.modules.get(base.__module__)
+        global_names = dict(vars(module)) if module is not None else {}
+        for name, hint in own.items():
+            if name in skip:
+                continue
+
+            def probe() -> None: ...
+
+            probe.__annotations__ = {name: hint}
+            try:
+                hints.update(get_type_hints(probe, global_names, dict(vars(base)), include_extras=True))
+            except (NameError, TypeError) as error:
+                raise _hints_unresolved(cls, error) from error
+    return hints
+
+
+def _relationships(cls: type) -> frozenset:
+    """The names of a SQLAlchemy class's relationships, such as ``books`` in
+    ``books: Mapped[list["Book"]] = relationship()``. Empty for any other
+    class.
+
+    A relationship is never a column, so it is not a field of the plan,
+    and it needs no marker. Rule A still holds for every column. SQLAlchemy
+    maps a declarative class when its class statement runs, so its mapper
+    lists the relationships before the decorator runs, and before the
+    classes they name exist. ``Mapper._props`` is SQLAlchemy's own record
+    of them; if it is missing, nothing is skipped."""
+    orm = sys.modules.get("sqlalchemy.orm")
+    if orm is None:
+        return frozenset()
+    mapper = cls.__dict__.get("__mapper__")
+    props = getattr(mapper, "_props", None)
+    if not isinstance(props, dict):
+        return frozenset()
+    return frozenset(
+        name for name, prop in props.items() if isinstance(prop, orm.RelationshipProperty)
+    )
 
 
 def _signature(cls: type) -> Optional[inspect.Signature]:
@@ -306,7 +358,12 @@ def _read_fields(cls: type, hints: Dict[str, Any]) -> List[_ReadField]:
     names = _library_field_names(cls)
     from_hints = names is None
     if names is None:
-        names = [name for name, hint in hints.items() if not _is_class_level(hint)]
+        relationships = _relationships(cls)
+        names = [
+            name
+            for name, hint in hints.items()
+            if not _is_class_level(hint) and name not in relationships
+        ]
     read = []
     for name in names:
         marker, value_type = _marker_of(name, hints.get(name), from_hints=from_hints)

@@ -17,6 +17,7 @@ from typing import Annotated, ClassVar, Final, List, NamedTuple, Optional, Union
 import attrs
 import pydantic
 import pytest
+from sqlalchemy import inspect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy import ForeignKey
 
@@ -308,20 +309,52 @@ class LaterBase(DeclarativeBase):
     pass
 
 
-def test_a_relationship_to_a_class_defined_later_is_refused_with_its_field():
-    # Author is defined after Book, as a relationship target often is.
+def test_a_relationship_to_a_class_defined_later_needs_no_marker():
+    # Author is defined after Book, as a relationship target often is. A
+    # relationship is never a column, so it needs no marker, and its hint
+    # is not resolved.
+    @stackencrypt.model("books")
+    class Book(LaterBase):
+        __tablename__ = "books"
+        id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+        title: Mapped[Annotated[str, TextEq]]
+        authors: Mapped[List["Author"]] = relationship(back_populates="book")  # noqa: F821
+
+    class Author(LaterBase):
+        __tablename__ = "authors"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        book_id: Mapped[int] = mapped_column(ForeignKey("books.id"))
+        book: Mapped["Book"] = relationship(back_populates="authors")
+
+    assert planned(Book) == [("id", Passthrough), ("title", TextEq)]
+    # SQLAlchemy still reads the hint: the relationship is a list of Author.
+    assert inspect(Book).relationships["authors"].uselist is True
+    stackencrypt.Cipher(Book)  # the class is as the decorator left it
+
+
+def test_a_relationship_to_one_object_needs_no_marker():
+    @stackencrypt.model("comments")
+    class Comment(Base):
+        __tablename__ = "comments"
+        id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+        body: Mapped[Annotated[str, TextEq]]
+        user_id: Mapped[Annotated[int, Passthrough]] = mapped_column(ForeignKey("users.id"))
+        user: Mapped["User"] = relationship()
+
+    assert planned(Comment) == [("id", Passthrough), ("body", TextEq), ("user_id", Passthrough)]
+
+
+def test_a_sqlalchemy_column_with_no_marker_is_still_refused():
     def build():
-        @stackencrypt.model("books")
-        class Book(LaterBase):
-            __tablename__ = "books"
+        @stackencrypt.model("notes")
+        class Note(Base):
+            __tablename__ = "notes"
             id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
-            title: Mapped[Annotated[str, TextEq]]
-            authors: Mapped[Annotated[List["Author"], Ignore]] = relationship("Author")  # noqa: F821
+            body: Mapped[str]
 
     error = refusal(build)
-    assert error.code == "declaration_hints_unresolved"
-    assert error.field == "authors"
-    assert isinstance(error.__cause__, NameError)
+    assert error.code == "declaration_no_marker"
+    assert error.field == "body"
 
 
 def test_a_class_is_declared_once():
