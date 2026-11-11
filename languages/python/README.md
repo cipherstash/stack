@@ -143,27 +143,47 @@ The values are checked as `encrypt` checks them. A row that is not a mapping rai
 `stackencrypt.sqlalchemy.configure_encryption` makes the ORM encrypt and decrypt for you. Call it once, after you create the engine. Then use sessions as usual. The app reads and writes plaintext attributes, and the tables store EQL values.
 
 ```text
-from stackencrypt.sqlalchemy import configure_encryption
+from stackencrypt.sqlalchemy import configure_encryption, eql_type_map
+
+
+class Base(DeclarativeBase):
+    type_annotation_map = eql_type_map
+
+
+@stackencrypt.model("customers")
+class Customer(Base):
+    __tablename__ = "customers"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    email: Mapped[Annotated[str, TextEq]]
+    level: Mapped[Annotated[int, IntegerOrd]]
+
 
 engine = create_engine(DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1))
-configure_encryption(engine, [Customer, Order])
+configure_encryption(engine, [Customer])
 
 with Session(engine) as session:
-    session.add(Customer(email="a@example.com", name="Ann", plan="free"))
+    session.add(Customer(email="a@example.com", level=3))
     session.commit()                                   # encrypted on the way in
-    customer = session.scalars(select(Customer)).one()
+    customer = session.scalars(select(Customer).where(Customer.email == "a@example.com")).one()
     customer.email                                     # "a@example.com"
 ```
+
+`eql_type_map` gives each encrypted field its EQL column type, such as `public.eql_v4_text_eq` for `TextEq`. So a column needs no type of its own. `Base.metadata.create_all(engine)` creates the EQL columns.
 
 - **Writes:** each INSERT or UPDATE on a listed table is encrypted with one batch of key requests for all its rows.
 - **Reads:** the objects a query loads are decrypted with one batch for each class. This includes relationship loads, and attributes read again after a commit.
 - Only encrypted fields are changed. A passthrough field is stored as SQLAlchemy writes it.
+
+- **Search:** `==`, `<`, `<=`, `>`, and `>=` on an encrypted field compare it with a query term, as `cipher.eq` and `cipher.gte` make. The field's marker must support the operator. For example, `Customer.level >= 3` works, and `Customer.email > x` raises `QueryError` with `query_unsupported`.
+- **Other operators** that would send a value, such as `like`, `in_`, `!=`, and `between`, raise `QueryError` with `query_unsupported` when you build the query. The value would reach the database as plaintext, and could never match. `is_(None)`, `is_not(None)`, `asc()`, and `desc()` send no value, so they work.
+- A comparison on a class that is not configured raises `QueryError` with `query_not_configured`.
 
 Each class must be declared with `stackencrypt.model` and mapped by SQLAlchemy. `configure_encryption` refuses a class with `DeclarationError` in these cases:
 
 - `declaration_not_mapped`: SQLAlchemy does not map the class.
 - `declaration_table_mismatch`: the table in `stackencrypt.model` is not the `__tablename__`.
 - `declaration_column_name`: an encrypted field's column has another name than the field, as with `mapped_column("email_address")`.
+- `declaration_column_type`: an encrypted field's column is not the EQL type of its marker. Set `type_annotation_map = eql_type_map` on the base.
 - `declaration_already_configured`: the class was configured before in this process.
 
 A statement that puts an encrypted value inside its SQL, such as `insert(Customer).values(email=...)`, raises `DeclarationError` with `declaration_inline_value`. The value is not stored. Pass the values as parameters instead, as `session.add` and `session.execute(insert(Customer), rows)` do.
@@ -171,7 +191,7 @@ A statement that puts an encrypted value inside its SQL, such as `insert(Custome
 These are not handled yet:
 
 - A Core query, such as `conn.execute(text("SELECT ..."))`, returns EQL values, not plaintext. Use `cipher.decrypt_rows` on its rows.
-- A search by an encrypted field, such as `where(Customer.email == x)`, is not supported yet. Build the term with `cipher.eq` and compare it in the SQL, as in "Search by equality".
+- A match search, `matches`, is not supported through the ORM yet. Use `cipher.matches`, as in "Search by match".
 - A query result is read in full before it is returned, so that its objects can be decrypted in one batch. A query that streams its rows does not stream.
 
 ## Declare a SQLAlchemy relationship

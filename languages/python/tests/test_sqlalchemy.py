@@ -1,5 +1,5 @@
-"""``stackencrypt.sqlalchemy.configure_encryption`` before any query: the
-class checks.
+"""``stackencrypt.sqlalchemy`` before any request: the type map, the class
+checks of ``configure_encryption``, and the operators a query refuses.
 
 These tests need fake credentials only. They use an SQLite engine that no
 test connects to. The hooks run against PostgreSQL in
@@ -10,18 +10,19 @@ import dataclasses
 from typing import Annotated
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 import stackencrypt
 from stackencrypt import DeclarationError, Ignore, Passthrough, TextEq
-from stackencrypt.sqlalchemy import configure_encryption
+from stackencrypt import IntegerOrd, QueryError, Text, _eql
+from stackencrypt.sqlalchemy import EqlType, configure_encryption, eql_type_map
 
 pytestmark = pytest.mark.usefixtures("credentials")
 
 
 class Base(DeclarativeBase):
-    pass
+    type_annotation_map = eql_type_map
 
 
 @stackencrypt.model("customers")
@@ -133,7 +134,9 @@ def test_a_sealed_value_inside_the_sql_is_refused_and_not_stored(untouched):
         email: Mapped[Annotated[str, TextEq]]
 
     engine = create_engine("sqlite://")
-    Lead.__table__.create(engine)
+    # SQLite has no EQL types, and the refusal comes before the database.
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE leads (id INTEGER PRIMARY KEY, email TEXT)")
     configure_encryption(engine, [Lead])
 
     for statement in [
@@ -148,3 +151,92 @@ def test_a_sealed_value_inside_the_sql_is_refused_and_not_stored(untouched):
 
     with engine.connect() as conn:
         assert conn.execute(select(Lead.__table__)).all() == []
+
+
+# The type map.
+
+
+def test_the_type_map_gives_every_declarable_marker_its_eql_type():
+    declarable = [m for m in _eql.TYPES if m.producible and m.plaintext != "json"]
+    assert declarable
+    for marker in declarable:
+        [column_type] = [t for hint, t in eql_type_map.items() if hint.__metadata__ == (marker,)]
+        assert isinstance(column_type, EqlType)
+        assert column_type.marker is marker
+        assert column_type.get_col_spec() == marker.sql_domain
+
+
+def test_a_column_of_another_type_is_refused(engine):
+    @stackencrypt.model("tickets")
+    class Ticket(Base):
+        __tablename__ = "tickets"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        email: Mapped[Annotated[str, TextEq]] = mapped_column(String)
+
+    error = refused(engine, [Ticket])
+    assert error.code == "declaration_column_type"
+    assert error.field == "email"
+    assert "eql_v4_text_eq" in error.message
+
+
+# The operators a query refuses, before any request.
+
+
+@stackencrypt.model("scores")
+class Score(Base):
+    __tablename__ = "scores"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    level: Mapped[Annotated[int, IntegerOrd]]
+    note: Mapped[Annotated[str, Text]]
+
+
+@pytest.fixture(scope="module")
+def scores():
+    configure_encryption(create_engine("sqlite://"), [Score])
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Score.note.like("%secret%"),
+        lambda: Score.note.contains("secret"),
+        lambda: Score.note.in_(["secret"]),
+        lambda: Score.note != "secret",
+        lambda: Score.level.between(1, 9),
+        lambda: Score.level + 1,
+    ],
+    ids=["like", "contains", "in", "not-equal", "between", "add"],
+)
+def test_an_operator_that_would_send_the_value_is_refused(scores, untouched, build):
+    with pytest.raises(QueryError) as raised:
+        build()
+    assert raised.value.code == "query_unsupported"
+    assert "secret" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Score.note.is_(None),
+        lambda: Score.note.is_not(None),
+        lambda: Score.note == None,  # noqa: E711
+        lambda: Score.level.asc(),
+        lambda: Score.level.desc(),
+    ],
+    ids=["is-null", "is-not-null", "equals-none", "asc", "desc"],
+)
+def test_an_operator_that_sends_no_value_is_allowed_with_no_request(scores, untouched, build):
+    build()
+
+
+def test_a_comparison_on_a_class_not_configured_is_refused(untouched):
+    @stackencrypt.model("drafts")
+    class Draft(Base):
+        __tablename__ = "drafts"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        note: Mapped[Annotated[str, Text]]
+
+    with pytest.raises(QueryError) as raised:
+        Draft.note == "secret"  # noqa: B015
+    assert raised.value.code == "query_not_configured"
+    assert "secret" not in str(raised.value)
