@@ -102,36 +102,31 @@ func (e Exports) Free(ctx context.Context, b Buf) {
 // the guest comes to own and reclaim it. se_alloc is the one export the ABI
 // lets a host import re-enter.
 //
-// It reports whether the guest took the data. When it did not, the guest
-// never learns of the buffer it allocated, so Place zeroes the bytes it
-// wrote in place and clears the pointer slot: the data (a bearer token, a
-// ZeroKMS response) must not outlive the failure. It cannot release the
-// buffer, because se_dealloc is not callable from an import; the guest's
-// registry frees the zeroed bytes at shutdown.
+// It reports whether the guest took the data. Both out-slots are checked
+// against guest memory before anything is allocated: a buffer the guest is
+// never told about can be neither read nor released, and it would hold the
+// data (a bearer token, a ZeroKMS response) until shutdown. Guest memory
+// only grows, so a slot that was in range stays writable after se_alloc.
 func Place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte) bool {
 	fn := m.ExportedFunction("se_alloc")
 	if fn == nil {
+		return false
+	}
+	mem := m.Memory()
+	// Four bytes each; uint64 so a slot near 4 GiB cannot wrap.
+	size := uint64(mem.Size())
+	if uint64(ptrOut)+4 > size || uint64(lenOut)+4 > size {
 		return false
 	}
 	b, err := alloc(ctx, fn, uint64(len(data)))
 	if err != nil {
 		return false
 	}
-	ptr := b.Ptr
-	length := uint32(len(data)) //nolint:gosec // bounded above
-	mem := m.Memory()
-	if len(data) > 0 && !mem.Write(ptr, data) {
+	// A write that fails lands nothing: wazero's Write is all-or-nothing.
+	if len(data) > 0 && !mem.Write(b.Ptr, data) {
 		return false
 	}
-	if mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, length) {
-		return true
-	}
-	// A failed write can still have landed the first slot.
-	_ = mem.WriteUint32Le(ptrOut, 0)
-	if length > 0 {
-		mem.Write(ptr, make([]byte, length))
-	}
-	return false
+	return mem.WriteUint32Le(ptrOut, b.Ptr) && mem.WriteUint32Le(lenOut, b.Len)
 }
 
 // Call stages every buffer argument, calls fn with the arguments in
