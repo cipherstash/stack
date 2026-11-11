@@ -1,18 +1,31 @@
 # Run skeleton
 
-## PostgreSQL v2 extension in development
+## PostgreSQL v2-to-v3 procedure
 
 The `postgres-fixture` directory and `postgres-behaviour.mjs` / `postgres-oracle.mjs`
-start the separate PostgreSQL v2-to-v3 procedure tracked by #1605. They cover the
+provide the separate PostgreSQL v2-to-v3 procedure tracked by #1605. They cover the
 guide's text equality, safe integer equality and storage-only text mappings.
 The oracle compares retained ciphertext and equality terms while permitting
 the documented envelope change and verifies source/target domains and indexes.
 
-This procedure is not yet selectable through `harness:run`. Remaining work is
-v2 bundle provisioning, independent store seeding and admin snapshots, procedure
-metadata and Run wiring, a hidden Reference Migration executed in App Host,
-and the credentialed reference/broken-migration CI matrix. Current unit tests
-do not establish a completed live PostgreSQL migration.
+Select it with `harness:run --procedure postgres-v2-to-v3 --migrator <adapter>`.
+For deterministic acceptance use `--fake reference` instead of `--migrator`.
+The default remains `--procedure dynamodb`. Both procedures record their identity,
+source and target EQL generations, exact Stack source and guide hash.
+
+The PostgreSQL procedure installs the historical EQL 2.2.1 bundle alongside v3
+and seeds each independent Store Set with Protect.js writes to v2 columns.
+Legacy reads and queries must pass before migration. The migrated application's
+`createApp` applies its database conversion inside App Host using the Oracle
+Store Set's application role. The harness snapshots stored rows, domains and
+indexes independently, after read-only application checks and before fresh writes.
+
+The hidden Reference Migration retains source columns and rebuilds only the
+envelopes the guide proves convertible. Deterministic variants `noop`, `row-loss`,
+`wrong-mapping`, `missing-index`, `rewrite` and `missing-log` exercise the named
+failure checks. The existing credentialed CI self-test job runs this matrix
+when `HARNESS_LIVE=1`; ordinary self-tests skip it. Local unit checks alone do
+not establish a completed live PostgreSQL migration.
 
 ## Running the existing baseline
 

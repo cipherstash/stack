@@ -71,6 +71,9 @@ export interface IsolationResult {
   timedOut?: boolean
 }
 export interface Manifest {
+  procedure?: 'dynamodb' | 'postgres-v2-to-v3'
+  sourceEqlGeneration?: number
+  targetEqlGeneration?: number
   stack?: string
   guideHash: string | null
   guideSections?: string[]
