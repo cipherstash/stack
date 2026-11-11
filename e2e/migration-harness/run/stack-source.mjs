@@ -51,7 +51,7 @@ export async function resolveStack({ source, root, output }) {
     !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version)
   )
     throw Error('Could not resolve exact Stack version')
-  const ffiRange = JSON.parse(
+  const ffiAnswer = JSON.parse(
     (
       await exec('npm', [
         'view',
@@ -61,6 +61,12 @@ export async function resolveStack({ source, root, output }) {
       ])
     ).stdout,
   )
+  // npm 12 wraps even an exact version's field in an array; older npm does not.
+  const ffiRange = Array.isArray(ffiAnswer)
+    ? ffiAnswer.length === 1
+      ? ffiAnswer[0]
+      : undefined
+    : ffiAnswer
   if (typeof ffiRange !== 'string' || !ffiRange)
     throw Error('Could not resolve Stack FFI dependency')
   return { version, install: version, ffiRange }
