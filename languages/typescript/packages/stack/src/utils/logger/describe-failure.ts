@@ -1,7 +1,7 @@
 // Type-only imports: adapter-kit must stay importable without loading the
 // native binding or the auth module, so the allowlists below are written out
-// and the types prove them complete (`describe-failure.test.ts` checks the FFI
-// list against the runtime one).
+// as `Record`s over the code unions, which makes the compiler prove them
+// complete.
 import type { AuthErrorCode } from '@cipherstash/auth'
 import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
 import { EncryptionErrorTypes } from '@/errors'
@@ -45,8 +45,8 @@ export function describeFailure(err: unknown): string {
   }
 }
 
+// Any other name is reported as plain `Error`.
 const ERROR_CLASSES: ReadonlySet<string> = new Set([
-  'Error',
   'AggregateError',
   'EvalError',
   'RangeError',
@@ -59,26 +59,25 @@ const ERROR_CLASSES: ReadonlySet<string> = new Set([
   'EncryptionFailedError',
 ])
 
-/** Every FFI error code. `describe-failure.test.ts` pins it to the runtime list. */
-export const FFI_ERROR_CODES = [
-  'INVARIANT_VIOLATION',
-  'UNKNOWN_QUERY_OP',
-  'UNKNOWN_COLUMN',
-  'MISSING_INDEX',
-  'INVALID_QUERY_INPUT',
-  'SHORT_MATCH_NEEDLE',
-  'INVALID_JSON_PATH',
-  'STE_VEC_REQUIRES_JSON_CAST_AS',
-  'MATCH_REQUIRES_TEXT',
-  'UNSUPPORTED_CONFIG_VERSION',
-  'INVALID_EQL_VERSION',
-  'EQL_V3_UNSUPPORTED_COLUMN',
-  'EQL_V3_CONVERSION_FAILED',
-  'INVALID_CIPHERTEXT',
-  'UNKNOWN',
-] as const satisfies readonly ProtectErrorCode[]
+// A `Record` over each union, so the compiler rejects a missing or unknown code.
+const FFI_ERROR_CODES: Record<ProtectErrorCode, true> = {
+  INVARIANT_VIOLATION: true,
+  UNKNOWN_QUERY_OP: true,
+  UNKNOWN_COLUMN: true,
+  MISSING_INDEX: true,
+  INVALID_QUERY_INPUT: true,
+  SHORT_MATCH_NEEDLE: true,
+  INVALID_JSON_PATH: true,
+  STE_VEC_REQUIRES_JSON_CAST_AS: true,
+  MATCH_REQUIRES_TEXT: true,
+  UNSUPPORTED_CONFIG_VERSION: true,
+  INVALID_EQL_VERSION: true,
+  EQL_V3_UNSUPPORTED_COLUMN: true,
+  EQL_V3_CONVERSION_FAILED: true,
+  INVALID_CIPHERTEXT: true,
+  UNKNOWN: true,
+}
 
-// A `Record` over the union, so the compiler rejects a missing or unknown code.
 const AUTH_ERROR_CODES: Record<AuthErrorCode, true> = {
   REQUEST_ERROR: true,
   ACCESS_DENIED: true,
@@ -105,7 +104,7 @@ const AUTH_ERROR_CODES: Record<AuthErrorCode, true> = {
 
 const KNOWN_IDENTIFIERS: ReadonlySet<string> = new Set([
   ...Object.values(EncryptionErrorTypes),
-  ...FFI_ERROR_CODES,
+  ...Object.keys(FFI_ERROR_CODES),
   ...Object.keys(AUTH_ERROR_CODES),
 ])
 

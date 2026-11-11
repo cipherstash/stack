@@ -154,10 +154,8 @@ export function matchNeedleError(
  * wildcard the bloom tokenizer cannot honour (an interior `%` or a `_`, which it
  * would treat as an ordinary character and so silently match nothing).
  *
- * Takes the pattern rather than its length so no caller can be tempted to
- * interpolate it: the pattern is the caller's plaintext search term, and the
- * message is thrown to callers who may log it. Only its length appears.
- * Adapters prefix their surface and append their own remedy.
+ * Only the pattern's length appears: it is plaintext, and callers may log the
+ * message. Adapters prefix their surface and append their own remedy.
  */
 export function likeWildcardError(pattern: string): string {
   return `the ${[...pattern].length}-character search pattern has wildcards fuzzy free-text matching cannot honor (an interior "%" or a "_").`
