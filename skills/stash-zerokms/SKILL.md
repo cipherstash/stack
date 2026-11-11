@@ -32,13 +32,14 @@ Rust `stack-kms` 0.2 (also re-exported by `stack-encrypt` 0.3) validates the
 destination on every token, including refreshes: HTTPS at the root path on
 the default port, under `viturhosted.net` or
 `zerokms.cipherstashmanaged.net`, in a region known to that SDK build. Keep
-one client per region. Later tokens may move its hosted domain, but a missing,
-untrusted, or different-region claim fails before sending credentials. For
+one client per region. Once ZeroKMS accepts a token, later tokens may move
+its hosted domain, but a missing, untrusted, or different-region claim fails
+before sending credentials. For
 a newly introduced region, upgrade the SDK. For an intentionally configured
 gateway, staging service or local service, supply an explicit Rust KMS
 endpoint; normal hosted deployments use discovery. Custom Rust transports
-must let `ensure_base_url` update discovered URLs while preserving explicit
-configuration. Device provisioning also validates hosted claims; editing a
+receive the discovered endpoint with each `send` call and use it only when
+they were not configured with one. Device provisioning also validates hosted claims; editing a
 profile token is not an endpoint configuration mechanism.
 
 ## The model in one paragraph

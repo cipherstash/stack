@@ -9,10 +9,11 @@ use url::Url;
 /// No message repeats the URL it refused: [`NoHost`](Self::NoHost) and
 /// [`QueryOrFragment`](Self::QueryOrFragment) are checked before
 /// [`Userinfo`](Self::Userinfo), so the URL they hold can still carry
-/// credentials, and a query string can carry anything. A
-/// [`NotHosted`](Self::NotHosted) URL came from an unverified token claim, so
-/// it can carry whatever its author chose. The URL stays in the variant for a
-/// caller in this process.
+/// credentials, and a query string can carry anything. The URL stays in
+/// those variants for a caller in this process. A URL refused from a token's
+/// `services` claim is not kept anywhere, not even for `Debug`: the claim is
+/// unverified, so it can carry whatever its author chose, and the error is
+/// [`NotHosted`](Self::NotHosted), which holds nothing.
 #[derive(Debug, Error, PartialEq, Eq, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum InvalidEndpoint {
@@ -58,7 +59,7 @@ pub enum InvalidEndpoint {
         code(stack_kms::endpoint_not_hosted),
         help("To use any other ZeroKMS endpoint, configure it explicitly (`CS_ZEROKMS_HOST` or `with_base_url`).")
     )]
-    NotHosted(String),
+    NotHosted,
 
     /// A token's `services` claim named a ZeroKMS in a different region from
     /// the one this client resolved from an earlier token. The client refuses
@@ -85,7 +86,7 @@ impl stack_auth::ErrorPayload for InvalidEndpoint {
             | Self::NoHost(_)
             | Self::QueryOrFragment(_)
             | Self::Userinfo
-            | Self::NotHosted(_)
+            | Self::NotHosted
             | Self::Mismatch => serde_json::Map::new(),
         }
     }
@@ -187,14 +188,20 @@ impl ZeroKmsEndpoint {
     /// Whatever [`new`](Self::new) refuses, and
     /// [`InvalidEndpoint::NotHosted`] for a usable URL on any other host.
     pub(crate) fn from_services_claim(url: Url) -> Result<HostedEndpoint, InvalidEndpoint> {
-        let endpoint = Self::new(url)?;
+        let endpoint = Self::new(url).map_err(|e| match e {
+            // These two keep the URL, and a claimed URL must not be kept.
+            InvalidEndpoint::NoHost(_) | InvalidEndpoint::QueryOrFragment(_) => {
+                InvalidEndpoint::NotHosted
+            }
+            other => other,
+        })?;
         let url = endpoint.as_url();
         match stack_auth::HostedZeroKmsEndpoint::new(url.clone()) {
             Ok(hosted) => Ok(HostedEndpoint {
                 endpoint,
                 region: hosted.region(),
             }),
-            Err(_) => Err(InvalidEndpoint::NotHosted(endpoint.0.into())),
+            Err(_) => Err(InvalidEndpoint::NotHosted),
         }
     }
 
@@ -437,7 +444,7 @@ mod tests {
                 "https://us-east-1.aws.cts.cipherstashmanaged.net/",
             ] {
                 assert!(
-                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted(_))),
+                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted)),
                     "{s}: {:?}",
                     claimed(s)
                 );
@@ -498,7 +505,7 @@ mod tests {
                 "https://us-east-1.aws.xzerokms.cipherstashmanaged.net/",
             ] {
                 assert!(
-                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted(_))),
+                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted)),
                     "{s}: {:?}",
                     claimed(s)
                 );
@@ -509,15 +516,15 @@ mod tests {
         fn rejects_a_region_cipherstash_does_not_run() {
             assert!(matches!(
                 claimed("https://mars-north-1.aws.viturhosted.net/"),
-                Err(InvalidEndpoint::NotHosted(_))
+                Err(InvalidEndpoint::NotHosted)
             ));
             assert!(matches!(
                 claimed("https://us-east-1.gcp.viturhosted.net/"),
-                Err(InvalidEndpoint::NotHosted(_))
+                Err(InvalidEndpoint::NotHosted)
             ));
             assert!(matches!(
                 claimed("https://mars-north-1.aws.zerokms.cipherstashmanaged.net/"),
-                Err(InvalidEndpoint::NotHosted(_))
+                Err(InvalidEndpoint::NotHosted)
             ));
         }
 
@@ -525,7 +532,7 @@ mod tests {
         fn rejects_plain_http_to_a_hosted_name() {
             assert!(matches!(
                 claimed("http://us-east-1.aws.viturhosted.net/"),
-                Err(InvalidEndpoint::NotHosted(_))
+                Err(InvalidEndpoint::NotHosted)
             ));
         }
 
@@ -538,7 +545,7 @@ mod tests {
                 "https://us-east-1.aws.viturhosted.net/other/service/",
             ] {
                 assert!(
-                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted(_))),
+                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted)),
                     "{s}: {:?}",
                     claimed(s)
                 );
@@ -549,7 +556,7 @@ mod tests {
         fn rejects_a_non_default_port() {
             assert!(matches!(
                 claimed("https://us-east-1.aws.viturhosted.net:8443/"),
-                Err(InvalidEndpoint::NotHosted(_))
+                Err(InvalidEndpoint::NotHosted)
             ));
         }
 
@@ -561,8 +568,32 @@ mod tests {
             ));
             assert!(matches!(
                 claimed("https://us-east-1.aws.viturhosted.net/?q=1"),
-                Err(InvalidEndpoint::QueryOrFragment(_))
+                Err(InvalidEndpoint::NotHosted)
             ));
+        }
+
+        /// The claim is unverified and its URL may carry anything, so a
+        /// refused one is not kept, not even where `?err` would print it.
+        #[test]
+        fn a_refused_claim_is_not_kept_for_debug_or_display() {
+            for s in [
+                "https://marker-host.example/marker-path",
+                "https://us-east-1.aws.viturhosted.net/marker-path",
+                "https://us-east-1.aws.viturhosted.net/?marker-query",
+                "https://us-east-1.aws.viturhosted.net/#marker-fragment",
+            ] {
+                let err = claimed(s).unwrap_err();
+                assert_eq!(err, InvalidEndpoint::NotHosted, "{s}");
+                let outer = crate::Error::from(claimed(s).unwrap_err());
+                for shown in [
+                    format!("{err}"),
+                    format!("{err:?}"),
+                    format!("{outer}"),
+                    format!("{outer:?}"),
+                ] {
+                    assert!(!shown.contains("marker"), "{s}: {shown}");
+                }
+            }
         }
     }
 }

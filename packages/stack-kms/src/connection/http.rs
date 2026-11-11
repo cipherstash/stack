@@ -9,9 +9,9 @@ use crate::endpoint::ZeroKmsEndpoint;
 use crate::user_agent::get_user_agent;
 use reqwest::header::HeaderMap;
 use serde_json::to_vec;
+use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
-use std::{collections::HashMap, sync::Mutex};
 use thiserror::Error;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
@@ -52,8 +52,8 @@ pub struct HttpConnectionOpts {
 
 impl HttpConnectionOpts {
     /// Options for a connection to `base_url`, or — when `None` — to the
-    /// CipherStash-hosted endpoint the access token's `services` claim names
-    /// (resolved on first use via [`HttpConnection::ensure_base_url`]). An
+    /// CipherStash-hosted endpoint the access token's `services` claim names,
+    /// which [`StackKms`](crate::StackKms) passes with each request. An
     /// explicit `base_url` may be any usable endpoint; a claimed one may not.
     pub fn new(base_url: Option<ZeroKmsEndpoint>) -> Self {
         Self {
@@ -126,8 +126,9 @@ impl HttpConnectionOpts {
 }
 
 pub struct HttpConnection {
-    base_url: Mutex<Option<ZeroKmsEndpoint>>,
-    explicitly_configured: bool,
+    /// The endpoint configured at init, if any. Without one, each request
+    /// goes to the endpoint `StackKms` passes to `send`.
+    base_url: Option<ZeroKmsEndpoint>,
     client: reqwest::Client,
 }
 
@@ -182,59 +183,49 @@ impl ZeroKMSConnectionInit for HttpConnection {
 
         let client = builder.build()?;
 
-        let explicitly_configured = opts.base_url.is_some();
-        let base_url = Mutex::new(opts.base_url);
         Ok(Self {
-            base_url,
-            explicitly_configured,
+            base_url: opts.base_url,
             client,
         })
     }
 }
 
-impl ZeroKMSConnection for HttpConnection {
-    fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
-        if !self.explicitly_configured {
-            *self
-                .base_url
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
-        }
+impl HttpConnection {
+    /// Where a request goes: the endpoint configured at init, or else the one
+    /// the caller resolved for this request.
+    fn request_base<'a>(
+        &'a self,
+        endpoint: Option<&'a ZeroKmsEndpoint>,
+    ) -> Option<&'a ZeroKmsEndpoint> {
+        self.base_url.as_ref().or(endpoint)
     }
+}
 
+impl ZeroKMSConnection for HttpConnection {
     fn has_base_url(&self) -> bool {
-        self.base_url
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
+        self.base_url.is_some()
     }
 
     async fn send<Request: ViturRequest>(
         &self,
         request: Request,
         access_token: &str,
+        endpoint: Option<&ZeroKmsEndpoint>,
     ) -> Result<Request::Response, ViturRequestError> {
         let body = to_vec(&request)
             .map_err(|e| ViturRequestError::prepare("Failed to serialize request", e))?;
 
-        // Snapshot the destination before any await. A concurrent refresh may
-        // update the same region's domain without changing this request's URL.
-        let base_url = self
-            .base_url
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-            .ok_or_else(|| {
-                // A missing base URL is a client-side configuration problem (the
-                // token carried no ZeroKMS `services` claim and none was set
-                // explicitly), not an authentication failure — classify it as a
-                // request-preparation error so callers don't mistake it for a 401
-                // and trigger a token refresh/reauth loop.
-                ViturRequestError::prepare(
-                    "ZeroKMS base URL was not resolved from the token's services claim",
-                    BaseUrlUnresolved,
-                )
-            })?;
+        let base_url = self.request_base(endpoint).ok_or_else(|| {
+            // A missing base URL is a client-side configuration problem (the
+            // token carried no ZeroKMS `services` claim and none was set
+            // explicitly), not an authentication failure — classify it as a
+            // request-preparation error so callers don't mistake it for a 401
+            // and trigger a token refresh/reauth loop.
+            ViturRequestError::prepare(
+                "ZeroKMS base URL was not resolved from the token's services claim",
+                BaseUrlUnresolved,
+            )
+        })?;
 
         let url = base_url.request_url(Request::ENDPOINT);
 
@@ -293,62 +284,27 @@ mod base_url_tests {
     }
 
     #[test]
-    fn is_unset_until_ensured() {
+    fn without_a_configured_url_a_request_goes_where_the_caller_says() {
         let c = conn(None);
         assert!(!c.has_base_url());
 
-        c.ensure_base_url(endpoint("https://a.example"));
-
-        assert!(c.has_base_url());
+        let passed = endpoint("https://a.example");
         assert_eq!(
-            c.base_url.lock().unwrap().as_ref().unwrap().as_str(),
-            "https://a.example/"
+            c.request_base(Some(&passed)).map(ZeroKmsEndpoint::as_str),
+            Some("https://a.example/")
         );
+        assert_eq!(c.request_base(None), None);
     }
 
     #[test]
-    fn the_latest_discovered_url_is_used() {
-        let c = conn(None);
-        c.ensure_base_url(endpoint("https://first.example"));
-        c.ensure_base_url(endpoint("https://second.example"));
-
-        assert_eq!(
-            c.base_url.lock().unwrap().as_ref().unwrap().as_str(),
-            "https://second.example/",
-            "discovery follows the latest validated claim"
-        );
-    }
-
-    #[test]
-    fn a_discovered_endpoint_follows_a_hosted_domain_migration() {
-        let c = conn(None);
-        c.ensure_base_url(endpoint("https://us-east-1.aws.viturhosted.net/"));
-        c.ensure_base_url(endpoint(
-            "https://us-east-1.aws.zerokms.cipherstashmanaged.net/",
-        ));
-        assert_eq!(
-            c.base_url
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .request_url("retrieve-data-key")
-                .as_str(),
-            "https://us-east-1.aws.zerokms.cipherstashmanaged.net/retrieve-data-key",
-            "request URLs must follow a validated domain migration"
-        );
-    }
-
-    #[test]
-    fn a_url_given_at_init_is_kept_over_a_later_ensure() {
+    fn a_url_given_at_init_wins_over_the_callers() {
         let c = conn(Some(endpoint("https://init.example")));
         assert!(c.has_base_url());
 
-        c.ensure_base_url(endpoint("https://other.example"));
-
+        let passed = endpoint("https://other.example");
         assert_eq!(
-            c.base_url.lock().unwrap().as_ref().unwrap().as_str(),
-            "https://init.example/"
+            c.request_base(Some(&passed)).map(ZeroKmsEndpoint::as_str),
+            Some("https://init.example/")
         );
     }
 
@@ -360,10 +316,7 @@ mod base_url_tests {
         let c = conn(Some(endpoint("https://gateway.example/zerokms")));
 
         assert_eq!(
-            c.base_url
-                .lock()
-                .unwrap()
-                .as_ref()
+            c.request_base(None)
                 .unwrap()
                 .request_url(zerokms_protocol::RetrieveKeyRequest::ENDPOINT)
                 .as_str(),
@@ -383,7 +336,7 @@ mod base_url_tests {
             unverified_context: Default::default(),
         };
 
-        let err = c.send(req, "token").await.unwrap_err();
+        let err = c.send(req, "token", None).await.unwrap_err();
 
         assert!(
             matches!(err.kind, ViturRequestErrorKind::PrepareRequest),

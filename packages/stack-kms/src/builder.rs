@@ -80,8 +80,9 @@ impl stack_auth::ErrorPayload for StackKmsBuilderError {
 /// 3. Automatically from the token's `services` claim. Only a
 ///    CipherStash-hosted ZeroKMS (`https://<region>.<provider>.viturhosted.net`
 ///    or `https://<region>.<provider>.zerokms.cipherstashmanaged.net`)
-///    is accepted there, and every later token must name the same region
-///    (on either domain); any other endpoint must be configured by 1 or 2
+///    is accepted there. Once ZeroKMS has accepted a token at that
+///    endpoint, every later token must name the same region (on either
+///    domain); any other endpoint must be configured by 1 or 2
 ///
 /// # Example
 ///

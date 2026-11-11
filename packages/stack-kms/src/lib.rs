@@ -19,19 +19,22 @@
 //!
 //! Endpoint discovery now requires a valid CipherStash-hosted ZeroKMS claim
 //! on **every** token, including tokens fetched after initial discovery.
-//! Missing claims, non-hosted URLs and a change of region fail before sending
-//! credentials. Supported domains are `viturhosted.net` and
+//! Missing claims and non-hosted URLs fail before sending credentials, and so
+//! does a change of region once ZeroKMS has accepted a token. Supported domains are `viturhosted.net` and
 //! `zerokms.cipherstashmanaged.net`; HTTPS, the default port, a root path and
 //! a region known to this build's `cts-common` are required. Future regions
 //! require an SDK upgrade. Gateways, staging and local services require an
 //! explicit endpoint through the builder or `CS_ZEROKMS_HOST`.
 //!
-//! The first discovered **region** remains fixed, while subsequent valid
-//! tokens can change its hosted domain. Custom discovery transports must
-//! update their [`ZeroKMSConnection::ensure_base_url`] implementation to
-//! replace discovered URLs and preserve explicitly configured URLs. Snapshot
-//! each request's URL before awaiting transport work. [`InvalidEndpoint`]
-//! has new `NotHosted` and `Mismatch` variants and is now non-exhaustive;
+//! The **region** of the first claimed endpoint ZeroKMS accepts a token at
+//! remains fixed; a token ZeroKMS refuses pins nothing. Each token is sent to
+//! the endpoint its own claim names, so later valid tokens can change the
+//! region's hosted domain. The endpoint now travels with each request:
+//! [`ZeroKMSConnection::send`] takes it as a third argument, used only when
+//! the connection has no endpoint of its own; `ensure_base_url` is gone, and
+//! the low-level [`Client`] key methods take the endpoint after the access
+//! token. [`InvalidEndpoint`] has new `NotHosted` and `Mismatch` variants and
+//! is now non-exhaustive; `NotHosted` keeps no part of the refused URL;
 //! downstream matches must include a fallback arm. `stack-encrypt` exposes
 //! this version through its `kms` re-export
 //! starting in 0.3.
