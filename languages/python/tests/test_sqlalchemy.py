@@ -10,11 +10,11 @@ import dataclasses
 from typing import Annotated
 
 import pytest
-from sqlalchemy import String, create_engine
+from sqlalchemy import String, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 import stackencrypt
-from stackencrypt import DeclarationError, Ignore, Passthrough, TextEq
+from stackencrypt import DeclarationError, Ignore, InvalidValueError, Passthrough, TextEq
 from stackencrypt import IntegerOrd, QueryError, Text, _eql
 from stackencrypt.sqlalchemy import EqlType, configure_encryption, eql_type_map
 
@@ -200,12 +200,11 @@ def scores():
     [
         lambda: Score.note.like("%secret%"),
         lambda: Score.note.contains("secret"),
-        lambda: Score.note.in_(["secret"]),
-        lambda: Score.note != "secret",
+        lambda: Score.note.in_(select(Score.note).scalar_subquery()),
         lambda: Score.level.between(1, 9),
         lambda: Score.level + 1,
     ],
-    ids=["like", "contains", "in", "not-equal", "between", "add"],
+    ids=["like", "contains", "in-a-subquery", "between", "add"],
 )
 def test_an_operator_that_would_send_the_value_is_refused(scores, untouched, build):
     with pytest.raises(QueryError) as raised:
@@ -220,10 +219,13 @@ def test_an_operator_that_would_send_the_value_is_refused(scores, untouched, bui
         lambda: Score.note.is_(None),
         lambda: Score.note.is_not(None),
         lambda: Score.note == None,  # noqa: E711
+        lambda: Score.note != None,  # noqa: E711
+        lambda: Score.note.in_([]),
+        lambda: Score.note.not_in([]),
         lambda: Score.level.asc(),
         lambda: Score.level.desc(),
     ],
-    ids=["is-null", "is-not-null", "equals-none", "asc", "desc"],
+    ids=["is-null", "is-not-null", "equals-none", "not-equals-none", "in-nothing", "not-in-nothing", "asc", "desc"],
 )
 def test_an_operator_that_sends_no_value_is_allowed_with_no_request(scores, untouched, build):
     build()
@@ -240,3 +242,33 @@ def test_a_comparison_on_a_class_not_configured_is_refused(untouched):
         Draft.note == "secret"  # noqa: B015
     assert raised.value.code == "query_not_configured"
     assert "secret" not in str(raised.value)
+
+
+# Passthrough values on writes.
+
+
+def test_a_passthrough_value_is_checked_on_a_flush(untouched):
+    import datetime
+
+    from sqlalchemy.orm import Session
+
+    @stackencrypt.model("trips")
+    class Visit(Base):
+        __tablename__ = "trips"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        email: Mapped[Annotated[str, TextEq]]
+        at: Mapped[Annotated[datetime.datetime, Passthrough]]
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE trips (id INTEGER PRIMARY KEY, email TEXT, at TEXT)")
+    configure_encryption(engine, [Visit])
+
+    with Session(engine) as session, pytest.raises(InvalidValueError) as raised:
+        session.add(Visit(email="secret@example.com", at=datetime.datetime(2026, 1, 1)))
+        session.commit()
+
+    assert raised.value.code == "value_naive_datetime"
+    assert raised.value.field == "at"
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT count(*) FROM trips").scalar() == 0
