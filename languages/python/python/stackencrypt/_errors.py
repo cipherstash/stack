@@ -61,7 +61,8 @@ class DecryptError(StashError):
     """A stored row that ``decrypt`` cannot turn into a model.
 
     Before any key request: ``decrypt_row_shape`` (a row that is not a
-    mapping), ``decrypt_missing_column`` (a declared field's column is not in
+    mapping, or, for ``decrypt_rows``, rows that hold different declared
+    fields), ``decrypt_missing_column`` (a declared field's column is not in
     the row), ``decrypt_malformed`` (the column value is not an EQL value),
     and ``decrypt_foreign_row`` (the value was stored under another table or
     column). After the key requests: ``decrypt_kind_mismatch`` (the value was

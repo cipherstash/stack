@@ -571,3 +571,38 @@ def test_100_rows_with_one_field_make_one_key_request():
 
     assert _engine.request_count() - before == 1
     assert len(rows) == 100
+
+
+def test_decrypt_rows_opens_values_from_encrypt_and_from_encrypt_rows():
+    people = Cipher(Person)
+    [whole] = people.encrypt([Person(email="a@example.com", name="Ann", age=30)])
+    [part] = people.encrypt_rows([{"email": "b@example.com", "people_id": 2}])
+
+    opened = people.decrypt_rows(
+        [{"email": whole["email"], "name": whole["name"], "id": 1}]
+    ) + people.decrypt_rows([part])
+
+    assert opened == [
+        {"email": "a@example.com", "name": "Ann", "id": 1},
+        {"email": "b@example.com", "people_id": 2},
+    ]
+
+
+def test_decrypt_rows_refuses_a_value_stored_for_another_column():
+    people = Cipher(Person)
+    [row] = people.encrypt_rows([{"email": "a@example.com"}])
+    with pytest.raises(DecryptError) as raised:
+        people.decrypt_rows([{"name": row["email"]}])
+    assert raised.value.code == "decrypt_foreign_row"
+    assert raised.value.field == "name"
+
+
+def test_decrypt_rows_of_100_rows_with_one_field_make_one_key_request():
+    people = Cipher(Person)
+    rows = people.encrypt_rows([{"email": f"user{i}@example.com"} for i in range(100)])
+    before = _engine.request_count()
+
+    opened = people.decrypt_rows(rows)
+
+    assert _engine.request_count() - before == 1
+    assert opened[99] == {"email": "user99@example.com"}

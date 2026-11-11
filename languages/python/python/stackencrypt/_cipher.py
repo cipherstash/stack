@@ -29,8 +29,10 @@ from stackencrypt._declaration import (
 from stackencrypt._errors import (
     AuthenticationError,
     DeclarationError,
+    DecryptError,
     InvalidValueError,
     QueryError,
+    StashError,
 )
 
 
@@ -107,33 +109,76 @@ class Cipher(Generic[T]):
         request is made when any row fails. The input rows are not changed.
         """
         rows = list(rows)
+        names = self._row_fields(rows, InvalidValueError, "value_row_shape", "Encrypt")
+        if not names:
+            return [dict(row) for row in rows]
+        sealed = _engine.encrypt(
+            self._row_plan(names),
+            [SimpleNamespace(**{name: row[name] for name in names}) for row in rows],
+        )
+        return [{**row, **columns} for row, columns in zip(rows, sealed)]
+
+    def decrypt_rows(self, rows: Sequence[Mapping[str, object]]) -> List[Dict[str, object]]:
+        """Decrypt ``rows``, mappings from field name to stored value, that
+        may hold only some of the declared fields::
+
+            users.decrypt_rows([{"email": '{"c": ...}', "id": 1}])
+
+        The reverse of ``encrypt_rows``. Returns one new dict per row. Each
+        declared field's value is replaced with its plaintext. A sealed
+        value may be EQL JSON as a ``str``, as UTF-8 ``bytes``, or as a
+        parsed ``dict``. Every other key is kept unchanged.
+
+        Every row must hold the same declared fields, so that one call
+        sends one batch of key requests. Rows that hold none are returned
+        unchanged with no request.
+
+        Every row is checked first, as ``decrypt`` checks it, with the same
+        errors. A row that is not a mapping, or that holds other declared
+        fields than row 0, raises ``DecryptError`` with the code
+        ``decrypt_row_shape``. No request is made when any row fails.
+        """
+        rows = list(rows)
+        names = self._row_fields(rows, DecryptError, "decrypt_row_shape", "Decrypt")
+        if not names:
+            return [dict(row) for row in rows]
+        opened = _engine.decrypt(
+            self._row_plan(names), dict, [{name: row[name] for name in names} for row in rows]
+        )
+        return [{**row, **values} for row, values in zip(rows, opened)]
+
+    def _row_fields(
+        self, rows: List[Mapping[str, object]], error: Type[StashError], code: str, verb: str
+    ) -> FrozenSet[str]:
+        """The declared fields every row holds. Raises ``error`` with
+        ``code`` for a row that is not a mapping, or that holds other
+        declared fields than row 0."""
         names: Optional[FrozenSet[str]] = None
         for at, row in enumerate(rows):
             if not isinstance(row, Mapping):
-                raise InvalidValueError(
-                    "value_row_shape",
+                raise error(
+                    code,
                     f"row {at} is a {type(row).__name__}, not a mapping of field names to values.",
                 )
             these = frozenset(name for name in row if name in self._planned)
             if names is None:
                 names = these
             elif these != names:
-                raise InvalidValueError(
-                    "value_row_shape",
+                raise error(
+                    code,
                     f"row {at} holds other declared fields than row 0. "
                     f"Row 0 holds {sorted(names)}; row {at} holds {sorted(these)}. "
-                    "Encrypt rows with different fields in separate calls.",
+                    f"{verb} rows with different fields in separate calls.",
                 )
-        if not names:
-            return [dict(row) for row in rows]
+        return names or frozenset()
+
+    def _row_plan(self, names: FrozenSet[str]) -> object:
+        """The plan for the declared fields ``names``, in declaration order."""
         plan = self._row_plans.get(names)
         if plan is None:
             fields = [field for field in self._declaration.fields if field.name in names]
             plan = self._row_plans[names] = _build_plan(self._declaration, fields)
-        sealed = _engine.encrypt(
-            plan, [SimpleNamespace(**{name: row[name] for name in names}) for row in rows]
-        )
-        return [{**row, **columns} for row, columns in zip(rows, sealed)]
+        return plan
 
     def decrypt(self, rows: Sequence[Mapping[str, object]]) -> List[T]:
         """Decrypt ``rows`` into instances of the declared class.
