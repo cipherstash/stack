@@ -9,6 +9,11 @@ import { fakeMigrate } from './fake-migrator.mjs'
 import { declaredStack, migrationChecks } from './migration-checks.mjs'
 import { runMigrator } from './migrator.mjs'
 import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
+import { postgresBehaviour, postgresLegacy } from './postgres-behaviour.mjs'
+import {
+  postgresMigrationChecks,
+  validatePostgresBaseline,
+} from './postgres-oracle.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
 import {
   isSnapshotInfrastructureError,
@@ -31,6 +36,13 @@ export function createRealDriver({
   credentials,
   manifest,
 }) {
+  const procedure = manifest.procedure ?? 'dynamodb'
+  if (!['dynamodb', 'postgres-v2-to-v3'].includes(procedure))
+    throw Error('Unknown migration procedure')
+  const postgresUpgrade = procedure === 'postgres-v2-to-v3'
+  manifest.procedure = procedure
+  manifest.sourceEqlGeneration = 2
+  manifest.targetEqlGeneration = 3
   /** @type {import('./real-stores.mjs').Resource[]} */
   const resources = []
   const workspace = resolve(output, 'migrator')
@@ -130,7 +142,10 @@ export function createRealDriver({
           }),
       ]
       await prepareWorkspace({
-        fixture: resolve(root, 'e2e/migration-harness/fixture'),
+        fixture: resolve(
+          root,
+          `e2e/migration-harness/${postgresUpgrade ? 'postgres-fixture' : 'fixture'}`,
+        ),
         workspace,
         guide,
         frictionPath: '/workspace/friction.json',
@@ -149,12 +164,14 @@ export function createRealDriver({
         runId: id,
         actor: 'migrator',
         eqlBundle,
+        postgresV2: postgresUpgrade,
         resources,
       })
       oracleStores = await createStoreSet({
         runId: id,
         actor: 'oracle',
         eqlBundle,
+        postgresV2: postgresUpgrade,
         resources,
       })
       manifest.storeCapabilities = {
@@ -185,9 +202,21 @@ export function createRealDriver({
           forwards: forwards(stores),
         })
         try {
-          for (const record of [legacy, mutation]) {
+          for (const record of postgresUpgrade
+            ? postgresLegacy
+            : [legacy, mutation]) {
             await initializationHost.call('put', [record])
-            await initializationHost.call('copyToPostgres', [record.pk])
+            if (!postgresUpgrade)
+              await initializationHost.call('copyToPostgres', [record.pk])
+          }
+          if (postgresUpgrade) {
+            const result = await postgresBehaviour((method, args) =>
+              initializationHost.call(method, args),
+            )
+            if (result.checks.some((check) => !check.passed))
+              throw Error(
+                'Legacy PostgreSQL reads or queries failed before migration',
+              )
           }
         } finally {
           await initializationHost.close()
@@ -195,8 +224,11 @@ export function createRealDriver({
       }
     },
     async snapshot() {
-      legacySnapshot = await assigned(oracleStores).snapshot()
-      validateLegacySnapshot(legacySnapshot)
+      legacySnapshot = postgresUpgrade
+        ? await assigned(oracleStores).postgresSnapshot()
+        : await assigned(oracleStores).snapshot()
+      if (postgresUpgrade) validatePostgresBaseline(legacySnapshot)
+      else validateLegacySnapshot(legacySnapshot)
       await writeFile(
         resolve(output, 'legacy-snapshot.json'),
         JSON.stringify(legacySnapshot),
@@ -204,58 +236,34 @@ export function createRealDriver({
     },
     async migrate() {
       if (!stackSource) throw Error('Stack source not resolved')
-      const source = stackSource
-      if (source.tarball)
-        await cp(source.tarball, resolve(workspace, 'resolved-stack.tgz'))
-      /** @param {{stdout?:string, stderr?:string}} transcript */
-      const writeTranscript = async (transcript) => {
-        await writeFile(
-          resolve(output, 'migrator-transcript.log'),
-          `${transcript.stdout ?? ''}\n${transcript.stderr ?? ''}`,
-        )
-        manifest.artifacts = {
-          transcript: 'migrator-transcript.log',
-          snapshot: 'legacy-snapshot.json',
-        }
-      }
-      const migration = async () =>
-        fakeMigration
-          ? await fakeMigrate({
-              root,
-              workspace,
-              kind: fakeMigration,
-              stack: source.install,
-            })
-          : await runMigrator({
-              command,
-              timeoutMs: manifest.agents?.limits?.timeMs,
-              maxToolCalls: manifest.agents?.limits?.toolCalls,
-              maxModelTurns: manifest.agents?.limits?.turns,
-              stop: () => isolation.stop({ expected: true }),
-              execute: (argv, timeoutMs) =>
-                isolation.exec({
-                  actor: 'migrator',
-                  workspace,
-                  env: env(migratorStores),
-                  command: argv,
-                  forwards: forwards(migratorStores),
-                  timeoutMs,
-                }),
-            })
-      /** @type {Awaited<ReturnType<typeof migration>>} */
-      let result
-      try {
-        result = await migration()
-      } catch (error) {
-        // A rejected Migrator carries its partial transcript; keep it on disk,
-        // since the failed Runs are the ones that most need diagnosing.
-        await writeTranscript(
-          error && typeof error === 'object'
-            ? /** @type {{stdout?:string, stderr?:string}} */ (error)
-            : {},
-        )
-        throw error
-      }
+      if (stackSource.tarball)
+        await cp(stackSource.tarball, resolve(workspace, 'resolved-stack.tgz'))
+      const result = fakeMigration
+        ? await fakeMigrate({
+            root,
+            workspace,
+            kind: fakeMigration,
+            stack: stackSource.install,
+            procedure,
+          })
+        : await runMigrator({
+            command,
+            timeoutMs: manifest.agents?.limits?.timeMs,
+            maxToolCalls: manifest.agents?.limits?.toolCalls,
+            maxModelTurns: manifest.agents?.limits?.turns,
+            stop: () => isolation.stop({ expected: true }),
+            execute: (argv, timeoutMs) =>
+              isolation.exec({
+                actor: 'migrator',
+                workspace,
+                env: env(migratorStores),
+                command: argv,
+                forwards: forwards(migratorStores),
+                timeoutMs,
+              }),
+          })
+      if ('runtime' in result && result.runtime)
+        manifest.agents = { ...manifest.agents, runtime: result.runtime }
       if (fakeMigration && fakeMigration !== 'noop')
         await execute('migrator', workspace, migratorStores, ['npm', 'install'])
       await writeTranscript(result)
@@ -368,8 +376,35 @@ export function createRealDriver({
       const application = host
       if (!application) throw Error('App Host has not started')
       try {
-        /** @type {{snapshot: unknown} | {cause: string}} */
-        let mutationRead = { snapshot: undefined }
+        if (postgresUpgrade) {
+          const result = await postgresBehaviour((method, args) =>
+            application.call(method, args),
+          )
+          let current
+          try {
+            current = await assigned(oracleStores).postgresSnapshot()
+          } catch (error) {
+            throw Object.assign(
+              Error('PostgreSQL Oracle snapshot failed', { cause: error }),
+              { infrastructure: true },
+            )
+          }
+          result.checks.push(
+            ...postgresMigrationChecks(legacySnapshot, current),
+          )
+          const checks = await result.mutate()
+          checks.push(
+            ...(await migrationChecks({
+              workspace,
+              installedWorkspace: oracleWorkspace,
+              stackVersion: manifest.stack,
+              ffiRange,
+              procedure,
+            })),
+          )
+          return checks
+        }
+        let mutationSnapshot
         const result = await behaviour(
           (method, args) => application.call(method, args),
           async () => {

@@ -2,6 +2,20 @@ import { isDeepStrictEqual } from 'node:util'
 
 const columns = ['email', 'age', 'notes']
 const targetTypes = ['eql_v3_text_eq', 'eql_v3_integer_eq', 'eql_v3_text']
+export const requiredPostgresChecks = [
+  'behaviour.postgres-row-retention',
+  'no-rewrite.postgres-retained-bytes',
+  'migration.postgres-v3-columns',
+  'migration.postgres-indexes',
+  'behaviour.postgres-legacy-read',
+  'behaviour.postgres-email-lookup',
+  'behaviour.postgres-age-lookup',
+  'behaviour.postgres-fresh-write',
+  'behaviour.postgres-fresh-lookups',
+  'migration.protect-dependencies-absent',
+  'migration.protect-ffi-version',
+  'migration.endpoint-shim-absent',
+]
 
 /** @param {unknown} value @returns {Record<string, unknown>} */
 function object(value) {

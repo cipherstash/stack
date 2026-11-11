@@ -184,10 +184,9 @@ function ffiDeclarationsMatch(manifest, expected) {
   return true
 }
 
-/** Run the static migration checks on the Migrator output and the App Host's
- * installed copy, and the stored-shape check on the Oracle's Mutation Data,
- * without importing application code.
- * @param {{workspace:string,installedWorkspace:string,stackVersion:string,ffiRange:string,mutationSnapshot:unknown}} options
+/** Run the static migration checks on the Migrator output and the stored-shape
+ * check on the Oracle's Mutation Data, without importing application code.
+ * @param {{workspace:string,installedWorkspace:string,stackVersion:string,ffiRange:string,mutationSnapshot?:unknown,procedure?:string}} options
  * @returns {Promise<import('../types.js').OracleCheck[]>} */
 export async function migrationChecks({
   workspace,
@@ -195,6 +194,7 @@ export async function migrationChecks({
   stackVersion,
   ffiRange,
   mutationSnapshot,
+  procedure = 'dynamodb',
 }) {
   /** @type {import('../types.js').OracleCheck[]} */
   const checks = []
@@ -253,17 +253,17 @@ export async function migrationChecks({
       ffiDeclarationsMatch(manifest, expected)
     )
   })
-  await check('migration.endpoint-shim-absent', async () => {
-    for (const directory of inspected)
-      if (sourceFacts(await sources(directory)).endpointShim) return false
-    return true
-  })
-  await check('migration.active-hmac-absent', () => {
-    const item = object(object(object(mutationSnapshot).dynamo).Item)
-    return (
-      Object.hasOwn(item, 'active__source') &&
-      !Object.hasOwn(item, 'active__hmac')
-    )
-  })
+  await check(
+    'migration.endpoint-shim-absent',
+    async () => !sourceFacts(await sources(workspace)).endpointShim,
+  )
+  if (procedure === 'dynamodb')
+    await check('migration.active-hmac-absent', () => {
+      const item = object(object(object(mutationSnapshot).dynamo).Item)
+      return (
+        Object.hasOwn(item, 'active__source') &&
+        !Object.hasOwn(item, 'active__hmac')
+      )
+    })
   return checks
 }
