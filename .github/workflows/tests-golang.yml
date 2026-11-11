@@ -94,8 +94,28 @@ env:
 
 jobs:
   wasi-check:
-    name: WASI check, guests and Go (Linux)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: WASI check, guests and Go (Linux) (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 60
     env:
       # wasm:guest:test and wasm:auth-guest:test run nextest, which is pinned
@@ -191,6 +211,9 @@ jobs:
           done
 
       - name: Hand the guests to the other jobs
+        # RunsOn trial: one entry uploads, because an artifact name is unique per
+        # run; every runner's consumers test the baseline's build.
+        if: matrix.runner.id == 'blacksmith'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wasm-guests
@@ -241,8 +264,28 @@ jobs:
   # Linux only: macOS and Windows would report the same findings. Needs no
   # guests: the packages embed a directory and compile without them.
   go-lint:
-    name: Go lint
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: Go lint (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - id: github
+            name: github
+            label: ubuntu-24.04
+          - id: runs-on-2
+            name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -332,9 +375,29 @@ jobs:
   # stack-encrypt examples read CS_* through `StackCipher::new()`; tests-crates
   # builds them, and this job runs them.
   live:
-    name: Go live tests and stack-encrypt examples
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: Go live tests and stack-encrypt examples (${{ matrix.runner.name }})
     needs: wasi-check
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - id: github
+            name: github
+            label: ubuntu-24.04
+          - id: runs-on-2
+            name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 30
     env:
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
