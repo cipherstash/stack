@@ -138,6 +138,42 @@ The values are checked as `encrypt` checks them. A row that is not a mapping rai
 
 `cipher.decrypt_rows` is the reverse. It takes dicts of stored values that contain some of the declared fields, and returns dicts with the plaintext. Other keys are kept unchanged. It follows the same rules, and raises the same errors as `decrypt`. A row that is not a mapping raises `DecryptError` with the code `decrypt_row_shape`. So do rows that contain different declared fields.
 
+## Use it with the SQLAlchemy ORM
+
+`stackencrypt.sqlalchemy.configure_encryption` makes the ORM encrypt and decrypt for you. Call it once, after you create the engine. Then use sessions as usual. The app reads and writes plaintext attributes, and the tables store EQL values.
+
+```text
+from stackencrypt.sqlalchemy import configure_encryption
+
+engine = create_engine(DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1))
+configure_encryption(engine, [Customer, Order])
+
+with Session(engine) as session:
+    session.add(Customer(email="a@example.com", name="Ann", plan="free"))
+    session.commit()                                   # encrypted on the way in
+    customer = session.scalars(select(Customer)).one()
+    customer.email                                     # "a@example.com"
+```
+
+- **Writes:** each INSERT or UPDATE on a listed table is encrypted with one batch of key requests for all its rows.
+- **Reads:** the objects a query loads are decrypted with one batch for each class. This includes relationship loads, and attributes read again after a commit.
+- Only encrypted fields are changed. A passthrough field is stored as SQLAlchemy writes it.
+
+Each class must be declared with `stackencrypt.model` and mapped by SQLAlchemy. `configure_encryption` refuses a class with `DeclarationError` in these cases:
+
+- `declaration_not_mapped`: SQLAlchemy does not map the class.
+- `declaration_table_mismatch`: the table in `stackencrypt.model` is not the `__tablename__`.
+- `declaration_column_name`: an encrypted field's column has another name than the field, as with `mapped_column("email_address")`.
+- `declaration_already_configured`: the class was configured before in this process.
+
+A statement that puts an encrypted value inside its SQL, such as `insert(Customer).values(email=...)`, raises `DeclarationError` with `declaration_inline_value`. The value is not stored. Pass the values as parameters instead, as `session.add` and `session.execute(insert(Customer), rows)` do.
+
+These are not handled yet:
+
+- A Core query, such as `conn.execute(text("SELECT ..."))`, returns EQL values, not plaintext. Use `cipher.decrypt_rows` on its rows.
+- A search by an encrypted field, such as `where(Customer.email == x)`, is not supported yet. Build the term with `cipher.eq` and compare it in the SQL, as in "Search by equality".
+- A query result is read in full before it is returned, so that its objects can be decrypted in one batch. A query that streams its rows does not stream.
+
 ## Declare a SQLAlchemy relationship
 
 A SQLAlchemy relationship is not a column. Every annotated field needs a marker, so write a relationship in one of two ways:
