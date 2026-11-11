@@ -112,11 +112,23 @@ export async function createApp(env = process.env) {
   }
   return {
     async get(pk) {
+      if (variant === 'fresh-v2') {
+        const rows =
+          await sql`SELECT pk, coalesce(email_v3::jsonb, email::jsonb) AS email, coalesce(age_v3::jsonb, age::jsonb) AS age, coalesce(notes_v3::jsonb, notes::jsonb) AS notes FROM customers WHERE pk = ${pk}`
+        return decrypt(rows[0])
+      }
       const rows =
         await sql`SELECT pk, email_v3::jsonb AS email, age_v3::jsonb AS age, notes_v3::jsonb AS notes FROM customers WHERE pk = ${pk}`
       return decrypt(rows[0])
     },
     async findEmail(value) {
+      if (variant === 'fresh-v2') {
+        const rows =
+          await sql`SELECT pk, coalesce(email_v3::jsonb, email::jsonb) AS email, coalesce(age_v3::jsonb, age::jsonb) AS age, coalesce(notes_v3::jsonb, notes::jsonb) AS notes FROM customers ORDER BY pk`
+        return (await Promise.all(rows.map(decrypt))).filter(
+          (row) => row.email === value,
+        )
+      }
       const term = unwrap(
         await client.encryptQuery(value, {
           table: customers,
@@ -129,6 +141,13 @@ export async function createApp(env = process.env) {
       return Promise.all(rows.map(decrypt))
     },
     async findAge(value) {
+      if (variant === 'fresh-v2') {
+        const rows =
+          await sql`SELECT pk, coalesce(email_v3::jsonb, email::jsonb) AS email, coalesce(age_v3::jsonb, age::jsonb) AS age, coalesce(notes_v3::jsonb, notes::jsonb) AS notes FROM customers ORDER BY pk`
+        return (await Promise.all(rows.map(decrypt))).filter(
+          (row) => row.age === value,
+        )
+      }
       if (variant === 'wrong-mapping') return []
       const term = unwrap(
         await client.encryptQuery(value, {
@@ -150,6 +169,23 @@ export async function createApp(env = process.env) {
       )
         throw Error('Unsupported customer')
       const model = unwrap(await client.encryptModel(customer, customers))
+      if (variant === 'fresh-v2') {
+        const old = Object.fromEntries(
+          columns.map((column) => [
+            column,
+            {
+              ...model[column],
+              v: 2,
+              k: 'ct',
+              hm: model[column].hm ?? null,
+              ob: null,
+              bf: null,
+            },
+          ]),
+        )
+        await sql`INSERT INTO customers (pk, email, age, notes) VALUES (${model.pk}, ${sql.json(old.email)}, ${sql.json(old.age)}, ${sql.json(old.notes)})`
+        return
+      }
       await sql`INSERT INTO customers (pk, email_v3, age_v3, notes_v3) VALUES (${model.pk}, ${sql.json(model.email)}, ${sql.json(model.age)}, ${sql.json(model.notes)})`
     },
     close: () => stores.close(),

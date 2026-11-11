@@ -142,3 +142,73 @@ test('Postgres driver seeds both independent v2 Store Sets and snapshots only Or
     await rm(output, { recursive: true, force: true })
   }
 })
+
+test('Postgres driver inspects fresh stored envelopes after the application write', async () => {
+  observed.snapshot.mockClear()
+  const events: string[] = []
+  observed.snapshot.mockImplementation(() => events.push('snapshot'))
+  const output = await mkdtemp(resolve(tmpdir(), 'mh-postgres-fresh-'))
+  let fresh: unknown = null
+  const driver = createRealDriver({
+    id: 'postgres-fresh',
+    root: fileURLToPath(new URL('../../..', import.meta.url)),
+    output,
+    command: '',
+    credentials: {},
+    manifest: {
+      stack: '1.2.1',
+      guideHash: null,
+      procedure: 'postgres-v2-to-v3',
+    },
+    isolation: {
+      prove: async () => ({
+        verified: true,
+        backend: 'test',
+        policies: {
+          filesystem: 'test',
+          network: 'test',
+          migratorEnvironment: { id: 'test', storeSet: 'migrator' },
+          appHost: { id: 'test', storeSet: 'oracle' },
+        },
+      }),
+      exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      stop: async () => {},
+      openAppHost: async () => ({
+        call: async (method, args = []) => {
+          events.push(method)
+          if (method === 'put') {
+            fresh = args[0]
+            return null
+          }
+          if (method === 'get')
+            return args[0] === 'new'
+              ? fresh
+              : postgresLegacy.find((row) => row.pk === args[0])
+          return []
+        },
+        close: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      }),
+    },
+  })
+  try {
+    await driver.provision()
+    await driver.snapshot()
+    await driver.installAppHost()
+    const checks = await driver.behaviour()
+    expect(fresh).not.toBeNull()
+    expect(
+      events.slice(events.indexOf('put'), events.indexOf('put') + 3),
+    ).toEqual(['put', 'snapshot', 'get'])
+    expect(observed.snapshot).toHaveBeenCalledTimes(3)
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        id: 'migration.postgres-fresh-v3-storage',
+        passed: false,
+      }),
+    )
+  } finally {
+    observed.snapshot.mockReset()
+    await driver.close()
+    await rm(output, { recursive: true, force: true })
+  }
+})

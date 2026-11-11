@@ -44,3 +44,13 @@ test('Postgres behaviour identifies a query mapping that returns only one equal-
     }),
   )
 })
+
+test('Postgres failures retain safe diagnostic codes without provider or SQL text', async () => {
+  const result = await postgresBehaviour(async () => {
+    throw Object.assign(Error('secret-sentinel in SQL or provider response'), {
+      code: '42P01',
+    })
+  })
+  expect(result.checks[0].cause).toContain('42P01')
+  expect(JSON.stringify(result.checks)).not.toContain('secret-sentinel')
+})

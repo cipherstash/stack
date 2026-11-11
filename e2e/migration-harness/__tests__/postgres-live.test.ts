@@ -20,6 +20,7 @@ const cases = [
   ['reference', 'pass', null],
   ['noop', 'behaviour', 'migration.postgres-v3-columns'],
   ['row-loss', 'behaviour', 'behaviour.postgres-row-retention'],
+  ['fresh-v2', 'behaviour', 'migration.postgres-fresh-v3-storage'],
   ['wrong-mapping', 'behaviour', 'behaviour.postgres-age-lookup'],
   ['missing-index', 'behaviour', 'migration.postgres-indexes'],
   ['rewrite', 'behaviour', 'no-rewrite.postgres-retained-bytes'],
@@ -76,6 +77,15 @@ for (const [kind, outcome, checkId] of cases)
         )
         expect(before.rows).toHaveLength(3)
         expect(before.rows[0].email.v).toBe(2)
+        if (kind === 'fresh-v2') {
+          for (const id of [
+            'behaviour.postgres-fresh-write',
+            'behaviour.postgres-fresh-lookups',
+          ])
+            expect(
+              report.evidence.find((e) => e.checkId === id)?.payload,
+            ).toMatchObject({ passed: true })
+        }
         if (checkId)
           expect(
             report.evidence.find((e) => e.checkId === checkId)?.payload,
