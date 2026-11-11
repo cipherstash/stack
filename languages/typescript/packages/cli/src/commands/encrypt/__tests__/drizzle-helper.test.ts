@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -31,7 +32,9 @@ describe('scaffoldDrizzleMigration', () => {
   let root: string
   let cwd: string
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'stash-scaffold-'))
+    // realpath: process.cwd() reports the physical path after chdir, so a
+    // symlinked TMPDIR would otherwise break the expected-path assertions.
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'stash-scaffold-')))
     cwd = process.cwd()
     process.chdir(root)
     spawnSyncMock.mockReset()
