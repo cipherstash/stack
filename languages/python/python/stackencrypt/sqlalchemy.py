@@ -74,6 +74,9 @@ from sqlalchemy.sql.elements import (
     ClauseElement,
     ColumnClause,
     Grouping,
+    Label,
+    _label_reference,
+    _textual_label_reference,
 )
 from sqlalchemy.sql.dml import Insert, Update
 from sqlalchemy.sql.functions import FunctionElement
@@ -827,12 +830,9 @@ def _sorted_by_terms(statement: Any) -> Any:
     column type's operators, so the hooks rewrite it here. The statement is
     copied only when an ORDER BY changes."""
     if not any(
-        _sort_keys(clauses) is not clauses
-        for clauses in (
-            element._order_by_clauses
-            for element in visitors.iterate(statement)
-            if isinstance(element, Select) and element._order_by_clauses
-        )
+        _select_sort_keys(element) is not element._order_by_clauses
+        for element in visitors.iterate(statement)
+        if isinstance(element, Select) and element._order_by_clauses
     ):
         return statement
 
@@ -840,25 +840,53 @@ def _sorted_by_terms(statement: Any) -> Any:
         # On the copy that cloned_traverse made, as SQLAlchemy's own
         # generative methods change it.
         if select._order_by_clauses:
-            select._order_by_clauses = _sort_keys(select._order_by_clauses)
+            select._order_by_clauses = _select_sort_keys(select)
 
     return visitors.cloned_traverse(statement, {}, {"select": visit_select})
 
 
-def _sort_keys(clauses: Any) -> Any:
-    """``clauses`` with each encrypted column replaced by its order term; the
-    same object when nothing changes."""
+def _select_sort_keys(select: Any) -> Any:
+    """The ORDER BY of ``select`` with each encrypted column replaced by its
+    order term; the same object when nothing changes. A label in the ORDER
+    BY, as in ``order_by(col.label("x"))`` or ``order_by("x")``, would sort
+    by the selected column, so it is replaced by the order term of the
+    column it names."""
+    clauses = select._order_by_clauses
+    # The select's labelled encrypted columns, by label name.
+    labelled = {
+        column.name: column.element
+        for column in getattr(select, "_raw_columns", ())
+        if isinstance(column, Label) and _is_eql_column(column.element)
+    }
 
     def replace(element: Any) -> Any:
         if isinstance(element, FunctionElement) and getattr(element, "name", None) in _ORDER_TERMS.values():
             return element  # already a sort key: not opened again
+        if isinstance(element, (_label_reference, _textual_label_reference)):
+            named = element.element
+            column = labelled.get(named) if isinstance(named, str) else _labelled_column(named)
+            return _sort_key(column) if column is not None else None
+        column = _labelled_column(element)
+        if column is not None:
+            return _sort_key(column)
         # Any column of an EQL type: of a table, an alias, or a subquery.
-        if isinstance(element, ColumnClause) and isinstance(element.type, EqlType):
+        if _is_eql_column(element):
             return _sort_key(element)
         return None
 
     rewritten = tuple(visitors.replacement_traverse(clause, {}, replace) for clause in clauses)
     return clauses if all(new is old for new, old in zip(rewritten, clauses)) else rewritten
+
+
+def _is_eql_column(element: Any) -> bool:
+    return isinstance(element, ColumnClause) and isinstance(element.type, EqlType)
+
+
+def _labelled_column(element: Any) -> Any:
+    """The encrypted column inside a label, or ``None``."""
+    if isinstance(element, Label) and _is_eql_column(element.element):
+        return element.element
+    return None
 
 
 def _cipher_of(column: Any) -> Cipher:

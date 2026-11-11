@@ -661,3 +661,16 @@ def test_a_bare_order_by_in_a_subquery_sorts_by_the_plaintext(engine, runs, sent
 def labels_of(engine, statement):
     with Session(engine) as session:
         return [r.label for r in session.scalars(statement)]
+
+
+def test_a_labelled_column_in_order_by_sorts_by_the_plaintext(engine, runs, sent):
+    hr = Run.average_hr.label("hr")
+    with Session(engine) as session:
+        by_label = session.execute(select(Run.label, hr).order_by(hr)).all()
+        by_name = session.execute(select(Run.label, hr).order_by("hr")).all()
+
+    assert [row.label for row in by_label] == ["e", "c", "a", "d", "b"]
+    assert [row.label for row in by_name] == ["e", "c", "a", "d", "b"]
+    assert all("ORDER BY eql_v4.ord_term(runs.average_hr)" in sql for sql in sent[-2:]), sent[-2:]
+    # The selected column is still the decrypted value, under its label.
+    assert [row.hr for row in by_label] == [98, 120, 150, 175, None]

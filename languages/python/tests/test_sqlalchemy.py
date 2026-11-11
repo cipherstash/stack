@@ -389,3 +389,40 @@ def test_a_comparison_with_another_column_sends_no_value(scores, untouched):
     sql = str((Score.note == Score.note).compile(dialect=postgresql.dialect()))
 
     assert sql == "scores.note = scores.note"
+
+
+def test_a_labelled_column_in_order_by_is_sorted_by_the_order_term(untouched):
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    @stackencrypt.model("splits")
+    class Split(Base):
+        __tablename__ = "splits"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        seconds: Mapped[Annotated[int, IntegerOrd]]
+
+    engine = create_engine("sqlite://")
+    sent = []
+    event.listen(engine, "before_cursor_execute", lambda conn, cur, sql, *a: sent.append(sql))
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE splits (id INTEGER PRIMARY KEY, seconds TEXT)")
+    configure_encryption(engine, [Split])
+    secs = Split.seconds.label("secs")
+
+    with Session(engine) as session:
+        for statement in (
+            select(secs).order_by(secs),
+            select(secs).order_by("secs"),
+            select(secs).order_by(secs.desc()),
+        ):
+            try:
+                session.execute(statement)
+            except Exception:
+                pass  # SQLite has no eql_v4 functions: only the SQL matters here.
+
+    sorts = [sql.split("ORDER BY", 1)[1].strip() for sql in sent[-3:]]
+    assert sorts == [
+        "eql_v4.ord_term(splits.seconds)",
+        "eql_v4.ord_term(splits.seconds)",
+        "eql_v4.ord_term(splits.seconds) DESC",
+    ]
