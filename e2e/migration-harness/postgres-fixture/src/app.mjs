@@ -8,7 +8,8 @@ const customers = csTable('customers', {
 })
 const columns = ['email', 'age', 'notes']
 function unwrap(result) {
-  if (result.failure) throw Error('Legacy encryption operation failed')
+  if (result.failure)
+    throw Error('Legacy encryption operation failed', { cause: result.failure })
   return result.data
 }
 export async function createApp(env = process.env) {

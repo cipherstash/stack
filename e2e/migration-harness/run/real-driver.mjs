@@ -11,6 +11,7 @@ import { runMigrator } from './migrator.mjs'
 import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
 import { postgresBehaviour, postgresLegacy } from './postgres-behaviour.mjs'
 import {
+  postgresFreshWriteCheck,
   postgresMigrationChecks,
   validatePostgresBaseline,
 } from './postgres-oracle.mjs'
@@ -359,8 +360,17 @@ export function createRealDriver({
       if (!application) throw Error('App Host has not started')
       try {
         if (postgresUpgrade) {
-          const result = await postgresBehaviour((method, args) =>
-            application.call(method, args),
+          let freshSnapshot
+          let freshSnapshotFailure
+          const result = await postgresBehaviour(
+            (method, args) => application.call(method, args),
+            async () => {
+              try {
+                freshSnapshot = await assigned(oracleStores).postgresSnapshot()
+              } catch (error) {
+                freshSnapshotFailure = error
+              }
+            },
           )
           let current
           try {
@@ -375,6 +385,18 @@ export function createRealDriver({
             ...postgresMigrationChecks(legacySnapshot, current),
           )
           const checks = await result.mutate()
+          if (freshSnapshotFailure) {
+            throw Object.assign(
+              Error('PostgreSQL fresh storage inspection failed', {
+                cause: freshSnapshotFailure,
+              }),
+              {
+                infrastructure:
+                  isSnapshotInfrastructureError(freshSnapshotFailure),
+              },
+            )
+          }
+          checks.push(postgresFreshWriteCheck(freshSnapshot, 'new'))
           checks.push(
             ...(await migrationChecks({
               workspace,
