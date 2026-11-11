@@ -14,15 +14,15 @@ note: method defined here
    |     pub fn field<R, U, C2, Q>(
    |            ^^^^^
 
-error[E0277]: `field` takes a marker of the record this field holds, and `Option<EncryptedAddress>` does not hold `EncryptedAccount`
+error[E0277]: `field` on a field of type `Option<EncryptedAddress>` does not accept a marker of `EncryptedAccount`
   --> tests/ui/marker_field_of_another_record.rs:41:44
    |
 41 |     let _ = EncryptedAccount::SECOND.field(EncryptedAccount::EMAIL);
-   |                                      ----- ^^^^^^^^^^^^^^^^^^^^^^^ a marker of another record
+   |                                      ----- ^^^^^^^^^^^^^^^^^^^^^^^ this is a marker of `EncryptedAccount`
    |                                      |
    |                                      required by a bound introduced by this call
    |
-   = note: a field of type `T` or `Option<T>` takes a marker of the record `T`, such as `T::STREET`
+   = note: for a field of type `EncryptedAddress` or `Option<EncryptedAddress>`, pass a marker such as `EncryptedAddress::STREET`
 help: the trait `Holds<EncryptedAccount>` is not implemented for `Option<EncryptedAddress>`
       but trait `Holds<EncryptedAddress>` is implemented for it
   --> src/marker.rs

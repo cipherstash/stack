@@ -17,16 +17,24 @@
 //! a method for each operator one of its indexes answers. A nullable field,
 //! `Option<Encrypted<EqualityTerm>>`, has the methods a present value has.
 //!
-//! A record that lists a scope gives its markers that scope's type. The
-//! scope may be one the caller supplies, `scope(tenant: u64)`, or one the
-//! row stores, `scope(field = "tenant")`: a query cannot read a row, so it
-//! takes either kind from its caller. The query has no
-//! [`encrypt`](MarkedQuery::encrypt) until [`scope`](MarkedQuery::scope) is
-//! given exactly once, with a value of that type. A record that lists none
-//! gives a query that is ready at once and takes no scope. A binding is in
-//! no query context, so the query type has no `bind` method. The query ends
-//! with `encrypt`, whose output is the query term the field's index sends
-//! for the operator ([`Supports::Query`]).
+//! A record can list a scope. A scope is a value, such as a tenant ID,
+//! that separates one group of rows from another. A record lists a scope
+//! in one of two ways:
+//!
+//! - `scope(tenant: u64)`: the caller passes the scope when it encrypts.
+//! - `scope(field = "tenant")`: each row stores the scope in a field.
+//!
+//! A query cannot read a row, so you pass the scope to the query in both
+//! cases. Call [`scope`](MarkedQuery::scope) once, with a value of the
+//! scope's type. Until you do, the query has no
+//! [`encrypt`](MarkedQuery::encrypt) method. A query on a record that
+//! lists no scope needs none, so you can encrypt it at once.
+//!
+//! A binding, such as a row ID, is not part of any query context. The
+//! query type therefore has no `bind` method.
+//!
+//! `encrypt` ends the query. The method returns the query term that the
+//! field's index sends for the operator ([`Supports::Query`]).
 //!
 //! ```
 //! use stack_encrypt::kms::FakeDataKeySource;
@@ -80,34 +88,45 @@
 //!
 //! # A field that is a record
 //!
-//! A field whose type is itself a record, `address: EncryptedAddress`, is
-//! sealed under the outer field's context: each inner field's context is
-//! its own, `addresses/street`, then the outer field's, `accounts/address`,
-//! then the outer record's scope, if it lists one. The marker of the outer
-//! field reaches the inner record's markers with that context applied:
+//! The type of a field can be another record, for example
+//! `address: EncryptedAddress`. To query a field of the inner record,
+//! start from the outer field's marker and call [`field`](Marker::field):
 //!
 //! ```text
 //! EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET).eq("Main St")
 //! ```
 //!
-//! [`field`](Marker::field) takes a marker of the record the field holds,
-//! and no other, so a marker of another record does not compile
-//! (`tests/ui/marker_field_of_another_record.rs`). The result is a marker
-//! of the inner field, and its [`contexts`](Marker::contexts) are the outer
-//! record's, narrowed to the inner field. A record three deep is reached
-//! one step at a time:
+//! `field` returns a marker of the inner field. The derive seals each
+//! inner field under a context with these parts, in this order:
+//!
+//! 1. the inner field's own label, `addresses/street`
+//! 2. the outer field's label, `accounts/address`
+//! 3. the outer record's scope, if the outer record lists one
+//!
+//! A query from the returned marker uses the same context, so the query
+//! term matches the stored term. Call [`contexts`](Marker::contexts) on
+//! the returned marker to read that context.
+//!
+//! `field` accepts only a marker of the record that is the field's type.
+//! A marker of any other record does not compile
+//! (`tests/ui/marker_field_of_another_record.rs`).
+//!
+//! For a record nested three deep, call `field` once for each level:
 //! `Outer::ACCOUNT.field(EncryptedAccount::ADDRESS).field(EncryptedAddress::STREET)`.
 //!
 //! A nullable record field, `address: Option<EncryptedAddress>`, has the
-//! same `field` ([`Holds`]). A row whose field is `None` stores nothing,
-//! so no query matches it.
+//! same `field` method ([`Holds`]). A row whose field is `None` stores no
+//! term, so no query matches that row.
 //!
-//! ## An inner record with a scope of its own
+//! ## An inner record that lists a scope
 //!
-//! An inner record may list a scope of its own, such as
-//! `scope(field = "tenant")`. A query of one of its fields then takes one
-//! scope for each record that lists one, and [`scope`](MarkedQuery::scope)
-//! takes them together, outermost first ([`JoinScope`]):
+//! The inner record can list a scope too, for example
+//! `scope(field = "tenant")`. The derive puts that scope into the context
+//! after the inner field's label and before the outer field's label.
+//!
+//! The query then needs one scope for each record that lists one. Pass
+//! them to [`scope`](MarkedQuery::scope) as a tuple, with the outermost
+//! record's scope first:
 //!
 //! ```text
 //! EncryptedCompany::OFFICE
@@ -116,12 +135,23 @@
 //!     .scope((Scope::new(company_tenant), Scope::new(office_tenant)))
 //! ```
 //!
-//! Where only one of the records lists a scope, `scope` takes that one
-//! scope alone. A missing scope, a scope of the wrong type, and scopes in
-//! the wrong order do not compile
-//! (`tests/ui/marker_nested_query_needs_each_scope.rs`). A query takes at
-//! most three scopes, so a fourth record with a scope of its own does not
-//! compile either (`tests/ui/marker_nested_query_takes_three_scopes.rs`).
+//! If only one of the records lists a scope, pass that scope on its own,
+//! not in a tuple. [`JoinScope`] works out the type that `scope` accepts.
+//!
+//! These mistakes do not compile
+//! (`tests/ui/marker_nested_query_needs_each_scope.rs`):
+//!
+//! - leaving out a scope
+//! - passing a scope of the wrong type
+//! - passing two scopes of different types in the wrong order
+//!
+//! Two scopes of the same type in the wrong order do compile. The query
+//! then derives a term that matches no row.
+//!
+//! A query accepts at most three scopes. A fourth nested record that
+//! lists a scope does not compile
+//! (`tests/ui/marker_nested_query_takes_three_scopes.rs`). To query under
+//! more than three scopes, use the [`dynamic`](crate::dynamic) module.
 //!
 //! # The type a query takes
 //!
@@ -152,21 +182,30 @@ use crate::op::{
 use crate::target::{DeclaredContext, NoScope, Pending, Scope};
 use crate::{KeysetCipher, Label, NonEmpty};
 
-/// A field of a derived record, as a value: the field's name, the context
-/// the derive sealed it under, its target type `T`, the type `C` of the
-/// scopes a query of it takes, and the type `P` a query of it takes
-/// ([`TakesAny`], or [`Takes<String>`] for a field marked
-/// `#[stash(query = String)]`).
+/// A field of a derived record, as a value that a query starts from.
 ///
-/// `C` is [`NoScope`] for a record that lists no scope, and `Scope<u64>`
-/// for one that lists `scope(tenant: u64)` or `scope(field = "tenant")`
-/// over a `u64`. For a field reached with [`field`](Self::field), it is
-/// each record's scope, outermost first ([`JoinScope`]): one `Scope<U>`,
-/// or a tuple of two or three.
+/// A marker records the field's name and the context the derive sealed the
+/// field under. The type parameters are:
 ///
-/// `W` is where the field sits: [`Root<R>`] for a field of the record `R`,
-/// which is every marker the derive emits, and [`Nested<W>`] for a field of
-/// a record that is itself a field, reached with [`field`](Self::field).
+/// - `W`: where the field is. [`Root<R>`] is a field of the record `R`,
+///   and every marker the derive emits has it. [`Nested<W>`] is a field of
+///   a record that is itself a field, and [`field`](Self::field) returns
+///   it.
+/// - `T`: the field's target type.
+/// - `C`: the scopes that a query from this marker needs.
+/// - `P`: the value type that a query from this marker accepts. `P` is
+///   [`TakesAny`], or [`Takes<String>`] for a field marked
+///   `#[stash(query = String)]`.
+///
+/// `C` is one of these:
+///
+/// - [`NoScope`], for a record that lists no scope.
+/// - `Scope<u64>`, for a record that lists `scope(tenant: u64)`, or
+///   `scope(field = "tenant")` where the field is a `u64`.
+/// - A tuple of two or three scopes, outermost record first. `field`
+///   returns a marker with a tuple when more than one record lists a
+///   scope ([`JoinScope`]).
+///
 /// See the [module docs](self).
 pub struct Marker<W, T, C = NoScope, P = TakesAny> {
     name: &'static str,
@@ -247,20 +286,27 @@ impl<W: Place, T, C, P> Marker<W, T, C, P> {
         self.place.narrow((self.contexts)()).narrowed(self.name)
     }
 
-    /// The marker of a field of the record this field holds, with this
-    /// field's context applied: `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)`.
-    /// A query from it derives under the inner field's own context, then
-    /// the inner record's scope if it lists one, then this field's
-    /// context, then the outer record's scope, as the derive sealed the
-    /// inner field. It takes the inner marker's query type.
+    /// Returns the marker of a field of the record that is this field's
+    /// type: `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)`.
     ///
-    /// `inner` must be a marker of the record `R` this field holds, or
-    /// holds an `Option` of ([`Holds`]), so a marker of another record
-    /// does not compile.
+    /// This field's type is a record `R`, or `Option<R>` ([`Holds`]).
+    /// `inner` must be a marker of `R`. A marker of another record does
+    /// not compile.
     ///
-    /// The query takes this marker's scope, then the inner record's
-    /// ([`JoinScope`]): `.scope((outer, inner))` where both records list
-    /// one, and the one scope alone where one record does.
+    /// A query from the returned marker uses the context that the derive
+    /// sealed the inner field under. The parts are, in order:
+    ///
+    /// 1. the inner field's label
+    /// 2. the inner record's scope, if the inner record lists one
+    /// 3. this field's context
+    /// 4. the outer record's scope, if the outer record lists one
+    ///
+    /// The query needs each scope that the two records list
+    /// ([`JoinScope`]). If both records list a scope, call
+    /// `.scope((outer, inner))`. If one record lists a scope, pass that
+    /// scope on its own.
+    ///
+    /// The returned marker has the query type of `inner`.
     pub fn field<R, U, C2, Q>(
         self,
         inner: Marker<Root<R>, U, C2, Q>,
@@ -296,9 +342,10 @@ impl<W: Place, T, C, P> Marker<W, T, C, P> {
         let nested = holders.iter().filter(|holder| holder.scoped).count();
         MarkedQuery {
             label: self.label(),
-            // Each scope the marker takes is one record's. The records
-            // that are fields list theirs in `holders`; any scope left over
-            // is the outermost record's.
+            // One record lists each scope the marker needs.
+            // `holders` covers the records that are fields. If the marker
+            // needs one more scope than those records list, the outermost
+            // record lists that scope.
             root_scoped: C::COUNT > nested,
             holders,
             value: Some(value),
@@ -317,9 +364,11 @@ fn label(scope: &'static str, identity: &'static str) -> Label {
     })
 }
 
-/// A record field that holds a marked field: the outer field's label, and
-/// whether the record it holds lists a scope of its own. Opaque: a
-/// [`Place`] lists them for a query.
+/// One record field between the outermost record and a marked field.
+///
+/// A `Holder` records the label of that record field. A `Holder` also
+/// records whether the record that is the field's type lists a scope.
+/// Hidden: only [`Place`] uses it.
 #[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct Holder {
@@ -327,25 +376,29 @@ pub struct Holder {
     scoped: bool,
 }
 
-/// The record fields that hold a field at `place`, outermost first: empty
-/// for a field of the record itself.
+/// Returns the record fields between the outermost record and the field
+/// at `place`, outermost first. The list is empty for a field of the
+/// outermost record.
 fn holders(place: &impl Place) -> Vec<Holder> {
     let mut holders = Vec::new();
     place.push_holders(&mut holders);
     holders
 }
 
-/// The labels of the record fields that hold a field, outermost first.
+/// Returns the label of each record field in `holders`, in the same order.
 fn labels(holders: &[Holder]) -> Vec<&Label> {
     holders.iter().map(|holder| &holder.label).collect()
 }
 
-/// A field type that holds the record `R`: `R` itself, or `Option<R>` for
-/// a nullable record field. [`Marker::field`] takes a marker of `R`.
+/// Implemented by a field type that contains the record `R`.
+///
+/// The types are `R` itself, and `Option<R>` for a nullable record field.
+/// [`Marker::field`] on a field of either type accepts a marker of `R`.
+/// Sealed.
 #[diagnostic::on_unimplemented(
-    message = "`field` takes a marker of the record this field holds, and `{Self}` does not hold `{R}`",
-    label = "a marker of another record",
-    note = "a field of type `T` or `Option<T>` takes a marker of the record `T`, such as `T::STREET`"
+    message = "`field` on a field of type `{Self}` does not accept a marker of `{R}`",
+    label = "this is a marker of `{R}`",
+    note = "for a field of type `EncryptedAddress` or `Option<EncryptedAddress>`, pass a marker such as `EncryptedAddress::STREET`"
 )]
 pub trait Holds<R>: holds_sealed::Sealed<R> {}
 mod holds_sealed {
@@ -356,49 +409,57 @@ impl<R> Holds<R> for R {}
 impl<R> holds_sealed::Sealed<R> for Option<R> {}
 impl<R> Holds<R> for Option<R> {}
 
-/// The scope a query takes when a field of a record with the scope `Self`
-/// holds a record with the scope `Inner`: what [`Marker::field`] gives its
-/// result.
+/// Works out which scopes a query needs after a call to [`Marker::field`].
 ///
-/// - Where the inner record lists none, the outer record's scope.
-/// - Where only the inner record lists one, that scope.
-/// - Where both do, both, outermost first: `(Scope<A>, Scope<B>)`.
+/// `Self` is the scope type of the outer marker. `Inner` is the scope type
+/// of the inner record's marker. [`Joined`](Self::Joined) is the scope
+/// type of the marker that `field` returns:
 ///
-/// A query takes at most three scopes: a fourth does not compile, and the
-/// error says so. Sealed.
+/// - If the inner record lists no scope, `Joined` is the outer marker's
+///   scope type.
+/// - If only the inner record lists a scope, `Joined` is that scope.
+/// - If both list a scope, `Joined` is a tuple with the outer scopes
+///   first: `(Scope<A>, Scope<B>)`.
+///
+/// A query accepts at most three scopes. A fourth does not compile, and
+/// the compiler error states the limit. Sealed.
 #[diagnostic::on_unimplemented(
-    message = "`field` takes a marker of a record, whose scope is `NoScope` or one `Scope<T>`, not `{Inner}`",
-    label = "not the scope of one record"
+    message = "`field` does not accept a marker whose scope type is `{Inner}`",
+    label = "`field` accepts a marker whose scope type is `NoScope` or one `Scope<T>`"
 )]
 pub trait JoinScope<Inner>: join_sealed::Sealed<Inner> {
-    /// The scope the query takes.
+    /// The scope type of the marker that `field` returns.
     type Joined: ScopeInput;
 }
 mod join_sealed {
     pub trait Sealed<Inner> {}
 
-    /// The scope of a fourth record, which a query cannot take. It bounds
-    /// the one [`JoinScope`](super::JoinScope) implementation that would
-    /// add a fourth scope.
+    /// Makes the compiler report the limit of three scopes.
     ///
-    /// Without that implementation, the compiler sees one way to join a
-    /// fourth scope, `JoinScope<NoScope>`. It then decides that the inner
-    /// record lists no scope, and reports a type mismatch that says so.
-    /// With it, the compiler takes the inner record's scope from the
-    /// marker it is given, and reports this trait's message.
+    /// This trait bounds the one [`JoinScope`](super::JoinScope)
+    /// implementation that would add a fourth scope. No marker meets the
+    /// bound, so a fourth scope never compiles, and the compiler prints
+    /// the message below.
     ///
-    /// Its one implementation is for [`Unnameable`], so that the compiler
-    /// cannot rule the bound out before it knows the inner scope. No
-    /// marker has that scope.
+    /// That implementation exists only for the error message. Without it,
+    /// a tuple of three scopes has one `JoinScope` implementation,
+    /// `JoinScope<NoScope>`. The compiler then infers that the inner
+    /// record lists no scope. The compiler reports a type mismatch that
+    /// does not mention the limit.
+    ///
+    /// This trait has one implementation, for a scope of [`Unnameable`].
+    /// If the trait had none, the compiler would discard the fourth-scope
+    /// implementation early, and infer `NoScope` again.
     #[diagnostic::on_unimplemented(
-        message = "a query takes at most three scopes, and this field would take a fourth, `{Self}`",
-        label = "a fourth record with a scope of its own",
-        note = "the dynamic interface queries a field under more than three scopes"
+        message = "a query accepts at most three scopes",
+        label = "this call to `field` adds a fourth scope, `{Self}`",
+        note = "to query a field under more than three scopes, use the `stack_encrypt::dynamic` module"
     )]
     pub trait FourthScope {}
     impl FourthScope for super::Scope<Unnameable> {}
 
-    /// A type outside this module cannot name. See [`FourthScope`].
+    /// A type that code outside this module cannot name, so no marker has
+    /// a scope of this type. See [`FourthScope`].
     pub enum Unnameable {}
 }
 impl<C: ScopeInput> join_sealed::Sealed<NoScope> for C {}
@@ -418,7 +479,8 @@ impl<A, B, D> JoinScope<Scope<D>> for (Scope<A>, Scope<B>) {
     type Joined = (Scope<A>, Scope<B>, Scope<D>);
 }
 impl<A, B, D, E> join_sealed::Sealed<Scope<E>> for (Scope<A>, Scope<B>, Scope<D>) {}
-/// Met by no marker: see `join_sealed::FourthScope`.
+/// No marker meets this bound. The implementation makes the compiler
+/// report the limit of three scopes: see `join_sealed::FourthScope`.
 impl<A, B, D, E> JoinScope<Scope<E>> for (Scope<A>, Scope<B>, Scope<D>)
 where
     Scope<E>: join_sealed::FourthScope,
@@ -433,8 +495,9 @@ pub trait Place: Copy + place_sealed::Sealed {
     /// The outermost record's contexts, narrowed to the record that holds
     /// the field.
     fn narrow(&self, contexts: Contexts) -> Contexts;
-    /// Push the record fields that hold the field, outermost first: none
-    /// for a field of the record itself.
+    /// Appends the record fields between the outermost record and this
+    /// field to `holders`, outermost first. Appends nothing for a field of
+    /// the outermost record.
     #[doc(hidden)]
     fn push_holders(&self, holders: &mut Vec<Holder>);
 }
@@ -466,7 +529,7 @@ pub struct Nested<W> {
     name: &'static str,
     scope: &'static str,
     identity: &'static str,
-    /// Whether the record this field holds lists a scope of its own.
+    /// Whether the record that is this field's type lists a scope.
     scoped: bool,
     outer: W,
 }
@@ -669,15 +732,17 @@ pub type BetweenQuery<T, In, S = Ready> = MarkedQuery<T, Between, (In, In), S>;
 /// operator and its state.
 type Tags<T, Op, S> = PhantomData<fn() -> (T, Op, S)>;
 
-/// The scopes a query from a marker takes, as the marker's type
-/// parameter: what state the query starts in. Sealed: the inputs are
-/// [`NoScope`], [`Scope<U>`], and a tuple of two or three scopes for a
-/// field of a record that lists a scope of its own ([`JoinScope`]).
+/// Implemented by each scope type a marker can have. The scope type
+/// decides which state a query from the marker starts in.
+///
+/// The types are [`NoScope`], [`Scope<U>`], and a tuple of two or three
+/// scopes. [`Marker::field`] returns a marker with a tuple when more than
+/// one record lists a scope ([`JoinScope`]). Sealed.
 pub trait ScopeInput: scope_sealed::Sealed {
-    /// [`Ready`] for a query that takes no scope; [`Needs<Self>`] for one
-    /// that takes any.
+    /// The state a query starts in: [`Ready`] if the query needs no
+    /// scope, and [`Needs<Self>`] if the query needs one or more.
     type Start;
-    /// How many scopes the query takes.
+    /// The number of scopes the query needs.
     #[doc(hidden)]
     const COUNT: usize;
 }
@@ -705,10 +770,12 @@ impl<A, B, D> ScopeInput for (Scope<A>, Scope<B>, Scope<D>) {
     const COUNT: usize = 3;
 }
 
-/// The scopes [`scope`](MarkedQuery::scope) is given: one [`Scope<U>`], or
-/// a tuple of them, outermost record first. Sealed.
+/// Implemented by each value that [`scope`](MarkedQuery::scope) accepts.
+///
+/// The values are one [`Scope<U>`], and a tuple of two or three scopes
+/// with the outermost record's scope first. Sealed.
 pub trait GivenScopes: given_sealed::Sealed {
-    /// Push each scope, outermost record first.
+    /// Appends each scope to `scopes`, outermost record first.
     #[doc(hidden)]
     fn push_scopes(self, scopes: &mut Vec<DeclaredContext>);
 }
@@ -749,14 +816,16 @@ where
     }
 }
 
-/// The state of a query that takes the scopes `C`, which have not been
-/// given yet: [`scope`](MarkedQuery::scope) takes them and makes the query
-/// [`Ready`]. `C` is one [`Scope<U>`], or a tuple of them for a field of a
-/// record that lists a scope of its own.
+/// The state of a query that needs the scopes `C` and does not have them
+/// yet. Call [`scope`](MarkedQuery::scope) to pass them. The query is then
+/// [`Ready`].
+///
+/// `C` is one [`Scope<U>`], or a tuple of two or three scopes when more
+/// than one record lists a scope.
 pub struct Needs<C>(PhantomData<fn() -> C>);
 
-/// The state of a query that can be encrypted: it takes no scope, or its
-/// scopes have been given.
+/// The state of a query that you can encrypt. Either the query needs no
+/// scope, or you have passed the scopes it needs.
 pub struct Ready;
 
 /// A query from a [`Marker`], for the operator `Op` with the input `In`, in
@@ -765,14 +834,15 @@ pub struct Ready;
 /// when the query is derived, refused or dropped.
 pub struct MarkedQuery<T, Op, In, S = Ready> {
     label: Label,
-    /// The record fields that hold the field, outermost first.
+    /// The record fields between the outermost record and the queried
+    /// field, outermost first.
     holders: Vec<Holder>,
     /// Whether the outermost record lists a scope.
     root_scoped: bool,
     value: Option<In>,
     wipe: fn(In),
-    /// The scopes given, one for each record that lists one, outermost
-    /// first.
+    /// The scopes passed to `scope`: one for each record that lists a
+    /// scope, outermost first.
     scopes: Vec<DeclaredContext>,
     marker: Tags<T, Op, S>,
 }
@@ -800,12 +870,16 @@ impl<T, Op, In, C> MarkedQuery<T, Op, In, Needs<C>>
 where
     C: GivenScopes,
 {
-    /// Give the scopes the query takes: the tenant a record was encrypted
-    /// with `Scope::new(tenant)`, of the type the record lists. A field of
-    /// a record that lists a scope of its own takes one scope for each
-    /// record, as a tuple, outermost first. An empty scope is refused when
-    /// the query runs. The query is then [`Ready`]; there is no second
-    /// `scope`.
+    /// Passes the scopes the query needs, and makes the query [`Ready`].
+    ///
+    /// For one record that lists a scope, pass the value the record was
+    /// encrypted with, such as `Scope::new(tenant)`. The value has the
+    /// type the record lists. When more than one record lists a scope,
+    /// pass a tuple with one scope for each, outermost record first.
+    ///
+    /// You can call `scope` once: a [`Ready`] query has no `scope`
+    /// method. An empty scope compiles, and
+    /// [`encrypt`](MarkedQuery::encrypt) returns an error for it.
     pub fn scope(mut self, scope: C) -> MarkedQuery<T, Op, In, Ready> {
         let mut scopes = Vec::new();
         scope.push_scopes(&mut scopes);
@@ -822,23 +896,30 @@ where
 }
 
 impl<T, Op, In, S> MarkedQuery<T, Op, In, S> {
-    /// The parts the field's own label is extended by, as the derive seals
-    /// a nested record's fields. The build starts with the outermost
-    /// record's scope. For each record field that holds the field,
-    /// outermost first, the parts so far extend that field's label. The
-    /// record that field holds then puts its own scope, if it lists one,
-    /// before the result. So a field of a field is
-    /// `(addresses/street) / ((accounts/address) / tenant)`, and where the
-    /// inner record lists a scope, that scope extends the field's label
-    /// first.
+    /// Builds the context parts that extend the field's own label. The
+    /// result is the context the derive seals a nested record's fields
+    /// under.
+    ///
+    /// The build starts with the outermost record's scope, or with no
+    /// parts if that record lists none. Then, for each record field
+    /// between the outermost record and the queried field, outermost
+    /// first:
+    ///
+    /// 1. The parts so far extend that record field's label.
+    /// 2. If the record that is the field's type lists a scope, that scope
+    ///    goes before the result.
+    ///
+    /// For a field of a field under one outer scope, the query context is
+    /// `(addresses/street) / ((accounts/address) / tenant)`.
     fn extension(&mut self) -> DeclaredContext {
-        // The types give one scope for each record that lists one. A
-        // wrong count would derive a term no row stores, with no error.
+        // The types guarantee one scope for each record that lists one.
+        // With a wrong count, the query would derive a term that no row
+        // stores. The query would return no error.
         debug_assert_eq!(
             self.scopes.len(),
             usize::from(self.root_scoped)
                 + self.holders.iter().filter(|holder| holder.scoped).count(),
-            "a query has one scope for each record that lists one",
+            "a query must have one scope for each record that lists a scope",
         );
         let mut given = std::mem::take(&mut self.scopes).into_iter();
         let mut next = |scoped: bool| match scoped {
@@ -862,11 +943,14 @@ where
     In: Input<Op::Arity>,
     T: Answers<Op, In>,
 {
-    /// Derive the query term under `keyset`: the term the field's index
-    /// sends for the operator, derived under the marker's label extended
-    /// by the outer fields' contexts and the scopes. The query is prepared
-    /// ([`Supports::prepare`]) before any key is requested, so a refused
-    /// query costs no request, and its value is wiped.
+    /// Derives the query term under `keyset`. The term is the one that the
+    /// field's index sends for the operator. The context of the term is
+    /// the marker's label, extended by the outer fields' contexts and the
+    /// scopes.
+    ///
+    /// The query is prepared ([`Supports::prepare`]) before any key is
+    /// requested. A refused query therefore requests no key. The value of
+    /// a refused query is wiped.
     pub fn encrypt<'a, K: 'static>(
         mut self,
         keyset: &'a KeysetCipher<'_, K>,

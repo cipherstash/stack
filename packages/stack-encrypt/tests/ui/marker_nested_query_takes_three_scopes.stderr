@@ -1,11 +1,11 @@
-error[E0277]: a query takes at most three scopes, and this field would take a fourth, `stack_encrypt::target::Scope<u64>`
+error[E0277]: a query accepts at most three scopes
   --> tests/ui/marker_nested_query_takes_three_scopes.rs:73:10
    |
 73 |         .field(EncryptedDesk::LABEL);
-   |          ^^^^^ a fourth record with a scope of its own
+   |          ^^^^^ this call to `field` adds a fourth scope, `stack_encrypt::target::Scope<u64>`
    |
    = help: the trait `stack_encrypt::marker::join_sealed::FourthScope` is not implemented for `stack_encrypt::target::Scope<u64>`
-   = note: the dynamic interface queries a field under more than three scopes
+   = note: to query a field under more than three scopes, use the `stack_encrypt::dynamic` module
 help: the trait `stack_encrypt::marker::join_sealed::FourthScope` is implemented for `stack_encrypt::target::Scope<stack_encrypt::marker::join_sealed::Unnameable>`
   --> src/marker.rs
    |
