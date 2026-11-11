@@ -308,65 +308,64 @@ export function createRealDriver({
       )
     },
     async migrate() {
-      if (!stackSource) throw Error('Stack source not resolved')
-      const source = stackSource
-      if (source.tarball)
-        await cp(source.tarball, resolve(workspace, 'resolved-stack.tgz'))
-      /** @param {{stdout?:string, stderr?:string}} transcript */
-      const writeTranscript = async (transcript) => {
-        await writeFile(
-          resolve(output, 'migrator-transcript.log'),
-          `${transcript.stdout ?? ''}\n${transcript.stderr ?? ''}`,
-        )
-        manifest.artifacts = {
-          transcript: 'migrator-transcript.log',
-          snapshot: 'legacy-snapshot.json',
-        }
+      manifest.documentationExposure = {
+        status: 'unknown',
+        reviewRequired: true,
+        evidenceComplete: false,
       }
-      const migration = async () =>
-        fakeMigration
-          ? await fakeMigrate({
-              root,
-              workspace,
-              kind: fakeMigration,
-              stack: source.install,
-              procedure,
-            })
-          : await runMigrator({
-              command,
-              timeoutMs: manifest.agents?.limits?.timeMs,
-              maxToolCalls: manifest.agents?.limits?.toolCalls,
-              maxModelTurns: manifest.agents?.limits?.turns,
-              stop: () => isolation.stop({ expected: true }),
-              execute: (argv, timeoutMs) =>
-                isolation.exec({
-                  actor: 'migrator',
-                  workspace,
-                  env: env(migratorStores),
-                  command: argv,
-                  forwards: forwards(migratorStores),
-                  timeoutMs,
-                }),
-            })
-      /** @type {Awaited<ReturnType<typeof migration>>} */
-      let result
-      try {
-        result = await migration()
-      } catch (error) {
-        // A rejected Migrator carries its partial transcript; keep it on disk,
-        // since the failed Runs are the ones that most need diagnosing.
-        await writeTranscript(
-          error && typeof error === 'object'
-            ? /** @type {{stdout?:string, stderr?:string}} */ (error)
-            : {},
+      if (!stackSource) throw Error('Stack source not resolved')
+      if (stackSource.tarball)
+        await cp(stackSource.tarball, resolve(workspace, 'resolved-stack.tgz'))
+      const result = fakeMigration
+        ? await fakeMigrate({
+            root,
+            workspace,
+            kind: fakeMigration,
+            stack: stackSource.install,
+            procedure,
+          })
+        : await runMigrator({
+            command,
+            timeoutMs: manifest.agents?.limits?.timeMs,
+            maxToolCalls: manifest.agents?.limits?.toolCalls,
+            maxModelTurns: manifest.agents?.limits?.turns,
+            stop: () => isolation.stop({ expected: true }),
+            execute: (argv, timeoutMs) =>
+              isolation.exec({
+                actor: 'migrator',
+                workspace,
+                env: env(migratorStores),
+                command: argv,
+                forwards: forwards(migratorStores),
+                timeoutMs,
+              }),
+          })
+      if ('brokerEvidence' in result && result.brokerEvidence) {
+        await writeFile(
+          resolve(output, 'broker-evidence.json'),
+          JSON.stringify({
+            complete: result.documentationExposure?.evidenceComplete ?? false,
+            records: result.brokerEvidence,
+          }),
+          { mode: 0o600, flag: 'wx' },
         )
-        throw error
+        manifest.documentationExposure = result.documentationExposure
       }
       if ('runtime' in result && result.runtime)
         manifest.agents = { ...manifest.agents, runtime: result.runtime }
       if (fakeMigration && fakeMigration !== 'noop')
         await execute('migrator', workspace, migratorStores, ['npm', 'install'])
-      await writeTranscript(result)
+      await writeFile(
+        resolve(output, 'migrator-transcript.log'),
+        `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
+      )
+      manifest.artifacts = {
+        transcript: 'migrator-transcript.log',
+        ...('brokerEvidence' in result
+          ? { brokerEvidence: 'broker-evidence.json' }
+          : {}),
+        snapshot: 'legacy-snapshot.json',
+      }
       // A timed-out broker has stopped its isolated tools and proof relays.
       // Preserve its agent-limit result rather than restarting work for a diff.
       if (result.exitCode !== 0 || result.limit) return result
@@ -408,6 +407,9 @@ export function createRealDriver({
       await writeFile(resolve(output, 'migration.diff'), diff.stdout)
       manifest.artifacts = {
         transcript: 'migrator-transcript.log',
+        ...('brokerEvidence' in result
+          ? { brokerEvidence: 'broker-evidence.json' }
+          : {}),
         diff: 'migration.diff',
         snapshot: 'legacy-snapshot.json',
       }
