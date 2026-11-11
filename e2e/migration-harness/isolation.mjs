@@ -398,6 +398,19 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
       await writeFile(canary, 'SYNTHETIC-NOT-A-SECRET')
       await chmod(canary, 0o644)
       try {
+        const gitProbe = await start({
+          actor: 'git-tool-probe',
+          workspace,
+          probe: true,
+          command: ['git', '--version'],
+        })
+        gitProbe.child.stdin.end()
+        const gitResult = await gitProbe.completion
+        if (
+          gitResult.exitCode !== 0 ||
+          !gitResult.stdout.startsWith('git version ')
+        )
+          throw infrastructure('Git is unavailable in the isolated runtime')
         const actor = 'startup-probe'
         const probe = await start({
           actor,
