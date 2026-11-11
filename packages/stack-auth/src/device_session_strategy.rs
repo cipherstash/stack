@@ -203,22 +203,33 @@ impl DeviceSessionStrategyBuilder {
                 region,
                 client_id,
                 token,
-            } => Self::build_from_token(region, client_id, token, base_url_override, transport),
+            } => Self::build_from_token(
+                region,
+                client_id,
+                token,
+                base_url_override,
+                transport,
+                expected_workspace,
+            ),
             OAuthTokenSource::Store(store) => {
                 let ws_store = match expected_workspace {
                     Some(ws) => store.workspace_store(ws.as_str())?,
                     None => store.current_workspace_store()?,
                 };
-                Self::build_from_workspace_store(ws_store, base_url_override, transport)
+                Self::build_from_workspace_store(
+                    ws_store,
+                    base_url_override,
+                    transport,
+                    expected_workspace,
+                )
             }
-            OAuthTokenSource::WorkspaceStore(store) => {
-                Self::build_from_workspace_store(store, base_url_override, transport)
-            }
+            OAuthTokenSource::WorkspaceStore(store) => Self::build_from_workspace_store(
+                store,
+                base_url_override,
+                transport,
+                expected_workspace,
+            ),
         }
-        .map(|mut strategy| {
-            strategy.expected_workspace = expected_workspace;
-            strategy
-        })
     }
 
     /// Build from a token supplied directly (in-memory only, no store).
@@ -228,6 +239,7 @@ impl DeviceSessionStrategyBuilder {
         mut token: Token,
         base_url_override: Option<url::Url>,
         transport: SharedTransport,
+        expected_workspace: Option<WorkspaceId>,
     ) -> Result<DeviceSessionStrategy, AuthError> {
         let base_url = match base_url_override {
             Some(url) => url,
@@ -257,10 +269,11 @@ impl DeviceSessionStrategyBuilder {
             &region_id,
             device_instance_id,
             transport,
-        );
+        )
+        .pinned_to(expected_workspace);
         Ok(DeviceSessionStrategy {
             crn,
-            expected_workspace: None,
+            expected_workspace,
             inner: AutoRefresh::with_token(refresher, token),
         })
     }
@@ -270,6 +283,7 @@ impl DeviceSessionStrategyBuilder {
         ws_store: ProfileStore,
         base_url_override: Option<url::Url>,
         transport: SharedTransport,
+        expected_workspace: Option<WorkspaceId>,
     ) -> Result<DeviceSessionStrategy, AuthError> {
         let token: Token = ws_store.load_profile()?;
 
@@ -302,10 +316,11 @@ impl DeviceSessionStrategyBuilder {
             &region_str,
             device_instance_id,
             transport,
-        );
+        )
+        .pinned_to(expected_workspace);
         Ok(DeviceSessionStrategy {
             crn,
-            expected_workspace: None,
+            expected_workspace,
             inner: AutoRefresh::with_token(refresher, token),
         })
     }

@@ -1,3 +1,4 @@
+use cts_common::WorkspaceId;
 use url::Url;
 
 use stack_profile::ProfileStore;
@@ -20,6 +21,9 @@ pub(crate) struct DeviceSessionRefresher {
     region: String,
     device_instance_id: Option<String>,
     transport: SharedTransport,
+    /// When set, a refreshed token for any other workspace is refused before
+    /// it is cached or written to the store.
+    expected_workspace: Option<WorkspaceId>,
 }
 
 impl DeviceSessionRefresher {
@@ -38,7 +42,32 @@ impl DeviceSessionRefresher {
             region: region.into(),
             device_instance_id,
             transport,
+            expected_workspace: None,
         }
+    }
+
+    /// Refuse, before it is cached or saved, any refreshed token that is not
+    /// for `workspace`. Otherwise a session for another workspace would be
+    /// written over this profile's, where a sibling process would pick it up.
+    pub(crate) fn pinned_to(mut self, workspace: Option<WorkspaceId>) -> Self {
+        self.expected_workspace = workspace;
+        self
+    }
+
+    fn check_workspace(&self, token: &Token) -> Result<(), AuthError> {
+        let Some(expected) = self.expected_workspace else {
+            return Ok(());
+        };
+        let token_workspace = token.workspace_id()?;
+        if token_workspace != expected {
+            return Err(AuthError::WorkspaceMismatch(
+                crate::error::WorkspaceMismatch {
+                    expected_workspace: expected,
+                    token_workspace,
+                },
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -88,6 +117,7 @@ impl Refresher for DeviceSessionRefresher {
             tracing::debug!(
                 "refresh skipped: another process rotated the token while we waited on the lock"
             );
+            self.check_workspace(&disk_token)?;
             return Ok(disk_token);
         }
 
@@ -104,6 +134,10 @@ impl Refresher for DeviceSessionRefresher {
         if let Some(ref id) = self.device_instance_id {
             token.set_device_instance_id(id);
         }
+
+        // Before anything is saved or cached: a rejected token must leave
+        // this profile's saved session alone.
+        self.check_workspace(&token)?;
 
         // Persist while holding the lock — any sibling process waiting on
         // the lock will read the rotated token on their next attempt and
@@ -343,6 +377,53 @@ mod tests {
             on_disk.client_id(),
             Some("cli"),
             "the client id should be persisted"
+        );
+    }
+
+    /// A refresh that returns another workspace's token must be refused before
+    /// anything is saved: the profile's own session has to survive intact.
+    #[tokio::test]
+    async fn a_refreshed_token_for_another_workspace_is_refused_and_not_saved() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.json(serde_json::json!({
+                "access_token": crate::test_support::jwt_with_workspace("AAAAAAAAAAAAAAAA"),
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": "other-refresh"
+            }));
+        });
+        let server = start_server(mocks).await;
+        let dir = tempfile::tempdir().unwrap();
+
+        let disk = token_on_disk("own-access", "matching-refresh");
+        let refresher = refresher_with_disk_token(&dir, server.url(""), disk)
+            .pinned_to(Some(WorkspaceId::try_from(WORKSPACE_ID).unwrap()));
+
+        let err = refresher
+            .refresh(&SecretToken::new("matching-refresh"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AuthError::WorkspaceMismatch(_)),
+            "a token for another workspace must be refused, got {err:?}"
+        );
+
+        let on_disk: Token = ProfileStore::new(dir.path())
+            .workspace_store(WORKSPACE_ID)
+            .unwrap()
+            .load_profile()
+            .unwrap();
+        assert_eq!(
+            on_disk.access_token().as_str(),
+            "own-access",
+            "the saved session must not be overwritten by the rejected token"
+        );
+        assert_eq!(
+            on_disk.refresh_token().unwrap().as_str(),
+            "matching-refresh",
+            "the saved refresh token must be untouched"
         );
     }
 
