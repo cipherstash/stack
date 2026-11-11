@@ -20,9 +20,10 @@
 //! Endpoint discovery now requires a valid CipherStash-hosted ZeroKMS claim
 //! on **every** token, including tokens fetched after initial discovery.
 //! Missing claims and non-hosted URLs fail before sending credentials, and so
-//! does a change of region once ZeroKMS has accepted a token. Supported domains are `viturhosted.net` and
-//! `zerokms.cipherstashmanaged.net`; HTTPS, the default port, a root path and
-//! a region known to this build's `cts-common` are required. Future regions
+//! does a change of region once ZeroKMS has accepted a token. Supported
+//! domains are `viturhosted.net` and `zerokms.cipherstashmanaged.net`; HTTPS,
+//! the default port, a root path and a region known to this build's
+//! `cts-common` are required. Future regions
 //! require an SDK upgrade. Gateways, staging and local services require an
 //! explicit endpoint through the builder or `CS_ZEROKMS_HOST`.
 //!

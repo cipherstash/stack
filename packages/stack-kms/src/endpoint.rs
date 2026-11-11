@@ -189,10 +189,11 @@ impl ZeroKmsEndpoint {
     /// [`InvalidEndpoint::NotHosted`] for a usable URL on any other host.
     pub(crate) fn from_services_claim(url: Url) -> Result<HostedEndpoint, InvalidEndpoint> {
         let endpoint = Self::new(url).map_err(|e| match e {
-            // These two keep the URL, and a claimed URL must not be kept.
-            InvalidEndpoint::NoHost(_) | InvalidEndpoint::QueryOrFragment(_) => {
-                InvalidEndpoint::NotHosted
-            }
+            // These keep the URL or part of it (`Scheme` keeps the scheme,
+            // which the claim's author chose), and a claim must not be kept.
+            InvalidEndpoint::NoHost(_)
+            | InvalidEndpoint::QueryOrFragment(_)
+            | InvalidEndpoint::Scheme(_) => InvalidEndpoint::NotHosted,
             other => other,
         })?;
         let url = endpoint.as_url();
@@ -581,6 +582,7 @@ mod tests {
                 "https://us-east-1.aws.viturhosted.net/marker-path",
                 "https://us-east-1.aws.viturhosted.net/?marker-query",
                 "https://us-east-1.aws.viturhosted.net/#marker-fragment",
+                "marker://us-east-1.aws.viturhosted.net/",
             ] {
                 let err = claimed(s).unwrap_err();
                 assert_eq!(err, InvalidEndpoint::NotHosted, "{s}");
