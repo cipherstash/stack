@@ -185,6 +185,7 @@ Each class must be declared with `stackencrypt.model` and mapped by SQLAlchemy. 
 - `declaration_table_mismatch`: the table in `stackencrypt.model` is not the `__tablename__`.
 - `declaration_column_name`: an encrypted field's column has another name than the field, as with `mapped_column("email_address")`.
 - `declaration_column_type`: an encrypted field's column is not the EQL type of its marker. Set `type_annotation_map = eql_type_map` on the base.
+- `declaration_unique_column`: an encrypted column has `unique=True` or a unique constraint. Each EQL value contains new random ciphertext, so the constraint would never find a duplicate. Use a unique index on `eql_v4.eq_term(col)`, as in "Migrations with Alembic".
 - `declaration_already_configured`: the class was configured before in this process.
 
 A statement that puts an encrypted value inside its SQL, such as `insert(Customer).values(email=...)`, raises `DeclarationError` with `declaration_inline_value`. The value is not stored. Pass the values as parameters instead, as `session.add` and `session.execute(insert(Customer), rows)` do.
@@ -199,6 +200,14 @@ A class mapped with `eql_type_map` gets a database index for each search its fie
 | `ope` | `btree (eql_v4.ord_term(col))` |
 | `ore_block` | `btree (eql_v4.ord_term_ore(col))` |
 | `match` | `gin (eql_v4.match_term(col))` |
+
+If the model declares its own index on the same term of the same column, the SDK adds none for that term. Declare it in `__table_args__`. For example, a unique email needs a unique btree index, because PostgreSQL cannot make a hash index unique:
+
+```text
+__table_args__ = (
+    Index("customers_email_unique", text("eql_v4.eq_term(email)"), unique=True),
+)
+```
 
 An `ore_block` index needs an operator class that EQL's install creates. If the role that installed EQL could not create operator classes, the index still builds. But PostgreSQL never uses it, and gives no error.
 

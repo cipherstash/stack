@@ -12,7 +12,7 @@ from alembic.autogenerate import render_python_code
 from alembic.operations import ops
 from alembic.autogenerate.api import AutogenContext
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import Column, Integer, MetaData, String, Table, Text
+from sqlalchemy import Column, Index, Integer, MetaData, String, Table, Text, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -82,6 +82,37 @@ def test_each_eql_index_of_a_marker_gets_its_database_index(marker):
         + INDEX_SQL[kind].format(col="v")
         for kind in marker.indexes
     }
+
+
+def test_an_index_the_model_declares_on_the_same_term_replaces_the_sdk_index():
+    @stackencrypt.model("members")
+    class Member(Base):
+        __tablename__ = "members"
+        # Unique, so a btree: PostgreSQL cannot make a hash index unique.
+        __table_args__ = (Index("members_email_unique", text("eql_v4.eq_term(email)"), unique=True),)
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        email: Mapped[Annotated[str, TextSearch]]
+
+    assert sorted(index.name for index in Member.__table__.indexes) == [
+        "ix_members_email_match",
+        "ix_members_email_ope",
+        "members_email_unique",
+    ]
+
+
+def test_an_index_on_another_column_does_not_replace_the_sdk_index():
+    @stackencrypt.model("guests")
+    class Guest(Base):
+        __tablename__ = "guests"
+        __table_args__ = (Index("guests_name_eq", text("eql_v4.eq_term(name)")),)
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        email: Mapped[Annotated[str, TextEq]]
+        name: Mapped[Annotated[str, TextEq]]
+
+    assert sorted(index.name for index in Guest.__table__.indexes) == [
+        "guests_name_eq",
+        "ix_guests_email_eq",
+    ]
 
 
 def test_a_table_that_is_not_mapped_gets_no_index():
