@@ -22,7 +22,7 @@ indexes independently, after read-only application checks and before fresh write
 
 The hidden Reference Migration retains source columns and rebuilds only the
 envelopes the guide proves convertible. Deterministic variants `noop`, `row-loss`,
-`wrong-mapping`, `missing-index`, `rewrite` and `missing-log` exercise the named
+`wrong-mapping`, `fresh-v2`, `missing-index`, `rewrite` and `missing-log` exercise the named
 failure checks. The existing credentialed CI self-test job runs this matrix
 when `HARNESS_LIVE=1`; ordinary self-tests skip it. Local unit checks alone do
 not establish a completed live PostgreSQL migration.

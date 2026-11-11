@@ -29,6 +29,7 @@ export async function fakeMigrate({
     'noop',
     'row-loss',
     'wrong-mapping',
+    'fresh-v2',
     'missing-index',
     'rewrite',
     'missing-log',

@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { object } from './record.mjs'
 
 const columns = ['email', 'age', 'notes']
 const targetTypes = ['eql_v3_text_eq', 'eql_v3_integer_eq', 'eql_v3_text']
@@ -12,17 +13,11 @@ export const requiredPostgresChecks = [
   'behaviour.postgres-age-lookup',
   'behaviour.postgres-fresh-write',
   'behaviour.postgres-fresh-lookups',
+  'migration.postgres-fresh-v3-storage',
   'migration.protect-dependencies-absent',
   'migration.protect-ffi-version',
   'migration.endpoint-shim-absent',
 ]
-
-/** @param {unknown} value @returns {Record<string, unknown>} */
-function object(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw Error('Invalid PostgreSQL snapshot object')
-  return Object.fromEntries(Object.entries(value))
-}
 
 /** Invalid migrated values are failed Oracle evidence, not setup exceptions.
  * @param {unknown} value @returns {Record<string, unknown>} */
@@ -65,6 +60,9 @@ export function validatePostgresBaseline(snapshot) {
       const payload = object(row[column])
       const identity = object(payload.i)
       if (
+        Object.keys(payload).some(
+          (key) => !['v', 'k', 'i', 'c', 'hm', 'ob', 'bf'].includes(key),
+        ) ||
         payload.v !== 2 ||
         payload.k !== 'ct' ||
         identity.t !== 'customers' ||
@@ -80,6 +78,7 @@ export function validatePostgresBaseline(snapshot) {
         throw Error(`Invalid legacy PostgreSQL payload: ${column}`)
     }
   }
+  return data
 }
 
 /** Compare only bytes proven retained by the guide. Version and envelope fields
@@ -88,9 +87,17 @@ export function validatePostgresBaseline(snapshot) {
  * @param {unknown} before @param {unknown} after
  * @returns {import('../types.js').OracleCheck[]} */
 export function postgresMigrationChecks(before, after) {
-  validatePostgresBaseline(before)
-  const baseline = read(before)
-  const current = read(after)
+  const baseline = validatePostgresBaseline(before)
+  let current
+  try {
+    current = read(after)
+  } catch {
+    return requiredPostgresChecks.slice(0, 4).map((id) => ({
+      id,
+      passed: false,
+      cause: 'Invalid migrated PostgreSQL snapshot identities or structure',
+    }))
+  }
   const sameRows =
     baseline.rows.size === current.rows.size &&
     [...baseline.rows.keys()].every((pk) => current.rows.has(pk))
@@ -104,13 +111,16 @@ export function postgresMigrationChecks(before, after) {
     const actual = current.rows.get(pk)
     for (const column of columns) {
       const source = object(row[column])
-      for (const name of [column, `${column}_v3`]) {
-        const value = migratedPayload(actual?.[name])
-        if (value.c !== source.c || (value.hm ?? null) !== (source.hm ?? null))
-          changed.push(`${pk}/${name}`)
-      }
+      if (!isDeepStrictEqual(actual?.[column], source))
+        changed.push(`${pk}/${column}`)
+      const value = migratedPayload(actual?.[`${column}_v3`])
+      if (value.c !== source.c || (value.hm ?? null) !== (source.hm ?? null))
+        changed.push(`${pk}/${column}_v3`)
       const target = migratedPayload(actual?.[`${column}_v3`])
-      if (target.v !== 3 || !isDeepStrictEqual(target.i, source.i))
+      if (
+        !validTarget(target, column) ||
+        !isDeepStrictEqual(target.i, source.i)
+      )
         mapped = false
     }
   }
@@ -157,4 +167,47 @@ export function postgresMigrationChecks(before, after) {
         : {}),
     },
   ]
+}
+
+/** @param {Record<string, unknown>} target @param {string} column */
+function validTarget(target, column) {
+  const keys = column === 'notes' ? ['v', 'i', 'c'] : ['v', 'i', 'c', 'hm']
+  return (
+    isDeepStrictEqual(Object.keys(target).sort(), keys.sort()) &&
+    target.v === 3 &&
+    typeof target.c === 'string' &&
+    target.c.length > 0 &&
+    isDeepStrictEqual(target.i, { t: 'customers', c: column }) &&
+    (column === 'notes' ||
+      (typeof target.hm === 'string' && target.hm.length > 0))
+  )
+}
+
+/** Inspect fresh storage independently of application return values.
+ * @param {unknown} snapshot @param {string} pk
+ * @returns {import('../types.js').OracleCheck} */
+export function postgresFreshWriteCheck(snapshot, pk) {
+  let passed = false
+  try {
+    const row = read(snapshot).rows.get(pk)
+    passed =
+      !!row &&
+      columns.every(
+        (column) =>
+          row[column] === null &&
+          validTarget(migratedPayload(row[`${column}_v3`]), column),
+      )
+  } catch {
+    /* Invalid stored evidence is a failed check. */
+  }
+  return {
+    id: 'migration.postgres-fresh-v3-storage',
+    passed,
+    ...(!passed
+      ? {
+          cause:
+            'Fresh PostgreSQL row must use v3 targets and leave retained source columns null',
+        }
+      : {}),
+  }
 }

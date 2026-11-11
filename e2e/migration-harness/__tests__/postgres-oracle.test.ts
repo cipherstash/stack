@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest'
 import {
+  postgresFreshWriteCheck,
   postgresMigrationChecks,
   validatePostgresBaseline,
 } from '../run/postgres-oracle.mjs'
@@ -186,4 +187,98 @@ test.each([
   { ...baseline(), rows: [{ pk: 'ada' }] },
 ])('Postgres baseline rejects missing legacy evidence', (snapshot) => {
   expect(() => validatePostgresBaseline(snapshot)).toThrow()
+})
+
+test('retained source envelopes remain identical, including identity and unknown metadata', () => {
+  for (const change of [
+    { i: { t: 'other', c: 'email' } },
+    { v: 3 },
+    { extra: 'private-value' },
+  ]) {
+    const after = migrated()
+    Object.assign(after.rows[0].email, change)
+    const checks = postgresMigrationChecks(baseline(), after)
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        id: 'no-rewrite.postgres-retained-bytes',
+        passed: false,
+      }),
+    )
+    expect(JSON.stringify(checks)).not.toContain('private-value')
+  }
+})
+
+test('target envelopes reject legacy fields and storage-only hm even when null', () => {
+  for (const change of [
+    { k: 'ct' },
+    { ob: null },
+    { bf: null },
+    { hm: null },
+    { extra: 'private-value' },
+  ]) {
+    const after = migrated()
+    Object.assign(after.rows[0].notes_v3, change)
+    expect(postgresMigrationChecks(baseline(), after)).toContainEqual(
+      expect.objectContaining({
+        id: 'migration.postgres-v3-columns',
+        passed: false,
+      }),
+    )
+  }
+})
+
+test.each(['duplicate', 'empty'])(
+  'invalid migrated %s identities produce named failure evidence',
+  (kind) => {
+    const after = migrated()
+    if (kind === 'duplicate') after.rows.push(after.rows[0])
+    else after.rows[0].pk = ''
+    expect(postgresMigrationChecks(baseline(), after)).toContainEqual(
+      expect.objectContaining({
+        id: 'behaviour.postgres-row-retention',
+        passed: false,
+      }),
+    )
+  },
+)
+
+test('baseline rejects unsupported term fields before migration', () => {
+  const before = baseline()
+  Object.assign(before.rows[0].email, { sv: 'unsupported' })
+  expect(() => validatePostgresBaseline(before)).toThrow(
+    'Invalid legacy PostgreSQL payload',
+  )
+})
+
+test('fresh storage requires all v3 envelopes and null legacy sources', () => {
+  const after = migrated()
+  const fresh = {
+    ...after.rows[0],
+    pk: 'new',
+    email: null,
+    age: null,
+    notes: null,
+  }
+  const snapshot = { ...after, rows: [...after.rows, fresh] }
+  expect(postgresFreshWriteCheck(snapshot, 'new').passed).toBe(true)
+  for (const column of ['email', 'age', 'notes']) {
+    expect(
+      postgresFreshWriteCheck(
+        {
+          ...snapshot,
+          rows: [...after.rows, { ...fresh, [column]: after.rows[0].email }],
+        },
+        'new',
+      ).passed,
+    ).toBe(false)
+    expect(
+      postgresFreshWriteCheck(
+        {
+          ...snapshot,
+          rows: [...after.rows, { ...fresh, [`${column}_v3`]: null }],
+        },
+        'new',
+      ).passed,
+    ).toBe(false)
+  }
 })

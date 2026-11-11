@@ -14,6 +14,7 @@ const checks = [
   'behaviour.postgres-age-lookup',
   'behaviour.postgres-fresh-write',
   'behaviour.postgres-fresh-lookups',
+  'migration.postgres-fresh-v3-storage',
 ]
 test('Postgres Run requires its own Oracle contract rather than DynamoDB HMAC checks', async () => {
   const driver = {
@@ -33,7 +34,7 @@ test('Postgres Run requires its own Oracle contract rather than DynamoDB HMAC ch
   expect((await run({ id: 'pg', manifest, driver })).outcome).toBe('pass')
   driver.behaviour = async () =>
     checks
-      .filter((id) => id !== 'migration.postgres-indexes')
+      .filter((id) => id !== 'migration.postgres-fresh-v3-storage')
       .map((id) => ({ id, passed: true }))
   expect((await run({ id: 'pg-missing', manifest, driver })).outcome).toBe(
     'behaviour',
