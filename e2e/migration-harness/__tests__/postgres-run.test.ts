@@ -15,6 +15,8 @@ const checks = [
   'behaviour.postgres-fresh-write',
   'behaviour.postgres-fresh-lookups',
   'migration.postgres-fresh-v3-storage',
+  'migration.postgres-migrate',
+  'migration.postgres-migrate-rerun',
 ]
 test('Postgres Run requires its own Oracle contract rather than DynamoDB HMAC checks', async () => {
   const driver = {

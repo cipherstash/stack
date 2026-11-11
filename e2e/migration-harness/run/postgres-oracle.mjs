@@ -17,6 +17,8 @@ export const requiredPostgresChecks = [
   'migration.protect-dependencies-absent',
   'migration.protect-ffi-version',
   'migration.endpoint-shim-absent',
+  'migration.postgres-migrate',
+  'migration.postgres-migrate-rerun',
 ]
 
 /** Invalid migrated values are failed Oracle evidence, not setup exceptions.

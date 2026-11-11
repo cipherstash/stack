@@ -142,7 +142,13 @@ These stories extend, rather than renumber, the 42 harness stories below.
   EQL generations in its Run Manifest.
 - The Postgres extension applies the migrated application's database migration
   through the restricted App Host to independently seeded Oracle Stores before
-  checking them. Migrator Stores remain separate. Compare source bytes and
+  checking them. The guide runs that conversion as a one-off step in a
+  write-maintenance window, not at application startup, so the Postgres Fixture
+  App exposes it as a separate entry point (`src/migrate.mjs`, `migrate(env)`)
+  and `createApp` must not alter the schema. The Oracle runs `migrate(env)` once
+  before App Host starts `createApp`, then again: the rerun is safe only if the
+  Oracle snapshots before and after it are identical, whether it succeeded or
+  refused. Migrator Stores remain separate. Compare source bytes and
   verified retained ciphertext/search terms across conversion; permitted new
   envelopes, target columns and indexes are not themselves no-rewrite failures.
   Unexpected ciphertext rewriting for a mapping proven to retain bytes fails.

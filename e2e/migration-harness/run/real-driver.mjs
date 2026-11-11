@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
-import { promisify } from 'node:util'
+import { isDeepStrictEqual, promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
 import { fakeMigrate } from './fake-migrator.mjs'
 import { migrationChecks } from './migration-checks.mjs'
@@ -91,8 +91,9 @@ export function createRealDriver({
   function forwards(stores) {
     return [...assigned(stores).forwards, ...services]
   }
-  /** @param {string} actor @param {string} directory @param {StoreSet|null} stores @param {string[]} argv */
-  async function execute(actor, directory, stores, argv) {
+  /** Runs one isolated command and keeps its output, whatever its exit code.
+   * @param {string} actor @param {string} directory @param {StoreSet|null} stores @param {string[]} argv */
+  async function attempt(actor, directory, stores, argv) {
     const result = await isolation.exec({
       actor,
       workspace: directory,
@@ -104,9 +105,71 @@ export function createRealDriver({
       resolve(output, `${actor}-${Date.now()}.log`),
       `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
     )
+    return result
+  }
+  /** @param {string} actor @param {string} directory @param {StoreSet|null} stores @param {string[]} argv */
+  async function execute(actor, directory, stores, argv) {
+    const result = await attempt(actor, directory, stores, argv)
     if (result.exitCode !== 0)
       throw Error(`${actor} command exited ${result.exitCode}`)
     return result
+  }
+  /** Reads the Oracle database with the harness's admin connection. A store
+   * transport failure is infrastructure; anything else is migration damage. */
+  async function oracleSnapshot() {
+    try {
+      return await assigned(oracleStores).postgresSnapshot()
+    } catch (error) {
+      throw Object.assign(
+        Error('PostgreSQL Oracle snapshot failed', { cause: error }),
+        { infrastructure: isSnapshotInfrastructureError(error) },
+      )
+    }
+  }
+  /** The guide runs the PostgreSQL conversion as a one-off step in a
+   * write-maintenance window, not at application startup. The Oracle runs the
+   * workspace's `src/migrate.mjs` `migrate(env)` inside App Host against its
+   * fresh database, then runs it again: a rerun must either succeed without
+   * changing data or refuse without changing anything. Data, not the exit
+   * code, decides the rerun check.
+   * @returns {Promise<import('../types.js').OracleCheck[]>} */
+  async function postgresConversion() {
+    const convert = () =>
+      attempt('app-host', oracleWorkspace, oracleStores, [
+        'node',
+        '/harness/app-host.mjs',
+        'migrate',
+      ])
+    const first = await convert()
+    if (first.exitCode !== 0)
+      return [
+        {
+          id: 'migration.postgres-migrate',
+          passed: false,
+          cause: `migrate(env) exited ${first.exitCode}`,
+        },
+        {
+          id: 'migration.postgres-migrate-rerun',
+          passed: false,
+          cause: 'Rerun not checked: the first migrate(env) failed',
+        },
+      ]
+    const before = await oracleSnapshot()
+    const rerun = await convert()
+    const after = await oracleSnapshot()
+    const unchanged = isDeepStrictEqual(before, after)
+    return [
+      { id: 'migration.postgres-migrate', passed: true },
+      {
+        id: 'migration.postgres-migrate-rerun',
+        passed: unchanged,
+        ...(unchanged
+          ? {}
+          : {
+              cause: `Rerunning migrate(env) changed stored data (exit ${rerun.exitCode})`,
+            }),
+      },
+    ]
   }
   return {
     async provision() {
@@ -348,6 +411,8 @@ export function createRealDriver({
           ? 'file:./resolved-stack.tgz'
           : `@cipherstash/stack@${manifest.stack}`,
       ])
+      // PostgreSQL starts createApp only after its conversion, in behaviour().
+      if (postgresUpgrade) return
       host = await isolation.openAppHost({
         actor: 'app-host',
         workspace: oracleWorkspace,
@@ -356,6 +421,17 @@ export function createRealDriver({
       })
     },
     async behaviour() {
+      /** @type {import('../types.js').OracleCheck[]} */
+      let conversion = []
+      if (postgresUpgrade) {
+        conversion = await postgresConversion()
+        host = await isolation.openAppHost({
+          actor: 'app-host',
+          workspace: oracleWorkspace,
+          env: env(oracleStores),
+          forwards: forwards(oracleStores),
+        })
+      }
       const application = host
       if (!application) throw Error('App Host has not started')
       try {
@@ -372,15 +448,8 @@ export function createRealDriver({
               }
             },
           )
-          let current
-          try {
-            current = await assigned(oracleStores).postgresSnapshot()
-          } catch (error) {
-            throw Object.assign(
-              Error('PostgreSQL Oracle snapshot failed', { cause: error }),
-              { infrastructure: isSnapshotInfrastructureError(error) },
-            )
-          }
+          const current = await oracleSnapshot()
+          result.checks.unshift(...conversion)
           result.checks.push(
             ...postgresMigrationChecks(legacySnapshot, current),
           )

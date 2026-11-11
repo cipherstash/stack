@@ -15,10 +15,18 @@ source and target EQL generations, exact Stack source and guide hash.
 
 The PostgreSQL procedure installs the historical EQL 2.2.1 bundle alongside v3
 and seeds each independent Store Set with Protect.js writes to v2 columns.
-Legacy reads and queries must pass before migration. The migrated application's
-`createApp` applies its database conversion inside App Host using the Oracle
-Store Set's application role. The harness snapshots stored rows, domains and
-indexes independently, after read-only application checks and before fresh writes.
+Legacy reads and queries must pass before migration. As the guide prescribes a
+one-off conversion in a write-maintenance window rather than at application
+startup, the Fixture App has a separate entry point, `src/migrate.mjs`
+`migrate(env)`, and `createApp` must not alter the schema. The Oracle runs
+`migrate(env)` inside App Host (`node /harness/app-host.mjs migrate`) using the
+Oracle Store Set's application role, then runs it again: the rerun passes
+`migration.postgres-migrate-rerun` only if the Oracle snapshots before and after
+it are identical, whether it succeeded or refused with a non-zero exit. A failed
+first `migrate(env)` fails `migration.postgres-migrate` as a behaviour failure.
+Only then does App Host start `createApp`. The harness snapshots stored rows,
+domains and indexes independently, after read-only application checks and
+before fresh writes.
 
 The hidden Reference Migration retains source columns and rebuilds only the
 envelopes the guide proves convertible. Deterministic variants `noop`, `row-loss`,
