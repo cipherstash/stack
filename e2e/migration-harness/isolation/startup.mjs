@@ -9,6 +9,7 @@ for (const name of [
   'HARNESS_CONFIG',
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
   'HARNESS_MODEL_CANARY',
 ]) {
   if (process.env[name])

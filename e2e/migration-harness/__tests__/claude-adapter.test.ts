@@ -170,8 +170,45 @@ test.each(['turn-limit', 'over-budget'])(
 test('Claude refuses a login-only host without making a tool call', async () => {
   const f = await fixture()
   vi.stubEnv('ANTHROPIC_API_KEY', '')
-  expect((await f.run()).stderr).toContain('explicit ANTHROPIC_API_KEY')
+  vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', '')
+  expect((await f.run()).stderr).toContain(
+    'explicit ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN',
+  )
   expect(f.execute).not.toHaveBeenCalled()
+})
+
+// --bare reads only ANTHROPIC_API_KEY or apiKeyHelper, never OAuth, so a
+// subscription token from `claude setup-token` runs without --bare. Isolation
+// then rests on the other flags, the empty config directory and the init check.
+test('Claude can authenticate with an explicit subscription token', async () => {
+  const f = await fixture()
+  vi.stubEnv('ANTHROPIC_API_KEY', '')
+  vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'test-subscription-token')
+  const outcome = await f.run()
+  expect(outcome, outcome.stderr).toMatchObject({ exitCode: 0 })
+  const launch = JSON.parse(await readFile(f.report, 'utf8'))
+  expect(launch.env).toMatchObject({
+    CLAUDE_CODE_OAUTH_TOKEN: 'test-subscription-token',
+    CLAUDE_CONFIG_DIR: launch.env.HOME,
+  })
+  expect(launch.env).not.toHaveProperty('ANTHROPIC_API_KEY')
+  expect(launch.env).not.toHaveProperty('CS_CLIENT_KEY')
+  expect(launch.args).not.toContain('--bare')
+  expect(launch.args).toEqual(
+    expect.arrayContaining([
+      '--restricted',
+      '--strict-mcp-config',
+      '--setting-sources',
+      '',
+      '--disable-slash-commands',
+      '--no-session-persistence',
+    ]),
+  )
+  expect(launch.config.mcpServers.migration.env).toMatchObject({
+    ANTHROPIC_API_KEY: '',
+    CLAUDE_CODE_OAUTH_TOKEN: '',
+  })
+  expect(outcome.stdout).not.toContain('test-subscription-token')
 })
 
 test('Claude version failures do not export provider diagnostics', async () => {
