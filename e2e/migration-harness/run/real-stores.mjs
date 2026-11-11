@@ -264,18 +264,31 @@ export async function createStoreSet({
   return {
     env,
     async postgresSnapshot() {
-      const rows =
-        await snapshotSql`SELECT to_jsonb(customers) AS row FROM customers ORDER BY pk`
       const attributes =
         await snapshotSql`SELECT attname, atttypid::regtype::text AS type FROM pg_attribute
         WHERE attrelid = 'public.customers'::regclass AND attnum > 0 AND NOT attisdropped`
+      // Composite to_jsonb does not reliably unwrap encrypted domains. Cast each
+      // known encrypted column to its JSONB base type, as application reads do.
+      const encryptedColumns = [
+        'email',
+        'age',
+        'notes',
+        'email_v3',
+        'age_v3',
+        'notes_v3',
+      ].filter((name) =>
+        attributes.some((attribute) => attribute.attname === name),
+      )
+      const rows = await snapshotSql.unsafe(
+        `SELECT pk${encryptedColumns.map((name) => `, "${name}"::jsonb AS "${name}"`).join('')} FROM customers ORDER BY pk`,
+      )
       const indexes =
         await snapshotSql`SELECT pg_get_indexdef(ix.indexrelid, 1, true) AS expression,
         ix.indisvalid AS valid, ix.indisready AS ready, (ix.indpred IS NOT NULL) AS partial, am.amname AS method
         FROM pg_index ix JOIN pg_class idx ON idx.oid = ix.indexrelid JOIN pg_am am ON am.oid = idx.relam
         WHERE ix.indrelid = 'public.customers'::regclass AND ix.indnatts = 1`
       return {
-        rows: rows.map((entry) => entry.row),
+        rows: [...rows],
         columns: Object.fromEntries(
           attributes.map((entry) => [entry.attname, entry.type]),
         ),
