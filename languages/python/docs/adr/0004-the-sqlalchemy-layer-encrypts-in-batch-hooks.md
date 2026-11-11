@@ -39,6 +39,7 @@ Each encrypted value needs its own data key from ZeroKMS, CipherStash's key serv
 
 - Writes: a `before_execute` hook on the engine. For each `INSERT` or `UPDATE` on a configured table, it encrypts the parameters of every row with one `Cipher.encrypt_rows` call.
 - Reads: the `load` and `refresh` events of each class record the objects a query builds. A `do_orm_execute` hook then decrypts them, with one `Cipher.decrypt_rows` call for each class and set of fields. It sets the plaintext with `set_committed_value`, so the objects are not marked as changed.
+- Reads of columns: the same hook decrypts the result columns that are encrypted fields, as in `select(Customer.email, Customer.plan)`. It makes one `decrypt_rows` call for each class and set of fields.
 
 ### Why B
 
@@ -130,7 +131,7 @@ Reads do not check passthrough values, as `decrypt_rows` reads only the encrypte
 ## Consequences
 
 - A query result is read in full before it is returned, so that its objects can be decrypted in one batch. A query that streams its rows does not stream.
-- A Core query, such as `conn.execute(text(...))`, is not decrypted. It returns EQL values.
+- A query run on a connection, not a session, is not decrypted. It returns EQL values, and the app calls `cipher.decrypt_rows`. A connection has no hook that can change a result. A session query of columns is decrypted.
 - The layer imports SQLAlchemy. The rest of the package still does not. SQLAlchemy is not a runtime dependency.
 - `do_orm_execute` is registered on every session in the process. It acts only on objects of configured classes.
 
@@ -138,6 +139,5 @@ Reads do not check passthrough values, as `decrypt_rows` reads only the encrypte
 
 - `between`, as two comparisons. The engine has no range term for EQL types (ADR-0003, amendment).
 - `matches` through the ORM. ADR-0003 says the layer should hide `target_limit` and `verify`.
-- Core queries.
 - The reverse migration of a change to an EQL type.
 - Installing EQL from a migration.
