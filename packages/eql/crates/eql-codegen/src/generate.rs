@@ -307,7 +307,7 @@ pub fn render_query_functions_file(
 ) -> String {
     use crate::consts::sql_str;
     use crate::context::{
-        cross_blocker_entry, domain_name, environment, extractor_entry, query_domain_name,
+        domain_name, environment, extractor_entry, mismatch_blocker_entry, query_domain_name,
         wrapper_entry, FunctionsContext, SqlParam,
     };
     let name = domain.full_name(family_name);
@@ -365,7 +365,7 @@ pub fn render_query_functions_file(
                 (sibling_dom.clone(), query_dom.clone()),
                 (query_dom.clone(), sibling_dom.clone()),
             ] {
-                entries.push(cross_blocker_entry(
+                entries.push(mismatch_blocker_entry(
                     op,
                     [
                         SqlParam {

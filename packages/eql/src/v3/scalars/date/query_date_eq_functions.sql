@@ -46,110 +46,110 @@ CREATE FUNCTION eql_v3.neq(a eql_v3.query_date_eq, b public.eql_v3_date_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
 
---! @brief Blocker: public.eql_v3_date_ord_ore = eql_v3.query_date_eq always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: public.eql_v3_date_ord_ore and eql_v3.query_date_eq (mismatched query domain).
 --! @param a public.eql_v3_date_ord_ore left operand
 --! @param b eql_v3.query_date_eq right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_date_ord_ore, b eql_v3.query_date_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '=', 'public.eql_v3_date_ord_ore', 'eql_v3.query_date_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_date_ord_ore and eql_v3.query_date_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: eql_v3.query_date_eq = public.eql_v3_date_ord_ore always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: eql_v3.query_date_eq and public.eql_v3_date_ord_ore (mismatched query domain).
 --! @param a eql_v3.query_date_eq left operand
 --! @param b public.eql_v3_date_ord_ore right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_date_eq, b public.eql_v3_date_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '=', 'eql_v3.query_date_eq', 'public.eql_v3_date_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_date_eq and public.eql_v3_date_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: public.eql_v3_date_ord_ore <> eql_v3.query_date_eq always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: public.eql_v3_date_ord_ore and eql_v3.query_date_eq (mismatched query domain).
 --! @param a public.eql_v3_date_ord_ore left operand
 --! @param b eql_v3.query_date_eq right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_date_ord_ore, b eql_v3.query_date_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '<>', 'public.eql_v3_date_ord_ore', 'eql_v3.query_date_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_date_ord_ore and eql_v3.query_date_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: eql_v3.query_date_eq <> public.eql_v3_date_ord_ore always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: eql_v3.query_date_eq and public.eql_v3_date_ord_ore (mismatched query domain).
 --! @param a eql_v3.query_date_eq left operand
 --! @param b public.eql_v3_date_ord_ore right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_date_eq, b public.eql_v3_date_ord_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '<>', 'eql_v3.query_date_eq', 'public.eql_v3_date_ord_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_date_eq and public.eql_v3_date_ord_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: public.eql_v3_date_ord = eql_v3.query_date_eq always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: public.eql_v3_date_ord and eql_v3.query_date_eq (mismatched query domain).
 --! @param a public.eql_v3_date_ord left operand
 --! @param b eql_v3.query_date_eq right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_date_ord, b eql_v3.query_date_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '=', 'public.eql_v3_date_ord', 'eql_v3.query_date_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_date_ord and eql_v3.query_date_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: eql_v3.query_date_eq = public.eql_v3_date_ord always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: eql_v3.query_date_eq and public.eql_v3_date_ord (mismatched query domain).
 --! @param a eql_v3.query_date_eq left operand
 --! @param b public.eql_v3_date_ord right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_date_eq, b public.eql_v3_date_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '=', 'eql_v3.query_date_eq', 'public.eql_v3_date_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_date_eq and public.eql_v3_date_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: public.eql_v3_date_ord <> eql_v3.query_date_eq always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: public.eql_v3_date_ord and eql_v3.query_date_eq (mismatched query domain).
 --! @param a public.eql_v3_date_ord left operand
 --! @param b eql_v3.query_date_eq right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_date_ord, b eql_v3.query_date_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '<>', 'public.eql_v3_date_ord', 'eql_v3.query_date_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_date_ord and eql_v3.query_date_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: eql_v3.query_date_eq <> public.eql_v3_date_ord always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: eql_v3.query_date_eq and public.eql_v3_date_ord (mismatched query domain).
 --! @param a eql_v3.query_date_eq left operand
 --! @param b public.eql_v3_date_ord right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_date_eq, b public.eql_v3_date_ord)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '<>', 'eql_v3.query_date_eq', 'public.eql_v3_date_ord'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_date_eq and public.eql_v3_date_ord'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: public.eql_v3_date_ord_ope = eql_v3.query_date_eq always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: public.eql_v3_date_ord_ope and eql_v3.query_date_eq (mismatched query domain).
 --! @param a public.eql_v3_date_ord_ope left operand
 --! @param b eql_v3.query_date_eq right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.eq(a public.eql_v3_date_ord_ope, b eql_v3.query_date_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '=', 'public.eql_v3_date_ord_ope', 'eql_v3.query_date_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'public.eql_v3_date_ord_ope and eql_v3.query_date_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: eql_v3.query_date_eq = public.eql_v3_date_ord_ope always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: eql_v3.query_date_eq and public.eql_v3_date_ord_ope (mismatched query domain).
 --! @param a eql_v3.query_date_eq left operand
 --! @param b public.eql_v3_date_ord_ope right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.eq(a eql_v3.query_date_eq, b public.eql_v3_date_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '=', 'eql_v3.query_date_eq', 'public.eql_v3_date_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '=', 'eql_v3.query_date_eq and public.eql_v3_date_ord_ope'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: public.eql_v3_date_ord_ope <> eql_v3.query_date_eq always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: public.eql_v3_date_ord_ope and eql_v3.query_date_eq (mismatched query domain).
 --! @param a public.eql_v3_date_ord_ope left operand
 --! @param b eql_v3.query_date_eq right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.neq(a public.eql_v3_date_ord_ope, b eql_v3.query_date_eq)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '<>', 'public.eql_v3_date_ord_ope', 'eql_v3.query_date_eq'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'public.eql_v3_date_ord_ope and eql_v3.query_date_eq'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Blocker: eql_v3.query_date_eq <> public.eql_v3_date_ord_ope always raises (mismatched query domain).
+--! @brief Unsupported operator blocker for eql_v3.query_date_eq: eql_v3.query_date_eq and public.eql_v3_date_ord_ope (mismatched query domain).
 --! @param a eql_v3.query_date_eq left operand
 --! @param b public.eql_v3_date_ord_ope right operand
 --! @return boolean never returned — the function always raises
 CREATE FUNCTION eql_v3_internal.neq(a eql_v3.query_date_eq, b public.eql_v3_date_ord_ope)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported between % and %: use the query domain that matches the column', '<>', 'eql_v3.query_date_eq', 'public.eql_v3_date_ord_ope'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '<>', 'eql_v3.query_date_eq and public.eql_v3_date_ord_ope'; END; $$
 LANGUAGE plpgsql;

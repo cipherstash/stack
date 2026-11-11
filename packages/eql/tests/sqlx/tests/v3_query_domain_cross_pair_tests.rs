@@ -69,7 +69,7 @@ async fn probe(pool: &PgPool, left: &str, op: &str, right: &str) -> Option<Strin
 }
 
 #[sqlx::test]
-async fn every_cross_family_pair_raises_in_both_directions(pool: PgPool) -> Result<()> {
+async fn every_same_family_cross_domain_pair_raises_in_both_directions(pool: PgPool) -> Result<()> {
     let twins = twins(&pool).await?;
     assert!(twins.len() > 20, "catalog enumeration found {twins:?}");
 
@@ -100,7 +100,7 @@ async fn every_cross_family_pair_raises_in_both_directions(pool: PgPool) -> Resu
     assert!(checked > 500, "only {checked} pairs checked");
     assert!(
         leaks.is_empty(),
-        "{} of {checked} cross-family pairs did not raise:\n{}",
+        "{} of {checked} same-family cross-domain pairs did not raise:\n{}",
         leaks.len(),
         leaks.join("\n")
     );
@@ -120,7 +120,7 @@ async fn reported_mismatches_raise(pool: PgPool) -> Result<()> {
         let err = probe(&pool, l, op, r)
             .await
             .unwrap_or_else(|| panic!("{l} {op} {r} fell through to native jsonb"));
-        assert!(err.contains("not supported between"), "{l} {op} {r}: {err}");
+        assert!(err.contains("is not supported for"), "{l} {op} {r}: {err}");
     }
     Ok(())
 }
@@ -140,5 +140,38 @@ async fn matching_twin_still_compares(pool: PgPool) -> Result<()> {
     ] {
         assert_eq!(probe(&pool, l, op, r).await, None, "{l} {op} {r}");
     }
+    Ok(())
+}
+
+/// The blockers are recognised as blockers by `eql_v3.lints()` (it matches their
+/// message text), so none is reported as an inlinability or blocker-shape error.
+/// Without the shared `is not supported for` marker every one of them is
+/// misclassified as an ordinary operator wrapper that fails to inline.
+#[sqlx::test]
+async fn cross_pair_blockers_are_recognised_by_the_lints(pool: PgPool) -> Result<()> {
+    let flagged: Vec<(String, String, String)> = sqlx::query_as(
+        r#"SELECT severity, category, object_name FROM eql_v3.lints()
+           WHERE severity = 'error'
+             AND object_name LIKE 'operator %'
+             AND object_name LIKE '%query\_%'"#,
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert!(
+        flagged.is_empty(),
+        "lint errors on query-twin operators: {flagged:?}"
+    );
+
+    let blockers: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'eql_v3_internal'
+           WHERE p.prosrc LIKE '%use the query domain that matches the column%'"#,
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(
+        blockers > 500,
+        "only {blockers} cross-pair blockers installed"
+    );
     Ok(())
 }

@@ -45,11 +45,6 @@ pub fn environment() -> minijinja::Environment<'static> {
     )
     .expect("functions/unsupported.sql.j2 template");
     env.add_template(
-        "functions/crossblocker.sql.j2",
-        include_str!("../templates/functions/crossblocker.sql.j2"),
-    )
-    .expect("functions/crossblocker.sql.j2 template");
-    env.add_template(
         "operators.sql",
         include_str!("../templates/operators.sql.j2"),
     )
@@ -234,16 +229,12 @@ pub enum FnEntry {
         function_name: String, // e.g. lt / "->" / "#>"
         args: [SqlParam; 2],
         returns: String, // boolean / text / jsonb / domain (selection STAYS in Rust)
-    },
-    /// A blocker for a storage domain paired with ANOTHER domain's query twin.
-    /// Compact (no per-parameter docs) because there is one per ordered pair of
-    /// domains in a family, and its message names both operands so the caller
-    /// sees which query domain they should have used.
-    CrossBlocker {
-        operator_lit: String,
-        function_name: String,
-        args: [SqlParam; 2],
-        returns: String,
+        // `Some("<a> and <b>")` (sql_str-escaped) for a blocker that rejects a
+        // storage domain paired with ANOTHER domain's query twin: the template
+        // then emits compact docs (there is one per ordered pair of domains in a
+        // family) and a message naming both operands. `None` for every other
+        // blocker.
+        mismatch: Option<String>,
     },
 }
 
@@ -313,16 +304,30 @@ pub fn unsupported_entry(op: &Operator, args: [SqlParam; 2], returns: &str) -> F
         function_name: op.function_name.to_string(),
         args,
         returns: returns.to_string(),
+        mismatch: None,
     }
 }
 
-/// Build a cross-domain blocker entry (see [`FnEntry::CrossBlocker`]).
-pub fn cross_blocker_entry(op: &Operator, args: [SqlParam; 2], returns: &str) -> FnEntry {
-    FnEntry::CrossBlocker {
-        operator_lit: sql_str(op.symbol.as_str()),
-        function_name: op.function_name.to_string(),
-        args,
-        returns: returns.to_string(),
+/// Build a blocker for a storage domain paired with another domain's query twin
+/// (see [`FnEntry::Unsupported::mismatch`]). Same marker text as every other
+/// blocker, so the lints that recognise blockers by message keep seeing it.
+pub fn mismatch_blocker_entry(op: &Operator, args: [SqlParam; 2], returns: &str) -> FnEntry {
+    let operands = sql_str(&format!("{} and {}", args[0].ty, args[1].ty));
+    match unsupported_entry(op, args, returns) {
+        FnEntry::Unsupported {
+            operator_lit,
+            function_name,
+            args,
+            returns,
+            ..
+        } => FnEntry::Unsupported {
+            operator_lit,
+            function_name,
+            args,
+            returns,
+            mismatch: Some(operands),
+        },
+        other => other,
     }
 }
 
