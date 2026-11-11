@@ -44,14 +44,24 @@ const PLATFORMS_DIR = join(
 /**
  * Where each platform builds.
  *
- * Linux goes to Blacksmith (the repo's standard Linux runner); the Darwin and
- * Windows builds need GitHub-hosted images for their SDKs. Both Darwin
- * platforms share `macos-latest` and cross-compile — which is exactly why
- * `target` is explicit.
+ * Darwin and Windows need GitHub-hosted images for their SDKs; both Darwin
+ * platforms share `macos-latest` and cross-compile, which is why `target` is
+ * explicit. The gnu builds took just over twice as long on GitHub's standard
+ * runner as on Blacksmith 4 vCPU, so they run on RunsOn. A matrix value cannot
+ * read `${{ github.run_id }}`, so the run ID that makes the RunsOn label unique
+ * is passed in. musl stays on Blacksmith: it could not be timed, because its
+ * image pins a `musl-dev` that Alpine no longer serves.
  */
-export function runnerFor(platform) {
+export function runnerFor(platform, runId = process.env.GITHUB_RUN_ID) {
   if (platform.startsWith('win32')) return 'windows-latest'
   if (platform.startsWith('darwin')) return 'macos-latest'
+  if (platform.startsWith('linux-') && platform.endsWith('-gnu')) {
+    if (!runId)
+      throw new Error(
+        `${platform} builds on RunsOn, whose label needs the run ID; set GITHUB_RUN_ID`,
+      )
+    return `runs-on=${runId}/family=c8a+m8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache`
+  }
   return 'blacksmith-4vcpu-ubuntu-2404'
 }
 
@@ -97,11 +107,11 @@ export function triplesFromPlatformManifests(dir = PLATFORMS_DIR) {
  * `triples` is a platform name -> Rust target triple mapping, as
  * `triplesFromPlatformManifests()` (or `neon list-platforms`) produces.
  */
-export function releaseMatrix(triples) {
+export function releaseMatrix(triples, runId = process.env.GITHUB_RUN_ID) {
   return Object.entries(triples).map(([platform, target]) => ({
     platform,
     target,
-    os: runnerFor(platform),
+    os: runnerFor(platform, runId),
     ...buildFor(platform),
   }))
 }

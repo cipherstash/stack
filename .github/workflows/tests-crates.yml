@@ -79,7 +79,7 @@ env:
 jobs:
   rust:
     name: fmt, clippy, nextest, doctests, rustdoc
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 60
     env:
       # Job-level, not workflow-level: RUSTFLAGS replaces the
@@ -158,7 +158,7 @@ jobs:
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6

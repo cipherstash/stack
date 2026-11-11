@@ -64,7 +64,7 @@ env:
 jobs:
   mutants:
     name: Mutants gate
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 120
     permissions:
       contents: read
