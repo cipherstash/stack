@@ -13,7 +13,7 @@ from typing import Annotated, List, Optional
 
 import pytest
 from _live import DATABASE_URL, LIVE, needs_database
-from sqlalchemy import ForeignKey, and_, create_engine, delete, func, not_, or_, select, text, update
+from sqlalchemy import ForeignKey, and_, create_engine, delete, desc, func, not_, or_, select, text, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
 import stackencrypt
@@ -683,3 +683,13 @@ def test_a_column_named_by_a_string_in_order_by_sorts_by_the_plaintext(engine, r
     assert labels_of(engine, select(Run).order_by(desc("pace").nulls_last())) == ["d", "a", "e", "b", "c"]
     assert "ORDER BY eql_v4.ord_term(runs.average_hr)" in sent[-2], sent[-2]
     assert "ORDER BY eql_v4.ord_term(runs.pace) DESC NULLS LAST" in sent[-1], sent[-1]
+
+
+def test_a_plaintext_label_with_an_encrypted_columns_name_sorts_by_the_plaintext(engine, runs, sent):
+    # The label "average_hr" names the plaintext label column.
+    renamed = Run.label.label("average_hr")
+    with Session(engine) as session:
+        found = session.execute(select(renamed).order_by(desc("average_hr"))).scalars().all()
+
+    assert found == ["e", "d", "c", "b", "a"]
+    assert "ord_term" not in sent[-1], sent[-1]
