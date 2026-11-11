@@ -184,10 +184,12 @@ pub mod transcode;
 mod tuples;
 
 pub(crate) use self::core::{bind_pending, seal_pending};
-/// The check a `#[stash(context_field)]` record runs on decrypt. It is not
-/// part of the API: the derives and the EQL types name it, and a caller
-/// passes a `NonEmpty<T>` or nothing. It is public only so that code the
-/// derives emit in another crate can name it. The definition is hidden too.
+/// The check that a `#[stash(context_field)]` record runs on decrypt.
+///
+/// `ExpectedContext` is not part of the API. Only the derives and the EQL
+/// types name it, and a caller passes a `NonEmpty<T>` or nothing. The type
+/// is public only because the derives emit code in other crates that
+/// names it. The definition is hidden too.
 #[doc(hidden)]
 pub use context::ExpectedContext;
 pub use context::{

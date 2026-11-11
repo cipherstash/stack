@@ -69,9 +69,9 @@ pub trait EncryptFrom<S>: Sized + 'static {
 /// ciphertext and its context, and [`open`] describes the rest. A query-only
 /// target (terms alone) has no implementation.
 pub trait DecryptInto<P>: Sized {
-    /// What a caller supplies to open the target. A record that stores its
-    /// context converts from `()` or from the `NonEmpty<T>` the caller
-    /// believes it is opening.
+    /// The context that a caller passes to decrypt the target. For a
+    /// record that stores its context, the caller passes `()`, or the
+    /// `NonEmpty<T>` that the caller expects the record to store.
     type Context;
     /// The description the cipher executes to recover `P`.
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K>;
