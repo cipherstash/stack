@@ -44,7 +44,7 @@ Stack reads and writes the same two attributes:
 - It decrypts a legacy `__source` with no read option (`compat › every legacy item decrypts, one at a time, with no read option`, `compat › every legacy item decrypts in one bulk call`), and gets the same plaintext protect-dynamodb does (`compat › agrees with what protect-dynamodb itself decrypts`).
 - Its `encryptQuery` mints the same `__hmac` that protect-dynamodb's `createSearchTerms` did (`compat › matches protect-dynamodb createSearchTerms for the same value`), so the tested text and numeric equality queries match the expected legacy items (`compat › every equality query finds exactly the legacy rows it should`).
 - A new Stack write sits beside legacy items, and one query and one bulk read cover both (`compat › new Stack writes sit beside legacy items: one query and one bulk read cover both`).
-- Reading and querying leave the stored items byte-identical (`compat › Stack's reads and queries left every stored item byte-identical`).
+- Reading and querying leave the in-memory stored item objects byte-identical (`compat › Stack's reads and queries left every stored item byte-identical`).
 - A tampered ciphertext fails to decrypt; it never returns wrong plaintext (`compat › fails, never returns wrong plaintext, when the ciphertext is tampered with`).
 
 ## Steps
