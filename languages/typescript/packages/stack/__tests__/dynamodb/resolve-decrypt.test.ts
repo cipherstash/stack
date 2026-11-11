@@ -448,15 +448,13 @@ describe('handleError', () => {
 
   // The message may quote a plaintext value (CIP-5161). It is returned to the
   // caller on the error, but the library's own log names only the failure kind.
-  it('logs the failure kind and code, never the message', () => {
-    const failure = Object.assign(
-      new Error('value "Qzx-secret-wvy" rejected'),
-      {
-        code: 'UNKNOWN_COLUMN',
-      },
-    )
+  const leakyFailure = () =>
+    Object.assign(new Error('value "Qzx-secret-wvy" rejected'), {
+      code: 'UNKNOWN_COLUMN',
+    })
 
-    const error = handleError(failure, 'encryptModel')
+  it('logs the failure kind and code, never the message', () => {
+    const error = handleError(leakyFailure(), 'encryptModel')
 
     expect(error.message).toContain('Qzx-secret-wvy')
     const logged = errorLog.mock.calls.flat().join('\n')
@@ -469,16 +467,10 @@ describe('handleError', () => {
   // service, so it gets the same log-safe description as the shared logger.
   // The full message stays on the returned error and on `errorHandler`'s.
   it('hands the configured logger a log-safe error, and errorHandler the full one', () => {
-    const failure = Object.assign(
-      new Error('value "Qzx-secret-wvy" rejected'),
-      {
-        code: 'UNKNOWN_COLUMN',
-      },
-    )
     const logged: unknown[] = []
     const handled: Error[] = []
 
-    const error = handleError(failure, 'encryptModel', {
+    const error = handleError(leakyFailure(), 'encryptModel', {
       logger: { error: (message, err) => logged.push(message, err) },
       errorHandler: (err) => handled.push(err),
     })

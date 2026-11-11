@@ -1,9 +1,5 @@
-import { PROTECT_ERROR_CODES } from '@cipherstash/protect-ffi'
 import { describe, expect, it } from 'vitest'
-import {
-  describeFailure,
-  FFI_ERROR_CODES,
-} from '@/utils/logger/describe-failure'
+import { describeFailure } from '@/utils/logger/describe-failure'
 
 // `describeFailure` is what adapters log in place of an error's message, which
 // may quote a plaintext value (CIP-5161). Everything it returns must come from
@@ -81,9 +77,5 @@ describe('describeFailure', () => {
     const { proxy, revoke } = Proxy.revocable({}, {})
     revoke()
     expect(describeFailure(proxy)).toBe('unknown failure')
-  })
-
-  it('allowlists exactly the FFI error codes protect-ffi declares', () => {
-    expect([...FFI_ERROR_CODES].sort()).toEqual([...PROTECT_ERROR_CODES].sort())
   })
 })

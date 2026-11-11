@@ -599,10 +599,7 @@ export class EncryptedQueryBuilderImpl<
       } satisfies DecryptContext)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      // Log the failure's kind, never its message: this catch sees errors from
-      // every layer (query-term validation, encryption, PostgREST), and their
-      // messages may quote a plaintext value. The full message still reaches
-      // the caller in the returned `error`.
+      // Log-safe: see describeFailure. The full message goes back in `error`.
       logger.error(
         `Supabase encrypted query failed on table "${this.tableName}" (${describeFailure(err)}).`,
       )

@@ -128,15 +128,8 @@ describe('cipherstash v3 operator lowering — eqlMatch needle guards', () => {
   // the caller, who commonly logs it, so it reports the term's length only.
   it('never echoes the rejected pattern in the wildcard error', () => {
     for (const needle of ['Qzx%wvy', 'Qzx_wvy']) {
-      let message = ''
-      try {
-        lowerMatch(needle)
-      } catch (err) {
-        message = (err as Error).message
-      }
-      expect(message, needle).toMatch(/cannot honor/)
-      expect(message, needle).not.toContain('Qzx')
-      expect(message, needle).not.toContain('wvy')
+      expect(() => lowerMatch(needle), needle).toThrow(/cannot honor/)
+      expect(() => lowerMatch(needle), needle).not.toThrow(/Qzx|wvy/)
     }
   })
 

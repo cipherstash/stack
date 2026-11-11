@@ -69,11 +69,9 @@ export function handleError(
     context,
   })
 
-  // Log the failure's kind, never its message: it may quote a plaintext value
-  // (CIP-5161). `options.logger` is a log sink too (typically `console`), so it
-  // gets a copy of the error carrying the same description instead of the
-  // message. The full message stays on the returned error and reaches
-  // `errorHandler`, which hands it back to the caller.
+  // Log-safe: see describeFailure. `options.logger` is a log sink too, so it
+  // gets a copy carrying the description; the full message stays on the
+  // returned error and reaches `errorHandler`.
   const description = `DynamoDB error in ${context} (${describeFailure(error)}).`
   logger.error(description)
 

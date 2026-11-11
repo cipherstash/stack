@@ -61,15 +61,9 @@ describe('plaintext search terms stay out of errors and logs', () => {
 
   it('a like() pattern with unsupported wildcards is not echoed in the error', () => {
     for (const pattern of ['Qzx%wvy', 'Qzx_wvy']) {
-      let message = ''
-      try {
-        builder().select('id').like('email', pattern)
-      } catch (err) {
-        message = (err as Error).message
-      }
-      expect(message, pattern).toMatch(/cannot honor/)
-      expect(message, pattern).not.toContain('Qzx')
-      expect(message, pattern).not.toContain('wvy')
+      const like = () => builder().select('id').like('email', pattern)
+      expect(like, pattern).toThrow(/cannot honor/)
+      expect(like, pattern).not.toThrow(/Qzx|wvy/)
     }
   })
 
