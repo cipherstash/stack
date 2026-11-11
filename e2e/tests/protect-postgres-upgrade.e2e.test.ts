@@ -130,12 +130,29 @@ describe('Protect Postgres v2 to Stack v3', () => {
     }
   }, 120_000)
 
-  it.each(['constraint', 'index'])(
+  // Stack writes leave the legacy columns null, so a NOT NULL there would fail
+  // every write after cutover. PostgreSQL 18 lists NOT NULL in pg_constraint
+  // and 17 does not; the preflight must give the same answer on both.
+  it('refuses a NOT NULL legacy column before changing source data or columns', async () => {
+    await sql`ALTER TABLE ${sql(table)} ALTER COLUMN email SET NOT NULL`
+    const before = await sql`SELECT * FROM ${sql(table)} ORDER BY pk`
+    await expect(app.migrate()).rejects.toThrow(
+      'Unsupported table dependencies',
+    )
+    expect(await sql`SELECT * FROM ${sql(table)} ORDER BY pk`).toEqual(before)
+    expect(
+      await sql`SELECT attname FROM pg_attribute WHERE attrelid = ${table}::regclass AND attname = 'email_v3'`,
+    ).toHaveLength(0)
+  }, 120_000)
+
+  it.each(['constraint', 'not-null', 'index'])(
     'refuses rollback that would discard a customer %s',
     async (dependency) => {
       await app.migrate()
       if (dependency === 'constraint') {
         await sql`ALTER TABLE ${sql(table)} ADD CONSTRAINT customer_check CHECK (email_v3 IS NOT NULL)`
+      } else if (dependency === 'not-null') {
+        await sql`ALTER TABLE ${sql(table)} ALTER COLUMN email_v3 SET NOT NULL`
       } else {
         await sql`CREATE INDEX ${sql(`${table}_custom`)} ON ${sql(table)} (eql_v3.eq_term(email_v3))`
       }
@@ -147,6 +164,10 @@ describe('Protect Postgres v2 to Stack v3', () => {
       if (dependency === 'constraint') {
         expect(
           await sql`SELECT 1 FROM pg_constraint WHERE conrelid = ${table}::regclass AND conname = 'customer_check'`,
+        ).toHaveLength(1)
+      } else if (dependency === 'not-null') {
+        expect(
+          await sql`SELECT 1 FROM pg_attribute WHERE attrelid = ${table}::regclass AND attname = 'email_v3' AND attnotnull`,
         ).toHaveLength(1)
       } else {
         expect(
