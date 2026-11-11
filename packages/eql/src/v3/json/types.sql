@@ -249,6 +249,13 @@ $$;
 --! GIN index expression:
 --!   `GIN (eql_v3.to_ste_vec_query(col)::jsonb jsonb_path_ops)`.
 --!
+--! @note There is deliberately no `CREATE CAST` from `public.eql_v3_json_search`
+--!   to `eql_v3.query_json`. PostgreSQL ignores a cast whose source type is a
+--!   domain (it warns "cast will be ignored because the source data type is a
+--!   domain"), so `doc::eql_v3.query_json` would never call
+--!   `to_ste_vec_query`; it is a plain binary coercion that then fails the
+--!   `query_json` CHECK. Call `eql_v3.to_ste_vec_query(col)` explicitly.
+--!
 --! @param e public.eql_v3_json_search Source encrypted payload
 --! @return eql_v3.query_json Query-shaped needle, sv elements normalised.
 --! @see eql_v3.query_json
@@ -291,7 +298,3 @@ AS $$
     )
   )::eql_v3.query_json
 $$;
-
-CREATE CAST (public.eql_v3_json_search AS eql_v3.query_json)
-  WITH FUNCTION eql_v3.to_ste_vec_query(public.eql_v3_json_search)
-  AS ASSIGNMENT;
