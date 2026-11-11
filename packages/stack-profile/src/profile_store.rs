@@ -636,6 +636,22 @@ mod tests {
     }
 
     #[test]
+    fn load_reports_a_non_utf8_file_as_a_json_error() {
+        // Reading through `SecretBuf` leaves UTF-8 validation to serde_json,
+        // so a file of invalid bytes is malformed JSON, like any other
+        // unparseable file, rather than an I/O error.
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfileStore::new(dir.path());
+        std::fs::write(dir.path().join("data.json"), b"{\"name\": \"\xff\"}").unwrap();
+
+        let err = store.load::<TestData>("data.json").unwrap_err();
+        assert!(
+            matches!(err, ProfileError::Json(_)),
+            "a non-UTF-8 file should be a JSON error; got {err:?}"
+        );
+    }
+
+    #[test]
     fn clear_removes_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         let store = ProfileStore::new(dir.path());

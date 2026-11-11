@@ -8,8 +8,13 @@ use zeroize::Zeroizing;
 /// file is well under 4 KiB), so most buffers never grow.
 const INITIAL_CAPACITY: usize = 4096;
 
-/// How much room [`SecretBuf::read_from`] makes for each read.
+/// How much room [`SecretBuf::read_from`] makes when it grows the buffer.
 const READ_CHUNK: usize = 4096;
+
+/// The least spare room [`SecretBuf::read_from`] reads into before it grows
+/// the buffer. A file that fits in the initial capacity with this much to
+/// spare is read, end-of-file probe included, without growing.
+const MIN_READ_SPARE: usize = 512;
 
 /// A byte buffer that is zeroized when dropped, including every allocation it
 /// outgrows.
@@ -45,10 +50,13 @@ impl SecretBuf {
     pub(crate) fn read_from(mut reader: impl Read) -> std::io::Result<Self> {
         let mut buf = Self::new();
         loop {
-            buf.reserve(READ_CHUNK)?;
+            if buf.0.capacity() - buf.0.len() < MIN_READ_SPARE {
+                buf.reserve(READ_CHUNK)?;
+            }
             let filled = buf.0.len();
-            // Within capacity, so this does not reallocate.
-            buf.0.resize(filled + READ_CHUNK, 0);
+            // Exactly up to capacity, so this does not reallocate.
+            let capacity = buf.0.capacity();
+            buf.0.resize(capacity, 0);
             let result = reader.read(&mut buf.0[filled..]);
             buf.0.truncate(filled + *result.as_ref().unwrap_or(&0));
             match result {
@@ -170,6 +178,18 @@ mod tests {
         let payload = payload(3 * INITIAL_CAPACITY + 17);
         let buf = SecretBuf::read_from(payload.as_slice()).unwrap();
         assert_eq!(buf.as_bytes(), payload.as_slice());
+    }
+
+    #[test]
+    fn read_from_does_not_grow_for_a_file_that_fits() {
+        let payload = payload(2_000);
+        let buf = SecretBuf::read_from(payload.as_slice()).unwrap();
+        assert_eq!(buf.as_bytes(), payload.as_slice());
+        assert_eq!(
+            buf.0.capacity(),
+            INITIAL_CAPACITY,
+            "a profile-sized file should be read without growing the buffer"
+        );
     }
 
     #[test]
