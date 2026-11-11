@@ -20,22 +20,107 @@ query decrypts them. The app reads and writes plaintext attributes.
 Only the sealed fields go through the hooks. A passthrough field is stored
 as SQLAlchemy writes it.
 
+- Search: the column type that ``eql_type_map`` gives each encrypted field
+  turns ``==``, ``<``, ``<=``, ``>`` and ``>=`` into a comparison with a query
+  term, made by ``Cipher.eq``, ``lt``, ``lte``, ``gt`` or ``gte``. Any other
+  operator that would send a value raises ``QueryError`` when the query is
+  built, because the value would reach the database as plaintext.
+
 This module imports SQLAlchemy. The rest of the package does not.
 """
 
-from typing import Any, Dict, FrozenSet, List, Sequence, Tuple, Type
+from typing import Annotated, Any, Callable, Dict, FrozenSet, List, Sequence, Tuple, Type
 
-from sqlalchemy import event, inspect
+from sqlalchemy import String, Table, cast, event, inspect, literal
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
+from sqlalchemy.sql import operators
 from sqlalchemy.sql.dml import Insert, Update
+from sqlalchemy.types import UserDefinedType
 
+from stackencrypt import _eql
 from stackencrypt._cipher import Cipher
-from stackencrypt._errors import DeclarationError
-from stackencrypt._markers import Passthrough
+from stackencrypt._declaration import _KIND_TYPES
+from stackencrypt._errors import DeclarationError, QueryError
+from stackencrypt._markers import Marker, Passthrough
 
-__all__ = ["configure_encryption"]
+__all__ = ["EqlType", "configure_encryption", "eql_type_map"]
+
+
+class EqlType(UserDefinedType):  # type: ignore[type-arg]
+    """The column type of an encrypted field: its marker's EQL type, such as
+    ``public.eql_v4_text_eq`` for ``TextEq``. ``eql_type_map`` gives it to
+    each field, so a model does not name it."""
+
+    cache_ok = True
+
+    def __init__(self, marker: Type[Marker]) -> None:
+        self.marker = marker
+
+    def get_col_spec(self, **kwargs: Any) -> str:
+        return self.marker.sql_domain
+
+    def __repr__(self) -> str:
+        return f"EqlType({self.marker.__name__})"
+
+    class comparator_factory(UserDefinedType.Comparator):  # type: ignore[type-arg]
+        def operate(self, op: Any, *other: Any, **kwargs: Any) -> Any:
+            if op in _NO_VALUE or (op is operators.eq and other == (None,)):
+                return super().operate(op, *other, **kwargs)
+            method = _COMPARISONS.get(op)
+            if method is None or len(other) != 1:
+                raise _refused(self.expr, op)
+            return super().operate(op, _term(self.expr, method, other[0]), **kwargs)
+
+        def reverse_operate(self, op: Any, other: Any, **kwargs: Any) -> Any:
+            raise _refused(self.expr, op)
+
+
+class _QueryType(UserDefinedType):  # type: ignore[type-arg]
+    """The type a query term is cast to, such as ``eql_v4.query_text_eq``."""
+
+    cache_ok = True
+
+    def __init__(self, sql_name: str) -> None:
+        self.sql_name = sql_name
+
+    def get_col_spec(self, **kwargs: Any) -> str:
+        return self.sql_name
+
+
+# For a DeclarativeBase's `type_annotation_map`: every marker the decorator
+# accepts, under the hint a model writes for it, such as
+# Annotated[str, TextEq].
+eql_type_map: Dict[Any, EqlType] = {
+    Annotated[_KIND_TYPES[marker.plaintext], marker]: EqlType(marker)  # type: ignore[valid-type]
+    for marker in _eql.TYPES
+    if marker.producible and marker.plaintext in _KIND_TYPES
+}
+
+# The comparisons a query term answers, and the Cipher method that makes it.
+_COMPARISONS: Dict[Any, str] = {
+    operators.eq: "eq",
+    operators.lt: "lt",
+    operators.le: "lte",
+    operators.gt: "gt",
+    operators.ge: "gte",
+}
+
+# The operators that send no value to the database.
+_NO_VALUE = frozenset(
+    {
+        operators.is_,
+        operators.is_not,
+        operators.asc_op,
+        operators.desc_op,
+        operators.nulls_first_op,
+        operators.nulls_last_op,
+    }
+)
+
+# The configured tables, for the comparisons: a Table to its cipher.
+_TABLES: Dict[Table, Cipher] = {}
 
 # The objects a load built or refreshed, and which attributes, waiting for
 # the do_orm_execute hook. Kept in each session's `info`.
@@ -74,6 +159,7 @@ def configure_encryption(engine: Engine, classes: Sequence[type]) -> None:
     tables: Dict[str, Tuple[Cipher, FrozenSet[str]]] = {}
     for cls, cipher, sealed in checked:
         _CONFIGURED[cls] = (cipher, sealed)
+        _TABLES[inspect(cls).local_table] = cipher
         tables[cipher.declaration.table] = (cipher, sealed)
         event.listen(cls, "load", _remember_load)
         event.listen(cls, "refresh", _remember_refresh)
@@ -113,6 +199,20 @@ def _check(cls: type) -> Tuple[type, Cipher, FrozenSet[str]]:
                 "configure_encryption needs each encrypted field's column to have "
                 "the field's name.",
                 field=name,
+            )
+    for field in cipher.declaration.fields:
+        if field.marker is Passthrough:
+            continue
+        column_type = mapper.columns[field.name].type
+        if not (isinstance(column_type, EqlType) and column_type.marker is field.marker):
+            raise DeclarationError(
+                "declaration_column_type",
+                f"field {field.name!r} of {cls.__qualname__} is declared "
+                f"{field.marker.__name__}, so its column must be "
+                f"{field.marker.sql_domain}, but SQLAlchemy maps it as {column_type!r}. "
+                "Set `type_annotation_map = eql_type_map` on the declarative base, "
+                "and give the column no type of its own.",
+                field=field.name,
             )
     return cls, cipher, sealed
 
@@ -198,3 +298,34 @@ def _decrypt_loaded(state: Any) -> Any:
             for name, value in values.items():
                 set_committed_value(target, name, value)
     return result()
+
+
+def _term(column: Any, method: str, value: object) -> Any:
+    """``value`` as the query term that ``method`` makes for ``column``,
+    cast to the column marker's query type."""
+    cipher = _TABLES.get(getattr(column, "table", None))
+    if cipher is None:
+        raise QueryError(
+            "query_not_configured",
+            f"column {_column_name(column)} is encrypted, but its class is not configured. "
+            "Call configure_encryption with the class before you build a query on it.",
+        )
+    term = getattr(cipher, method)(column.key, value)
+    return cast(literal(term, String()), _QueryType(column.type.marker.query_sql_domain))
+
+
+def _refused(column: Any, op: Callable[..., Any]) -> QueryError:
+    name = getattr(op, "__name__", repr(op)).removesuffix("_op")
+    return QueryError(
+        "query_unsupported",
+        f"{name} is not supported on the encrypted column {_column_name(column)}. "
+        "It would send the value to the database as plaintext. Use ==, <, <=, >, or >= "
+        "where the column's marker supports it.",
+        field=getattr(column, "key", None),
+        reason=name,
+    )
+
+
+def _column_name(column: Any) -> str:
+    table = getattr(getattr(column, "table", None), "name", "?")
+    return f"{table}.{getattr(column, 'name', '?')}"

@@ -14,37 +14,24 @@ import pytest
 from _live import DATABASE_URL, LIVE, needs_database
 from sqlalchemy import ForeignKey, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
-from sqlalchemy.types import UserDefinedType
 
 import stackencrypt
-from stackencrypt import Ignore, Passthrough, Text, TextEq, _engine
-from stackencrypt.sqlalchemy import configure_encryption
+from stackencrypt import Ignore, IntegerOrd, Passthrough, QueryError, Text, TextEq, _engine
+from stackencrypt.sqlalchemy import configure_encryption, eql_type_map
 
 pytestmark = [*LIVE, needs_database]
 
 
-class Eql(UserDefinedType):
-    """An EQL column type, named by its SQL name."""
-
-    cache_ok = True
-
-    def __init__(self, sql_name: str) -> None:
-        self.sql_name = sql_name
-
-    def get_col_spec(self, **kwargs: object) -> str:
-        return self.sql_name
-
-
 class Base(DeclarativeBase):
-    pass
+    type_annotation_map = eql_type_map
 
 
 @stackencrypt.model("customers")
 class Customer(Base):
     __tablename__ = "customers"
     id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
-    email: Mapped[Annotated[str, TextEq]] = mapped_column(Eql("public.eql_v4_text_eq"))
-    name: Mapped[Annotated[str, Text]] = mapped_column(Eql("public.eql_v4_text"))
+    email: Mapped[Annotated[str, TextEq]]
+    name: Mapped[Annotated[str, Text]]
     plan: Mapped[Annotated[str, Passthrough]]
     orders = relationship("Order", back_populates="customer")  # a list of Order
 
@@ -54,8 +41,15 @@ class Order(Base):
     __tablename__ = "orders"
     id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
     customer_id: Mapped[Annotated[int, Ignore]] = mapped_column(ForeignKey("customers.id"))
-    note: Mapped[Annotated[str, Text]] = mapped_column(Eql("public.eql_v4_text"))
+    note: Mapped[Annotated[str, Text]]
     customer: Mapped[Annotated["Customer", Ignore]] = relationship(back_populates="orders")
+
+
+@stackencrypt.model("players")
+class Player(Base):
+    __tablename__ = "players"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    level: Mapped[Annotated[int, IntegerOrd]]
 
 
 @pytest.fixture(scope="module")
@@ -72,7 +66,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))
     Base.metadata.create_all(engine)
-    configure_encryption(engine, [Customer, Order])
+    configure_encryption(engine, [Customer, Order, Player])
     yield engine
     with engine.begin() as conn:
         conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
@@ -82,7 +76,7 @@ def engine():
 @pytest.fixture(autouse=True)
 def empty(engine):
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE orders, customers RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE orders, customers, players RESTART IDENTITY"))
 
 
 def stored(engine, sql):
@@ -170,3 +164,36 @@ def test_100_objects_make_one_key_request_to_insert_and_one_to_load(engine):
     # 100 objects of 2 sealed fields: 200 values, one request of up to 500 keys.
     assert (inserted, loaded) == (1, 1)
     assert sorted(c.email for c in customers)[0] == "ann@example.com"
+
+
+def test_an_equality_search_finds_the_one_matching_row(engine):
+    add_ann(engine)
+    with Session(engine) as session:
+        session.add(Customer(email="bob@example.com", name="Bob", plan="free"))
+        session.commit()
+    with Session(engine) as session:
+        found = session.scalars(select(Customer).where(Customer.email == "bob@example.com")).all()
+
+    assert [(c.email, c.name) for c in found] == [("bob@example.com", "Bob")]
+
+
+def test_order_searches_find_the_rows_on_each_side(engine):
+    with Session(engine) as session:
+        session.add_all([Player(level=level) for level in (1, 3, 5, 7)])
+        session.commit()
+    with Session(engine) as session:
+        high = session.scalars(select(Player).where(Player.level >= 5)).all()
+        low = session.scalars(select(Player).where(Player.level < 3)).all()
+        middle = session.scalars(
+            select(Player).where(Player.level > 1, Player.level <= 5).order_by(Player.id)
+        ).all()
+
+    assert sorted(p.level for p in high) == [5, 7]
+    assert [p.level for p in low] == [1]
+    assert [p.level for p in middle] == [3, 5]
+
+
+def test_an_order_search_on_an_equality_field_is_unsupported(engine):
+    with pytest.raises(QueryError) as raised:
+        select(Customer).where(Customer.email > "a@example.com")
+    assert raised.value.code == "query_unsupported"
