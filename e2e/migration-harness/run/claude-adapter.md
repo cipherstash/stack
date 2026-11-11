@@ -63,6 +63,8 @@ completion, unexpected tool/permission settings, and turn limits. These tests
 make no model calls and need no Docker. They do need permission to create a local
 Unix socket.
 
-A real model Run for each procedure still belongs in credentialed CI. Fake CLI
-coverage does not prove that an installed Claude version can complete a
-migration or that the guide is sufficient for a real model.
+A real model Run for each procedure remains pending on a disposable remote host
+selected by the maintainer. Real agents remain outside CI under the ADR; CI runs
+deterministic Fake Migrators. Fake CLI coverage does not prove that an installed
+Claude version can complete a migration or that the guide is sufficient for a
+real model.
