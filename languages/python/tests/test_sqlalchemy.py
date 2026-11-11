@@ -426,3 +426,74 @@ def test_a_labelled_column_in_order_by_is_sorted_by_the_order_term(untouched):
         "eql_v4.ord_term(splits.seconds)",
         "eql_v4.ord_term(splits.seconds) DESC",
     ]
+
+
+def test_a_column_named_by_a_string_in_order_by_is_sorted_by_the_order_term(untouched):
+    from sqlalchemy import desc, event
+    from sqlalchemy.orm import Session
+
+    @stackencrypt.model("legs")
+    class Leg(Base):
+        __tablename__ = "legs"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        seconds: Mapped[Annotated[int, IntegerOrd]]
+
+    engine = create_engine("sqlite://")
+    sent = []
+    event.listen(engine, "before_cursor_execute", lambda conn, cur, sql, *a: sent.append(sql))
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE legs (id INTEGER PRIMARY KEY, seconds TEXT)")
+    configure_encryption(engine, [Leg])
+    statements = [
+        select(Leg.seconds).order_by("seconds"),
+        select(Leg.seconds).order_by(desc("seconds")),
+        select(Leg).order_by("seconds"),
+        select(Leg.__table__).order_by("seconds"),
+    ]
+
+    with Session(engine) as session:
+        for statement in statements:
+            try:
+                session.execute(statement)
+            except Exception:
+                pass  # SQLite has no eql_v4 functions: only the SQL matters here.
+
+    sorts = [sql.split("ORDER BY", 1)[1].strip() for sql in sent[-4:]]
+    assert sorts == [
+        "eql_v4.ord_term(legs.seconds)",
+        "eql_v4.ord_term(legs.seconds) DESC",
+        "eql_v4.ord_term(legs.seconds)",
+        "eql_v4.ord_term(legs.seconds)",
+    ]
+
+
+def test_a_string_naming_an_encrypted_column_that_is_not_selected_is_sorted_or_refused(untouched):
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session, aliased
+
+    @stackencrypt.model("stages")
+    class Stage(Base):
+        __tablename__ = "stages"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        name: Mapped[Annotated[str, Passthrough]]
+        seconds: Mapped[Annotated[int, IntegerOrd]]
+
+    engine = create_engine("sqlite://")
+    sent = []
+    event.listen(engine, "before_cursor_execute", lambda conn, cur, sql, *a: sent.append(sql))
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE stages (id INTEGER PRIMARY KEY, name TEXT, seconds TEXT)")
+    configure_encryption(engine, [Stage])
+    other = aliased(Stage)
+
+    with Session(engine) as session:
+        try:
+            session.execute(select(Stage.name).order_by("seconds"))
+        except Exception:
+            pass  # SQLite has no eql_v4 functions: only the SQL matters here.
+        with pytest.raises(QueryError) as raised:
+            session.execute(select(Stage.name, other.name).join(other, other.id == Stage.id).order_by("seconds"))
+
+    assert sent[-1].split("ORDER BY", 1)[1].strip() == "eql_v4.ord_term(stages.seconds)"
+    assert raised.value.code == "query_unsupported"
+    assert "seconds" in raised.value.message
