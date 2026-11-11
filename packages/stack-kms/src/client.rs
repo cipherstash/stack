@@ -402,7 +402,12 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
 /// `StackKms` owns the transport [`Client`], a [`stack_auth`] credential
 /// provider, and a [`ClientKey`]. Each operation fetches a fresh access token
 /// (refreshing as needed), resolves the ZeroKMS endpoint from the token's
-/// `services` claim on first use, and delegates to the low-level client.
+/// `services` claim, and delegates to the low-level client. Discovery accepts
+/// only CipherStash-hosted HTTPS endpoints in regions known to this build.
+/// Every token must carry a valid claim for the first token's region; missing,
+/// untrusted, or different-region claims are refused before a request is sent.
+/// A later token may move that region's endpoint between the supported hosted
+/// domains. Explicitly configured endpoints bypass claim-based discovery.
 ///
 /// Build one with [`StackKmsBuilder`](crate::StackKmsBuilder) (the default
 /// HTTP transport, `http` feature), or with [`connect`](Self::connect) over
@@ -413,22 +418,25 @@ pub struct StackKms<C, Conn = HttpConnection> {
     credentials: C,
     client_key: ClientKey,
     /// `None` when the connection was given its endpoint at init; otherwise
-    /// the endpoint the first token's `services` claim named, once known.
-    discovered: Option<OnceLock<HostedEndpoint>>,
+    /// the region the first token's `services` claim named, once known.
+    discovered: Option<OnceLock<cts_common::Region>>,
 }
 
 /// `StackKms` owns the transport [`Client`], a [`stack_auth`] credential
 /// provider, and a [`ClientKey`]. Without the `http` feature there is no
 /// default connection: build one with [`connect`](Self::connect) over the
 /// host's [`ZeroKMSConnection`].
+/// Discovery requires every token to name a supported CipherStash-hosted
+/// HTTPS endpoint in the first token's region. Later tokens can change its
+/// hosted domain; explicitly configured endpoints bypass discovery.
 #[cfg(not(feature = "http"))]
 pub struct StackKms<C, Conn> {
     client: Client<Conn>,
     credentials: C,
     client_key: ClientKey,
     /// `None` when the connection was given its endpoint at init; otherwise
-    /// the endpoint the first token's `services` claim named, once known.
-    discovered: Option<OnceLock<HostedEndpoint>>,
+    /// the region the first token's `services` claim named, once known.
+    discovered: Option<OnceLock<cts_common::Region>>,
 }
 
 impl<C, Conn> StackKms<C, Conn>
@@ -452,7 +460,8 @@ where
     /// ZeroKMS endpoint is taken from the access token's `services` claim on
     /// first use unless the connection already knows one. A claimed endpoint
     /// must be CipherStash-hosted, and every later token must name the same
-    /// region; whether the connection already knows one is decided here, once.
+    /// region, while its hosted domain may change. Whether the connection
+    /// already knows one is decided here, once.
     pub fn connect(
         opts: ClientOpts<Conn::ConnectionOpts>,
         credentials: C,
@@ -482,35 +491,33 @@ where
     /// — so:
     ///
     /// * the claim may only name a CipherStash-hosted ZeroKMS
-    ///   ([`ZeroKmsEndpoint::from_services_claim`]), and
+    ///   ([`stack_auth::ServiceToken::hosted_zerokms_endpoint`]), and
     /// * every later token must name the same region as the first one did.
     ///   A token for another region is refused rather than sent to the
-    ///   pinned endpoint, and it cannot move the pin. A token naming the
-    ///   same region on the other hosted domain is accepted and still sent
-    ///   to the pinned endpoint: both domains serve that region's ZeroKMS
-    ///   while CipherStash moves between them, and refusing would fail
-    ///   every call on a long-lived client when CTS switches domain.
+    ///   pinned region. A token naming the same region on the other hosted
+    ///   domain updates the connection, so it can keep working when the old
+    ///   domain is retired. Missing or untrusted claims are refused even
+    ///   after the region has been pinned.
     async fn get_token(&self) -> Result<stack_auth::ServiceToken, Error> {
         let token = (&self.credentials).get_token().await?;
         // Configured explicitly: the claim is not consulted.
         let Some(discovered) = &self.discovered else {
             return Ok(token);
         };
-        let claimed = ZeroKmsEndpoint::from_services_claim(token.zerokms_url()?)?;
-        let pinned = discovered.get_or_init(|| {
-            tracing::debug!(
-                target: "stack_kms",
-                endpoint = %claimed.endpoint,
-                "resolved ZeroKMS endpoint from the token's services claim"
-            );
-            self.client
-                .connection()
-                .ensure_base_url(claimed.endpoint.clone());
-            claimed.clone()
-        });
-        if pinned.region != claimed.region {
+        let claimed = match token.hosted_zerokms_endpoint() {
+            Ok(hosted) => HostedEndpoint {
+                endpoint: hosted.into(),
+                region: hosted.region(),
+            },
+            // Retain the KMS endpoint error classification for malformed or
+            // untrusted claims; successful discovery uses the shared cache.
+            Err(_) => ZeroKmsEndpoint::from_services_claim(token.zerokms_url()?)?,
+        };
+        let region = discovered.get_or_init(|| claimed.region);
+        if *region != claimed.region {
             return Err(InvalidEndpoint::Mismatch.into());
         }
+        self.client.connection().ensure_base_url(claimed.endpoint);
         Ok(token)
     }
 
@@ -751,7 +758,7 @@ mod tests {
 
     /// Where a token's `services` claim may send key operations (CIP-5152).
     /// The claim is unverified, so it may only name a CipherStash-hosted
-    /// ZeroKMS, and it cannot move an endpoint already in use.
+    /// ZeroKMS, and it cannot change a region already in use.
     mod endpoint_from_the_services_claim {
         use super::*;
         use base64ct::{Base64UrlUnpadded, Encoding};
@@ -828,7 +835,7 @@ mod tests {
         impl ZeroKMSConnection for Discovering {
             fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
                 *self.calls.lock().unwrap() += 1;
-                self.pinned.lock().unwrap().get_or_insert(url);
+                *self.pinned.lock().unwrap() = Some(url);
             }
 
             fn has_base_url(&self) -> bool {
@@ -919,8 +926,8 @@ mod tests {
             assert_eq!(pinned(&kms).as_deref(), Some(SYDNEY));
             assert_eq!(
                 *kms.client.connection().calls.lock().unwrap(),
-                1,
-                "the endpoint is handed to the connection once"
+                2,
+                "only the two valid same-region tokens update the connection"
             );
         }
 
@@ -944,9 +951,9 @@ mod tests {
             assert_eq!(
                 pinned(&kms).as_deref(),
                 Some(SYDNEY),
-                "the endpoint in use does not move"
+                "the endpoint follows each same-region claim"
             );
-            assert_eq!(*kms.client.connection().calls.lock().unwrap(), 1);
+            assert_eq!(*kms.client.connection().calls.lock().unwrap(), 3);
         }
 
         #[tokio::test]
@@ -960,7 +967,33 @@ mod tests {
             kms.get_token()
                 .await
                 .expect("same region on the old domain is the same ZeroKMS");
-            assert_eq!(pinned(&kms).as_deref(), Some(VIRGINIA));
+            assert_eq!(pinned(&kms).as_deref(), Some(VIRGINIA_OLD));
+        }
+
+        mod given_a_same_region_hosted_domain_migration {
+            use super::*;
+
+            #[tokio::test]
+            async fn subsequent_requests_use_the_new_domain() {
+                const SYDNEY_NEW: &str =
+                    "https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net/";
+                let kms = kms(
+                    None,
+                    Tokens::new([jwt(Some(SYDNEY)), jwt(Some(SYDNEY_NEW))]),
+                );
+                kms.get_token()
+                    .await
+                    .expect("the first token discovers Sydney");
+                kms.get_token()
+                    .await
+                    .expect("the refreshed token names the same region");
+
+                assert_eq!(
+                    pinned(&kms).as_deref(),
+                    Some(SYDNEY_NEW),
+                    "the connection must follow the trusted same-region domain migration before the old domain retires"
+                );
+            }
         }
 
         #[tokio::test]
@@ -992,6 +1025,91 @@ mod tests {
                 matches!(err, Error::InvalidEndpoint(InvalidEndpoint::NotHosted(_))),
                 "{err:?}"
             );
+        }
+
+        mod stress_tests {
+            use super::*;
+            use std::sync::Arc;
+            use tokio::sync::Barrier;
+
+            struct ConcurrentTokens {
+                tokens: Tokens,
+                barrier: Barrier,
+            }
+
+            impl AuthStrategy for &ConcurrentTokens {
+                async fn get_token(
+                    self,
+                ) -> Result<stack_auth::ServiceToken, stack_auth::AuthError> {
+                    let token = (&self.tokens).get_token().await?;
+                    self.barrier.wait().await;
+                    Ok(token)
+                }
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            async fn concurrent_discovery_keeps_one_region() {
+                const CALLERS: usize = 32;
+                let tokens = std::array::from_fn::<_, CALLERS, _>(|i| {
+                    jwt(Some(if i % 2 == 0 { SYDNEY } else { VIRGINIA }))
+                });
+                let kms = Arc::new(
+                    StackKms::<_, Discovering>::connect(
+                        ClientOpts::new(None),
+                        ConcurrentTokens {
+                            tokens: Tokens::new(tokens),
+                            barrier: Barrier::new(CALLERS),
+                        },
+                        random_client_key(),
+                    )
+                    .unwrap(),
+                );
+                let mut callers = Vec::new();
+                for _ in 0..CALLERS {
+                    let kms = Arc::clone(&kms);
+                    callers.push(tokio::spawn(async move { kms.get_token().await }));
+                }
+                let mut accepted_region = None;
+                let mut accepted = 0;
+                for caller in callers {
+                    match caller.await.unwrap() {
+                        Ok(token) => {
+                            let region = token.hosted_zerokms_endpoint().unwrap().region();
+                            assert_eq!(
+                                *accepted_region.get_or_insert(region),
+                                region,
+                                "only one region may win discovery"
+                            );
+                            accepted += 1;
+                        }
+                        Err(error) => assert!(
+                            matches!(error, Error::InvalidEndpoint(InvalidEndpoint::Mismatch)),
+                            "other regions must fail before transport: {error:?}"
+                        ),
+                    }
+                }
+                assert_eq!(
+                    accepted,
+                    CALLERS / 2,
+                    "every token for the winning region is accepted"
+                );
+                let endpoint = kms
+                    .client
+                    .connection()
+                    .pinned
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap();
+                let region = stack_auth::HostedZeroKmsEndpoint::new(endpoint.as_url().clone())
+                    .unwrap()
+                    .region();
+                assert_eq!(
+                    Some(region),
+                    accepted_region,
+                    "the transport uses the winning region"
+                );
+            }
         }
 
         #[tokio::test]

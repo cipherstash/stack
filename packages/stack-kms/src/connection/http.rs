@@ -11,7 +11,7 @@ use reqwest::header::HeaderMap;
 use serde_json::to_vec;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
-use std::{collections::HashMap, sync::OnceLock};
+use std::{collections::HashMap, sync::Mutex};
 use thiserror::Error;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
@@ -126,7 +126,8 @@ impl HttpConnectionOpts {
 }
 
 pub struct HttpConnection {
-    base_url: OnceLock<ZeroKmsEndpoint>,
+    base_url: Mutex<Option<ZeroKmsEndpoint>>,
+    explicitly_configured: bool,
     client: reqwest::Client,
 }
 
@@ -181,24 +182,31 @@ impl ZeroKMSConnectionInit for HttpConnection {
 
         let client = builder.build()?;
 
-        let base_url = OnceLock::new();
-        if let Some(url) = opts.base_url {
-            // Pre-fill when an explicit URL was provided at build time.
-            let _ = base_url.set(url);
-        }
-
-        Ok(Self { base_url, client })
+        let explicitly_configured = opts.base_url.is_some();
+        let base_url = Mutex::new(opts.base_url);
+        Ok(Self {
+            base_url,
+            explicitly_configured,
+            client,
+        })
     }
 }
 
 impl ZeroKMSConnection for HttpConnection {
     fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
-        // OnceLock::set returns Err if already set — that's fine, we keep the first value.
-        let _ = self.base_url.set(url);
+        if !self.explicitly_configured {
+            *self
+                .base_url
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
+        }
     }
 
     fn has_base_url(&self) -> bool {
-        self.base_url.get().is_some()
+        self.base_url
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
     }
 
     async fn send<Request: ViturRequest>(
@@ -209,17 +217,24 @@ impl ZeroKMSConnection for HttpConnection {
         let body = to_vec(&request)
             .map_err(|e| ViturRequestError::prepare("Failed to serialize request", e))?;
 
-        let base_url = self.base_url.get().ok_or_else(|| {
-            // A missing base URL is a client-side configuration problem (the
-            // token carried no ZeroKMS `services` claim and none was set
-            // explicitly), not an authentication failure — classify it as a
-            // request-preparation error so callers don't mistake it for a 401
-            // and trigger a token refresh/reauth loop.
-            ViturRequestError::prepare(
-                "ZeroKMS base URL was not resolved from the token's services claim",
-                BaseUrlUnresolved,
-            )
-        })?;
+        // Snapshot the destination before any await. A concurrent refresh may
+        // update the same region's domain without changing this request's URL.
+        let base_url = self
+            .base_url
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| {
+                // A missing base URL is a client-side configuration problem (the
+                // token carried no ZeroKMS `services` claim and none was set
+                // explicitly), not an authentication failure — classify it as a
+                // request-preparation error so callers don't mistake it for a 401
+                // and trigger a token refresh/reauth loop.
+                ViturRequestError::prepare(
+                    "ZeroKMS base URL was not resolved from the token's services claim",
+                    BaseUrlUnresolved,
+                )
+            })?;
 
         let url = base_url.request_url(Request::ENDPOINT);
 
@@ -285,16 +300,43 @@ mod base_url_tests {
         c.ensure_base_url(endpoint("https://a.example"));
 
         assert!(c.has_base_url());
-        assert_eq!(c.base_url.get().unwrap().as_str(), "https://a.example/");
+        assert_eq!(
+            c.base_url.lock().unwrap().as_ref().unwrap().as_str(),
+            "https://a.example/"
+        );
     }
 
     #[test]
-    fn the_first_ensured_url_wins() {
+    fn the_latest_discovered_url_is_used() {
         let c = conn(None);
         c.ensure_base_url(endpoint("https://first.example"));
         c.ensure_base_url(endpoint("https://second.example"));
 
-        assert_eq!(c.base_url.get().unwrap().as_str(), "https://first.example/");
+        assert_eq!(
+            c.base_url.lock().unwrap().as_ref().unwrap().as_str(),
+            "https://second.example/",
+            "discovery follows the latest validated claim"
+        );
+    }
+
+    #[test]
+    fn a_discovered_endpoint_follows_a_hosted_domain_migration() {
+        let c = conn(None);
+        c.ensure_base_url(endpoint("https://us-east-1.aws.viturhosted.net/"));
+        c.ensure_base_url(endpoint(
+            "https://us-east-1.aws.zerokms.cipherstashmanaged.net/",
+        ));
+        assert_eq!(
+            c.base_url
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .request_url("retrieve-data-key")
+                .as_str(),
+            "https://us-east-1.aws.zerokms.cipherstashmanaged.net/retrieve-data-key",
+            "request URLs must follow a validated domain migration"
+        );
     }
 
     #[test]
@@ -304,7 +346,10 @@ mod base_url_tests {
 
         c.ensure_base_url(endpoint("https://other.example"));
 
-        assert_eq!(c.base_url.get().unwrap().as_str(), "https://init.example/");
+        assert_eq!(
+            c.base_url.lock().unwrap().as_ref().unwrap().as_str(),
+            "https://init.example/"
+        );
     }
 
     #[test]
@@ -316,7 +361,9 @@ mod base_url_tests {
 
         assert_eq!(
             c.base_url
-                .get()
+                .lock()
+                .unwrap()
+                .as_ref()
                 .unwrap()
                 .request_url(zerokms_protocol::RetrieveKeyRequest::ENDPOINT)
                 .as_str(),

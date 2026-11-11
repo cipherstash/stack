@@ -54,9 +54,10 @@ extern "C" {
 /// The endpoint is pinned at init when the cipher config named one;
 /// otherwise it is discovered by `StackKms` from the access token's
 /// `services` claim through [`ensure_base_url`](Self::ensure_base_url) —
-/// the first value wins, per the trait's contract.
+/// later validated claims may update the domain within the pinned region.
 pub struct WasiHostConnection {
     base: Mutex<Option<ZeroKmsEndpoint>>,
+    explicitly_configured: bool,
 }
 
 impl WasiHostConnection {
@@ -76,6 +77,7 @@ impl ZeroKMSConnectionInit for WasiHostConnection {
 
     fn init(opts: Self::ConnectionOpts) -> Result<Self, Infallible> {
         Ok(Self {
+            explicitly_configured: opts.is_some(),
             base: Mutex::new(opts),
         })
     }
@@ -84,7 +86,7 @@ impl ZeroKMSConnectionInit for WasiHostConnection {
 impl ZeroKMSConnection for WasiHostConnection {
     fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
         let mut base = self.base();
-        if base.is_none() {
+        if !self.explicitly_configured {
             *base = Some(url);
         }
     }

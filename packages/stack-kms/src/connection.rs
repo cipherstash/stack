@@ -48,18 +48,20 @@ pub trait ZeroKMSConnection: ZeroKMSConnectionInit {
         access_token: &str,
     ) -> impl Future<Output = Result<Request::Response, ViturRequestError>> + crate::MaybeSend;
 
-    /// Record the ZeroKMS endpoint if none is known yet.
+    /// Update the discovered ZeroKMS endpoint, preserving explicit configuration.
     ///
     /// [`StackKms`](crate::StackKms) calls this with the endpoint named by the
-    /// access token's `services` claim the first time it holds a token.
+    /// access token's `services` claim after validating its hosted domain
+    /// and checking that its region matches the first discovered region.
     ///
     /// Endpoint discovery is `StackKms` policy, not something every transport
     /// needs: the default is a no-op, paired with a `has_base_url` of `true`,
     /// which is correct for a transport that does not build URLs from a base
     /// (it dispatches on the request's endpoint name) or that was pinned at
     /// init. A transport that *does* want discovery must override **both**,
-    /// and its `ensure_base_url` must keep the first value it is given — an
-    /// endpoint pinned at init must not be overridden by a later token.
+    /// and its `ensure_base_url` must accept later discovered URLs so a
+    /// hosted domain can migrate. An endpoint configured at init must stay
+    /// fixed. Snapshot the URL for each request before awaiting network I/O.
     fn ensure_base_url(&self, _url: ZeroKmsEndpoint) {}
 
     /// Whether an endpoint is known, either from init or from a previous

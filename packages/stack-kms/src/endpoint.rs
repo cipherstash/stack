@@ -14,6 +14,7 @@ use url::Url;
 /// it can carry whatever its author chose. The URL stays in the variant for a
 /// caller in this process.
 #[derive(Debug, Error, PartialEq, Eq, miette::Diagnostic)]
+#[non_exhaustive]
 pub enum InvalidEndpoint {
     /// The value did not parse as a URL at all.
     #[error("not a valid URL: {0}")]
@@ -90,29 +91,11 @@ impl stack_auth::ErrorPayload for InvalidEndpoint {
     }
 }
 
-/// The domains CipherStash serves ZeroKMS from. A hosted ZeroKMS is
-/// `<region>.<provider>.<domain>`; `cts_common` knows only the first, so
-/// the list lives here.
-const HOSTED_ZEROKMS_DOMAINS: &[&str] = &["viturhosted.net", "zerokms.cipherstashmanaged.net"];
-
-/// The region of `host` when it is `<region>.<provider>.<domain>` for a
-/// hosted domain and a region CipherStash runs. `host` comes from a parsed
-/// [`Url`], so it is already lowercase and IDNA-normalised.
-fn hosted_zerokms_region(host: &str) -> Option<cts_common::Region> {
-    HOSTED_ZEROKMS_DOMAINS.iter().find_map(|domain| {
-        host.strip_suffix(domain)
-            .and_then(|prefix| prefix.strip_suffix('.'))
-            // Exactly two labels: `<region>.<provider>`.
-            .filter(|region| region.matches('.').count() == 1)
-            .and_then(|region| cts_common::Region::new(region).ok())
-    })
-}
-
 /// A CipherStash-hosted ZeroKMS endpoint named by a token's `services`
 /// claim, with the region its host names.
 ///
-/// Each region's ZeroKMS is served under every domain in
-/// `HOSTED_ZEROKMS_DOMAINS` while CipherStash moves from `viturhosted.net`
+/// Each region's ZeroKMS is served under both supported domains
+/// while CipherStash moves from `viturhosted.net`
 /// to `zerokms.cipherstashmanaged.net`, so two claims for the same region
 /// name the same service. Compare claims by [`region`](Self::region), not
 /// by URL: a client pinned to one domain must keep working when CTS starts
@@ -151,6 +134,13 @@ pub(crate) struct HostedEndpoint {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ZeroKmsEndpoint(Url);
+
+impl From<&stack_auth::HostedZeroKmsEndpoint> for ZeroKmsEndpoint {
+    fn from(endpoint: &stack_auth::HostedZeroKmsEndpoint) -> Self {
+        // The shared type has already enforced stricter rules than `new`.
+        Self(endpoint.as_url().clone())
+    }
+}
 
 impl ZeroKmsEndpoint {
     /// Validate and normalise a parsed [`Url`].
@@ -199,12 +189,12 @@ impl ZeroKmsEndpoint {
     pub(crate) fn from_services_claim(url: Url) -> Result<HostedEndpoint, InvalidEndpoint> {
         let endpoint = Self::new(url)?;
         let url = endpoint.as_url();
-        let region = (url.scheme() == "https" && url.port().is_none() && url.path() == "/")
-            .then(|| url.host_str().and_then(hosted_zerokms_region))
-            .flatten();
-        match region {
-            Some(region) => Ok(HostedEndpoint { endpoint, region }),
-            None => Err(InvalidEndpoint::NotHosted(endpoint.0.into())),
+        match stack_auth::HostedZeroKmsEndpoint::new(url.clone()) {
+            Ok(hosted) => Ok(HostedEndpoint {
+                endpoint,
+                region: hosted.region(),
+            }),
+            Err(_) => Err(InvalidEndpoint::NotHosted(endpoint.0.into())),
         }
     }
 
@@ -414,7 +404,7 @@ mod tests {
 
         #[test]
         fn accepts_every_region_cipherstash_runs_on_every_hosted_domain() {
-            for domain in HOSTED_ZEROKMS_DOMAINS {
+            for domain in ["viturhosted.net", "zerokms.cipherstashmanaged.net"] {
                 for region in cts_common::Region::all() {
                     let s = format!("https://{}.{domain}/", region.identifier());
                     assert_eq!(claimed(&s).map(|e| e.to_string()), Ok(s.clone()), "{s}");

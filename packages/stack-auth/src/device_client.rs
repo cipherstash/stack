@@ -11,7 +11,7 @@ use zerokms_protocol::{CreateClientRequest, CreateClientResponse, ViturKeyMateri
 
 use crate::error::RequestError;
 use crate::transport::{self, ReqwestTransport};
-use crate::{ensure_trailing_slash, ServiceToken, Token};
+use crate::{ServiceToken, Token};
 
 // ---------------------------------------------------------------------------
 // Secret key file (output)
@@ -96,7 +96,20 @@ impl ErrorPayload for DeviceClientError {
 ///
 /// If the secret key already exists on disk, or the server returns 409
 /// (conflict), this is a no-op.
+///
+/// # Errors
+///
+/// Returns [`DeviceClientError::Auth`] before sending credentials when the
+/// token lacks a valid CipherStash-hosted ZeroKMS claim. Profile, transport,
+/// response and persistence failures are reported by the other variants.
 pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClientError> {
+    bind_client_device_with_transport(store, &transport::share(ReqwestTransport::default())).await
+}
+
+async fn bind_client_device_with_transport(
+    store: &ProfileStore,
+    transport: &transport::SharedTransport,
+) -> Result<(), DeviceClientError> {
     let ws_store = store.current_workspace_store()?;
 
     if ws_store.exists(SECRET_KEY_FILENAME) {
@@ -106,7 +119,7 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
 
     let token: Token = ws_store.load_profile()?;
     let service_token = ServiceToken::new(token.access_token().clone());
-    let zerokms_url = ensure_trailing_slash(service_token.zerokms_url()?);
+    let zerokms_url = service_token.hosted_zerokms_endpoint()?.as_url();
 
     // DeviceIdentity is NOT workspace-scoped, so this reads from the root.
     let identity = DeviceIdentity::load_or_create(store)?;
@@ -124,7 +137,7 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
         serde_json::to_vec(&request).map_err(|e| RequestError(Box::new(e)))?,
     );
     let response = transport::post(
-        &transport::share(ReqwestTransport::default()),
+        transport,
         url,
         "application/json",
         // The shared transport adds `content-type` and the crate's
@@ -267,6 +280,63 @@ mod tests {
         server
     }
 
+    // Exercise hosted-claim validation normally, but carry the request to a
+    // per-test local server through the transport seam.
+    struct LocalTransport(url::Url);
+
+    impl crate::transport::HttpTransport for LocalTransport {
+        async fn send(
+            &self,
+            request: crate::transport::HttpRequest,
+        ) -> Result<crate::transport::HttpResponse, RequestError> {
+            use crate::transport::HttpRequest;
+            assert_eq!(
+                request.url().as_str(),
+                "https://us-east-1.aws.viturhosted.net/create-client",
+                "provisioning must use the validated hosted destination"
+            );
+            assert_eq!(request.method(), "POST", "provisioning uses POST");
+            let local = HttpRequest::new(
+                "POST",
+                self.0.join(request.url().path()).unwrap(),
+                request.headers().to_vec(),
+                request.body().to_vec(),
+            );
+            ReqwestTransport::default().send(local).await
+        }
+    }
+
+    mod given_a_profile_token_naming_an_untrusted_endpoint {
+        use super::*;
+
+        #[tokio::test]
+        async fn refuses_provisioning_before_sending_the_bearer() {
+            let dir = TempDir::new().unwrap();
+            let store = ProfileStore::new(dir.path());
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/create-client");
+                then.json(client_response_json());
+            });
+            let server = start_server(mocks).await;
+            save_test_token(&store, &make_test_jwt(server.url("/")));
+
+            let result = bind_client_device(&store).await;
+
+            assert!(
+                matches!(result, Err(DeviceClientError::Auth(_))),
+                "an untrusted services claim must be refused before provisioning; got {result:?}"
+            );
+            assert!(
+                !store
+                    .workspace_store(TEST_WORKSPACE_ID)
+                    .unwrap()
+                    .exists(SECRET_KEY_FILENAME),
+                "a refused endpoint must not create a device credential"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn provisions_and_saves_secret_key() {
         let dir = TempDir::new().unwrap();
@@ -289,10 +359,15 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let jwt = make_test_jwt(server.url("/"));
+        let jwt = make_test_jwt("https://us-east-1.aws.viturhosted.net/");
         save_test_token(&store, &jwt);
 
-        bind_client_device(&store).await.unwrap();
+        bind_client_device_with_transport(
+            &store,
+            &transport::share(LocalTransport(server.url("/"))),
+        )
+        .await
+        .unwrap();
 
         let ws_store = store.workspace_store(TEST_WORKSPACE_ID).unwrap();
         let saved: serde_json::Value = ws_store.load(SECRET_KEY_FILENAME).unwrap();
@@ -339,10 +414,15 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let jwt = make_test_jwt(server.url("/"));
+        let jwt = make_test_jwt("https://us-east-1.aws.viturhosted.net/");
         save_test_token(&store, &jwt);
 
-        bind_client_device(&store).await.unwrap();
+        bind_client_device_with_transport(
+            &store,
+            &transport::share(LocalTransport(server.url("/"))),
+        )
+        .await
+        .unwrap();
 
         let ws_store = store.workspace_store(TEST_WORKSPACE_ID).unwrap();
         assert!(
@@ -364,10 +444,15 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let jwt = make_test_jwt(server.url("/"));
+        let jwt = make_test_jwt("https://us-east-1.aws.viturhosted.net/");
         save_test_token(&store, &jwt);
 
-        let err = bind_client_device(&store).await.unwrap_err();
+        let err = bind_client_device_with_transport(
+            &store,
+            &transport::share(LocalTransport(server.url("/"))),
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(err, DeviceClientError::Server { status: 500, .. }),
             "expected Server error, got: {err:?}"
