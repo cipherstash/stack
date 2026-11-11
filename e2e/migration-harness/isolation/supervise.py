@@ -131,6 +131,7 @@ def invoke(argv, stage):
 
     def trace():
         pending = {}
+        exec_moves = {}
         actor_exit = None
         source = process.stderr
         if source is not None:
@@ -151,14 +152,43 @@ def invoke(argv, stage):
                         actor_exit = int(exited.group(1))
                     elif killed:
                         actor_exit = -getattr(signal, killed.group(1))
+                # A non-leader exec takes the thread group's PID. strace 6.1
+                # terminates its printed entry with this marker instead of
+                # <unfinished ...>, then resumes under the replacement PID.
+                moved = re.fullmatch(r'(.*) <pid changed to (\d+) \.\.\.>', call)
+                if moved:
+                    entry, replacement = moved.groups()
+                    if not entry.startswith(('execve(', 'execveat(')) or replacement == pid:
+                        raise RuntimeError('invalid ptrace exec PID transition')
+                    pending.pop(pid, None)
+                    pending[replacement] = entry
+                    exec_moves[pid] = replacement
+                    continue
+                superseded = re.fullmatch(r'\+\+\+ superseded by execve in pid (\d+) \+\+\+', call)
+                if superseded:
+                    former = superseded.group(1)
+                    if exec_moves.pop(former, None) == pid:
+                        if not pending.get(pid, '').startswith(('execve(', 'execveat(')):
+                            raise RuntimeError('missing ptrace exec PID transition')
+                    else:
+                        # Interleaving may have already printed <unfinished ...>
+                        # for the old thread before strace observes its exec.
+                        entry = pending.pop(former, None)
+                        if not entry or not entry.startswith(('execve(', 'execveat(')):
+                            raise RuntimeError('missing ptrace exec PID transition')
+                        pending[pid] = entry
+                    continue
                 if '<unfinished ...>' in call:
                     pending[pid] = call.split('<unfinished ...>')[0]
                     continue
                 if call.startswith('<... '):
-                    resumed = re.match(r'<\.\.\. \w+ resumed>(.*)', call)
+                    resumed = re.match(r'<\.\.\. (\w+) resumed>(.*)', call)
                     if not resumed or pid not in pending:
-                        raise RuntimeError('unmatched ptrace syscall continuation')
-                    call = pending.pop(pid) + resumed.group(1)
+                        raise RuntimeError('unmatched ptrace syscall continuation (pid=%s, syscall=%s, pending=%s)' % (pid, resumed.group(1) if resumed else 'invalid', len(pending)))
+                    entry = pending.pop(pid)
+                    if entry.split('(', 1)[0] != resumed.group(1):
+                        raise RuntimeError('mismatched ptrace syscall continuation')
+                    call = entry + resumed.group(2)
                 if ' = ' not in call: continue
                 operation, result = call.rsplit(' = ', 1)
                 # Canonical paths returned by the kernel are decoded by strace -yy.
