@@ -290,6 +290,11 @@ export function createRealDriver({
       )
     },
     async migrate() {
+      manifest.documentationExposure = {
+        status: 'unknown',
+        reviewRequired: true,
+        evidenceComplete: false,
+      }
       if (!stackSource) throw Error('Stack source not resolved')
       if (stackSource.tarball)
         await cp(stackSource.tarball, resolve(workspace, 'resolved-stack.tgz'))
@@ -317,6 +322,17 @@ export function createRealDriver({
                 timeoutMs,
               }),
           })
+      if ('brokerEvidence' in result && result.brokerEvidence) {
+        await writeFile(
+          resolve(output, 'broker-evidence.json'),
+          JSON.stringify({
+            complete: result.documentationExposure?.evidenceComplete ?? false,
+            records: result.brokerEvidence,
+          }),
+          { mode: 0o600, flag: 'wx' },
+        )
+        manifest.documentationExposure = result.documentationExposure
+      }
       if ('runtime' in result && result.runtime)
         manifest.agents = { ...manifest.agents, runtime: result.runtime }
       if (fakeMigration && fakeMigration !== 'noop')
@@ -327,6 +343,9 @@ export function createRealDriver({
       )
       manifest.artifacts = {
         transcript: 'migrator-transcript.log',
+        ...('brokerEvidence' in result
+          ? { brokerEvidence: 'broker-evidence.json' }
+          : {}),
         snapshot: 'legacy-snapshot.json',
       }
       // A timed-out broker has stopped its isolated tools and proof relays.
@@ -370,6 +389,9 @@ export function createRealDriver({
       await writeFile(resolve(output, 'migration.diff'), diff.stdout)
       manifest.artifacts = {
         transcript: 'migrator-transcript.log',
+        ...('brokerEvidence' in result
+          ? { brokerEvidence: 'broker-evidence.json' }
+          : {}),
         diff: 'migration.diff',
         snapshot: 'legacy-snapshot.json',
       }

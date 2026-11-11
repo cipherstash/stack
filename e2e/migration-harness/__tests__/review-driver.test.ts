@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,7 +10,7 @@ import { migrationChecks, noRewriteCheck } from '../run/migration-checks.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
 import { dynamoSnapshotError } from '../run/snapshot-errors.mjs'
-import type { IsolationOptions } from '../types.js'
+import type { IsolationOptions, Manifest } from '../types.js'
 
 const observed = vi.hoisted(() => ({
   dispose: vi.fn(async () => {}),
@@ -97,6 +97,7 @@ async function setup(
     gitFailure?: 'add' | 'diff'
     stopFails?: boolean
     timeoutMs?: number
+    toolResponse?: { exitCode: number; stdout: string; stderr: string }
   } = {},
 ) {
   const output = await mkdtemp(join(tmpdir(), 'mh-review-driver-'))
@@ -124,7 +125,7 @@ async function setup(
         const result = await execute(file, args, { cwd: invocation.workspace })
         return { exitCode: 0, stdout: result.stdout, stderr: result.stderr }
       }
-      return { exitCode: 0, stdout: '', stderr: '' }
+      return options.toolResponse ?? { exitCode: 0, stdout: '', stderr: '' }
     },
     stop: async (stopOptions?: { expected?: boolean }) => {
       cancellations.push(stopOptions)
@@ -148,6 +149,11 @@ async function setup(
       close: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     }),
   }
+  const manifest: Manifest & { stack: string } = {
+    guideHash: 'guide',
+    stack: '1.2.1',
+    agents: { limits: { timeMs: options.timeoutMs ?? 5000, turns: 5 } },
+  }
   const driver = createRealDriver({
     id: 'review',
     root,
@@ -155,14 +161,10 @@ async function setup(
     command: options.command ?? 'true',
     isolation,
     credentials: { CS_CLIENT_KEY: 'app-secret' },
-    manifest: {
-      guideHash: 'guide',
-      stack: '1.2.1',
-      agents: { limits: { timeMs: options.timeoutMs ?? 5000, turns: 5 } },
-    },
+    manifest,
   })
   await driver.provision()
-  return { driver, output, commands, calls, cancellations }
+  return { driver, output, commands, calls, cancellations, manifest }
 }
 
 test('F1 records a committed migration relative to the prepared fixture', async () => {
@@ -576,4 +578,44 @@ test.each([
   expect(
     (await migrationChecks(options)).find((check) => check.id === id)?.passed,
   ).toBe(false)
+})
+
+test('N3 persists private broker responses without exporting their contents in the manifest', async () => {
+  const adapterDir = await mkdtemp(join(tmpdir(), 'mh-evidence-driver-'))
+  outputs.push(adapterDir)
+  const adapter = join(adapterDir, 'adapter.mjs')
+  await writeFile(
+    adapter,
+    `console.log(JSON.stringify({id:'doc',method:'exec',command:['npm','view','example','readme']}));process.stdin.once('data',()=>process.exit(0));`,
+  )
+  const response = {
+    exitCode: 0,
+    stdout: 'PRIVATE-RESPONSE-CANARY',
+    stderr: 'PRIVATE-DIAGNOSTIC-CANARY',
+  }
+  const { driver, output, manifest } = await setup({
+    command: `node '${adapter}'`,
+    toolResponse: response,
+  })
+  await driver.migrate()
+  const path = join(output, 'broker-evidence.json')
+  expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({
+    complete: true,
+    records: [
+      {
+        id: 'doc',
+        command: ['npm', 'view', 'example', 'readme'],
+        result: response,
+      },
+    ],
+  })
+  expect((await stat(path)).mode & 0o777).toBe(0o600)
+  expect(manifest.artifacts?.brokerEvidence).toBe('broker-evidence.json')
+  expect(manifest.documentationExposure).toMatchObject({
+    status: 'observed',
+    evidenceComplete: true,
+    reviewRequired: true,
+  })
+  expect(JSON.stringify(manifest)).not.toContain('PRIVATE-RESPONSE-CANARY')
+  expect(JSON.stringify(manifest)).not.toContain('PRIVATE-DIAGNOSTIC-CANARY')
 })

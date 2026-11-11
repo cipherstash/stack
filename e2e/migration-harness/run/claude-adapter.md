@@ -54,6 +54,20 @@ identifier and final turn count in `manifest.agents.runtime`. Model text never
 becomes a broker request. CLI stderr is consumed but not exported, because it can
 contain provider details. The broker transcript records the actual isolated
 command requests and runtime metadata; the broker also returns tool-call exit codes.
+`broker-evidence.json` separately retains request IDs, commands and responses as
+private evidence (mode `0600`), referenced by `manifest.artifacts.brokerEvidence`.
+It is not inline Editor evidence and must be redacted before any future export.
+Retention is limited to 8 MiB per Run; records that exceed the remaining budget
+are omitted and the artifact and manifest report incomplete evidence.
+
+`manifest.documentationExposure` reports `observed` for explicit successful npm
+README retrieval. Successful Migrator opens of installed Markdown/README files
+report `possible`: observer events omit open flags, so extraction writes cannot
+be distinguished from reads. Metadata-only inspection does not set this signal.
+Other execution remains `unknown`,
+never "no exposure". `reviewRequired` is always true. Inspect the private responses
+and supervisor events before making a guide-only claim; incomplete evidence cannot
+establish one. These signals do not detect every way documentation can be accessed.
 
 The MCP bridge connects through a private Unix socket and a per-run token. It
 accepts only `exec` with a string argument array; the model cannot select a host
@@ -72,8 +86,9 @@ completion, unexpected tool/permission settings, and turn limits. These tests
 make no model calls and need no Docker. They do need permission to create a local
 Unix socket.
 
-A real model Run for each procedure remains pending on a disposable remote host
-selected by the maintainer. Real agents remain outside CI under the ADR; CI runs
-deterministic Fake Migrators. Fake CLI coverage does not prove that an installed
-Claude version can complete a migration or that the guide is sufficient for a
-real model.
+The workstream handoff reports one successful guide-only sample per procedure at
+guide hash `1a3a83d1…` and harness commit `d6feaca69`. The retained final artifacts
+have not been audited here, and command responses missing from those historical
+Runs cannot be reconstructed by this change. Those samples do not establish ADR
+convergence. Real agents remain outside CI; CI runs deterministic Fake Migrators.
+Fake CLI coverage does not prove guide sufficiency for a real model.

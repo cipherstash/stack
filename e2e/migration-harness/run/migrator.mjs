@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 /** Run a trusted model adapter on the host. Its only application tool is the
  * JSON-lines exec broker; the caller supplies the fixed isolated execution context.
- * @param {{command:string, execute:(command:string[],timeoutMs:number)=>Promise<import('../types.js').IsolationResult>, stop:()=>Promise<unknown>, timeoutMs?:number, maxToolCalls?:number, maxModelTurns?:number}} options
+ * @param {{command:string, execute:(command:string[],timeoutMs:number)=>Promise<import('../types.js').IsolationResult>, stop:()=>Promise<unknown>, timeoutMs?:number, maxToolCalls?:number, maxModelTurns?:number, maxEvidenceBytes?:number}} options
  * @returns {Promise<import('../types.js').MigratorResult & {stdout:string,stderr:string}>}
  */
 export async function runMigrator({
@@ -15,6 +15,7 @@ export async function runMigrator({
   timeoutMs = 40 * 60 * 1000,
   maxToolCalls = 200,
   maxModelTurns = 200,
+  maxEvidenceBytes = 8 * 1024 * 1024,
 }) {
   if (
     !Number.isFinite(timeoutMs) ||
@@ -22,7 +23,9 @@ export async function runMigrator({
     !Number.isSafeInteger(maxToolCalls) ||
     maxToolCalls <= 0 ||
     !Number.isSafeInteger(maxModelTurns) ||
-    maxModelTurns <= 0
+    maxModelTurns <= 0 ||
+    !Number.isSafeInteger(maxEvidenceBytes) ||
+    maxEvidenceBytes <= 0
   )
     throw Error('Invalid Migrator limits')
   const directory = await mkdtemp(join(tmpdir(), 'migration-adapter-'))
@@ -54,6 +57,17 @@ export async function runMigrator({
       const seen = new Set()
       /** @type {Array<{id:string,exitCode:number}>} */
       const toolCalls = []
+      /** @type {NonNullable<import('../types.js').MigratorResult['brokerEvidence']>} */
+      const brokerEvidence = []
+      let evidenceBytes = 0
+      let evidenceComplete = true
+      /** @type {import('../types.js').DocumentationExposure} */
+      const documentationExposure = {
+        status: 'unknown',
+        reviewRequired: true,
+        evidenceComplete: true,
+      }
+
       let buffer = '',
         stdout = '',
         stderr = ''
@@ -207,6 +221,29 @@ export async function runMigrator({
                 Math.max(1, deadline - Date.now()),
               )
               toolCalls.push({ id: request.id, exitCode: result.exitCode })
+              // Keep raw responses private, separate from exportable tool metadata.
+              const record = {
+                id: request.id,
+                command: request.command,
+                result,
+              }
+              const bytes = Buffer.byteLength(JSON.stringify(record))
+              if (evidenceBytes + bytes <= maxEvidenceBytes) {
+                brokerEvidence.push(record)
+                evidenceBytes += bytes
+              } else evidenceComplete = false
+              // This recognizes explicit retrieval only; unrecognized commands never
+              // prove absence. File-access evidence supplies another positive signal.
+              if (
+                result.exitCode === 0 &&
+                request.command[0] === 'npm' &&
+                ['view', 'info', 'show'].includes(request.command[1]) &&
+                request.command.some((/** @type {string} */ arg) =>
+                  /^readme(?:\.|$)/i.test(arg),
+                )
+              )
+                documentationExposure.status = 'observed'
+              documentationExposure.evidenceComplete = evidenceComplete
               if (!stopped && !closed)
                 child.stdin.write(
                   `${JSON.stringify({ id: request.id, result })}\n`,
@@ -235,6 +272,8 @@ export async function runMigrator({
           exitCode: limit ? 124 : (code ?? 1),
           limit,
           toolCalls: [...toolCalls],
+          brokerEvidence,
+          documentationExposure,
           ...(runtime ? { runtime } : {}),
           stdout,
           stderr,
