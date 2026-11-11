@@ -668,14 +668,16 @@ def _item(row: Any, at: int) -> Any:
 def _verify(conditions: List[_Condition], result: Any) -> Any:
     """Keep the rows that pass every condition: for each, at least one
     branch whose match searches all pass ``verify``. A field that is NULL
-    fails its search."""
+    fails its search, and so does an object an outer join leaves out."""
     rows = list(result.data)
     passed: Dict[int, List[bool]] = {}
 
     def results(search: _Search) -> List[bool]:
         if id(search) not in passed:
             at, field, query = search
-            values = [getattr(_item(row, at), field) for row in rows]
+            # An outer join gives None for a missing object. Its search fails,
+            # as for a NULL value.
+            values = [getattr(_item(row, at), field, None) for row in rows]
             present = [i for i, value in enumerate(values) if value is not None]
             ok = [False] * len(rows)
             for i, verified in zip(present, query.verify([values[i] for i in present])):
