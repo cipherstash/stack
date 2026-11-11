@@ -84,7 +84,7 @@ test('invalid friction remains primary while independent behaviour diagnostics r
     ['invalid-friction-log', 'behaviour'],
   )
 })
-test('pre-Migrator installation failure skips dependents and excludes Editor', async () => {
+test('pre-Migrator installation failure is infrastructure, skips dependents and excludes Editor', async () => {
   const report = await run({
     id: 'install',
     manifest,
@@ -94,7 +94,15 @@ test('pre-Migrator installation failure skips dependents and excludes Editor', a
       },
     }),
   })
-  assert.equal(report.outcome, 'install')
+  assert.equal(report.outcome, 'infrastructure')
+  assert.equal(report.migratorInvoked, false)
+  assert.deepEqual(report.failures, [
+    {
+      stage: 'unmigrated-install',
+      category: 'infrastructure',
+      cause: 'npm failed',
+    },
+  ])
   assert.equal(report.editorEligible, false)
   assert.deepEqual(
     report.stages.filter((s) => s.status === 'skipped').map((s) => s.name),
