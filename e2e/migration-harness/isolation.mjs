@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { createInterface } from 'node:readline'
+import { StringDecoder } from 'node:string_decoder'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -38,8 +38,26 @@ function command(args) {
  * produces events on a channel separate from every actor's output. No socket
  * giving access to the Docker daemon is mounted in the actor container.
  */
-/** @param {{onEvent?:(event:import('./types.js').AccessEvent)=>void}} options */
-export function createIsolation({ onEvent = (_event) => {} } = {}) {
+/** @param {{onEvent?:(event:import('./types.js').AccessEvent)=>void, limits?:{outputBytes?:number,eventCount?:number,eventBytes?:number,frameBytes?:number}}} options */
+export function createIsolation({
+  onEvent = (_event) => {},
+  limits = {},
+} = {}) {
+  const budget = {
+    outputBytes: 16 * 1024 * 1024,
+    eventCount: 250_000,
+    eventBytes: 64 * 1024 * 1024,
+    frameBytes: 64 * 1024,
+    ...limits,
+  }
+  if (
+    Object.values(budget).some(
+      (value) => !Number.isSafeInteger(value) || value <= 0,
+    )
+  )
+    throw Error('Invalid isolation evidence limits')
+  let retainedEventBytes = 0
+  let retainedEventCount = 0
   /** @type {import('./types.js').AccessEvent[]} */
   const events = []
   /** @type {Set<{stop:(options?:{expected?:boolean})=>Promise<unknown>,settled:()=>Promise<unknown>}>} */
@@ -239,13 +257,40 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
     /** @type {Promise<import('./types.js').IsolationResult>} */
     const completion = new Promise((resolve, reject) => {
       child.on('error', reject)
+      let outputBytes = 0
+      let overflowed = false
+      /** Stop instead of presenting truncated supervision as complete evidence. */
+      function overflow() {
+        if (overflowed) return
+        overflowed = true
+        failure = infrastructure('Isolation output or evidence limit exceeded')
+        fatal = failure
+        void stop()
+      }
+      /** @param {string} value */
+      function retainOutput(value) {
+        outputBytes += Buffer.byteLength(value)
+        if (outputBytes > budget.outputBytes) overflow()
+        return !overflowed
+      }
       child.stderr.on('data', (data) => {
-        stderr += data
+        if (!overflowed && retainOutput(data.toString())) stderr += data
       })
-      createInterface({ input: child.stdout }).on('line', (line) => {
+      /** @param {string} line */
+      function receive(line) {
+        if (overflowed) return
         try {
           const frame = JSON.parse(line)
           if (frame.kind === 'event') {
+            retainedEventCount++
+            retainedEventBytes += Buffer.byteLength(line)
+            if (
+              retainedEventCount > budget.eventCount ||
+              retainedEventBytes > budget.eventBytes
+            ) {
+              overflow()
+              return
+            }
             events.push(frame.event)
             onEvent(frame.event)
             if (isBreach(frame.event)) {
@@ -257,11 +302,14 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
             }
           } else if (frame.kind === 'stdout') {
             const text = Buffer.from(frame.data, 'base64').toString()
-            stdout += text
-            onOutput(text)
-          } else if (frame.kind === 'stderr')
-            stderr += Buffer.from(frame.data, 'base64').toString()
-          else if (frame.kind === 'actor-exit') {
+            if (retainOutput(text)) {
+              stdout += text
+              onOutput(text)
+            }
+          } else if (frame.kind === 'stderr') {
+            const text = Buffer.from(frame.data, 'base64').toString()
+            if (retainOutput(text)) stderr += text
+          } else if (frame.kind === 'actor-exit') {
             if (frame.actor !== actor || !Number.isInteger(frame.exitCode))
               throw Error('Invalid actor exit identity')
             if (frame.stage === 'command') actorExit = frame.exitCode
@@ -276,6 +324,35 @@ export function createIsolation({ onEvent = (_event) => {} } = {}) {
           )
           void stop()
         }
+      }
+      // readline buffers an unterminated frame without a bound. Split incrementally
+      // and reject before retaining a frame larger than the trusted protocol permits.
+      const decoder = new StringDecoder('utf8')
+      let buffer = ''
+      child.stdout.on('data', (chunk) => {
+        if (overflowed) return
+        const text = decoder.write(chunk)
+        let offset = 0
+        while (offset < text.length && !overflowed) {
+          const newline = text.indexOf('\n', offset)
+          const end = newline < 0 ? text.length : newline
+          const part = text.slice(offset, end)
+          if (
+            Buffer.byteLength(buffer) + Buffer.byteLength(part) >
+            budget.frameBytes
+          ) {
+            overflow()
+            return
+          }
+          buffer += part
+          if (newline < 0) break
+          receive(buffer)
+          buffer = ''
+          offset = newline + 1
+        }
+      })
+      child.stdout.on('end', () => {
+        if (!overflowed && buffer) receive(buffer + decoder.end())
       })
       child.on('close', async (code) => {
         clearTimeout(timer)

@@ -11,6 +11,7 @@ test('Run observes Legacy Data before new writes and mutation through App Host c
   ])
   const postgres = new Map<string, Record<string, unknown>>([
     [legacy.pk, legacy],
+    [mutation.pk, mutation],
   ])
   const methods: string[] = []
   const project = (row: Record<string, unknown> | undefined) =>
@@ -102,7 +103,7 @@ test('fresh-write lookup failure is visible as stable Oracle evidence', async ()
     {
       id: 'behaviour.fresh-findBalance',
       passed: false,
-      cause: 'Fresh write not found',
+      cause: 'Unexpected application result',
     },
   )
 })

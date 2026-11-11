@@ -142,7 +142,7 @@ export async function run({ id, manifest, driver, supervision = null }) {
   )
   const installed = await stage(
     stages[1],
-    'install',
+    'infrastructure',
     () => driver.installUnmigrated(),
     provisioned,
   )
