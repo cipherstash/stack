@@ -71,6 +71,14 @@ class Trip(Base):
     city: Mapped[Annotated[Optional[str], TextMatch]]
 
 
+@stackencrypt.model("guides")
+class Guide(Base):
+    __tablename__ = "guides"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    trip_id: Mapped[Annotated[int, Ignore]] = mapped_column(ForeignKey("trips.id"))
+    bio: Mapped[Annotated[str, TextMatch]]
+
+
 @stackencrypt.model("players")
 class Player(Base):
     __tablename__ = "players"
@@ -92,7 +100,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))
     Base.metadata.create_all(engine)
-    configure_encryption(engine, [Customer, Order, Player, Profile, Venue, Trip])
+    configure_encryption(engine, [Customer, Order, Player, Profile, Venue, Trip, Guide])
     yield engine
     with engine.begin() as conn:
         conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
@@ -102,7 +110,7 @@ def engine():
 @pytest.fixture(autouse=True)
 def empty(engine):
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE orders, customers, players, profiles, venues, trips RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE orders, customers, players, profiles, venues, guides, trips RESTART IDENTITY"))
 
 
 def stored(engine, sql):
@@ -500,3 +508,22 @@ def test_an_or_that_is_not_only_matches_is_refused(engine, where):
         session.execute(select(Trip).where(where()))
     assert raised.value.code == "query_unsupported"
     assert "A match index can return rows" in raised.value.message
+
+
+def test_an_or_across_an_outer_join_fails_the_branch_of_a_missing_object(engine):
+    add_trips(engine)
+    with Session(engine) as session:
+        # Only Hill walk (id 3) has a guide.
+        session.add(Guide(trip_id=3, bio="Mountain leader"))
+        session.commit()
+    with Session(engine) as session:
+        statement = (
+            select(Trip, Guide)
+            .outerjoin(Guide, Guide.trip_id == Trip.id)
+            .where(or_(Trip.name.match("run"), Guide.bio.match("mountain")))
+            .order_by(Trip.id)
+        )
+        found = [(trip.name, guide and guide.bio) for trip, guide in session.execute(statement)]
+
+    # Morning run has no guide: its Guide branch fails, and its name keeps it.
+    assert found == [("Morning run", None), ("Hill walk", "Mountain leader")]

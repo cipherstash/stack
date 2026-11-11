@@ -145,7 +145,7 @@ Anything else raises `QueryError` with `query_unsupported` before the query is s
 
 ### An `or_` of match searches
 
-A search box that looks in several text fields is an `or_` of match searches, such as `or_(Activity.name.match(q), Activity.town.match(q))`. The hook accepts an `or_` whose branches are all match searches, or `and_` of them. It keeps a row if any branch passes `verify`. A branch on a field that is NULL fails for that row.
+A search box that looks in several text fields is an `or_` of match searches, such as `or_(Activity.name.match(q), Activity.town.match(q))`. The hook accepts an `or_` whose branches are all match searches, or `and_` of them. It keeps a row if any branch passes `verify`. A branch fails for a row when its field is NULL, or when an outer join gives no object for its class. With `AND` alone, such a row never comes back, because its `@@` is NULL. With `or_`, another branch can bring it back.
 
 This gives exactly the rows that `verify` would keep over the whole table. A match search never leaves out a row that `verify` would keep:
 
