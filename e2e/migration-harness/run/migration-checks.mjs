@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { satisfies, valid } from 'semver'
 import ts from 'typescript'
+import { noRewrite } from './no-rewrite.mjs'
+import { object } from './record.mjs'
 
 export const requiredOracleChecks = [
   'no-rewrite.legacy-bytes',
@@ -15,47 +17,8 @@ const legacyPackage =
   /@cipherstash\/(?:protect-dynamodb|protect|schema)(?![\w-])/
 const hostSetting = /^(CS_CTS_HOST|CS_ZEROKMS_HOST)$/
 
-/** @param {unknown} value @returns {Record<string, unknown>} */
-function object(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw Error('Expected a stored record or package object')
-  return Object.fromEntries(Object.entries(value))
-}
-
-/** Project only the encrypted bytes and equality terms covered by the ADR.
- * Metadata and unrelated stored fields are not part of the no-rewrite contract.
- * @param {unknown} snapshot */
-export function legacyBytes(snapshot) {
-  const value = object(snapshot)
-  const item = object(object(value.dynamo).Item)
-  const dynamo = Object.fromEntries(
-    Object.entries(item).filter(([key]) => /__(source|hmac)$/.test(key)),
-  )
-  if (!Object.keys(dynamo).some((key) => key.endsWith('__source')))
-    throw Error('Legacy DynamoDB ciphertext is missing')
-  if (!Array.isArray(value.postgres) || value.postgres.length !== 1)
-    throw Error('Legacy Postgres record is missing')
-  const row = object(value.postgres[0])
-  const postgres = Object.fromEntries(
-    Object.entries(row).flatMap(([key, payload]) => {
-      if (key === 'pk') return []
-      const envelope = object(payload)
-      if (typeof envelope.c !== 'string')
-        throw Error('Legacy Postgres ciphertext is missing')
-      return [
-        [
-          key,
-          { c: envelope.c, ...('hm' in envelope ? { hm: envelope.hm } : {}) },
-        ],
-      ]
-    }),
-  )
-  if (!Object.keys(postgres).length)
-    throw Error('Legacy Postgres ciphertext is missing')
-  return { dynamo, postgres }
-}
-
-/** @param {unknown} before @param {unknown} after @returns {import('../types.js').OracleCheck} */
+/** Compatibility entry point for check-level callers.
+ * @param {unknown} before @param {unknown} after @returns {import('../types.js').OracleCheck} */
 export function noRewriteCheck(before, after) {
   try {
     const passed = isDeepStrictEqual(legacyBytes(before), legacyBytes(after))

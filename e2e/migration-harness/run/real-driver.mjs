@@ -12,6 +12,7 @@ import {
 } from './migration-checks.mjs'
 import { runMigrator } from './migrator.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
+import { isSnapshotInfrastructureError } from './snapshot-errors.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
 /** @typedef {Awaited<ReturnType<typeof createStoreSet>>} StoreSet
@@ -378,10 +379,16 @@ export function createRealDriver({
         const result = await behaviour((method, args) =>
           application.call(method, args),
         )
-        const comparison = noRewriteCheck(
-          legacySnapshot,
-          await oracleSnapshot(),
-        )
+        let current
+        try {
+          current = await assigned(oracleStores).snapshot()
+        } catch (error) {
+          throw Object.assign(
+            new Error('Oracle snapshot read failed', { cause: error }),
+            { infrastructure: isSnapshotInfrastructureError(error) },
+          )
+        }
+        const comparison = noRewrite(legacySnapshot, current)
         result.checks.push(comparison)
         // Inspect the stored active field straight after setActive: the copy
         // checks then put the full record twice, which would replace a stale

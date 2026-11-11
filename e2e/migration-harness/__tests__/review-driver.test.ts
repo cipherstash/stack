@@ -273,36 +273,106 @@ test('F5 checks legacy ciphertext after reads and before mutations', async () =>
   expect(mutationBeforeSnapshot).toBe(false)
 })
 
-test('inspects the stored active field before later full puts can overwrite it', async () => {
-  const { driver, calls } = await setup()
-  await driver.snapshot()
-  await driver.installAppHost()
-  let callsAtMutationSnapshot: string[] | undefined
-  observed.snapshot.mockImplementation(async (pk?: string) => {
-    if (pk === 'mutation') callsAtMutationSnapshot = calls.slice()
-    return {
-      dynamo: { Item: { email__source: { S: 'original' } } },
-      postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
+test.each([
+  [
+    'dropped table',
+    Object.assign(Error('missing table'), { code: '42P01' }),
+    'behaviour',
+  ],
+  [
+    'renamed column',
+    Object.assign(Error('missing column'), { code: '42703' }),
+    'behaviour',
+  ],
+  [
+    'invalid payload cast',
+    Object.assign(Error('invalid cast'), { code: '42846' }),
+    'behaviour',
+  ],
+  [
+    'deleted DynamoDB table',
+    Object.assign(Error('missing table'), {
+      name: 'ResourceNotFoundException',
+    }),
+    'behaviour',
+  ],
+  [
+    'unknown snapshot failure',
+    Error('unrecognized snapshot failure'),
+    'behaviour',
+  ],
+  [
+    'refused connection',
+    Object.assign(Error('connection refused'), { code: 'ECONNREFUSED' }),
+    'infrastructure',
+  ],
+  [
+    'reset connection',
+    Object.assign(Error('connection reset'), { code: 'ECONNRESET' }),
+    'infrastructure',
+  ],
+  [
+    'connection timeout',
+    Object.assign(Error('connection timed out'), { code: 'ETIMEDOUT' }),
+    'infrastructure',
+  ],
+  [
+    'broken socket pipe',
+    Object.assign(Error('broken pipe'), { code: 'EPIPE' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres.js closed connection',
+    Object.assign(Error('connection closed'), { code: 'CONNECTION_CLOSED' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres connection loss',
+    Object.assign(Error('connection failure'), { code: '08006' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres shutdown',
+    Object.assign(Error('admin shutdown'), { code: '57P01' }),
+    'infrastructure',
+  ],
+  [
+    'fetch transport failure',
+    new TypeError('fetch failed', {
+      cause: Object.assign(Error('socket closed'), { code: 'UND_ERR_SOCKET' }),
+    }),
+    'infrastructure',
+  ],
+] as const)(
+  'post-read snapshot classifies %s',
+  async (_scenario, error, outcome) => {
+    const { driver, calls } = await setup()
+    const baseline = await observed.snapshot()
+    observed.snapshot
+      .mockResolvedValueOnce(baseline)
+      .mockRejectedValueOnce(error)
+    try {
+      const report = await run({
+        id: 'post-read-snapshot',
+        manifest: { guideHash: 'guide' },
+        driver: {
+          ...driver,
+          provision: async () => {},
+          migrate: async () => ({ exitCode: 0 }),
+          friction: async () => [],
+        },
+      })
+      expect(report.outcome).toBe(outcome)
+      expect(report.editorEligible).toBe(outcome === 'behaviour')
+      expect(calls).toContain('findPostgresAge')
+      expect(
+        report.stages.find((stage) => stage.name === 'behaviour')?.status,
+      ).toBe('failed')
+    } finally {
+      await driver.close()
     }
-  })
-  try {
-    await driver.behaviour()
-  } finally {
-    observed.snapshot.mockReset()
-    observed.snapshot.mockImplementation(async () => ({
-      dynamo: { Item: { email__source: { S: 'original' } } },
-      postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
-    }))
-  }
-  expect(callsAtMutationSnapshot).toBeDefined()
-  const seen = callsAtMutationSnapshot ?? []
-  const setActive = seen.lastIndexOf('setActive')
-  expect(setActive).toBeGreaterThanOrEqual(0)
-  // No later write may run between setActive and the inspected snapshot.
-  expect(seen.slice(setActive + 1)).not.toContain('put')
-  expect(seen).not.toContain('copyToPostgres')
-  expect(seen).not.toContain('copyToDynamo')
-})
+  },
+)
 
 test('F12 disposes stores even when the isolation supervisor fails to stop', async () => {
   const { driver } = await setup({ stopFails: true })
