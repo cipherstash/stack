@@ -641,15 +641,25 @@ async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetSta
 pub struct FromEnv;
 
 /// The client key, looked up the way [`stack_auth::AutoStrategy`] looks up the
-/// access token: `CS_CLIENT_ID` / `CS_CLIENT_KEY` first, then the current
-/// workspace's `secretkey.json` in the profile directory. A profile directory
+/// access token: `CS_CLIENT_ID` / `CS_CLIENT_KEY` first, then `secretkey.json`
+/// in the profile directory — of the workspace `CS_WORKSPACE_CRN` names if it
+/// is set, otherwise of the current one. A profile directory
 /// that cannot be resolved is not an error here — env-only setups (CI) have
 /// none — it just leaves the environment as the only source.
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 fn client_key_provider() -> FallbackKeyProvider<EnvKeyProvider, ProfileClientKey> {
+    // An unparseable CRN is left for `AutoStrategy` to report; here it just
+    // means no workspace pin.
+    let workspace = std::env::var("CS_WORKSPACE_CRN")
+        .ok()
+        .and_then(|crn| crn.parse::<stack_auth::Crn>().ok())
+        .map(|crn| crn.workspace_id.to_string());
     FallbackKeyProvider::new(
         EnvKeyProvider,
-        ProfileClientKey(ProfileStore::resolve(None).ok()),
+        ProfileClientKey {
+            store: ProfileStore::resolve(None).ok(),
+            workspace,
+        },
     )
 }
 
@@ -663,14 +673,33 @@ fn client_key_provider() -> EnvKeyProvider {
 /// directory so the "not configured" message can say what to do about it
 /// rather than only that `CS_CLIENT_ID` is unset.
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
-struct ProfileClientKey(Option<ProfileStore>);
+struct ProfileClientKey {
+    store: Option<ProfileStore>,
+    /// The workspace to read `secretkey.json` from, so the client key and the
+    /// access token come from the same one. `None` means the CLI's current.
+    workspace: Option<String>,
+}
 
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 impl KeyProvider for ProfileClientKey {
     async fn client_key(&self) -> Result<stack_kms::ClientKey, KeyProviderError> {
-        match &self.0 {
-            Some(store) => store.client_key().await,
-            None => Err(KeyProviderError::NotConfigured(
+        match (&self.store, &self.workspace) {
+            (Some(store), Some(workspace)) => {
+                let ws_store = store
+                    .workspace_store(workspace)
+                    .map_err(|e| KeyProviderError::LoadError(e.to_string()))?;
+                if !ws_store.exists_profile::<stack_kms::SecretKey>() {
+                    return Err(KeyProviderError::NotConfigured(format!(
+                        "no client key for workspace {workspace}: set CS_CLIENT_ID / CS_CLIENT_KEY, or run `npx stash auth login` for that workspace"
+                    )));
+                }
+                let secret_key: stack_kms::SecretKey = ws_store
+                    .load_profile()
+                    .map_err(|e| KeyProviderError::LoadError(e.to_string()))?;
+                secret_key.client_key().await
+            }
+            (Some(store), None) => store.client_key().await,
+            (None, _) => Err(KeyProviderError::NotConfigured(
                 "no client key: set CS_CLIENT_ID / CS_CLIENT_KEY, or run `npx stash auth login`"
                     .into(),
             )),
@@ -757,9 +786,9 @@ impl StackCipherBuilder<FromEnv> {
     ///
     /// 1. the environment (`CS_CLIENT_ACCESS_KEY` + `CS_WORKSPACE_CRN`;
     ///    `CS_CLIENT_ID` + `CS_CLIENT_KEY`), then
-    /// 2. the current workspace in the CLI's profile directory
-    ///    (`auth.json`; `secretkey.json`), which `npx stash auth login`
-    ///    writes.
+    /// 2. the CLI's profile directory (`auth.json`; `secretkey.json`), which
+    ///    `npx stash auth login` writes: the workspace `CS_WORKSPACE_CRN`
+    ///    names if it is set (for both files), otherwise the current one.
     ///
     /// So on a developer machine, logging in with the CLI is sufficient; in
     /// CI, the four variables are.
@@ -2050,6 +2079,84 @@ impl<'c, 'a> MapAccess<'c> for StackMapAccess<'a> {
             }
             None => Err(Unspecified),
         }
+    }
+}
+
+#[cfg(all(test, feature = "http", not(target_arch = "wasm32")))]
+mod profile_client_key_tests {
+    use super::*;
+
+    const CURRENT: &str = "ZVATKW3VHMFG27DY";
+    const PINNED: &str = "AAAAAAAAAAAAAAAA";
+
+    /// A temporary profile directory, removed when dropped.
+    struct TempDir(std::path::PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A profile directory whose *current* workspace has a (not usable as a
+    /// ZeroKMS key, but present) client key and whose pinned one has none.
+    fn store_with_key_in_current_workspace() -> (TempDir, ProfileStore) {
+        let dir = TempDir(std::env::temp_dir().join(format!("stack-encrypt-{}", Uuid::new_v4())));
+        let store = ProfileStore::new(&dir.0);
+        store.init_workspace(PINNED).unwrap();
+        store.init_workspace(CURRENT).unwrap(); // now current
+        let key =
+            stack_kms::SecretKey::from_hex(Uuid::new_v4().to_string(), "00".repeat(32)).unwrap();
+        store
+            .current_workspace_store()
+            .unwrap()
+            .save_profile(&key)
+            .unwrap();
+        (dir, store)
+    }
+
+    #[test]
+    fn the_temp_profile_directory_is_removed_when_dropped() {
+        let (dir, _store) = store_with_key_in_current_workspace();
+        let path = dir.0.clone();
+        assert!(path.exists());
+
+        drop(dir);
+
+        assert!(!path.exists(), "temp profile directory was left behind");
+    }
+
+    #[tokio::test]
+    async fn a_pinned_workspace_never_borrows_the_current_workspaces_client_key() {
+        let (_dir, store) = store_with_key_in_current_workspace();
+        let provider = ProfileClientKey {
+            store: Some(store),
+            workspace: Some(PINNED.to_string()),
+        };
+
+        let err = provider.client_key().await.map(|_| ()).unwrap_err();
+
+        assert!(
+            matches!(err, KeyProviderError::NotConfigured(_)),
+            "expected NotConfigured for the pinned workspace, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_pin_the_current_workspaces_client_key_is_used() {
+        let (_dir, store) = store_with_key_in_current_workspace();
+        let provider = ProfileClientKey {
+            store: Some(store),
+            workspace: None,
+        };
+
+        // The key is found (so not `NotConfigured`); it is just not a real one.
+        let err = provider.client_key().await.map(|_| ()).unwrap_err();
+
+        assert!(
+            !matches!(err, KeyProviderError::NotConfigured(_)),
+            "the current workspace's key should have been found, got {err:?}"
+        );
     }
 }
 

@@ -159,7 +159,7 @@ yourself.
 
 | Strategy | Use for | Credential source |
 |---|---|---|
-| `AutoStrategy` (the default when `config.authStrategy` is unset) | Most apps | `CS_CLIENT_ACCESS_KEY` **and** `CS_WORKSPACE_CRN` env vars, else the dev profile (`~/.cipherstash/auth.json`), else fails `NOT_AUTHENTICATED` |
+| `AutoStrategy` (the default when `config.authStrategy` is unset) | Most apps | `CS_CLIENT_ACCESS_KEY` **and** `CS_WORKSPACE_CRN` env vars, else the dev profile (`~/.cipherstash/auth.json`) — the session of the workspace named by `CS_WORKSPACE_CRN` if set (tokens are checked against it, `WORKSPACE_MISMATCH` otherwise), else the CLI's current workspace's — else fails `NOT_AUTHENTICATED`. **That workspace pin is in `@cipherstash/auth`'s `AutoStrategy` (pass it as `config.authStrategy`); the default client built without `config.authStrategy` resolves credentials inside `@cipherstash/protect-ffi`, which still follows the CLI's *current* workspace — for the token and for the client key it reads from the profile — until it picks the pin up. Pass `config.authStrategy` and keep the CLI's current workspace equal to `CS_WORKSPACE_CRN` until then** |
 | `AccessKeyStrategy` | Services, CI, backfill jobs | Explicit workspace CRN + access key |
 | `OidcFederationStrategy` | Per-user (identity-bound) encryption | Your IdP's JWT, fetched via a callback on every operation — one CTS token cached per distinct JWT (see Client lifetime) |
 | `DeviceSessionStrategy` | CLI-adjacent tooling | The device-code session `stash auth login` created |
@@ -217,9 +217,9 @@ pass `.data`.
 
 | `failure.type` | Meaning / fix |
 |---|---|
-| `NOT_AUTHENTICATED` | No credentials found — set the `CS_*` variables, or run `npx stash auth login` for a dev profile |
+| `NOT_AUTHENTICATED` | No credentials found — set the `CS_*` variables, or run `npx stash auth login` for a dev profile. With `@cipherstash/auth`'s `AutoStrategy` and `CS_WORKSPACE_CRN` set, the dev profile must be logged in to *that* workspace (the CLI's current workspace doesn't count): log in to it, or unset `CS_WORKSPACE_CRN`. The default client (no `config.authStrategy`) uses the CLI's current workspace instead — make the intended workspace current |
 | `MISSING_WORKSPACE_CRN` | `CS_CLIENT_ACCESS_KEY` is set but `CS_WORKSPACE_CRN` isn't — the access-key path needs both |
-| `WORKSPACE_MISMATCH` (`expected` / `actual`) | The access key belongs to a different workspace than the CRN — you've mixed environments' credentials |
+| `WORKSPACE_MISMATCH` (`expected` / `actual`) | The access key (or dev-profile session) belongs to a different workspace than the CRN — you've mixed environments' credentials |
 | `INVALID_ACCESS_KEY` / `INVALID_CRN` | Malformed values — check for truncation/quoting in the secret store |
 | `EXPIRED_TOKEN` / `INVALID_GRANT` | The underlying session/JWT expired — for `OidcFederationStrategy`, check that `getJwt` returns a *fresh* token |
 | `ACCESS_DENIED` | CTS refused the exchange — membership, provider config, or (as an HTTP 402) billing |
@@ -399,12 +399,14 @@ client-side strategy model applies to apps behind the Proxy.
 ## Quick diagnosis
 
 1. **`NOT_AUTHENTICATED` locally** → `npx stash auth login` (dev profile),
-   or export the four `CS_*` variables.
+   or export the four `CS_*` variables. With `@cipherstash/auth`'s
+   `AutoStrategy` and `CS_WORKSPACE_CRN` set, log in to that workspace, or
+   unset it; the default client follows the CLI's current workspace.
 2. **Works locally, 401 in CI/production** → the deployed environment lacks
    the `CS_*` variables, or they're from the wrong workspace — mint with
    `stash env`, compare `CS_WORKSPACE_CRN`.
-3. **`WORKSPACE_MISMATCH`** → the access key and the CRN name different
-   workspaces; re-mint rather than mix-and-match.
+3. **`WORKSPACE_MISMATCH`** → the access key (or dev-profile session) and
+   the CRN name different workspaces; re-mint rather than mix-and-match.
 4. **`No OIDC provider found for issuer`** → add your IdP at
    dashboard.cipherstash.com → workspace → OIDC providers, and check the
    issuer URL matches the JWT's `iss` exactly.

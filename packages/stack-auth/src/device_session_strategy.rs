@@ -1,10 +1,10 @@
-use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
+use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery, WorkspaceId};
 use tracing::warn;
 
 use stack_profile::ProfileStore;
 
 use crate::auto_refresh::AutoRefresh;
-use crate::device_session_refresher::DeviceSessionRefresher;
+use crate::device_session_refresher::{ensure_workspace, DeviceSessionRefresher};
 use crate::transport::{self, SharedTransport};
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, HttpTransport, ServiceToken, Token};
 
@@ -35,6 +35,8 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, HttpTransport, Servi
 /// ```
 pub struct DeviceSessionStrategy {
     crn: Option<Crn>,
+    /// When set, every token is checked against this workspace.
+    expected_workspace: Option<WorkspaceId>,
     inner: AutoRefresh<DeviceSessionRefresher>,
 }
 
@@ -56,6 +58,7 @@ impl DeviceSessionStrategy {
             },
             base_url_override: None,
             transport: None,
+            expected_workspace: None,
         }
     }
 
@@ -72,6 +75,7 @@ impl DeviceSessionStrategy {
             source: OAuthTokenSource::Store(store),
             base_url_override: None,
             transport: None,
+            expected_workspace: None,
         }
     }
 
@@ -85,6 +89,7 @@ impl DeviceSessionStrategy {
             source: OAuthTokenSource::WorkspaceStore(store),
             base_url_override: None,
             transport: None,
+            expected_workspace: None,
         }
     }
 
@@ -96,7 +101,11 @@ impl DeviceSessionStrategy {
 
 impl AuthStrategy for &DeviceSessionStrategy {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
-        Ok(self.inner.get_token().await?)
+        let token = self.inner.get_token().await?;
+        match self.expected_workspace {
+            Some(expected) => token.verify_workspace(expected),
+            None => Ok(token),
+        }
     }
 }
 
@@ -120,9 +129,27 @@ pub struct DeviceSessionStrategyBuilder {
     source: OAuthTokenSource,
     base_url_override: Option<url::Url>,
     transport: Option<SharedTransport>,
+    expected_workspace: Option<WorkspaceId>,
 }
 
 impl DeviceSessionStrategyBuilder {
+    /// Pin the strategy to the workspace named by `crn`.
+    ///
+    /// Every token returned by `get_token` is checked against the CRN's
+    /// workspace, failing with [`AuthError::WorkspaceMismatch`] if it belongs
+    /// to another one — as [`AccessKeyStrategy`](crate::AccessKeyStrategy)
+    /// does. Only the workspace ID is compared, not the region.
+    ///
+    /// For a strategy built with [`with_profile`](DeviceSessionStrategy::with_profile),
+    /// the token is also loaded from that workspace's directory rather than
+    /// from the store's *current* workspace, so a CLI user who has switched
+    /// workspaces does not change which one this process uses. The other
+    /// sources are already a specific workspace's, so the pin only verifies.
+    pub fn workspace_crn(mut self, crn: &Crn) -> Self {
+        self.expected_workspace = Some(crn.workspace_id);
+        self
+    }
+
     /// Send this strategy's requests through `transport` instead of the
     /// bundled `reqwest` client.
     ///
@@ -168,6 +195,7 @@ impl DeviceSessionStrategyBuilder {
             source,
             base_url_override,
             transport,
+            expected_workspace,
         } = self;
         let transport = transport::resolve(transport)?;
         match source {
@@ -175,14 +203,32 @@ impl DeviceSessionStrategyBuilder {
                 region,
                 client_id,
                 token,
-            } => Self::build_from_token(region, client_id, token, base_url_override, transport),
+            } => Self::build_from_token(
+                region,
+                client_id,
+                token,
+                base_url_override,
+                transport,
+                expected_workspace,
+            ),
             OAuthTokenSource::Store(store) => {
-                let ws_store = store.current_workspace_store()?;
-                Self::build_from_workspace_store(ws_store, base_url_override, transport)
+                let ws_store = match expected_workspace {
+                    Some(ws) => store.workspace_store(ws.as_str())?,
+                    None => store.current_workspace_store()?,
+                };
+                Self::build_from_workspace_store(
+                    ws_store,
+                    base_url_override,
+                    transport,
+                    expected_workspace,
+                )
             }
-            OAuthTokenSource::WorkspaceStore(store) => {
-                Self::build_from_workspace_store(store, base_url_override, transport)
-            }
+            OAuthTokenSource::WorkspaceStore(store) => Self::build_from_workspace_store(
+                store,
+                base_url_override,
+                transport,
+                expected_workspace,
+            ),
         }
     }
 
@@ -193,6 +239,7 @@ impl DeviceSessionStrategyBuilder {
         mut token: Token,
         base_url_override: Option<url::Url>,
         transport: SharedTransport,
+        expected_workspace: Option<WorkspaceId>,
     ) -> Result<DeviceSessionStrategy, AuthError> {
         let base_url = match base_url_override {
             Some(url) => url,
@@ -211,6 +258,7 @@ impl DeviceSessionStrategyBuilder {
                 e
             })
             .ok();
+        ensure_workspace(&token, expected_workspace)?;
         let region_id = region.identifier();
         let device_instance_id = token.device_instance_id().map(String::from);
         token.set_region(&region_id);
@@ -222,9 +270,11 @@ impl DeviceSessionStrategyBuilder {
             &region_id,
             device_instance_id,
             transport,
-        );
+        )
+        .pinned_to(expected_workspace);
         Ok(DeviceSessionStrategy {
             crn,
+            expected_workspace,
             inner: AutoRefresh::with_token(refresher, token),
         })
     }
@@ -234,8 +284,12 @@ impl DeviceSessionStrategyBuilder {
         ws_store: ProfileStore,
         base_url_override: Option<url::Url>,
         transport: SharedTransport,
+        expected_workspace: Option<WorkspaceId>,
     ) -> Result<DeviceSessionStrategy, AuthError> {
         let token: Token = ws_store.load_profile()?;
+        // Before `AutoRefresh` can see it: refreshing another workspace's
+        // session would consume that session's refresh credential.
+        ensure_workspace(&token, expected_workspace)?;
 
         let region_str = token
             .region()
@@ -266,9 +320,11 @@ impl DeviceSessionStrategyBuilder {
             &region_str,
             device_instance_id,
             transport,
-        );
+        )
+        .pinned_to(expected_workspace);
         Ok(DeviceSessionStrategy {
             crn,
+            expected_workspace,
             inner: AutoRefresh::with_token(refresher, token),
         })
     }
@@ -323,5 +379,50 @@ mod tests {
             strategy.workspace_crn().is_none(),
             "CRN should be None when the token has no decodable workspace claim"
         );
+    }
+
+    /// A session for another workspace is refused when the strategy is built,
+    /// before `AutoRefresh` exists: a near-expiry one would otherwise be
+    /// refreshed on the first `get_token`, consuming a credential that
+    /// belongs to someone else.
+    #[test]
+    fn build_rejects_a_session_from_another_workspace() {
+        let region = Region::aws("ap-southeast-2").expect("valid region");
+        let token = jwt_token(claims_with_workspace("7366ITCXSAPCH5TN"));
+        let other: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
+            .parse()
+            .expect("valid crn");
+
+        // The base URL is unreachable: nothing may be sent.
+        let result = DeviceSessionStrategy::with_token(region, "my-client", token)
+            .base_url(base_url())
+            .workspace_crn(&other)
+            .build();
+
+        assert!(
+            matches!(result, Err(AuthError::WorkspaceMismatch(_))),
+            "a session for another workspace must be refused at build, got {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn get_token_accepts_a_token_from_the_pinned_workspace() {
+        let region = Region::aws("ap-southeast-2").expect("valid region");
+        let token = jwt_token(claims_with_workspace("7366ITCXSAPCH5TN"));
+        let same: Crn = "crn:ap-southeast-2.aws:7366ITCXSAPCH5TN"
+            .parse()
+            .expect("valid crn");
+
+        let strategy = DeviceSessionStrategy::with_token(region, "my-client", token)
+            .base_url(base_url())
+            .workspace_crn(&same)
+            .build()
+            .expect("build should succeed");
+
+        (&strategy)
+            .get_token()
+            .await
+            .expect("matching workspace should pass");
     }
 }

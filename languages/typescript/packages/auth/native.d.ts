@@ -58,7 +58,9 @@ export declare function beginDeviceCodeFlow(region: string, clientId: string): P
  *
  * Detection order:
  * 1. `CS_CLIENT_ACCESS_KEY` env var (or explicit `accessKey` option) → access key auth
- * 2. `~/.cipherstash/auth.json` → OAuth token auth
+ * 2. `~/.cipherstash/auth.json` → OAuth token auth, from the workspace named by
+ *    the workspace CRN (option or `CS_WORKSPACE_CRN`) if set, otherwise the
+ *    CLI's current workspace
  * 3. Error: not authenticated
  */
 export declare class AutoStrategy {
