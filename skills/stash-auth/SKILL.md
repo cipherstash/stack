@@ -399,8 +399,9 @@ client-side strategy model applies to apps behind the Proxy.
 ## Quick diagnosis
 
 1. **`NOT_AUTHENTICATED` locally** → `npx stash auth login` (dev profile),
-   or export the four `CS_*` variables. If `CS_WORKSPACE_CRN` is set, log in
-   to that workspace, or unset it.
+   or export the four `CS_*` variables. With `@cipherstash/auth`'s
+   `AutoStrategy` and `CS_WORKSPACE_CRN` set, log in to that workspace, or
+   unset it; the default client follows the CLI's current workspace.
 2. **Works locally, 401 in CI/production** → the deployed environment lacks
    the `CS_*` variables, or they're from the wrong workspace — mint with
    `stash env`, compare `CS_WORKSPACE_CRN`.
