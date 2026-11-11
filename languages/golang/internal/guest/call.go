@@ -53,13 +53,13 @@ type Exports struct {
 // alloc asks the guest's se_alloc for n bytes. It is the one allocation
 // sequence behind AllocWrite and Place, so the two cannot drift on the
 // bound, the result's shape or the null-pointer check.
-func alloc(ctx context.Context, fn api.Function, n int) (Buf, error) {
+func alloc(ctx context.Context, fn api.Function, n uint64) (Buf, error) {
 	// se_alloc takes an i32: a longer length would reach the guest
 	// truncated to its low 32 bits.
-	if uint64(n) > math.MaxUint32 {
+	if n > math.MaxUint32 {
 		return Buf{}, errors.New("cipherstash: buffer exceeds the guest's 4 GiB address space")
 	}
-	res, err := fn.Call(ctx, uint64(n))
+	res, err := fn.Call(ctx, n)
 	if err != nil {
 		return Buf{}, fmt.Errorf("%w: guest alloc: %w", ErrTrap, err)
 	}
@@ -75,7 +75,7 @@ func alloc(ctx context.Context, fn api.Function, n int) (Buf, error) {
 
 // AllocWrite stages data into a fresh guest buffer.
 func (e Exports) AllocWrite(ctx context.Context, m api.Module, data []byte) (Buf, error) {
-	b, err := alloc(ctx, e.Alloc, len(data))
+	b, err := alloc(ctx, e.Alloc, uint64(len(data)))
 	if err != nil {
 		return Buf{}, err
 	}
@@ -113,7 +113,7 @@ func Place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte
 	if fn == nil {
 		return false
 	}
-	b, err := alloc(ctx, fn, len(data))
+	b, err := alloc(ctx, fn, uint64(len(data)))
 	if err != nil {
 		return false
 	}
