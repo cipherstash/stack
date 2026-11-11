@@ -1,5 +1,21 @@
 # Run skeleton
 
+## PostgreSQL v2 extension in development
+
+The `postgres-fixture` directory and `postgres-behaviour.mjs` / `postgres-oracle.mjs`
+start the separate PostgreSQL v2-to-v3 procedure tracked by #1605. They cover the
+guide's text equality, safe integer equality and storage-only text mappings.
+The oracle compares retained ciphertext and equality terms while permitting
+the documented envelope change and verifies source/target domains and indexes.
+
+This procedure is not yet selectable through `harness:run`. Remaining work is
+v2 bundle provisioning, independent store seeding and admin snapshots, procedure
+metadata and Run wiring, a hidden Reference Migration executed in App Host,
+and the credentialed reference/broken-migration CI matrix. Current unit tests
+do not establish a completed live PostgreSQL migration.
+
+## Running the existing baseline
+
 From the repository root:
 
 ```sh
