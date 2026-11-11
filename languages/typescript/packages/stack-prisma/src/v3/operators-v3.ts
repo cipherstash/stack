@@ -75,6 +75,7 @@
 
 import {
   jsonPathOf,
+  likeWildcardError,
   matchNeedleError,
   parseSelectorSegments,
   unsupportedLeafReason,
@@ -537,9 +538,7 @@ function normalizeMatchNeedle(
     throw operatorError(
       ctx,
       method,
-      // The pattern is the caller's plaintext search term: name its length,
-      // never its content (CIP-5161).
-      `cipherstash ${method}: pattern (${[...value].length} characters) on column "${ctx.columnName ?? 'unknown'}" has wildcards fuzzy free-text matching cannot honor (an interior "%" or any "_"). Pass a literal search term.`,
+      `cipherstash ${method} on column "${ctx.columnName ?? 'unknown'}": ${likeWildcardError(value)} Pass a literal search term.`,
     )
   }
   const match = ctx.meta.indexes.match

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { MatchIndexOpts } from '@/schema/internal'
-import { matchNeedleError, matchNeedleMinLength } from '@/schema/match-defaults'
+import {
+  likeWildcardError,
+  matchNeedleError,
+  matchNeedleMinLength,
+} from '@/schema/match-defaults'
 
 // The floor a free-text needle must clear before it yields any ngram. A needle
 // below it tokenizes to nothing, so its bloom filter is EMPTY — and
@@ -101,5 +105,18 @@ describe('matchNeedleError', () => {
   it('ignores non-string operands, leaving them to the encryption layer', () => {
     expect(matchNeedleError(42, ngram)).toBeUndefined()
     expect(matchNeedleError(null, ngram)).toBeUndefined()
+  })
+})
+
+// Shared by the Supabase and Prisma like/ilike shims so neither can quote the
+// pattern (CIP-5161): it is the caller's plaintext search term.
+describe('likeWildcardError', () => {
+  it('names the wildcard problem and the pattern length in codepoints, never the pattern', () => {
+    for (const pattern of ['Qzx%wvy', 'Qzx_wvy', '\u{1F512}%Qz']) {
+      const reason = likeWildcardError(pattern)
+      expect(reason, pattern).toMatch(/cannot honor/)
+      expect(reason, pattern).toContain(`${[...pattern].length}-character`)
+      expect(reason, pattern).not.toContain('Qz')
+    }
   })
 })

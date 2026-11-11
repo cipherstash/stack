@@ -127,10 +127,11 @@ export function matchNeedleMinLength(opts: MatchIndexOpts): number | undefined {
  * measuring what its tokenizer actually receives: v2 needles carry SQL wildcards
  * (`'%ada%'`), so the floor may have to apply to the unwrapped term rather than
  * to the string the caller passed.
+ *
+ * The message never quotes the needle: it is the caller's plaintext search
+ * term, and every adapter throws this reason to its caller, who may log it. It
+ * reports the length, which is what the caller needs to fix the query.
  */
-// The message never quotes the needle: it is the caller's plaintext search
-// term, and every adapter throws this reason to its caller (who may log it).
-// Report the length, which is what the caller needs to fix the query.
 export function matchNeedleError(
   needle: unknown,
   opts: MatchIndexOpts,
@@ -146,4 +147,18 @@ export function matchNeedleError(
   }
   if (min === undefined || length >= min) return undefined
   return `free-text search needs at least ${min} characters (the index tokenizer's token_length), but the search term has ${length}. A shorter term produces no tokens and would match every row.`
+}
+
+/**
+ * The reason a free-text `like`/`ilike` pattern was rejected for carrying a
+ * wildcard the bloom tokenizer cannot honour (an interior `%` or a `_`, which it
+ * would treat as an ordinary character and so silently match nothing).
+ *
+ * Takes the pattern rather than its length so no caller can be tempted to
+ * interpolate it: the pattern is the caller's plaintext search term, and the
+ * message is thrown to callers who may log it. Only its length appears.
+ * Adapters prefix their surface and append their own remedy.
+ */
+export function likeWildcardError(pattern: string): string {
+  return `the ${[...pattern].length}-character search pattern has wildcards fuzzy free-text matching cannot honor (an interior "%" or a "_").`
 }

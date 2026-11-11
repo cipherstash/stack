@@ -465,6 +465,36 @@ describe('handleError', () => {
     expect(logged).not.toContain('Qzx')
   })
 
+  // `options.logger` is a log sink the caller wires to `console` or a log
+  // service, so it gets the same log-safe description as the shared logger.
+  // The full message stays on the returned error and on `errorHandler`'s.
+  it('hands the configured logger a log-safe error, and errorHandler the full one', () => {
+    const failure = Object.assign(
+      new Error('value "Qzx-secret-wvy" rejected'),
+      {
+        code: 'UNKNOWN_COLUMN',
+      },
+    )
+    const logged: unknown[] = []
+    const handled: Error[] = []
+
+    const error = handleError(failure, 'encryptModel', {
+      logger: { error: (message, err) => logged.push(message, err) },
+      errorHandler: (err) => handled.push(err),
+    })
+
+    expect(error.message).toContain('Qzx-secret-wvy')
+    expect(handled[0]?.message).toContain('Qzx-secret-wvy')
+    const [message, loggedError] = logged as [string, Error & { code: string }]
+    expect(message).toContain('encryptModel')
+    expect(loggedError).toBeInstanceOf(Error)
+    expect(loggedError.code).toBe('UNKNOWN_COLUMN')
+    expect(
+      [message, loggedError.message, String(loggedError.stack)].join('\n'),
+    ).not.toContain('Qzx')
+    expect(loggedError.message).toContain('UNKNOWN_COLUMN')
+  })
+
   it('extracts the message from an Error, a plain object, or anything else', () => {
     expect(
       handleError(new Error('from an Error'), 'decryptModel').message,
@@ -482,7 +512,7 @@ describe('handleError', () => {
     expect(handleError(null, 'decryptModel').message).toBe('null')
   })
 
-  it('hands the constructed error to both the errorHandler and the caller logger', () => {
+  it('hands the constructed error to the errorHandler and a log-safe copy to the caller logger', () => {
     const seen: unknown[] = []
     const callerLog = { error: vi.fn() }
 
@@ -497,7 +527,16 @@ describe('handleError', () => {
     // classified one.
     expect(seen).toHaveLength(1)
     expect(seen[0]).toBe(error)
-    expect(callerLog.error).toHaveBeenCalledWith('Error in decryptModel', error)
+    // The logger gets a copy with the same code but a log-safe message
+    // (CIP-5161), not the caller's error.
+    expect(callerLog.error).toHaveBeenCalledWith(
+      'Error in decryptModel',
+      expect.objectContaining({
+        code: error.code,
+        message: expect.stringContaining('DynamoDB error in decryptModel'),
+      }),
+    )
+    expect(callerLog.error.mock.calls[0][1]).not.toBe(error)
     expect(errorLog).toHaveBeenCalledWith(
       expect.stringContaining('DynamoDB error in decryptModel'),
     )

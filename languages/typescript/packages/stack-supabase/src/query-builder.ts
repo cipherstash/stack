@@ -1,6 +1,7 @@
 import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
 import {
   describeFailure,
+  likeWildcardError,
   logger,
   parseSelectorSegments,
   reconstructSelectorDocument,
@@ -899,9 +900,7 @@ export class EncryptedQueryBuilderImpl<
     const { needle, hasUnsupportedWildcard } = parseLikeNeedle(pattern)
     if (hasUnsupportedWildcard) {
       throw new Error(
-        // The pattern is the caller's plaintext search term: name its length,
-        // never its content (CIP-5161).
-        `[supabase v3]: "${op}" pattern (${[...pattern].length} characters) on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an unescaped internal "%" or any unescaped "_"). Use matches("${column}", term) with a literal search term.`,
+        `[supabase v3]: "${op}" on encrypted column "${column}": ${likeWildcardError(pattern)} Escape a literal "%" or "_" as "\\%" or "\\_", or use matches("${column}", term) with a literal search term.`,
       )
     }
     const key = `${op}:${column}`

@@ -65,7 +65,10 @@ export {
   unsupportedLeafReason,
 } from './eql/v3/selector-path.js'
 // Shared match-index guard (short-needle rejection), reused by both adapters.
-export { matchNeedleError } from './schema/match-defaults.js'
+export {
+  likeWildcardError,
+  matchNeedleError,
+} from './schema/match-defaults.js'
 // The canonical EQL v2/v3 table discriminator. Added because the adapters must
 // make the same routing decision core does, and that function's own doctrine is
 // that every site routes through it — "a second hand-written spelling of the
