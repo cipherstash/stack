@@ -1,5 +1,5 @@
-//! No heap block the extension frees during `encrypt`, `query` or `decrypt`
-//! still contains the plaintext.
+//! No heap block the extension frees during `encrypt`, `query`, `verify` or
+//! `decrypt` still contains the plaintext.
 //!
 //! The scope is the extension's own copies: what this crate and the engine
 //! allocate in Rust while they read a Python value, write the input frame,
@@ -33,7 +33,7 @@ use std::ffi::c_void;
 use std::sync::Mutex;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyString, PyType};
+use pyo3::types::{PyDict, PyList, PyString, PyType};
 use stack_encrypt::StackCipher;
 use stack_kms::FakeDataKeySource;
 
@@ -381,6 +381,37 @@ fn decrypt_frees_no_copy_of_the_plaintext_unwiped() {
             opened[0].bind(py).extract::<String>().unwrap(),
             marked("a@example.com")
         );
+    });
+}
+
+#[test]
+fn verify_frees_no_copy_of_the_plaintext_unwiped() {
+    let _serial = serial();
+    Python::initialize();
+    Python::attach(|py| {
+        let plan = build_plan(
+            py,
+            "notes",
+            vec![(
+                "body".into(),
+                Some("TextMatch".into()),
+                Some("string".into()),
+                py.get_type::<PyString>(),
+            )],
+        )
+        .unwrap();
+        // The Python objects are made before the watch: they are the
+        // caller's, not the extension's.
+        let text = PyString::new(py, &marked("a note")).into_any();
+        let values =
+            PyList::new(py, [marked("a note in full"), "nothing here".to_owned()]).unwrap();
+
+        // The binding `Cipher.verify` calls, as Python calls it.
+        let kept = watched("verify", || {
+            crate::query::verify(py, &plan, "body", &text, &values).unwrap()
+        });
+
+        assert_eq!(kept, [true, false]);
     });
 }
 
