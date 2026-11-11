@@ -8,7 +8,7 @@ of its own, and drops the schema afterwards.
 """
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Optional
 
 import pytest
 from _live import DATABASE_URL, LIVE, needs_database
@@ -53,6 +53,15 @@ class Profile(Base):
     plan: Mapped[Annotated[str, Passthrough]]
 
 
+@stackencrypt.model("venues")
+class Venue(Base):
+    __tablename__ = "venues"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    name: Mapped[Annotated[str, TextEq]]
+    city: Mapped[Annotated[Optional[str], TextEq]]
+    visits: Mapped[Annotated[Optional[int], Passthrough]]
+
+
 @stackencrypt.model("players")
 class Player(Base):
     __tablename__ = "players"
@@ -74,7 +83,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))
     Base.metadata.create_all(engine)
-    configure_encryption(engine, [Customer, Order, Player, Profile])
+    configure_encryption(engine, [Customer, Order, Player, Profile, Venue])
     yield engine
     with engine.begin() as conn:
         conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
@@ -84,7 +93,7 @@ def engine():
 @pytest.fixture(autouse=True)
 def empty(engine):
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE orders, customers, players, profiles RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE orders, customers, players, profiles, venues RESTART IDENTITY"))
 
 
 def stored(engine, sql):
@@ -359,3 +368,38 @@ def test_a_match_on_a_field_with_no_match_index_is_unsupported(engine):
     with pytest.raises(QueryError) as raised:
         Customer.email.match("ali")
     assert raised.value.code == "query_unsupported"
+
+
+# A field declared Optional.
+
+
+def test_an_optional_field_stores_null_reads_none_and_is_found_with_is_null(engine):
+    with Session(engine) as session:
+        session.add_all([Venue(name="hall", city=None, visits=None), Venue(name="park", city="Leeds", visits=2)])
+        session.commit()
+    with Session(engine) as session:
+        missing = session.scalars(select(Venue).where(Venue.city.is_(None))).all()
+        leeds = session.scalars(select(Venue).where(Venue.city == "Leeds")).all()
+        cities = session.execute(select(Venue.name, Venue.city).order_by(Venue.id)).all()
+
+    assert [(v.name, v.city, v.visits) for v in missing] == [("hall", None, None)]
+    assert [(v.name, v.city, v.visits) for v in leeds] == [("park", "Leeds", 2)]
+    assert [tuple(row) for row in cities] == [("hall", None), ("park", "Leeds")]
+
+
+def test_an_optional_field_can_be_set_to_none_and_back(engine):
+    with Session(engine) as session:
+        session.add(Venue(name="hall", city="York", visits=1))
+        session.commit()
+    with Session(engine) as session:
+        hall = session.scalars(select(Venue)).one()
+        hall.city = None
+        session.commit()
+        assert hall.city is None
+    with Session(engine) as session:
+        hall = session.scalars(select(Venue)).one()
+        assert hall.city is None
+        hall.city = "Bath"
+        session.commit()
+    with Session(engine) as session:
+        assert session.scalars(select(Venue).where(Venue.city == "Bath")).one().name == "hall"

@@ -22,8 +22,14 @@ use crate::errors::raise;
 use crate::values::{read, to_python, PyKind, Read};
 
 /// One plan field as the decorator hands it over: `(name, eql_type, kind,
-/// value_type)`.
-type FieldSpec<'py> = (String, Option<String>, Option<String>, Bound<'py, PyType>);
+/// value_type, nullable)`.
+type FieldSpec<'py> = (
+    String,
+    Option<String>,
+    Option<String>,
+    Bound<'py, PyType>,
+    bool,
+);
 
 /// A model's plan, built once by `Cipher` and passed to every call.
 #[pyclass(frozen, module = "stackencrypt._engine")]
@@ -44,7 +50,7 @@ pub struct Plan {
 pub fn build_plan(py: Python<'_>, table: &str, fields: Vec<FieldSpec<'_>>) -> PyResult<Plan> {
     let mut kinds = Vec::with_capacity(fields.len());
     let mut specs = Vec::with_capacity(fields.len());
-    for (name, eql_type, kind, value_type) in fields {
+    for (name, eql_type, kind, value_type, nullable) in fields {
         let eql = match (eql_type, kind) {
             (Some(eql_type), Some(kind)) => {
                 let kind = Kind::parse(&kind).ok_or_else(|| {
@@ -73,7 +79,11 @@ pub fn build_plan(py: Python<'_>, table: &str, fields: Vec<FieldSpec<'_>>) -> Py
                 ))
             }
         };
-        specs.push(Field { name, eql });
+        specs.push(Field {
+            name,
+            eql,
+            nullable,
+        });
     }
     let plan = ModelPlan::new(table, specs).map_err(|refused| raise(py, refused))?;
     Ok(Plan { plan, kinds })
@@ -121,6 +131,7 @@ pub fn encrypt<'py>(
             let value = match column {
                 Column::Eql(json) => PyString::new(py, json).into_any().unbind(),
                 // A passthrough value came from Python, so it fits.
+                Column::Null => py.None(),
                 Column::Passthrough(scalar) => {
                     to_python(py, scalar)?.map_err(|unfit| PyValueError::new_err(unfit.cause()))?
                 }
@@ -191,6 +202,11 @@ pub(crate) fn field_value<'a>(
     field: &Field,
     kind: PyKind,
 ) -> PyResult<Result<Read<'a>, Refusal>> {
+    // A field declared Optional: None is a missing value. The engine stores
+    // nothing for it, and the column holds SQL NULL.
+    if field.nullable && value.is_none() {
+        return Ok(Ok(Read::Other(values::Value::Null)));
+    }
     let engine_kind = field.eql.as_ref().map(|(_, kind)| *kind);
     let reason = engine_kind.map_or("passthrough", Kind::name);
     let named = |refused: Refusal| Refusal {

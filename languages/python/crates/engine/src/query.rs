@@ -44,6 +44,10 @@ pub fn query(
     let Some((_, engine_kind)) = declared.eql else {
         return Err(raise(py, not_sealed(field)));
     };
+    // A nullable field reads None as a missing value, which has no term.
+    if declared.nullable && value.is_none() {
+        return Err(raise(py, no_term_for_none(field, engine_kind.name())));
+    }
     let read = field_value(value, declared, kind)?.map_err(|refused| raise(py, refused))?;
     let value = read.value();
     py.detach(|| core::query(&plan.plan, field, op, engine_kind, value))
@@ -115,6 +119,18 @@ pub fn target_limit(
         confidence,
     )
     .map_err(|refused| raise(py, refused))
+}
+
+fn no_term_for_none(field: &str, kind: &str) -> Refusal {
+    Refusal {
+        code: "value_none".to_owned(),
+        message: format!(
+            "field {field:?}: is None. A missing value is stored as SQL NULL, with no \
+             term. Search for it with `IS NULL`."
+        ),
+        field: Some(field.to_owned()),
+        reason: Some(kind.to_owned()),
+    }
 }
 
 fn as_text<'r>(read: &'r Read<'_>) -> Option<&'r str> {

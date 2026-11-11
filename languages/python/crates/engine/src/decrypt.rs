@@ -106,6 +106,23 @@ fn stored_row(plan: &Plan, row: &Bound<'_, PyAny>, at: usize) -> PyResult<Row> {
                 },
             )
         };
+        // A field declared Optional, stored as SQL NULL: an EQL field has no
+        // entry, which opens as a null; a passthrough is a null.
+        if field.nullable && value.is_none() {
+            if field.eql.is_none() {
+                stored
+                    .passthrough(field, stackencrypt_core::values::Value::Null)
+                    .map_err(|misfit| {
+                        in_row(Refusal {
+                            code: misfit.code().to_owned(),
+                            message: format!("field {:?}: a null does not fit", field.name),
+                            field: Some(field.name.clone()),
+                            reason: Some("passthrough".to_owned()),
+                        })
+                    })?;
+            }
+            continue;
+        }
         match &field.eql {
             Some(_) => {
                 let text = eql_text(field, &value)?.map_err(in_row)?;

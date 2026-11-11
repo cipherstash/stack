@@ -32,6 +32,7 @@ constructor and the replaced methods must be as they were at decoration.
 
 import dataclasses
 import inspect
+import types
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -47,6 +48,7 @@ from typing import (
     Tuple,
     Type,
     TypeVar,
+    Union,
     get_args,
     get_origin,
     get_type_hints,
@@ -57,6 +59,12 @@ from stackencrypt._errors import DeclarationError
 from stackencrypt._markers import Ignore, Marker, Passthrough
 
 T = TypeVar("T", bound=type)
+
+# The origins of a union: typing.Union, and types.UnionType for `T | None`
+# from Python 3.10.
+_UNIONS = tuple(
+    origin for origin in (Union, getattr(types, "UnionType", None)) if origin is not None
+)
 
 # The one attribute the decorator stores, in the class's own __dict__.
 DECLARATION_ATTRIBUTE = "__stash_declaration__"
@@ -99,6 +107,8 @@ class DeclaredField:
     name: str
     marker: Type[Marker]
     value_type: type = dataclasses.field(default=object, repr=False, compare=False)
+    # Declared Optional: None is a missing value, stored as SQL NULL.
+    nullable: bool = False
 
 
 @dataclass(frozen=True)
@@ -108,6 +118,7 @@ class _ReadField:
     name: str
     marker: Type[Marker]
     value_type: Any
+    nullable: bool = False
 
 
 @dataclass(frozen=True)
@@ -177,7 +188,9 @@ def model(table: str, *, redact: bool = True) -> Callable[[T], T]:
         declaration = Declaration(
             table=table,
             fields=tuple(
-                DeclaredField(name=f.name, marker=f.marker, value_type=f.value_type)
+                DeclaredField(
+                    name=f.name, marker=f.marker, value_type=f.value_type, nullable=f.nullable
+                )
                 for f in planned
             ),
             hints=hints,
@@ -297,7 +310,10 @@ def _read_fields(cls: type, hints: Dict[str, Any]) -> List[_ReadField]:
     read = []
     for name in names:
         marker, value_type = _marker_of(name, hints.get(name), from_hints=from_hints)
-        read.append(_ReadField(name=name, marker=marker, value_type=value_type))
+        value_type, nullable = _without_none(value_type)
+        read.append(
+            _ReadField(name=name, marker=marker, value_type=value_type, nullable=nullable)
+        )
     return read
 
 
@@ -403,6 +419,18 @@ def _is_wrapper(hint: Any) -> bool:
         and origin.__module__ not in _VALUE_TYPE_MODULES
         and len(get_args(hint)) == 1
     )
+
+
+def _without_none(value_type: Any) -> Tuple[Any, bool]:
+    """``Optional[T]`` as ``(T, True)``; any other type as ``(type, False)``.
+    ``Optional[T]`` is ``Union[T, None]``, and ``T | None`` from Python 3.10.
+    A union of more than one type besides ``None`` is left as it is, and
+    the type check refuses it."""
+    if get_origin(value_type) in _UNIONS:
+        others = [arg for arg in get_args(value_type) if arg is not type(None)]
+        if len(others) == 1 and len(get_args(value_type)) == 2:
+            return others[0], True
+    return value_type, False
 
 
 def _marker_of(name: str, hint: Any, *, from_hints: bool) -> Tuple[Type[Marker], Any]:
@@ -606,7 +634,11 @@ def _check_plan(table: str, planned: List[_ReadField]) -> None:
     refused = _engine.check_plan(
         table,
         [
-            (field.name, None if field.marker is Passthrough else field.marker.name)
+            (
+                field.name,
+                None if field.marker is Passthrough else field.marker.name,
+                field.nullable,
+            )
             for field in planned
         ],
     )

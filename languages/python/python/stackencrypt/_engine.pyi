@@ -6,7 +6,7 @@ def build_info() -> tuple[str, str]:
     """``(version, engine_commit)`` as recorded at build time."""
 
 def check_plan(
-    table: str, fields: List[Tuple[str, Optional[str]]]
+    table: str, fields: List[Tuple[str, Optional[str], bool]]
 ) -> Optional[Tuple[str, str, Optional[str], Optional[str]]]:
     """The engine's check of a model's plan: ``None``, or its refusal as
     ``(code, message, field, reason)``."""
@@ -20,7 +20,7 @@ class Plan:
     """A model's plan, built once by ``Cipher``. Opaque."""
 
 def build_plan(
-    table: str, fields: List[Tuple[str, Optional[str], Optional[str], type]]
+    table: str, fields: List[Tuple[str, Optional[str], Optional[str], type, bool]]
 ) -> Plan:
     """The plan for a model stored in ``table``: ``(name, eql_type, kind,
     value_type)`` per field, ``eql_type`` and ``kind`` ``None`` for a

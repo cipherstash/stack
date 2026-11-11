@@ -42,7 +42,7 @@ On a read, only the encrypted fields are decrypted.
 This module imports SQLAlchemy. The rest of the package does not.
 """
 
-from typing import Annotated, Any, Callable, Dict, FrozenSet, List, Sequence, Tuple, Type
+from typing import Annotated, Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple, Type
 
 from sqlalchemy import (
     Index,
@@ -147,10 +147,17 @@ class _QueryType(UserDefinedType):  # type: ignore[type-arg]
 # For a DeclarativeBase's `type_annotation_map`: every marker the decorator
 # accepts, under the hint a model writes for it, such as
 # Annotated[str, TextEq].
+# Annotated[str, TextEq], and Annotated[Optional[str], TextEq] for a field
+# that can be missing: SQLAlchemy looks up the whole hint, and makes the
+# column nullable for the Optional one.
 eql_type_map: Dict[Any, EqlType] = {
-    Annotated[_KIND_TYPES[marker.plaintext], marker]: EqlType(marker)  # type: ignore[valid-type]
+    hint: EqlType(marker)
     for marker in _eql.TYPES
     if marker.producible and marker.plaintext in _KIND_TYPES
+    for hint in (
+        Annotated[_KIND_TYPES[marker.plaintext], marker],  # type: ignore[valid-type]
+        Annotated[Optional[_KIND_TYPES[marker.plaintext]], marker],  # type: ignore[valid-type]
+    )
 }
 
 # The comparisons a query term answers, and the Cipher method that makes it.

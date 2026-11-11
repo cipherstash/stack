@@ -30,6 +30,9 @@ pub struct Field {
     pub name: String,
     /// The EQL type and its kind, or `None` for a passthrough.
     pub eql: Option<(String, Kind)>,
+    /// Whether the field can be missing: Python's `Optional`. A missing
+    /// value is written as a null, and comes back as [`Column::Null`].
+    pub nullable: bool,
 }
 
 /// A model's plan, built once per `Cipher` and read on every call.
@@ -53,7 +56,11 @@ impl ModelPlan {
                     .eql
                     .as_ref()
                     .map_or(plan::Column::Passthrough, |(name, _)| {
-                        plan::Column::Eql(name)
+                        if field.nullable {
+                            plan::Column::NullableEql(name)
+                        } else {
+                            plan::Column::Eql(name)
+                        }
                     });
                 (field.name.as_str(), column)
             })
@@ -90,6 +97,8 @@ pub enum Column {
     Eql(String),
     /// The echoed value of a passthrough field.
     Passthrough(Scalar),
+    /// A nullable field's missing value: SQL `NULL`, Python's `None`.
+    Null,
 }
 
 /// Encrypt `rows` models, written as one frame, under `plan`. Returns one
@@ -152,10 +161,14 @@ fn read_row(plan: &ModelPlan, row: StackCipherText) -> Result<Vec<Column>, Refus
     };
     let mut columns = Vec::with_capacity(plan.fields.len());
     for field in &plan.fields {
-        let (_, outputs) = entries
-            .iter()
-            .find(|(name, _)| name == &field.name)
-            .ok_or_else(|| engine_fault("a row lacks a declared field"))?;
+        let Some((_, outputs)) = entries.iter().find(|(name, _)| name == &field.name) else {
+            // A nullable EQL field's null produces no entry.
+            if field.nullable {
+                columns.push(Column::Null);
+                continue;
+            }
+            return Err(engine_fault("a row lacks a declared field"));
+        };
         let CipherText::Map(outputs) = outputs else {
             return Err(engine_fault("a field is not a map of outputs"));
         };
