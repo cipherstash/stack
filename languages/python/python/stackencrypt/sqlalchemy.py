@@ -20,6 +20,13 @@ query decrypts them. The app reads and writes plaintext attributes.
 Only the sealed fields go through the hooks. A passthrough field is stored
 as SQLAlchemy writes it.
 
+- Indexes: a mapped class's table gets a database index for each EQL index
+  of each encrypted column, such as ``hash (eql_v4.eq_term(email))`` for ``TextEq``.
+  So ``create_all`` and Alembic's ``autogenerate`` create them.
+- Migrations: two hooks for ``context.configure`` in Alembic's ``env.py``.
+  ``render_item`` writes an ``EqlType`` into a migration file with its
+  imports. ``process_revision_directives`` writes a change of an existing
+  column to an EQL type as an ALTER with a USING cast.
 - Search: the column type that ``eql_type_map`` gives each encrypted field
   turns ``==``, ``<``, ``<=``, ``>`` and ``>=`` into a comparison with a query
   term, made by ``Cipher.eq``, ``lt``, ``lte``, ``gt`` or ``gte``. Any other
@@ -31,9 +38,9 @@ This module imports SQLAlchemy. The rest of the package does not.
 
 from typing import Annotated, Any, Callable, Dict, FrozenSet, List, Sequence, Tuple, Type
 
-from sqlalchemy import String, Table, cast, event, inspect, literal
+from sqlalchemy import Index, String, Table, cast, event, func, inspect, literal
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Mapper, Session
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import operators
 from sqlalchemy.sql.dml import Insert, Update
@@ -45,7 +52,13 @@ from stackencrypt._declaration import _KIND_TYPES
 from stackencrypt._errors import DeclarationError, QueryError
 from stackencrypt._markers import Marker, Passthrough
 
-__all__ = ["EqlType", "configure_encryption", "eql_type_map"]
+__all__ = [
+    "EqlType",
+    "configure_encryption",
+    "eql_type_map",
+    "process_revision_directives",
+    "render_item",
+]
 
 
 class EqlType(UserDefinedType):  # type: ignore[type-arg]
@@ -118,6 +131,150 @@ _NO_VALUE = frozenset(
         operators.nulls_last_op,
     }
 )
+
+# The database index for each kind of EQL index: the EQL function the index
+# is on, and the index method.
+_INDEXES: Dict[str, Tuple[str, str]] = {
+    "eq": ("eq_term", "hash"),
+    "ope": ("ord_term", "btree"),
+    "ore_block": ("ord_term_ore", "btree"),
+    "match": ("match_term", "gin"),
+}
+
+
+@event.listens_for(Mapper, "instrument_class")
+def _add_indexes(mapper: Any, cls: type) -> None:
+    """Give a mapped class's table a database index for each EQL index of
+    each ``EqlType`` column, named ``ix_<table>_<column>_<kind>``.
+
+    It runs when SQLAlchemy maps the class, not when a column joins a table:
+    Alembic's ``add_column`` puts the new column on a temporary table and
+    creates every index of that table, so an index added there would be
+    created twice."""
+    table = mapper.local_table
+    if not isinstance(table, Table):
+        return
+    for column in table.columns:
+        if not isinstance(column.type, EqlType):
+            continue
+        for kind in column.type.marker.indexes:
+            if kind not in _INDEXES:
+                continue
+            function, method = _INDEXES[kind]
+            name = f"ix_{table.name}_{column.name}_{kind}"
+            if any(index.name == name for index in table.indexes):
+                continue
+            Index(name, getattr(func.eql_v4, function)(column), postgresql_using=method)
+
+
+def render_item(type_: str, obj: Any, autogen_context: Any) -> Any:
+    """For Alembic's ``context.configure(render_item=render_item)`` in
+    ``env.py``. Writes an ``EqlType`` column type into a migration as
+    ``stackencrypt.sqlalchemy.EqlType(stackencrypt.TextEq)``, and adds the
+    imports it needs. Returns ``False`` for anything else, so that Alembic
+    writes it as usual."""
+    if type_ == "type" and isinstance(obj, EqlType):
+        autogen_context.imports.add("import stackencrypt")
+        autogen_context.imports.add("import stackencrypt.sqlalchemy")
+        return f"stackencrypt.sqlalchemy.EqlType(stackencrypt.{obj.marker.__name__})"
+    return False
+
+
+def process_revision_directives(context: Any, revision: Any, directives: List[Any]) -> None:
+    """For Alembic's ``context.configure(process_revision_directives=...)``
+    in ``env.py``. Rewrites each upgrade step that changes an existing
+    column to an EQL type.
+
+    Alembic writes that change as ``op.alter_column(..., type_=EqlType(...))``,
+    and PostgreSQL refuses it: there is no cast from a column's old type to
+    an EQL type. The step becomes ``op.execute`` of an ALTER with
+    ``USING <column>::jsonb::<EQL type>``. That changes the type of a column
+    with no rows. A column with rows that are not EQL values fails the
+    migration, and keeps its rows. Any other change to the same column, such
+    as to ``nullable``, is kept as Alembic wrote it.
+
+    The downgrade steps are not changed.
+    """
+    from alembic.operations import ops
+
+    preparer = context.dialect.identifier_preparer
+    for script in directives:
+        for container, rewrite in (
+            (script.upgrade_ops, lambda step: _rewrite_type_change(ops, preparer, step)),
+            (script.downgrade_ops, lambda step: [step]),
+        ):
+            kept = []
+            for table_ops in container.ops:
+                if isinstance(table_ops, ops.ModifyTableOps):
+                    table_ops.ops = [
+                        step
+                        for operation in table_ops.ops
+                        for unchanged in _drop_same_eql_type(ops, operation)
+                        for step in rewrite(unchanged)
+                    ]
+                    if not table_ops.ops:
+                        continue
+                kept.append(table_ops)
+            container.ops = kept
+
+
+def _drop_same_eql_type(ops: Any, operation: Any) -> List[Any]:
+    """Alembic compares a column's type as text: the database gives an EQL
+    column's type as ``eql_v4_text_eq``, and ``EqlType`` as
+    ``public.eql_v4_text_eq``. So it finds a change where there is none.
+    Drop that type change, and the step if it changes nothing else."""
+    if not isinstance(operation, ops.AlterColumnOp) or operation.modify_type is None:
+        return [operation]
+    if not _same_eql_type(operation.existing_type, operation.modify_type):
+        return [operation]
+    operation.modify_type = None
+    return [operation] if operation.has_changes() else []
+
+
+def _same_eql_type(a: Any, b: Any) -> bool:
+    for eql, other in ((a, b), (b, a)):
+        if isinstance(eql, EqlType):
+            name = eql.marker.sql_domain.rsplit(".", 1)[-1]
+            if isinstance(other, EqlType):
+                return other.marker is eql.marker
+            return getattr(other, "name", None) == name and getattr(other, "schema", None) in (
+                None,
+                "public",
+            )
+    return False
+
+
+def _rewrite_type_change(ops: Any, preparer: Any, operation: Any) -> List[Any]:
+    if not (
+        isinstance(operation, ops.AlterColumnOp)
+        and isinstance(operation.modify_type, EqlType)
+        and not _is_eql(operation.existing_type)
+    ):
+        return [operation]
+    table = preparer.quote(operation.table_name)
+    if operation.schema:
+        table = f"{preparer.quote_schema(operation.schema)}.{table}"
+    column = preparer.quote(operation.column_name)
+    domain = operation.modify_type.marker.sql_domain
+    steps = [
+        ops.ExecuteSQLOp(
+            f"ALTER TABLE {table} ALTER COLUMN {column} TYPE {domain} "
+            f"USING {column}::jsonb::{domain}"
+        )
+    ]
+    operation.existing_type = operation.modify_type
+    operation.modify_type = None
+    if operation.has_changes():
+        steps.append(operation)
+    return steps
+
+
+def _is_eql(column_type: Any) -> bool:
+    """An EQL type, from the model or as the database gives it."""
+    if isinstance(column_type, EqlType):
+        return True
+    return str(getattr(column_type, "name", "")).startswith("eql_v4_")
+
 
 # The configured tables, for the comparisons: a Table to its cipher.
 _TABLES: Dict[Table, Cipher] = {}
