@@ -200,9 +200,9 @@ func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[stri
 // equality index, matches through a match index, and the orderings through
 // the one order index the field declares (ORE, block ORE or OPE; check
 // refused a field with two); each only where the index applies to the type
-// (indexApplies). There is no second list of the types the orderings are
-// answered over: an index that applies answers its operators, as in the
-// engine.
+// (indexApplies). As in the engine, there is no second list of the types
+// that the orderings accept. If an index applies to a type, each of the
+// index's operators accepts that type.
 func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName) (stashgen.IndexName, bool) {
 	declared := func(want stashgen.IndexName) bool {
 		for _, idx := range indexes {
@@ -251,8 +251,8 @@ func eightBit(t stashgen.GoType) bool {
 // match over text alone, ORE and OPE over integers of 16 bits and wider,
 // floats, text, decimals, dates and timestamps. Not over a boolean or an
 // 8-bit integer, whose order term would reveal which rows are true, or
-// each row's rank among 256 values. Not over bytes, which no ordering
-// operator is answered over: the term would be stored and never queried.
+// each row's rank among 256 values. Not over bytes: no ordering operator
+// accepts bytes, so no query could use the stored term.
 // The JSON index is not in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
