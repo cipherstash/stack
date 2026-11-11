@@ -64,6 +64,7 @@ interface Frame {
   data?: string
   error?: string
   event?: {
+    pid: number
     operation: string
     resource: string
     decision: string
@@ -203,6 +204,46 @@ test('observer transfers an interleaved unfinished exec and preserves forbidden 
     decision: 'forbidden',
     result: 'success',
   })
+})
+
+// strace 6.1 printleader (src/strace.c) prints the [pid N] prefix only while
+// more than one tracee is attached. A descendant that outlives the actor is the
+// sole tracee, so its lines are unprefixed until it creates another process.
+test('observer attributes unprefixed lines to the sole surviving tracee, not the actor', async () => {
+  const frames = await observe([
+    {
+      stage: 'command',
+      trace: [
+        '[pid 42] clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x1) = 46',
+        '[pid 42] +++ exited with 0 +++',
+        'vfork( <unfinished ...>',
+        '[pid 47] execve("/usr/bin/true", ["true"], 0x1 /* 1 var */) = 0',
+        '[pid 46] <... vfork resumed>) = 47',
+        '[pid 47] +++ exited with 0 +++',
+        'openat(AT_FDCWD, "/protected/file", O_RDONLY) = -1 EACCES (Permission denied)',
+        '+++ exited with 1 +++',
+      ],
+    },
+  ])
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  const events = frames
+    .filter((frame) => frame.kind === 'event')
+    .map((frame) => frame.event)
+  expect(events).toContainEqual(
+    expect.objectContaining({ pid: 46, operation: 'vfork' }),
+  )
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      pid: 46,
+      operation: 'openat',
+      resource: '/protected/file',
+      decision: 'forbidden',
+      result: 'denied',
+    }),
+  )
+  expect(frames).toContainEqual(
+    expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+  )
 })
 
 test.each([

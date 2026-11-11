@@ -132,6 +132,10 @@ def invoke(argv, stage):
     def trace():
         pending = {}
         exec_moves = {}
+        # strace prefixes a line with [pid N] only while more than one tracee is
+        # attached. Track attached tracees so an unprefixed line is attributed to
+        # the sole survivor, which is not the actor once a descendant outlives it.
+        live = {str(actor_pid)} if actor_pid is not None else set()
         actor_exit = None
         source = process.stderr
         if source is not None:
@@ -144,14 +148,21 @@ def invoke(argv, stage):
                 match = re.match(r'(?:\[pid\s+(\d+)\]\s+|\s*(\d+)\s+)?(.*)', line)
                 if not match: continue
                 first, second, call = match.groups()
-                pid = first or second or str(actor_pid or process.pid)
-                if (first is None and second is None) or int(pid) == actor_pid:
-                    exited = re.fullmatch(r'\+\+\+ exited with (\d+) \+\+\+', call)
-                    killed = re.fullmatch(r'\+\+\+ killed by (SIG\w+)(?: \(core dumped\))? \+\+\+', call)
-                    if exited:
-                        actor_exit = int(exited.group(1))
-                    elif killed:
-                        actor_exit = -getattr(signal, killed.group(1))
+                prefixed = first is not None or second is not None
+                if prefixed:
+                    pid = first or second
+                elif len(live) == 1:
+                    pid = next(iter(live))
+                else:
+                    pid = str(actor_pid or process.pid)
+                exited = re.fullmatch(r'\+\+\+ exited with (\d+) \+\+\+', call)
+                killed = re.fullmatch(r'\+\+\+ killed by (SIG\w+)(?: \(core dumped\))? \+\+\+', call)
+                if exited or killed:
+                    live.discard(pid)
+                    if (int(pid) == actor_pid) if actor_pid is not None else not prefixed:
+                        actor_exit = int(exited.group(1)) if exited else -getattr(signal, killed.group(1))
+                    continue
+                live.add(pid)
                 # A non-leader exec takes the thread group's PID. strace 6.1
                 # terminates its printed entry with this marker instead of
                 # <unfinished ...>, then resumes under the replacement PID.
@@ -167,6 +178,7 @@ def invoke(argv, stage):
                 superseded = re.fullmatch(r'\+\+\+ superseded by execve in pid (\d+) \+\+\+', call)
                 if superseded:
                     former = superseded.group(1)
+                    live.discard(former)
                     if exec_moves.pop(former, None) == pid:
                         if not pending.get(pid, '').startswith(('execve(', 'execveat(')):
                             raise RuntimeError('missing ptrace exec PID transition')
@@ -191,6 +203,10 @@ def invoke(argv, stage):
                     call = entry + resumed.group(2)
                 if ' = ' not in call: continue
                 operation, result = call.rsplit(' = ', 1)
+                if operation.startswith(('clone(', 'clone3(', 'fork(', 'vfork(')):
+                    child = re.match(r'(\d+)\b', result)
+                    if child and int(child.group(1)) > 0:
+                        live.add(child.group(1))
                 # Canonical paths returned by the kernel are decoded by strace -yy.
                 # Raw arguments are used only to decide access, never exported.
                 canonical = re.match(r'\d+<(/[^>]+)>', result)
