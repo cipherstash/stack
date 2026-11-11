@@ -632,6 +632,40 @@ async fn test_poll_for_token_does_not_sleep_past_the_deadline() {
     );
 }
 
+/// Polling waits the interval between requests. The server answers
+/// `authorization_pending` for exactly as many polls as fit before the
+/// deadline and `access_denied` after that, so a loop that polls without
+/// waiting fails fast instead of spinning.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_waits_the_interval_between_polls() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/code");
+        then.json(device_code_json_expiring_in(12));
+    });
+    // Polls at T=0, 5 and 10; the next would be T=15, past the deadline.
+    mocks.mock_with_options(1, Some(3), |when, then| {
+        when.post().path("/oauth/device/token");
+        then.bad_request().json(error_json("authorization_pending"));
+    });
+    mocks.mock_with_options(2, None, |when, then| {
+        when.post().path("/oauth/device/token");
+        then.bad_request().json(error_json("access_denied"));
+    });
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+    let started = tokio::time::Instant::now();
+
+    let err = pending.poll_for_token().await.unwrap_err();
+
+    assert!(
+        matches!(err, AuthError::TokenExpired(_)),
+        "expected the deadline to end polling after three polls, got {err:?}"
+    );
+    assert_eq!(started.elapsed().as_secs(), 12);
+}
+
 /// A server-supplied token lifetime past the cap is clamped on the
 /// device-code path too, rather than wrapping `now + expires_in` to a
 /// timestamp in the past.
