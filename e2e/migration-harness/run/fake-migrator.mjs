@@ -2,9 +2,16 @@ import { cp, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 /** Harness-owned deterministic command substitute. The hidden reference is never mounted.
- * @param {{root:string,workspace:string,kind:string,stack:string}} options
+ * @param {{root:string,workspace:string,kind:string,stack:string,procedure?:string}} options
  * @returns {Promise<import("../types.js").MigratorResult & {stdout:string,stderr:string}>} */
-export async function fakeMigrate({ root, workspace, kind, stack }) {
+export async function fakeMigrate({
+  root,
+  workspace,
+  kind,
+  stack,
+  procedure = 'dynamodb',
+}) {
+  const postgres = procedure === 'postgres-v2-to-v3'
   const variants = [
     'reference',
     'downcase',
@@ -17,15 +24,33 @@ export async function fakeMigrate({ root, workspace, kind, stack }) {
     'denied-app',
     'denied-lifecycle',
   ]
-  if (!variants.includes(kind)) throw Error('Unknown Fake Migrator')
+  const postgresVariants = [
+    'reference',
+    'noop',
+    'row-loss',
+    'wrong-mapping',
+    'missing-index',
+    'rewrite',
+    'missing-log',
+  ]
+  if (!(postgres ? postgresVariants : variants).includes(kind))
+    throw Error('Unknown Fake Migrator')
   if (kind !== 'noop') {
     await cp(
-      resolve(root, 'e2e/migration-harness/reference/src'),
+      resolve(
+        root,
+        `e2e/migration-harness/${postgres ? 'postgres-reference' : 'reference'}/src`,
+      ),
       resolve(workspace, 'src'),
       { recursive: true },
     )
     const path = resolve(workspace, 'src/app.mjs')
     let source = await readFile(path, 'utf8')
+    if (postgres)
+      source = source.replace(
+        "const variant = 'reference'",
+        `const variant = '${kind}'`,
+      )
     if (kind === 'denied-app')
       source = `import { readFile } from 'node:fs/promises'\n${source}`.replace(
         'export async function createApp(env = process.env) {',
@@ -41,7 +66,7 @@ export async function fakeMigrate({ root, workspace, kind, stack }) {
         'balance: String(model.balance)',
         'balance: Number(model.balance)',
       )
-    if (kind === 'rewrite')
+    if (kind === 'rewrite' && !postgres)
       source = source.replace(
         /get:\s*async\s*\(?pk\)?\s*=>\s*decrypt\(await stores.get\(pk\)\),/,
         'async get(pk) { const value = await decrypt(await stores.get(pk)); if (pk === "legacy" && value) await this.put(value); return value },',
