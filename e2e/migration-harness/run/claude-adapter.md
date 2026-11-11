@@ -8,9 +8,18 @@ the same filesystem and network policy as Fake Migrators.
 ## Run
 
 Install a recent Claude Code CLI supporting `--bare`, `--restricted` and
-`--permission-prompts none` on the trusted host. Supply `ANTHROPIC_API_KEY` through
-the host's secret environment. The adapter deliberately does not use a Claude
-login session, OAuth token, keychain, provider overrides, or an API-key helper.
+`--permission-prompts none` on the trusted host. Supply one model credential
+through the host's secret environment:
+
+- `ANTHROPIC_API_KEY`, billed to an API account. The CLI runs with `--bare`.
+- `CLAUDE_CODE_OAUTH_TOKEN`, a long-lived Claude subscription token created
+  with `claude setup-token`. `--bare` never reads OAuth credentials, so the CLI
+  runs without it; the remaining flags, the empty configuration directory and
+  the initialization check below still apply. Usage counts against the
+  subscription's limits.
+
+When both are set the API key is used. The adapter deliberately does not use a
+Claude login session, keychain, provider overrides, or an API-key helper.
 CipherStash and store credentials remain owned by the harness.
 
 Pass an **absolute** adapter path because the broker starts it in an empty
@@ -48,7 +57,7 @@ command requests and runtime metadata; the broker also returns tool-call exit co
 
 The MCP bridge connects through a private Unix socket and a per-run token. It
 accepts only `exec` with a string argument array; the model cannot select a host
-working directory, environment, mount or policy. The model API key is supplied
+working directory, environment, mount or policy. The model credential is supplied
 only to the host CLI and explicitly removed from the bridge's environment. The
 adapter and CLI are trusted host code, not an additional security boundary
 against a compromised host executable. Temporary configuration and socket files

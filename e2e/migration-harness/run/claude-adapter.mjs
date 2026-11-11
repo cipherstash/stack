@@ -20,9 +20,15 @@ export async function runClaudeAdapter({
 } = {}) {
   if (process.env.HARNESS_BROKER_PROTOCOL !== 'json-lines-exec-v1')
     throw Error('Claude adapter requires the harness broker')
-  if (!process.env.ANTHROPIC_API_KEY)
+  // An API key wins when both are set. A subscription token comes from
+  // `claude setup-token`; neither path reads a login session or keychain.
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  const subscriptionToken = apiKey
+    ? undefined
+    : process.env.CLAUDE_CODE_OAUTH_TOKEN
+  if (!apiKey && !subscriptionToken)
     throw Error(
-      'Claude adapter requires an explicit ANTHROPIC_API_KEY; login sessions are not used',
+      'Claude adapter requires an explicit ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN; login sessions are not used',
     )
   const maxTurns = Number(process.env.HARNESS_MAX_MODEL_TURNS)
   if (!Number.isSafeInteger(maxTurns) || maxTurns < 1)
@@ -37,7 +43,9 @@ export async function runClaudeAdapter({
     HOME: directory,
     TMPDIR: directory,
     CLAUDE_CONFIG_DIR: directory,
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    ...(apiKey
+      ? { ANTHROPIC_API_KEY: apiKey }
+      : { CLAUDE_CODE_OAUTH_TOKEN: subscriptionToken }),
   }
   /** @type {Map<string,{socket:import('node:net').Socket,id:string|number}>} */
   const pending = new Map()
@@ -104,6 +112,7 @@ export async function runClaudeAdapter({
               MIGRATION_BRIDGE_SOCKET: socketPath,
               MIGRATION_BRIDGE_TOKEN: token,
               ANTHROPIC_API_KEY: '',
+              CLAUDE_CODE_OAUTH_TOKEN: '',
             },
           },
         },
@@ -143,8 +152,10 @@ export async function runClaudeAdapter({
     )
     const prompt =
       'Upgrade the Fixture App in /workspace using only /workspace/migration-guide.md. Read that guide through the exec tool, follow its applicable migration procedure, and verify the migrated application. All commands and file access must use the exec tool in the isolated Migrator Environment. Record guide friction in /workspace/friction.json as a JSON array of objects with section, issue, actionable (boolean), description, and workaround. Write [] when there is no friction. Do not invent prior-run context.'
+    // --bare never reads OAuth, so a subscription token runs without it. The
+    // flags below, the empty config directory and the init check still apply.
     const args = [
-      '--bare',
+      ...(apiKey ? ['--bare'] : []),
       '--restricted',
       '--tools',
       '',
