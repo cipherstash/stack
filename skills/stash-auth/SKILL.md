@@ -159,7 +159,7 @@ yourself.
 
 | Strategy | Use for | Credential source |
 |---|---|---|
-| `AutoStrategy` (the default when `config.authStrategy` is unset) | Most apps | `CS_CLIENT_ACCESS_KEY` **and** `CS_WORKSPACE_CRN` env vars, else the dev profile (`~/.cipherstash/auth.json`) — the session of the workspace named by `CS_WORKSPACE_CRN` if set (never the CLI's current workspace; tokens are checked against it, `WORKSPACE_MISMATCH` otherwise), else the current workspace's — else fails `NOT_AUTHENTICATED` |
+| `AutoStrategy` (the default when `config.authStrategy` is unset) | Most apps | `CS_CLIENT_ACCESS_KEY` **and** `CS_WORKSPACE_CRN` env vars, else the dev profile (`~/.cipherstash/auth.json`) — the session of the workspace named by `CS_WORKSPACE_CRN` if set (tokens are checked against it, `WORKSPACE_MISMATCH` otherwise), else the CLI's current workspace's — else fails `NOT_AUTHENTICATED`. **That workspace pin is in `@cipherstash/auth`'s `AutoStrategy` (pass it as `config.authStrategy`); the default client built without `config.authStrategy` resolves credentials inside `@cipherstash/protect-ffi`, which still follows the CLI's *current* workspace until it picks the pin up** |
 | `AccessKeyStrategy` | Services, CI, backfill jobs | Explicit workspace CRN + access key |
 | `OidcFederationStrategy` | Per-user (identity-bound) encryption | Your IdP's JWT, fetched via a callback on every operation — one CTS token cached per distinct JWT (see Client lifetime) |
 | `DeviceSessionStrategy` | CLI-adjacent tooling | The device-code session `stash auth login` created |
@@ -217,7 +217,7 @@ pass `.data`.
 
 | `failure.type` | Meaning / fix |
 |---|---|
-| `NOT_AUTHENTICATED` | No credentials found — set the `CS_*` variables, or run `npx stash auth login` for a dev profile. If `CS_WORKSPACE_CRN` is set, the dev profile must be logged in to *that* workspace (the CLI's current workspace doesn't count): log in to it, or unset `CS_WORKSPACE_CRN` |
+| `NOT_AUTHENTICATED` | No credentials found — set the `CS_*` variables, or run `npx stash auth login` for a dev profile. With `@cipherstash/auth`'s `AutoStrategy` and `CS_WORKSPACE_CRN` set, the dev profile must be logged in to *that* workspace (the CLI's current workspace doesn't count): log in to it, or unset `CS_WORKSPACE_CRN`. The default client (no `config.authStrategy`) uses the CLI's current workspace instead — make the intended workspace current |
 | `MISSING_WORKSPACE_CRN` | `CS_CLIENT_ACCESS_KEY` is set but `CS_WORKSPACE_CRN` isn't — the access-key path needs both |
 | `WORKSPACE_MISMATCH` (`expected` / `actual`) | The access key (or dev-profile session) belongs to a different workspace than the CRN — you've mixed environments' credentials |
 | `INVALID_ACCESS_KEY` / `INVALID_CRN` | Malformed values — check for truncation/quoting in the secret store |

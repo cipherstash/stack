@@ -2089,11 +2089,20 @@ mod profile_client_key_tests {
     const CURRENT: &str = "ZVATKW3VHMFG27DY";
     const PINNED: &str = "AAAAAAAAAAAAAAAA";
 
+    /// A temporary profile directory, removed when dropped.
+    struct TempDir(std::path::PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// A profile directory whose *current* workspace has a (not usable as a
     /// ZeroKMS key, but present) client key and whose pinned one has none.
-    fn store_with_key_in_current_workspace() -> ProfileStore {
-        let dir = std::env::temp_dir().join(format!("stack-encrypt-{}", Uuid::new_v4()));
-        let store = ProfileStore::new(&dir);
+    fn store_with_key_in_current_workspace() -> (TempDir, ProfileStore) {
+        let dir = TempDir(std::env::temp_dir().join(format!("stack-encrypt-{}", Uuid::new_v4())));
+        let store = ProfileStore::new(&dir.0);
         store.init_workspace(PINNED).unwrap();
         store.init_workspace(CURRENT).unwrap(); // now current
         let key =
@@ -2103,13 +2112,14 @@ mod profile_client_key_tests {
             .unwrap()
             .save_profile(&key)
             .unwrap();
-        store
+        (dir, store)
     }
 
     #[tokio::test]
     async fn a_pinned_workspace_never_borrows_the_current_workspaces_client_key() {
+        let (_dir, store) = store_with_key_in_current_workspace();
         let provider = ProfileClientKey {
-            store: Some(store_with_key_in_current_workspace()),
+            store: Some(store),
             workspace: Some(PINNED.to_string()),
         };
 
@@ -2123,8 +2133,9 @@ mod profile_client_key_tests {
 
     #[tokio::test]
     async fn without_a_pin_the_current_workspaces_client_key_is_used() {
+        let (_dir, store) = store_with_key_in_current_workspace();
         let provider = ProfileClientKey {
-            store: Some(store_with_key_in_current_workspace()),
+            store: Some(store),
             workspace: None,
         };
 
