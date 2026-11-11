@@ -63,7 +63,13 @@ Each principle is marked:
 
 - There is one way to declare a model: `stackencrypt.model`. Every class library goes through it. `tests/_declaration_cases.py` declares one model with each of dataclasses, attrs, Pydantic, `NamedTuple`, and SQLAlchemy.
 - No test shows that each refusal fires for every one of the five libraries.
-- There is one package, `stackencrypt`. The SQLAlchemy layer is a later, separate design (spec #1341, "Out of Scope").
+- There is one package, `stackencrypt`.
+- The SQLAlchemy layer, `stackencrypt.sqlalchemy`, is a second way to encrypt and decrypt. ADR-0004 records its design. It passes the four tests:
+  1. **A need the first way cannot meet.** An ORM app uses `Session` and its own objects. With `cipher.encrypt` alone, `examples/customer-directory/app_sqlalchemy.py` could not use `Session` at all.
+  2. **The same output, through the same code.** The hooks call `encrypt_rows` and `decrypt_rows`, which run the same `_engine.encrypt` and `_engine.decrypt`. Search terms come from the same `Cipher` methods. `test_a_row_updated_with_some_fields_decrypts_and_searches_with_the_full_model` shows that a value from a smaller plan opens and searches under the full plan. The example's `test_each_app_reads_what_the_other_wrote` shows the two ways read each other's rows.
+  3. **The same guarantees, at the same stage.** The declaration is the same decorator. Every value, passthrough values included, is checked before any key request. Errors contain no value. A match search runs `verify` for the app. One difference: the read hook makes one `decrypt_rows` call for each class and set of fields, not one call for the whole result. If a later call fails, the query raises, and the app gets no result.
+  4. **Someone owns it.** It has the README section "Use it with the SQLAlchemy ORM", ADR-0004, and four test files. `mise run test` and the `live` job of `tests-python.yml` run them. The owners of this repository, `@cipherstash/developers` in `.github/CODEOWNERS`, own it with the rest of the Python SDK.
+- No test checks what SQLAlchemy logs with `echo=True`. The write hook runs before that log, so the log should show EQL values.
 
 ## G7. State the design, and run its claims: held
 
