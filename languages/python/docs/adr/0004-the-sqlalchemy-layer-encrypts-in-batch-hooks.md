@@ -190,7 +190,7 @@ The cause is in EQL v4. It defines `<` and the other comparisons for its column 
 ### What B does
 
 - `.asc()`, `.desc()`, `.nulls_first()`, and `.nulls_last()` on an encrypted column sort by `eql_v4.ord_term(col)`, or `eql_v4.ord_term_ore(col)` for an `ore_block` marker.
-- A bare `order_by(col)` and `sqlalchemy.asc(col)` do not go through the column type's operators. So the hooks rewrite the `ORDER BY` of each `select`: the session hook for an ORM query, and the engine hook for a query on a connection.
+- A bare `order_by(col)` and `sqlalchemy.asc(col)` do not go through the column type's operators. So the hooks rewrite the `ORDER BY` of each `select`: the session hook for a query in a session, and the engine hook for a query on a connection. The engine hook rewrites every `select`. SQLAlchemy marks a select as ORM when it names a mapped class or attribute, as `select(Run.label)` does, even when it runs on a connection. A select from a session reaches the engine hook already rewritten, and is left as it is.
 - Sorting a column with no order index raises `QueryError` with `query_unsupported`. Before, it gave the order of the stored JSON, with no error.
 
 If EQL gains a sort order for its v4 column types, the rewrite can stay. The order term is also the form that uses the index.

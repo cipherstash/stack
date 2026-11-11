@@ -603,3 +603,16 @@ def test_an_order_by_on_a_connection_sorts_by_the_plaintext(engine, runs):
 
     assert found == ["e", "c", "a", "d", "b"]
     assert bare == ["b", "e", "a", "d", "c"]
+
+
+def test_an_orm_select_on_a_connection_sorts_by_the_plaintext(engine, runs):
+    # select(Run.label) names a mapped attribute, so SQLAlchemy marks it as
+    # an ORM statement, even when it runs on a connection.
+    from sqlalchemy import asc
+
+    with engine.connect() as conn:
+        bare = conn.execute(select(Run.label).order_by(Run.average_hr)).scalars().all()
+        function = conn.execute(select(Run.label).order_by(asc(Run.pace))).scalars().all()
+
+    assert bare == ["e", "c", "a", "d", "b"]
+    assert function == ["b", "e", "a", "d", "c"]

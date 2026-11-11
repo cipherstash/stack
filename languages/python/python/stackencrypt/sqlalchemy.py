@@ -485,10 +485,12 @@ def _encrypter(tables: Dict[str, Tuple[Cipher, FrozenSet[str]]]) -> Any:
                 column, _ = matches[0]._annotations[_MATCH]
                 raise _match_refused(column, "is not run through a session.")
         if isinstance(clause, Select):
-            # An ORM select is rewritten in the session hook.
-            if clause._propagate_attrs.get("compile_state_plugin") != "orm":
-                clause = _sorted_by_terms(clause)
-            return clause, multiparams, params
+            # Every select, ORM-marked or not. SQLAlchemy marks a select as
+            # ORM when it names a mapped class or attribute, even when it
+            # runs on a connection, where the session hook does not run. A
+            # select from a session reaches here already rewritten, and
+            # comes back unchanged.
+            return _sorted_by_terms(clause), multiparams, params
         if not isinstance(clause, (Insert, Update)):
             return clause, multiparams, params
         configured = tables.get(getattr(clause.table, "name", None))
