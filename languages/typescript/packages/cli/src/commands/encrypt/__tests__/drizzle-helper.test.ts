@@ -55,7 +55,10 @@ describe('scaffoldDrizzleMigration', () => {
 
   it('writes to the directory drizzle-kit reports, not the scanned one', async () => {
     mkdirSync('drizzle')
-    writeFileSync('drizzle/0000_drop_users_email.sql', 'ALTER TABLE t DROP COLUMN c;')
+    writeFileSync(
+      'drizzle/0000_drop_users_email.sql',
+      'ALTER TABLE t DROP COLUMN c;',
+    )
     drizzleKitWrites('src/db/migrations/0003_drop_users_email.sql')
 
     const result = await scaffoldDrizzleMigration({
@@ -153,7 +156,9 @@ describe('scaffoldDrizzleMigration', () => {
         sql: 'SELECT 1;',
       }),
     ).rejects.toThrow(/not a drizzle-kit scaffold/)
-    expect(readFileSync('db/0000_old.sql', 'utf-8')).toBe('ALTER TABLE t DROP COLUMN c;')
+    expect(readFileSync('db/0000_old.sql', 'utf-8')).toBe(
+      'ALTER TABLE t DROP COLUMN c;',
+    )
   })
 
   it('surfaces drizzle-kit stdout and stderr on failure', async () => {
