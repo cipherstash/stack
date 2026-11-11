@@ -122,10 +122,43 @@ The write hook sends every declared field to `encrypt_rows`, not only the encryp
 
 Reads do not check passthrough values, as `decrypt_rows` reads only the encrypted fields.
 
+## Decision 8: a match search removes its false matches, with limits
+
+`.match(text)` on a field with a match index is `col @@ term`. A match index is a Bloom filter, so the database can return rows that do not hold the text. ADR-0003 says the layer should hide this. So after the query, the session hook runs `MatchQuery.verify` on each row, and removes the rows that fail.
+
+Removing rows after the query is right only in some places. So `.match()` works only when all three of these are true:
+
+1. The statement is a `select` run through a session.
+2. The match is a condition of the `WHERE`, joined with `AND` if there are others.
+3. The result includes whole objects of the class, so the column is loaded.
+
+Anything else raises `QueryError` with `query_unsupported` before the query is sent:
+
+| Use | Why it is refused |
+|---|---|
+| In `or_(...)` | A row kept by the other condition would be removed. |
+| In `not_(...)` | The rows to keep are the false matches, which the hook cannot find. |
+| `select(Profile.plan)` | The matched column is not in the result, so `verify` cannot run. |
+| `func.count()` | The count includes the false matches. |
+| `update` or `delete` | The false matches would be changed in the database. |
+| A query on a connection | No hook can remove rows from its result. |
+
+### A LIMIT can return fewer rows
+
+The database applies a `LIMIT` before the hook removes rows. So `.limit(10)` can return fewer than 10 rows, even when more rows match.
+
+| Option | Cost |
+|---|---|
+| **A. Return fewer rows (chosen)** | The page can be short. |
+| B. Raise the limit with `target_limit` | An extra query for a histogram of the stored filters, on each search. Without it, there is no finite limit. |
+| C. Query again with an `OFFSET` | Several queries for one search, and rows can change between them. |
+
+A never returns a row that does not hold the text. B or C can come later, if an app needs exact page sizes.
+
 ## What was run
 
 - `tests/test_sqlalchemy.py` and `tests/test_sqlalchemy_migrations.py` run without credentials. They cover the checks, the refused operators, the indexes, and the Alembic rendering.
-- `tests/test_sqlalchemy_live.py` runs the hooks against ZeroKMS and PostgreSQL. It covers writes, reads, relationship loads, reads after a commit, search, and the request counts.
+- `tests/test_sqlalchemy_live.py` runs the hooks against ZeroKMS and PostgreSQL. It covers writes, reads, relationship loads, reads after a commit, search, match search, and the request counts. A false match of the Bloom filter cannot be made on purpose. So the tests that show rows being removed replace `verify` with a function that refuses one row.
 - `tests/test_sqlalchemy_migrations_live.py` runs `alembic revision --autogenerate` and `alembic upgrade` on an existing table. A second `autogenerate` writes nothing. With `enable_seqscan` off, `EXPLAIN` shows each index in use.
 
 ## Consequences
@@ -138,6 +171,6 @@ Reads do not check passthrough values, as `decrypt_rows` reads only the encrypte
 ## Open
 
 - `between`, as two comparisons. The engine has no range term for EQL types (ADR-0003, amendment).
-- `matches` through the ORM. ADR-0003 says the layer should hide `target_limit` and `verify`.
+- Exact page sizes for `.match()` with a `LIMIT`: option B or C of Decision 8.
 - The reverse migration of a change to an EQL type.
 - Installing EQL from a migration.

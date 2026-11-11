@@ -28,6 +28,11 @@ On a read, only the encrypted fields are decrypted.
   ``render_item`` writes an ``EqlType`` into a migration file with its
   imports. ``process_revision_directives`` writes a change of an existing
   column to an EQL type as an ALTER with a USING cast.
+- Match: ``.match(text)`` on a field with a match index is ``col @@ term``.
+  The session hook runs ``verify`` on the rows and removes those that fail.
+  It works only in a session's select, as a condition of the WHERE joined
+  with AND, with whole objects of the class in the result. Anything else
+  raises ``QueryError``. A LIMIT can return fewer rows than it names.
 - Search: the column type that ``eql_type_map`` gives each encrypted field
   turns ``==``, ``<``, ``<=``, ``>`` and ``>=`` into a comparison with a query
   term, made by ``Cipher.eq``, ``lt``, ``lte``, ``gt`` or ``gte``. Any other
@@ -54,10 +59,11 @@ from sqlalchemy import (
     or_,
 )
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, Row
 from sqlalchemy.orm import Mapper, Session
 from sqlalchemy.orm.attributes import set_committed_value
-from sqlalchemy.sql import operators
+from sqlalchemy.sql import operators, visitors
+from sqlalchemy.sql.elements import BooleanClauseList
 from sqlalchemy.sql.dml import Insert, Update
 from sqlalchemy.types import UserDefinedType
 
@@ -107,6 +113,16 @@ class EqlType(UserDefinedType):  # type: ignore[type-arg]
                 # One equality term for each value. An empty list matches no row.
                 found = or_(false(), *[self.operate(operators.eq, value) for value in values])
                 return found if op is operators.in_op else not_(found)
+            if op is operators.match_op and len(other) == 1:
+                query = _cipher_of(self.expr).matches(self.expr.key, other[0])
+                term = cast(
+                    literal(query.term, String()),
+                    _QueryType(self.expr.type.marker.query_sql_domain),
+                )
+                found = super().operate(_MATCHES, term)
+                # The session hook finds the search by this annotation, to
+                # check where it is and to verify the rows.
+                return found._annotate({_MATCH: (self.expr, query)})
             method = _COMPARISONS.get(op)
             if method is None or len(other) != 1:
                 raise _refused(self.expr, op)
@@ -145,6 +161,14 @@ _COMPARISONS: Dict[Any, str] = {
     operators.gt: "gt",
     operators.ge: "gte",
 }
+
+# A match search: `col @@ term`, and the annotation that marks it.
+_MATCHES = operators.custom_op("@@", is_comparison=True)
+_MATCH = "stackencrypt_match"
+
+# The execution option the session hook sets on a statement whose match
+# searches it checked and verifies.
+_VERIFIED = "stackencrypt_match_verified"
 
 # The operators that send no value to the database.
 _NO_VALUE = frozenset(
@@ -435,6 +459,11 @@ def _check(cls: type) -> Tuple[type, Cipher, FrozenSet[str]]:
 
 def _encrypter(tables: Dict[str, Tuple[Cipher, FrozenSet[str]]]) -> Any:
     def encrypt_parameters(conn, clause, multiparams, params, execution_options):  # type: ignore[no-untyped-def]
+        if not execution_options.get(_VERIFIED):
+            matches = _matches_in(clause)
+            if matches:
+                column, _ = matches[0]._annotations[_MATCH]
+                raise _match_refused(column, "is not run through a session.")
         if not isinstance(clause, (Insert, Update)):
             return clause, multiparams, params
         configured = tables.get(getattr(clause.table, "name", None))
@@ -495,10 +524,16 @@ def _remember(target: object, attrs: Any) -> None:
 
 
 def _decrypt_loaded(state: Any) -> Any:
+    matches = _matches_in(state.statement)
+    if matches and not state.is_select:
+        column, _ = matches[0]._annotations[_MATCH]
+        raise _match_refused(column, "is in an UPDATE or a DELETE, so it would change rows that do not hold the text.")
     if not state.is_select:
         return None
+    searches = _checked_matches(state.statement, matches)
     # Freezing reads every row, so every load and refresh event has fired.
-    result = state.invoke_statement().freeze()
+    options = {_VERIFIED: True} if searches else {}
+    result = state.invoke_statement(execution_options=options).freeze()
     pending = state.session.info.pop(_PENDING, [])
     groups: Dict[Tuple[type, FrozenSet[str]], List[object]] = {}
     for target, names in pending:
@@ -519,7 +554,70 @@ def _decrypt_loaded(state: Any) -> Any:
         for target, values in zip(targets, opened):
             for name, value in values.items():
                 set_committed_value(target, name, value)
-    return _decrypt_columns(state.statement, result)()
+    result = _decrypt_columns(state.statement, result)
+    if searches:
+        result = _verify(searches, result)
+    return result()
+
+
+def _checked_matches(statement: Any, matches: List[Any]) -> List[Tuple[int, str, Any]]:
+    """For each match search: the result position of its class's objects,
+    the field, and the ``MatchQuery``. Raises ``QueryError`` for a search
+    whose rows cannot be verified."""
+    if not matches:
+        return []
+    # The conditions as the app passed them to where(), with each and_()
+    # opened. `whereclause` would join copies of them.
+    pending = list(getattr(statement, "_where_criteria", ()) or [statement.whereclause])
+    top = set()
+    while pending:
+        condition = pending.pop()
+        if isinstance(condition, BooleanClauseList) and condition.operator is operators.and_:
+            pending.extend(condition.clauses)
+        else:
+            top.add(id(condition))
+    descriptions = statement.column_descriptions
+    searches = []
+    for match in matches:
+        column, query = match._annotations[_MATCH]
+        if id(match) not in top:
+            raise _match_refused(column, "is not a condition of the WHERE joined with AND.")
+        cls = next((c for c, (cipher, _) in _CONFIGURED.items() if cipher is _cipher_of(column)), None)
+        at = next(
+            (
+                i
+                for i, description in enumerate(descriptions)
+                if description.get("type") is cls and description.get("expr") is cls
+            ),
+            None,
+        )
+        if at is None:
+            raise _match_refused(column, "has no whole objects of its class in the result.")
+        searches.append((at, column.key, query))
+    return searches
+
+
+def _item(row: Any, at: int) -> Any:
+    """Item ``at`` of a frozen row. A result of one object, as from
+    ``select(Customer)``, keeps the object itself, not a one-item row."""
+    return row[at] if isinstance(row, (tuple, Row)) else row
+
+
+def _verify(searches: List[Tuple[int, str, Any]], result: Any) -> Any:
+    """Keep the rows whose objects hold the text of every match search."""
+    rows = list(result.data)
+    keep = [True] * len(rows)
+    for at, field, query in searches:
+        values = [getattr(_item(row, at), field) for row in rows]
+        present = [i for i, value in enumerate(values) if value is not None]
+        for i in set(range(len(rows))) - set(present):
+            keep[i] = False
+        for i, ok in zip(present, query.verify([values[i] for i in present])):
+            keep[i] = keep[i] and ok
+    # with_new_rows takes one tuple for each row, whatever the shape it keeps.
+    return result.with_new_rows(
+        [row if isinstance(row, (tuple, Row)) else (row,) for row, kept in zip(rows, keep) if kept]
+    )
 
 
 def _decrypt_columns(statement: Any, result: Any) -> Any:
@@ -541,7 +639,7 @@ def _decrypt_columns(statement: Any, result: Any) -> Any:
             positions.setdefault(cipher, {})[at] = column.key
     if not positions:
         return result
-    rows = [list(row) for row in result.data]
+    rows = [list(row) if isinstance(row, (tuple, Row)) else [row] for row in result.data]
     for cipher, fields in positions.items():
         # Rows grouped by which of these fields are not NULL.
         groups: Dict[FrozenSet[int], List[List[Any]]] = {}
@@ -572,6 +670,11 @@ def _column_of(expression: Any) -> Any:
 def _term(column: Any, method: str, value: object) -> Any:
     """``value`` as the query term that ``method`` makes for ``column``,
     cast to the column marker's query type."""
+    term = getattr(_cipher_of(column), method)(column.key, value)
+    return cast(literal(term, String()), _QueryType(column.type.marker.query_sql_domain))
+
+
+def _cipher_of(column: Any) -> Cipher:
     cipher = _TABLES.get(getattr(column, "table", None))
     if cipher is None:
         raise QueryError(
@@ -579,8 +682,28 @@ def _term(column: Any, method: str, value: object) -> Any:
             f"column {_column_name(column)} is encrypted, but its class is not configured. "
             "Call configure_encryption with the class before you build a query on it.",
         )
-    term = getattr(cipher, method)(column.key, value)
-    return cast(literal(term, String()), _QueryType(column.type.marker.query_sql_domain))
+    return cipher
+
+
+def _match_refused(column: Any, why: str) -> QueryError:
+    return QueryError(
+        "query_unsupported",
+        f"a match search on {_column_name(column)} {why} A match index can return rows "
+        "that do not hold the text, and the SDK removes them after the query. It can do "
+        "that only in a select run through a session, with the match as a condition of "
+        "the WHERE, joined with AND, and with whole objects of the class in the result.",
+        field=getattr(column, "key", None),
+        reason="match",
+    )
+
+
+def _matches_in(statement: Any) -> List[Any]:
+    """Every match search in ``statement``, as the annotated expressions."""
+    return [
+        element
+        for element in visitors.iterate(statement)
+        if _MATCH in getattr(element, "_annotations", {})
+    ]
 
 
 def _refused(column: Any, op: Callable[..., Any]) -> QueryError:
