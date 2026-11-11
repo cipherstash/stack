@@ -13,7 +13,7 @@ extends: ADR-0002, ADR-0003
 class Base(DeclarativeBase):
     type_annotation_map = eql_type_map
 
-configure_encryption(engine, [Customer])
+configure_encryption([Customer])
 
 with Session(engine) as session:
     session.add(Customer(email="a@example.com", level=3))
@@ -37,7 +37,7 @@ Each encrypted value needs its own data key from ZeroKMS, CipherStash's key serv
 
 **B. Hooks that work on a whole statement or result (chosen).**
 
-- Writes: a `before_execute` hook on the engine. For each `INSERT` or `UPDATE` on a configured table, it encrypts the parameters of every row with one `Cipher.encrypt_rows` call.
+- Writes: a `before_execute` hook on SQLAlchemy's `Engine` class, so every engine runs it. For each `INSERT` or `UPDATE` on a configured table, it encrypts the parameters of every row with one `Cipher.encrypt_rows` call.
 - Reads: the `load` and `refresh` events of each class record the objects a query builds. A `do_orm_execute` hook then decrypts them, with one `Cipher.decrypt_rows` call for each class and set of fields. It sets the plaintext with `set_committed_value`, so the objects are not marked as changed.
 - Reads of columns: the same hook decrypts the result columns that are encrypted fields, as in `select(Customer.email, Customer.plan)`. It makes one `decrypt_rows` call for each class and set of fields.
 
@@ -53,7 +53,7 @@ SQLAlchemy passes a column type one value at a time. So 100 rows would make 100 
 
 ## Decision 2: one setup call with an explicit list of classes
 
-`configure_encryption(engine, [Customer, Order])` takes the engine and the classes to encrypt. It does not find declared classes by itself, such as from the `Base` registry. An explicit list shows which tables are encrypted. A class imported late would otherwise be missed, with no error.
+`configure_encryption([Customer, Order])` takes the classes to encrypt. It does not find declared classes by itself, such as from the `Base` registry. An explicit list shows which tables are encrypted. A class imported late would otherwise be missed, with no error.
 
 It checks each class first, and raises `DeclarationError` before any query:
 
@@ -64,7 +64,22 @@ It checks each class first, and raises `DeclarationError` before any query:
 | `declaration_column_name` | an encrypted field whose column has another name |
 | `declaration_column_type` | an encrypted field whose column is not its marker's EQL type |
 | `declaration_unique_column` | an encrypted field with a unique constraint |
-| `declaration_already_configured` | a configuration from an earlier call |
+| `declaration_already_configured` | a table that another class is configured for |
+
+### Every engine, once in a process
+
+The first version took one engine: `configure_encryption(engine, classes)`. It installed the write hook on that engine only, and refused a second call for a class. But an app can write through more than one engine in a process: Endurain has its app engine, a test engine, and a worker that one test runs twice. A missed engine would write without encryption. The options were these:
+
+| Option | Problem |
+|---|---|
+| A list of engines | Every engine must exist at the call. A test engine made later is missed. |
+| A second call adds an engine | Each engine needs a call. A forgotten one writes without encryption. |
+| **The hooks on SQLAlchemy's `Engine` class (chosen)** | Every engine runs them. |
+
+So the call takes only the classes. The hooks are installed once, on `Engine` and on `Session`. Two changes go with it:
+
+- **A table is found by its `Table` object, not its name.** With every engine hooked, another database with a table of the same name would otherwise have its writes encrypted. A Core insert through `sa.table("users", ...)` uses a separate object, so it is not encrypted. PostgreSQL refuses its plaintext, because it does not fit the EQL column type, so the failure is not silent.
+- **A repeat call for a configured class does nothing.** It has nothing left to install. It still raises `DeclarationError` if the class changed since it was declared (`declaration_class_changed`), or if another class is configured for the same table (`declaration_already_configured`).
 
 The hooks use field names, and SQLAlchemy uses column names in statement parameters. So a column with another name, such as `mapped_column("email_address")`, is refused for now.
 

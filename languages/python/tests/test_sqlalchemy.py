@@ -38,9 +38,9 @@ def engine():
     return create_engine("sqlite://")
 
 
-def refused(engine, classes):
+def refused(classes):
     with pytest.raises(DeclarationError) as raised:
-        configure_encryption(engine, classes)
+        configure_encryption(classes)
     return raised.value
 
 
@@ -50,7 +50,7 @@ def test_a_class_sqlalchemy_does_not_map_is_refused(engine):
     class Contact:
         email: Annotated[str, TextEq]
 
-    error = refused(engine, [Contact])
+    error = refused([Contact])
     assert error.code == "declaration_not_mapped"
     assert "Contact" in error.message
 
@@ -60,7 +60,7 @@ def test_a_class_not_declared_is_refused(engine):
         __tablename__ = "plain"
         id: Mapped[int] = mapped_column(primary_key=True)
 
-    error = refused(engine, [Plain])
+    error = refused([Plain])
     assert error.code == "declaration_not_decorated"
 
 
@@ -71,7 +71,7 @@ def test_a_declared_table_that_is_not_the_mapped_table_is_refused(engine):
         id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
         email: Mapped[Annotated[str, TextEq]]
 
-    error = refused(engine, [Person])
+    error = refused([Person])
     assert error.code == "declaration_table_mismatch"
     assert "people" in error.message
     assert "persons" in error.message
@@ -84,7 +84,7 @@ def test_a_field_whose_column_has_another_name_is_refused(engine):
         id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
         email: Mapped[Annotated[str, TextEq]] = mapped_column("email_address")
 
-    error = refused(engine, [Account])
+    error = refused([Account])
     assert error.code == "declaration_column_name"
     assert error.field == "email"
     assert "email_address" in error.message
@@ -97,22 +97,102 @@ def test_a_unique_encrypted_column_is_refused(engine):
         id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
         email: Mapped[Annotated[str, TextEq]] = mapped_column(unique=True)
 
-    error = refused(engine, [Login])
+    error = refused([Login])
     assert error.code == "declaration_unique_column"
     assert error.field == "email"
     assert "eql_v4.eq_term(email)" in error.message
 
 
-def test_a_class_configured_twice_is_refused(engine):
+def test_a_repeat_call_for_a_configured_class_does_nothing(untouched):
     @stackencrypt.model("members")
     class Member(Base):
         __tablename__ = "members"
         id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
         email: Mapped[Annotated[str, TextEq]]
 
-    configure_encryption(engine, [Member])
-    error = refused(create_engine("sqlite://"), [Member])
+    configure_encryption([Member])
+    configure_encryption([Member])
+    configure_encryption([Member, Member])
+
+
+def test_a_class_whose_declaration_changed_is_refused_on_a_repeat_call():
+    @stackencrypt.model("pilots")
+    class Pilot(Base):
+        __tablename__ = "pilots"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        email: Mapped[Annotated[str, TextEq]]
+
+    configure_encryption([Pilot])
+    Pilot.__repr__ = lambda self: "Pilot(...)"
+
+    assert refused([Pilot]).code == "declaration_class_changed"
+
+
+def test_another_class_that_maps_a_configured_table_is_refused():
+    @stackencrypt.model("crews")
+    class Crew(Base):
+        __tablename__ = "crews"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        email: Mapped[Annotated[str, TextEq]]
+
+    class OtherBase(DeclarativeBase):
+        type_annotation_map = eql_type_map
+
+    @stackencrypt.model("crews")
+    class CrewAgain(OtherBase):
+        __table__ = Crew.__table__
+        id: Mapped[Annotated[int, Ignore]]
+        email: Mapped[Annotated[str, TextEq]]
+
+    configure_encryption([Crew])
+    error = refused([CrewAgain])
+
     assert error.code == "declaration_already_configured"
+    assert "Crew" in error.message
+
+
+def test_an_engine_made_after_the_call_is_encrypted_too(untouched):
+    import datetime
+
+    from sqlalchemy.orm import Session
+
+    @stackencrypt.model("flights")
+    class Flight(Base):
+        __tablename__ = "flights"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        email: Mapped[Annotated[str, TextEq]]
+        at: Mapped[Annotated[datetime.datetime, Passthrough]]
+
+    configure_encryption([Flight])
+    later = create_engine("sqlite://")
+    with later.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE flights (id INTEGER PRIMARY KEY, email TEXT, at TEXT)")
+
+    # The write hook runs on the new engine: it checks the passthrough value.
+    with Session(later) as session, pytest.raises(InvalidValueError) as raised:
+        session.add(Flight(email="secret@example.com", at=datetime.datetime(2026, 1, 1)))
+        session.commit()
+    assert raised.value.code == "value_naive_datetime"
+
+
+def test_a_table_of_the_same_name_that_is_not_configured_is_left_alone(untouched):
+    from sqlalchemy import Column, Integer, MetaData, Table, insert
+
+    @stackencrypt.model("tickets_seen")
+    class Seen(Base):
+        __tablename__ = "tickets_seen"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        email: Mapped[Annotated[str, TextEq]]
+
+    configure_encryption([Seen])
+    # Another database's table, with the same name, and no encryption.
+    other = Table("tickets_seen", MetaData(), Column("id", Integer, primary_key=True), Column("email", String))
+    engine = create_engine("sqlite://")
+    other.create(engine)
+
+    with engine.begin() as conn:
+        conn.execute(insert(other), [{"email": "plain@example.com"}])
+        assert conn.execute(other.select()).one().email == "plain@example.com"
 
 
 def test_a_refused_list_configures_none_of_its_classes(engine):
@@ -128,13 +208,13 @@ def test_a_refused_list_configures_none_of_its_classes(engine):
         id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
         email: Mapped[Annotated[str, TextEq]]
 
-    refused(engine, [Guest, Visitor])
+    refused([Guest, Visitor])
     # Guest was not configured by the refused call, so it can be now.
-    configure_encryption(engine, [Guest])
+    configure_encryption([Guest])
 
 
 def test_a_declared_mapped_class_is_accepted_with_no_request(engine, untouched):
-    configure_encryption(engine, [Customer])
+    configure_encryption([Customer])
 
 
 def test_a_sealed_value_inside_the_sql_is_refused_and_not_stored(untouched):
@@ -150,7 +230,7 @@ def test_a_sealed_value_inside_the_sql_is_refused_and_not_stored(untouched):
     # SQLite has no EQL types, and the refusal comes before the database.
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE leads (id INTEGER PRIMARY KEY, email TEXT)")
-    configure_encryption(engine, [Lead])
+    configure_encryption([Lead])
 
     for statement in [
         insert(Lead).values(email="secret@example.com"),
@@ -204,7 +284,7 @@ def test_a_column_of_another_type_is_refused(engine):
         id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
         email: Mapped[Annotated[str, TextEq]] = mapped_column(String)
 
-    error = refused(engine, [Ticket])
+    error = refused([Ticket])
     assert error.code == "declaration_column_type"
     assert error.field == "email"
     assert "eql_v4_text_eq" in error.message
@@ -223,7 +303,7 @@ class Score(Base):
 
 @pytest.fixture(scope="module")
 def scores():
-    configure_encryption(create_engine("sqlite://"), [Score])
+    configure_encryption([Score])
 
 
 @pytest.mark.parametrize(
@@ -293,7 +373,7 @@ def test_a_passthrough_value_is_checked_on_a_flush(untouched):
     engine = create_engine("sqlite://")
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE trips (id INTEGER PRIMARY KEY, email TEXT, at TEXT)")
-    configure_encryption(engine, [Visit])
+    configure_encryption([Visit])
 
     with Session(engine) as session, pytest.raises(InvalidValueError) as raised:
         session.add(Visit(email="secret@example.com", at=datetime.datetime(2026, 1, 1)))
@@ -350,7 +430,7 @@ def test_a_bare_order_by_is_sorted_by_the_order_term_in_a_session(untouched):
 
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE laps (id INTEGER PRIMARY KEY, seconds TEXT, note TEXT)")
-    configure_encryption(engine, [Lap])
+    configure_encryption([Lap])
 
     with Session(engine) as session:
         for statement in (select(Lap).order_by(Lap.seconds), select(Lap).order_by(asc(Lap.seconds))):
@@ -406,7 +486,7 @@ def test_a_labelled_column_in_order_by_is_sorted_by_the_order_term(untouched):
     event.listen(engine, "before_cursor_execute", lambda conn, cur, sql, *a: sent.append(sql))
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE splits (id INTEGER PRIMARY KEY, seconds TEXT)")
-    configure_encryption(engine, [Split])
+    configure_encryption([Split])
     secs = Split.seconds.label("secs")
 
     with Session(engine) as session:
@@ -443,7 +523,7 @@ def test_a_column_named_by_a_string_in_order_by_is_sorted_by_the_order_term(unto
     event.listen(engine, "before_cursor_execute", lambda conn, cur, sql, *a: sent.append(sql))
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE legs (id INTEGER PRIMARY KEY, seconds TEXT)")
-    configure_encryption(engine, [Leg])
+    configure_encryption([Leg])
     statements = [
         select(Leg.seconds).order_by("seconds"),
         select(Leg.seconds).order_by(desc("seconds")),
@@ -483,7 +563,7 @@ def test_a_string_naming_an_encrypted_column_that_is_not_selected_is_sorted_or_r
     event.listen(engine, "before_cursor_execute", lambda conn, cur, sql, *a: sent.append(sql))
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE stages (id INTEGER PRIMARY KEY, name TEXT, seconds TEXT)")
-    configure_encryption(engine, [Stage])
+    configure_encryption([Stage])
     other = aliased(Stage)
 
     with Session(engine) as session:
@@ -515,7 +595,7 @@ def test_a_plaintext_label_with_an_encrypted_columns_name_is_left_alone(untouche
     event.listen(engine, "before_cursor_execute", lambda conn, cur, sql, *a: sent.append(sql))
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE heats (id INTEGER PRIMARY KEY, rank INTEGER, seconds TEXT)")
-    configure_encryption(engine, [Heat])
+    configure_encryption([Heat])
 
     with Session(engine) as session:
         # The label "seconds" names the plaintext rank, so the sort is by rank.

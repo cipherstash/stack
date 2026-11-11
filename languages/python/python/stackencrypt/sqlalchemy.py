@@ -2,15 +2,15 @@
 
     from stackencrypt.sqlalchemy import configure_encryption
 
-    engine = create_engine(DATABASE_URL)
-    configure_encryption(engine, [Customer, Order])
+    configure_encryption([Customer, Order])
 
 After that, a flush encrypts the declared fields of the listed classes, and a
 query decrypts them. The app reads and writes plaintext attributes.
 
-- Writes: a ``before_execute`` hook on the engine. For each INSERT or UPDATE
-  on a listed table, it encrypts the parameters of all the statement's rows
-  with one ``Cipher.encrypt_rows`` call.
+- Writes: a ``before_execute`` hook on SQLAlchemy's ``Engine`` class, so
+  every engine runs it. For each INSERT or UPDATE on the Table object of a
+  listed class, it encrypts the parameters of all the statement's rows with
+  one ``Cipher.encrypt_rows`` call.
 - Reads: the ``load`` and ``refresh`` events of each listed class record the
   objects a query builds. A ``do_orm_execute`` hook then decrypts them, with
   one ``Cipher.decrypt_rows`` call for each class and set of fields. The
@@ -393,6 +393,9 @@ def _is_eql(column_type: Any) -> bool:
 # The configured tables, for the comparisons: a Table to its cipher.
 _TABLES: Dict[Table, Cipher] = {}
 
+# The configured tables, by their Table object: the class configured for each.
+_TABLE_CLASSES: Dict[Table, type] = {}
+
 # The objects a load built or refreshed, and which attributes, waiting for
 # the do_orm_execute hook. Kept in each session's `info`.
 _PENDING = "stackencrypt_pending"
@@ -401,40 +404,51 @@ _PENDING = "stackencrypt_pending"
 _CONFIGURED: Dict[type, Tuple[Cipher, FrozenSet[str]]] = {}
 
 
-def configure_encryption(engine: Engine, classes: Sequence[type]) -> None:
+def configure_encryption(classes: Sequence[type]) -> None:
     """Encrypt and decrypt the declared fields of ``classes`` when the ORM
-    writes them through ``engine`` and reads them in any session.
+    writes them through any engine, and reads them in any session.
 
     Each class must be declared with ``stackencrypt.model`` and mapped by
     SQLAlchemy. Its declared table must be its ``__tablename__``, and each
-    sealed field's column must have the field's name. A class can be
-    configured once in a process.
+    sealed field's column must have the field's name.
+
+    The hooks are installed once in a process, on SQLAlchemy's ``Engine``
+    and ``Session`` classes, so every engine gets them, including one made
+    later, such as a test's. A write is encrypted when its table is the
+    ``Table`` object of a configured class.
+
+    A repeat call for a class that is already configured does nothing.
+    It still raises ``DeclarationError`` when the class changed since it
+    was declared, or when another class is configured for its table.
 
     Every class is checked first. A class that fails raises
     ``DeclarationError``, and none of the classes is configured. The check
     makes no request.
     """
-    checked = [_check(cls) for cls in classes]
-    for cls, _, _ in checked:
-        if cls in _CONFIGURED:
+    checked = [_check(cls) for cls in classes]  # refuses a changed class too
+    owners = dict(_TABLE_CLASSES)
+    new = []
+    for cls, cipher, sealed in checked:
+        table = inspect(cls).local_table
+        owner = owners.get(table)
+        if owner is not None and owner is not cls:
             raise DeclarationError(
                 "declaration_already_configured",
-                f"{cls.__qualname__} is configured for encryption already. "
-                "Configure each class once, with every engine it writes through.",
+                f"{cls.__qualname__} maps table {table.name!r}, and "
+                f"{owner.__qualname__} is configured for that table already. "
+                "Configure one class for each table.",
             )
-    if len({cls for cls, _, _ in checked}) != len(checked):
-        raise DeclarationError(
-            "declaration_already_configured",
-            "the list names a class more than once.",
-        )
-    tables: Dict[str, Tuple[Cipher, FrozenSet[str]]] = {}
-    for cls, cipher, sealed in checked:
+        if owner is None:
+            owners[table] = cls
+            new.append((cls, cipher, sealed, table))
+    for cls, cipher, sealed, table in new:
         _CONFIGURED[cls] = (cipher, sealed)
-        _TABLES[inspect(cls).local_table] = cipher
-        tables[cipher.declaration.table] = (cipher, sealed)
+        _TABLES[table] = cipher
+        _TABLE_CLASSES[table] = cls
         event.listen(cls, "load", _remember_load)
         event.listen(cls, "refresh", _remember_refresh)
-    event.listen(engine, "before_execute", _encrypter(tables), retval=True)
+    if not event.contains(Engine, "before_execute", _encrypt_parameters):
+        event.listen(Engine, "before_execute", _encrypt_parameters, retval=True)
     if not event.contains(Session, "do_orm_execute", _decrypt_loaded):
         event.listen(Session, "do_orm_execute", _decrypt_loaded)
 
@@ -503,41 +517,50 @@ def _check(cls: type) -> Tuple[type, Cipher, FrozenSet[str]]:
     return cls, cipher, sealed
 
 
-def _encrypter(tables: Dict[str, Tuple[Cipher, FrozenSet[str]]]) -> Any:
-    def encrypt_parameters(conn, clause, multiparams, params, execution_options):  # type: ignore[no-untyped-def]
-        if not execution_options.get(_VERIFIED):
-            matches = _matches_in(clause)
-            if matches:
-                column, _ = matches[0]._annotations[_MATCH]
-                raise _match_refused(column, "is not run through a session.")
-        if isinstance(clause, Select):
-            # Every select, ORM-marked or not. SQLAlchemy marks a select as
-            # ORM when it names a mapped class or attribute, even when it
-            # runs on a connection, where the session hook does not run. A
-            # select from a session reaches here already rewritten, and
-            # comes back unchanged.
-            return _sorted_by_terms(clause), multiparams, params
-        if not isinstance(clause, (Insert, Update)):
-            return clause, multiparams, params
-        configured = tables.get(getattr(clause.table, "name", None))
-        if configured is None:
-            return clause, multiparams, params
-        cipher, sealed = configured
-        rows = [dict(row) for row in multiparams] if multiparams else [dict(params or {})]
-        _refuse_inline_values(conn, clause, sealed, rows)
-        # Passthrough fields too: encrypt_rows checks them as encrypt does,
-        # and returns them unchanged.
-        names = _declared(cipher).intersection(rows[0])
-        if not names:
-            return clause, multiparams, params
-        encrypted = cipher.encrypt_rows([{name: row[name] for name in names} for row in rows])
-        for row, values in zip(rows, encrypted):
-            row.update(values)
-        if multiparams:
-            return clause, rows, params
-        return clause, multiparams, rows[0]
+def _encrypt_parameters(conn, clause, multiparams, params, execution_options):  # type: ignore[no-untyped-def]
+    """The write hook, on SQLAlchemy's ``Engine`` class: every engine runs it."""
+    if not execution_options.get(_VERIFIED):
+        matches = _matches_in(clause)
+        if matches:
+            column, _ = matches[0]._annotations[_MATCH]
+            raise _match_refused(column, "is not run through a session.")
+    if isinstance(clause, Select):
+        # Every select, ORM-marked or not. SQLAlchemy marks a select as
+        # ORM when it names a mapped class or attribute, even when it
+        # runs on a connection, where the session hook does not run. A
+        # select from a session reaches here already rewritten, and
+        # comes back unchanged.
+        return _sorted_by_terms(clause), multiparams, params
+    if not isinstance(clause, (Insert, Update)):
+        return clause, multiparams, params
+    cls = _configured_class(clause.table)
+    if cls is None:
+        return clause, multiparams, params
+    cipher, sealed = _CONFIGURED[cls]
+    rows = [dict(row) for row in multiparams] if multiparams else [dict(params or {})]
+    _refuse_inline_values(conn, clause, sealed, rows)
+    # Passthrough fields too: encrypt_rows checks them as encrypt does,
+    # and returns them unchanged.
+    names = _declared(cipher).intersection(rows[0])
+    if not names:
+        return clause, multiparams, params
+    encrypted = cipher.encrypt_rows([{name: row[name] for name in names} for row in rows])
+    for row, values in zip(rows, encrypted):
+        row.update(values)
+    if multiparams:
+        return clause, rows, params
+    return clause, multiparams, rows[0]
 
-    return encrypt_parameters
+
+def _configured_class(table: Any) -> Any:
+    """The class configured for ``table``, found by its Table object, not
+    its name: another database's table of the same name is not encrypted.
+    An ORM statement can carry an annotated copy of the Table, so the copy
+    is also looked up as its original."""
+    found = _TABLE_CLASSES.get(table)
+    if found is None and hasattr(table, "_deannotate"):
+        found = _TABLE_CLASSES.get(table._deannotate())
+    return found
 
 
 def _declared(cipher: Cipher) -> FrozenSet[str]:

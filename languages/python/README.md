@@ -159,7 +159,7 @@ The values are checked as `encrypt` checks them. A row that is not a mapping rai
 
 ## Use it with the SQLAlchemy ORM
 
-`stackencrypt.sqlalchemy.configure_encryption` makes the ORM encrypt and decrypt for you. Call it once, after you create the engine. Then use sessions as usual. The app reads and writes plaintext attributes, and the tables store EQL values.
+`stackencrypt.sqlalchemy.configure_encryption` makes the ORM encrypt and decrypt for you. Call it once, with the classes to encrypt. Then use sessions as usual, with any engine. The app reads and writes plaintext attributes, and the tables store EQL values.
 
 ```text
 from stackencrypt.sqlalchemy import configure_encryption, eql_type_map
@@ -178,7 +178,7 @@ class Customer(Base):
 
 
 engine = create_engine(DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1))
-configure_encryption(engine, [Customer])
+configure_encryption([Customer])
 
 with Session(engine) as session:
     session.add(Customer(email="a@example.com", level=3))
@@ -189,7 +189,8 @@ with Session(engine) as session:
 
 `eql_type_map` gives each encrypted field its EQL column type, such as `public.eql_v4_text_eq` for `TextEq`. So a column needs no type of its own. `Base.metadata.create_all(engine)` creates the EQL columns. A field declared `Mapped[Annotated[Optional[str], TextEq]]` gets the same type, and SQLAlchemy makes its column nullable.
 
-- **Writes:** each INSERT or UPDATE on a listed table is encrypted with one batch of key requests for all its rows.
+- **Writes:** each INSERT or UPDATE on a listed class's table is encrypted with one batch of key requests for all its rows. This works on every engine in the process, including one made after the call, such as a test's. The table is found by its `Table` object, not its name. So a Core insert through `sa.table("customers", ...)`, which is a separate object, is not encrypted. PostgreSQL then refuses its plaintext, because it does not fit the EQL column type.
+- A repeat call for a configured class does nothing. It raises `DeclarationError` if the class changed since it was declared, or if another class is configured for the same table.
 - **Reads:** the objects a query loads are decrypted with one batch for each class. This includes relationship loads, and attributes read again after a commit. A session query of columns, such as `session.execute(select(Customer.email, Customer.plan))`, is decrypted too.
 - Only encrypted fields are changed. A passthrough field is checked as `encrypt` checks it, then stored unchanged. For example, a `datetime` with no time zone raises `InvalidValueError` with `value_naive_datetime`.
 
@@ -210,7 +211,7 @@ Each class must be declared with `stackencrypt.model` and mapped by SQLAlchemy. 
 - `declaration_column_name`: an encrypted field's column has another name than the field, as with `mapped_column("email_address")`.
 - `declaration_column_type`: an encrypted field's column is not the EQL type of its marker. Set `type_annotation_map = eql_type_map` on the base.
 - `declaration_unique_column`: an encrypted column has `unique=True` or a unique constraint. Each EQL value contains new random ciphertext, so the constraint would never find a duplicate. Use a unique index on `eql_v4.eq_term(col)`, as in "Migrations with Alembic".
-- `declaration_already_configured`: the class was configured before in this process.
+- `declaration_already_configured`: another class is configured for the same table.
 
 A statement that puts an encrypted value inside its SQL, such as `insert(Customer).values(email=...)`, raises `DeclarationError` with `declaration_inline_value`. The value is not stored. Pass the values as parameters instead, as `session.add` and `session.execute(insert(Customer), rows)` do.
 
