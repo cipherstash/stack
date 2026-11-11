@@ -189,7 +189,8 @@ const AUDITED_ACTIONS = new Map([
   // cargo-bins/cargo-binstall, release-plz/git-config) that this gate cannot
   // read; it opens local `./` composites only. So this is an audit of the
   // pinned version, not a standing property: re-read it when the pin moves.
-  // Read at 2eb1d8bc — all three download binaries, none touches the cache.
+  // Read at b2baf303 (v0.5.146) — all three download binaries, none touches
+  // the cache.
   ['release-plz/action', { cacheInput: null }],
 
   // ---- Docker, for the postgres-eql image ------------------------------

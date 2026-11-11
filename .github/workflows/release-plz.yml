@@ -176,8 +176,12 @@ jobs:
           git_tag_gpgsign: true
 
       - name: Run release-plz release
-        uses: release-plz/action@8e61445f0b34e7c6d985255f2f1f05a36eb350dc # v0.5
+        uses: release-plz/action@b2baf303c463c223526d52a8a91b0777f052cf3f # v0.5.146
         with:
+          # Pinned: the action default moved to CLI 0.4.1, whose changes touch
+          # the publish path (registry token vs Trusted Publishing lookup,
+          # post-publish wait). Revisit after reviewing a newer CLI.
+          version: "0.3.167"
           command: release
           # Required here and absent upstream: a composite action's steps do not
           # inherit the caller's working-directory, so without these release-plz
@@ -298,8 +302,12 @@ jobs:
           git_tag_gpgsign: true
 
       - name: Run release-plz release (root workspace)
-        uses: release-plz/action@8e61445f0b34e7c6d985255f2f1f05a36eb350dc # v0.5
+        uses: release-plz/action@b2baf303c463c223526d52a8a91b0777f052cf3f # v0.5.146
         with:
+          # Pinned: the action default moved to CLI 0.4.1, whose changes touch
+          # the publish path (registry token vs Trusted Publishing lookup,
+          # post-publish wait). Revisit after reviewing a newer CLI.
+          version: "0.3.167"
           command: release
           manifest_path: Cargo.toml
           config: release-plz.toml
