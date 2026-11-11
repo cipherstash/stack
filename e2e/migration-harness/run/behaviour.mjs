@@ -45,6 +45,19 @@ function postgresRecord(customer) {
     notes: customer.notes,
   }
 }
+/** Compare complete result sets without imposing database row order. Stack may
+ * normalize the downcase column when writing the fresh record.
+ * @param {unknown} value */
+function orderedRows(value) {
+  return records(value)
+    .map((item) => {
+      const row = record(item)
+      return row.pk === fresh.pk && typeof row.emailLower === 'string'
+        ? { ...row, emailLower: row.emailLower.toLowerCase() }
+        : row
+    })
+    .sort((left, right) => String(left.pk).localeCompare(String(right.pk)))
+}
 /** Calls only the App Host JSON RPC boundary; never imports application code.
  * @param {AppCall} call */
 export async function behaviour(call) {
@@ -68,42 +81,46 @@ export async function behaviour(call) {
     if (!isDeepStrictEqual(actual, expected))
       throw new Error('Unexpected application result')
   }
+  /** @param {string} method @param {unknown} value
+   * @param {unknown[]} expected @param {unknown} absent */
+  async function lookup(method, value, expected, absent) {
+    equal(orderedRows(await call(method, [value])), orderedRows(expected))
+    equal(await call(method, [absent]), [])
+  }
   await check('behaviour.legacy-get', async () =>
     equal(await call('get', [legacy.pk]), legacy),
   )
-  /** @type {[string,unknown][]} */
+  /** @type {[string,unknown,Customer[],unknown][]} */
   const legacyLookups = [
-    ['findEmail', legacy.email],
-    ['findEmailLower', legacy.emailLower.toLowerCase()],
-    ['findAge', legacy.age],
-    ['findBalance', legacy.balance],
-    ['findActive', legacy.active],
+    ['findEmail', legacy.email, [legacy], 'absent@example.com'],
+    [
+      'findEmailLower',
+      legacy.emailLower.toLowerCase(),
+      [legacy],
+      'absent@example.com',
+    ],
+    ['findAge', legacy.age, [legacy, mutation], -1],
+    ['findBalance', legacy.balance, [legacy], '123456789'],
+    ['findActive', legacy.active, [legacy, mutation], false],
   ]
-  for (const [method, value] of legacyLookups) {
-    await check(`behaviour.legacy-${method}`, async () => {
-      const found = records(await call(method, [value]))
-      if (!found.some((record) => isDeepStrictEqual(record, legacy)))
-        throw Error('Legacy Data not found')
-    })
+  for (const [method, value, expected, absent] of legacyLookups) {
+    await check(`behaviour.legacy-${method}`, () =>
+      lookup(method, value, expected, absent),
+    )
   }
   const postgres = postgresRecord(legacy)
   await check('behaviour.legacy-postgres-get', async () =>
     equal(await call('getPostgres', [legacy.pk]), postgres),
   )
-  /** @type {[string,unknown][]} */
+  /** @type {[string,unknown,ReturnType<typeof postgresRecord>[],unknown][]} */
   const postgresLookups = [
-    ['findPostgresEmail', legacy.email],
-    ['findPostgresAge', legacy.age],
+    ['findPostgresEmail', legacy.email, [postgres], 'absent@example.com'],
+    ['findPostgresAge', legacy.age, [postgres, postgresRecord(mutation)], -1],
   ]
-  for (const [method, value] of postgresLookups) {
-    await check(`behaviour.legacy-${method}`, async () => {
-      if (
-        !records(await call(method, [value])).some((record) =>
-          isDeepStrictEqual(record, postgres),
-        )
-      )
-        throw Error('Legacy Postgres Data not found')
-    })
+  for (const [method, value, expected, absent] of postgresLookups) {
+    await check(`behaviour.legacy-${method}`, () =>
+      lookup(method, value, expected, absent),
+    )
   }
   // Mutation checks are deliberately separate so #1535 can insert no-rewrite here.
   return {
@@ -120,29 +137,24 @@ export async function behaviour(call) {
           })
       })
       await check('behaviour.downcase-new-write-lookup', async () => {
-        if (
-          !records(
-            await call('findEmailLower', [fresh.emailLower.toLowerCase()]),
-          ).some((item) => record(item).pk === fresh.pk)
+        await lookup(
+          'findEmailLower',
+          fresh.emailLower.toLowerCase(),
+          [fresh],
+          'absent@example.com',
         )
-          throw Error('New downcase write not found')
       })
-      /** @type {[string,unknown][]} */
+      /** @type {[string,unknown,Customer[],unknown][]} */
       const freshLookups = [
-        ['findEmail', fresh.email],
-        ['findAge', fresh.age],
-        ['findBalance', fresh.balance],
-        ['findActive', fresh.active],
+        ['findEmail', fresh.email, [fresh], 'absent@example.com'],
+        ['findAge', fresh.age, [legacy, mutation, fresh], -1],
+        ['findBalance', fresh.balance, [mutation, fresh], '123456789'],
+        ['findActive', fresh.active, [legacy, mutation, fresh], false],
       ]
-      for (const [method, value] of freshLookups) {
-        await check(`behaviour.fresh-${method}`, async () => {
-          if (
-            !records(await call(method, [value])).some(
-              (item) => record(item).pk === fresh.pk,
-            )
-          )
-            throw Error('Fresh write not found')
-        })
+      for (const [method, value, expected, absent] of freshLookups) {
+        await check(`behaviour.fresh-${method}`, () =>
+          lookup(method, value, expected, absent),
+        )
       }
       await check('behaviour.balance-decimal-string', async () =>
         equal(record(await call('get', [fresh.pk])).balance, fresh.balance),
