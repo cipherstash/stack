@@ -24,6 +24,11 @@ pub(crate) struct DeviceSessionRefresher {
     /// When set, a refreshed token for any other workspace is refused before
     /// it is cached or written to the store.
     expected_workspace: Option<WorkspaceId>,
+    /// Set once an exchange consumed this session's refresh credential and
+    /// returned a token we refused. The credential cannot be replayed (the
+    /// issuer would revoke the chain), so every later refresh through this
+    /// refresher asks for a new sign-in instead.
+    credential_consumed: std::sync::atomic::AtomicBool,
 }
 
 impl DeviceSessionRefresher {
@@ -43,6 +48,7 @@ impl DeviceSessionRefresher {
             device_instance_id,
             transport,
             expected_workspace: None,
+            credential_consumed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -103,6 +109,10 @@ impl Refresher for DeviceSessionRefresher {
     }
 
     async fn refresh(&self, credential: &Self::Credential) -> Result<Token, AuthError> {
+        use std::sync::atomic::Ordering;
+        if self.credential_consumed.load(Ordering::SeqCst) {
+            return Err(AuthError::NotAuthenticated(crate::error::NotAuthenticated));
+        }
         // Cross-process refresh lock: only one process should be exchanging
         // a refresh token with the upstream IdP at a time. Without this,
         // two CLI invocations sharing `~/.cipherstash` both load the same
@@ -148,7 +158,25 @@ impl Refresher for DeviceSessionRefresher {
 
         // Before anything is saved or cached: a rejected token must leave
         // this profile's saved session alone.
-        self.check_workspace(&token)?;
+        if let Err(err) = self.check_workspace(&token) {
+            // The saved session is left alone, unless the issuer rotated the
+            // credential: then the saved copy is spent, and a retry (here or
+            // in another process) would replay it and get the whole chain
+            // revoked. Drop it so the next attempt asks for a sign-in.
+            let rotated = token
+                .refresh_token()
+                .is_some_and(|new| new.as_str() != credential.as_str());
+            if rotated {
+                self.credential_consumed
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                if let Some(store) = &self.store {
+                    if let Err(clear_err) = store.clear_profile::<Token>() {
+                        tracing::error!(%clear_err, "failed to clear a consumed session");
+                    }
+                }
+            }
+            return Err(err);
+        }
 
         // Persist while holding the lock — any sibling process waiting on
         // the lock will read the rotated token on their next attempt and
@@ -392,7 +420,8 @@ mod tests {
     }
 
     /// A refresh that returns another workspace's token must be refused before
-    /// anything is saved: the profile's own session has to survive intact.
+    /// anything is saved: the profile's own session has to survive intact. The
+    /// issuer did not rotate the credential here, so the saved one is still good.
     #[tokio::test]
     async fn a_refreshed_token_for_another_workspace_is_refused_and_not_saved() {
         let mut mocks = MockSet::new();
@@ -402,7 +431,7 @@ mod tests {
                 "access_token": crate::test_support::jwt_with_workspace("AAAAAAAAAAAAAAAA"),
                 "token_type": "Bearer",
                 "expires_in": 3600,
-                "refresh_token": "other-refresh"
+                "refresh_token": "matching-refresh"
             }));
         });
         let server = start_server(mocks).await;
@@ -435,6 +464,77 @@ mod tests {
             on_disk.refresh_token().unwrap().as_str(),
             "matching-refresh",
             "the saved refresh token must be untouched"
+        );
+    }
+
+    /// The issuer rotated the credential and returned another workspace's
+    /// token. The saved credential is spent, so neither a retry on this
+    /// refresher nor a reopened profile may replay it: the issuer must see
+    /// exactly one exchange and every retry must ask for a new sign-in.
+    #[tokio::test]
+    async fn a_rotated_credential_with_a_wrong_workspace_token_is_not_replayed() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = Arc::clone(&counter);
+        let wrong_token = crate::test_support::jwt_with_workspace("AAAAAAAAAAAAAAAA");
+        let app = axum::Router::new().route(
+            "/oauth/token",
+            axum::routing::post(move || {
+                let counter = Arc::clone(&counter_clone);
+                let wrong_token = wrong_token.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(serde_json::json!({
+                        "access_token": wrong_token,
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                        "refresh_token": "rotated-refresh"
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let base_url = Url::parse(&format!("http://{addr}")).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let refresher =
+            refresher_with_disk_token(&dir, base_url, token_on_disk("own-access", "spent-refresh"))
+                .pinned_to(Some(WorkspaceId::try_from(WORKSPACE_ID).unwrap()));
+        let credential = SecretToken::new("spent-refresh");
+
+        let first = refresher.refresh(&credential).await.unwrap_err();
+        assert!(
+            matches!(first, AuthError::WorkspaceMismatch(_)),
+            "the rejected exchange reports the mismatch, got {first:?}"
+        );
+
+        // Retry on the same refresher: no second exchange.
+        let retry = refresher.refresh(&credential).await.unwrap_err();
+        assert!(
+            matches!(retry, AuthError::NotAuthenticated(_)),
+            "a retry must ask for a new sign-in, got {retry:?}"
+        );
+
+        // Reopen the profile: the spent session is gone.
+        let reopened = ProfileStore::new(dir.path())
+            .workspace_store(WORKSPACE_ID)
+            .unwrap()
+            .load_profile::<Token>();
+        assert!(
+            reopened.is_err(),
+            "the spent session must not be loadable again"
+        );
+
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "the issuer must see exactly one exchange"
         );
     }
 
