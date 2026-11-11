@@ -847,23 +847,48 @@ def _sorted_by_terms(statement: Any) -> Any:
 
 def _select_sort_keys(select: Any) -> Any:
     """The ORDER BY of ``select`` with each encrypted column replaced by its
-    order term; the same object when nothing changes. A label in the ORDER
-    BY, as in ``order_by(col.label("x"))`` or ``order_by("x")``, would sort
-    by the selected column, so it is replaced by the order term of the
-    column it names."""
+    order term; the same object when nothing changes. A label or a name in
+    the ORDER BY, as in ``order_by(col.label("x"))``, ``order_by("x")`` or
+    ``order_by(desc("level"))``, would sort by the selected column, so it is
+    replaced by the order term of the column it names."""
     clauses = select._order_by_clauses
-    # The select's labelled encrypted columns, by label name.
-    labelled = {
-        column.name: column.element
-        for column in getattr(select, "_raw_columns", ())
-        if isinstance(column, Label) and _is_eql_column(column.element)
-    }
+    # The encrypted columns a string in the ORDER BY can name, as SQLAlchemy
+    # matches it when it compiles the statement: a label's name first, then
+    # a selected column's key, then a column of a FROM table. A name that
+    # two FROM tables share cannot be told apart, so it is refused.
+    labelled: Dict[str, Any] = {}
+    shared = set()
+    for table in select.get_final_froms():
+        for column in getattr(table, "c", ()):
+            if _is_eql_column(column):
+                if column.key in labelled and labelled[column.key] is not column:
+                    shared.add(column.key)
+                labelled[column.key] = column
+    labelled.update(
+        {key: column for key, column in select.selected_columns.items() if _is_eql_column(column)}
+    )
+    labelled.update(
+        {
+            column.name: column.element
+            for column in getattr(select, "_raw_columns", ())
+            if isinstance(column, Label) and _is_eql_column(column.element)
+        }
+    )
+    selected = set(select.selected_columns.keys())
 
     def replace(element: Any) -> Any:
         if isinstance(element, FunctionElement) and getattr(element, "name", None) in _ORDER_TERMS.values():
             return element  # already a sort key: not opened again
         if isinstance(element, (_label_reference, _textual_label_reference)):
             named = element.element
+            if isinstance(named, str) and named in shared and named not in selected:
+                raise QueryError(
+                    "query_unsupported",
+                    f"order_by({named!r}) names an encrypted column of more than one table "
+                    "in the query, so the SDK cannot sort by its order term. Pass the "
+                    "column itself, such as order_by(Model.field).",
+                    reason="order",
+                )
             column = labelled.get(named) if isinstance(named, str) else _labelled_column(named)
             return _sort_key(column) if column is not None else None
         column = _labelled_column(element)

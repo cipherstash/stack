@@ -674,3 +674,12 @@ def test_a_labelled_column_in_order_by_sorts_by_the_plaintext(engine, runs, sent
     assert all("ORDER BY eql_v4.ord_term(runs.average_hr)" in sql for sql in sent[-2:]), sent[-2:]
     # The selected column is still the decrypted value, under its label.
     assert [row.hr for row in by_label] == [98, 120, 150, 175, None]
+
+
+def test_a_column_named_by_a_string_in_order_by_sorts_by_the_plaintext(engine, runs, sent):
+    from sqlalchemy import desc
+
+    assert labels_of(engine, select(Run).order_by("average_hr")) == ["e", "c", "a", "d", "b"]
+    assert labels_of(engine, select(Run).order_by(desc("pace").nulls_last())) == ["d", "a", "e", "b", "c"]
+    assert "ORDER BY eql_v4.ord_term(runs.average_hr)" in sent[-2], sent[-2]
+    assert "ORDER BY eql_v4.ord_term(runs.pace) DESC NULLS LAST" in sent[-1], sent[-1]
