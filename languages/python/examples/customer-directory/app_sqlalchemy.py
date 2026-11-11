@@ -58,8 +58,8 @@ class Customer(Base):
     )
 
 
-# Once for the process, before the first request.
-configure_encryption(engine, [Customer])
+# Once for the process, before the first request. Every engine is covered.
+configure_encryption([Customer])
 
 
 def utc_now() -> datetime:

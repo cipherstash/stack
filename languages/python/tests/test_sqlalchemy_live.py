@@ -111,7 +111,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))
     Base.metadata.create_all(engine)
-    configure_encryption(engine, [Customer, Order, Player, Profile, Venue, Trip, Guide, Run])
+    configure_encryption([Customer, Order, Player, Profile, Venue, Trip, Guide, Run])
     yield engine
     with engine.begin() as conn:
         conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))

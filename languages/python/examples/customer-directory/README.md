@@ -52,7 +52,7 @@ The search is a `POST` so that the email stays out of URLs and access logs.
 mise run dev:sqlalchemy   # http://127.0.0.1:8001
 ```
 
-The app calls `configure_encryption(engine, [Customer])` once, at start-up. After that, the endpoints use `Session` with no SDK calls:
+The app calls `configure_encryption([Customer])` once, at start-up. After that, the endpoints use `Session` with no SDK calls:
 
 - `session.add` and `session.commit` encrypt `email` and `name`.
 - `select(Customer).where(Customer.email == search.email)` searches by the equality term.
