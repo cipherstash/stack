@@ -49,8 +49,9 @@ class InvalidValueError(StashError, ValueError):
     """A model's value that does not fit its field, refused before any request.
 
     The code is one of ``value_none``, ``value_wrong_type``,
-    ``value_out_of_range``, ``value_not_representable`` and
-    ``value_naive_datetime``. ``field`` names the field. ``reason`` is the
+    ``value_out_of_range``, ``value_not_representable``,
+    ``value_naive_datetime``, and ``value_row_shape``. The last is for a row
+    that ``encrypt_rows`` cannot read. ``field`` names the field. ``reason`` is the
     field's kind, such as ``int32``, or ``passthrough``. The message never
     contains the value.
     """

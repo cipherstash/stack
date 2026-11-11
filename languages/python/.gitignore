@@ -4,3 +4,7 @@
 *.so
 *.pyd
 .pytest_cache/
+# The CS_* credentials for `mise run test:live`, if `stash env` writes them
+# here. The file contains a client key and an access key, so it must never
+# be committed.
+.stackencrypt-live.env

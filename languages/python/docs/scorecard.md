@@ -24,6 +24,7 @@ Each principle is marked:
 ## G1. One engine, and the SDK never executes: held
 
 - `Cipher.encrypt`, `decrypt`, and each query method make one call into the extension, in `python/stackencrypt/_cipher.py`. The Python layer has no loop over rows, and no loop over a model's values.
+- `Cipher.encrypt_rows` is the exception. It loops over the rows in Python. For each row, it checks that the row is a mapping with the same declared fields as row 0. It then puts those fields' values on an object for the extension. It does not read, convert, or check a value. The extension does that, as for `encrypt`.
 - The Python layer does loop over the declared fields in two places. `Cipher` lists them once, to build the plan. A query method searches them to name a field it refuses. Neither loop touches a value.
 - The extension hands the engine one frame for the whole call, and reads back the engine's whole output. Encryption, decryption, and term derivation all run in `stack-encrypt`.
 - The declaration check asks the engine. When the class statement runs, the decorator calls `_engine.check_plan`, and the engine refuses a plan it cannot run. `Cipher` later builds the same plan with `_engine.build_plan`.
@@ -47,6 +48,7 @@ Each principle is marked:
 ## G4. One declaration serves the write, the query and the read: held
 
 - `Cipher(User)` builds one plan from the declaration. `encrypt`, the query methods, and `decrypt` all use that plan.
+- `encrypt_rows` uses a smaller plan with only the fields a row contains. It is built from the same declaration, with the same table, field names, and markers. `test_a_row_updated_with_some_fields_decrypts_and_searches_with_the_full_model` in `tests/test_encrypt_live.py` shows that its values decrypt and search under the full plan.
 - No call takes a context or an index choice. A query method, such as `eq` or `gte`, takes a field name and a value only (Python ADR-0002 and ADR-0003, under `docs/adr/`). The engine picks the index that supports the operator.
 - `test_a_query_term_finds_the_one_matching_row` in `tests/test_encrypt_live.py` runs `encrypt`, `eq`, and `decrypt` on one `Cipher` against PostgreSQL. The README test runs the same three steps.
 - A context that changes per caller, such as a tenant, is not supported yet. The README lists it.
