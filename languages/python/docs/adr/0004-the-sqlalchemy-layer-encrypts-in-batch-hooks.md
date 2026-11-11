@@ -76,6 +76,8 @@ The hooks can change only the parameters passed beside a statement. Three cases 
 - **An operator that would send a value as plaintext**, such as `like`, `contains`, `between`, or `in_` with a subquery. It raises `QueryError` with `query_unsupported` when the app builds the query. The value could also never match an EQL value.
 - **A unique constraint on an encrypted column.** Each EQL value contains new random ciphertext, so the constraint never finds a duplicate. A unique index on `eql_v4.eq_term(col)` works instead.
 
+A comparison with another SQL expression is allowed when the expression holds no Python value, such as another column. It sends no value. An expression that holds one, such as `literal("x")` or `func.lower("x")`, is refused: the hooks cannot encrypt a value inside an expression. SQLAlchemy itself compares columns this way when it copies a statement.
+
 The allowed operators are:
 
 - `==`, `<`, `<=`, `>`, and `>=`. Each one sends a query term made by the `Cipher` method of the same meaning.
@@ -190,7 +192,7 @@ The cause is in EQL v4. It defines `<` and the other comparisons for its column 
 ### What B does
 
 - `.asc()`, `.desc()`, `.nulls_first()`, and `.nulls_last()` on an encrypted column sort by `eql_v4.ord_term(col)`, or `eql_v4.ord_term_ore(col)` for an `ore_block` marker.
-- A bare `order_by(col)` and `sqlalchemy.asc(col)` do not go through the column type's operators. So the hooks rewrite the `ORDER BY` of each `select`: the session hook for a query in a session, and the engine hook for a query on a connection. The engine hook rewrites every `select`. SQLAlchemy marks a select as ORM when it names a mapped class or attribute, as `select(Run.label)` does, even when it runs on a connection. A select from a session reaches the engine hook already rewritten, and is left as it is.
+- A bare `order_by(col)` and `sqlalchemy.asc(col)` do not go through the column type's operators. So the hooks rewrite the `ORDER BY` of each `select`: the session hook for a query in a session, and the engine hook for a query on a connection. The rewrite covers every `select` in a statement, subqueries included, and a column of a table, an alias, or a subquery. The statement is copied only when an `ORDER BY` changes. The engine hook rewrites every `select`. SQLAlchemy marks a select as ORM when it names a mapped class or attribute, as `select(Run.label)` does, even when it runs on a connection. A select from a session reaches the engine hook already rewritten, and is left as it is.
 - Sorting a column with no order index raises `QueryError` with `query_unsupported`. Before, it gave the order of the stored JSON, with no error.
 
 If EQL gains a sort order for its v4 column types, the rewrite can stay. The order term is also the form that uses the index.

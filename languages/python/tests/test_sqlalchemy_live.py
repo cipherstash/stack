@@ -616,3 +616,48 @@ def test_an_orm_select_on_a_connection_sorts_by_the_plaintext(engine, runs):
 
     assert bare == ["e", "c", "a", "d", "b"]
     assert function == ["b", "e", "a", "d", "c"]
+
+
+@pytest.fixture
+def sent(engine):
+    """The SQL the engine sends while a test runs. A wrong sort gives a
+    random order, which can be the right one by chance, so a sort test
+    also checks the SQL."""
+    from sqlalchemy import event
+
+    statements = []
+
+    def record(conn, cursor, statement, *args):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    yield statements
+    event.remove(engine, "before_cursor_execute", record)
+
+
+def test_a_bare_order_by_on_an_aliased_class_sorts_by_the_plaintext(engine, runs, sent):
+    from sqlalchemy.orm import aliased
+
+    other = aliased(Run)
+    found = labels_of(engine, select(other).order_by(other.average_hr))
+
+    assert found == ["e", "c", "a", "d", "b"]
+    assert "ORDER BY eql_v4.ord_term(runs_1.average_hr)" in sent[-1], sent[-1]
+
+
+def test_a_bare_order_by_in_a_subquery_sorts_by_the_plaintext(engine, runs, sent):
+    # The three lowest heart rates, then their labels in the outer query.
+    lowest = select(Run.label, Run.average_hr).order_by(Run.average_hr).limit(3).subquery()
+    with Session(engine) as session:
+        found = session.execute(select(lowest.c.label)).scalars().all()
+    with engine.connect() as conn:
+        on_a_connection = conn.execute(select(lowest.c.label)).scalars().all()
+
+    assert sorted(found) == ["a", "c", "e"]
+    assert sorted(on_a_connection) == ["a", "c", "e"]
+    assert all("ORDER BY eql_v4.ord_term(runs.average_hr)" in sql for sql in sent[-2:]), sent[-2:]
+
+
+def labels_of(engine, statement):
+    with Session(engine) as session:
+        return [r.label for r in session.scalars(statement)]

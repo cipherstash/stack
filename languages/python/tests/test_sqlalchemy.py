@@ -10,7 +10,7 @@ import dataclasses
 from typing import Annotated, Optional
 
 import pytest
-from sqlalchemy import String, create_engine, select
+from sqlalchemy import String, create_engine, func, literal, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 import stackencrypt
@@ -362,3 +362,30 @@ def test_a_bare_order_by_is_sorted_by_the_order_term_in_a_session(untouched):
             session.execute(select(Lap).order_by(Lap.note))
     assert all("ORDER BY eql_v4.ord_term(laps.seconds)" in sql for sql in seen[-2:]), seen
     assert raised.value.code == "query_unsupported"
+
+
+# A comparison with a SQL expression, not a Python value.
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Score.note == literal("secret"),
+        lambda: Score.note == func.lower("secret"),
+        lambda: Score.level > literal(3) + 1,
+    ],
+    ids=["literal", "function-of-a-value", "expression-of-a-value"],
+)
+def test_a_comparison_with_an_expression_that_holds_a_value_is_refused(scores, untouched, build):
+    with pytest.raises(QueryError) as raised:
+        build()
+    assert raised.value.code == "query_unsupported"
+    assert "secret" not in str(raised.value)
+
+
+def test_a_comparison_with_another_column_sends_no_value(scores, untouched):
+    from sqlalchemy.dialects import postgresql
+
+    sql = str((Score.note == Score.note).compile(dialect=postgresql.dialect()))
+
+    assert sql == "scores.note = scores.note"

@@ -68,7 +68,13 @@ from sqlalchemy.engine import Engine, Row
 from sqlalchemy.orm import Mapper, Session
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import operators, visitors
-from sqlalchemy.sql.elements import BooleanClauseList, Grouping
+from sqlalchemy.sql.elements import (
+    BindParameter,
+    BooleanClauseList,
+    ClauseElement,
+    ColumnClause,
+    Grouping,
+)
 from sqlalchemy.sql.dml import Insert, Update
 from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.sql.selectable import Select
@@ -112,8 +118,25 @@ class EqlType(UserDefinedType):  # type: ignore[type-arg]
                 # Sorted by the order term: EQL v4 gives its column types no
                 # sort order of their own (see _sort_key).
                 return getattr(_sort_key(self.expr), _SORTS[op])()
-            if op in _NO_VALUE or (op in (operators.eq, operators.ne) and other == (None,)):
+            # `is None`: `other == (None,)` would compare a SQL expression,
+            # which has no truth value.
+            if op in _NO_VALUE or (
+                op in (operators.eq, operators.ne) and len(other) == 1 and other[0] is None
+            ):
                 return super().operate(op, *other, **kwargs)
+            if (op in _COMPARISONS or op is operators.ne) and len(other) == 1:
+                expression = other[0]
+                if hasattr(expression, "__clause_element__"):  # an ORM attribute
+                    expression = expression.__clause_element__()
+                if isinstance(expression, ClauseElement):
+                    # A SQL expression that holds a Python value, such as
+                    # literal("x") or func.lower("x"), would send it to the
+                    # database as plaintext.
+                    if any(isinstance(e, BindParameter) for e in visitors.iterate(expression)):
+                        raise _refused(self.expr, op)
+                    # Another column: no value is sent. SQLAlchemy also
+                    # compares columns this way when it copies a statement.
+                    return super().operate(op, expression, **kwargs)
             if op is operators.ne and len(other) == 1:
                 # NOT (col = term): a NULL column matches neither, as with !=.
                 return not_(self.operate(operators.eq, other[0]))
@@ -798,27 +821,44 @@ def _sort_key(column: Any) -> Any:
 
 
 def _sorted_by_terms(statement: Any) -> Any:
-    """``statement`` with each encrypted column in its ORDER BY replaced by
-    its order term. A bare ``order_by(col)``, or ``sqlalchemy.asc(col)``,
-    does not go through the column type's operators, so the hooks rewrite
-    it here."""
-    clauses = getattr(statement, "_order_by_clauses", ())
-    if not clauses:
+    """``statement`` with each encrypted column in an ORDER BY replaced by
+    its order term, in every select of it, subqueries included. A bare
+    ``order_by(col)``, or ``sqlalchemy.asc(col)``, does not go through the
+    column type's operators, so the hooks rewrite it here. The statement is
+    copied only when an ORDER BY changes."""
+    if not any(
+        _sort_keys(clauses) is not clauses
+        for clauses in (
+            element._order_by_clauses
+            for element in visitors.iterate(statement)
+            if isinstance(element, Select) and element._order_by_clauses
+        )
+    ):
         return statement
+
+    def visit_select(select: Any) -> None:
+        # On the copy that cloned_traverse made, as SQLAlchemy's own
+        # generative methods change it.
+        if select._order_by_clauses:
+            select._order_by_clauses = _sort_keys(select._order_by_clauses)
+
+    return visitors.cloned_traverse(statement, {}, {"select": visit_select})
+
+
+def _sort_keys(clauses: Any) -> Any:
+    """``clauses`` with each encrypted column replaced by its order term; the
+    same object when nothing changes."""
 
     def replace(element: Any) -> Any:
         if isinstance(element, FunctionElement) and getattr(element, "name", None) in _ORDER_TERMS.values():
             return element  # already a sort key: not opened again
-        if isinstance(getattr(element, "type", None), EqlType) and isinstance(
-            getattr(element, "table", None), Table
-        ):
+        # Any column of an EQL type: of a table, an alias, or a subquery.
+        if isinstance(element, ColumnClause) and isinstance(element.type, EqlType):
             return _sort_key(element)
         return None
 
-    rewritten = [visitors.replacement_traverse(clause, {}, replace) for clause in clauses]
-    if all(new is old for new, old in zip(rewritten, clauses)):
-        return statement
-    return statement.order_by(None).order_by(*rewritten)
+    rewritten = tuple(visitors.replacement_traverse(clause, {}, replace) for clause in clauses)
+    return clauses if all(new is old for new, old in zip(rewritten, clauses)) else rewritten
 
 
 def _cipher_of(column: Any) -> Cipher:
