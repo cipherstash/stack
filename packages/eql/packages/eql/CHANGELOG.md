@@ -1,5 +1,55 @@
 # @cipherstash/eql
 
+## 3.1.0
+
+### Minor Changes
+
+- e930e5b: Security: the ORE block comparator (`eql_v3_internal.compare_ore_block_256_term`
+  and `compare_ore_block_256_terms`, behind every ordered ORE operator and the ORE
+  operator class) now runs a constant number of operations for operands of the
+  same shape (term count, term width, NULL positions), whether and wherever they
+  differ. Previously its run time depended on where two values first differ, so a
+  party able to time queries could learn how long a prefix their query value
+  shares with stored values. For text the effect was large: a comparison took
+  about 11 µs when the first term differs and 47 µs when only the sixth does.
+  Results are unchanged. Single-term comparisons cost about 6% more when the
+  terms differ and about 36% more (roughly 1 µs) when they are equal, since equal
+  terms now run the hash too; text comparisons now take about 18 µs whatever the
+  operands. Multi-term (text) values now check every paired term, so a
+  malformed or mismatched-width term after the first difference, or one paired
+  with a NULL element, raises instead of being skipped; see
+  [U-001](../../docs/upgrading/v3.1.md#u-001-block-ore-text-comparisons-check-every-term)
+  for how to find such rows before upgrading. A timing harness is in
+  `packages/eql/tests/timing/ore_block_256/`.
+- 0275684: **The `eql-bindings` crate resolves an EQL type named as a string to its own Stack Encrypt plan** (`stack-encrypt` feature). `eql_bindings::encryption::targets` carries a catalog-generated table of every EQL type a data plan may name as a field target — its name across languages, family and suffix, the plaintext `ValueKind` it takes, the indexes it carries, its query twin, and whether the engine can produce it today with the reason when not — and `encrypt` / `decrypt` / `query` entry points that dispatch on the name and run the type's derived `EncryptFrom` / `DecryptInto`, resolving to the EQL value's JSON bytes through the engine's `Pending` so a guest batches it with the rest of a plan. This is the EQL half of EQL types as plan field targets (cipherstash/stack#1062): a Go data plan names `TextEq` and the guest returns the finished EQL value instead of assembling one. `TextEq` is the only producible type; every other name is refused with the plan's reason. The SQL surface and the TypeScript package are unchanged.
+- c851db5: **Rust `TextEq` and `TextEqQuery` support Stack Encrypt's target-directed API behind the `stack-encrypt` feature.** The stored table and column identifier supplies the encryption context; native ciphertext and equality terms are transcoded into EQL payloads while Vitamin C owns plaintext encoding. This is a new producer profile with exact string equality, independent of existing cipherstash-client ciphertext and terms. Query operands carry no recoverable ciphertext.
+
+### Patch Changes
+
+- b15c1ad: Comparing an encrypted column with a different domain's query operand now raises instead of silently returning no rows. For example `public.eql_v3_text_ord = $1::eql_v3.query_text_eq`, or `eql_v3_text_ord < $1::eql_v3.query_text_ord_ope`, previously fell through to native `jsonb` comparison and answered false for equal values. Within a type family, every pair of a column domain and another domain's query operand now resolves to a blocker for the operators both sides support, naming both operands and telling the caller to use the query domain that matches the column. Use the query domain of the column's own domain (`eql_v3.query_<column domain>`). The install bundle grows by about 1,060 functions and the same number of operators, so a single-transaction uninstall now takes about 8,550 locks (up from about 6,400); raise `max_locks_per_transaction` on busy clusters.
+- 9412408: Drop the `CREATE CAST (public.eql_v3_json_search AS eql_v3.query_json)` that PostgreSQL always ignored (it warned "cast will be ignored because the source data type is a domain" on every install). `doc::eql_v3.query_json` was never converting; call `eql_v3.to_ste_vec_query(col)` instead. Also corrects the `eql-bindings` wire-format docs: `op` backs `_ord` / `_ord_ope` (and `text_ord` / `text_search` carry `hm` + `op`), `ob` only `_ord_ore`.
+- 37bf4cf: Encrypted JSON arrays now agree between the Rust/TypeScript bindings and the SQL. `SteVecDocument` models the root `a` array flag that the SQL root validator accepts and the array accessors require, so an array document the database accepts also parses in the bindings. The `a` flag on documents and entries is now optional but not nullable in the generated TypeScript and JSON Schema (`a?: boolean`), matching the SQL CHECK; a `null` is rejected instead of failing later with a cast error. `eql_v3.jsonb_array_length` returns 0 for an empty array (it returned NULL), and `eql_v3.jsonb_array_elements` and `eql_v3.jsonb_document_contains(jsonb[], jsonb)` no longer raise "upper bound of FOR loop cannot be null" on one.
+- 169f985: Fix: the `_ord_ore` comparison functions (`eql_v3.lt`, `lte`, `gt`, `gte`, `eq`,
+  `neq`), and the operators on `_ord_ore` columns when named with their schema
+  (`col OPERATOR(public.<) $1`), no longer give wrong answers when `public` is not
+  on the `search_path`. These functions are kept free of a pinned
+  `search_path` so PostgreSQL can inline them into index scans, which means they
+  look up their comparison operator through the caller's `search_path`. The ORE
+  comparison operators live in `public`, so a caller without it, such as a
+  `SECURITY DEFINER` function with `SET search_path = ''` (the hardening Supabase
+  recommends), got PostgreSQL's built-in record comparison instead. That compares
+  the ciphertext bytes, so equality and ordering were silently wrong rather than
+  raising an error. Every generated comparison function now names its operator
+  with its schema (`OPERATOR(public.<)` for ORE, `OPERATOR(pg_catalog.<)` for the
+  HMAC, bloom filter and OPE terms), so the result no longer depends on the
+  `search_path`, and the functions still inline. A bare `col < $1` still needs
+  `public` on the `search_path`, because the operators on encrypted columns are
+  created in `public`; without it, call the function (`eql_v3.lt(col, $1)`) or
+  name the operator's schema. Reinstall or upgrade EQL to pick up the fix.
+
+  The `stash-postgres` skill now explains how to query encrypted columns from a
+  function or role whose `search_path` leaves out `public`.
+
 ## 3.0.6
 
 ### Patch Changes

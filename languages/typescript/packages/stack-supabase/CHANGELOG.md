@@ -1,5 +1,41 @@
 # @cipherstash/stack-supabase
 
+## 1.3.0
+
+### Patch Changes
+
+- 43967d3: Two validation errors no longer quote the caller's search term: a free-text search term that is too short, and a `like`/`ilike` pattern with wildcards the encrypted search cannot honour. Each now reports the term's length instead.
+
+  The Supabase and DynamoDB adapters' error logs now record a failure's kind instead of its full message, which could quote a plaintext value. The kind is the error class plus any known encryption error type, FFI error code or auth code it carries; anything else is left out. The DynamoDB `options.logger` hook now receives a copy of the error whose message is that description, with the same `code`. The full message is still returned to the caller and passed to `errorHandler`. `@cipherstash/stack/adapter-kit` exports the shared `describeFailure` and `likeWildcardError` helpers that produce these messages.
+
+- bbb1bfa: `encrypt` on a `types.Json` column now types its result as `Encrypted | null` when the plaintext may be `null`. A `null` document has always resolved to `{ data: null }` at runtime (it is stored as SQL NULL, not encrypted), but the result was typed `Encrypted`, so `result.data.c` compiled and then threw. `encrypt` is now generic over the plaintext's type: a literal `null`, or a value typed `JsonDocument`, gives `data: Encrypted | null`, through `.withLockContext()` and `.audit()` too. A value TypeScript knows is non-null, and every scalar column, still gives `data: Encrypted`. No runtime change. If your code reads `result.data` after encrypting a Json value that may be `null`, it must now check for `null` first. `EncryptOperation` and `EncryptOperationWithLockContext` take an optional result type parameter (default `Encrypted`), and the `EncryptResult<P>` helper type is exported from `@cipherstash/stack/encryption`.
+
+  `@cipherstash/stack-supabase`: the per-term query-encryption fallback (used when the client has no `bulkEncrypt`) now rejects a `null` envelope instead of sending the string `"null"` as a filter operand, matching the bulk path.
+
+  `stash`: the `stash-encryption` skill now says what `encrypt` returns for a `null` Json document.
+
+- ab24980: Reading a table that has no encrypted columns no longer fails. Such a table is
+  not registered with the encryption client, and the adapter still asked the
+  client to decrypt its rows, so every `select()` on it, and every insert, update
+  or upsert followed by `.select()`, returned "decryptModel received a table this
+  client was not initialized with" (or threw, with `throwOnError`). On the
+  `wasm-inline` entry, writes to such a table failed the same way. The adapter now
+  passes the rows of a table with no encrypted columns straight through, in both
+  introspection and declared mode, without calling the encryption client.
+
+  A row from such a table that still holds an encrypted value, from an embedded
+  relation to an encrypted table or from an undeclared `eql_v3_*` column in
+  declared mode, is refused with an error naming the column, rather than returned
+  as ciphertext.
+
+- Updated dependencies [ef3765b]
+- Updated dependencies [43967d3]
+- Updated dependencies [fd0ee91]
+- Updated dependencies [4b14ee6]
+- Updated dependencies [bbb1bfa]
+- Updated dependencies [20ccab3]
+  - @cipherstash/stack@1.3.0
+
 ## 1.2.1
 
 ### Patch Changes

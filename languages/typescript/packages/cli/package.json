@@ -1,6 +1,6 @@
 {
 	"name": "stash",
-	"version": "1.2.1",
+	"version": "1.3.0",
 	"description": "CipherStash CLI — the one stash command for auth, init, encryption schema, database setup, and secrets.",
 	"repository": {
 		"type": "git",

@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/auth-win32-x64-msvc",
-  "version": "0.44.1",
+  "version": "1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cipherstash/stack.git",
