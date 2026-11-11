@@ -3,7 +3,7 @@ status: accepted
 date: 2026-11-02
 ticket: "#1391, the first ticket that adds `query`, as the spec (#1341) says"
 extends: ADR-0001
-amended_by: ADR-0003
+amended_by: ADR-0003, ADR-0004
 ---
 
 # A query names its field by a string
@@ -49,6 +49,8 @@ users.query(User.email, "a@example.com")
 A, for now.
 
 B stays open for the later SQLAlchemy layer. A SQLAlchemy model already has a column attribute for each field, so B works there without core changing the class. The layer reads the attribute's name and calls core with the string. The spec in #1341 keeps that layer out of scope for now.
+
+> **Answered by ADR-0004.** On the SQLAlchemy ORM, a query names the field by the class attribute, as in `select(Customer).where(Customer.email == x)`. The column type reads the attribute's name, and calls the `Cipher` with it. The `Cipher` methods still take a string.
 
 A does not block B. A later version can accept a string or an attribute in the same position. A caller who passes a string sees no change.
 
