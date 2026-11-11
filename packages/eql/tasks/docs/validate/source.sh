@@ -5,8 +5,8 @@
 #
 # This is the DB-free subset of `docs:validate`: coverage + required-tags read
 # the `--!` doxygen comments out of src/**/*.sql and need no Postgres. It exists
-# so CI can validate documentation on EVERY PR (including docs-only PRs that skip
-# the heavy, relevance-gated jobs) without standing up a database. The
+# so CI can validate documentation on every PR that touches EQL (including PRs
+# that skip the heavy jobs) without standing up a database. The
 # `documented-sql` syntax check (which needs psql) stays in the per-Postgres
 # `validate` job.
 

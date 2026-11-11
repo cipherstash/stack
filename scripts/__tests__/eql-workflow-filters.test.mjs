@@ -1,8 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import { runsWhen } from './lib/expressions.mjs'
+import { inheritedToolConfig } from './lib/inherited-tool-config.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
@@ -72,22 +75,21 @@ function pushPaths(relPath) {
 }
 
 /**
- * Every path listed by a `dorny/paths-filter` step, across every filter it
- * declares. `filters:` is a YAML document embedded in a YAML string, so it is
- * parsed rather than pattern-matched — a regex over the raw block would also
- * match the commentary around it.
+ * One named filter of a `dorny/paths-filter` step. `filters:` is YAML inside a
+ * YAML string, so it is parsed: a regex would also match the commentary.
+ *
+ * One key, not all of them: `relevant:` is the copy of the shared list, while
+ * `eql:` is a different, deliberately wider question (the whole subtree plus
+ * parent-directory config, for the cheap jobs) with its own checks below.
  */
-function dornyFilterPaths(relPath) {
+function dornyFilter(relPath, key) {
   const wf = readWorkflow(relPath)
   return Object.values(wf?.jobs ?? {})
     .flatMap((job) => job?.steps ?? [])
     .filter((step) =>
       String(step?.uses ?? '').startsWith('dorny/paths-filter@'),
     )
-    .flatMap((step) =>
-      Object.values(yaml.load(step?.with?.filters ?? '') ?? {}),
-    )
-    .flat()
+    .flatMap((step) => yaml.load(step?.with?.filters ?? '')?.[key] ?? [])
 }
 
 /** The local composite actions a workflow reaches through `uses: ./…`. */
@@ -152,7 +154,10 @@ const TRACKED = trackedUnder('.')
 /** The list each mechanism carries, keyed for the messages below. */
 const LISTS = [
   { id: `${TEST_EQL} (on.push.paths)`, entries: pushPaths(TEST_EQL) },
-  { id: `${TEST_EQL} (dorny relevant:)`, entries: dornyFilterPaths(TEST_EQL) },
+  {
+    id: `${TEST_EQL} (dorny relevant:)`,
+    entries: dornyFilter(TEST_EQL, 'relevant'),
+  },
   { id: `${BENCH_EQL} (on.push.paths)`, entries: pushPaths(BENCH_EQL) },
 ]
 
@@ -265,8 +270,8 @@ describe('every composite action a workflow runs can trigger it', () => {
 // and then every one of those paths must be selected by the workflow's
 // `on: push: paths:` filter. That filter is the one this can be strict about:
 // it decides whether the workflow STARTS, so it has to cover the inputs of
-// every job in the file, relevance-gated or not. The `dorny` copy gates only a
-// subset of the jobs, so it is not asserted here — it inherits the entries
+// every job in the file, whichever flag gates the job. The `relevant:` copy
+// gates only the heavy jobs, so it is not asserted here — it inherits the entries
 // through the parity check above, which is the looser but correct claim (the
 // bench inherits them the same way; see the comment on its own filter for why
 // equal beats minimal).
@@ -559,4 +564,159 @@ describe('the EQL push filters cover what the workflows actually read', () => {
       ).toEqual([])
     })
   }
+})
+
+// ---------------------------------------------------------------------------
+// The cheap jobs' gate.
+//
+// `test:public_identifiers` greps every tracked file under the subtree and
+// `test:doc-anchors` reads every tracked `*.md` there, which is wider than the
+// shared list. A gate narrower than that skips the job on a pull request that
+// breaks it, and `ci-required` counts the skip as a pass.
+
+const CHEAP_JOBS = ['docs-static', 'doc-anchors', 'known-failures']
+
+const TEST_EQL_JOBS = readWorkflow(TEST_EQL)?.jobs ?? {}
+
+const cheapJobs = CHEAP_JOBS.map((name) => {
+  const condition = String(TEST_EQL_JOBS[name]?.if ?? '')
+  return {
+    name,
+    condition,
+    needs: [TEST_EQL_JOBS[name]?.needs ?? []].flat(),
+    flag:
+      /needs\.changes\.outputs\.([A-Za-z0-9_-]+)/.exec(condition)?.[1] ?? null,
+  }
+})
+
+/**
+ * The filter key behind a `changes` output, found by RUNNING the step that
+ * writes the output as a pull request, with every other env var set to a
+ * sentinel that names it. Reading the shell instead would agree with a
+ * rewritten script only by luck.
+ */
+function filterBehind(flag) {
+  const steps = TEST_EQL_JOBS.changes?.steps ?? []
+  const writerId = /steps\.([A-Za-z0-9_-]+)\.outputs\./.exec(
+    String(TEST_EQL_JOBS.changes?.outputs?.[flag] ?? ''),
+  )?.[1]
+  const writer = steps.find((step) => step?.id === writerId)
+  if (!writer) return null
+
+  const scratch = mkdtempSync(join(tmpdir(), 'eql-workflow-filters-'))
+  try {
+    const outputFile = join(scratch, 'output')
+    writeFileSync(outputFile, '')
+    const env = { PATH: process.env.PATH, GITHUB_OUTPUT: outputFile }
+    for (const [key, value] of Object.entries(writer.env ?? {})) {
+      env[key] = /^\$\{\{\s*github\.event_name\s*\}\}$/.test(String(value))
+        ? 'pull_request'
+        : `sentinel:${key}`
+    }
+    execFileSync('bash', ['-c', String(writer.run)], { cwd: scratch, env })
+
+    const line = readFileSync(outputFile, 'utf8')
+      .split('\n')
+      .find((entry) => entry.startsWith(`${flag}=`))
+    const envKey = /^sentinel:(.+)$/.exec(line?.slice(flag.length + 1))?.[1]
+    const source = /steps\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)/.exec(
+      String(writer.env?.[envKey] ?? ''),
+    )
+    if (!source) return null
+    const filterStep = steps.find((step) => step?.id === source[1])
+    const entries = yaml.load(filterStep?.with?.filters ?? '')?.[source[2]]
+    return Array.isArray(entries) ? { key: source[2], entries } : null
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}
+
+describe('the cheap EQL jobs are gated on a filter covering what they read', () => {
+  const flags = [...new Set(cheapJobs.map((job) => job.flag))]
+  const gate = flags.length === 1 && flags[0] ? filterBehind(flags[0]) : null
+  const selects = (file) =>
+    (gate?.entries ?? []).some((entry) => matches(entry, file))
+
+  it('gates every cheap job on one `changes` output', () => {
+    for (const { name, needs, flag } of cheapJobs) {
+      expect(
+        needs,
+        `${TEST_EQL} job "${name}" must \`needs: [changes]\` to read the flag that gates it.`,
+      ).toContain('changes')
+      expect(
+        flag,
+        `${TEST_EQL} job "${name}" reads no \`needs.changes.outputs.<flag>\` in its \`if:\`, so it runs on every pull request — including one that touches nothing in EQL.`,
+      ).toBeTruthy()
+    }
+    expect(
+      flags,
+      'The cheap jobs read different flags. They have the same inputs, so one gate is enough, and the checks below follow only one.',
+    ).toHaveLength(1)
+  })
+
+  it('skips a cheap job only on a pull request whose flag is false', () => {
+    // Evaluated rather than pattern-matched. Off a pull request the flag is a
+    // default, so the condition alone must open there.
+    const context = (eventName, value) => ({
+      github: { event_name: eventName },
+      needs: { changes: { outputs: { [flags[0]]: value } } },
+      vars: {},
+    })
+    for (const { name, condition } of cheapJobs) {
+      const verdicts = {
+        'pull_request, flag true': runsWhen(
+          condition,
+          context('pull_request', 'true'),
+        ),
+        'pull_request, flag false': runsWhen(
+          condition,
+          context('pull_request', 'false'),
+        ),
+        ...Object.fromEntries(
+          ['push', 'schedule', 'merge_group', 'workflow_dispatch'].map(
+            (event) => [
+              `${event}, flag unset`,
+              runsWhen(condition, context(event, '')),
+            ],
+          ),
+        ),
+      }
+      expect(verdicts, `${name}: if: ${condition}`).toEqual({
+        'pull_request, flag true': true,
+        'pull_request, flag false': false,
+        'push, flag unset': true,
+        'schedule, flag unset': true,
+        'merge_group, flag unset': true,
+        'workflow_dispatch, flag unset': true,
+      })
+    }
+  })
+
+  it('follows that output to the filter that computes it', () => {
+    expect(
+      gate,
+      `\`jobs.changes.outputs.${flags[0]}\` in ${TEST_EQL} does not lead, through the step that writes it, to a key of the \`dorny/paths-filter\` step. Either the wiring changed shape or the output is no longer written from a filter.`,
+    ).toBeTruthy()
+  })
+
+  it('selects every tracked file under the subtree', () => {
+    const missed = TRACKED_EQL.filter((file) => !selects(file))
+    expect(
+      missed,
+      `The \`${gate?.key}:\` filter in ${TEST_EQL} gates the cheap jobs, and these tracked files are outside it. \`test:public_identifiers\` greps every tracked file under \`${EQL}/\`, so a pull request touching only one of them skips the job that checks it. \`${EQL}/**\` covers the lot.`,
+    ).toEqual([])
+  })
+
+  it('selects the workflow and the config mise and cargo read from parent directories', () => {
+    const inherited = inheritedToolConfig(EQL)
+    expect(
+      inherited,
+      `inheritedToolConfig("${EQL}") no longer finds the root mise.toml, so the check below is vacuous for it.`,
+    ).toContain('mise.toml')
+    const missed = [TEST_EQL, ...inherited].filter((file) => !selects(file))
+    expect(
+      missed,
+      `The \`${gate?.key}:\` filter in ${TEST_EQL} does not select these. mise and cargo read config from every parent directory of \`${EQL}\`, so the cheap jobs install the root's tools, load the root's tasks and build with the root's cargo config — a change here can break them. Add each path to the filter.`,
+    ).toEqual([])
+  })
 })
