@@ -206,6 +206,36 @@ test('observer transfers an interleaved unfinished exec and preserves forbidden 
   })
 })
 
+// Python's startup checks its standard streams with newfstatat(fd, "",
+// AT_EMPTY_PATH). With -yy strace decodes fd 2 as the supervisor's capture file,
+// but the call names no path: it reads metadata of a descriptor already held.
+test('observer allows metadata reads of a held descriptor but still forbids a named lookup', async () => {
+  const frames = await observe([
+    {
+      stage: 'command',
+      calls: [
+        'newfstatat(2</trace/actor-stderr>, "", {st_mode=S_IFREG|0600, st_size=0, ...}, AT_EMPTY_PATH) = 0',
+        'statx(2</trace/actor-stderr>, "", AT_STATX_SYNC_AS_STAT|AT_EMPTY_PATH, STATX_ALL, {stx_mask=STATX_BASIC_STATS, ...}) = 0',
+        'newfstatat(AT_FDCWD</workspace>, "/trace/actor-stderr", 0xffffc0de, 0) = 0',
+      ],
+    },
+  ])
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  const events = frames
+    .filter((frame) => frame.kind === 'event')
+    .map((frame) => frame.event)
+  expect(events.slice(0, 2)).toEqual([
+    expect.objectContaining({ operation: 'newfstatat', decision: 'allowed' }),
+    expect.objectContaining({ operation: 'statx', decision: 'allowed' }),
+  ])
+  expect(events[2]).toMatchObject({
+    operation: 'newfstatat',
+    resource: '/trace/actor-stderr',
+    decision: 'forbidden',
+    result: 'success',
+  })
+})
+
 // strace 6.1 printleader (src/strace.c) prints the [pid N] prefix only while
 // more than one tracee is attached. A descendant that outlives the actor is the
 // sole tracee, so its lines are unprefixed until it creates another process.

@@ -211,6 +211,12 @@ def invoke(argv, stage):
                 # Raw arguments are used only to decide access, never exported.
                 canonical = re.match(r'\d+<(/[^>]+)>', result)
                 path = canonical.group(1) if canonical else None
+                # newfstatat/statx(fd, "", AT_EMPTY_PATH) reads metadata of a
+                # descriptor the actor already holds (Python checks its stdio
+                # this way). -yy decodes the fd's path, but nothing is looked up
+                # by name, so the access was decided when the fd was opened.
+                held_descriptor = bool(re.match(r'(?:newfstatat|statx|fstatat64)\(\d+<[^>]*>, "",', operation)
+                                       and 'AT_EMPTY_PATH' in operation)
                 if path is None:
                     raw = re.search(r'\"(/[^\"]*)\"', operation)
                     path = raw.group(1) if raw else None
@@ -223,7 +229,7 @@ def invoke(argv, stage):
                 denied = result.startswith('-1 ')
                 operation_name = operation.split('(', 1)[0]
                 resource = path or 'syscall:' + operation_name
-                forbidden = bool(path and not permitted(path))
+                forbidden = bool(path and not permitted(path) and not held_descriptor)
                 if operation.startswith(('connect(', 'sendto(', 'sendmsg(', 'sendmmsg(', 'recvfrom(', 'recvmsg(', 'recvmmsg(', 'getsockopt(')):
                     endpoint = re.search(r'sin_port=htons\((\d+)\).*sin_addr=inet_addr\("([^"]+)"\)', operation)
                     kernel_route = ('<NETLINK:[ROUTE:' in operation
