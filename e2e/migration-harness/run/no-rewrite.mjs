@@ -36,8 +36,20 @@ export function noRewrite(before, after) {
       throw Error('Legacy Data snapshot contains no encrypted attributes')
     return result
   }
+  // A malformed baseline is infrastructure; a malformed current snapshot is
+  // app damage, so it fails this check rather than hiding it from the report.
   const expected = fields(before, true)
-  const actual = fields(after)
+  /** @type {Map<string, unknown>} */
+  let actual
+  try {
+    actual = fields(after)
+  } catch {
+    return {
+      id: 'no-rewrite.legacy-bytes',
+      passed: false,
+      cause: 'Current Legacy Data snapshot does not match the baseline shape',
+    }
+  }
   const changed = [...new Set([...expected.keys(), ...actual.keys()])].filter(
     (key) =>
       !expected.has(key) ||

@@ -19,12 +19,20 @@ const connectionCodes = new Set([
 
 /** Preserve retryable store transport failures without hiding app-caused damage.
  * PostgreSQL class 08 is connection errors; 57P01-03 are server shutdown/startup.
+ * HTTP 5xx and 429 store responses are availability failures.
  * Schema/data errors and unrecognized failures remain behaviour failures.
  * @param {unknown} error @returns {boolean} */
 export function isSnapshotInfrastructureError(error) {
   const seen = new Set()
   while (error && typeof error === 'object' && !seen.has(error)) {
     seen.add(error)
+    // A store that answered 5xx or 429 was unavailable; a 4xx is app damage.
+    if (
+      'status' in error &&
+      typeof error.status === 'number' &&
+      (error.status >= 500 || error.status === 429)
+    )
+      return true
     if ('code' in error && typeof error.code === 'string') {
       if (connectionCodes.has(error.code)) return true
       if (/^[0-9A-Z]{5}$/.test(error.code))
@@ -35,4 +43,10 @@ export function isSnapshotInfrastructureError(error) {
     error = 'cause' in error ? error.cause : undefined
   }
   return false
+}
+
+/** The failed DynamoDB GetItem response, keeping its HTTP status for classification.
+ * @param {number} status @returns {Error & { status: number }} */
+export function dynamoSnapshotError(status) {
+  return Object.assign(Error(`Dynamo snapshot failed: ${status}`), { status })
 }
