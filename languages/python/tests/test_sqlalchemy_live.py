@@ -225,3 +225,39 @@ def test_an_update_of_a_passthrough_field_only_makes_no_key_request(engine):
         assert _engine.request_count() - before == 0
     with Session(engine) as session:
         assert session.scalars(select(Customer)).one().plan == "pro"
+
+
+def test_a_query_of_columns_decrypts_the_encrypted_ones(engine):
+    add_ann(engine)
+    with Session(engine) as session:
+        rows = session.execute(select(Customer.email, Customer.name, Customer.plan)).all()
+        labelled = session.execute(select(Customer.email.label("address"))).all()
+        both = session.execute(select(Customer, Customer.name)).all()
+
+    assert [tuple(row) for row in rows] == [("ann@example.com", "Ann", "free")]
+    assert [row.address for row in labelled] == ["ann@example.com"]
+    [(ann, name)] = both
+    assert (ann.email, name) == ("ann@example.com", "Ann")
+
+
+def test_100_rows_of_columns_make_one_key_request(engine):
+    with Session(engine) as session:
+        session.add_all(
+            [Customer(email=f"user{i}@example.com", name=f"User {i}", plan="free") for i in range(100)]
+        )
+        session.commit()
+    with Session(engine) as session:
+        before = _engine.request_count()
+        rows = session.execute(select(Customer.email, Customer.name)).all()
+        assert _engine.request_count() - before == 1
+    assert sorted(row.email for row in rows)[0] == "user0@example.com"
+
+
+def test_a_core_query_on_a_connection_returns_eql_values(engine):
+    add_ann(engine)
+    with engine.connect() as conn:
+        [email] = conn.execute(select(Customer.__table__.c.email)).scalars().all()
+    # Left to the app: cipher.decrypt_rows opens it.
+    assert "ann@example.com" not in str(email)
+    [opened] = stackencrypt.Cipher(Customer).decrypt_rows([{"email": email}])
+    assert opened == {"email": "ann@example.com"}

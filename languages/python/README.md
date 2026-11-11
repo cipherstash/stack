@@ -171,7 +171,7 @@ with Session(engine) as session:
 `eql_type_map` gives each encrypted field its EQL column type, such as `public.eql_v4_text_eq` for `TextEq`. So a column needs no type of its own. `Base.metadata.create_all(engine)` creates the EQL columns.
 
 - **Writes:** each INSERT or UPDATE on a listed table is encrypted with one batch of key requests for all its rows.
-- **Reads:** the objects a query loads are decrypted with one batch for each class. This includes relationship loads, and attributes read again after a commit.
+- **Reads:** the objects a query loads are decrypted with one batch for each class. This includes relationship loads, and attributes read again after a commit. A session query of columns, such as `session.execute(select(Customer.email, Customer.plan))`, is decrypted too.
 - Only encrypted fields are changed. A passthrough field is checked as `encrypt` checks it, then stored unchanged. For example, a `datetime` with no time zone raises `InvalidValueError` with `value_naive_datetime`.
 
 - **Search:** `==`, `<`, `<=`, `>`, and `>=` on an encrypted field compare it with a query term, as `cipher.eq` and `cipher.gte` make. The field's marker must support the operator. For example, `Customer.level >= 3` works, and `Customer.email > x` raises `QueryError` with `query_unsupported`.
@@ -237,7 +237,7 @@ These are not handled by the hooks yet:
 
 These are not handled yet:
 
-- A Core query, such as `conn.execute(text("SELECT ..."))`, returns EQL values, not plaintext. Use `cipher.decrypt_rows` on its rows.
+- A query run on a connection, not a session, returns EQL values, not plaintext. Examples are `conn.execute(select(...))` and `conn.execute(text("SELECT ..."))`. Use `cipher.decrypt_rows` on its rows. A connection has no hook that can change a result.
 - A match search, `matches`, is not supported through the ORM yet. Use `cipher.matches`, as in "Search by match".
 - A query result is read in full before it is returned, so that its objects can be decrypted in one batch. A query that streams its rows does not stream.
 

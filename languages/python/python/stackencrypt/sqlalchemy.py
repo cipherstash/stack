@@ -519,7 +519,54 @@ def _decrypt_loaded(state: Any) -> Any:
         for target, values in zip(targets, opened):
             for name, value in values.items():
                 set_committed_value(target, name, value)
-    return result()
+    return _decrypt_columns(state.statement, result)()
+
+
+def _decrypt_columns(statement: Any, result: Any) -> Any:
+    """Decrypt the result columns that are encrypted fields, such as
+    ``email`` in ``select(Customer.email, Customer.plan)``: with one
+    ``decrypt_rows`` call for each class and set of fields. A column of a
+    whole object, as in ``select(Customer)``, is left to the load events."""
+    descriptions = getattr(statement, "column_descriptions", None)
+    if not descriptions:
+        return result
+    # Each result column that is an encrypted field: its position, by cipher.
+    positions: Dict[Cipher, Dict[int, str]] = {}
+    for at, description in enumerate(descriptions):
+        column = _column_of(description.get("expr"))
+        if column is None or not isinstance(column.type, EqlType):
+            continue
+        cipher = _TABLES.get(getattr(column, "table", None))
+        if cipher is not None:
+            positions.setdefault(cipher, {})[at] = column.key
+    if not positions:
+        return result
+    rows = [list(row) for row in result.data]
+    for cipher, fields in positions.items():
+        # Rows grouped by which of these fields are not NULL.
+        groups: Dict[FrozenSet[int], List[List[Any]]] = {}
+        for row in rows:
+            present = frozenset(at for at in fields if row[at] is not None)
+            if present:
+                groups.setdefault(present, []).append(row)
+        for present, members in groups.items():
+            opened = cipher.decrypt_rows(
+                [{fields[at]: row[at] for at in present} for row in members]
+            )
+            for row, values in zip(members, opened):
+                for at in present:
+                    row[at] = values[fields[at]]
+    return result.with_new_rows([tuple(row) for row in rows])
+
+
+def _column_of(expression: Any) -> Any:
+    """The table column behind a result column: through an ORM attribute's
+    clause element, and through a label."""
+    if hasattr(expression, "__clause_element__"):
+        expression = expression.__clause_element__()
+    while hasattr(expression, "element") and not isinstance(getattr(expression, "table", None), Table):
+        expression = expression.element
+    return expression if isinstance(getattr(expression, "table", None), Table) else None
 
 
 def _term(column: Any, method: str, value: object) -> Any:
