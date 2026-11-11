@@ -20,7 +20,7 @@ AS $$ SELECT eql_v3_internal.bloom_filter(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.matches(a public.eql_v3_text_match, b eql_v3.query_text_match)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v3.match_term(b)) > 0 OR cardinality(eql_v3.match_term(a)) = 0) $$;
+AS $$ SELECT eql_v3.match_term(a) OPERATOR(pg_catalog.@>) eql_v3.match_term(b) AND (pg_catalog.cardinality(eql_v3.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality(eql_v3.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Operator wrapper for eql_v3.query_text_match.
 --! @param a eql_v3.query_text_match
@@ -28,4 +28,4 @@ AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v
 --! @return boolean
 CREATE FUNCTION eql_v3.matches(a eql_v3.query_text_match, b public.eql_v3_text_match)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v3.match_term(b)) > 0 OR cardinality(eql_v3.match_term(a)) = 0) $$;
+AS $$ SELECT eql_v3.match_term(a) OPERATOR(pg_catalog.@>) eql_v3.match_term(b) AND (pg_catalog.cardinality(eql_v3.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality(eql_v3.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;

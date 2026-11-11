@@ -81,6 +81,21 @@ export function isV3ColumnLike(builder: unknown): builder is V3ColumnLike {
 }
 
 /**
+ * Whether a table carries at least one encrypted column — the ONE rule for
+ * "is this a plaintext table".
+ *
+ * `create.ts` hands `Encryption({ schemas })` only the tables for which this is
+ * true, and the query pipeline (`ColumnMap.hasEncryptedColumns`) keeps every
+ * other table away from the encryption client. Both engines refuse a model
+ * operation on a table they were not initialized with, so the two must agree,
+ * or every read of the affected tables fails with "decryptModel received a
+ * table this client was not initialized with".
+ */
+export function tableHasEncryptedColumns(table: AnyV3Table): boolean {
+  return Object.keys(table.columnBuilders).length > 0
+}
+
+/**
  * Reject a declared property name that is also a DIFFERENT physical column.
  *
  * `select('*')` expands the introspected DB names into property names, so a
@@ -195,6 +210,12 @@ export class ColumnMap {
     }
 
     this.encryptedColumnNames = Object.keys(this.v3Columns)
+  }
+
+  /** False for a plaintext table, which the encrypt and decrypt steps must keep
+   * away from the encryption client (see {@link tableHasEncryptedColumns}). */
+  get hasEncryptedColumns(): boolean {
+    return this.encryptedColumnNames.length > 0
   }
 
   /** Resolve a JS property name to its DB column name. `Object.hasOwn` guards

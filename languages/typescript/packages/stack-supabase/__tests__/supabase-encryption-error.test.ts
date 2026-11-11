@@ -6,6 +6,7 @@ import { EncryptedQueryBuilderImpl } from '../src/query-builder'
 import {
   createMockEncryptionClient,
   createMockSupabase,
+  failingOperation,
   fakeEnvelope,
   operation,
 } from './helpers/supabase-mock'
@@ -24,19 +25,6 @@ import {
 const usersV3 = encryptedTable('users', {
   email: types.TextEq('email'),
 })
-
-/** A chainable op that resolves to `{ failure }`, like a real failed operation. */
-function failingOperation(failure: { type: string; message: string }) {
-  const op = {
-    withLockContext: () => op,
-    audit: () => op,
-    then: (
-      onfulfilled?: ((value: { failure: typeof failure }) => unknown) | null,
-      onrejected?: ((reason: unknown) => unknown) | null,
-    ) => Promise.resolve({ failure }).then(onfulfilled, onrejected),
-  }
-  return op
-}
 
 describe('EncryptedSupabaseError.encryptionError (#626)', () => {
   it('threads the EncryptionError through on an encryption failure', async () => {

@@ -596,7 +596,6 @@ export class EncryptedQueryBuilderImpl<
         ...ctx,
         selectColumns: this.selectColumns,
         resultMode: this.resultMode,
-        hasMutation: this.mutation !== null,
       } satisfies DecryptContext)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

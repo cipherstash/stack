@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server'
 import { logger } from '../../../utils/logger'
+import type { GetCtsTokenResponse } from '../index'
 import {
-  CS_COOKIE_NAME,
-  type CtsToken,
-  type GetCtsTokenResponse,
-} from '../index'
+  clearCtsSession,
+  isExpired,
+  ownerOfJwt,
+  parseCtsToken,
+  writeCtsSession,
+} from '../session'
 
 /**
  * How much of an error body to quote back. A refusal is one sentence; a gateway
@@ -147,6 +150,13 @@ function extractWorkspaceIdFromCrn(crn: string): string {
   return match[1]
 }
 
+/**
+ * The workspace ID to mint sessions for, read from `suppliedCrn` or else the
+ * `CS_WORKSPACE_CRN` environment variable.
+ *
+ * @throws When neither is set, or the CRN is not of the form
+ *   `crn:<region>:<workspace id>`.
+ */
 export function loadWorkSpaceId(suppliedCrn?: string): string {
   if (suppliedCrn) {
     return extractWorkspaceIdFromCrn(suppliedCrn)
@@ -161,7 +171,14 @@ export function loadWorkSpaceId(suppliedCrn?: string): string {
   return extractWorkspaceIdFromCrn(process.env.CS_WORKSPACE_CRN)
 }
 
-// Can be used independently of the Next.js middleware
+/**
+ * Exchange `oidcToken` for a CTS session token through CTS `/api/authorize`.
+ * Writes no cookie, so it can be used outside the Next.js middleware.
+ *
+ * Never throws for a CTS refusal, an unreachable CTS, or a success body that is
+ * not an unexpired token: each is returned as `{ success: false }`, with
+ * `authCode` set when CTS attached a refusal code.
+ */
 export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
   const workspaceId = loadWorkSpaceId()
 
@@ -180,16 +197,30 @@ export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
     process.env.CS_CTS_ENDPOINT ||
     'https://ap-southeast-2.aws.auth.viturhosted.net'
 
-  const ctsResponse = await fetch(`${ctsEndoint}/api/authorize`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      workspaceId,
-      oidcToken,
-    }),
-  })
+  let ctsResponse: Response
+  try {
+    ctsResponse = await fetch(`${ctsEndoint}/api/authorize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        workspaceId,
+        oidcToken,
+      }),
+    })
+  } catch {
+    // A transport failure (DNS, TLS, reset) rejects rather than resolving. It
+    // is reported like a refusal, so the middleware's cleanup still runs and a
+    // request is not turned into a 500. The exception is not repeated: a fetch
+    // wrapper may put the request, OIDC token included, into its message.
+    const error =
+      'Failed to fetch CTS token: the CipherStash API could not be reached.'
+    logger.error(
+      `There was an issue communicating with the CipherStash CTS API, the CipherStash session was not set. ${error}`,
+    )
+    return { success: false, error }
+  }
 
   // `fetch` only rejects on a transport failure, so a CTS refusal RESOLVES:
   // a `402` carrying `cs_code: USAGE_LIMIT_EXCEEDED` arrives here as an
@@ -214,16 +245,46 @@ export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
     }
   }
 
-  const cts_token = (await ctsResponse.json()) as CtsToken
-
-  return {
-    success: true,
-    ctsToken: cts_token,
+  // A success body is validated rather than cast: it is written straight into
+  // the session cookie, and a 2xx that is not a token (a proxy page, a changed
+  // API) must fail here, not as a malformed cookie on every later request.
+  const raw = await ctsResponse.text().catch(() => '')
+  let body: unknown
+  try {
+    body = JSON.parse(raw)
+  } catch {
+    body = undefined
   }
+
+  // An already-expired token is refused too: the cookie it would be written to
+  // reads as no session, so every later request would mint again.
+  const ctsToken = parseCtsToken(body)
+  if (!ctsToken || isExpired(ctsToken)) {
+    const error = `Failed to fetch CTS token: the CipherStash API returned ${ctsResponse.status} without a valid, unexpired token.`
+    logger.error(
+      `There was an issue communicating with the CipherStash CTS API, the CipherStash session was not set. ${error}`,
+    )
+    return { success: false, error }
+  }
+
+  return { success: true, ctsToken }
 }
 
-// Used in the Next.js middleware
-export const setCtsToken = async (oidcToken: string, res?: NextResponse) => {
+/**
+ * Mint a session for `oidcToken` and write it to the response, labelled with
+ * the token's issuer and subject. Used by the Next.js middleware.
+ *
+ * `clearOnFailure` says a session cookie, on the request or already on `res`,
+ * must not outlive this call (malformed, expired, minted for someone else, or
+ * never checked): if CTS refuses, that cookie is deleted rather than left for
+ * the next request to read as this user's session. Without it, a failed mint
+ * leaves the response alone.
+ */
+export const setCtsToken = async (
+  oidcToken: string,
+  res?: NextResponse,
+  { clearOnFailure = false }: { clearOnFailure?: boolean } = {},
+) => {
   const ctsResponse = await fetchCtsToken(oidcToken)
   const cts_token = ctsResponse.ctsToken
 
@@ -241,18 +302,13 @@ export const setCtsToken = async (oidcToken: string, res?: NextResponse) => {
       `There was an issue fetching the CipherStash session, the CipherStash session was not set. ${reason}`,
     )
 
-    return res ?? NextResponse.next()
+    const response = res ?? NextResponse.next()
+    return clearOnFailure ? clearCtsSession(response) : response
   }
 
-  // Setting cookies on the request and response using the `ResponseCookies` API
-  const response = res ?? NextResponse.next()
-  response.cookies.set({
-    name: CS_COOKIE_NAME,
-    value: JSON.stringify(cts_token),
-    expires: new Date(cts_token.expiry * 1000),
-    sameSite: 'lax',
-    path: '/',
-  })
-
-  return response
+  return writeCtsSession(
+    res ?? NextResponse.next(),
+    cts_token,
+    ownerOfJwt(oidcToken),
+  )
 }

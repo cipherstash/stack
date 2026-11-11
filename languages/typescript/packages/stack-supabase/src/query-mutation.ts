@@ -35,6 +35,9 @@ export async function encryptMutationData(
 ): Promise<Record<string, unknown> | Record<string, unknown>[] | null> {
   if (!mutation) return null
   if (mutation.kind === 'delete') return null
+  // A plaintext table has nothing to encrypt or rename, and is not registered
+  // with the encryption client (see `tableHasEncryptedColumns`).
+  if (!ctx.columns.hasEncryptedColumns) return mutation.data
 
   const data = mutation.data
   const client = dynamicEncryptionClient(ctx.encryptionClient)

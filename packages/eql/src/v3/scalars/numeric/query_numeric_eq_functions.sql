@@ -20,7 +20,7 @@ AS $$ SELECT eql_v3_internal.hmac_256(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a public.eql_v3_numeric_eq, b eql_v3.query_numeric_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.=) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_numeric_eq.
 --! @param a eql_v3.query_numeric_eq
@@ -28,7 +28,7 @@ AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a eql_v3.query_numeric_eq, b public.eql_v3_numeric_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.=) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_numeric_eq.
 --! @param a public.eql_v3_numeric_eq
@@ -36,7 +36,7 @@ AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a public.eql_v3_numeric_eq, b eql_v3.query_numeric_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for eql_v3.query_numeric_eq.
 --! @param a eql_v3.query_numeric_eq
@@ -44,4 +44,4 @@ AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a eql_v3.query_numeric_eq, b public.eql_v3_numeric_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b) $$;

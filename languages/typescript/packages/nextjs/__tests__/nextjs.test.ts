@@ -14,7 +14,7 @@
  * `protectMiddleware` imports it from — mocking the barrel it is re-exported
  * through would not intercept the call.
  */
-import { type NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('next/headers', () => ({
@@ -53,7 +53,9 @@ import {
 const jwtWithSubject = (sub: string) =>
   [
     Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
-    Buffer.from(JSON.stringify({ sub })).toString('base64url'),
+    Buffer.from(JSON.stringify({ iss: 'https://idp.example', sub })).toString(
+      'base64url',
+    ),
     '',
   ].join('.')
 
@@ -66,16 +68,11 @@ const requestCookie = (value: string | undefined) => {
 }
 
 /** A `NextRequest` carrying (or not carrying) a CipherStash session cookie. */
-const requestWithSession = (sessionValue?: string) =>
-  ({
-    cookies: {
-      get: vi.fn((name: string) =>
-        name === CS_COOKIE_NAME && sessionValue !== undefined
-          ? { value: sessionValue }
-          : undefined,
-      ),
-    },
-  }) as unknown as NextRequest
+const requestWithSession = (sessionValue?: string) => {
+  const req = new NextRequest('https://app.example/')
+  if (sessionValue !== undefined) req.cookies.set(CS_COOKIE_NAME, sessionValue)
+  return req
+}
 
 beforeEach(() => {
   vi.mocked(setCtsToken).mockImplementation(
@@ -90,7 +87,10 @@ afterEach(() => {
 
 describe('getCtsToken', () => {
   it('returns the parsed token when the session cookie is present', async () => {
-    const ctsToken: CtsToken = { accessToken: 'fake_token', expiry: 999999 }
+    const ctsToken: CtsToken = {
+      accessToken: 'fake_token',
+      expiry: 1_900_000_000,
+    }
     requestCookie(JSON.stringify(ctsToken))
 
     const result = await getCtsToken()
@@ -99,6 +99,20 @@ describe('getCtsToken', () => {
     expect(logger.debug).not.toHaveBeenCalledWith(
       'No CipherStash session cookie found in the request.',
     )
+  })
+
+  it('still accepts a token that may be undefined', async () => {
+    // Deprecating the no-argument form must not stop this call compiling.
+    const ctsToken: CtsToken = {
+      accessToken: 'fake_token',
+      expiry: 1_900_000_000,
+    }
+    requestCookie(JSON.stringify(ctsToken))
+    const noToken = undefined as string | undefined
+
+    const result = await getCtsToken(noToken)
+
+    expect(result).toEqual({ success: true, ctsToken })
   })
 
   it('reports a failure when there is no cookie and no JWT to exchange', async () => {
@@ -157,14 +171,17 @@ describe('protectMiddleware', () => {
 
     await protectMiddleware('a-user-jwt', req)
 
-    expect(setCtsToken).toHaveBeenCalledWith('a-user-jwt', undefined)
+    expect(setCtsToken).toHaveBeenCalledWith('a-user-jwt', undefined, {
+      clearOnFailure: false,
+    })
   })
 
   it('leaves the session alone when the JWT and session are the same user', async () => {
-    // The CTS access token's `sub` is the OIDC one prefixed with `CS|`.
-    const session: CtsToken = {
+    // The cookie records the OIDC identity the session was minted for.
+    const session = {
       accessToken: jwtWithSubject('CS|user-1'),
-      expiry: 999999,
+      expiry: 1_900_000_000,
+      owner: { issuer: 'https://idp.example', subject: 'user-1' },
     }
     const req = requestWithSession(JSON.stringify(session))
     const res = NextResponse.next()
@@ -176,26 +193,32 @@ describe('protectMiddleware', () => {
   })
 
   it('re-mints the session when the JWT belongs to a different user', async () => {
-    const session: CtsToken = {
+    const session = {
       accessToken: jwtWithSubject('CS|user-1'),
-      expiry: 999999,
+      expiry: 1_900_000_000,
+      owner: { issuer: 'https://idp.example', subject: 'user-1' },
     }
     const req = requestWithSession(JSON.stringify(session))
     const oidcToken = jwtWithSubject('user-2')
 
     await protectMiddleware(oidcToken, req)
 
-    expect(setCtsToken).toHaveBeenCalledWith(oidcToken, undefined)
+    expect(setCtsToken).toHaveBeenCalledWith(oidcToken, undefined, {
+      clearOnFailure: true,
+    })
   })
 
   it('resets the session when no JWT is supplied but a session cookie exists', async () => {
-    const session: CtsToken = { accessToken: 'whatever', expiry: 999999 }
+    const session: CtsToken = {
+      accessToken: 'whatever',
+      expiry: 1_900_000_000,
+    }
     const req = requestWithSession(JSON.stringify(session))
 
     const result = await protectMiddleware('', req)
 
     expect(logger.debug).toHaveBeenCalledWith(
-      'The JWT token was undefined, so the CipherStash session was reset.',
+      'No user is signed in, so the CipherStash session was reset.',
     )
     expect(result.cookies.get(CS_COOKIE_NAME)?.value).toBe('')
     expect(setCtsToken).not.toHaveBeenCalled()
@@ -208,7 +231,7 @@ describe('protectMiddleware', () => {
 
     expect(response).toBeInstanceOf(NextResponse)
     expect(logger.debug).toHaveBeenCalledWith(
-      'The JWT token was undefined, so the CipherStash session was not set.',
+      'No user is signed in, so the CipherStash session was not set.',
     )
   })
 })
