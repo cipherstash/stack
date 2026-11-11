@@ -12,11 +12,14 @@ null; lookups return matching customers sorted by primary key. `src/stores.mjs`
 exports `createStores(env)` with `init()` and `close()` methods.
 
 The assigned database is disposable and contains the customer's original data.
-Run any conversion through application startup in your migrated `createApp`;
-it must be safe to start again after the conversion. Keep the source columns,
-populate separate v3 target columns and create the guide's equality indexes.
-Do not reseed or delete existing data during startup. New writes use the target
-columns after migration.
+Put the one-off database conversion in `src/migrate.mjs`, which exports
+`async function migrate(env)`; it currently does nothing. It runs once against
+the database, during a write-maintenance window, before the migrated
+application starts. Running it a second time must be safe: it either succeeds
+without changing data or refuses (throws) without changing anything. Keep the
+source columns, populate separate v3 target columns and create the guide's
+equality indexes. Do not reseed or delete existing data. `createApp` must not
+alter the schema. New writes use the target columns after migration.
 
 For checks outside the application API, use the harness acceptance command for those checks.
 Record unclear instructions and failed approaches in `friction.md`.
