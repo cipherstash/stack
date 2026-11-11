@@ -36,6 +36,10 @@
     "./next": {
       "types": "./next.d.ts",
       "default": "./next.mjs"
+    },
+    "./start": {
+      "types": "./start.d.mts",
+      "default": "./start.mjs"
     }
   },
   "napi": {
@@ -68,6 +72,10 @@
     "base64url.d.ts",
     "next.mjs",
     "next.d.ts",
+    "start.mjs",
+    "start.d.mts",
+    "warmed.mjs",
+    "warmed.d.ts",
     "wasm/"
   ],
   "scripts": {
@@ -83,7 +91,8 @@
     "@cipherstash/auth-linux-x64-gnu": "workspace:*",
     "@cipherstash/auth-linux-arm64-gnu": "workspace:*",
     "@cipherstash/auth-linux-x64-musl": "workspace:*",
-    "@cipherstash/auth-win32-x64-msvc": "workspace:*"
+    "@cipherstash/auth-win32-x64-msvc": "workspace:*",
+    "@tanstack/react-start": ">=1.132.0"
   },
   "peerDependenciesMeta": {
     "@cipherstash/auth-darwin-x64": {
@@ -103,6 +112,9 @@
     },
     "@cipherstash/auth-win32-x64-msvc": {
       "optional": true
+    },
+    "@tanstack/react-start": {
+      "optional": true
     }
   },
   "dependencies": {
@@ -111,6 +123,7 @@
   "devDependencies": {
     "@napi-rs/cli": "^2",
     "typescript": "^5",
-    "vitest": "catalog:repo"
+    "vitest": "catalog:repo",
+    "@tanstack/react-start": "^1.168.60"
   }
 }

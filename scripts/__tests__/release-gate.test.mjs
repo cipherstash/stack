@@ -1522,7 +1522,10 @@ describe('a `files` artefact', () => {
 
   it('hashes every listed file in the tree, one line per file', () => {
     const lines = inTreeArtefactDigest(AUTH, artefact).split('\n')
-    expect(artefact.files).toHaveLength(15)
+    // The wrapper's `files` allowlist, minus `wasm/`: the four `./start` entry
+    // files (start.mjs, start.d.mts, warmed.mjs, warmed.d.ts) joined the
+    // fifteen the auth freeze carried.
+    expect(artefact.files).toHaveLength(19)
     expect(lines).toHaveLength(artefact.files.length)
     for (const line of lines)
       expect(line).toMatch(/^package\/\S+ [0-9a-f]{64}$/)
