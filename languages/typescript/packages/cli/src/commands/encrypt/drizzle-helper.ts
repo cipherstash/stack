@@ -74,11 +74,13 @@ export async function scaffoldDrizzleMigration(opts: {
   const generatedPath =
     parseReportedMigrationPath(cp.stdout) ??
     (await findNewMigration(outDir, opts.name, before))
-  // `generate --custom` leaves an empty file. Anything else is an existing
-  // migration (a banner line naming one, a wrapper's echo): never overwrite it.
-  if ((await readFile(generatedPath, 'utf-8')).trim() !== '') {
+  // `generate --custom` leaves a comment-only placeholder (drizzle-kit writes
+  // `-- Custom SQL migration file, put your code below! --`). Anything with
+  // real SQL is an existing migration (a banner line naming one, a wrapper's
+  // echo): never overwrite it.
+  if (!isScaffoldOnly(await readFile(generatedPath, 'utf-8'))) {
     throw new Error(
-      `${generatedPath} is not an empty drizzle-kit scaffold; refusing to overwrite it. If drizzle-kit just journaled an empty "${opts.name}" migration, it is in the \`out\` of your drizzle.config.ts.`,
+      `${generatedPath} is not a drizzle-kit scaffold; refusing to overwrite it. If drizzle-kit just journaled a placeholder "${opts.name}" migration, it is in the \`out\` of your drizzle.config.ts.`,
     )
   }
   await writeFile(generatedPath, opts.sql, 'utf-8')
@@ -88,6 +90,13 @@ export async function scaffoldDrizzleMigration(opts: {
     dir: dirname(generatedPath),
     requestedDir: outDir,
   }
+}
+
+/** Blank, or nothing but `--` comment lines: no statement to lose. */
+function isScaffoldOnly(content: string): boolean {
+  return content
+    .split(/\r?\n/)
+    .every((line) => line.trim() === '' || line.trim().startsWith('--'))
 }
 
 async function listSqlFiles(dir: string): Promise<Set<string>> {
