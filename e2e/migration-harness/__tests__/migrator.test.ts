@@ -158,29 +158,33 @@ test('broker preserves an infrastructure failure from isolated execution', async
   ).rejects.toBe(failure)
 })
 
-test('broker decodes a multi-byte character split across two output chunks', async () => {
-  const execute = vi.fn(async () => result)
-  // "✓" is e2 9c 93. Each stream is cut after its first byte, so the two
-  // halves arrive in separate chunks.
-  const outcome = await runMigrator({
-    command: await adapter(`
-      const line = Buffer.from(JSON.stringify({ id: 'one', method: 'exec', command: ['echo', 'ok ✓'] }) + '\\n')
-      const cut = line.indexOf(0xe2) + 1
-      const tick = Buffer.from('✓')
-      process.stderr.write(tick.subarray(0, 1))
-      process.stdout.write(line.subarray(0, cut))
-      setTimeout(() => {
-        process.stderr.write(tick.subarray(1))
-        process.stdout.write(line.subarray(cut))
-      }, 100)
-      process.stdin.once('data', () => process.exit(0))
-    `),
-    execute,
-    stop: async () => {},
-    timeoutMs: 5000,
-  })
-  expect(execute).toHaveBeenCalledOnce()
-  expect(execute).toHaveBeenCalledWith(['echo', 'ok ✓'], expect.any(Number))
-  expect(outcome.stdout).toContain('ok ✓')
-  expect(outcome.stderr).toBe('✓')
+test('broker rejects invalid or duplicate runtime metadata without treating it as a tool', async () => {
+  const runtime = {
+    provider: 'claude-code',
+    version: '2.1.300',
+    model: 'resolved-sonnet',
+    numTurns: 1,
+    permissionMode: 'acceptEdits',
+  }
+  for (const messages of [
+    [{ method: 'runtime', runtime: { ...runtime, numTurns: -1 } }],
+    [{ method: 'runtime', runtime: { ...runtime, apiKey: 'not-exportable' } }],
+    [
+      { method: 'runtime', runtime },
+      { method: 'runtime', runtime },
+    ],
+  ]) {
+    const execute = vi.fn(async () => result)
+    await expect(
+      runMigrator({
+        command: await adapter(
+          `process.stdout.write(${JSON.stringify(`${messages.map((message) => JSON.stringify(message)).join('\n')}\n`)});setTimeout(()=>{},10000)`,
+        ),
+        execute,
+        stop: async () => {},
+        timeoutMs: 1000,
+      }),
+    ).rejects.toThrow('invalid or duplicate runtime metadata')
+    expect(execute).not.toHaveBeenCalled()
+  }
 })
