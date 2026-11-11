@@ -2,7 +2,7 @@ error[E0599]: no method named `encrypt` found for struct `MarkedQuery<Encrypted<
   --> tests/ui/marker_nested_query_needs_each_scope.rs:46:29
    |
 46 |     let _ = label.eq("D-7").encrypt(&keyset).await;
-   |                             ^^^^^^^ method not found in `MarkedQuery<Encrypted<EqualityTerm>, stack_encrypt::op::Eq, std::string::String, Needs<(stack_encrypt::target::Scope<std::string::String>, stack_encrypt::target::Scope<u64>)>>`
+   |                             ^^^^^^^ method not found in `MarkedQuery<Encrypted<EqualityTerm>, stack_encrypt::op::Eq, std::string::String, Needs<Scopes<stack_encrypt::target::Scope<std::string::String>, stack_encrypt::target::Scope<u64>>>>`
    |
    = note: the method was found for
            - `MarkedQuery<T, Op, In>`
