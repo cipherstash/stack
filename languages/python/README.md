@@ -188,6 +188,43 @@ Each class must be declared with `stackencrypt.model` and mapped by SQLAlchemy. 
 
 A statement that puts an encrypted value inside its SQL, such as `insert(Customer).values(email=...)`, raises `DeclarationError` with `declaration_inline_value`. The value is not stored. Pass the values as parameters instead, as `session.add` and `session.execute(insert(Customer), rows)` do.
 
+### Migrations with Alembic
+
+A class mapped with `eql_type_map` gets a database index for each search its fields support. For example, `email: Mapped[Annotated[str, TextEq]]` gets `ix_customers_email_eq`, on `hash (eql_v4.eq_term(email))`. Without that index, a search still returns the right rows, but PostgreSQL reads every row. `create_all` and Alembic's `autogenerate` both create these indexes.
+
+| Marker index | Database index |
+|---|---|
+| `eq` | `hash (eql_v4.eq_term(col))` |
+| `ope` | `btree (eql_v4.ord_term(col))` |
+| `ore_block` | `btree (eql_v4.ord_term_ore(col))` |
+| `match` | `gin (eql_v4.match_term(col))` |
+
+An `ore_block` index needs an operator class that EQL's install creates. If the role that installed EQL could not create operator classes, the index still builds. But PostgreSQL never uses it, and gives no error.
+
+Give Alembic the two hooks in your `env.py`:
+
+```text
+from stackencrypt.sqlalchemy import process_revision_directives, render_item
+
+context.configure(
+    connection=connection,
+    target_metadata=target_metadata,
+    render_item=render_item,
+    process_revision_directives=process_revision_directives,
+)
+```
+
+- `render_item` writes an encrypted column's type into the migration as `stackencrypt.sqlalchemy.EqlType(stackencrypt.TextEq)`, and adds the imports it needs.
+- `process_revision_directives` changes two kinds of step that Alembic writes for an EQL column.
+  - A change of an existing column to an EQL type, such as from `text`, becomes `op.execute` of an `ALTER` with `USING email::jsonb::public.eql_v4_text_eq`. PostgreSQL refuses the change without it. The cast changes a column with no rows. A column with rows that are not EQL values fails the migration, and keeps its rows.
+  - A type change from an EQL type to the same EQL type is left out. Alembic would otherwise write one for every EQL column in each new migration.
+
+These are not handled by the hooks yet:
+
+- Encrypting data that a column already holds. The migration fails instead.
+- The reverse migration of a change to an EQL type. Its `downgrade` is Alembic's `alter_column`, as Alembic writes it. It has not been tested.
+- Installing EQL. Install the bundle before the first migration, as in "Before you start".
+
 These are not handled yet:
 
 - A Core query, such as `conn.execute(text("SELECT ..."))`, returns EQL values, not plaintext. Use `cipher.decrypt_rows` on its rows.
