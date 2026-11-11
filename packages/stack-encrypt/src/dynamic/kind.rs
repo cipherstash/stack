@@ -62,13 +62,14 @@ use crate::target::IndexSpec;
 /// values. A composite (`array`, `object`) has no term. Only the index's
 /// kind matters: a match index's options do not change what it applies to.
 ///
-/// Bytes are the one kind an index is refused though the scheme defines
-/// its term. [`IndexSpec::defines`] takes bytes for an order index, but no
-/// ordering operator is answered over bytes, so a plan that declared one
-/// would store a term anyone can compare and no query can use. A plan
-/// admits an index only over a kind one of the index's operators answers,
-/// as the typed path's `Index` bound on [`op::Ordered`](crate::op::Ordered)
-/// does.
+/// A plan refuses an order index on bytes, although the scheme defines an
+/// order term for bytes. [`IndexSpec::defines`] accepts bytes for an order
+/// index. No ordering operator accepts bytes, so no query could use the
+/// stored term. Anyone who reads the rows could still compare the terms.
+///
+/// A plan therefore accepts an index on a kind only if one of the
+/// index's operators accepts that kind. The typed interface has the same
+/// rule: an order index needs [`op::Ordered`](crate::op::Ordered).
 ///
 /// ```
 /// use stack_encrypt::dynamic::{admits, ValueKind};

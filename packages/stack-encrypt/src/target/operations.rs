@@ -1040,15 +1040,19 @@ term_operation!(
 term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.
     ///
-    /// `S` is a type an ordering operator is answered over
-    /// ([`op::Ordered`](crate::op::Ordered)), as for the [`Ore`](super::Ore)
-    /// index. An index or a target of another crate is built from this
-    /// operation, so it takes no type that the index refuses. Bytes have an
-    /// order term but no ordering operator, so a term stored for them would
-    /// reveal the order of the rows and answer no query. The keyset's
-    /// [`ore_term`](crate::KeysetCipher::ore_term) still derives one term of
-    /// bytes, for tests of the term itself; it is not a description, so no
-    /// plan or target can be built from it.
+    /// `S` must be a type that the ordering operators accept
+    /// ([`op::Ordered`](crate::op::Ordered)). The [`Ore`](super::Ore)
+    /// index has the same bound. Another crate can build an index or a
+    /// target from this operation, so the operation accepts no type that
+    /// the index refuses.
+    ///
+    /// Bytes have an order term, but no ordering operator accepts bytes.
+    /// A stored term of bytes would reveal the order of the rows. No
+    /// query could use that term.
+    ///
+    /// The keyset method [`ore_term`](crate::KeysetCipher::ore_term) still
+    /// derives an order term of bytes, for tests of the term. That method
+    /// does not return a description, so no plan or target can use it.
     ore, crate::sem::OreTerm<S>, consume, [],
     [S: crate::op::Ordered]
 );

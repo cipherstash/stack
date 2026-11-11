@@ -188,13 +188,15 @@ impl fmt::Display for IndexSpec {
 
 /// An operation that derives one search term of `S`.
 ///
-/// Implemented for exactly the plaintexts the index answers a query over,
-/// which is what makes an inapplicable index a compile error: there is no
-/// `Index<u32>` for [`Match`](struct@Match), because match is defined over
-/// text. An order index ([`Ore`], [`Ope`], [`OreBlock`]) is implemented for
-/// the types an ordering operator is answered over
-/// ([`op::Ordered`](crate::op::Ordered)). Its scheme can also order bytes,
-/// but no ordering operator is answered over bytes, so there is no
+/// An index implements `Index<S>` only for the plaintext types `S` that
+/// its operators accept. An index on any other type does not compile. For
+/// example, there is no `Index<u32>` for [`Match`](struct@Match), because
+/// a match query needs text.
+///
+/// An order index ([`Ore`], [`Ope`], or [`OreBlock`]) implements
+/// `Index<S>` for the types that the ordering operators accept
+/// ([`op::Ordered`](crate::op::Ordered)). The order scheme can also order
+/// bytes. No ordering operator accepts bytes, so there is no
 /// `Index<Vec<u8>>` for [`Ore`].
 ///
 /// An index does not seal anything. [`indexed`] puts a ciphertext beside the
@@ -206,7 +208,7 @@ impl fmt::Display for IndexSpec {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an index of `{S}`",
     label = "this index is not defined over `{S}`",
-    note = "an index applies only to the plaintexts it answers a query over: `Match` takes text, `Equality` takes the types its scheme encodes, and `Ore`, `Ope` and `OreBlock` take the types `op::Ordered` lists"
+    note = "`Match` accepts text; `Equality` accepts the types its scheme encodes; `Ore`, `Ope` and `OreBlock` accept the types that implement `op::Ordered`"
 )]
 pub trait Index<S> {
     /// The term this index derives.
@@ -231,14 +233,17 @@ pub trait Index<S> {
 pub struct Equality;
 
 /// The order-revealing index: a CLLW ORE ciphertext of the value, under a
-/// key derived from the field's context. Defined for every `S` an ordering
-/// operator is answered over ([`op::Ordered`](crate::op::Ordered)): the
-/// integers of 16 bits and wider, the floats, text, dates, timestamps and
-/// decimals.
+/// key derived from the field's context.
 ///
-/// Not for bytes. The scheme can order a `Vec<u8>`, but no ordering
-/// operator is answered over bytes, so a stored term would reveal the order
-/// of the rows and answer no query. An order index on bytes does not
+/// `Ore` accepts every type `S` that the ordering operators accept
+/// ([`op::Ordered`](crate::op::Ordered)): the integers of 16 bits and
+/// wider, the floats, text, dates, timestamps, and decimals.
+///
+/// `Ore` does not accept bytes. The scheme can order a `Vec<u8>`, but no
+/// ordering operator accepts bytes.
+///
+/// A stored term of bytes would reveal the order of the rows. No query
+/// could use that term. An order index on bytes therefore does not
 /// compile:
 ///
 /// ```compile_fail
@@ -373,10 +378,10 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
     }
 }
 
-// Each order index is declared over `Ordered`, the trait its operators
-// need, and not over `Orderable`, which also covers bytes. An index stores
-// a term that reveals the order of the rows, so it is declared only for a
-// type an ordering operator is answered over.
+// Each order index needs `Ordered`, the trait that the ordering operators
+// need. `Orderable` is wider: it also covers bytes. An index stores a term
+// that reveals the order of the rows, so an index only accepts a type
+// that an ordering operator accepts.
 impl<S> Index<S> for Ore
 where
     S: crate::op::Ordered,
