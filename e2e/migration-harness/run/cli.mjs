@@ -11,14 +11,21 @@ const { values } = parseArgs({
   args: process.argv.slice(2),
   options: {
     migrator: { type: 'string' },
+    fake: { type: 'string' },
     output: { type: 'string' },
     stack: { type: 'string' },
   },
   strict: true,
 })
-const command = values.migrator
-if (!command || values.output === '' || values.stack === '')
-  throw Error('Usage: harness:run --migrator <command>')
+const command = values.migrator ?? ''
+const fakeMigration = values.fake
+if (
+  (!command && !fakeMigration) ||
+  (command && fakeMigration) ||
+  values.output === '' ||
+  values.stack === ''
+)
+  throw Error('Usage: harness:run --migrator <command> | --fake <variant>')
 const id = randomUUID()
 const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const output = resolve(values.output ?? `.migration-harness-runs/${id}`)
@@ -30,8 +37,9 @@ const manifest = {
     await promisify(execFile)('git', ['rev-parse', 'HEAD'], { cwd: root })
   ).stdout.trim(),
   agents: {
-    migrator: command,
-    model: 'command-adapter',
+    // A deterministic Fake Migrator Run must not read as real agent evidence.
+    migrator: fakeMigration ? `fake:${fakeMigration}` : command,
+    model: fakeMigration ? 'fake-migrator' : 'command-adapter',
     limits: { timeMs: 40 * 60 * 1000, turns: 200 },
     allowlist: ['brokered isolated exec'],
   },
@@ -59,6 +67,7 @@ try {
     root,
     output,
     command,
+    fakeMigration,
     isolation,
     credentials,
     manifest,

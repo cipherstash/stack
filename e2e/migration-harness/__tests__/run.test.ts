@@ -221,6 +221,10 @@ test('App Host install failure outranks invalid friction', async () => {
     }),
   })
   assert.equal(report.outcome, 'install')
+  assert.deepEqual(
+    report.failures.map((f) => f.category),
+    ['invalid-friction-log', 'install'],
+  )
 })
 test('trusted successful forbidden access stops later calls and excludes Editor', async () => {
   let later = false

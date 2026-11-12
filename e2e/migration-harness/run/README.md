@@ -93,3 +93,16 @@ Diff evidence uses the host-recorded fixture commit, so an adapter can commit
 its changes without hiding them. Failed Git commands fail the migration stage
 instead of publishing an empty diff. Raw transcripts and snapshots remain local
 Run artifacts; this command does not export them to an Editor.
+
+## Deterministic acceptance matrix
+
+Use `harness:run --fake reference` for the known-correct migration. Other variants
+are `noop`, `downcase`, `stale-hmac`, `bigint`, `rewrite`, `missing-log`,
+`legacy-ffi`, `denied-app` and `denied-lifecycle`. These harness-owned substitutes
+copy application files; dependency installation and application execution stay
+inside isolation. The hidden Reference Migration is never mounted into an actor.
+
+`--stack` also accepts `tree` or a `.tgz` path. Tree mode requires Stack build
+outputs and packs them with pnpm. Exact versions and tarball SHA-256 digests are
+recorded in the manifest. Set `HARNESS_LIVE=1` and the four `CS_*` credentials
+to run the credentialed self-test matrix; CI runs it without model calls.
