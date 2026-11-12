@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { lockedPackages } from './lib/cargo-lock.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 
 /**
@@ -31,28 +32,6 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 
 const EQL_LOCK = 'packages/eql/Cargo.lock'
 const FFI_LOCK = 'languages/typescript/packages/protect-ffi/Cargo.lock'
-
-/**
- * Every `name` package a `Cargo.lock` records, as its version, source and
- * checksum, sorted by version. The version alone is not enough: a git source
- * or a `[patch.crates-io]` fork can keep the version number while resolving
- * different code, and the source and checksum are what tell them apart.
- */
-export function lockedPackages(source, name) {
-  const field = (block, key) =>
-    new RegExp(`^${key} = "([^"]*)"$`, 'm').exec(block)?.[1] ?? null
-  return source
-    .split(/^\[\[package\]\]$/m)
-    .slice(1)
-    .filter((block) => new RegExp(`^name = "${name}"$`, 'm').test(block))
-    .map((block) => ({
-      version: field(block, 'version'),
-      source: field(block, 'source'),
-      checksum: field(block, 'checksum'),
-    }))
-    .filter((pkg) => pkg.version)
-    .sort((a, b) => a.version.localeCompare(b.version))
-}
 
 const read = (file) => readFileSync(join(REPO_ROOT, file), 'utf8')
 
