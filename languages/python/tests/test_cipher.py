@@ -128,6 +128,31 @@ def test_a_replaced_repr_is_refused(credentials):
     assert "__repr__ replaced" in str(error)
 
 
+@pytest.mark.parametrize("change", ["changed", "removed"])
+def test_a_changed_or_removed_hint_is_refused(credentials, change):
+    User = declared()
+    if change == "changed":
+        User.__annotations__["age"] = Annotated[str, Passthrough]
+    else:
+        del User.__annotations__["age"]
+
+    error = refusal(lambda: Cipher(User))
+    assert error.code == "declaration_class_changed"
+    assert error.reason == "fields"
+    assert error.field == "age"
+
+
+@pytest.mark.parametrize("name", ["__str__", "__rich_repr__"])
+def test_each_replaced_method_is_refused(credentials, name):
+    User = declared()
+    setattr(User, name, lambda self: self.email)
+
+    error = refusal(lambda: Cipher(User))
+    assert error.code == "declaration_class_changed"
+    assert error.reason == "methods"
+    assert f"{name} replaced" in str(error)
+
+
 def test_a_hint_that_no_longer_resolves_names_the_name(credentials):
     User = declared()
     User.__annotations__["posts"] = "List[Undefined]"

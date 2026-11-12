@@ -17,7 +17,7 @@ Each principle is marked:
 | G3. Run each check at the earliest stage the language allows | strained |
 | G4. One declaration serves the write, the query and the read | held |
 | G5. Batch by default | held |
-| G6. A second way in has to earn its place | held |
+| G6. A second way in has to earn its place | strained |
 | G7. State the design, and run its claims | held |
 | G8. Usage first, then reference | held |
 
@@ -59,7 +59,9 @@ Each principle is marked:
 - Each query method is the single-value call the principle allows: one field, one search value. It makes no key request after the first call of the process.
 - A model's fields of different types go in one request.
 
-## G6. A second way in has to earn its place: held
+## G6. A second way in has to earn its place: strained
+
+Strained, not held: the two gaps below have no test.
 
 - There is one way to declare a model: `stackencrypt.model`. Every class library goes through it. `tests/_declaration_cases.py` declares one model with each of dataclasses, attrs, Pydantic, `NamedTuple`, and SQLAlchemy.
 - No test shows that each refusal fires for every one of the five libraries.

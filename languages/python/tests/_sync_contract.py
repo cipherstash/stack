@@ -13,6 +13,7 @@ import os
 import signal
 import threading
 import time
+import traceback
 from typing import Annotated, Dict, List
 
 import stackencrypt
@@ -39,15 +40,16 @@ def encrypt_from_threads(cipher: Cipher, per_thread: int) -> List[Dict[str, obje
     any call failed."""
     sealed: List[List[Dict[str, object]]] = [[] for _ in range(THREADS)]
     failures: List[str] = []
-    start = threading.Barrier(THREADS)
+    # A timeout, so one thread that never arrives fails the test, not hangs it.
+    start = threading.Barrier(THREADS, timeout=30)
 
     def encrypt_many(t: int) -> None:
-        start.wait()
         try:
+            start.wait()
             for n in range(per_thread):
                 sealed[t].extend(cipher.encrypt([user(t * per_thread + n)]))
-        except Exception as error:
-            failures.append(repr(error))
+        except Exception:
+            failures.append(f"thread {t}: {traceback.format_exc()}")
 
     threads = [threading.Thread(target=encrypt_many, args=(t,)) for t in range(THREADS)]
     for thread in threads:
@@ -65,15 +67,15 @@ def decrypt_from_threads(cipher: Cipher, rows: List[Dict[str, object]]) -> List[
     per_thread = -(-len(rows) // THREADS)
     opened: List[List[User]] = [[] for _ in range(THREADS)]
     failures: List[str] = []
-    start = threading.Barrier(THREADS)
+    start = threading.Barrier(THREADS, timeout=30)
 
     def decrypt_many(t: int) -> None:
-        start.wait()
         try:
+            start.wait()
             for row in rows[t * per_thread : (t + 1) * per_thread]:
                 opened[t].extend(cipher.decrypt([row]))
-        except Exception as error:
-            failures.append(repr(error))
+        except Exception:
+            failures.append(f"thread {t}: {traceback.format_exc()}")
 
     threads = [threading.Thread(target=decrypt_many, args=(t,)) for t in range(THREADS)]
     for thread in threads:
@@ -96,4 +98,6 @@ def wait_for_the_interrupt() -> None:
     loop gives it that check, and ends if it never comes."""
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        pass
+        # A short sleep still returns to Python, which then checks for the
+        # signal, and it does not keep a core busy.
+        time.sleep(0.01)

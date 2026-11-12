@@ -26,8 +26,10 @@ from errors import install_error_handlers, log_error, problem
 
 # hide_parameters leaves the bound values out of SQLAlchemy's error text.
 # PostgreSQL's own detail can still quote the start of a rejected value.
+# make_url reads both postgresql:// and postgres://, as app.py accepts both.
+# The URL object, not its str(), which writes the password as ***.
 engine = sa.create_engine(
-    os.environ["DATABASE_URL"].replace("postgresql://", "postgresql+psycopg://", 1),
+    sa.engine.make_url(os.environ["DATABASE_URL"]).set(drivername="postgresql+psycopg"),
     hide_parameters=True,
 )
 

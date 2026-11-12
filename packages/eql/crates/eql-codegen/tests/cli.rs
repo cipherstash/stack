@@ -223,14 +223,18 @@ fn select_subcommand_drops_files_confined_to_the_other_version() {
 
 /// `go-eql` and `py-eql` write outside the EQL subtree, so an
 /// `EQL_CODEGEN_OUT_ROOT` override would send them outside the throwaway tree.
-/// Each refuses the override with exit 2, before writing anything.
+/// Each refuses the override with exit 2, before writing anything. The
+/// override is two folders deep, so the emitters' `../../` paths would land
+/// inside the throwaway tree, where the test looks for them.
 #[test]
 fn cross_tree_emitters_refuse_the_output_root_override() {
-    let out_root = tempdir();
+    let tree = tempdir();
+    let out_root = tree.0.join("one").join("two");
+    std::fs::create_dir_all(&out_root).expect("create the nested output root");
     for command in ["go-eql", "py-eql"] {
         let out = Command::new(bin())
             .arg(command)
-            .env("EQL_CODEGEN_OUT_ROOT", out_root.0.as_os_str())
+            .env("EQL_CODEGEN_OUT_ROOT", out_root.as_os_str())
             .output()
             .unwrap_or_else(|e| panic!("run eql-codegen {command}: {e}"));
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -240,6 +244,15 @@ fn cross_tree_emitters_refuse_the_output_root_override() {
             stderr.contains("EQL_CODEGEN_OUT_ROOT"),
             "{command}: {stderr}"
         );
+        for path in [
+            eql_codegen::go_eql::GO_EQL_PATH,
+            eql_codegen::py_eql::PY_EQL_PATH,
+        ] {
+            assert!(
+                !out_root.join(path).exists(),
+                "{command} wrote {path} before it refused"
+            );
+        }
     }
 }
 

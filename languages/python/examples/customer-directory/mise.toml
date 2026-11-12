@@ -9,10 +9,11 @@ description = "Reset the example's database, install EQL v4 and the table, and i
 shell = "bash -c"
 run = """
 set -euo pipefail
+# Built from the tree, because the released copy moves only at a version bump.
+# Built first, so a failed build leaves the database as it was.
+mise -C ../../../../packages/eql run build
 docker compose down --volumes
 docker compose up --detach --wait
-# Built from the tree, because the released copy moves only at a version bump.
-mise -C ../../../../packages/eql run build
 psql_in_db() {
   docker compose exec -T db psql -U postgres -d customer_directory -v ON_ERROR_STOP=1 -q
 }

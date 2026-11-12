@@ -33,6 +33,8 @@ def test_the_readme_has_sql_for_the_live_test_to_run():
 def test_the_readme_installs_the_bundle_the_live_tests_install():
     # The live task cannot run the README's psql command from the root, so it
     # runs its own. Both must name the same bundle.
-    [install] = [block for block in blocks("sh") if "psql" in block]
+    installs = [block for block in blocks("sh") if "psql" in block]
+    assert len(installs) == 1, "the README must have exactly one psql install block"
+    [install] = installs
     assert BUNDLE in install
     assert f"../../{BUNDLE}" in MISE.read_text(encoding="utf-8")

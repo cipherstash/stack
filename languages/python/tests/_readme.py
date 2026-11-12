@@ -53,16 +53,16 @@ def program() -> str:
 
 
 class _TopLevel(ast.NodeVisitor):
-    """The names a program binds at its top level, and the names it reads
-    there. A function, class, lambda, or comprehension has a scope of its
-    own, so its names are skipped."""
+    """The names a program binds at its top level. A function, class,
+    lambda, or comprehension has a scope of its own, so its names are
+    skipped."""
 
     def __init__(self) -> None:
         self.bound: Set[str] = set()
-        self.read: Set[str] = set()
 
     def visit_Name(self, node: ast.Name) -> None:
-        (self.bound if isinstance(node.ctx, ast.Store) else self.read).add(node.id)
+        if isinstance(node.ctx, ast.Store):
+            self.bound.add(node.id)
 
     def visit_alias(self, node: ast.alias) -> None:
         self.bound.add((node.asname or node.name).split(".")[0])

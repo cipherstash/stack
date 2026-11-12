@@ -84,9 +84,10 @@ mod tests {
     }
 
     /// The commit is this checkout's, with `-dirty` exactly when a file
-    /// under a `packages/stack-*` crate has changed outside its `fuzz/`.
-    /// The status is read for all of `packages/` and filtered here, so the
-    /// test does not repeat build.rs's pathspec.
+    /// under a `packages/stack-*` crate has changed outside its `fuzz/`, or
+    /// the root `Cargo.toml` or this workspace's `Cargo.lock` has changed.
+    /// The status is read for wider paths and filtered here, so the test
+    /// does not repeat build.rs's pathspec.
     #[test]
     fn engine_commit_is_this_checkouts_commit() {
         // A commit given in STACKENCRYPT_ENGINE_COMMIT is trusted as given.
@@ -96,19 +97,29 @@ mod tests {
         let Some(head) = git(&["rev-parse", "HEAD"]) else {
             return;
         };
-        let status = git(&["status", "--porcelain", "--", "../../../../packages"])
-            .expect("git status runs in a checkout");
+        let status = git(&[
+            "status",
+            "--porcelain",
+            "--",
+            "../../../../packages",
+            "../../../../Cargo.toml",
+            "../../Cargo.lock",
+        ])
+        .expect("git status runs in a checkout");
         // A porcelain line is a two-letter status, a space and the path from
         // the repository root. A rename shows "old -> new".
         let dirty = status.lines().any(|line| {
             line.get(3..).is_some_and(|paths| {
                 paths.split(" -> ").any(|path| {
-                    path.trim_matches('"')
-                        .strip_prefix("packages/")
-                        .and_then(|rest| rest.split_once('/'))
-                        .is_some_and(|(krate, rest)| {
-                            krate.starts_with("stack-") && !rest.starts_with("fuzz/")
-                        })
+                    let path = path.trim_matches('"');
+                    path == "Cargo.toml"
+                        || path == "languages/python/Cargo.lock"
+                        || path
+                            .strip_prefix("packages/")
+                            .and_then(|rest| rest.split_once('/'))
+                            .is_some_and(|(krate, rest)| {
+                                krate.starts_with("stack-") && !rest.starts_with("fuzz/")
+                            })
                 })
             })
         });

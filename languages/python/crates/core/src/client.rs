@@ -92,16 +92,21 @@ pub fn shared() -> Result<&'static Client, Refusal> {
 /// after the switch. The two have different key source types, so a function
 /// that returned "the current client" would still leave each operation to
 /// write a branch per client.
+///
+/// Both branches give the macro's value: the test branch leaves the block,
+/// not the function, so code after `run!` runs in the test build too.
 macro_rules! run {
     (|$cipher:ident| $future:expr) => {{
-        #[cfg(feature = "deterministic-kms")]
-        if let Some((cipher, runtime)) = $crate::client::deterministic() {
-            let $cipher = cipher;
-            return runtime.block_on($future);
+        'run: {
+            #[cfg(feature = "deterministic-kms")]
+            if let Some((cipher, runtime)) = $crate::client::deterministic() {
+                let $cipher = cipher;
+                break 'run runtime.block_on($future);
+            }
+            let client = $crate::client::shared()?;
+            let $cipher = client.cipher();
+            client.block_on($future)
         }
-        let client = $crate::client::shared()?;
-        let $cipher = client.cipher();
-        client.block_on($future)
     }};
 }
 pub(crate) use run;

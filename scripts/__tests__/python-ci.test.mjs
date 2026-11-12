@@ -117,6 +117,14 @@ describe('tests-python.yml', () => {
     ).toEqual([])
   })
 
+  it('finds the stack crates as path dependencies, so the filter check is not empty', () => {
+    // A lockfile parser that finds nothing would leave the check above with
+    // no tree to look for, and it would pass.
+    expect(pathDependencyTrees()).toEqual(
+      expect.arrayContaining(['packages/stack-encrypt', 'packages/stack-kms']),
+    )
+  })
+
   it('runs on pull requests touching a file the core crate compiles by #[path]', () => {
     const paths = triggers(readWorkflow(WORKFLOW)).pull_request?.paths ?? []
     const files = pathModuleFiles()
@@ -208,6 +216,12 @@ describe('tests-python.yml', () => {
     const compiles = (step) =>
       /\bcargo\b|\bmise run\b/.test(step.run ?? '') ||
       /^PyO3\/maturin-action@/.test(step.uses ?? '')
+    // The scan must find the jobs that compile, or the check below passes
+    // over none: a wheel step in another form would drop out of it.
+    const compiling = Object.entries(wf.jobs)
+      .filter(([, job]) => job.steps.some(compiles))
+      .map(([id]) => id)
+    expect(compiling.sort()).toEqual(['live', 'python', 'wheels'])
     const missing = Object.entries(wf.jobs)
       .filter(([, job]) => job.steps.some(compiles))
       .filter(
@@ -221,6 +235,23 @@ describe('tests-python.yml', () => {
       missing,
       'jobs that compile Rust with no Swatinem/rust-cache step',
     ).toEqual([])
+  })
+
+  it('builds the deterministic test extension with the features of the normal build', () => {
+    // `--features` replaces pyproject.toml's list. A feature added there and
+    // not here would leave tests_deterministic/ testing another extension.
+    const pyproject = read(`${PYTHON_ROOT}/pyproject.toml`)
+    const declared = pyproject.match(/^features = \[([^\]]*)\]/m)
+    expect(
+      declared,
+      'pyproject.toml has a [tool.maturin] features list',
+    ).not.toBeNull()
+    const normal = [...declared[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+    const task = read(`${PYTHON_ROOT}/mise.toml`).match(/--features ([^\s"]+)/)
+    expect(task, 'test:deterministic passes --features').not.toBeNull()
+    expect(task[1].split(',').sort()).toEqual(
+      [...normal, 'deterministic-kms'].sort(),
+    )
   })
 
   it('runs every task of the Python workspace, and the two cargo lints, from that folder', () => {
