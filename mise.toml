@@ -10,6 +10,7 @@
 includes = [
   "packages/stack-auth/tasks.toml",
   "packages/stack-kms/tasks.toml",
+  "packages/stack-kms-vendor/tasks.toml",
   "packages/stack-profile/tasks.toml",
   "packages/stack-encrypt/tasks.toml",
   "packages/stack-guest-abi/tasks.toml",
@@ -119,6 +120,11 @@ check() {
 check stack-auth --no-default-features
 check stack-kms --no-default-features
 check stack-encrypt --no-default-features
+# The key vendor seam (ADR-0014): no transport of its own, so it must build for WASI as is. Its
+# `http` feature is the native transport, gated to non-wasm32 targets, so it
+# must add nothing here either.
+check stack-kms-vendor
+check stack-kms-vendor --features http
 # The Go binding's credential guest (ADR-0005) compiles stack-profile for
 # WASI: the hostname and the process id are native-only there.
 check stack-profile
