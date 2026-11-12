@@ -798,7 +798,9 @@ mod tests {
                 );
             }
         }
-        assert!(gap(family("json"), "").unwrap().contains("tree of leaves"));
+        // The `json` family's storage domain is produced from a document
+        // sealed as one leaf.
+        assert!(gap(family("json"), "").is_none());
     }
 
     #[test]

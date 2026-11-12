@@ -203,8 +203,33 @@ power-of-two bucket of at least 16 bytes). They order by the same key as the
 `ob` never equals the stored bytes; the comparator orders them. Text whose
 fold is longer than 1023 bytes or ends in NUL has no block ORE term and is
 refused. `TextSearchOre` follows `TextSearch`, with `ob` in place of `op`.
-`Date`, `Timestamp` and `Numeric` wait for a choice of their Rust plaintext
-types, and `Json` for a decision on sealing a document as one leaf.
+
+`Json` (`public.eql_v4_json`) stores a JSON document as one ciphertext, with
+no index. Its plaintext is `v4::plaintext::JsonPlaintext`, which holds a
+`serde_json::Value` and wipes it when it is dropped. `c` holds the document's
+JSON text, sealed as one text leaf: the text `serde_json` writes, with no
+whitespace. So the stored value shows the size of the document and nothing
+else, where a `JsonSearch` document shows which rows have which paths. Key
+order, whitespace and the spelling of a number are not kept. On decrypt the
+text is parsed by Stack Encrypt's rules (64-bit integers or doubles, no
+repeated member, valid Unicode), and a `c` that opens but does not hold a
+document is `Error::OpenedType`. Nothing inside a `Json` value can be
+queried: use `JsonSearch` for a document that is searched.
+
+```rust,ignore
+use eql_bindings::v4::{json::Json, plaintext::JsonPlaintext};
+use eql_bindings::Identifier;
+use serde_json::json;
+use stack_encrypt::{DecryptFrom, EncryptInto};
+
+let column = Identifier::for_column("users", "profile")?;
+let profile = JsonPlaintext::from(json!({"name": "Ada", "tags": ["maths"]}));
+let stored: Json = profile.encrypt_into_with_context(&keyset, column.clone()).await?;
+// INSERT ... VALUES ($1::public.eql_v4_json), binding sqlx::types::Json(&stored)
+
+let opened = JsonPlaintext::decrypt_from_with_context(stored, &keyset, column).await?;
+assert_eq!(opened.value()["tags"][0], "maths");
+```
 
 Each ordered v4 family also has two range query types, one per order term:
 `IntegerRangeOreQuery` and `IntegerRangeOpeQuery`, and so on
@@ -385,7 +410,10 @@ serializes it for its `se_targets` export; the module docs are the wire format.
 Rust plan — the same `EncryptFrom` the typed `encrypt_as::<TextEq>` runs, so
 the two paths produce the same identifier and equality term and open each
 other's values. An unproducible name is refused with the table's reason; an
-unknown one with "no such EQL type".
+unknown one with "no such EQL type". Every type in the table is producible
+today. A type that stores a JSON document (`Json`, `JsonSearch`) takes the
+plaintext kind `json`: the document's UTF-8 JSON text, in a text or bytes
+value, and it opens back to its text.
 
 ```rust,ignore
 use eql_bindings::encryption::targets;

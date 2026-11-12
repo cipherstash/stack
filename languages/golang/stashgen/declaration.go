@@ -275,11 +275,11 @@ const (
 	KindTimestamp
 	// KindDecimal is encrypt.Decimal.
 	KindDecimal
-	// KindJSON is json.RawMessage: a JSON document, stored as an
-	// JSONSearch value.
+	// KindJSON is json.RawMessage: a JSON document, stored as a
+	// JSONSearch or JSON value.
 	KindJSON
-	// KindJSONValue is a struct, map or slice type stored as an
-	// JSONSearch document: encoding/json writes it to JSON text and reads
+	// KindJSONValue is a struct, map or slice type stored as a
+	// JSONSearch or JSON document: encoding/json writes it to JSON text and reads
 	// it back. A field is classified so only where it names such an EQL
 	// type; anywhere else the type keeps its own kind.
 	KindJSONValue

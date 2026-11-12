@@ -34,7 +34,7 @@ func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 		"Boolean",
 		"Real", "RealEq", "RealOrdOre", "RealOrd", "RealOrdOpe",
 		"Double", "DoubleEq", "DoubleOrdOre", "DoubleOrd", "DoubleOrdOpe",
-		"JsonSearch",
+		"Json", "JsonSearch",
 	}
 	if len(producible) != len(want) {
 		t.Fatalf("producible = %v, want %v", producible, want)
@@ -53,8 +53,10 @@ func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 	if !ok || textEq.GoName != "TextEq" || textEq.Plaintext != "string" || textEq.Query != "TextEqQuery" || textEq.SQLDomain != "public.eql_v4_text_eq" || len(textEq.Indexes) != 1 || textEq.Indexes[0] != "eq" {
 		t.Fatalf("TextEq = %+v", textEq)
 	}
-	if j, ok := eql.Lookup("Json"); !ok || j.GoName != "JSON" {
-		t.Fatalf("Json's Go name is JSON: %+v", j)
+	// The storage-only document: produced from JSON text, with no index
+	// and no query.
+	if j, ok := eql.Lookup("Json"); !ok || j.GoName != "JSON" || j.Plaintext != "json" || j.SQLDomain != "public.eql_v4_json" || len(j.Indexes) != 0 || j.Query != "" {
+		t.Fatalf("Json = %+v", j)
 	}
 	if _, ok := eql.Lookup("Nope"); ok {
 		t.Fatal("Lookup found a type that does not exist")

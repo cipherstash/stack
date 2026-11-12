@@ -359,6 +359,11 @@ mod given_text_eq {
 mod given_a_name_the_engine_cannot_produce {
     use super::*;
 
+    /// Every type the table marks as not producible is refused by all three
+    /// entry points, with the table's reason, before any key is touched.
+    /// The catalog has no such type today, so this holds for one added
+    /// later; the refusal itself is tested on a row built for it, in
+    /// `eql_bindings::encryption::targets`.
     #[tokio::test]
     async fn every_entry_point_refuses_it_with_the_table_reason() {
         let (cipher, calls) = common::cipher().await;
@@ -391,20 +396,6 @@ mod given_a_name_the_engine_cannot_produce {
                 name,
             );
         }
-        let error = refused(targets::encrypt("Json", &keyset, &email(), text("x")));
-        assert_eq!(
-            error.to_string(),
-            "the engine cannot produce Json yet: a JSON value seals as a tree of leaves and EQL's \
-             `c` holds one; how a document becomes one sealed leaf is not decided"
-        );
-        // Refused by name before the label or the value is looked at.
-        let error = refused(targets::encrypt(
-            "Json",
-            &keyset,
-            &Label::new(["one"]).unwrap(),
-            frame(None::<i32>),
-        ));
-        assert!(matches!(error, TargetError::Unproducible { .. }), "{error}");
         let calls = calls.lock().unwrap();
         assert!(
             calls.generate.is_empty() && calls.retrieve.is_empty(),
@@ -571,7 +562,9 @@ mod the_table {
                 "date" => Some(ValueKind::Date),
                 "timestamp" => Some(ValueKind::Timestamp),
                 "numeric" => Some(ValueKind::Decimal),
-                // The rest have no Rust plaintext type in eql-bindings yet.
+                "json" => Some(ValueKind::Json),
+                // A family added later has no Rust plaintext type in
+                // eql-bindings until it is given one.
                 _ => None,
             };
             assert_eq!(
@@ -689,16 +682,14 @@ mod the_table {
                 "DoubleOrdOre",
                 "DoubleOrd",
                 "DoubleOrdOpe",
+                "Json",
                 "JsonSearch"
             ],
         );
-        for row in targets::targets().iter().filter(|t| !t.producible) {
-            let reason = row.reason.expect("an unproducible type has a reason");
-            let expected = match (row.family, row.suffix) {
-                ("json", "") => "tree of leaves",
-                (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
-            };
-            assert!(reason.contains(expected), "{}: {reason}", row.name);
+        // That is every row: no type waits for an encoding today.
+        for row in targets::targets() {
+            assert!(row.producible, "{}", row.name);
+            assert_eq!(row.reason, None, "{}", row.name);
         }
     }
 
@@ -722,16 +713,23 @@ mod the_table {
                 "reason": null
             })
         );
+        // A storage-only type: its query fields are null, not absent.
         let row = targets::target("Json").unwrap();
-        let json = serde_json::to_value(row).unwrap();
         assert_eq!(
-            json["plaintext"],
-            serde_json::Value::Null,
-            "an unspecified plaintext is null, not absent"
+            serde_json::to_value(row).unwrap(),
+            serde_json::json!({
+                "name": "Json",
+                "family": "json",
+                "suffix": "",
+                "plaintext": "json",
+                "sql_domain": "public.eql_v4_json",
+                "indexes": [],
+                "query": null,
+                "query_sql_domain": null,
+                "producible": true,
+                "reason": null
+            })
         );
-        assert_eq!(json["query"], serde_json::Value::Null);
-        assert_eq!(json["producible"], false);
-        assert!(json["reason"].is_string());
         // The whole table serializes as a list, the shape of the export.
         let all = serde_json::to_value(targets::targets()).unwrap();
         assert_eq!(all.as_array().unwrap().len(), targets::targets().len());

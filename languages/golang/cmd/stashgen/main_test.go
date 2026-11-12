@@ -164,7 +164,7 @@ type Person struct {
 
 // The real engine: the embedded guest, which the command links with the EQL
 // types, so a struct with encrypt_into=TextEq generates, and a type the
-// engine cannot produce yet is refused with nothing written. Skips when the
+// engine does not have is refused with nothing written. Skips when the
 // guest is not built.
 func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 	checker, err := encrypt.NewChecker(context.Background())
@@ -184,20 +184,64 @@ func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 	if !strings.Contains(string(written), "eql.TextEq") || !strings.Contains(string(written), `EncryptInto("email", gensupport.String, "TextEq")`) {
 		t.Fatalf("the generated file does not name the EQL type:\n%s", written)
 	}
-	// A type the engine cannot produce yet: refused by name, nothing written.
-	unproducible := strings.Replace(userSource, "encrypt_into=TextEq", "encrypt_into=Json", 1)
-	dir = writeModule(t, map[string]string{"model.go": unproducible})
+	// A type the engine does not have: refused by name, nothing written.
+	unknown := strings.Replace(userSource, "encrypt_into=TextEq", "encrypt_into=TextNope", 1)
+	dir = writeModule(t, map[string]string{"model.go": unknown})
 	stderr.Reset()
 	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 1 {
 		t.Fatalf("exit %d, want 1\n%s", code, stderr.String())
 	}
-	// Refused by the generator with the engine's reason, before the engine
-	// is asked: se_targets lists the type as not producible.
-	if !strings.Contains(stderr.String(), "cannot produce the EQL type Json yet") {
+	// Refused by the generator before the engine is asked: se_targets
+	// lists no type of that name.
+	if !strings.Contains(stderr.String(), "the engine has no EQL type TextNope") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(dir, "user_stash.go")); !os.IsNotExist(err) {
 		t.Fatal("a file was written after the engine refused")
+	}
+	// The storage-only document generates: a field with Encrypt and no
+	// query method. It takes no options, which are the JSON index's, and a
+	// string is not a document.
+	documentSource := func(goType, tag string) string {
+		return "package users\n\nimport \"encoding/json\"\n\nvar _ json.RawMessage\n\ntype User struct {\n" +
+			"\t_ struct{} `stash:\"context=users\"`\n" +
+			"\tID int64 `stash:\"id,passthrough\"`\n" +
+			"\tProfile " + goType + " `stash:\"profile," + tag + "\"`\n}\n"
+	}
+	dir = writeModule(t, map[string]string{"model.go": documentSource("json.RawMessage", "encrypt_into=Json")})
+	stderr.Reset()
+	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, stderr.String())
+	}
+	written, err = os.ReadFile(filepath.Join(dir, "user_stash.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Profile eql.JSON", `EncryptInto("profile", gensupport.JSON, "Json")`, "func (f ProfileField) Encrypt("} {
+		if !strings.Contains(string(written), want) {
+			t.Fatalf("the generated file lacks %q:\n%s", want, written)
+		}
+	}
+	for _, unwanted := range []string{"Contains(", "Selector(", "Match("} {
+		if strings.Contains(string(written), unwanted) {
+			t.Fatalf("a storage-only document has no query method, and the file has %q:\n%s", unwanted, written)
+		}
+	}
+	for _, refused := range []struct{ goType, tag, want string }{
+		{"json.RawMessage", "encrypt_into=Json(ordered=$.age)", "the target takes no options"},
+		{"string", "encrypt_into=Json", "Json seals a json document, and string is one JSON scalar"},
+	} {
+		dir = writeModule(t, map[string]string{"model.go": documentSource(refused.goType, refused.tag)})
+		stderr.Reset()
+		if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 1 {
+			t.Fatalf("%s: exit %d, want 1\n%s", refused.tag, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "User.Profile") || !strings.Contains(stderr.String(), refused.want) {
+			t.Fatalf("%s: stderr = %q", refused.tag, stderr.String())
+		}
+		if _, err := os.Stat(filepath.Join(dir, "user_stash.go")); !os.IsNotExist(err) {
+			t.Fatalf("%s: a file was written after the refusal", refused.tag)
+		}
 	}
 	// A Go type the EQL type does not seal: TextEq takes a string. The
 	// generator refuses it from the engine's plaintext kind, before the

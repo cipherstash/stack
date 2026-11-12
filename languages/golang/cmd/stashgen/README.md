@@ -75,6 +75,7 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"email,encrypt,index=equality;match"` | seal the field, and derive each index beside it |
 | `stash:"score,index=ore"` | derive the index alone; no ciphertext is stored, so `Decrypt` leaves the field at its zero value |
 | `stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"` | on a `json.RawMessage`, or a struct, map or slice type: store the field as an encrypted JSON document; see "Encrypted JSON documents" |
+| `stash:"settings,encrypt_into=Json"` | on the same Go types: store the field as an encrypted JSON document with no index, which is stored and read back whole; see "A document with no index" |
 | `stash:"attrs,index=json"` | refused: a JSON document is stored with `encrypt_into=JsonSearch`, not as an index beside a ciphertext |
 | `stash:"id,passthrough"` | store the field as it is |
 | `stash:"tenant,context_field"` | the field's value is the context of every other field in the struct, in place of a `context=` tag; stored as it is |
@@ -110,6 +111,29 @@ This build refuses an index with options: a query term is derived with the defau
 These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
 `opaque` seals the whole struct as one `bytes` field holding a storage blob (see "What crosses the binding").
 `json` names the JSON index, which a field reaches only through `encrypt_into=JsonSearch`.
+
+### A document with no index
+
+A field with `encrypt_into=Json` is stored as one encrypted JSON document with no index, an `eql.JSON` in a `public.eql_v4_json` column.
+Use it for a document that is stored and read back whole, and never queried.
+
+```go
+type Setting struct {
+	_      struct{}          `stash:"context=settings"`
+	ID     int64             `stash:"id,passthrough"`
+	Raw    json.RawMessage   `stash:"raw,encrypt_into=Json"`
+	Prefs  *Prefs            `stash:"prefs,encrypt_into=Json,null=sql"`
+	Labels map[string]string `stash:"labels,encrypt_into=Json"`
+}
+```
+
+The stored value is `{"v": 4, "i": {...}, "c": "..."}`: one ciphertext, which holds the document's JSON text.
+It shows the size of the document and nothing else. A `JsonSearch` document also shows which rows have which paths, and is many times larger.
+The field's entry in `Fields` has `Encrypt` and no query method: nothing inside the document can be searched, and PostgreSQL blocks the JSON operators on the column.
+
+`Json` takes the Go types `JsonSearch` takes, and reads them back the same way: the rules in [Encrypted JSON documents](#encrypted-json-documents) for `encoding/json`, `json.RawMessage`, optional fields (`null=sql`) and refused text all apply.
+It takes no options: `ordered=` and `sealed_root=` belong to the JSON index, which `Json` does not have.
+To make a `Json` field searchable later, change its tag to `JsonSearch`, change the column's type, and encrypt the rows again: the two types store different values.
 
 ### Encrypted JSON documents
 
@@ -404,9 +428,10 @@ The engine produces these EQL types today, each from one Go field type:
 | `TimestampOrd`, `TimestampOrdOpe`, `TimestampOrdOre` | `time.Time` |
 | `Numeric`, `NumericEq` | `encrypt.Decimal` |
 | `NumericOrd`, `NumericOrdOpe`, `NumericOrdOre` | `encrypt.Decimal` |
+| `Json` | struct, map, slice, or `json.RawMessage`; see [A document with no index](#a-document-with-no-index) |
 | `JsonSearch` | struct, map, slice, or `json.RawMessage`; see [Encrypted JSON documents](#encrypted-json-documents) |
 
-The `Eq` types answer `Eq`; the `Ord`, `OrdOpe` and `OrdOre` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `TextMatch` answers `Matches`, and `TextSearch` and `TextSearchOre` all of `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, each query carrying only the term its operator reads; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp` and `Numeric` are stored and read only, with no query method.
+The `Eq` types answer `Eq`; the `Ord`, `OrdOpe` and `OrdOre` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `TextMatch` answers `Matches`, and `TextSearch` and `TextSearchOre` all of `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, each query carrying only the term its operator reads; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp`, `Numeric` and `Json` are stored and read only, with no query method.
 The ordered date, timestamp and numeric types answer the four comparisons, as do the other ordered EQL types. The generated EQL fields have no `Between` method yet: EQL v4 has range query domains, but `stashgen` does not construct their operands. A JSON document's declared ordered paths have their own `Between` method, which returns two leaf query values; see [Encrypted JSON documents](#encrypted-json-documents).
 
 Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
@@ -431,7 +456,7 @@ The error names the type and the field, and never a value.
 - a `context_field` beside a `context=` field, a second `context_field`, one that is not a `string`, one with another part such as `encrypt` or `index=`, or one whose name is not a label segment;
 - an index or an EQL type that does not apply to the field's Go type, such as `match` on an `int32`;
 - a field type that the engine cannot seal;
-- an EQL type that the engine cannot produce yet;
+- an EQL type that the engine does not have, or cannot produce yet;
 - an index the engine does not derive yet (`json`), or an index with options;
 - a `passthrough` field that has an index;
 - a model with a field that has no tag, or with no field for an output;

@@ -313,11 +313,20 @@ func TestTextEqIsRefusedByTheBuildWithoutEQLTypes(t *testing.T) {
 	if err := eqlChecker.Check(ctx, plan); err != nil {
 		t.Fatalf("the eql build refuses TextEq: %v", err)
 	}
-	for _, name := range []string{"Json", "Nope"} {
-		refused := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: name}}}
-		if err := eqlChecker.Check(ctx, refused); !errors.Is(err, encrypt.ErrEncoding) {
-			t.Errorf("%s: Check = %v, want ErrEncoding", name, err)
-		}
+	// A type the engine does not have.
+	unknown := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: "Nope"}}}
+	if err := eqlChecker.Check(ctx, unknown); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("Nope: Check = %v, want ErrEncoding", err)
+	}
+	// The storage-only document is a target for a json field, and for no
+	// other kind.
+	document := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "profile", Kind: record.JSON, Target: "Json"}}}
+	if err := eqlChecker.Check(ctx, document); err != nil {
+		t.Errorf("the eql build refuses Json: %v", err)
+	}
+	notDocument := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "profile", Kind: record.String, Target: "Json"}}}
+	if err := eqlChecker.Check(ctx, notDocument); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("a string Json field: Check = %v, want ErrEncoding", err)
 	}
 	// A declared type other than TextEq's plaintext, and an extended plan.
 	wrongKind := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.Uint64, Target: "TextEq"}}}

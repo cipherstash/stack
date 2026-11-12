@@ -39,6 +39,21 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **Store a JSON document as one ciphertext, with no index: the EQL type
+  `Json`** (#1636). A struct, map, slice or `json.RawMessage` field tagged
+  `encrypt_into=Json` is stored as an `eql.JSON` in a `public.eql_v4_json`
+  column. The stored value is `{v, i, c}`, where `c` holds the document's
+  JSON text as one ciphertext. It shows the document's size and nothing
+  else. Use it for a document that is read back whole and never queried.
+  `JsonSearch` stays the type for a document the database searches.
+  - The field takes the Go types a `JsonSearch` field takes, and the same
+    rules: a document is written with `encoding/json`, text that is not a
+    document is refused as `ErrEncoding`, and an optional field says
+    `null=sql`.
+  - The field's entry in `Fields` has `Encrypt` and no query method.
+  - Before, the engine listed `Json` as a type it could not produce, and
+    `stashgen` refused the tag. `eql.Types` now lists it as producible,
+    with the plaintext kind `json`.
 - `Checker.Contexts` and `Cipher.Contexts` show the contexts a plan's
   fields are sealed and indexed under, before any key is requested: one
   line per field, then one indented line with its context, such as

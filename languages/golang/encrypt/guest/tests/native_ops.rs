@@ -1446,6 +1446,7 @@ fn targets_lists_what_the_build_holds() {
             "DoubleOrdOre",
             "DoubleOrd",
             "DoubleOrdOpe",
+            "Json",
             "JsonSearch"
         ],
         "the engine's producible types, in catalog order"

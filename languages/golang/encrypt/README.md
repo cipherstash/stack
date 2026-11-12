@@ -520,6 +520,7 @@ The EQL types the engine produces, and the Go field types each takes:
 | `Numeric` | `encrypt.Decimal` | none |
 | `NumericEq` | `encrypt.Decimal` | `=`, `<>` (`1.5 = 1.50`) |
 | `NumericOrd`, `NumericOrdOpe`, `NumericOrdOre` | `encrypt.Decimal` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Json` (`eql.JSON`) | struct, map, slice, or `json.RawMessage` | none: the document is one ciphertext, stored and read back whole; see [Encrypted JSON documents](#encrypted-json-documents) |
 | `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, several members of one array element, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
 
 Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
@@ -604,6 +605,14 @@ value is stored under a table and a column, and the extended label has no
 column.
 
 ### Encrypted JSON documents
+
+There are two EQL types for a JSON document. `Json` stores it as one
+ciphertext in a `public.eql_v4_json` column
+(`stash:"settings,encrypt_into=Json"`): nothing inside it can be searched,
+and the stored value shows only the document's size. Use it for a document
+that is stored and read back whole. `JsonSearch`, described below, stores a
+document the database can search. Both take the same Go types. See
+[A document with no index](../cmd/stashgen/README.md#a-document-with-no-index).
 
 `JsonSearch` stores a whole JSON document in one `public.eql_v4_json_search`
 column, from a struct, map or slice field, or a `json.RawMessage`

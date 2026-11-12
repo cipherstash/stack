@@ -243,6 +243,8 @@ const EXCHANGE_VARIABLES = [
   'EQL_V4_RUST_ROWS',
   'EQL_V4_SMALLINT_ROWS_OUT',
   'EQL_V4_SMALLINT_ROWS',
+  'EQL_V4_JSON_ROWS_OUT',
+  'EQL_V4_JSON_ROWS',
 ]
 
 const ENGINE_CRATES = ['stack-encrypt', 'vitaminc-aead', 'vitaminc-aead-frame']
