@@ -6,7 +6,11 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { legacy } from '../run/behaviour.mjs'
-import { dynamoColumns } from '../run/legacy-columns.mjs'
+import {
+  dynamoColumns,
+  hasHmac,
+  postgresColumns,
+} from '../run/legacy-columns.mjs'
 import { migrationChecks, noRewriteCheck } from '../run/migration-checks.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
@@ -23,7 +27,7 @@ const observed = vi.hoisted(() => ({
           ...Object.fromEntries(
             dynamoColumns.flatMap((key) => [
               [`${key}__source`, { S: 'original' }],
-              [`${key}__hmac`, { S: 'term' }],
+              ...(hasHmac(key) ? [[`${key}__hmac`, { S: 'term' }]] : []),
             ]),
           ),
         },
@@ -31,9 +35,12 @@ const observed = vi.hoisted(() => ({
       postgres: [
         {
           pk: 'legacy',
-          email: { c: 'original', hm: 'term' },
-          age: { c: 'original', hm: 'term' },
-          notes: { c: 'original' },
+          ...Object.fromEntries(
+            postgresColumns.map((column) => [
+              column,
+              { c: 'original', ...(hasHmac(column) ? { hm: 'term' } : {}) },
+            ]),
+          ),
         },
       ],
     }),
