@@ -7,7 +7,8 @@ import { fakeMigrate } from './fake-migrator.mjs'
 import { migrationChecks } from './migration.mjs'
 import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
-import { resolveStack } from './stack-source.mjs'
+import { isSnapshotInfrastructureError } from './snapshot-errors.mjs'
+import { resolveStack, verifyInstalledTarball } from './stack-source.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
 /** @typedef {Awaited<ReturnType<typeof createStoreSet>>} StoreSet
@@ -291,14 +292,25 @@ export function createRealDriver({
             .split(sep)
             .some((part) => ['node_modules', '.git'].includes(part)),
       })
+      // The Migrator controls its copy of the tarball. Supply the App Host with
+      // the host-resolved artifact, removing first so a planted symlink cannot
+      // redirect the write, and confirm npm installed exactly that artifact.
+      const tarball = stackSource?.tarball
+      const installed = resolve(oracleWorkspace, 'resolved-stack.tgz')
+      if (tarball) {
+        await rm(installed, { force: true })
+        await cp(tarball, installed)
+      }
       await execute('app-host', oracleWorkspace, oracleStores, [
         'npm',
         'install',
         '--save-exact',
-        stackSource?.tarball
+        tarball
           ? 'file:./resolved-stack.tgz'
           : `@cipherstash/stack@${manifest.stack}`,
       ])
+      if (tarball)
+        await verifyInstalledTarball({ workspace: oracleWorkspace, tarball })
       host = await isolation.openAppHost({
         actor: 'app-host',
         workspace: oracleWorkspace,
