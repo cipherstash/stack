@@ -260,7 +260,7 @@ test('fresh storage requires all v3 envelopes and null legacy sources', () => {
     notes: null,
   }
   const snapshot = { ...after, rows: [...after.rows, fresh] }
-  expect(postgresFreshWriteCheck(snapshot, 'new').passed).toBe(true)
+  expect(postgresFreshWriteCheck(snapshot, 'new', after).passed).toBe(true)
   for (const column of ['email', 'age', 'notes']) {
     expect(
       postgresFreshWriteCheck(
@@ -269,6 +269,7 @@ test('fresh storage requires all v3 envelopes and null legacy sources', () => {
           rows: [...after.rows, { ...fresh, [column]: after.rows[0].email }],
         },
         'new',
+        after,
       ).passed,
     ).toBe(false)
     expect(
@@ -278,7 +279,42 @@ test('fresh storage requires all v3 envelopes and null legacy sources', () => {
           rows: [...after.rows, { ...fresh, [`${column}_v3`]: null }],
         },
         'new',
+        after,
       ).passed,
     ).toBe(false)
   }
+})
+
+test('fresh storage refuses a write that removes or rewrites pre-existing rows', () => {
+  const before = migrated()
+  const fresh = {
+    ...before.rows[0],
+    pk: 'new',
+    email: null,
+    age: null,
+    notes: null,
+  }
+  // Deleting Grace leaves every lookup the behaviour checks perform intact.
+  const deleted = {
+    ...before,
+    rows: [...before.rows.filter((row) => row.pk !== 'grace'), fresh],
+  }
+  expect(postgresFreshWriteCheck(deleted, 'new', before)).toMatchObject({
+    passed: false,
+    cause: expect.stringContaining('grace'),
+  })
+  // Clearing retained v2 columns keeps v3 lookups working but loses rollback.
+  const cleared = {
+    ...before,
+    rows: [...before.rows.map((row) => ({ ...row, email: null })), fresh],
+  }
+  expect(postgresFreshWriteCheck(cleared, 'new', before)).toMatchObject({
+    passed: false,
+    cause: expect.stringContaining('ada'),
+  })
+  const extra = {
+    ...before,
+    rows: [...before.rows, fresh, { ...fresh, pk: 'stray' }],
+  }
+  expect(postgresFreshWriteCheck(extra, 'new', before).passed).toBe(false)
 })

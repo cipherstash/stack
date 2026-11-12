@@ -114,7 +114,7 @@ export function createRealDriver({
       throw Error(`${actor} command exited ${result.exitCode}`)
     return result
   }
-  /** Reads the Oracle database with the harness's admin connection. A store
+  /** Reads the Oracle database from the harness as the Run's role. A store
    * transport failure is infrastructure; anything else is migration damage. */
   async function oracleSnapshot() {
     try {
@@ -131,8 +131,10 @@ export function createRealDriver({
    * workspace's `src/migrate.mjs` `migrate(env)` inside App Host against its
    * fresh database, then runs it again: a rerun must either succeed without
    * changing data or refuse without changing anything. Data, not the exit
-   * code, decides the rerun check.
-   * @returns {Promise<import('../types.js').OracleCheck[]>} */
+   * code, decides the rerun check, except that a rerun the isolation backend
+   * timed out has not refused: it was killed, so it fails. Returns the snapshot
+   * taken after the first run, before any application code starts.
+   * @returns {Promise<{checks: import('../types.js').OracleCheck[], converted: unknown}>} */
   async function postgresConversion() {
     const convert = () =>
       attempt('app-host', oracleWorkspace, oracleStores, [
@@ -142,34 +144,41 @@ export function createRealDriver({
       ])
     const first = await convert()
     if (first.exitCode !== 0)
-      return [
-        {
-          id: 'migration.postgres-migrate',
-          passed: false,
-          cause: `migrate(env) exited ${first.exitCode}`,
-        },
-        {
-          id: 'migration.postgres-migrate-rerun',
-          passed: false,
-          cause: 'Rerun not checked: the first migrate(env) failed',
-        },
-      ]
+      return {
+        converted: null,
+        checks: [
+          {
+            id: 'migration.postgres-migrate',
+            passed: false,
+            cause: `migrate(env) exited ${first.exitCode}`,
+          },
+          {
+            id: 'migration.postgres-migrate-rerun',
+            passed: false,
+            cause: 'Rerun not checked: the first migrate(env) failed',
+          },
+        ],
+      }
     const before = await oracleSnapshot()
     const rerun = await convert()
     const after = await oracleSnapshot()
     const unchanged = isDeepStrictEqual(before, after)
-    return [
-      { id: 'migration.postgres-migrate', passed: true },
-      {
-        id: 'migration.postgres-migrate-rerun',
-        passed: unchanged,
-        ...(unchanged
-          ? {}
-          : {
-              cause: `Rerunning migrate(env) changed stored data (exit ${rerun.exitCode})`,
-            }),
-      },
-    ]
+    const rerunCause = rerun.timedOut
+      ? 'Rerunning migrate(env) timed out'
+      : unchanged
+        ? null
+        : `Rerunning migrate(env) changed stored data (exit ${rerun.exitCode})`
+    return {
+      converted: before,
+      checks: [
+        { id: 'migration.postgres-migrate', passed: true },
+        {
+          id: 'migration.postgres-migrate-rerun',
+          passed: !rerunCause,
+          ...(rerunCause ? { cause: rerunCause } : {}),
+        },
+      ],
+    }
   }
   return {
     async provision() {
@@ -424,8 +433,10 @@ export function createRealDriver({
     async behaviour() {
       /** @type {import('../types.js').OracleCheck[]} */
       let conversion = []
+      /** @type {unknown} */
+      let converted = null
       if (postgresUpgrade) {
-        conversion = await postgresConversion()
+        ;({ checks: conversion, converted } = await postgresConversion())
         host = await isolation.openAppHost({
           actor: 'app-host',
           workspace: oracleWorkspace,
@@ -451,8 +462,21 @@ export function createRealDriver({
           )
           const current = await oracleSnapshot()
           result.checks.unshift(...conversion)
+          // The conversion is migrate(env)'s job: storage checks must hold
+          // before createApp runs, not only after the application has run.
+          const early = converted
+            ? postgresMigrationChecks(legacySnapshot, converted)
+            : []
           result.checks.push(
-            ...postgresMigrationChecks(legacySnapshot, current),
+            ...postgresMigrationChecks(legacySnapshot, current).map((check) => {
+              const before = early.find((entry) => entry.id === check.id)
+              return before && !before.passed
+                ? {
+                    ...before,
+                    cause: `${before.cause} (before the application started)`,
+                  }
+                : check
+            }),
           )
           const checks = await result.mutate()
           if (freshSnapshotFailure) {
@@ -466,7 +490,7 @@ export function createRealDriver({
               },
             )
           }
-          checks.push(postgresFreshWriteCheck(freshSnapshot, 'new'))
+          checks.push(postgresFreshWriteCheck(freshSnapshot, 'new', current))
           checks.push(
             ...(await migrationChecks({
               workspace,

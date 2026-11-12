@@ -22,11 +22,18 @@ startup, the Fixture App has a separate entry point, `src/migrate.mjs`
 `migrate(env)` inside App Host (`node /harness/app-host.mjs migrate`) using the
 Oracle Store Set's application role, then runs it again: the rerun passes
 `migration.postgres-migrate-rerun` only if the Oracle snapshots before and after
-it are identical, whether it succeeded or refused with a non-zero exit. A failed
-first `migrate(env)` fails `migration.postgres-migrate` as a behaviour failure.
-Only then does App Host start `createApp`. The harness snapshots stored rows,
-domains and indexes independently, after read-only application checks and
-before fresh writes.
+it are identical, whether it succeeded or refused with a non-zero exit; a rerun
+the isolation backend timed out fails. A failed first `migrate(env)` fails
+`migration.postgres-migrate` as a behaviour failure. Only then does App Host
+start `createApp`. The harness snapshots stored rows, domains and indexes
+independently, as the Run's own application role rather than the superuser, so
+an object a migration planted cannot run with superuser privileges. The storage
+checks must hold on the snapshot taken after the first `migrate(env)`, before
+`createApp` runs, and again after read-only application checks. The snapshot
+after the fresh write must add exactly the fresh row and leave every other row,
+retained v2 sources included, unchanged. The EQL 2.2.1 bundle is downloaded once
+per process with a timeout and refused unless its SHA-256 digest matches the
+release asset's.
 
 The hidden Reference Migration retains source columns and rebuilds only the
 envelopes the guide proves convertible. Deterministic variants `noop`, `row-loss`,
@@ -119,8 +126,9 @@ mutations. Metadata changes alone do not fail this comparison. The mutation
 checks then run, followed by the migration layer: old Protect imports and npm
 dependencies must be gone, every FFI lockfile entry must match the actual
 version selected for the exact Stack dependency, the endpoint shim must be
-removed, and stored Mutation Data must contain no `active__hmac` after updating
-the active field. Missing checks or missing inspection evidence prevent a pass.
+removed, and, for the DynamoDB procedure only, stored Mutation Data must
+contain no `active__hmac` after updating the active field. PostgreSQL runs
+require `requiredPostgresChecks` instead, which has no `active__hmac` check. Missing checks or missing inspection evidence prevent a pass.
 
 Diff evidence uses the host-recorded fixture commit, so an adapter can commit
 its changes without hiding them. Failed Git commands fail the migration stage

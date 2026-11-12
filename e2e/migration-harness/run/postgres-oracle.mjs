@@ -85,7 +85,8 @@ export function validatePostgresBaseline(snapshot) {
 
 /** Compare only bytes proven retained by the guide. Version and envelope fields
  * legitimately change; source columns, ciphertext and equality terms must remain.
- * Snapshotting runs with the harness's admin connection, never inside App Host.
+ * Snapshotting runs as the Run's application role from the harness, never
+ * inside App Host and never as the superuser.
  * @param {unknown} before @param {unknown} after
  * @returns {import('../types.js').OracleCheck[]} */
 export function postgresMigrationChecks(before, after) {
@@ -185,31 +186,46 @@ function validTarget(target, column) {
   )
 }
 
-/** Inspect fresh storage independently of application return values.
- * @param {unknown} snapshot @param {string} pk
+/** Inspect fresh storage independently of application return values. The write
+ * must add exactly the fresh row: every row present just before it, taken from
+ * `before`, must survive byte for byte, retained v2 sources included.
+ * @param {unknown} snapshot @param {string} pk @param {unknown} before
  * @returns {import('../types.js').OracleCheck} */
-export function postgresFreshWriteCheck(snapshot, pk) {
-  let passed = false
-  try {
-    const row = read(snapshot).rows.get(pk)
-    passed =
-      !!row &&
-      columns.every(
-        (column) =>
-          row[column] === null &&
-          validTarget(migratedPayload(row[`${column}_v3`]), column),
-      )
-  } catch {
-    /* Invalid stored evidence is a failed check. */
-  }
-  return {
+export function postgresFreshWriteCheck(snapshot, pk, before) {
+  const failed = (/** @type {string} */ cause) => ({
     id: 'migration.postgres-fresh-v3-storage',
-    passed,
-    ...(!passed
-      ? {
-          cause:
-            'Fresh PostgreSQL row must use v3 targets and leave retained source columns null',
-        }
-      : {}),
+    passed: false,
+    cause,
+  })
+  let after
+  let prior
+  try {
+    after = read(snapshot)
+    prior = read(before)
+  } catch {
+    return failed('Invalid PostgreSQL snapshot around the fresh write')
   }
+  const row = after.rows.get(pk)
+  if (
+    !row ||
+    !columns.every(
+      (column) =>
+        row[column] === null &&
+        validTarget(migratedPayload(row[`${column}_v3`]), column),
+    )
+  )
+    return failed(
+      'Fresh PostgreSQL row must use v3 targets and leave retained source columns null',
+    )
+  const changed = [...prior.rows]
+    .filter(([key, value]) => !isDeepStrictEqual(after.rows.get(key), value))
+    .map(([key]) => key)
+  const added = [...after.rows.keys()].filter(
+    (key) => key !== pk && !prior.rows.has(key),
+  )
+  if (prior.rows.has(pk) || changed.length || added.length)
+    return failed(
+      `The fresh write changed other PostgreSQL rows: ${[...changed, ...added].join(', ') || pk}`,
+    )
+  return { id: 'migration.postgres-fresh-v3-storage', passed: true }
 }
