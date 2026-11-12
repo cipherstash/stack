@@ -142,6 +142,7 @@ def invoke(argv, stage):
         # the sole survivor, which is not the actor once a descendant outlives it.
         live = {str(actor_pid)} if actor_pid is not None else set()
         actor_exit = None
+        first_record = True
         source = process.stderr
         if source is not None:
             while True:
@@ -160,13 +161,16 @@ def invoke(argv, stage):
                     pid = next(iter(live))
                 else:
                     pid = str(actor_pid or process.pid)
-                if actor_pid is None and prefixed and not live and actor_exit is None:
-                    # A fast actor may finish before /proc discovery sees it.
-                    # The first trusted record is the initial exec launched by
-                    # strace; never substitute a later descendant's exit PID.
-                    if not call.startswith('execve('):
-                        raise RuntimeError('ptrace stream lacks initial actor exec record')
-                    actor_pid = int(pid)
+                if first_record:
+                    # strace forks capability-probe children before the actor.
+                    # /proc may observe one of those helpers; shared numeric
+                    # output identifies the actor by its initial trusted exec.
+                    if second is not None or actor_pid is None:
+                        if not prefixed or not call.startswith('execve('):
+                            raise RuntimeError('ptrace stream lacks initial actor exec record')
+                        actor_pid = int(pid)
+                        live = {pid}
+                    first_record = False
                 exited = re.fullmatch(r'\+\+\+ exited with (\d+) \+\+\+', call)
                 killed = re.fullmatch(r'\+\+\+ killed by (SIG\w+)(?: \(core dumped\))? \+\+\+', call)
                 if exited or killed:
