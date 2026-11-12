@@ -1,5 +1,9 @@
-"""Child process of `test_concurrency_live.py`: one call, then a fork, then a
-call in the forked child. Prints what the child did as JSON.
+"""Child process of `test_concurrency_live.py`: a fork, and a call in the
+forked child. Prints what the child did as JSON.
+
+`after` forks after the first call, so the parent's client exists: the
+child must be refused, with no wait. `before` forks before any call, so no
+client exists: the child must build its own and work.
 
 The child's result comes back through a pipe. The parent waits at most 30
 seconds, so a child that never returns shows as "hang" and does not stop
@@ -8,15 +12,18 @@ the test run.
 
 import json
 import os
+import sys
 import time
 
 from _sync_contract import User, user
 
-from stackencrypt import Cipher, _engine
+from stackencrypt import Cipher, StashError, _engine
 
+mode = sys.argv[1]
 cipher = Cipher(User)
-cipher.encrypt([user(1)])
-assert _engine.client_builds() == 1
+if mode == "after":
+    cipher.encrypt([user(1)])
+    assert _engine.client_builds() == 1
 
 read_end, write_end = os.pipe()
 pid = os.fork()
@@ -25,10 +32,9 @@ if pid == 0:
     try:
         rows = cipher.encrypt([user(2)])
         opened = cipher.decrypt(rows)
-        result = {
-            "child": "ok" if opened == [user(2)] else "wrong",
-            "builds": _engine.client_builds(),
-        }
+        result = {"child": "ok" if opened == [user(2)] else "wrong"}
+    except StashError as error:
+        result = {"child": error.code}
     except BaseException as error:  # noqa: BLE001  Reported to the parent.
         result = {"child": f"error: {type(error).__name__}"}
     os.write(write_end, json.dumps(result).encode())

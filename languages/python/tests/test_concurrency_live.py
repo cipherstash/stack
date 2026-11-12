@@ -49,17 +49,20 @@ def test_threads_decrypt_at_once_and_every_row_opens():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows has no fork")
-@pytest.mark.skipif(
-    sys.platform == "darwin",
-    reason="macOS refuses its TLS certificate service in a child that fork made",
+@pytest.mark.parametrize(
+    "mode, child",
+    [
+        # The parent's client cannot work in the child, and a new runtime
+        # there can block. The child is refused at once, with what to do.
+        ("after", "stack_forked"),
+        # No client existed at the fork, so the child builds its own.
+        ("before", "ok"),
+    ],
 )
-def test_a_forked_child_builds_its_own_client_and_its_calls_succeed():
-    # The child's copy of the client has a runtime with no threads: a fork
-    # copies only the thread that called it. The child builds a client of
-    # its own on its first call.
-    result = run_python([str(HERE / "_fork.py")])
-
-    assert result == {"child": "ok", "builds": 2}, result
+def test_a_forked_child_is_refused_only_when_the_client_was_built_before_the_fork(
+    mode, child
+):
+    assert run_python([str(HERE / "_fork.py"), mode]) == {"child": child}
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGINT is sent with os.kill")
