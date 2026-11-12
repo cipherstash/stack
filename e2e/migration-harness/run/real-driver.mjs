@@ -210,6 +210,7 @@ export function createRealDriver({
         workspace,
         guide,
         frictionPath: '/workspace/friction.json',
+        guideSections: manifest.guideSections,
       })
       baseCommit = (
         await promisify(execFile)('git', ['rev-parse', 'HEAD'], {

@@ -33,6 +33,7 @@ test.each([
           workspace: join(root, 'workspace'),
           guide: join(root, 'guide.md'),
           frictionPath: '/workspace/friction.json',
+          guideSections: ['preamble', 'guide'],
         }),
       ).rejects.toThrow('Fixture README')
     } finally {
