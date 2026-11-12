@@ -286,8 +286,25 @@ describe('tests-python.yml', () => {
         new RegExp(`(^|[\\s;&|])${command}(\\s|$)`, 'm').test(run),
       )
 
+    // A local shortcut CI runs in parts. `test:live` builds, then runs
+    // `test:live:run`. The live job runs the builds and `test:live:run` as
+    // separate steps, so that no build runs with the CS_* credentials set.
+    const localOnly = { 'test:live': 'mise run test:live:run' }
+    for (const [task, runs] of Object.entries(localOnly)) {
+      const body = miseToml.match(
+        new RegExp(
+          `^\\[tasks\\."${task}"\\]\\n([\\s\\S]*?)(?=^\\[|(?![\\s\\S]))`,
+          'm',
+        ),
+      )
+      expect(body, `${task} is still a task`).not.toBeNull()
+      expect(body[1], `${task} still runs ${runs}`).toContain(runs)
+    }
+
     const wanted = [
-      ...tasks.filter((t) => !dependedOn.has(t)).map((t) => `mise run ${t}`),
+      ...tasks
+        .filter((t) => !dependedOn.has(t) && !(t in localOnly))
+        .map((t) => `mise run ${t}`),
       'cargo fmt --all --check',
       'cargo clippy',
     ]
