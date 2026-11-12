@@ -64,13 +64,38 @@ fn py_tuple(items: &[&str]) -> String {
 /// The class docstring: the summary and the status line the Go emitter
 /// writes too ([`Row::summary`], [`Row::status`]).
 fn docstring(row: &Row) -> String {
-    let text = format!(
+    py_docstring(&format!(
         "The EQL type {summary}.\n\n    {status}\n    ",
         summary = row.summary(),
         status = row.status(),
-    );
+    ))
+}
+
+/// `text` as a Python docstring literal. A backslash is doubled, so Python
+/// reads it as written. Text with `"""` in it is refused: it would end the
+/// docstring.
+fn py_docstring(text: &str) -> String {
     assert!(!text.contains("\"\"\""), "catalog text ends the docstring");
     format!("\"\"\"{}\"\"\"", text.replace('\\', "\\\\"))
+}
+
+/// The names a catalog row may not take as its class name: Python keywords
+/// that are names, and the module's own names, which a class of the same
+/// name would replace.
+const RESERVED_NAMES: [&str; 5] = ["Marker", "None", "True", "False", "TYPES"];
+
+/// `name` as a Python class name. A catalog name is written straight into
+/// `class {name}(Marker):` and into `TYPES`, so a name that is not a plain
+/// class name, or that replaces one of the module's names, is refused here
+/// rather than in the Python job.
+fn py_ident(name: &str) -> &str {
+    assert!(
+        name.starts_with(|c: char| c.is_ascii_uppercase())
+            && name.chars().all(|c| c.is_ascii_alphanumeric())
+            && !RESERVED_NAMES.contains(&name),
+        "catalog name {name:?} is not a usable Python class name"
+    );
+    name
 }
 
 fn class(out: &mut String, row: &Row) {
@@ -91,7 +116,7 @@ fn class(out: &mut String, row: &Row) {
          query_sql_domain = {query_sql_domain}\n    \
          producible = {producible}\n    \
          reason = {reason}\n",
-        name = row.name,
+        name = py_ident(&row.name),
         doc = docstring(row),
         name_lit = py_str(&row.name),
         family = py_str(row.family),
@@ -136,7 +161,7 @@ pub fn render_py_eql() -> String {
     }
     out.push_str("\n\nTYPES = (\n");
     for row in &rows {
-        let _ = writeln!(out, "    {},", row.name);
+        let _ = writeln!(out, "    {},", py_ident(&row.name));
     }
     out.push_str(")\n");
     out
@@ -159,6 +184,42 @@ mod tests {
     #[test]
     fn strings_escape_the_quote_and_the_backslash() {
         assert_eq!(py_str(r#"a "b" \c"#), r#""a \"b\" \\c""#);
+    }
+
+    #[test]
+    #[should_panic(expected = "control character")]
+    fn a_string_with_a_control_character_is_refused() {
+        py_str("a\nb");
+    }
+
+    #[test]
+    fn an_absent_string_is_none() {
+        assert_eq!(py_opt(None), "None");
+        assert_eq!(py_opt(Some("eq")), r#""eq""#);
+    }
+
+    #[test]
+    fn a_docstring_doubles_a_backslash() {
+        assert_eq!(py_docstring(r"a \b"), r#""""a \\b""""#);
+    }
+
+    #[test]
+    #[should_panic(expected = "ends the docstring")]
+    fn a_docstring_with_three_quotes_is_refused() {
+        py_docstring(r#"a """ b"#);
+    }
+
+    #[test]
+    fn a_class_name_is_a_plain_capitalised_identifier() {
+        assert_eq!(py_ident("TextEq"), "TextEq");
+        for bad in [
+            "None", "True", "Marker", "TYPES", "textEq", "Text_Eq", "1Text", "",
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| py_ident(bad)).is_err(),
+                "{bad:?} was accepted"
+            );
+        }
     }
 
     #[test]

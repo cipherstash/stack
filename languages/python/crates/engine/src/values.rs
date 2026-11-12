@@ -472,4 +472,97 @@ mod tests {
     fn decimal_of(value: &Bound<'_, PyAny>) -> Result<Value<'static>, Refusal> {
         decimal(value, "decimal").unwrap()
     }
+
+    /// A positive exponent multiplies the mantissa, and the sign applies to
+    /// it. A wrong sign or power would encrypt another number with no error.
+    #[test]
+    fn a_decimal_reads_as_its_exact_mantissa_and_scale() {
+        Python::initialize();
+        Python::attach(|py| {
+            let decimal = py.import("decimal").unwrap().getattr("Decimal").unwrap();
+            for (text, expected_mantissa, expected_scale) in [
+                ("1.2E+3", 1_200, 0),
+                ("-0.05", -5, 2),
+                ("-7", -7, 0),
+                ("1E+28", 10_i128.pow(28), 0),
+            ] {
+                match decimal_of(&decimal.call1((text,)).unwrap()) {
+                    Ok(Value::Decimal { mantissa, scale }) => {
+                        assert_eq!(
+                            (mantissa, scale),
+                            (expected_mantissa, expected_scale),
+                            "{text}"
+                        );
+                    }
+                    other => panic!("{text}: {other:?}"),
+                }
+            }
+        });
+    }
+
+    /// A date is days from 1970-01-01, and a datetime nanoseconds from the
+    /// epoch, in UTC. Both are checked against known numbers, before the
+    /// epoch and with a non-UTC offset, and read back as equal values.
+    #[test]
+    fn a_date_and_a_datetime_read_as_the_engines_numbers_and_back() {
+        Python::initialize();
+        Python::attach(|py| {
+            let datetime = py.import("datetime").unwrap();
+            let utc = datetime
+                .getattr("timezone")
+                .unwrap()
+                .getattr("utc")
+                .unwrap();
+            let ten_hours = datetime
+                .getattr("timezone")
+                .unwrap()
+                .call1((datetime
+                    .getattr("timedelta")
+                    .unwrap()
+                    .call1((0, 36_000))
+                    .unwrap(),))
+                .unwrap();
+            let day_before = datetime
+                .getattr("date")
+                .unwrap()
+                .call1((1969, 12, 31))
+                .unwrap();
+            let cases = [
+                (day_before, PyKind::Date, Scalar::Date(-1)),
+                (
+                    // 1970-01-01T00:00:00.123456Z, written ten hours ahead.
+                    datetime
+                        .getattr("datetime")
+                        .unwrap()
+                        .call1((1970, 1, 1, 10, 0, 0, 123_456, &ten_hours))
+                        .unwrap(),
+                    PyKind::DateTime,
+                    Scalar::Timestamp(123_456_000),
+                ),
+                (
+                    datetime
+                        .getattr("datetime")
+                        .unwrap()
+                        .call1((1969, 12, 31, 23, 59, 59, 999_999, &utc))
+                        .unwrap(),
+                    PyKind::DateTime,
+                    Scalar::Timestamp(-1_000),
+                ),
+            ];
+            for (value, kind, scalar) in cases {
+                let read = read(&value, kind, "test").unwrap().unwrap();
+                let got = match read.value() {
+                    Value::Date(days) => Scalar::Date(i32::try_from(days).unwrap()),
+                    Value::Timestamp(nanos) => Scalar::Timestamp(nanos),
+                    other => panic!("{value}: read as {other:?}"),
+                };
+                assert_eq!(got, scalar, "{value}");
+                let opened = to_python(py, &scalar).unwrap().unwrap();
+                assert!(
+                    opened.bind(py).eq(&value).unwrap(),
+                    "{value} came back as {opened}"
+                );
+            }
+        });
+    }
 }
