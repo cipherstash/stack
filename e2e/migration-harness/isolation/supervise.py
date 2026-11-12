@@ -67,7 +67,9 @@ def invoke(argv, stage):
     redactions = credential_redactions(env)
     if stage == 'startup-probe':
         env['HARNESS_STARTUP_TARGETS'] = json.dumps(config.get('forbiddenTargets', []))
-    command = ['strace', '-f', '-q', '-yy', '-s', '4096', '-e',
+    # Shared -o output makes strace prefix every line with its PID, including
+    # sole survivors. Keep it on the trusted stderr pipe; actor stderr uses fd 3.
+    command = ['strace', '-f', '-o', '/dev/stderr', '-q', '-yy', '-s', '4096', '-e',
                'trace=%file,%network,%process',
                'setpriv', '--reuid=%s' % config['uid'], '--regid=%s' % config['gid'], '--clear-groups',
                '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all',
@@ -131,6 +133,7 @@ def invoke(argv, stage):
         return path in ['/', '/harness'] or path in ['/harness/app-host.mjs', '/harness/startup.mjs'] or any(path == root or path.startswith(root + '/') for root in allowed)
 
     def trace():
+        nonlocal actor_pid
         pending = {}
         pending_forks = {}
         exec_moves = {}
@@ -157,6 +160,13 @@ def invoke(argv, stage):
                     pid = next(iter(live))
                 else:
                     pid = str(actor_pid or process.pid)
+                if actor_pid is None and prefixed and not live and actor_exit is None:
+                    # A fast actor may finish before /proc discovery sees it.
+                    # The first trusted record is the initial exec launched by
+                    # strace; never substitute a later descendant's exit PID.
+                    if not call.startswith('execve('):
+                        raise RuntimeError('ptrace stream lacks initial actor exec record')
+                    actor_pid = int(pid)
                 exited = re.fullmatch(r'\+\+\+ exited with (\d+) \+\+\+', call)
                 killed = re.fullmatch(r'\+\+\+ killed by (SIG\w+)(?: \(core dumped\))? \+\+\+', call)
                 if exited or killed:
