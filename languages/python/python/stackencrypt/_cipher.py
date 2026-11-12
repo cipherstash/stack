@@ -219,6 +219,8 @@ class Cipher(Generic[T]):
         field's raises ``InvalidValueError``; it is never converted. The
         call is all or nothing: no instance is built when any row fails.
 
+        It returns one instance for each row, in the order of the rows.
+
         Each of these errors names the row. Two errors from the engine name
         the field only, not the row: ``decrypt_malformed`` for a value that
         is not the field's EQL type, and ``decrypt_kind_mismatch`` for a

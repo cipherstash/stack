@@ -4,7 +4,7 @@ Measured on 9 November 2026, on one macOS machine, against real ZeroKMS. The SDK
 
 ## Gaps in the SDK or its documentation
 
-Items 5, 6, and 7 were found before the SQLAlchemy layer existed. Each now has a status line.
+Items 5, 6, and 7 were found before the SQLAlchemy layer existed. Items 1 to 7 each now have a status line.
 
 ### 1. The README does not warn about Pydantic's `ValidationError`
 
@@ -16,6 +16,8 @@ The example sets `hide_input_in_errors=True` and replaces FastAPI's 422 response
 
 Suggested action: add both to the README's list, with the setting that hides the input.
 
+Status: addressed. The README's list in "What a printed model shows" now names both. It gives `hide_input_in_errors=True` for the `ValidationError`, and says that FastAPI's 422 response needs its own handler: with that setting, `errors()` still contains the input (checked with Pydantic 2.14.3).
+
 ### 2. The README has no recipe for a database-generated key
 
 The README covers a UUID key only. A required integer `id` on the model cannot work, because the model is encrypted before PostgreSQL creates the `id`.
@@ -24,6 +26,8 @@ The example leaves `id` out of the model. It works, but the model then cannot re
 
 Suggested action: add the database-generated case to "Store a UUID key".
 
+Status: addressed. "Store a UUID key" now covers a key the database generates, for psycopg and for the SQLAlchemy layer.
+
 ### 3. `decrypt` does not say whether it keeps row order
 
 Neither the `decrypt` docstring nor the README says that results come back in the order of the input rows. An application that needs a column outside the model must pair it with the decrypted result by position.
@@ -31,6 +35,8 @@ Neither the `decrypt` docstring nor the README says that results come back in th
 The example avoids this by not returning `id`. I did not test the order.
 
 Suggested action: state the guarantee, and add a test for it.
+
+Status: addressed. The README and the `Cipher.decrypt` docstring state that the instances come back in the order of the rows. `tests_deterministic/test_order.py` checks it, with the rows in reverse order.
 
 ### 4. The README does not cover uniqueness on an encrypted column
 
@@ -43,6 +49,8 @@ CREATE UNIQUE INDEX customers_email_unique ON customers (eql_v4.eq_term(email));
 A second insert with the same email raises `UniqueViolation` with SQLSTATE 23505. `EXPLAIN` shows an index scan on this index for `WHERE email = %s::eql_v4.query_text_eq`, with `enable_seqscan` off.
 
 Suggested action: document the unique index, and say that equal emails produce equal terms.
+
+Status: addressed. The SQLAlchemy section of the README explains `declaration_unique_column`. It says that equal values have equal `eq` terms, and shows a unique index on `eql_v4.eq_term(email)`.
 
 ### 5. The README has no write or read path for SQLAlchemy
 
