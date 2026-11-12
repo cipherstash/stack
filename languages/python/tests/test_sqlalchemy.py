@@ -10,7 +10,7 @@ import dataclasses
 from typing import Annotated, Optional
 
 import pytest
-from sqlalchemy import String, create_engine, func, literal, select
+from sqlalchemy import String, UniqueConstraint, create_engine, func, literal, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 import stackencrypt
@@ -101,6 +101,31 @@ def test_a_unique_encrypted_column_is_refused(engine):
     assert error.code == "declaration_unique_column"
     assert error.field == "email"
     assert "eql_v4.eq_term(email)" in error.message
+
+
+def test_an_encrypted_column_in_a_unique_constraint_is_refused(engine):
+    @stackencrypt.model("seats")
+    class Seat(Base):
+        __tablename__ = "seats"
+        __table_args__ = (UniqueConstraint("venue", "holder"),)
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        venue: Mapped[Annotated[int, Ignore]]
+        holder: Mapped[Annotated[str, TextEq]]
+
+    error = refused([Seat])
+    assert error.code == "declaration_unique_column"
+    assert error.field == "holder"
+
+
+def test_a_unique_plaintext_column_beside_an_encrypted_one_is_accepted(untouched):
+    @stackencrypt.model("passes")
+    class Pass(Base):
+        __tablename__ = "passes"
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        code: Mapped[Annotated[str, Ignore]] = mapped_column(unique=True)
+        holder: Mapped[Annotated[str, TextEq]]
+
+    configure_encryption([Pass])
 
 
 def test_a_repeat_call_for_a_configured_class_does_nothing(untouched):
