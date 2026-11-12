@@ -153,6 +153,19 @@ def test_each_replaced_method_is_refused(credentials, name):
     assert f"{name} replaced" in str(error)
 
 
+def test_a_redact_false_class_may_replace_its_printing_methods(credentials):
+    # The README says Cipher checks the printing methods only when the
+    # decorator replaced them.
+    @stackencrypt.model("users", redact=False)
+    @dataclasses.dataclass
+    class User:
+        email: Annotated[str, TextEq]
+
+    User.__repr__ = lambda self: "replaced"
+
+    Cipher(User)
+
+
 def test_a_hint_that_no_longer_resolves_names_the_name(credentials):
     User = declared()
     User.__annotations__["posts"] = "List[Undefined]"

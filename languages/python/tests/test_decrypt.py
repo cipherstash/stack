@@ -9,6 +9,7 @@ make no request. The live round trip is in ``test_encrypt_live.py``.
 import dataclasses
 import datetime
 import json
+import uuid
 from typing import Annotated
 
 import pytest
@@ -187,6 +188,23 @@ def test_a_passthrough_int_that_arrives_as_str_is_the_wrong_type(untouched):
     assert error.code == "value_wrong_type"
     assert error.field == "age"
     assert error.reason == "passthrough"
+
+
+@stackencrypt.model("keyed")
+@dataclasses.dataclass
+class Keyed:
+    email: Annotated[str, TextEq]
+    id: Annotated[str, Passthrough]
+
+
+def test_a_uuid_for_a_str_passthrough_is_the_wrong_type(untouched):
+    # The README's UUID advice depends on this: psycopg reads a uuid column
+    # as a uuid.UUID, and decrypt does not convert it to str.
+    stored = json.dumps({"i": {"t": "keyed", "c": "email"}, "v": 2})
+    with pytest.raises(InvalidValueError) as raised:
+        Cipher(Keyed).decrypt([{"email": stored, "id": uuid.uuid4()}])
+    assert raised.value.code == "value_wrong_type"
+    assert raised.value.field == "id"
 
 
 def test_a_null_passthrough_is_refused(untouched):

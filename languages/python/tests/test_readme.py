@@ -26,6 +26,31 @@ def test_the_python_blocks_bind_the_names_the_live_check_reads():
     assert check_names() <= bound_names(program())
 
 
+def test_bound_names_keeps_only_the_top_level_names():
+    source = (
+        "import os.path as p\n"
+        "top = 1\n"
+        "def f():\n"
+        "    inside_function = 2\n"
+        "class C:\n"
+        "    inside_class = 3\n"
+        "squares = [n * n for n in range(3)]\n"
+        "lam = lambda x: x\n"
+    )
+    assert bound_names(source) == {"p", "top", "f", "C", "squares", "lam"}
+
+
+def test_bound_names_reads_except_as_and_a_walrus_in_a_comprehension():
+    source = (
+        "try:\n"
+        "    pass\n"
+        "except ValueError as caught:\n"
+        "    pass\n"
+        "found = [last := n for n in range(3)]\n"
+    )
+    assert bound_names(source) == {"caught", "found", "last"}
+
+
 def test_the_readme_has_sql_for_the_live_test_to_run():
     assert blocks("sql")
 

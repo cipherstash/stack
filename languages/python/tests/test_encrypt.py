@@ -44,10 +44,17 @@ def cipher_for(**fields):
 
 
 def refused(cipher, model):
+    """The refusal of ``model``. Neither the valid email nor the refused
+    value may appear in it. None and a bool are not checked: their text can
+    appear in a message for another reason."""
     with pytest.raises(InvalidValueError) as raised:
         cipher.encrypt([model])
     error = raised.value
     assert SECRET not in str(error)
+    value = getattr(model, error.field) if error.field else None
+    if value is not None and not isinstance(value, bool):
+        for shown in {repr(value), str(value)}:
+            assert shown not in str(error), f"{shown} is in {error}"
     return error
 
 
@@ -102,7 +109,7 @@ def test_a_passthrough_value_of_another_type_is_refused(untouched):
 
 def test_an_int_outside_its_kind_is_out_of_range(untouched):
     cipher, User = cipher_for(rank=Annotated[int, Smallint])
-    error = refused(cipher, User(email=SECRET, rank=40_000))
+    error = refused(cipher, User(email=SECRET, rank=40_123))
     assert error.code == "value_out_of_range"
     assert error.field == "rank"
     assert error.reason == "int16"
