@@ -90,20 +90,33 @@ cargo test --locked --workspace
 cargo test --locked -p stackencrypt-core --features deterministic-kms --test deterministic_switch
 """
 
+[tasks."build:eql-bundle"]
+description = "Build the EQL v4 bundle from the tree, for the live tests"
+# Built from packages/eql, as the Go task go:test:postgres builds it: the
+# copy under crates/eql-bindings/sql is the released bundle and moves only at
+# the lockstep bump.
+run = "mise -C ../../packages/eql run build"
+
 [tasks."test:live"]
-description = "Install the EQL v4 bundle built from the tree into the database EQL_TEST_DATABASE_URL names, and run the live tests against it and ZeroKMS; needs the four CS_* credentials"
-depends = ["build"]
+description = "Build the extension and the EQL v4 bundle, then run test:live:run; needs the four CS_* credentials and EQL_TEST_DATABASE_URL"
+depends = ["build", "build:eql-bundle"]
+run = "mise run test:live:run"
+
+[tasks."test:live:run"]
+description = "Install the EQL v4 bundle into the database EQL_TEST_DATABASE_URL names, and run the live tests against it and ZeroKMS; builds nothing"
 shell = "bash -c"
-# The bundle is built from packages/eql, as the Go task go:test:postgres
-# builds it: the copy under crates/eql-bindings/sql is the released bundle
-# and moves only at the lockstep bump. The tests skip without credentials or
-# a database, so a skip here is a failure: this task is where both are
-# given.
+# Builds nothing, so CI can run the builds in a step with no credentials and
+# give the credentials to this task alone: a dependency's build script then
+# never runs with them set (tests-python.yml's live job). It needs the
+# extension in .venv and the bundle under packages/eql/release first; locally,
+# run test:live, which builds both. The tests skip without credentials or a
+# database, so a skip here is a failure: this task is where both are given.
 run = """
 set -euo pipefail
 : "${EQL_TEST_DATABASE_URL:?set EQL_TEST_DATABASE_URL to a libpq connection string for a disposable PostgreSQL}"
-mise -C ../../packages/eql run build
-psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f ../../packages/eql/release/cipherstash-encrypt-v4.sql
+bundle=../../packages/eql/release/cipherstash-encrypt-v4.sql
+[ -f "$bundle" ] || { echo "error: $bundle is missing; run mise run build:eql-bundle first" >&2; exit 1; }
+psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$bundle"
 log="${TMPDIR:-/tmp}/stackencrypt-live.log"
 .venv/bin/python -m pytest -m live -v -rs | tee "$log"
 if grep -q ' SKIPPED' "$log"; then

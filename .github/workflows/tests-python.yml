@@ -220,11 +220,10 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
-    env:
-      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
-      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
-      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+    # The CS_* credentials are given to the `Live tests` step alone, not the
+    # job. Every other step, the builds above all, runs third-party code: each
+    # dependency's build.rs and proc-macros, and maturin. None of it runs with
+    # the credentials set.
     services:
       postgres:
         image: postgres:17
@@ -288,12 +287,23 @@ jobs:
         with:
           workspaces: packages/eql
 
-      # Builds the wheel and the bundle, installs the bundle, and runs the
-      # live tests; a skip fails the task.
+      # The builds, with no credentials: the extension into .venv, and the
+      # EQL v4 bundle.
+      - name: Build the extension and the EQL bundle
+        run: |
+          mise run build
+          mise run build:eql-bundle
+
+      # Installs the bundle and runs the live tests, building nothing; a skip
+      # fails the task. The only step with the credentials.
       - name: Live tests
         env:
+          CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+          CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
+          CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+          CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
           EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres sslmode=disable"
-        run: mise run test:live
+        run: mise run test:live:run
 
   # One abi3-py39 wheel per platform the FFI ships for, by the same Rust
   # triples. python-ci.test.mjs holds the list to the protect-ffi platform
