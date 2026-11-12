@@ -97,6 +97,8 @@ def test_two_ciphers_share_one_engine_client():
     # Read after the first call: an earlier test may have loaded the keyset
     # more than once, if a load failed and the next call loaded it again.
     loads = _engine.requests().get("load-keyset")
+    # A missing counter would make the last check compare None with None.
+    assert loads is not None and loads >= 1, _engine.requests()
 
     Cipher(Contact).encrypt([Contact(email="b@example.com")])
 

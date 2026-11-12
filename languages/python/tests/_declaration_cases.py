@@ -480,6 +480,51 @@ def test_class_level_names_are_not_fields():
     assert planned(User) == [("email", TextEq)]
 
 
+def test_class_level_hints_are_not_fields_on_a_class_read_from_its_hints():
+    # No library field list, so the fields come from the hints, as on a
+    # SQLAlchemy class. Each form the filter checks is here.
+    @stackencrypt.model("users")
+    class User(KeywordConstructor):
+        email: Annotated[str, TextEq]
+        registry: ClassVar[dict] = {}
+        bare: ClassVar = 0
+        token: dataclasses.InitVar[str] = ""
+
+    assert planned(User) == [("email", TextEq)]
+
+
+class RefusedBase(DeclarativeBase):
+    pass
+
+
+def build_a_mapped_class(kind):
+    if kind == "no marker":
+
+        @stackencrypt.model("mapped_no_marker")
+        class MappedNoMarker(RefusedBase):
+            __tablename__ = "mapped_no_marker"
+            id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+            email: Mapped[str]
+
+    else:
+
+        @stackencrypt.model("mapped_two_markers")
+        class MappedTwoMarkers(RefusedBase):
+            __tablename__ = "mapped_two_markers"
+            id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+            email: Mapped[Annotated[str, TextEq, Passthrough]]
+
+
+@pytest.mark.parametrize(
+    "kind, code",
+    [("no marker", "declaration_no_marker"), ("two markers", "declaration_two_markers")],
+)
+def test_rule_a_holds_inside_mapped(kind, code):
+    error = refusal(lambda: build_a_mapped_class(kind))
+    assert error.code == code
+    assert error.field == "email"
+
+
 def test_a_subclass_is_not_declared_until_it_is_decorated():
     @stackencrypt.model("users")
     @dataclasses.dataclass
