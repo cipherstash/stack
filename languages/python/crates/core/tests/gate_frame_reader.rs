@@ -8,7 +8,7 @@
 
 use stack_encrypt::dynamic::frame::Frame;
 use stack_encrypt::dynamic::plaintext::{
-    Encrypt, Error, FixedType, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    Encrypt, Error, FixedType, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError, Width,
 };
 use stack_encrypt::dynamic::ValueFrame;
 
@@ -26,6 +26,28 @@ impl Encrypt for User {
         map.entry("born")?
             .scalar(Some(Logical::Date), Physical::Int(Int::I32(-25_567)))?;
         map.entry("nickname")?.passthrough(Nickname)?;
+        map.end()
+    }
+}
+
+/// A record with the other shapes a field can have: a typed null, a
+/// sequence and a nested map. The typed null is written as a plain null.
+struct Shapes;
+
+impl Encrypt for Shapes {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(Some(3))?;
+        let date = FixedType::new(Some(Logical::Date), Width::I32).expect("a date has a width");
+        map.entry("left")?.typed_null(date)?;
+        let mut tags = map.entry("tags")?.seq(Some(2))?;
+        tags.element()?.scalar(None, Physical::Text("a"))?;
+        tags.element()?.scalar(None, Physical::Int(Int::I64(2)))?;
+        tags.end()?;
+        let mut address = map.entry("address")?.map(Some(1))?;
+        address
+            .entry("city")?
+            .scalar(None, Physical::Text("London"))?;
+        address.end()?;
         map.end()
     }
 }
@@ -92,8 +114,8 @@ impl Sink for Reader<'_> {
         Ok(())
     }
 
-    fn typed_null(self, _: FixedType) -> Result<(), ReadError> {
-        self.scalar(None, Physical::Null)
+    fn typed_null(self, ty: FixedType) -> Result<(), ReadError> {
+        self.scalar(ty.logical(), Physical::Null)
     }
 
     fn seq(self, _: Option<usize>) -> Result<Self, ReadError> {
@@ -188,6 +210,26 @@ fn an_outside_sink_recovers_each_field_kind_from_a_record_frame() {
             seen("age", None, "int", false),
             seen("born", Some("Date"), "int", false),
             seen("nickname", None, "text", true),
+        ],
+    );
+}
+
+#[test]
+fn an_outside_sink_reads_a_typed_null_a_sequence_and_a_nested_map() {
+    let record = ValueFrame::of(Shapes).expect("the record is in the value model");
+    let frame = Frame::parse(record.risky_ref()).expect("a ValueFrame is one frame");
+
+    assert_eq!(
+        read(frame),
+        vec![
+            // A frame writer writes a typed null as the plain null: a
+            // frame is plaintext, so padding hides nothing in it (vitaminc's
+            // FrameWriter). A decrypted record's null carries no type, and
+            // the extension takes a field's type from its plan.
+            seen("left", None, "null", false),
+            seen("tags", None, "text", false),
+            seen("tags", None, "int", false),
+            seen("city", None, "text", false),
         ],
     );
 }

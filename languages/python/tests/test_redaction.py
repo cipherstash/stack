@@ -8,7 +8,8 @@ from typing import Annotated, NamedTuple
 import attrs
 import pydantic
 import pytest
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 import stackencrypt
 from stackencrypt import DeclarationError, Ignore, Passthrough, TextEq
@@ -78,6 +79,26 @@ class MappedUser(Base):
 
 def declare_sqlalchemy():
     return MappedUser(email=SECRET, age=42)
+
+
+def test_an_expired_or_detached_sqlalchemy_column_runs_no_select():
+    # After a commit every attribute is expired: reading one runs a SELECT,
+    # and on a detached instance it raises. repr must do neither.
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    statements = []
+    event.listen(engine, "before_cursor_execute", lambda *args: statements.append(args[2]))
+    expected = "MappedUser(email=<sealed>, age=<unset>)"
+    with Session(engine) as session:
+        user = MappedUser(email=SECRET, age=42)
+        session.add(user)
+        session.commit()
+        statements.clear()
+
+        assert repr(user) == expected
+        assert statements == []
+    assert repr(user) == expected
+    assert statements == []
 
 
 KINDS = [

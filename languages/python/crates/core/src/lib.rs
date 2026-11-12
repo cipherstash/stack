@@ -57,6 +57,7 @@ pub fn engine_commit() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::engine_commit;
+    use std::process::Command;
 
     #[test]
     fn engine_commit_is_a_full_hex_sha() {
@@ -67,5 +68,51 @@ mod tests {
             sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
             "{commit:?}"
         );
+    }
+
+    /// `git` in this crate's directory, or `None` when it fails.
+    fn git(args: &[&str]) -> Option<String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// The commit is this checkout's, with `-dirty` exactly when a file
+    /// under a `packages/stack-*` crate has changed outside its `fuzz/`.
+    /// The status is read for all of `packages/` and filtered here, so the
+    /// test does not repeat build.rs's pathspec.
+    #[test]
+    fn engine_commit_is_this_checkouts_commit() {
+        // A commit given in STACKENCRYPT_ENGINE_COMMIT is trusted as given.
+        if env!("STACKENCRYPT_ENGINE_COMMIT_SOURCE") != "git" {
+            return;
+        }
+        let Some(head) = git(&["rev-parse", "HEAD"]) else {
+            return;
+        };
+        let status = git(&["status", "--porcelain", "--", "../../../../packages"])
+            .expect("git status runs in a checkout");
+        // A porcelain line is a two-letter status, a space and the path from
+        // the repository root. A rename shows "old -> new".
+        let dirty = status.lines().any(|line| {
+            line.get(3..).is_some_and(|paths| {
+                paths.split(" -> ").any(|path| {
+                    path.trim_matches('"')
+                        .strip_prefix("packages/")
+                        .and_then(|rest| rest.split_once('/'))
+                        .is_some_and(|(krate, rest)| {
+                            krate.starts_with("stack-") && !rest.starts_with("fuzz/")
+                        })
+                })
+            })
+        });
+        let expected = format!("{}{}", head.trim(), if dirty { "-dirty" } else { "" });
+        assert_eq!(engine_commit(), expected, "git status:\n{status}");
     }
 }

@@ -30,12 +30,17 @@ def call_then_wait_for_the_interrupt():
 
 
 def test_interrupt_waits_for_the_detached_call_to_return():
+    # Cancelled and joined in `finally`: a timer left running would send
+    # SIGINT into a later, unrelated test.
     timer = send_sigint_later(SIGNAL_AT_S)
-    started = time.monotonic()
-    with pytest.raises(KeyboardInterrupt):
-        call_then_wait_for_the_interrupt()
-    raised_after_s = time.monotonic() - started
-    timer.join()
+    try:
+        started = time.monotonic()
+        with pytest.raises(KeyboardInterrupt):
+            call_then_wait_for_the_interrupt()
+        raised_after_s = time.monotonic() - started
+    finally:
+        timer.cancel()
+        timer.join()
 
     # The signal was sent at 0.2 s. If the call had been cut short, the
     # interrupt would arrive then. It must arrive after the call's full second.
@@ -44,8 +49,11 @@ def test_interrupt_waits_for_the_detached_call_to_return():
 
 def test_the_extension_is_usable_after_an_interrupt():
     timer = send_sigint_later(SIGNAL_AT_S)
-    with pytest.raises(KeyboardInterrupt):
-        call_then_wait_for_the_interrupt()
-    timer.join()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            call_then_wait_for_the_interrupt()
+    finally:
+        timer.cancel()
+        timer.join()
 
     assert probe(10) >= 10

@@ -58,6 +58,32 @@ def encrypt_from_threads(cipher: Cipher, per_thread: int) -> List[Dict[str, obje
     return [row for rows in sealed for row in rows]
 
 
+def decrypt_from_threads(cipher: Cipher, rows: List[Dict[str, object]]) -> List[User]:
+    """Release ``THREADS`` threads at once, each to decrypt its own slice of
+    ``rows`` one call at a time. Returns every user, in row order. Raises if
+    any call failed."""
+    per_thread = -(-len(rows) // THREADS)
+    opened: List[List[User]] = [[] for _ in range(THREADS)]
+    failures: List[str] = []
+    start = threading.Barrier(THREADS)
+
+    def decrypt_many(t: int) -> None:
+        start.wait()
+        try:
+            for row in rows[t * per_thread : (t + 1) * per_thread]:
+                opened[t].extend(cipher.decrypt([row]))
+        except Exception as error:
+            failures.append(repr(error))
+
+    threads = [threading.Thread(target=decrypt_many, args=(t,)) for t in range(THREADS)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert failures == [], failures
+    return [model for models in opened for model in models]
+
+
 def send_sigint_later(seconds: float) -> threading.Timer:
     """Send SIGINT to this process after ``seconds``."""
     timer = threading.Timer(seconds, os.kill, (os.getpid(), signal.SIGINT))

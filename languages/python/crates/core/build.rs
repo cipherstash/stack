@@ -29,9 +29,9 @@ const ENGINE_PREFIX: &str = "stack-";
 
 fn main() {
     println!("cargo:rerun-if-env-changed={ENV_OVERRIDE}");
-    let commit = match env::var(ENV_OVERRIDE) {
-        Ok(value) if !value.is_empty() => value.to_ascii_lowercase(),
-        _ => commit_from_git(),
+    let (commit, source) = match env::var(ENV_OVERRIDE) {
+        Ok(value) if !value.is_empty() => (value.to_ascii_lowercase(), "env"),
+        _ => (commit_from_git(), "git"),
     };
     let sha = commit.strip_suffix("-dirty").unwrap_or(&commit);
     assert!(
@@ -39,6 +39,10 @@ fn main() {
         "the engine commit must be a full 40-character hex SHA (optionally `-dirty`), got {commit:?}"
     );
     println!("cargo:rustc-env={ENV_OVERRIDE}={commit}");
+    // Where the commit came from, for the test that checks it against git.
+    // cargo also sets the variable above when it runs the tests, so the
+    // test cannot tell an override from the environment.
+    println!("cargo:rustc-env=STACKENCRYPT_ENGINE_COMMIT_SOURCE={source}");
 }
 
 fn commit_from_git() -> String {
