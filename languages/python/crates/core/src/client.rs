@@ -3,9 +3,9 @@
 //! Every `Cipher` in the process uses the same `StackCipher`. It is built on
 //! the first operation that needs it, by whichever thread gets there first,
 //! and never rebuilt: credentials are read once, and the default keyset is
-//! loaded once (the spec in #1341, "Operations"). The one exception is a
-//! child that `fork` made: it builds a client of its own on its first call,
-//! as described at [`shared`]. Beside it is one
+//! loaded once (the spec in #1341, "Operations"). A child that `fork` made
+//! after the client was built cannot use it, and is refused, as described at
+//! [`shared`]. Beside it is one
 //! multi-thread tokio runtime. An operation hands its future to that runtime
 //! and blocks its own thread, with the GIL released, so calls from several
 //! Python threads run inside the engine at the same time.
@@ -17,10 +17,8 @@
 
 use std::collections::BTreeMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(feature = "deterministic-kms")]
-use std::sync::OnceLock;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use stack_auth::AutoStrategy;
 use stack_encrypt::kms::{
@@ -43,11 +41,10 @@ pub struct Client {
     runtime: tokio::runtime::Runtime,
 }
 
-/// The client, with the ID of the process that built it. A child that
-/// `fork` made holds a copy of its parent's client, and that copy's runtime
-/// has no threads: a fork copies only the thread that called it. So a client
-/// is used only in the process that built it.
-static CLIENT: Mutex<Option<(u32, &'static Client)>> = Mutex::new(None);
+static CLIENT: OnceLock<Client> = OnceLock::new();
+/// The ID of the process that built `CLIENT`. Set before `CLIENT`, so a
+/// thread that sees the client sees its process ID.
+static BUILT_IN: AtomicU32 = AtomicU32::new(0);
 // Serialises the build, so two threads making their first call at once build
 // one client and load the keyset once. `OnceLock::get_or_init` would do the
 // same, but it cannot fail, and a failed build must not be cached: the user
@@ -66,31 +63,47 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// This process's client, if it has built one.
-fn current() -> Option<&'static Client> {
-    match *locked(&CLIENT) {
-        Some((pid, client)) if pid == std::process::id() => Some(client),
-        _ => None,
+/// The client, if this process built it. A refusal if another process
+/// built it: this process is a child that `fork` made after the build.
+///
+/// The child's copy of the client cannot work: its runtime has no threads,
+/// because a fork copies only the thread that called it. A new runtime is
+/// not safe in the child either: tokio's locks keep a process-wide table of
+/// waiting threads, and the child's copy lists the parent's threads. A new
+/// runtime there blocked in 8 of 15 runs on Linux. So the child is refused.
+/// No lock is taken here, so the refusal cannot block.
+fn current() -> Result<Option<&'static Client>, Refusal> {
+    let Some(client) = CLIENT.get() else {
+        return Ok(None);
+    };
+    if BUILT_IN.load(Ordering::Acquire) == std::process::id() {
+        return Ok(Some(client));
     }
+    Err(Refusal {
+        code: "stack_forked".to_owned(),
+        message: "this process was forked after the engine client was built, and a forked \
+                  process cannot use it. Make the first encrypt, decrypt or query call after \
+                  the fork: with Gunicorn, do not use --preload; with multiprocessing, use \
+                  the spawn start method."
+            .to_owned(),
+        field: None,
+        reason: None,
+    })
 }
 
 /// The shared client, built on the first call.
 ///
-/// A child that `fork` made after its parent built the client builds a new
-/// one on its first call, and loads the keyset again. The parent's copy is
-/// never dropped in the child: dropping a runtime whose threads are gone
-/// could block. A fork while another thread is building the client is not
-/// safe: the child's copy of the build lock stays locked.
-///
 /// # Errors
 ///
-/// The refusal of whatever failed: the credentials (`stack_auth_*`), the
-/// client key or the ZeroKMS client (`stack_kms_*`), or the keyset load
-/// (`stack_encrypt_*`). Nothing is cached on failure.
+/// `stack_forked` in a child that `fork` made after the client was built
+/// (see [`current`]). Otherwise the refusal of whatever failed: the
+/// credentials (`stack_auth_*`), the client key or the ZeroKMS client
+/// (`stack_kms_*`), or the keyset load (`stack_encrypt_*`). Nothing is
+/// cached on failure.
 pub fn shared() -> Result<&'static Client, Refusal> {
     #[cfg(feature = "deterministic-kms")]
     refuse_after_switch()?;
-    if let Some(client) = current() {
+    if let Some(client) = current()? {
         return Ok(client);
     }
     let _building = locked(&BUILDING);
@@ -98,15 +111,13 @@ pub fn shared() -> Result<&'static Client, Refusal> {
     // it, and the live client must then not be built.
     #[cfg(feature = "deterministic-kms")]
     refuse_after_switch()?;
-    if let Some(client) = current() {
+    if let Some(client) = current()? {
         return Ok(client);
     }
-    // Leaked on purpose: a client lives as long as its process, and a copy
-    // inherited through fork must never be dropped.
-    let client: &'static Client = Box::leak(Box::new(build()?));
+    let client = build()?;
     BUILDS.fetch_add(1, Ordering::Relaxed);
-    *locked(&CLIENT) = Some((std::process::id(), client));
-    Ok(client)
+    BUILT_IN.store(std::process::id(), Ordering::Release);
+    Ok(CLIENT.get_or_init(|| client))
 }
 
 /// Run an operation's future on the process's client, and return its result.
@@ -188,7 +199,7 @@ pub fn use_deterministic(seed: [u8; 32]) -> Result<(), Refusal> {
     // The lock `shared` builds under: a live build in flight on another
     // thread finishes before this checks, so the two never both exist.
     let _building = locked(&BUILDING);
-    if locked(&CLIENT).is_some() || DETERMINISTIC.get().is_some() {
+    if CLIENT.get().is_some() || DETERMINISTIC.get().is_some() {
         return Err(refused(
             "the process already has a client; call this before any operation".to_owned(),
         ));
@@ -216,8 +227,7 @@ pub fn deterministic() -> Option<&'static Deterministic> {
 }
 
 /// How many times the shared client has been built in this process: 0
-/// before the first operation, 1 after it. A forked child starts from its
-/// parent's count, so its own build makes it 2. For the tests.
+/// before the first operation, 1 after it. For the tests.
 pub fn build_count() -> u64 {
     BUILDS.load(Ordering::Relaxed)
 }

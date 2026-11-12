@@ -53,11 +53,13 @@ class Cipher(Generic[T]):
     first ``encrypt`` or ``decrypt`` of any cipher, which loads the default
     keyset once.
 
-    A child process that ``os.fork`` made, as Gunicorn's workers are, builds
-    a client of its own on its first call, and loads the keyset again. On
-    macOS, the child crashes when it does: macOS does not allow its TLS
-    certificate service after a fork. Build no client before the fork there,
-    or start child processes with ``spawn``.
+    A process that ``os.fork`` made, as Gunicorn's workers are, cannot use a
+    client its parent built: the first ``encrypt``, ``decrypt`` or query
+    call must come after the fork. A call in such a child raises
+    ``StashError`` with the code ``stack_forked``. A fork before the first
+    call is fine: each child builds its own client. With Gunicorn, do not
+    use ``--preload``. With ``multiprocessing``, use the ``spawn`` start
+    method.
     """
 
     def __init__(self, cls: Type[T]) -> None:
