@@ -12,7 +12,7 @@ import uuid
 from typing import Annotated, List, Optional
 
 import pytest
-from _live import DATABASE_URL, LIVE, needs_database
+from _live import LIVE, needs_database, sqlalchemy_url
 from sqlalchemy import ForeignKey, and_, create_engine, delete, desc, func, not_, or_, select, text, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
@@ -100,11 +100,10 @@ class Player(Base):
 @pytest.fixture(scope="module")
 def engine():
     schema = f"sa_{uuid.uuid4().hex[:12]}"
-    url = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
     # The EQL types are in `public` and the functions in `eql_v4`, so both
     # stay on the search path after the test schema.
     engine = create_engine(
-        url,
+        sqlalchemy_url(),
         connect_args={"options": f"-c search_path={schema},public"},
         hide_parameters=True,
     )

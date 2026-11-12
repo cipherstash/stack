@@ -11,10 +11,9 @@ import pathlib
 import sys
 import textwrap
 import uuid
-from urllib.parse import quote
 
 import pytest
-from _live import DATABASE_URL, LIVE, needs_database
+from _live import LIVE, needs_database, sqlalchemy_url
 from sqlalchemy import create_engine, text
 
 pytestmark = [*LIVE, needs_database]
@@ -117,8 +116,7 @@ def project(tmp_path, monkeypatch, request):
     marker = request.node.get_closest_marker("models")
     models = marker.args[0] if marker else MODELS
     schema = f"mig_{uuid.uuid4().hex[:12]}"
-    url = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
-    url += ("&" if "?" in url else "?") + "options=" + quote(f"-csearch_path={schema},public")
+    url = sqlalchemy_url(options=f"-csearch_path={schema},public").render_as_string(hide_password=False)
     engine = create_engine(url)
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))

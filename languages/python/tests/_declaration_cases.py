@@ -309,7 +309,7 @@ class LaterBase(DeclarativeBase):
     pass
 
 
-def test_a_relationship_to_a_class_defined_later_needs_no_marker():
+def test_a_relationship_to_a_class_defined_later_needs_no_marker(credentials):
     # Author is defined after Book, as a relationship target often is. A
     # relationship is never a column, so it needs no marker, and its hint
     # is not resolved.
