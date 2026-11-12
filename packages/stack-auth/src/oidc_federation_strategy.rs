@@ -1707,7 +1707,13 @@ mod tests {
         );
 
         gate.add_permits(1);
-        let token = second.await.expect("task").expect("the survivor completes");
+        // Bounded, so a broken exchange (one that never takes the permit)
+        // fails here instead of hanging the suite.
+        let token = tokio::time::timeout(std::time::Duration::from_secs(10), second)
+            .await
+            .expect("the survivor finishes")
+            .expect("task")
+            .expect("the survivor completes");
         assert_eq!(subject(&token), "CS|header.payload.signature");
         assert_eq!(
             strategy.cached_jwts(),

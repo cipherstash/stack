@@ -197,8 +197,9 @@ impl OidcFederation {
         let auth_resp: AuthoriseResponse = resp.json()?;
 
         // The response → Token mapping (including the absolute-epoch `expiry`
-        // handling that CIP-3233 fixed) lives on `From<AuthoriseResponse>`.
-        Ok(auth_resp.into())
+        // handling that CIP-3233 fixed, and the 30-day cap) lives on
+        // `AuthoriseResponse::into_token`.
+        Ok(auth_resp.into_token(crate::token::now_unix_secs()))
     }
 }
 
@@ -399,6 +400,30 @@ mod tests {
             !token.is_expired(),
             "a freshly federated 15-minute token must not be reported as already expired"
         );
+    }
+
+    /// The federation step caps an absurd absolute `expiry` at 30 days from
+    /// now, exactly as the access-key path does: both go through one mapping.
+    #[tokio::test]
+    async fn oidc_expiry_is_capped_at_thirty_days() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.json(serde_json::json!({ "accessToken": "tok", "expiry": u64::MAX }));
+        });
+        let server = start_server(mocks).await;
+
+        let token = federation(&server)
+            .federate(&SecretToken::new("jwt-0"))
+            .await
+            .unwrap();
+
+        assert!(
+            token.expires_in() <= crate::token::MAX_TOKEN_LIFETIME_SECS,
+            "expiry must be capped at 30 days; got expires_in = {}",
+            token.expires_in()
+        );
+        assert!(!token.is_expired(), "a capped token is still a live token");
     }
 
     /// The federation step sends exactly the JWT it was given, and nothing it
