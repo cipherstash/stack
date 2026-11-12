@@ -52,6 +52,12 @@ class Cipher(Generic[T]):
     Every cipher in the process shares one engine client. It is built on the
     first ``encrypt`` or ``decrypt`` of any cipher, which loads the default
     keyset once.
+
+    A child process that ``os.fork`` made, as Gunicorn's workers are, builds
+    a client of its own on its first call, and loads the keyset again. On
+    macOS, the child crashes when it does: macOS does not allow its TLS
+    certificate service after a fork. Build no client before the fork there,
+    or start child processes with ``spawn``.
     """
 
     def __init__(self, cls: Type[T]) -> None:
