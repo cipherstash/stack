@@ -4,6 +4,7 @@ The Docker namespace supplies enforcement; strace supplies ptrace events for
 descendants, including npm lifecycle scripts. Trace files are root-only.
 """
 import base64
+import errno
 import json
 import os
 import re
@@ -253,6 +254,14 @@ def invoke(argv, stage):
                     if path is not None:
                         path = os.path.normpath(path)
                 denied = result.startswith('-1 ')
+                # Nonblocking connect reports its failure through SO_ERROR.
+                # getsockopt itself succeeds when it reads that error; its zero
+                # return value is not evidence of a successful connection.
+                socket_error = re.fullmatch(r'getsockopt\(\d+(?:<[^,]*>)?, SOL_SOCKET, SO_ERROR, \[(E[A-Z0-9_]+|[0-9]+)\], \[4\]\)', operation)
+                if result == '0' and socket_error:
+                    value = socket_error.group(1)
+                    if value in errno.errorcode.values() or (value.isdecimal() and int(value) > 0):
+                        denied = True
                 operation_name = operation.split('(', 1)[0]
                 resource = path or 'syscall:' + operation_name
                 forbidden = bool(path and not permitted(path) and not held_descriptor)
