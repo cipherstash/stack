@@ -35,6 +35,14 @@ test = [
     "alembic>=1.13",
 ]
 
+# maturin, the build backend, for `mise run build`. uv.lock records its
+# version and hash, and Dependabot updates it with the test extra, after the
+# same 7-day cooldown. The build installs it into .venv and builds with
+# --no-build-isolation, so uv downloads no unlocked build tool. The range is
+# [build-system]'s, which stays for an install by any other route.
+[dependency-groups]
+build = ["maturin>=1.9,<2.0"]
+
 [tool.maturin]
 # The pure-Python package is the distribution; the Rust extension is its
 # `_engine` submodule, so the Python side can change without a recompile.
