@@ -70,15 +70,29 @@ for (const [kind, outcome, checkId] of cases) {
             .map((e) => e.payload),
         })
         assert.equal(report.outcome, outcome, diagnostics)
-        if (kind.startsWith('denied-'))
+        // Every isolated exec starts with a startup probe that reads the same
+        // canary, so only a command-stage denial from the expected actor and
+        // Run stage proves the migrated code itself was exercised.
+        const deniedBy = (actor: string, stage?: string) =>
+          report.evidence.some(
+            (e) =>
+              e.kind === 'isolation-event' &&
+              (stage === undefined || e.stage === stage) &&
+              Object(e.payload).actor === actor &&
+              Object(e.payload).stage === 'command' &&
+              Object(e.payload).result === 'denied' &&
+              Object(e.payload).decision === 'forbidden' &&
+              Object(e.payload).resource === '/trace/canary',
+          )
+        if (kind === 'denied-app')
+          assert.ok(deniedBy('app-host'), 'createApp probe was not denied')
+        // Only the Migrator's bare `npm install` runs the root install hook;
+        // the App Host names a package spec, and npm skips root lifecycle
+        // scripts for `npm install <spec>`.
+        if (kind === 'denied-lifecycle')
           assert.ok(
-            report.evidence.some(
-              (e) =>
-                e.kind === 'isolation-event' &&
-                Object(e.payload).result === 'denied' &&
-                Object(e.payload).decision === 'forbidden' &&
-                Object(e.payload).resource === '/trace/canary',
-            ),
+            deniedBy('migrator', 'migrator'),
+            'Migrator install hook was not denied',
           )
         if (checkId)
           assert.equal(
