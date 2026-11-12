@@ -98,6 +98,7 @@ test('supervisor requests PID-prefixed shared output and preserves numeric-PID l
     {
       stage: 'command',
       trace: [
+        '42 execve("/usr/bin/setpriv", ["setpriv"], 0x1) = 0',
         '42 clone(child_stack=NULL, flags=SIGCHLD) = 46',
         '42 +++ exited with 0 +++',
         '46 vfork( <unfinished ...>',
@@ -143,6 +144,57 @@ test('supervisor requests PID-prefixed shared output and preserves numeric-PID l
     expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
   )
 })
+
+test('initial traced exec identifies the actor when proc discovers a strace capability-probe child', async () => {
+  // strace 6.1 forks and reaps capability-probe children before startup_child.
+  // A /proc poll may observe one of those children; it is never in this trace.
+  const frames = await observe(
+    [
+      {
+        stage: 'command',
+        trace: [
+          '42 execve("/usr/bin/setpriv", ["setpriv"], 0x1) = 0',
+          '42 clone(child_stack=NULL, flags=SIGCHLD) = 45',
+          '42 +++ exited with 0 +++',
+          '45 openat(AT_FDCWD, "/protected/file", O_RDONLY) = -1 EACCES (Permission denied)',
+          '45 +++ exited with 1 +++',
+        ],
+      },
+    ],
+    {},
+    39,
+  )
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  expect(frames).toContainEqual(
+    expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+  )
+  expect(frames).toContainEqual(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        pid: 45,
+        operation: 'openat',
+        decision: 'forbidden',
+        result: 'denied',
+      }),
+    }),
+  )
+})
+
+test.each([null, 39])(
+  'numeric output refuses a missing initial exec with proc PID %s',
+  async (actorPid) => {
+    const frames = await observe(
+      [{ stage: 'command', trace: ['42 +++ exited with 0 +++'] }],
+      {},
+      actorPid,
+    )
+    expect(frames).toContainEqual({
+      kind: 'stream-error',
+      error: 'ptrace stream lacks initial actor exec record',
+    })
+    expect(frames.some((frame) => frame.kind === 'actor-exit')).toBe(false)
+  },
+)
 
 test('observer identifies a fast actor from its initial numeric exec when proc discovery misses it', async () => {
   const frames = await observe(
@@ -258,6 +310,7 @@ test.each(['bracket', 'numeric'])(
       {
         stage: 'command',
         trace: [
+          '[pid 42] execve("/usr/bin/node", ["node"], 0x1) = 0',
           '[pid 43] execve("/usr/bin/node", ["node"], 0x1 /* 1 var */ <pid changed to 42 ...>',
           '[pid 42] +++ superseded by execve in pid 43 +++',
           '[pid 42] <... execve resumed>) = 0',
