@@ -14,17 +14,24 @@
 // engine returns does. It must never panic. A scalar it accepts that the
 // write check also accepts must write back as a passthrough and read as
 // itself.
+//
+// The first input byte chooses the branch. 0x00 is Read, and the rest of the
+// input is the frame, byte for byte, so a seed in `corpus/value_frame/` is
+// 0x00 then a real frame. Any other byte is Write, and the rest decodes
+// through `arbitrary`. `arbitrary` itself cannot carry a frame as it is: its
+// `Vec<u8>` puts a byte of its own before each element.
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::dynamic::ValueFrame;
 use stackencrypt_core::values::{self, Kind, Scalar, Typed, Value};
 
+/// The first input byte that chooses Read; any other byte chooses Write.
+const READ: u8 = 0x00;
+
+/// A Write input: a kind and a host value.
 #[derive(Arbitrary, Debug)]
-enum Input {
-    Write(MirrorKind, Host),
-    Read(Vec<u8>),
-}
+struct Write(MirrorKind, Host);
 
 /// `Option<Kind>`: `Passthrough` is `None`.
 #[derive(Arbitrary, Debug, Clone, Copy)]
@@ -140,42 +147,55 @@ fn same(a: &Scalar, b: &Scalar) -> bool {
     }
 }
 
-fuzz_target!(|input: Input| {
-    match input {
-        Input::Write(kind, host) => {
-            let (kind, value) = (kind.kind(), host.value());
-            if values::scalar(kind, value).is_err() {
-                return;
-            }
-            let frame = ValueFrame::of(Typed(kind, value)).expect("an accepted value frames");
-            let read = values::read(frame.risky_ref()).expect("a written frame reads");
-            assert!(
-                same(&read, &expected(kind, value)),
-                "{read:?} for {kind:?} {value:?}"
-            );
-            if let Some(plain) = independent(kind, value) {
-                assert_eq!(frame.risky_ref(), plain.risky_ref(), "{kind:?} {value:?}");
-            }
-        }
-        Input::Read(bytes) => {
-            let Ok(read) = values::read(&bytes) else {
-                return;
-            };
-            let Some(value) = read.value() else {
-                return;
-            };
-            // `values::read` range-checks a timestamp, but not a date or a
-            // decimal: it reads any `i32` day count, and any scale and
-            // mantissa. `values::scalar` refuses a date outside the engine's
-            // range, a scale over 28, and a mantissa over 96 bits. The engine
-            // only returns a passthrough the SDK wrote, so read accepting
-            // more than write is not a defect.
-            if values::scalar(None, value).is_err() {
-                return;
-            }
-            let frame = ValueFrame::of(Typed(None, value)).expect("a read scalar writes back");
-            let again = values::read(frame.risky_ref()).expect("a written frame reads");
-            assert!(same(&again, &read), "{again:?} after {read:?}");
-        }
+fuzz_target!(|data: &[u8]| {
+    let Some((&branch, rest)) = data.split_first() else {
+        return;
+    };
+    if branch == READ {
+        read_back(rest);
+    } else if let Ok(Write(kind, host)) = Write::arbitrary_take_rest(Unstructured::new(rest)) {
+        write_back(kind, host);
     }
 });
+
+/// Write: an accepted value frames, reads back as itself narrowed to its
+/// kind, and, for a plain Rust type, gives the bytes `ValueFrame::of` gives
+/// that type.
+fn write_back(kind: MirrorKind, host: Host) {
+    let (kind, value) = (kind.kind(), host.value());
+    if values::scalar(kind, value).is_err() {
+        return;
+    }
+    let frame = ValueFrame::of(Typed(kind, value)).expect("an accepted value frames");
+    let read = values::read(frame.risky_ref()).expect("a written frame reads");
+    assert!(
+        same(&read, &expected(kind, value)),
+        "{read:?} for {kind:?} {value:?}"
+    );
+    if let Some(plain) = independent(kind, value) {
+        assert_eq!(frame.risky_ref(), plain.risky_ref(), "{kind:?} {value:?}");
+    }
+}
+
+/// Read: `bytes` never panic `values::read`, and a scalar that both checks
+/// accept writes back as a passthrough and reads as itself.
+fn read_back(bytes: &[u8]) {
+    let Ok(read) = values::read(bytes) else {
+        return;
+    };
+    let Some(value) = read.value() else {
+        return;
+    };
+    // `values::read` range-checks a timestamp, but not a date or a decimal:
+    // it reads any `i32` day count, and any scale and mantissa.
+    // `values::scalar` refuses a date outside the engine's range, a scale
+    // over 28, and a mantissa over 96 bits. The engine only returns a
+    // passthrough the SDK wrote, so read accepting more than write is not a
+    // defect.
+    if values::scalar(None, value).is_err() {
+        return;
+    }
+    let frame = ValueFrame::of(Typed(None, value)).expect("a read scalar writes back");
+    let again = values::read(frame.risky_ref()).expect("a written frame reads");
+    assert!(same(&again, &read), "{again:?} after {read:?}");
+}
