@@ -516,9 +516,18 @@ impl HttpTransport for ReqwestTransport {
                 )
             })
             .collect();
-        let body = response.bytes().await?.to_vec();
+        let body = response_body(response.bytes().await?);
         Ok(HttpResponse::new(status, headers, body))
     }
+}
+
+/// The bytes of a response body, moved out of reqwest's buffer rather than
+/// copied when nothing else shares it. A minted token arrives in this body,
+/// and [`HttpResponse`] wipes its own copy on drop; a copy would free
+/// reqwest's buffer, token and all, unwiped.
+#[cfg(feature = "http")]
+fn response_body(bytes: bytes::Bytes) -> Vec<u8> {
+    Vec::from(bytes)
 }
 
 /// The bundled transport, boxed for the strategies.
@@ -826,6 +835,20 @@ mod tests {
 
         let (_, _, _, sent) = seen(&stub);
         assert_eq!(sent, serde_json::to_vec(&body).unwrap());
+    }
+
+    /// The response body takes over reqwest's allocation instead of copying
+    /// it, so the token in it is wiped with [`HttpResponse`].
+    #[test]
+    #[cfg(feature = "http")]
+    fn response_body_takes_over_the_buffer_it_is_given() {
+        let bytes = bytes::Bytes::from(br#"{"accessToken":"secret"}"#.to_vec());
+        let ptr = bytes.as_ptr();
+
+        let body = response_body(bytes);
+
+        assert_eq!(body, br#"{"accessToken":"secret"}"#);
+        assert_eq!(body.as_ptr(), ptr, "the buffer must be moved, not copied");
     }
 
     #[test]
