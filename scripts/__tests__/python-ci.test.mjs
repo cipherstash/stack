@@ -254,6 +254,57 @@ describe('tests-python.yml', () => {
     )
   })
 
+  it('runs the parity test that refuses a hand edit to _eql.py', () => {
+    // The one check that fails when someone edits the generated
+    // `_eql.py` by hand: test-eql.yml does not start on a change under
+    // languages/python.
+    const wf = readWorkflow(WORKFLOW)
+    const runs = Object.values(wf.jobs)
+      .flatMap((job) => job.steps)
+      .map((step) => step.run ?? '')
+      .filter((run) =>
+        [
+          'cargo test',
+          '--locked',
+          '-p eql-codegen',
+          '--test py_eql_parity',
+        ].every((part) => run.includes(part)),
+      )
+    expect(
+      runs,
+      "steps that run eql-codegen's py_eql_parity test",
+    ).toHaveLength(1)
+  })
+
+  it('builds from uv.lock, with no tool resolved outside it', () => {
+    // `uv sync --locked` refuses a lock that does not match pyproject.toml;
+    // without it, uv would update the lock and the build would pass. Each
+    // `uv pip install` must take nothing from the index: `--no-deps` for
+    // the package's dependencies, `--no-build-isolation` for maturin.
+    expect(existsSync(join(REPO_ROOT, PYTHON_ROOT, 'uv.lock'))).toBe(true)
+    const miseToml = read(`${PYTHON_ROOT}/mise.toml`)
+    const build = miseToml.match(
+      /^\[tasks\.build\]\n([\s\S]*?)(?=^\[|(?![\s\S]))/m,
+    )
+    expect(build, 'mise.toml has a [tasks.build]').not.toBeNull()
+    const lines = build[1]
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('#'))
+    const syncs = lines.filter((line) => /\buv sync\b/.test(line))
+    expect(syncs, 'uv sync lines in the build task').toHaveLength(1)
+    expect(syncs[0]).toContain('--locked')
+    expect(syncs[0]).toContain('--group build')
+    const installs = lines.filter((line) => /\buv pip install\b/.test(line))
+    expect(
+      installs.length,
+      'uv pip install lines in the build task',
+    ).toBeGreaterThan(0)
+    for (const line of installs) {
+      expect(line).toContain('--no-deps')
+      expect(line).toContain('--no-build-isolation')
+    }
+  })
+
   it('runs every task of the Python workspace, and the two cargo lints, from that folder', () => {
     // "A check nothing invokes reads exactly like a check that passes"
     // (crates-ci.test.mjs). That file scans the root mise.toml and the crate

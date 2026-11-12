@@ -600,23 +600,34 @@ const RUST_CACHE_STEPS = workflowFiles().flatMap((relPath) => {
 })
 
 /**
- * Whether a rust-cache step names the root of another Cargo workspace: a
- * directory outside the EQL tree with its own `Cargo.lock`. A job that builds
- * both EQL and that workspace (tests-python.yml's `live` builds the Python
- * wheel and the EQL bundle) caches each in its own step, and the other
- * workspace's step is right where it is. A member of the EQL workspace, or
- * the monorepo root, is not another workspace, so this check still catches
- * both.
+ * The workspaces a rust-cache step names: one per line of `workspaces:`, as
+ * rust-cache reads it. A job that builds EQL and another workspace
+ * (tests-python.yml's `live` builds the Python wheel and the EQL bundle)
+ * lists both in one step. Two steps would each prune the shared cargo
+ * registry to their own crates before they save.
  */
+const workspacesOf = (step) =>
+  String(step?.with?.workspaces ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+/**
+ * Whether `dir` is the root of another Cargo workspace: a directory outside
+ * the EQL tree with its own `Cargo.lock`. A member of the EQL workspace, or
+ * the monorepo root, is not another workspace, so the check below still
+ * catches both.
+ */
+const isAnotherWorkspace = (dir) =>
+  dir !== '.' &&
+  dir !== CARGO_WORKSPACE &&
+  !dir.startsWith(`${CARGO_WORKSPACE}/`) &&
+  existsSync(join(REPO_ROOT, dir, 'Cargo.lock'))
+
+/** A step that caches other workspaces only, and not EQL's. */
 const namesAnotherWorkspace = ({ step }) => {
-  const dir = step?.with?.workspaces
-  return (
-    typeof dir === 'string' &&
-    dir !== '.' &&
-    dir !== CARGO_WORKSPACE &&
-    !dir.startsWith(`${CARGO_WORKSPACE}/`) &&
-    existsSync(join(REPO_ROOT, dir, 'Cargo.lock'))
-  )
+  const dirs = workspacesOf(step)
+  return dirs.length > 0 && dirs.every(isAnotherWorkspace)
 }
 
 /** The rust-cache steps in EQL's jobs that cache the EQL workspace. */
@@ -664,13 +675,15 @@ describe('the shared Rust cache is pointed and saved correctly', () => {
     // root workspace, and rust-cache's default (`. -> target`) is right there.
     // Held non-empty, so a change to `isEqlJob` cannot empty the check.
     expect(EQL_RUST_CACHE_STEPS.length).toBeGreaterThan(0)
-    const wrong = EQL_RUST_CACHE_STEPS.filter(
-      ({ step }) =>
-        !String(step?.with?.workspaces ?? '')
-          .split('\n')
-          .map((line) => line.split('->')[0].trim())
-          .includes(CARGO_WORKSPACE),
-    ).map((entry) =>
+    // The step names the EQL root, and any other entry is another
+    // workspace's root, never an EQL member or the monorepo root.
+    const wrong = EQL_RUST_CACHE_STEPS.filter(({ step }) => {
+      const dirs = workspacesOf(step)
+      return (
+        !dirs.includes(CARGO_WORKSPACE) ||
+        !dirs.every((dir) => dir === CARGO_WORKSPACE || isAnotherWorkspace(dir))
+      )
+    }).map((entry) =>
       stepLabel(entry, `workspaces: ${entry.step?.with?.workspaces}`),
     )
     expect(
