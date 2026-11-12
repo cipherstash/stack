@@ -83,7 +83,11 @@ checks then run, followed by the migration layer: old Protect imports and npm
 dependencies must be gone, every FFI lockfile entry must match the actual
 version selected for the exact Stack dependency, the endpoint shim must be
 removed, and stored Mutation Data must contain no `active__hmac` after updating
-the active field. Missing checks or missing inspection evidence prevent a pass.
+the active field. The import, dependency and shim checks read both the
+Migrator workspace and the App Host's installed copy after its lifecycle
+scripts. The Mutation Data is read straight after `setActive`, before the copy
+checks put the full record again. Missing checks or missing inspection evidence
+prevent a pass.
 
 Diff evidence uses the host-recorded fixture commit, so an adapter can commit
 its changes without hiding them. Failed Git commands fail the migration stage

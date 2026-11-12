@@ -339,16 +339,25 @@ export function createRealDriver({
           await assigned(oracleStores).snapshot(),
         )
         result.checks.push(comparison)
-        const checks = await result.mutate()
+        // Inspect the stored active field straight after setActive: the copy
+        // checks then put the full record twice, which would replace a stale
+        // legacy HMAC left by a broken setActive before it could be seen.
+        /** @type {unknown} */
+        let mutationSnapshot
+        const checks = await result.mutate({
+          afterSetActive: async () => {
+            mutationSnapshot = await assigned(oracleStores).snapshot(
+              mutation.pk,
+            )
+          },
+        })
         checks.push(
           ...(await migrationChecks({
             workspace,
             installedWorkspace: oracleWorkspace,
             stackVersion: manifest.stack,
             ffiRange,
-            mutationSnapshot: await assigned(oracleStores).snapshot(
-              mutation.pk,
-            ),
+            mutationSnapshot,
           })),
         )
         return checks

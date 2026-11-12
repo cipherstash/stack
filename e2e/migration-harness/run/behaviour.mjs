@@ -125,7 +125,9 @@ export async function behaviour(call) {
   // Mutation checks are deliberately separate so #1535 can insert no-rewrite here.
   return {
     checks,
-    async mutate() {
+    /** @param {{afterSetActive?: ()=>Promise<void>}} [hooks] afterSetActive
+     * runs before any later full put can overwrite the setActive result. */
+    async mutate(hooks = {}) {
       await check('behaviour.fresh-write', async () => {
         equal(await call('get', [fresh.pk]), null)
         await call('put', [fresh])
@@ -163,6 +165,7 @@ export async function behaviour(call) {
         await call('setActive', [mutation.pk, false])
         equal(record(await call('get', [mutation.pk])).active, false)
       })
+      await hooks.afterSetActive?.()
       const copiedMutation = {
         ...mutation,
         active: false,
