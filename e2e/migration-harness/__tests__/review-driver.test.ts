@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { legacy } from '../run/behaviour.mjs'
+import { dynamoColumns } from '../run/legacy-columns.mjs'
 import { migrationChecks, noRewriteCheck } from '../run/migration-checks.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
@@ -20,14 +21,7 @@ const observed = vi.hoisted(() => ({
         Item: {
           pk: { S: 'legacy' },
           ...Object.fromEntries(
-            [
-              'email',
-              'emailLower',
-              'age',
-              'balance',
-              'active',
-              'notes',
-            ].flatMap((key) => [
+            dynamoColumns.flatMap((key) => [
               [`${key}__source`, { S: 'original' }],
               [`${key}__hmac`, { S: 'term' }],
             ]),

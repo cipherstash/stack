@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import postgres from 'postgres'
+import { postgresSnapshotQuery } from './legacy-columns.mjs'
 import { dynamoSnapshotError } from './snapshot-errors.mjs'
 import { provisionPostgres } from './stores.mjs'
 
@@ -333,8 +334,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
       if (!response.ok) throw dynamoSnapshotError(response.status)
       return {
         dynamo: await response.json(),
-        postgres:
-          await snapshotSql`SELECT pk, email::jsonb, age::jsonb, notes::jsonb FROM customers WHERE pk = ${pk}`,
+        postgres: await snapshotSql.unsafe(postgresSnapshotQuery, [pk]),
       }
     },
   }
