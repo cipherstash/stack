@@ -131,6 +131,7 @@ def invoke(argv, stage):
 
     def trace():
         pending = {}
+        pending_forks = {}
         exec_moves = {}
         # strace prefixes a line with [pid N] only while more than one tracee is
         # attached. Track attached tracees so an unprefixed line is attributed to
@@ -159,6 +160,16 @@ def invoke(argv, stage):
                 killed = re.fullmatch(r'\+\+\+ killed by (SIG\w+)(?: \(core dumped\))? \+\+\+', call)
                 if exited or killed:
                     live.discard(pid)
+                    # A child can finish before its parent's creation syscall
+                    # resumes. An older process with that PID can also exit
+                    # during the call, before the PID is reused for its child.
+                    # Distinguish that older generation from the new child.
+                    for creation in pending_forks.values():
+                        if pid in creation['existing']:
+                            creation['existing'].remove(pid)
+                        else:
+                            creation['exited'].add(pid)
+                    pending_forks.pop(pid, None)
                     if (int(pid) == actor_pid) if actor_pid is not None else not prefixed:
                         actor_exit = int(exited.group(1)) if exited else -getattr(signal, killed.group(1))
                     continue
@@ -172,6 +183,11 @@ def invoke(argv, stage):
                     if not entry.startswith(('execve(', 'execveat(')) or replacement == pid:
                         raise RuntimeError('invalid ptrace exec PID transition')
                     pending.pop(pid, None)
+                    pending_forks.pop(pid, None)
+                    pending_forks.pop(replacement, None)
+                    for creation in pending_forks.values():
+                        creation['existing'].discard(pid)
+                        creation['existing'].discard(replacement)
                     pending[replacement] = entry
                     exec_moves[pid] = replacement
                     continue
@@ -179,6 +195,11 @@ def invoke(argv, stage):
                 if superseded:
                     former = superseded.group(1)
                     live.discard(former)
+                    pending_forks.pop(former, None)
+                    pending_forks.pop(pid, None)
+                    for creation in pending_forks.values():
+                        creation['existing'].discard(former)
+                        creation['existing'].discard(pid)
                     if exec_moves.pop(former, None) == pid:
                         if not pending.get(pid, '').startswith(('execve(', 'execveat(')):
                             raise RuntimeError('missing ptrace exec PID transition')
@@ -192,7 +213,10 @@ def invoke(argv, stage):
                     continue
                 if '<unfinished ...>' in call:
                     pending[pid] = call.split('<unfinished ...>')[0]
+                    if call.startswith(('clone(', 'clone3(', 'fork(', 'vfork(')):
+                        pending_forks[pid] = {'existing': set(live), 'exited': set()}
                     continue
+                exited_children = ()
                 if call.startswith('<... '):
                     resumed = re.match(r'<\.\.\. (\w+) resumed>(.*)', call)
                     if not resumed or pid not in pending:
@@ -200,12 +224,14 @@ def invoke(argv, stage):
                     entry = pending.pop(pid)
                     if entry.split('(', 1)[0] != resumed.group(1):
                         raise RuntimeError('mismatched ptrace syscall continuation')
+                    creation = pending_forks.pop(pid, None)
+                    exited_children = creation['exited'] if creation else ()
                     call = entry + resumed.group(2)
                 if ' = ' not in call: continue
                 operation, result = call.rsplit(' = ', 1)
                 if operation.startswith(('clone(', 'clone3(', 'fork(', 'vfork(')):
                     child = re.match(r'(\d+)\b', result)
-                    if child and int(child.group(1)) > 0:
+                    if child and int(child.group(1)) > 0 and child.group(1) not in exited_children:
                         live.add(child.group(1))
                 # Canonical paths returned by the kernel are decoded by strace -yy.
                 # Raw arguments are used only to decide access, never exported.
