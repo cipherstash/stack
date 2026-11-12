@@ -313,7 +313,7 @@ The conversion performs these steps in one transaction:
 5. Create functional equality indexes on `eql_v3.eq_term(email_v3)` and `eql_v3.eq_term(age_v3)`.
 6. Read and decrypt the target values with Stack, compare plaintext and retained bytes against the source, then commit. A failed check rolls back the added columns and indexes too.
 
-The script below is the core of the tested [executable migration](https://github.com/cipherstash/stack/blob/main/e2e/migration-guide/postgres.ts), for the `customers` table above. `client` and `customers` are the Stack client and schema from step 2. The script decrypts the source v2 envelopes with Stack's `client.decrypt`, which accepts Protect-written v2 payloads, so no Protect client is needed after step 2 removed it (`postgres-upgrade › decrypts every Protect-written v2 source envelope with Stack to the same plaintext as Protect`). The executable example additionally cross-checks each source value with the preserved Protect build; keeping that old build for rollback (step 1) is unchanged. The full example also runs the step 1 dependency preflight (constraints, secondary indexes, views, triggers, policies, inheritance) right after the lock; do not skip it.
+The script below is the core of the tested [executable migration](https://github.com/cipherstash/stack/blob/main/e2e/migration-guide/postgres.ts), for the `customers` table above. `client` and `customers` are the Stack client and schema from step 2. The script decrypts the source v2 envelopes with Stack's `client.decrypt`, which accepts Protect-written v2 payloads, so no Protect client is needed after step 2 removed it (`postgres-upgrade › decrypts every Protect-written v2 source envelope with Stack to the same plaintext as Protect`). The executable example additionally cross-checks each source value with the preserved Protect build; keeping that old build for rollback (step 1) is unchanged. The dependency preflight below matches the executable example's initial-migration checks: it refuses extra constraints, secondary indexes, views, triggers, policies and inheritance before changing data or adding columns. PostgreSQL 18 records the primary key column's NOT NULL constraint in `pg_constraint`; the check permits that constraint while still refusing NOT NULL on the encrypted source columns.
 
 ```typescript
 import postgres from 'postgres'
@@ -335,7 +335,23 @@ await sql.begin(async (tx) => {
     ['pk', 'text'], ['email', 'eql_v2_encrypted'],
     ['age', 'eql_v2_encrypted'], ['notes', 'eql_v2_encrypted'],
   ])) throw new Error('Unsupported columns')
-  // (Run the dependency preflight here.)
+  const dependencies = await tx`SELECT
+    EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'customers'::regclass AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_constraint WHERE (conrelid = 'customers'::regclass OR confrelid = 'customers'::regclass)
+      -- PostgreSQL 18 also lists the primary key column's NOT NULL here.
+      AND NOT (contype IN ('p', 'n') AND conrelid = 'customers'::regclass AND conkey = ARRAY[1]::smallint[]))
+    -- PostgreSQL 17 and earlier keep NOT NULL out of pg_constraint.
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'customers'::regclass
+      AND attnum > 1 AND NOT attisdropped AND attnotnull)
+    -- Initial conversion allows no secondary indexes, including target indexes.
+    OR EXISTS (SELECT 1 FROM pg_index WHERE indrelid = 'customers'::regclass AND NOT indisprimary)
+    OR EXISTS (SELECT 1 FROM pg_depend WHERE refobjid = 'customers'::regclass AND classid = 'pg_rewrite'::regclass)
+    OR (SELECT relrowsecurity OR relispartition OR relkind <> 'r' FROM pg_class WHERE oid = 'customers'::regclass)
+    OR EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'customers'::regclass)
+    OR EXISTS (SELECT 1 FROM pg_inherits WHERE inhparent = 'customers'::regclass OR inhrelid = 'customers'::regclass)
+    AS unsupported`
+  if (dependencies[0].unsupported)
+    throw new Error('Unsupported table dependencies: review constraints, indexes, views, triggers, policies and inheritance first')
 
   // 2. Validate every envelope and recompute its equality term with Stack.
   const rows = await tx`SELECT pk, email::jsonb AS email, age::jsonb AS age,
@@ -396,6 +412,8 @@ await sql.begin(async (tx) => {
 await sql`ANALYZE customers`
 await sql.end()
 ```
+
+**Rerunning the conversion:** after a successful commit, the table includes the three `_v3` columns. Running this conversion again fails the exact source-shape check before any DDL or data changes; the transaction rolls back without altering the completed migration. It is a one-off conversion, not an idempotent startup hook. Do not treat the mere presence of target columns as proof that a migration completed, and do not drop them to force a rerun. If a transaction failed, diagnose the failure and confirm its changes rolled back before deciding whether to retry. If the client lost the connection around commit, inspect and verify the database state first. Continue with verification and cutover after a successful migration.
 
 Only the envelope and database structure change for these proven mappings; the ciphertext and equality terms are copied unchanged. Do not generalize this to other capabilities or to v4 (`postgres-upgrade › migrates actual v2 columns, preserves ciphertext and queries, and rolls back before writes resume`).
 
