@@ -30,7 +30,7 @@ pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=
 
 The native build needs the repository's Rust toolchain and trusted mise configuration. These commands are for maintainers verifying the guide; a customer installing Stack from npm receives prebuilt binaries. The crossover task also runs the PostgreSQL upgrade and executable DynamoDB example. Credentialed tests fail if configuration is missing; a skipped or unrun suite is not migration evidence.
 
-The [executable examples](https://github.com/cipherstash/stack/blob/0ecabc3f62ee8a117c467981ce00d312e6cfc636/e2e/migration-guide/README.md) use npm and the pinned customer packages. Run them on disposable data. The DynamoDB example uses in-memory item persistence and exercises legacy reads, new writes, normalization, bigint serialization and boolean updates (`example › runs the npm DynamoDB example through legacy reads, new writes and boolean updates`). It is not an AWS deployment test.
+The [executable examples](https://github.com/cipherstash/stack/blob/21631ecf68fd5356fdd4c2631550a46931123dc4/e2e/migration-guide/README.md) use npm and the pinned customer packages. Run them on disposable data. The DynamoDB example uses in-memory item persistence and exercises legacy reads, new writes, normalization, bigint serialization and boolean updates (`example › runs the npm DynamoDB example through legacy reads, new writes and boolean updates`). It is not an AWS deployment test.
 
 ## Why the supported scalar attributes need no re-encryption
 
@@ -313,7 +313,7 @@ The conversion performs these steps in one transaction:
 5. Create functional equality indexes on `eql_v3.eq_term(email_v3)` and `eql_v3.eq_term(age_v3)`.
 6. Read and decrypt the target values with Stack, compare plaintext and retained bytes against the source, then commit. A failed check rolls back the added columns and indexes too.
 
-The complete script below is generated verbatim from the [canonical executable conversion](https://github.com/cipherstash/stack/blob/0ecabc3f62ee8a117c467981ce00d312e6cfc636/e2e/migration-guide/postgres-conversion.ts). The npm example and live suite use this same implementation; a hermetic check rejects snippet drift and strict TypeScript errors. The live suite also executes the pasted script itself (`postgres-upgrade › runs the standalone guide script against Protect-written source columns`).
+The complete script below is generated verbatim from the [canonical executable conversion](https://github.com/cipherstash/stack/blob/21631ecf68fd5356fdd4c2631550a46931123dc4/e2e/migration-guide/postgres-conversion.ts). The npm example and live suite use this same implementation; a hermetic check rejects snippet drift and strict TypeScript errors. The live suite also executes the pasted script itself (`postgres-upgrade › runs the standalone guide script against Protect-written source columns`).
 
 Prepare a **separate migration-tool directory** before the maintenance window. The new application from step 2 has removed Protect; this one-off tool deliberately retains both pinned SDKs so source validation is independent of Stack:
 
@@ -667,7 +667,7 @@ In rehearsal, test fresh Stack writes beside migrated rows, reads, lookups and u
 
 ### Reproduce the PostgreSQL example
 
-Use the [npm example instructions](https://github.com/cipherstash/stack/blob/0ecabc3f62ee8a117c467981ce00d312e6cfc636/e2e/migration-guide/README.md) with a disposable database containing both EQL generations. `seed` creates a new table and refuses an existing one; `migrate` validates and creates targets; `verify` reads them; `rollback` demonstrates recovery before writes; `write` demonstrates why that recovery boundary closes. No step drops or reinstalls an EQL schema.
+Use the [npm example instructions](https://github.com/cipherstash/stack/blob/21631ecf68fd5356fdd4c2631550a46931123dc4/e2e/migration-guide/README.md) with a disposable database containing both EQL generations. `seed` creates a new table and refuses an existing one; `migrate` validates and creates targets; `verify` reads them; `rollback` demonstrates recovery before writes; `write` demonstrates why that recovery boundary closes. No step drops or reinstalls an EQL schema.
 
 ## Optional: moving values between DynamoDB and Postgres
 

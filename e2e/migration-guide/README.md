@@ -1,6 +1,6 @@
 # Protect v2 to Stack v3 examples
 
-These examples accompany the [two-store migration guide](https://github.com/cipherstash/stack/blob/0ecabc3f62ee8a117c467981ce00d312e6cfc636/docs/migration/protect-dynamodb-to-stack.md). EQL v2/v3 are data generations; the target npm package is Stack 1.2.1. Nothing here uses v4.
+These examples accompany the [two-store migration guide](https://github.com/cipherstash/stack/blob/21631ecf68fd5356fdd4c2631550a46931123dc4/docs/migration/protect-dynamodb-to-stack.md). EQL v2/v3 are data generations; the target npm package is Stack 1.2.1. Nothing here uses v4.
 
 Use Node.js 22.18 or later. Copy this directory to a disposable location outside the monorepo and run:
 
