@@ -62,4 +62,6 @@ def run_python(args: List[str], env: Optional[Dict[str, str]] = None) -> Any:
         timeout=120,
     )
     assert done.returncode == 0, done.stderr
-    return json.loads(done.stdout.strip().splitlines()[-1])
+    lines = done.stdout.strip().splitlines()
+    assert lines, f"the child printed nothing. Its stderr:\n{done.stderr}"
+    return json.loads(lines[-1])

@@ -15,6 +15,12 @@ The SDK is not released, so its API can change. This example installs the SDK fr
 
 You need Docker, mise, and a Rust toolchain. mise installs the toolchain.
 
+`mise run setup` builds EQL with EQL's own mise file, which installs its own Rust toolchain. Trust that file once, from this folder:
+
+```sh
+mise trust ../../../../packages/eql
+```
+
 You also need CipherStash credentials. Set `CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, and `CS_CLIENT_KEY`. Or log in with `stash auth login`.
 
 ## Run it

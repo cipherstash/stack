@@ -8,9 +8,13 @@
 //! was not built from. The scope is every stack-* crate, not only
 //! `stack-encrypt`: it depends by path on `stack-kms` and
 //! `stack-encrypt-derive`, and a wider scope can only add a `-dirty` that is
-//! true. Edits outside `packages/stack-*` (this workspace, the Python
-//! package) are not engine edits and do not mark the engine dirty; the wheel
-//! version and the checkout commit describe those.
+//! true. Two more files choose the engine's code: the root `Cargo.toml`,
+//! which sets the versions of the crates the engine takes with
+//! `workspace = true`, and this workspace's `Cargo.lock`, which holds the
+//! exact versions. An edit to either also marks the engine dirty. Other
+//! edits outside `packages/stack-*` (this workspace, the Python package) are
+//! not engine edits; the wheel version and the checkout commit describe
+//! those.
 //!
 //! `STACKENCRYPT_ENGINE_COMMIT` in the environment wins over git, for a build
 //! from a source tree that is not a checkout. It is trusted as given: with no
@@ -26,6 +30,9 @@ const ENV_OVERRIDE: &str = "STACKENCRYPT_ENGINE_COMMIT";
 /// `stack-*` entry in it is engine source for the `-dirty` check.
 const PACKAGES_DIR: &str = "../../../../packages";
 const ENGINE_PREFIX: &str = "stack-";
+/// The files outside the stack-* crates that choose the engine's dependency
+/// versions, relative to this crate.
+const DEPENDENCY_FILES: [&str; 2] = ["../../../../Cargo.toml", "../../Cargo.lock"];
 
 fn main() {
     println!("cargo:rerun-if-env-changed={ENV_OVERRIDE}");
@@ -81,6 +88,12 @@ fn commit_from_git() -> String {
     for dir in engine_dirs(&manifest_dir) {
         println!("cargo:rerun-if-changed={}", dir.display());
     }
+    for file in DEPENDENCY_FILES {
+        println!(
+            "cargo:rerun-if-changed={}",
+            manifest_dir.join(file).display()
+        );
+    }
 
     let commit = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| {
         panic!(
@@ -101,9 +114,15 @@ fn commit_from_git() -> String {
         dirs.iter()
             .map(|d| format!(":(exclude){}/fuzz", d.display())),
     );
+    paths.extend(DEPENDENCY_FILES.iter().map(|file| (*file).to_owned()));
     let mut status = vec!["status", "--porcelain", "--"];
     status.extend(paths.iter().map(String::as_str));
-    let dirty = git(&status).is_some_and(|s| !s.is_empty());
+    // A status that fails cannot say the tree is clean, so it fails the
+    // build, as `rev-parse` does.
+    let porcelain = git(&status).unwrap_or_else(|| {
+        panic!("`git status` failed, so the build cannot tell whether the engine has edits")
+    });
+    let dirty = !porcelain.is_empty();
     if dirty {
         format!("{commit}-dirty")
     } else {

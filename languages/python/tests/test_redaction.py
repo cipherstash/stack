@@ -275,17 +275,17 @@ def test_a_hand_written_method_in_any_form_is_refused(form):
     assert error.code == "declaration_repr_present"
 
 
-def test_a_hand_written_str_is_refused():
-    def build():
-        @stackencrypt.model("users")
-        @dataclasses.dataclass
-        class User:
-            email: Annotated[str, TextEq]
+@pytest.mark.parametrize("name", ["__str__", "__rich_repr__"])
+def test_each_hand_written_method_is_refused(name):
+    def method(self):
+        return self.email
 
-            def __str__(self):
-                return self.email
-
-    assert pytest.raises(DeclarationError, build).value.code == "declaration_repr_present"
+    cls = dataclasses.make_dataclass(
+        "User", [("email", Annotated[str, TextEq])], namespace={name: method}
+    )
+    error = pytest.raises(DeclarationError, stackencrypt.model("users"), cls).value
+    assert error.code == "declaration_repr_present"
+    assert name in str(error)
 
 
 def test_redact_false_keeps_a_hand_written_repr_and_shows_plaintext():

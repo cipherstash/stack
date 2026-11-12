@@ -21,6 +21,31 @@ const CORPUS: &str = include_str!("../testdata/value-conformance.json");
 /// (`int8`, the unsigned and 128-bit integers, `uuid`), it is not a scalar
 /// (`array`, `object`), or it is a timestamp in a unit other than the
 /// nanoseconds the SDK writes.
+/// The vectors the SDK writes, in corpus order: every scalar kind it has,
+/// from the corpus at this commit. A vector added on a refresh fails the
+/// test with its name.
+const WRITTEN: &[&str] = &[
+    "false",
+    "true",
+    "int16",
+    "int32",
+    "int64",
+    "float32",
+    "float64",
+    "text",
+    "text-nul",
+    "bytes",
+    "date",
+    "date-year-zero",
+    "timestamp",
+    "timestamp-nanos",
+    "timestamp-expanded-year",
+    "timestamp-negative-year",
+    "decimal",
+    "decimal-min",
+    "decimal-small",
+];
+
 const NOT_WRITTEN: &[&str] = &[
     "null",
     "undefined",
@@ -155,7 +180,7 @@ fn decimal(text: &str) -> (i128, u8) {
 #[test]
 fn every_vector_the_sdk_writes_gives_its_bytes_and_reads_back() {
     let corpus = corpus();
-    let mut written = 0;
+    let mut written = Vec::new();
     for vector in corpus["vectors"].as_array().expect("vectors") {
         let name = vector["name"].as_str().expect("a name");
         let (mut text, mut bytes) = (String::new(), Vec::new());
@@ -185,10 +210,9 @@ fn every_vector_the_sdk_writes_gives_its_bytes_and_reads_back() {
             expected,
             "{name}: the read value"
         );
-        written += 1;
+        written.push(name);
     }
-    // Every scalar kind the SDK has, from the corpus at this commit.
-    assert_eq!(written, 19);
+    assert_eq!(written, WRITTEN);
 }
 
 #[test]
@@ -204,7 +228,7 @@ fn every_malformed_vector_is_refused() {
 #[test]
 fn every_normalized_vector_reads_as_its_canonical_value() {
     let corpus = corpus();
-    let mut written = 0;
+    let mut written = Vec::new();
     for vector in corpus["normalized"].as_array().expect("normalized") {
         let name = vector["name"].as_str().expect("a name");
         let transport = unhex(vector["transport"].as_str().expect("transport"));
@@ -245,10 +269,10 @@ fn every_normalized_vector_reads_as_its_canonical_value() {
                     &reencode[..],
                     "{name}: the written bytes"
                 );
-                written += 1;
+                written.push(name);
             }
         }
     }
-    // decimal-negative-zero, at this commit.
-    assert_eq!(written, 1);
+    // The normalized vectors that are not a typed null, at this commit.
+    assert_eq!(written, ["decimal-negative-zero"]);
 }

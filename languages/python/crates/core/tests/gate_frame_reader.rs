@@ -2,9 +2,12 @@
 //! frame and recover each field's value kind, with only the public API of
 //! `stack-encrypt`'s `dynamic` module.
 //!
-//! The record is built with `ValueFrame::of`, the same type and writer
-//! `dynamic::decrypt` returns its opened records in. This test does not
-//! decrypt: it proves the reading half, which is the half the extension owns.
+//! The record is built with `ValueFrame::of`, the same type
+//! `dynamic::decrypt` returns its opened records in. The writer is not the
+//! same: `ValueFrame::of` writes through the value model's `Modeled` writer,
+//! and `decrypt` writes each record with a plain `FrameWriter`. So this test
+//! does not check the bytes of a real decrypt result. It does not decrypt:
+//! it proves the reading half, which is the half the extension owns.
 
 use stack_encrypt::dynamic::frame::Frame;
 use stack_encrypt::dynamic::plaintext::{

@@ -201,6 +201,8 @@ def test_python_opens_the_rows_the_go_sdk_stored(fixture, cls, ids):
 
     opened = Cipher(cls).decrypt([stored_row(cls, row) for row in rows])
 
+    # zip stops at the shorter list, and Python 3.9 has no strict=True.
+    assert len(opened) == len(rows)
     for row, model in zip(rows, opened):
         expected = model_of(cls, row)
         for field in dataclasses.fields(cls):
@@ -214,6 +216,7 @@ def test_python_seals_what_the_go_sdk_sealed_apart_from_each_ciphertext(fixture,
 
     sealed = Cipher(cls).encrypt([model_of(cls, row) for row in rows])
 
+    assert len(sealed) == len(rows)
     for row, columns in zip(rows, sealed):
         for field in sealed_fields(cls):
             assert without_ciphertext(columns[field.name]) == without_ciphertext(

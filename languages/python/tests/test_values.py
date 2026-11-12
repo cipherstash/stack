@@ -24,10 +24,12 @@ from stackencrypt import (
     Boolean,
     Cipher,
     DateEq,
+    DeclarationError,
     DoubleEq,
     IntegerEq,
     InvalidValueError,
     NumericEq,
+    QueryError,
     RealEq,
     SmallintEq,
     StashError,
@@ -55,18 +57,21 @@ PYTHON_TYPE = {
 }
 
 
-def through_encrypt(marker: Any, value: Any) -> None:
+def declared(marker: Any) -> Tuple[Cipher, Any]:
+    """A cipher for a class with one field ``x`` of ``marker``. Built
+    outside ``pytest.raises``, so a refused declaration fails the test."""
     cls = dataclasses.make_dataclass(
         "Row", [("x", Annotated[PYTHON_TYPE[marker], marker])]
     )
-    Cipher(stackencrypt.model("rows")(cls)).encrypt([cls(x=value)])
+    return Cipher(stackencrypt.model("rows")(cls)), cls
 
 
-def through_eq(marker: Any, value: Any) -> None:
-    cls = dataclasses.make_dataclass(
-        "Row", [("x", Annotated[PYTHON_TYPE[marker], marker])]
-    )
-    Cipher(stackencrypt.model("rows")(cls)).eq("x", value)
+def through_encrypt(cipher: Cipher, cls: Any, value: Any) -> None:
+    cipher.encrypt([cls(x=value)])
+
+
+def through_eq(cipher: Cipher, cls: Any, value: Any) -> None:
+    cipher.eq("x", value)
 
 
 def calls(cases: List[Tuple[Any, ...]]) -> List[Any]:
@@ -85,9 +90,15 @@ REFUSED: List[Tuple[Any, Any, str, str]] = [
     (BigintEq, 2**63, "value_out_of_range", "int64"),
     (BigintEq, -(2**63) - 1, "value_out_of_range", "int64"),
     (IntegerEq, 2**31, "value_out_of_range", "int32"),
+    (IntegerEq, -(2**31) - 1, "value_out_of_range", "int32"),
+    (SmallintEq, 2**15, "value_out_of_range", "int16"),
     (SmallintEq, -(2**15) - 1, "value_out_of_range", "int16"),
     (RealEq, 0.1, "value_not_representable", "float32"),
+    (RealEq, 1e39, "value_not_representable", "float32"),
     (NumericEq, decimal.Decimal("NaN"), "value_not_representable", "decimal"),
+    # One past the largest 96-bit mantissa, on each side.
+    (NumericEq, decimal.Decimal("79228162514264337593543950336"), "value_not_representable", "decimal"),
+    (NumericEq, decimal.Decimal("-79228162514264337593543950336"), "value_not_representable", "decimal"),
     (NumericEq, decimal.Decimal("Infinity"), "value_not_representable", "decimal"),
     (NumericEq, decimal.Decimal("1e-29"), "value_not_representable", "decimal"),
     (TimestampEq, datetime.datetime(2024, 1, 1), "value_naive_datetime", "timestamp"),
@@ -107,8 +118,9 @@ REFUSED: List[Tuple[Any, Any, str, str]] = [
 def test_a_value_that_does_not_fit_is_refused_before_any_request(
     untouched, call, marker, value, code, reason
 ):
+    cipher, cls = declared(marker)
     with pytest.raises(InvalidValueError) as raised:
-        call(marker, value)
+        call(cipher, cls, value)
 
     assert raised.value.code == code
     assert raised.value.field == "x"
@@ -120,6 +132,8 @@ ACCEPTED: List[Tuple[Any, Any]] = [
     (BigintEq, 2**63 - 1),
     (BigintEq, -(2**63)),
     (IntegerEq, 2**31 - 1),
+    (IntegerEq, -(2**31)),
+    (SmallintEq, 2**15 - 1),
     (SmallintEq, -(2**15)),
     (RealEq, 0.5),
     (RealEq, math.nan),
@@ -141,7 +155,10 @@ ACCEPTED: List[Tuple[Any, Any]] = [
 
 @pytest.mark.parametrize(("call", "marker", "value"), calls(ACCEPTED))
 def test_a_value_at_the_edge_passes_every_check(call, marker, value):
+    cipher, cls = declared(marker)
     with pytest.raises(StashError) as raised:
-        call(marker, value)
+        call(cipher, cls, value)
 
-    assert not isinstance(raised.value, InvalidValueError), raised.value
+    # Only the failure to build the client shows that every check passed.
+    refused = (InvalidValueError, QueryError, DeclarationError)
+    assert not isinstance(raised.value, refused), raised.value

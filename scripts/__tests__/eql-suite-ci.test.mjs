@@ -234,6 +234,14 @@ describe('a `mise run` counts as an EQL task only from inside packages/eql', () 
     expect(eqlRunBodies(wf)).toEqual([])
   })
 
+  it('does not read a sibling folder with the same prefix as packages/eql', () => {
+    const wf = workflow({
+      sibling: { steps: [step('mise run test:sqlx', 'packages/eql-bench')] },
+      slash: { steps: [step('mise run test:schema', 'packages/eql/')] },
+    })
+    expect(eqlRunBodies(wf)).toEqual(['mise run test:schema'])
+  })
+
   it('strips shell comment lines, so a mention in a comment is not a run', () => {
     const wf = workflow({
       eql: {

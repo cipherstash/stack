@@ -487,8 +487,11 @@ def test_class_level_hints_are_not_fields_on_a_class_read_from_its_hints():
     class User(KeywordConstructor):
         email: Annotated[str, TextEq]
         registry: ClassVar[dict] = {}
-        bare: ClassVar = 0
         token: dataclasses.InitVar[str] = ""
+        if sys.version_info >= (3, 10):
+            # Python 3.9 cannot resolve a bare ClassVar written as a string,
+            # as the future import writes it: get_type_hints raises.
+            bare: ClassVar = 0
 
     assert planned(User) == [("email", TextEq)]
 

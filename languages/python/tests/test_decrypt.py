@@ -65,6 +65,15 @@ def test_one_row_on_its_own_is_refused_as_one_row(untouched):
     assert "not one row" in error.message
 
 
+def test_a_dict_that_is_not_json_is_malformed(untouched):
+    # A set has no JSON form: json.dumps raises TypeError.
+    value = {"i": {"t": "users", "c": "email"}, "v": {1, 2}}
+    error = refused([{"email": value, "age": 3}])
+    assert error.code == "decrypt_malformed"
+    assert error.field == "email"
+    assert "row 0" in error.message
+
+
 def test_a_str_that_is_not_valid_utf8_is_malformed(untouched):
     # A lone surrogate: a str Python holds, with no UTF-8 encoding.
     error = refused([{"email": "\ud800", "age": 3}])

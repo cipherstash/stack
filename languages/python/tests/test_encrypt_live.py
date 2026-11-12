@@ -52,6 +52,31 @@ class Contact:
     email: Annotated[str, TextEq]
 
 
+class Refused(Exception):
+    """The model's own error, from its constructor."""
+
+
+@stackencrypt.model("contacts")
+@dataclasses.dataclass
+class StrictContact:
+    """Contact's table and column, with a constructor that refuses a value."""
+
+    email: Annotated[str, TextEq]
+
+    def __post_init__(self):
+        if self.email == "bad@example.com":
+            raise Refused("the model refused this email")
+
+
+def test_an_error_from_the_constructor_reaches_the_caller_unchanged():
+    rows = Cipher(Contact).encrypt(
+        [Contact(email="good@example.com"), Contact(email="bad@example.com")]
+    )
+
+    with pytest.raises(Refused, match="the model refused this email"):
+        Cipher(StrictContact).decrypt(rows)
+
+
 @needs_database
 def test_an_encrypted_row_inserts_with_a_plain_parameter():
     psycopg = pytest.importorskip("psycopg")

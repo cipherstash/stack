@@ -133,11 +133,16 @@ unsafe impl GlobalAlloc for Spy {
             let trace = std::backtrace::Backtrace::force_capture().to_string();
             // Linux writes `<…::CipherKey>::seal`, macOS `…::CipherKey::seal`.
             if trace.replace(['<', '>'], "").contains(UPSTREAM_SEAL) {
-                *UPSTREAM.lock().unwrap() += 1;
+                // A panic here, inside the allocator, would abort the whole
+                // test binary with no message, so a poisoned lock is used
+                // as it is, as GATE is.
+                *UPSTREAM
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
             } else {
                 FOUND
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .push(format!("{} bytes freed unwiped:\n{trace}", layout.size()));
             }
             BUSY.with(|busy| busy.set(false));
