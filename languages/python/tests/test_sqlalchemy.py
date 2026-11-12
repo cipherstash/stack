@@ -326,8 +326,10 @@ class Score(Base):
     note: Mapped[Annotated[str, Text]]
 
 
-@pytest.fixture(scope="module")
-def scores():
+@pytest.fixture
+def scores(credentials):
+    # Function scope, so that the fake credentials are set first. A repeat
+    # call for a configured class does nothing.
     configure_encryption([Score])
 
 
