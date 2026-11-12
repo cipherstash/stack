@@ -55,6 +55,7 @@ let strategy = AccessKeyStrategy::builder(crn, key)
 use std::future::Future;
 use std::sync::Arc;
 
+use stack_profile::SecretBuf;
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
@@ -137,12 +138,15 @@ impl TokenStore for NoStore {
 ///
 /// Internally stores the JSON-serialised form of the token wrapped in
 /// [`Zeroizing`] so the buffer is wiped on overwrite and on store drop. The
-/// [`SecretToken`](crate::SecretToken) wrapped inside [`Token`] is
+/// JSON is written into a [`SecretBuf`], so no partial copy is left behind
+/// while it is serialised either.
+///
+/// The [`SecretToken`](crate::SecretToken) wrapped inside [`Token`] is
 /// [`ZeroizeOnDrop`](zeroize::ZeroizeOnDrop), so we deliberately don't clone
 /// the in-memory `Token` value — round-tripping through serde gives us a
 /// fresh `SecretToken` on each `load` without violating that invariant.
 pub struct InMemoryTokenStore {
-    state: Mutex<Option<Zeroizing<String>>>,
+    state: Mutex<Option<Zeroizing<Vec<u8>>>>,
 }
 
 impl InMemoryTokenStore {
@@ -164,17 +168,25 @@ impl TokenStore for InMemoryTokenStore {
     async fn load(&self) -> Option<Token> {
         let guard = self.state.lock().await;
         let json = guard.as_ref()?;
-        serde_json::from_str(json).ok()
+        serde_json::from_slice(json).ok()
     }
 
     async fn save(&self, token: &Token) {
-        let Ok(json) = serde_json::to_string(token) else {
+        let Ok(json) = SecretBuf::json(token) else {
             tracing::warn!("InMemoryTokenStore: failed to serialise token");
             return;
         };
         let mut guard = self.state.lock().await;
-        *guard = Some(Zeroizing::new(json));
+        *guard = Some(json);
     }
+}
+
+/// `token` as an owned JSON `String` for a `save` closure, moved rather than
+/// copied out of the buffer it was serialised into.
+fn token_json_string(token: &Token) -> Option<String> {
+    SecretBuf::json_string(token)
+        .ok()
+        .map(|mut json| std::mem::take(&mut *json))
 }
 
 /// [`TokenStore`] backed by user-supplied `load` and `save` async closures.
@@ -241,7 +253,7 @@ where
     }
 
     async fn save(&self, token: &Token) {
-        let Ok(json) = serde_json::to_string(token) else {
+        let Some(json) = token_json_string(token) else {
             tracing::warn!("TokenStoreFn: failed to serialise token");
             return;
         };
@@ -266,7 +278,7 @@ where
     }
 
     async fn save(&self, token: &Token) {
-        let Ok(json) = serde_json::to_string(token) else {
+        let Some(json) = token_json_string(token) else {
             tracing::warn!("TokenStoreFn: failed to serialise token");
             return;
         };
