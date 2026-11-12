@@ -3080,6 +3080,7 @@ dependencies = [
  "stack-encrypt",
  "stack-kms",
  "tokio",
+ "zeroize",
  "zerokms-protocol",
 ]
 
