@@ -50,3 +50,18 @@ export function isSnapshotInfrastructureError(error) {
 export function dynamoSnapshotError(status) {
   return Object.assign(Error(`Dynamo snapshot failed: ${status}`), { status })
 }
+
+/** Name a snapshot failure by its code or HTTP status, never its message, which
+ * can quote stored values.
+ * @param {unknown} error @returns {string} */
+export function snapshotErrorCode(error) {
+  const seen = new Set()
+  while (error && typeof error === 'object' && !seen.has(error)) {
+    seen.add(error)
+    if ('code' in error && typeof error.code === 'string') return error.code
+    if ('status' in error && typeof error.status === 'number')
+      return `HTTP ${error.status}`
+    error = 'cause' in error ? error.cause : undefined
+  }
+  return 'unrecognized error'
+}
