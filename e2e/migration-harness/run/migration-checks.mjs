@@ -147,8 +147,9 @@ function ffiDeclarationsMatch(manifest, expected) {
   return true
 }
 
-/** Run the static migration checks on the Migrator output and the stored-shape
- * check on the Oracle's Mutation Data, without importing application code.
+/** Run the static migration checks on the Migrator output and the App Host's
+ * installed copy, and the stored-shape check on the Oracle's Mutation Data,
+ * without importing application code.
  * @param {{workspace:string,installedWorkspace:string,stackVersion:string,ffiRange:string,mutationSnapshot:unknown}} options
  * @returns {Promise<import('../types.js').OracleCheck[]>} */
 export async function migrationChecks({
@@ -177,19 +178,26 @@ export async function migrationChecks({
       })
     }
   }
+  // Inspect the Migrator's output and the App Host's installed copy: install
+  // lifecycle scripts run in the installed copy, which is the one that executes.
+  const inspected = [workspace, installedWorkspace]
   // One read per check keeps a missing lockfile from hiding the independent shim result.
   await check('migration.protect-dependencies-absent', async () => {
-    const manifest = object(
-      JSON.parse(await textFile(join(workspace, 'package.json'))),
-    )
-    const lock = object(
-      JSON.parse(await textFile(join(workspace, 'package-lock.json'))),
-    )
-    return (
-      !legacyPackage.test(JSON.stringify(manifest)) &&
-      !legacyPackage.test(JSON.stringify(lock)) &&
-      !sourceFacts(await sources(workspace)).legacyImport
-    )
+    for (const directory of inspected) {
+      const manifest = object(
+        JSON.parse(await textFile(join(directory, 'package.json'))),
+      )
+      const lock = object(
+        JSON.parse(await textFile(join(directory, 'package-lock.json'))),
+      )
+      if (
+        legacyPackage.test(JSON.stringify(manifest)) ||
+        legacyPackage.test(JSON.stringify(lock)) ||
+        sourceFacts(await sources(directory)).legacyImport
+      )
+        return false
+    }
+    return true
   })
   await check('migration.protect-ffi-version', async () => {
     const installed = object(
@@ -208,10 +216,11 @@ export async function migrationChecks({
       ffiDeclarationsMatch(manifest, expected)
     )
   })
-  await check(
-    'migration.endpoint-shim-absent',
-    async () => !sourceFacts(await sources(workspace)).endpointShim,
-  )
+  await check('migration.endpoint-shim-absent', async () => {
+    for (const directory of inspected)
+      if (sourceFacts(await sources(directory)).endpointShim) return false
+    return true
+  })
   await check('migration.active-hmac-absent', () => {
     const item = object(object(object(mutationSnapshot).dynamo).Item)
     return (

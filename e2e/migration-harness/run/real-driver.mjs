@@ -361,8 +361,14 @@ export function createRealDriver({
             ? { id: 'no-rewrite.legacy-bytes', passed: false, ...current }
             : noRewrite(legacySnapshot, current.snapshot),
         )
-        await result.mutate()
-        const mutationRead = await read(mutation.pk)
+        // Inspect setActive before later full writes can repair stale HMACs.
+        /** @type {{snapshot: unknown} | {cause: string}} */
+        let mutationRead = { snapshot: undefined }
+        await result.mutate({
+          afterSetActive: async () => {
+            mutationRead = await read(mutation.pk)
+          },
+        })
         const migration = await migrationChecks({
           workspace,
           installedWorkspace: oracleWorkspace,
