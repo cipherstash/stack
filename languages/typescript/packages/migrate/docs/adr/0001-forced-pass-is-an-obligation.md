@@ -47,9 +47,10 @@ messages on top of these rules.
 ## Consequences
 
 - At most one column migration is open per column pair. A reverse column
-  migration cannot start until the forward one is dropped or aborted. Aborting a
-  forward column migration is a separate operation, and `@cipherstash/migrate`
-  does not provide it yet.
+  migration cannot start until the forward drop migration is generated, the
+  source column is recorded as removed, or the forward migration is aborted.
+  A generated drop may not yet be applied. Aborting a forward column migration
+  is a separate operation, and `@cipherstash/migrate` does not provide it yet.
 - Every backfill event in `cs_migrations` (started, checkpoint, completed and
   error) records the pass mode as `details.force`, in both directions. The
   dual-write confirmation and drop events do not. The obligation has no events

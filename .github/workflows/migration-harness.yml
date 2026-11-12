@@ -1,0 +1,54 @@
+name: Migration harness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'e2e/migration-harness/**'
+      - 'e2e/vitest.harness.config.ts'
+      - 'e2e/package.json'
+      - 'e2e/tsconfig.json'
+      - 'turbo.json'
+      - 'tsconfig.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'packages/eql/**'
+      - '.github/workflows/migration-harness.yml'
+  pull_request:
+    paths:
+      - 'e2e/migration-harness/**'
+      - 'e2e/vitest.harness.config.ts'
+      - 'e2e/package.json'
+      - 'e2e/tsconfig.json'
+      - 'turbo.json'
+      - 'tsconfig.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'packages/eql/**'
+      - '.github/workflows/migration-harness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probes:
+    name: Run skeleton and isolation probes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: npm install -g node-gyp
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec turbo run harness:selftest harness:typecheck harness:isolation-probe harness:store-probe --filter @cipherstash/e2e

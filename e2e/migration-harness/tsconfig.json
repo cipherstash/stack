@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "checkJs": true,
+    "noEmit": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true
+  },
+  "include": [
+    "run/**/*.mjs",
+    "isolation.mjs",
+    "isolation/**/*.mjs",
+    "__tests__/**/*.ts",
+    "../vitest.harness.config.ts"
+  ]
+}
