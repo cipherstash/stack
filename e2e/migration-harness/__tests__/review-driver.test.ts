@@ -397,6 +397,94 @@ test.each([
   },
 )
 
+async function runReal(driver: Awaited<ReturnType<typeof setup>>['driver']) {
+  try {
+    return await run({
+      id: 'snapshot-evidence',
+      manifest: { guideHash: 'guide' },
+      driver: {
+        ...driver,
+        provision: async () => {},
+        migrate: async () => ({ exitCode: 0 }),
+        friction: async () => [],
+      },
+    })
+  } finally {
+    await driver.close()
+  }
+}
+function oracleChecks(report: Awaited<ReturnType<typeof run>>) {
+  return report.evidence
+    .filter((item) => item.kind === 'oracle-check')
+    .map((item) => Object(item.payload))
+}
+
+test('a post-read schema error records a failed no-rewrite check and keeps the read checks', async () => {
+  const { driver } = await setup()
+  const baseline = await observed.snapshot()
+  observed.snapshot
+    .mockResolvedValueOnce(baseline)
+    .mockRejectedValueOnce(
+      Object.assign(Error('column "email" does not exist'), { code: '42703' }),
+    )
+  const report = await runReal(driver)
+  expect(report.outcome).toBe('behaviour')
+  const checks = oracleChecks(report)
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: 'no-rewrite.legacy-bytes',
+      passed: false,
+      cause: expect.stringContaining('42703'),
+    }),
+  )
+  expect(checks).toContainEqual(
+    expect.objectContaining({ id: 'behaviour.legacy-findPostgresAge' }),
+  )
+})
+
+test('a reset connection on the Mutation Data snapshot is infrastructure and keeps completed checks', async () => {
+  const { driver } = await setup()
+  const baseline = await observed.snapshot()
+  observed.snapshot
+    .mockResolvedValueOnce(baseline)
+    .mockResolvedValueOnce(baseline)
+    .mockRejectedValueOnce(
+      Object.assign(Error('connection reset'), { code: 'ECONNRESET' }),
+    )
+  const report = await runReal(driver)
+  expect(report.outcome).toBe('infrastructure')
+  expect(report.editorEligible).toBe(false)
+  expect(oracleChecks(report)).toContainEqual(
+    expect.objectContaining({ id: 'no-rewrite.legacy-bytes', passed: true }),
+  )
+})
+
+test('a schema error on the Mutation Data snapshot fails the active-HMAC check with its cause', async () => {
+  const { driver } = await setup()
+  const baseline = await observed.snapshot()
+  observed.snapshot
+    .mockResolvedValueOnce(baseline)
+    .mockResolvedValueOnce(baseline)
+    .mockRejectedValueOnce(
+      Object.assign(Error('relation "customers" does not exist'), {
+        code: '42P01',
+      }),
+    )
+  const report = await runReal(driver)
+  expect(report.outcome).toBe('behaviour')
+  const checks = oracleChecks(report)
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: 'migration.active-hmac-absent',
+      passed: false,
+      cause: expect.stringContaining('42P01'),
+    }),
+  )
+  expect(checks).toContainEqual(
+    expect.objectContaining({ id: 'no-rewrite.legacy-bytes', passed: true }),
+  )
+})
+
 test('F12 disposes stores even when the isolation supervisor fails to stop', async () => {
   const { driver } = await setup({ stopFails: true })
   await expect(driver.close()).rejects.toThrow('supervisor stop failed')
