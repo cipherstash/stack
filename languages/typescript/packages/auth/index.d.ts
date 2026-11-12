@@ -20,9 +20,23 @@
  */
 
 import type { Result } from "@byteslice/result";
-import type { TokenResult, AuthResult, AutoStrategyOptions } from "./native";
+import type {
+  TokenResult,
+  AuthResult,
+  AutoStrategyOptions,
+  KeysetCreateOptions,
+  KeysetRewrapOptions,
+  KeysetResult,
+} from "./native";
 
-export type { TokenResult, AuthResult, AutoStrategyOptions };
+export type {
+  TokenResult,
+  AuthResult,
+  AutoStrategyOptions,
+  KeysetCreateOptions,
+  KeysetRewrapOptions,
+  KeysetResult,
+};
 
 /** Fields present on every `AuthFailure`. */
 interface FailureBase {
@@ -182,6 +196,54 @@ export declare function beginDeviceCodeFlow(
 
 /** Provision a device client in ZeroKMS after login. */
 export declare function bindClientDevice(): Promise<Result<void, AuthFailure>>;
+
+/**
+ * A failure of {@link keysetCreate} or {@link keysetRewrap}. Discriminated by
+ * `type`. No message carries key material or a credential.
+ *
+ * - `INVALID_OPTIONS`: an option is missing or not accepted.
+ * - `STATIC_KEY`: a static key could not be read from its variable.
+ * - `VENDOR_CONFIG`: the vendor client could not be configured from the
+ *   environment (for example no region, address or credential).
+ * - `INVALID_RECORD`: the record could not be parsed or made (`diagnostic`
+ *   names the `stack_kms_vendor::*` code).
+ * - `VENDOR_ERROR`: the vendor call failed; `kind` is `NotFound`,
+ *   `AccessDenied`, `Throttled`, `Unavailable` or `InvalidCiphertext`.
+ */
+export type KeysetFailure = FailureBase & {
+  type:
+    | "INVALID_OPTIONS"
+    | "STATIC_KEY"
+    | "VENDOR_CONFIG"
+    | "INVALID_RECORD"
+    | "VENDOR_ERROR";
+  /** The key backend, as the SDKs name it (`aws-kms`, …), when known. */
+  vendor?: string;
+  /** The vendor failure kind, for `VENDOR_ERROR`. */
+  kind?: string;
+  /** The `stack_kms_vendor::*` diagnostic code, for `INVALID_RECORD`. */
+  diagnostic?: string;
+};
+
+/**
+ * Create a keyset in a key vendor backend (AWS KMS, Google Cloud KMS, Azure
+ * Key Vault, Vault Transit or the static key backend) and return its keyset
+ * record. ZeroKMS users never need this. The vendor's credentials come from
+ * its environment chain, as in the Rust and Go SDKs. Node only.
+ */
+export declare function keysetCreate(
+  options: KeysetCreateOptions,
+): Promise<Result<KeysetResult, KeysetFailure>>;
+
+/**
+ * Wrap a keyset record's key under a vendor key again, for example after a
+ * key rotation in the vendor. The keyset id, name and mode stay the same.
+ * Stored data is not re-keyed. A record may move to any key of its backend,
+ * and every stored value still opens. Node only.
+ */
+export declare function keysetRewrap(
+  options: KeysetRewrapOptions,
+): Promise<Result<KeysetResult, KeysetFailure>>;
 
 /**
  * Deprecated alias for {@link DeviceSessionStrategy}, exported at runtime as

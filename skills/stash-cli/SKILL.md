@@ -810,6 +810,80 @@ Things to know:
 
 Flags: `--name <name>`, `--write [path]`, `--json`.
 
+### Key vendor backends
+
+**ZeroKMS users never need these commands.** Skip this section unless the
+project keeps a keyset in a key vendor backend instead of ZeroKMS: AWS KMS,
+Google Cloud KMS, Azure Key Vault, HashiCorp Vault Transit, or the static key
+backend. Today only the Rust and Go SDKs load such keysets.
+
+#### `keyset create`
+
+```bash
+stash keyset create --backend aws --vendor-key arn:aws:kms:us-east-1:111122223333:key/<id> --name users
+stash keyset create --backend vault --vendor-key users --out keyset.env
+stash keyset create --backend static --vendor-key dev-key --out .env.keyset.local
+```
+
+Generates a keyset id and a root key, wraps the root key under `--vendor-key`
+(one vendor call), and prints a **keyset record** as a dotenv line:
+
+```dotenv
+CS_KEYSET_RECORD_USERS=stack-keyset:…
+```
+
+- `--backend <aws|gcp|azure|vault|static>` and `--vendor-key <ref>` are
+  required. `--mode` is optional: `derived` is the default and the only key
+  mode in this release.
+  `--name <name>` labels the keyset and names the variable
+  (`CS_KEYSET_RECORD_<NAME>`, else `CS_KEYSET_RECORD`).
+  The output names the backend in full (`aws-kms`, `gcp-kms`,
+  `azure-key-vault`, `vault-transit`, `static`), and `--backend` takes those
+  full names too.
+- **The record is not secret.** Only the vendor key can unwrap its key. Keep it
+  in config or an env var. **No SDK reads `CS_KEYSET_RECORD*` by itself**: the
+  app passes the value to `encrypt.WithKeysetRecords` (Go) or
+  `KeysetRecord::parse` (Rust).
+- **Credentials come from the vendor's own environment chain, never from a
+  flag** — the same chain the Rust and Go SDKs use. AWS: `AWS_REGION` plus
+  static keys, web identity, ECS or IMDS (no `~/.aws` profiles; export them
+  first with `aws configure export-credentials --format env`). Google Cloud:
+  `GOOGLE_OAUTH_ACCESS_TOKEN` (for example `gcloud auth print-access-token`),
+  else the metadata server; service account key files are **not** read. Azure:
+  `AZURE_KEY_VAULT_ACCESS_TOKEN`, client secret, workload identity or managed
+  identity. Vault: `VAULT_ADDR` with `VAULT_TOKEN`, AppRole or Kubernetes auth.
+  Do not read or print these values; ask the user to set them.
+- **Static backend.** `--key-env <VAR>` names the variable
+  that holds the 32-byte key (base64 or hex) — the name, never the key. Without
+  it a new key is generated and printed as `CS_STATIC_KEY`, which **is a
+  secret and the only copy**: write it with `--out` and move it to a secret
+  store. Never commit it.
+- `--out <file>` writes the block with mode 0600 and refuses an existing file
+  unless `--force`. Stdout carries only the block (or the `--json` event).
+  With `--json`, `--out` gives `{ status: "written", … }`, which never carries
+  the static key; failures are `{ status: "error", code, message, hint? }`.
+
+#### `keyset rewrap`
+
+```bash
+stash keyset rewrap --in keyset.env --out keyset.env --force
+stash keyset rewrap stack-keyset:… --vendor-key arn:aws:kms:us-east-1:111122223333:key/<new-id>
+stash keyset rewrap --in .env.keyset.local --key-env CS_STATIC_KEY --vendor-key dev-key-2 --new-key-env CS_STATIC_KEY_2
+```
+
+Unwraps the record's key and wraps it again (two vendor calls). With no
+`--vendor-key` it uses the record's own key, which moves the record to that
+key's current version after a rotation; with `--vendor-key` it moves to another
+key of the same backend. The keyset id, name and mode do not change, and
+**stored data is not re-keyed**. Every data key comes from the record's root
+key, so a record may move to any key of its backend and every stored value
+still opens. Replace the old record in every app afterwards. The record is the argument or `--in <file>` (one
+record per file). A static record needs `--key-env` for its current key, and
+`--new-key-env` (or a generated key) when `--vendor-key` names another key.
+
+Flags: `--in <file>`, `--vendor-key <ref>`, `--key-env <VAR>`,
+`--new-key-env <VAR>`, `--out <file>`, `--force`, `--json`.
+
 ## Programmatic API
 
 ```typescript
