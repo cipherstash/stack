@@ -277,15 +277,15 @@ jobs:
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2404
 
-      # One cache per workspace: this one, and EQL's, whose eql-codegen
-      # writes the bundle.
+      # One step for both workspaces: this one, and EQL's, whose eql-codegen
+      # writes the bundle. Two steps would each prune the shared cargo
+      # registry to their own crates before they save, so each save would
+      # lose the other workspace's crates.
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: languages/python
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          workspaces: packages/eql
+          workspaces: |
+            languages/python
+            packages/eql
 
       # The builds, with no credentials: the extension into .venv, and the
       # EQL v4 bundle.
