@@ -276,6 +276,165 @@ test('observer attributes unprefixed lines to the sole surviving tracee, not the
   )
 })
 
+test.each(['+++ exited with 0 +++', '+++ killed by SIGTERM +++'])(
+  'observer does not resurrect a child whose %s precedes the parent fork return',
+  async (terminal) => {
+    const frames = await observe([
+      {
+        stage: 'command',
+        trace: [
+          '[pid 42] clone(child_stack=NULL, flags=SIGCHLD) = 45',
+          '[pid 42] +++ exited with 0 +++',
+          'vfork( <unfinished ...>',
+          '[pid 46] execve("/usr/bin/true", ["true"], 0x1) = 0',
+          `[pid 46] ${terminal}`,
+          '<... vfork resumed>) = 46',
+          'vfork( <unfinished ...>',
+          '[pid 47] execve("/usr/bin/true", ["true"], 0x1) = 0',
+          '[pid 45] <... vfork resumed>) = 47',
+          '[pid 47] +++ exited with 0 +++',
+          'openat(AT_FDCWD, "/protected/file", O_RDONLY) = -1 EACCES (Permission denied)',
+          '+++ exited with 1 +++',
+        ],
+      },
+    ])
+    expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+    expect(
+      frames
+        .filter((frame) => frame.event?.operation === 'vfork')
+        .map((frame) => frame.event?.pid),
+    ).toEqual([45, 45])
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        kind: 'event',
+        event: expect.objectContaining({
+          pid: 45,
+          operation: 'openat',
+          resource: '/protected/file',
+          decision: 'forbidden',
+          result: 'denied',
+        }),
+      }),
+    )
+    expect(frames).toContainEqual(
+      expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+    )
+  },
+)
+
+test.each([false, true])(
+  'observer tracks a reused child PID after its old process exits (resumed=%s)',
+  async (resumed) => {
+    const frames = await observe([
+      {
+        stage: 'command',
+        trace: [
+          '[pid 42] clone(child_stack=NULL, flags=SIGCHLD) = 45',
+          '[pid 45] +++ exited with 0 +++',
+          ...(resumed
+            ? [
+                'clone(child_stack=NULL, flags=SIGCHLD <unfinished ...>',
+                '[pid 42] <... clone resumed>) = 45',
+              ]
+            : ['clone(child_stack=NULL, flags=SIGCHLD) = 45']),
+          '[pid 42] +++ exited with 0 +++',
+          'openat(AT_FDCWD, "/protected/file", O_RDONLY) = -1 EACCES (Permission denied)',
+          '+++ exited with 1 +++',
+        ],
+      },
+    ])
+    expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        kind: 'event',
+        event: expect.objectContaining({
+          pid: 45,
+          operation: 'openat',
+          resource: '/protected/file',
+          decision: 'forbidden',
+          result: 'denied',
+        }),
+      }),
+    )
+    expect(frames).toContainEqual(
+      expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+    )
+  },
+)
+
+// The actor ignores SIGCHLD, so exited children are auto-reaped. sigaction is
+// outside the supervisor's traced syscall classes; PID reuse may therefore
+// happen while another clone is outstanding without a wait syscall in the log.
+// Unrelated process churn that wraps the PID allocator is omitted here.
+test('observer tracks a child PID reused after an older child exits during clone', async () => {
+  const frames = await observe([
+    {
+      stage: 'command',
+      trace: [
+        '[pid 42] clone(child_stack=NULL, flags=SIGCHLD) = 45',
+        '[pid 42] clone(child_stack=NULL, flags=SIGCHLD <unfinished ...>',
+        '[pid 45] +++ exited with 0 +++',
+        '[pid 42] <... clone resumed>) = 45',
+        '[pid 42] +++ exited with 0 +++',
+        'vfork( <unfinished ...>',
+        '[pid 46] execve("/usr/bin/true", ["true"], 0x1) = 0',
+        '[pid 45] <... vfork resumed>) = 46',
+        '[pid 46] +++ exited with 0 +++',
+        'openat(AT_FDCWD, "/protected/file", O_RDONLY) = -1 EACCES (Permission denied)',
+        '+++ exited with 1 +++',
+      ],
+    },
+  ])
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  expect(frames).toContainEqual(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        pid: 45,
+        operation: 'openat',
+        decision: 'forbidden',
+        result: 'denied',
+      }),
+    }),
+  )
+  expect(frames).toContainEqual(
+    expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+  )
+})
+
+test('observer does not resurrect a reused child that also exits before clone resumes', async () => {
+  const frames = await observe([
+    {
+      stage: 'command',
+      trace: [
+        '[pid 42] clone(child_stack=NULL, flags=SIGCHLD) = 43',
+        '[pid 42] clone(child_stack=NULL, flags=SIGCHLD) = 45',
+        '[pid 42] clone(child_stack=NULL, flags=SIGCHLD <unfinished ...>',
+        '[pid 45] +++ exited with 0 +++',
+        '[pid 45] execve("/usr/bin/true", ["true"], 0x1) = 0',
+        '[pid 45] +++ exited with 0 +++',
+        '[pid 42] <... clone resumed>) = 45',
+        '[pid 42] +++ exited with 0 +++',
+        'openat(AT_FDCWD, "/protected/file", O_RDONLY) = -1 EACCES (Permission denied)',
+        '+++ exited with 1 +++',
+      ],
+    },
+  ])
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  expect(frames).toContainEqual(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        pid: 43,
+        operation: 'openat',
+        decision: 'forbidden',
+        result: 'denied',
+      }),
+    }),
+  )
+  expect(frames).toContainEqual(
+    expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+  )
+})
+
 test.each([
   [
     'unmatched ptrace syscall continuation',
