@@ -120,6 +120,16 @@ def install(cls: type, fields: Sequence[Tuple[str, bool]]) -> Tuple[Callable[...
     for method in methods:
         method.__qualname__ = f"{cls.__qualname__}.{method.__name__}"
         setattr(cls, method.__name__, method)
+    # Pydantic builds its other print hooks from __repr_args__: __repr_str__,
+    # and __pretty__, which devtools' debug() prints through. It is replaced
+    # too, with the same fields. Cipher does not check it again.
+    if isinstance(getattr(cls, "__pydantic_fields__", None), dict):
+
+        def __repr_args__(self: object) -> Iterator[Tuple[str, object]]:
+            return __rich_repr__(self)
+
+        __repr_args__.__qualname__ = f"{cls.__qualname__}.__repr_args__"
+        setattr(cls, "__repr_args__", __repr_args__)
     return methods
 
 

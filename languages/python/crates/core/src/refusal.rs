@@ -18,11 +18,15 @@ pub struct Refusal {
 }
 
 impl Refusal {
-    /// The code and message of `error`, with no field or reason.
+    /// The code and message of `error`, with no field or reason. The
+    /// engine's help follows the message as a sentence of its own: most
+    /// engine messages end with no full stop.
     pub fn of(error: &dyn Diagnostic) -> Self {
+        let text = error.to_string();
         let message = match error.help() {
-            Some(help) => format!("{error} {help}"),
-            None => error.to_string(),
+            Some(help) if text.ends_with(['.', '!', '?']) => format!("{text} {help}"),
+            Some(help) => format!("{text}. {help}"),
+            None => text,
         };
         Self {
             code: error.code().map_or_else(
@@ -44,7 +48,44 @@ pub fn python_code(engine_code: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::python_code;
+    use super::{python_code, Refusal};
+
+    /// An engine error with a message and a help, written by hand: this
+    /// crate has no derive for errors.
+    #[derive(Debug)]
+    struct WithHelp {
+        message: &'static str,
+    }
+
+    impl std::fmt::Display for WithHelp {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.message)
+        }
+    }
+
+    impl std::error::Error for WithHelp {}
+
+    impl miette::Diagnostic for WithHelp {
+        fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+            Some(Box::new("stack_test::joined"))
+        }
+
+        fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+            Some(Box::new("Do this."))
+        }
+    }
+
+    #[test]
+    fn the_message_and_its_help_are_two_sentences() {
+        let joined = Refusal::of(&WithHelp {
+            message: "the plan has no field",
+        });
+        assert_eq!(joined.message, "the plan has no field. Do this.");
+        let ended = Refusal::of(&WithHelp {
+            message: "the plan has no field.",
+        });
+        assert_eq!(ended.message, "the plan has no field. Do this.");
+    }
 
     #[test]
     fn engine_codes_replace_the_path_separator() {
