@@ -87,6 +87,13 @@ A passthrough `datetime` field needs a `timestamptz` column. psycopg reads a `ti
 
 `decrypt` checks every row before it sends anything. A value stored under another table or column raises `DecryptError` with the code `decrypt_foreign_row`. A passthrough value of another type than the field declares raises `InvalidValueError`. When any row fails, `decrypt` returns no instances.
 
+Each of these errors names the row and the field, such as `row 317, field "email"`. Two errors name the field only. The engine raises them. It does not report the row yet:
+
+- `decrypt_malformed`, for a value whose JSON is not the field's EQL type. Its `i` names this table and column. No key request is made.
+- `decrypt_kind_mismatch`, for a value that opens but was sealed as another type. This comes after the key requests.
+
+For these two, look for the bad value in that field's column, across all the rows of the call.
+
 ## A field that can be missing
 
 Declare a field that can be `None` with `Optional` inside the `Annotated`:
