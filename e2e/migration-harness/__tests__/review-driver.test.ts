@@ -6,17 +6,38 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { legacy } from '../run/behaviour.mjs'
+import { dynamoColumns } from '../run/legacy-columns.mjs'
 import { migrationChecks, noRewriteCheck } from '../run/migration-checks.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
+import { dynamoSnapshotError } from '../run/snapshot-errors.mjs'
 import type { IsolationOptions } from '../types.js'
 
 const observed = vi.hoisted(() => ({
   dispose: vi.fn(async () => {}),
-  snapshot: vi.fn(async () => ({
-    dynamo: { Item: { email__source: { S: 'original' } } },
-    postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
-  })),
+  snapshot: vi.fn(
+    async (): Promise<unknown> => ({
+      dynamo: {
+        Item: {
+          pk: { S: 'legacy' },
+          ...Object.fromEntries(
+            dynamoColumns.flatMap((key) => [
+              [`${key}__source`, { S: 'original' }],
+              [`${key}__hmac`, { S: 'term' }],
+            ]),
+          ),
+        },
+      },
+      postgres: [
+        {
+          pk: 'legacy',
+          email: { c: 'original', hm: 'term' },
+          age: { c: 'original', hm: 'term' },
+          notes: { c: 'original' },
+        },
+      ],
+    }),
+  ),
 }))
 
 vi.mock('../run/real-stores.mjs', () => ({
@@ -271,6 +292,191 @@ test('F5 checks legacy ciphertext after reads and before mutations', async () =>
   )
   expect(readBeforeSnapshot).toBe(true)
   expect(mutationBeforeSnapshot).toBe(false)
+})
+
+test.each([
+  [
+    'dropped table',
+    Object.assign(Error('missing table'), { code: '42P01' }),
+    'behaviour',
+  ],
+  [
+    'renamed column',
+    Object.assign(Error('missing column'), { code: '42703' }),
+    'behaviour',
+  ],
+  [
+    'invalid payload cast',
+    Object.assign(Error('invalid cast'), { code: '42846' }),
+    'behaviour',
+  ],
+  ['deleted DynamoDB table', dynamoSnapshotError(400), 'behaviour'],
+  ['DynamoDB service unavailable', dynamoSnapshotError(503), 'infrastructure'],
+  ['DynamoDB throttling', dynamoSnapshotError(429), 'infrastructure'],
+  [
+    'unknown snapshot failure',
+    Error('unrecognized snapshot failure'),
+    'behaviour',
+  ],
+  [
+    'refused connection',
+    Object.assign(Error('connection refused'), { code: 'ECONNREFUSED' }),
+    'infrastructure',
+  ],
+  [
+    'reset connection',
+    Object.assign(Error('connection reset'), { code: 'ECONNRESET' }),
+    'infrastructure',
+  ],
+  [
+    'connection timeout',
+    Object.assign(Error('connection timed out'), { code: 'ETIMEDOUT' }),
+    'infrastructure',
+  ],
+  [
+    'broken socket pipe',
+    Object.assign(Error('broken pipe'), { code: 'EPIPE' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres.js closed connection',
+    Object.assign(Error('connection closed'), { code: 'CONNECTION_CLOSED' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres connection loss',
+    Object.assign(Error('connection failure'), { code: '08006' }),
+    'infrastructure',
+  ],
+  [
+    'Postgres shutdown',
+    Object.assign(Error('admin shutdown'), { code: '57P01' }),
+    'infrastructure',
+  ],
+  [
+    'fetch transport failure',
+    new TypeError('fetch failed', {
+      cause: Object.assign(Error('socket closed'), { code: 'UND_ERR_SOCKET' }),
+    }),
+    'infrastructure',
+  ],
+] as const)(
+  'post-read snapshot classifies %s',
+  async (_scenario, error, outcome) => {
+    const { driver, calls } = await setup()
+    const baseline = await observed.snapshot()
+    observed.snapshot
+      .mockResolvedValueOnce(baseline)
+      .mockRejectedValueOnce(error)
+    try {
+      const report = await run({
+        id: 'post-read-snapshot',
+        manifest: { guideHash: 'guide' },
+        driver: {
+          ...driver,
+          provision: async () => {},
+          migrate: async () => ({ exitCode: 0 }),
+          friction: async () => [],
+        },
+      })
+      expect(report.outcome).toBe(outcome)
+      expect(report.editorEligible).toBe(outcome === 'behaviour')
+      expect(calls).toContain('findPostgresAge')
+      expect(
+        report.stages.find((stage) => stage.name === 'behaviour')?.status,
+      ).toBe('failed')
+    } finally {
+      await driver.close()
+    }
+  },
+)
+
+async function runReal(driver: Awaited<ReturnType<typeof setup>>['driver']) {
+  try {
+    return await run({
+      id: 'snapshot-evidence',
+      manifest: { guideHash: 'guide' },
+      driver: {
+        ...driver,
+        provision: async () => {},
+        migrate: async () => ({ exitCode: 0 }),
+        friction: async () => [],
+      },
+    })
+  } finally {
+    await driver.close()
+  }
+}
+function oracleChecks(report: Awaited<ReturnType<typeof run>>) {
+  return report.evidence
+    .filter((item) => item.kind === 'oracle-check')
+    .map((item) => Object(item.payload))
+}
+
+test('a post-read schema error records a failed no-rewrite check and keeps the read checks', async () => {
+  const { driver } = await setup()
+  const baseline = await observed.snapshot()
+  observed.snapshot
+    .mockResolvedValueOnce(baseline)
+    .mockRejectedValueOnce(
+      Object.assign(Error('column "email" does not exist'), { code: '42703' }),
+    )
+  const report = await runReal(driver)
+  expect(report.outcome).toBe('behaviour')
+  const checks = oracleChecks(report)
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: 'no-rewrite.legacy-bytes',
+      passed: false,
+      cause: expect.stringContaining('42703'),
+    }),
+  )
+  expect(checks).toContainEqual(
+    expect.objectContaining({ id: 'behaviour.legacy-findPostgresAge' }),
+  )
+})
+
+test('a reset connection on the Mutation Data snapshot is infrastructure and keeps completed checks', async () => {
+  const { driver } = await setup()
+  const baseline = await observed.snapshot()
+  observed.snapshot
+    .mockResolvedValueOnce(baseline)
+    .mockResolvedValueOnce(baseline)
+    .mockRejectedValueOnce(
+      Object.assign(Error('connection reset'), { code: 'ECONNRESET' }),
+    )
+  const report = await runReal(driver)
+  expect(report.outcome).toBe('infrastructure')
+  expect(report.editorEligible).toBe(false)
+  expect(oracleChecks(report)).toContainEqual(
+    expect.objectContaining({ id: 'no-rewrite.legacy-bytes', passed: true }),
+  )
+})
+
+test('a schema error on the Mutation Data snapshot fails the active-HMAC check with its cause', async () => {
+  const { driver } = await setup()
+  const baseline = await observed.snapshot()
+  observed.snapshot
+    .mockResolvedValueOnce(baseline)
+    .mockResolvedValueOnce(baseline)
+    .mockRejectedValueOnce(
+      Object.assign(Error('relation "customers" does not exist'), {
+        code: '42P01',
+      }),
+    )
+  const report = await runReal(driver)
+  expect(report.outcome).toBe('behaviour')
+  const checks = oracleChecks(report)
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: 'migration.active-hmac-absent',
+      passed: false,
+      cause: expect.stringContaining('42P01'),
+    }),
+  )
+  expect(checks).toContainEqual(
+    expect.objectContaining({ id: 'no-rewrite.legacy-bytes', passed: true }),
+  )
 })
 
 test('inspects the stored active field before later full puts can overwrite it', async () => {
