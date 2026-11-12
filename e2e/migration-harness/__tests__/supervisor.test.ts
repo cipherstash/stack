@@ -36,12 +36,13 @@ with tempfile.TemporaryDirectory() as directory:
         return real_open(path, flags, mode, **kwargs)
     def open_file(path, *args, **kwargs):
         if str(path).startswith('/proc/') and str(path).endswith('/children'):
-            return io.StringIO('42')
+            return io.StringIO('' if scenario.get('actorPid', 42) is None else str(scenario.get('actorPid', 42)))
         return real_builtin_open(path, *args, **kwargs)
     class Process:
         pid = 41
         def __init__(self, *args, **kwargs):
             global invocation
+            frames.append(dict(kind='observer-command', command=args[0]))
             current = scenario['invocations'][invocation]
             invocation += 1
             os.write(actor_fd, current.get('stderr', '').encode())
@@ -61,6 +62,7 @@ print(json.dumps(frames))
 
 interface Frame {
   kind: string
+  command?: string[]
   data?: string
   error?: string
   event?: {
@@ -80,15 +82,100 @@ async function observe(
     trace?: string[]
   }>,
   env: Record<string, string> = {},
+  actorPid: number | null = 42,
 ): Promise<Frame[]> {
   const { stdout } = await exec('python3', [
     '-c',
     runner,
     supervisor,
-    JSON.stringify({ invocations, env }),
+    JSON.stringify({ invocations, env, actorPid }),
   ])
   return JSON.parse(stdout)
 }
+
+test('supervisor requests PID-prefixed shared output and preserves numeric-PID lifecycle evidence', async () => {
+  const frames = await observe([
+    {
+      stage: 'command',
+      trace: [
+        '42 clone(child_stack=NULL, flags=SIGCHLD) = 46',
+        '42 +++ exited with 0 +++',
+        '46 vfork( <unfinished ...>',
+        '47 execve("/usr/bin/true", ["true"], 0x1) = 0',
+        '47 +++ exited with 0 +++',
+        '46 <... vfork resumed>) = 47',
+        '46 openat(AT_FDCWD, "/protected/file", O_RDONLY) = -1 EACCES (Permission denied)',
+        '46 +++ exited with 1 +++',
+      ],
+    },
+  ])
+  // strace 6.1 -f prints every PID only with a shared -o destination. Keep
+  // that output on the trusted stderr pipe rather than reconstructing identity
+  // from whether strace happened to omit the prefix at a lifecycle boundary.
+  const command =
+    frames.find((frame) => frame.kind === 'observer-command')?.command ?? []
+  expect(command[0]).toBe('strace')
+  expect(command).toContain('-f')
+  const output = command.indexOf('-o')
+  expect(
+    output,
+    'strace must use shared output mode to prefix every PID',
+  ).toBeGreaterThan(0)
+  expect(command[output + 1]).toBe('/dev/stderr')
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  expect(frames).toContainEqual(
+    expect.objectContaining({
+      event: expect.objectContaining({ pid: 46, operation: 'vfork' }),
+    }),
+  )
+  expect(frames).toContainEqual(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        pid: 46,
+        operation: 'openat',
+        resource: '/protected/file',
+        decision: 'forbidden',
+        result: 'denied',
+      }),
+    }),
+  )
+  expect(frames).toContainEqual(
+    expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+  )
+})
+
+test('observer identifies a fast actor from its initial numeric exec when proc discovery misses it', async () => {
+  const frames = await observe(
+    [
+      {
+        stage: 'command',
+        trace: [
+          '42 execve("/usr/bin/setpriv", ["setpriv"], 0x1) = 0',
+          '42 clone(child_stack=NULL, flags=SIGCHLD) = 45',
+          '42 +++ exited with 0 +++',
+          '45 openat(AT_FDCWD, "/protected/file", O_RDONLY) = -1 EACCES (Permission denied)',
+          '45 +++ exited with 1 +++',
+        ],
+      },
+    ],
+    {},
+    null,
+  )
+  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+  expect(frames).toContainEqual(
+    expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+  )
+  expect(frames).toContainEqual(
+    expect.objectContaining({
+      event: expect.objectContaining({
+        pid: 45,
+        operation: 'openat',
+        decision: 'forbidden',
+        result: 'denied',
+      }),
+    }),
+  )
+})
 
 test('trusted events omit subprocess argument credentials while retaining access identity', async () => {
   const secret = 'SYNTHETIC-ARGV-CREDENTIAL'
@@ -164,26 +251,33 @@ test('redacting a database password in a resource preserves a forbidden access d
 })
 
 // strace 6.1's non-leader exec format: tests/threads-execve.c and src/strace.c.
-test('observer joins exec continuation after a non-leader thread takes the process PID', async () => {
-  const frames = await observe([
-    {
-      stage: 'command',
-      trace: [
-        '[pid 43] execve("/usr/bin/node", ["node"], 0x1 /* 1 var */ <pid changed to 42 ...>',
-        '[pid 42] +++ superseded by execve in pid 43 +++',
-        '[pid 42] <... execve resumed>) = 0',
-        '[pid 42] +++ exited with 0 +++',
-      ],
-    },
-  ])
-  expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
-  expect(frames.find((frame) => frame.kind === 'event')?.event).toMatchObject({
-    operation: 'execve',
-    resource: '/usr/bin/node',
-    result: 'success',
-  })
-  expect(frames.some((frame) => frame.kind === 'actor-exit')).toBe(true)
-})
+test.each(['bracket', 'numeric'])(
+  'observer joins exec continuation after a non-leader thread takes the process PID (%s)',
+  async (prefix) => {
+    const frames = await observe([
+      {
+        stage: 'command',
+        trace: [
+          '[pid 43] execve("/usr/bin/node", ["node"], 0x1 /* 1 var */ <pid changed to 42 ...>',
+          '[pid 42] +++ superseded by execve in pid 43 +++',
+          '[pid 42] <... execve resumed>) = 0',
+          '[pid 42] +++ exited with 0 +++',
+        ].map((line) =>
+          prefix === 'numeric' ? line.replace(/^\[pid (\d+)\] /, '$1 ') : line,
+        ),
+      },
+    ])
+    expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+    expect(frames.find((frame) => frame.kind === 'event')?.event).toMatchObject(
+      {
+        operation: 'execve',
+        resource: '/usr/bin/node',
+        result: 'success',
+      },
+    )
+    expect(frames.some((frame) => frame.kind === 'actor-exit')).toBe(true)
+  },
+)
 
 test('observer transfers an interleaved unfinished exec and preserves forbidden access evidence', async () => {
   const frames = await observe([
