@@ -1,0 +1,71 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:8200/v1/auth/kubernetes/login",
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "x-vault-request",
+          "true"
+        ],
+        [
+          "x-vault-namespace",
+          "admin"
+        ]
+      ],
+      "body": {
+        "role": "cipherstash",
+        "jwt": "fixture.jwt.token"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "auth": {
+          "accessor": "HjtgtYyKbCqHkdof10qacF2T",
+          "client_token": "hvs.fixture-kubernetes-token",
+          "entity_id": "829b5b18-c7ea-dc88-fb8e-d062e4bc22b9",
+          "lease_duration": 3600,
+          "metadata": {
+            "role": "cipherstash",
+            "service_account_name": "app",
+            "service_account_namespace": "default",
+            "service_account_secret_name": "",
+            "service_account_uid": "5b1c2c9f-0000-4000-8000-000000000001"
+          },
+          "mfa_requirement": null,
+          "num_uses": 0,
+          "orphan": true,
+          "policies": [
+            "cipherstash-fixture",
+            "default"
+          ],
+          "renewable": true,
+          "token_policies": [
+            "cipherstash-fixture",
+            "default"
+          ],
+          "token_type": "service"
+        },
+        "data": null,
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "",
+        "renewable": false,
+        "request_id": "0d334ea8-3d6c-570f-9d25-a6e781cab3c7",
+        "warnings": null,
+        "wrap_info": null
+      }
+    }
+  }
+]

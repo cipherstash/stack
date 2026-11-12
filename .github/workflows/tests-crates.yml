@@ -22,6 +22,7 @@ on:
       - packages/stack-kms/**
       - packages/stack-kms-vendor/**
       - packages/stack-kms-aws/**
+      - packages/stack-kms-vault/**
       - packages/stack-encrypt/**
       - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
@@ -48,6 +49,7 @@ on:
       - packages/stack-kms/**
       - packages/stack-kms-vendor/**
       - packages/stack-kms-aws/**
+      - packages/stack-kms-vault/**
       - packages/stack-encrypt/**
       - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
@@ -155,7 +157,7 @@ jobs:
       # with no `version`, or a crate that uses API its dependency's packaged
       # source does not have yet. stack-profile and stack-auth are in the list
       # because stack-kms and stack-encrypt depend on them: without them, cargo
-      # resolves the published versions, which lag the tree. stack-kms-vendor and stack-kms-aws
+      # resolves the published versions, which lag the tree. stack-kms-vendor, stack-kms-aws and stack-kms-vault
       # are publishable but staged in release-plz.toml (their
       # first version is published by hand); packaging them here keeps them
       # publishable meanwhile. No token.
@@ -163,7 +165,7 @@ jobs:
       # version is on crates.io, cargo warns rather than fails on a dry run of
       # it.
       - name: Verify the stack-* crates package cleanly for crates.io
-        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt -p stack-kms-vendor -p stack-kms-aws
+        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt -p stack-kms-vendor -p stack-kms-aws -p stack-kms-vault
 
   # stack-kms-aws against a real AWS KMS API: LocalStack, as a service
   # (ADR-0014). The `rust` job runs the same test binary, where it skips
@@ -209,6 +211,39 @@ jobs:
       - name: stack-kms-aws against LocalStack
         run: mise run test:localstack:stack-kms-aws
 
+  # stack-kms-vault against a real Vault Transit engine: `vault server -dev`,
+  # as a service (ADR-0014). The `rust` job runs the same test binary, where it
+  # skips itself for want of an address; this job sets the address, and the
+  # mise task refuses to run without one, so a skip cannot read as a pass here.
+  vault:
+    name: stack-kms-vault against vault server -dev
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 30
+    env:
+      MISE_ENV: test
+      STACK_KMS_VAULT_ADDR: http://127.0.0.1:8200
+      STACK_KMS_VAULT_TOKEN: root
+    services:
+      vault:
+        # Pinned by digest (the multi-platform index of 1.20, 1.20.4 when
+        # pinned). The image's default command is `server -dev`.
+        image: hashicorp/vault:1.20@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10
+        ports:
+          - 8200:8200
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: root
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+          SKIP_SETCAP: 'true'
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8200/v1/sys/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
           version: 2026.4.0
@@ -220,6 +255,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
+      - name: stack-kms-vault against vault server -dev
+        run: mise run test:vault:stack-kms-vault
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm

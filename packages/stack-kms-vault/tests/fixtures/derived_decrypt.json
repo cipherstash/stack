@@ -1,0 +1,116 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "http://127.0.0.1:8200/v1/transit/keys/cipherstash-fixture-derived",
+      "headers": [
+        [
+          "x-vault-token",
+          "fixture-root-token"
+        ],
+        [
+          "x-vault-request",
+          "true"
+        ]
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "auth": null,
+        "data": {
+          "allow_plaintext_backup": false,
+          "auto_rotate_period": 0,
+          "convergent_encryption": false,
+          "deletion_allowed": false,
+          "derived": true,
+          "exportable": false,
+          "imported_key": false,
+          "kdf": "hkdf_sha256",
+          "keys": {
+            "1": 1794453020
+          },
+          "latest_version": 1,
+          "min_available_version": 0,
+          "min_decryption_version": 1,
+          "min_encryption_version": 0,
+          "name": "cipherstash-fixture-derived",
+          "supports_decryption": true,
+          "supports_derivation": true,
+          "supports_encryption": true,
+          "supports_signing": false,
+          "type": "aes256-gcm96"
+        },
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "transit",
+        "renewable": false,
+        "request_id": "23c985c0-238f-69e7-b15f-2cbe7e64c219",
+        "warnings": null,
+        "wrap_info": null
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:8200/v1/transit/decrypt/cipherstash-fixture-derived",
+      "headers": [
+        [
+          "x-vault-token",
+          "fixture-root-token"
+        ],
+        [
+          "x-vault-request",
+          "true"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "batch_input": [
+          {
+            "ciphertext": "vault:v1:pIBm6LS1rTj/jSRuccdWftK0Yv5umbyfMz6EWP5P9ZyMuBzbDzkmRU4+jdQJvr8Ni9Nz0+/lKgt1zroHJA3L0AYiYHIHONt8m7dRY2KMLPa6mFQIWaj7SSpouVDf",
+            "context": "BQAAAAAAAAAlAAAAAAAAAHN0YWNrLWttcy12ZW5kb3Iva2V5c2V0LXJlY29yZC1rZXkvdjEIAAAAAAAAAHJvb3Qta2V5EAAAAAAAAAAPHi08S1ppeIeWpbTD0uHwAQAAAAAAAAAEAQAAAAAAAAAC"
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "auth": null,
+        "data": {
+          "batch_results": [
+            {
+              "plaintext": "AevXOIqrrKsZlViO6KECUTACqz90/AVaZD9scv8R47JCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=",
+              "reference": ""
+            }
+          ]
+        },
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "transit",
+        "renewable": false,
+        "request_id": "e6ca0339-4806-cdd1-75c6-c5c6053103f3",
+        "warnings": null,
+        "wrap_info": null
+      }
+    }
+  }
+]
