@@ -7,17 +7,17 @@ sealed field shows ``<sealed>``, a passthrough field shows its value, and an
 Pydantic's ``model_dump``, ``vars`` and ``__dict__`` still return plaintext,
 and so does a debugger that reads attributes.
 
-A generated method (dataclass, attrs, Pydantic, ``NamedTuple``) is replaced.
-A method written on the class itself is refused unless the decorator is
+A method that dataclasses, attrs or ``NamedTuple`` generated is replaced.
+Pydantic's methods are on its base classes. Anything else on the class
+itself is the user's: a function, a ``staticmethod``, a ``partialmethod``,
+or a function from another module. It is refused unless the decorator is
 given ``redact=False``, because replacing it would silently drop the user's
 code. A method inherited from a base is replaced on the declared class only.
 """
 
 import collections
-import dataclasses
 import inspect
 import os
-import reprlib
 import types
 from typing import Any, Callable, Iterator, Sequence, Tuple
 
@@ -45,38 +45,53 @@ _STORAGE_DESCRIPTORS = (
     type(vars(collections.namedtuple("_Probe", "field"))["field"]),
 )
 
-# The files a generated __repr__ reports as its own. A dataclass's __repr__ is
-# wrapped for recursion, and the wrapper is in reprlib.py on 3.14 and in
-# dataclasses.py on 3.9. attrs reports a "<attrs generated ...>" name.
-_GENERATOR_FILES = frozenset(
-    os.path.realpath(module.__file__)
-    for module in (dataclasses, reprlib)
-    if module.__file__ is not None
-)
-
 # attrs compiles its methods under this file name.
 _ATTRS_GENERATED = "<attrs generated"
+
+# dataclasses compiles its __repr__ from a string, inside this function, from
+# 3.9 to 3.14. A Pydantic dataclass's __repr__ is the same.
+_DATACLASS_FILE = "<string>"
+_DATACLASS_QUALNAME = "__create_fn__.<locals>."
+
+# NamedTuple's methods are defined in collections itself.
+_COLLECTIONS_FILE = (
+    os.path.realpath(collections.__file__) if collections.__file__ is not None else None
+)
 
 METHODS = ("__repr__", "__str__", "__rich_repr__")
 
 
 def hand_written(cls: type, name: str) -> bool:
-    """Whether ``cls`` itself has a ``name`` method written by hand.
+    """Whether ``cls`` itself has a ``name`` that no known generator wrote.
 
     Only the class's own ``__dict__`` is read: a base's method is not the
-    class's. A generated method comes from a generator's file, or from
-    another module, such as ``pydantic.main``. A method compiled from a
-    string, as in the REPL, a notebook or ``python -c``, is hand-written.
+    class's. Anything there is the user's unless it is a generator's output.
+    A method compiled from a string, as in the REPL, a notebook or
+    ``python -c``, is hand-written.
     """
-    method = vars(cls).get(name)
-    code = getattr(method, "__code__", None)
-    if code is None or getattr(method, "__module__", None) != cls.__module__:
+    found = vars(cls)
+    return name in found and not _generated(found[name])
+
+
+def _generated(method: object) -> bool:
+    """Whether dataclasses, attrs or ``NamedTuple`` generated ``method``.
+
+    A wrapper, such as the one ``reprlib.recursive_repr`` adds, is
+    unwrapped first, so the function inside it decides. A user's
+    ``recursive_repr`` is then the user's own function.
+    """
+    if not isinstance(method, types.FunctionType):
+        return False
+    inner = inspect.unwrap(method)
+    code = getattr(inner, "__code__", None)
+    if code is None:
         return False
     filename = code.co_filename
-    return (
-        not filename.startswith(_ATTRS_GENERATED)
-        and os.path.realpath(filename) not in _GENERATOR_FILES
-    )
+    if filename.startswith(_ATTRS_GENERATED):
+        return True
+    if filename == _DATACLASS_FILE:
+        return inner.__qualname__.startswith(_DATACLASS_QUALNAME)
+    return _COLLECTIONS_FILE is not None and os.path.realpath(filename) == _COLLECTIONS_FILE
 
 
 def install(cls: type, fields: Sequence[Tuple[str, bool]]) -> Tuple[Callable[..., Any], ...]:

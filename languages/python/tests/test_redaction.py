@@ -1,6 +1,8 @@
 """``repr`` and ``str`` of a declared class show no sealed value."""
 
 import dataclasses
+import functools
+import reprlib
 from typing import Annotated, NamedTuple
 
 import attrs
@@ -196,6 +198,60 @@ def test_an_unset_slot_is_shown_as_unset():
 
     assert repr(User(email=SECRET)) == "User(email=<sealed>, age=<unset>)"
     assert repr(User(email=SECRET, age=9)) == "User(email=<sealed>, age=9)"
+
+
+def _repr_from_another_module(self):
+    return "elsewhere"
+
+
+_repr_from_another_module.__module__ = "somewhere.else"
+
+
+def build_with_a_hand_written_method(form):
+    if form == "recursive_repr":
+
+        @stackencrypt.model("users")
+        @dataclasses.dataclass
+        class User:
+            email: Annotated[str, TextEq]
+
+            @reprlib.recursive_repr()
+            def __repr__(self):
+                return f"User({self.email})"
+
+    elif form == "staticmethod":
+
+        @stackencrypt.model("users")
+        @dataclasses.dataclass
+        class User:
+            email: Annotated[str, TextEq]
+            __str__ = staticmethod(lambda: "user")
+
+    elif form == "partialmethod":
+
+        @stackencrypt.model("users")
+        @dataclasses.dataclass
+        class User:
+            email: Annotated[str, TextEq]
+            __str__ = functools.partialmethod(lambda self, text: text, "user")
+
+    else:
+
+        @stackencrypt.model("users")
+        @dataclasses.dataclass
+        class User:
+            email: Annotated[str, TextEq]
+            __repr__ = _repr_from_another_module
+
+
+@pytest.mark.parametrize(
+    "form", ["recursive_repr", "staticmethod", "partialmethod", "another module"]
+)
+def test_a_hand_written_method_in_any_form_is_refused(form):
+    # Only a generator's own output is replaced. Anything else written on the
+    # class is the user's, and replacing it would drop their code silently.
+    error = pytest.raises(DeclarationError, build_with_a_hand_written_method, form).value
+    assert error.code == "declaration_repr_present"
 
 
 def test_a_hand_written_str_is_refused():
