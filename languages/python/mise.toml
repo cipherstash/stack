@@ -26,9 +26,8 @@ set -euo pipefail
 # recreated, so a change to `[tools]` cannot leave the tests on the old one.
 # The `test` extra comes from uv.lock, with --locked, so a lock that does not
 # match pyproject.toml fails the build. Dependabot updates the lock. The
-# package has no runtime dependency, so the lock fixes test tooling versions
-# alone. maturin, the build backend, is not in the lock. uv resolves it from
-# the index in an isolated build environment, within pyproject.toml's range.
+# package has no runtime dependency, so the lock fixes tool versions alone:
+# the test extra, and maturin, the build backend, in the `build` group.
 want="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
 have="$([ -x .venv/bin/python ] && .venv/bin/python -c 'import sys; print("%d.%d" % sys.version_info[:2])' || true)"
 if [ "$have" != "$want" ]; then
@@ -40,13 +39,14 @@ fi
 # `wheels` job in tests-python.yml builds release, because the time it records
 # is the cost of the wheel a user would install.
 export MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:---profile dev}"
-# The `test` extra at the locked versions. The project itself is left out:
-# uv sync would install it editable.
-uv sync --locked --extra test --no-install-project --python .venv/bin/python
-# The package itself, built by maturin through the PEP 517 backend. Always
-# reinstall it so a Rust change is picked up. Its dependencies are the ones
-# above, so none is resolved here.
-uv pip install --python .venv/bin/python --reinstall-package stackencrypt --no-deps .
+# The `test` extra and the `build` group at the locked versions. The project
+# itself is left out: uv sync would install it editable.
+uv sync --locked --extra test --group build --no-install-project --python .venv/bin/python
+# The package itself, built by the locked maturin in .venv through the PEP
+# 517 backend. --no-build-isolation keeps uv from downloading a maturin of
+# its own, outside the lock. Always reinstall it so a Rust change is picked
+# up. Its dependencies are the ones above, so none is resolved here.
+uv pip install --python .venv/bin/python --no-build-isolation --reinstall-package stackencrypt --no-deps .
 .venv/bin/python -c 'import stackencrypt as s; print("stackencrypt", s.__version__, "engine", s.__engine__)'
 """
 
