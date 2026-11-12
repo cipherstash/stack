@@ -505,9 +505,12 @@ jobs:
 
       # Deterministic Fake Migrators only: no model credentials or token spend.
       # Only the live file reads HARNESS_LIVE; migration-harness.yml runs the
-      # rest of the self-test on harness changes. The default success() gate
-      # keeps two ten-minute live Runs from starting after an earlier failure.
+      # rest of the self-test on harness changes. Independent of the steps
+      # above: the harness installs @cipherstash/stack from npm inside its
+      # isolated containers and never loads this job's native bindings, so an
+      # unrelated failure earlier in the job must not hide its result.
       - name: Run the credentialed Migration Harness self-test
+        if: ${{ !cancelled() }}
         run: pnpm exec turbo run harness:selftest --filter @cipherstash/e2e --env-mode=loose -- migration-harness/__tests__/no-rewrite-live.test.ts
         env:
           HARNESS_LIVE: '1'
