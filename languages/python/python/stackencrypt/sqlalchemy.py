@@ -490,7 +490,9 @@ def _check(cls: type) -> Tuple[type, Cipher, FrozenSet[str]]:
             continue
         column = mapper.columns[field.name]
         unique = column.unique or any(
-            isinstance(constraint, UniqueConstraint) and column in constraint.columns
+            # contains_column, not `in`: a column collection takes only a
+            # string key with `in`, and raises ArgumentError for a Column.
+            isinstance(constraint, UniqueConstraint) and constraint.columns.contains_column(column)
             for constraint in mapper.local_table.constraints
         )
         if unique:
