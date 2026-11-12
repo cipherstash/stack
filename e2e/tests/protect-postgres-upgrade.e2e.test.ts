@@ -155,7 +155,8 @@ describe('Protect Postgres v2 to Stack v3', () => {
   }, 120_000)
 
   it('accepts the supported shape after a physical column before pk was dropped', async () => {
-    const replacement = `${table}_replacement`
+    const relation = `public.${table}`
+    const replacement = `public.${table}_replacement`
     await sql.begin(async (tx) => {
       await tx`CREATE TABLE ${tx(replacement)} (
         discarded text, pk text PRIMARY KEY,
@@ -164,11 +165,23 @@ describe('Protect Postgres v2 to Stack v3', () => {
         notes public.eql_v2_encrypted
       )`
       await tx`INSERT INTO ${tx(replacement)} (pk, email, age, notes)
-        SELECT pk, email, age, notes FROM ${tx(table)}`
+        SELECT pk, email, age, notes FROM ${tx(relation)}`
       await tx`ALTER TABLE ${tx(replacement)} DROP COLUMN discarded`
-      await tx`DROP TABLE ${tx(table)}`
+      await tx`DROP TABLE ${tx(relation)}`
       await tx`ALTER TABLE ${tx(replacement)} RENAME TO ${tx(table)}`
     })
+    const [fixture] =
+      await sql`SELECT pg_catalog.to_regclass(${relation})::text AS relation`
+    expect(
+      fixture.relation,
+      'fixture must create the public migration source',
+    ).not.toBeNull()
+    const attributes = await sql`SELECT attnum FROM pg_catalog.pg_attribute
+      WHERE attrelid = pg_catalog.to_regclass(${relation}) AND attname = 'pk' AND NOT attisdropped`
+    expect(
+      attributes.map((attribute) => attribute.attnum),
+      'pk must retain physical attribute 2 after its predecessor is dropped',
+    ).toEqual([2])
     await app.migrate()
     expect(await app.read('v3')).toEqual(app.corpus)
     await app.rollback()
