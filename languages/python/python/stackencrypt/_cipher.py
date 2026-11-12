@@ -218,6 +218,11 @@ class Cipher(Generic[T]):
         and no request is made. A passthrough value of another type than the
         field's raises ``InvalidValueError``; it is never converted. The
         call is all or nothing: no instance is built when any row fails.
+
+        Each of these errors names the row. Two errors from the engine name
+        the field only, not the row: ``decrypt_malformed`` for a value that
+        is not the field's EQL type, and ``decrypt_kind_mismatch`` for a
+        value sealed as another type.
         """
         return _engine.decrypt(
             self._plan, self._cls, _rows(rows, DecryptError, "decrypt_row_shape")
