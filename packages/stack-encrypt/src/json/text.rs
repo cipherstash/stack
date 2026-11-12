@@ -34,7 +34,7 @@
 //! and never a byte of the text.
 
 use serde_json::{Map, Number, Value};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Why JSON text was refused at the boundary. Each says what kind of
 /// mistake it was and where, never what the text held.
@@ -131,6 +131,18 @@ pub fn to_text(value: &Value) -> Result<Vec<u8>, serde_json::Error> {
     serde_json::to_writer(&mut counter, value)?;
     let mut text = Vec::with_capacity(counter.0);
     serde_json::to_writer(&mut text, value)?;
+    Ok(text)
+}
+
+/// [`to_text`] into a buffer that is wiped when it is dropped: the text a
+/// document is sealed as. The buffer is allocated once at the text's
+/// length, so writing it leaves no shorter copy behind, and it is wiped if
+/// the writer fails part way.
+pub(crate) fn to_wiped_text(value: &Value) -> Result<Zeroizing<Vec<u8>>, serde_json::Error> {
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value)?;
+    let mut text = Zeroizing::new(Vec::with_capacity(counter.0));
+    serde_json::to_writer(&mut *text, value)?;
     Ok(text)
 }
 

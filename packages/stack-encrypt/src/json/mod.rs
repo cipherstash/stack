@@ -69,6 +69,16 @@
 //! nothing above it is read. The entries are stored in a random order, root
 //! first, and no check reads a slot as a position in the document.
 //!
+//! # A document with no index
+//!
+//! [`JsonPlaintext`] is a JSON document as a plaintext that is wiped when
+//! it is dropped. It is a single value to the cipher, so
+//! [`KeysetCipher::encrypt`](crate::KeysetCipher::encrypt) seals one as
+//! **one ciphertext**: the document's JSON text in one text leaf, with no
+//! entries, selectors or tokens. Use it for a document that is stored and
+//! read back whole and never queried. It is not part of the index, and
+//! reveals only the size of the document.
+//!
 //! # Nonces and tokens
 //!
 //! - **Nonces are random.** Every entry is sealed through the engine's one
@@ -125,12 +135,14 @@ mod cascade;
 mod derive;
 mod path;
 mod plain;
+mod plaintext;
 mod query;
 mod shuffle;
 mod text;
 
 pub use derive::JsonTerms;
 pub use path::{JsonPath, JsonPathError, Segment};
+pub use plaintext::JsonPlaintext;
 pub use query::{
     AtPathTerms, JsonLeafQuery, JsonQuery, JsonSelector, JsonSelectorSet, JsonSubtreeKey,
 };

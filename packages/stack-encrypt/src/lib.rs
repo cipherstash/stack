@@ -386,6 +386,33 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
+//! ## A JSON document
+//!
+//! A JSON document is a single value to the cipher: wrap a
+//! `serde_json::Value` in [`JsonPlaintext`](json::JsonPlaintext) and
+//! `encrypt` returns one ciphertext. The plaintext of that ciphertext is
+//! the document's JSON text. Every language reads JSON text the same way,
+//! so use it for a document that another SDK also reads. Nothing inside it
+//! can be searched. The [`json`] index is for a document that is queried.
+//!
+//! ```
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use serde_json::json;
+//! use stack_encrypt::json::JsonPlaintext;
+//! # let cipher = stack_encrypt::StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//! #     .init()
+//! #     .await?;
+//! # let keyset = cipher.default_keyset();
+//! let settings = JsonPlaintext::from(json!({"theme": "dark", "beta": true}));
+//! let ct = keyset.encrypt_with_context(settings, "users/42/settings").await?;
+//! let settings: JsonPlaintext = keyset.decrypt_with_context(ct, "users/42/settings").await?;
+//! assert_eq!(settings.value()["theme"], "dark");
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
 //! # Records
 //!
 //! A record is a struct that is encrypted field by field. You declare the

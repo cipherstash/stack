@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`json::JsonPlaintext`, a JSON document as one ciphertext** (#1636).
+  `JsonPlaintext` holds a `serde_json::Value` and wipes it when it is
+  dropped. Build one with `JsonPlaintext::from(value)` or
+  `JsonPlaintext::parse(text)`, which applies the strict checks of
+  `json::parse_text`, and read it with `value()`. It is a single value to
+  the cipher, so `keyset.encrypt(document)` returns one `Ciphertext`, and
+  `keyset.decrypt::<JsonPlaintext>(ct)` opens it. A target with a
+  ciphertext field takes it as a plaintext too.
+  - The stored plaintext is the document's JSON text, sealed as one text
+    leaf. It is the text `serde_json` writes, with no whitespace. Key
+    order, whitespace and the spelling of a number are not kept.
+  - On decrypt the leaf is authenticated first, then the text is parsed by
+    the same strict rules. A leaf that is not text, or text that is not a
+    document, is `Error::OpenedType`. The ciphertext is authentic in that
+    case: it was sealed as something else.
+  - `dynamic::JsonPlaintext` is now this type, re-exported, so
+    `dynamic::read_json` returns it. It gains `Clone`, `Zeroize`, a
+    redacted `Debug`, `From<Value>` and `parse`.
+  - ADR-0013 records the decision.
 - **Field markers** (#1486, #1590, #1596, #1600). `#[derive(EncryptTarget)]` on
   a `struct = ..` record emits one `Marker` per derived field. It is an
   associated constant named after the field in upper case:

@@ -61,6 +61,9 @@
 //! - To encrypt many values in one request, use a batch
 //!   ([`Pending::all`](crate::Pending::all)) or a collection (see
 //!   [Collections](#collections)).
+//! - To encrypt a JSON document as one ciphertext that every language SDK
+//!   reads, use [`JsonPlaintext`](crate::json::JsonPlaintext). It is sealed
+//!   as JSON text, where a blob follows one language's types.
 //! - To search inside a JSON document, use the [`json`](crate::json) index.
 //!
 //! # Collections
