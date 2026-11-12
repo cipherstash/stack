@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -11,8 +11,17 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true })
 })
 
-async function fixture(mode = 'success') {
-  const directory = await mkdtemp(join(tmpdir(), 'claude-adapter-test-'))
+async function fixture(
+  mode = 'success',
+  options: {
+    stdout?: string
+    timeoutMs?: number
+    parent?: string
+  } = {},
+) {
+  const directory = await mkdtemp(
+    join(options.parent ?? tmpdir(), 'claude-adapter-test-'),
+  )
   directories.push(directory)
   const executable = join(directory, 'claude')
   const report = join(directory, 'launch.json')
@@ -33,7 +42,7 @@ const entry = config.mcpServers.migration
 await writeFile(${JSON.stringify(report)}, JSON.stringify({args,env:process.env,cwd:process.cwd(),config}))
 const emit = (value) => console.log(JSON.stringify(value))
 emit({ type:'system',subtype:'init',model:'claude-sonnet-resolved',permissionMode:mode === 'unsafe-permission' ? 'bypassPermissions' : 'acceptEdits',tools:mode === 'unsafe-tool' ? ['Bash'] : ['mcp__migration__exec'] })
-if (mode === 'unsafe-tool' || mode === 'unsafe-permission') { setTimeout(()=>{},10000) } else {
+if (mode === 'unsafe-tool' || mode === 'unsafe-permission' || mode === 'hang') { setTimeout(()=>{},10000) } else {
   const mcp = spawn(entry.command, entry.args, {env:{...process.env,...entry.env},stdio:['pipe','pipe','pipe']})
   const pending = new Map()
   createInterface({input:mcp.stdout}).on('line', line => { const msg=JSON.parse(line); pending.get(msg.id)?.(msg); pending.delete(msg.id) })
@@ -65,7 +74,7 @@ if (mode === 'unsafe-tool' || mode === 'unsafe-permission') { setTimeout(()=>{},
   vi.stubEnv('ANTHROPIC_BASE_URL', 'https://untrusted.invalid')
   const execute = vi.fn(async () => ({
     exitCode: 0,
-    stdout: 'isolated guide',
+    stdout: options.stdout ?? 'isolated guide',
     stderr: '',
   }))
   const run = () =>
@@ -73,7 +82,7 @@ if (mode === 'unsafe-tool' || mode === 'unsafe-permission') { setTimeout(()=>{},
       command: `${process.execPath} '${entry}'`,
       execute,
       stop: async () => {},
-      timeoutMs: 5000,
+      timeoutMs: options.timeoutMs ?? 5000,
       maxModelTurns: 3,
     })
   return { run, execute, report, directory }
@@ -163,9 +172,64 @@ test.each(['turn-limit', 'over-budget'])(
   'Claude turns %s into an agent limit',
   async (mode) => {
     const f = await fixture(mode)
-    expect((await f.run()).exitCode).toBe(124)
+    const outcome = await f.run()
+    expect(outcome.exitCode).toBe(124)
+    // run.mjs reports `limit`; without it a turn-limit stop reads as a crash.
+    expect(outcome.limit).toBe('model turn limit reached')
   },
 )
+
+// One command result over the 1 MiB protocol line limit used to kill the
+// adapter. The broker now bounds what it returns and marks the cut, so the
+// model can retry with a narrower read and the Run continues.
+test('Claude receives an oversized command result truncated with a marker instead of failing the Run', async () => {
+  const f = await fixture('success', { stdout: 'x'.repeat(2_000_000) })
+  const outcome = await f.run()
+  expect(outcome, outcome.stderr).toMatchObject({ exitCode: 0 })
+  const mcp = JSON.parse(await readFile(join(f.directory, 'mcp.json'), 'utf8'))
+  const delivered = JSON.parse(mcp.execution.result.content[0].text)
+  expect(delivered.stdout).toMatch(/output truncated/)
+  expect(delivered.stdout.length).toBeLessThan(1024 * 1024)
+  // The private evidence keeps the full response.
+  expect(outcome.brokerEvidence?.[0]?.result.stdout).toHaveLength(2_000_000)
+})
+
+// A SIGKILL on a time or tool-call limit skips the adapter's `finally`. Its
+// temporary CLI home holds mcp.json with the bridge token, so it must live in
+// the broker-owned directory the surviving broker always removes.
+test('a Claude adapter killed on a limit leaves no temporary home behind', async () => {
+  // A short parent keeps the nested Unix socket path under the macOS limit.
+  const parent = await mkdtemp('/tmp/mh-t-')
+  directories.push(parent)
+  vi.stubEnv('TMPDIR', parent)
+  const f = await fixture('hang', { timeoutMs: 3000, parent })
+  const outcome = await f.run()
+  expect(outcome.limit).toBe('time limit reached')
+  const launch = JSON.parse(await readFile(f.report, 'utf8'))
+  expect(launch.env.HOME).toBeTruthy()
+  expect(
+    (await readdir(parent)).filter((name) => name.startsWith('mh-claude-')),
+  ).toEqual([])
+  await expect(
+    readFile(join(launch.env.HOME, 'mcp.json')),
+  ).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('Claude receives the operator proxy and CA settings it needs to reach the API', async () => {
+  const f = await fixture()
+  vi.stubEnv('HTTPS_PROXY', 'http://proxy.internal:3128')
+  vi.stubEnv('NO_PROXY', 'localhost')
+  vi.stubEnv('NODE_EXTRA_CA_CERTS', '/etc/ssl/corp.pem')
+  const outcome = await f.run()
+  expect(outcome, outcome.stderr).toMatchObject({ exitCode: 0 })
+  const launch = JSON.parse(await readFile(f.report, 'utf8'))
+  expect(launch.env).toMatchObject({
+    HTTPS_PROXY: 'http://proxy.internal:3128',
+    NO_PROXY: 'localhost',
+    NODE_EXTRA_CA_CERTS: '/etc/ssl/corp.pem',
+  })
+  expect(launch.env).not.toHaveProperty('ANTHROPIC_BASE_URL')
+})
 
 test('Claude refuses a login-only host without making a tool call', async () => {
   const f = await fixture()

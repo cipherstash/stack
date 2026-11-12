@@ -3,6 +3,55 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+/** Escaped JSON length allowed for each of a result's stdout and stderr.
+ * An adapter may wrap a result in one more JSON string (the Claude MCP bridge
+ * does), which at most doubles an escaped string's length. Two streams at
+ * this bound stay under the 1 MiB protocol line limit after that wrapping.
+ */
+export const RESULT_STREAM_CHARS = 192 * 1024
+
+/** Bound one stream by its JSON-escaped length, cutting at a code point and
+ * appending a marker so the model can retry with a narrower command.
+ * @param {string} text
+ * @param {number} [limit]
+ */
+export function boundStream(text, limit = RESULT_STREAM_CHARS) {
+  if (JSON.stringify(text).length - 2 <= limit) return text
+  const marker = (/** @type {number} */ omitted) =>
+    `\n[harness: output truncated; ${omitted} of ${text.length} characters omitted. Use a narrower command.]`
+  const budget = limit - (JSON.stringify(marker(text.length)).length - 2)
+  let used = 0
+  let end = 0
+  for (const point of text) {
+    const cost = JSON.stringify(point).length - 2
+    if (used + cost > budget) break
+    used += cost
+    end += point.length
+  }
+  return `${text.slice(0, end)}${marker(text.length - end)}`
+}
+
+/** @param {import('../types.js').IsolationResult} result */
+function boundResult(result) {
+  return {
+    ...result,
+    stdout: boundStream(result.stdout),
+    stderr: boundStream(result.stderr),
+  }
+}
+
+/** @param {string[]} command */
+function requestsReadme(command) {
+  if (command[0] !== 'npm' || !['view', 'info', 'show'].includes(command[1]))
+    return false
+  // `npm view <package> [field...]`: the first positional names the package.
+  const fields = command
+    .slice(2)
+    .filter((arg) => !arg.startsWith('-'))
+    .slice(1)
+  return fields.some((field) => /^readme(?:\.|$)/i.test(field))
+}
+
 /** Run a trusted model adapter on the host. Its only application tool is the
  * JSON-lines exec broker; the caller supplies the fixed isolated execution context.
  * @param {{command:string, execute:(command:string[],timeoutMs:number)=>Promise<import('../types.js').IsolationResult>, stop:()=>Promise<unknown>, timeoutMs?:number, maxToolCalls?:number, maxModelTurns?:number, maxEvidenceBytes?:number}} options
@@ -44,6 +93,10 @@ export async function runMigrator({
     HARNESS_FRICTION_LOG: '/workspace/friction.json',
     HARNESS_MAX_TOOL_CALLS: String(maxToolCalls),
     HARNESS_MAX_MODEL_TURNS: String(maxModelTurns),
+    // terminate() SIGKILLs the adapter before its own cleanup runs. Its
+    // temporary files (Claude's holds the bridge token) land here instead,
+    // and the finally below always removes this directory.
+    TMPDIR: directory,
   })
   try {
     return await new Promise((resolve, reject) => {
@@ -236,17 +289,14 @@ export async function runMigrator({
               // prove absence. File-access evidence supplies another positive signal.
               if (
                 result.exitCode === 0 &&
-                request.command[0] === 'npm' &&
-                ['view', 'info', 'show'].includes(request.command[1]) &&
-                request.command.some((/** @type {string} */ arg) =>
-                  /^readme(?:\.|$)/i.test(arg),
-                )
+                result.stdout.trim() &&
+                requestsReadme(request.command)
               )
                 documentationExposure.status = 'observed'
               documentationExposure.evidenceComplete = evidenceComplete
               if (!stopped && !closed)
                 child.stdin.write(
-                  `${JSON.stringify({ id: request.id, result })}\n`,
+                  `${JSON.stringify({ id: request.id, result: boundResult(result) })}\n`,
                 )
             } catch (error) {
               failure = error instanceof Error ? error : Error(String(error))
@@ -264,11 +314,11 @@ export async function runMigrator({
           invalid('adapter exited with an unfinished request')
         await cancellation
         await queue
-        if (failure) {
-          reject(failure)
-          return
-        }
-        resolve({
+        // An adapter that reported runtime metadata and exits 124 stopped on
+        // its model-turn limit, even when its own turn count is within budget.
+        if (!limit && code === 124 && runtime)
+          limit = 'model turn limit reached'
+        const outcome = {
           exitCode: limit ? 124 : (code ?? 1),
           limit,
           toolCalls: [...toolCalls],
@@ -277,7 +327,19 @@ export async function runMigrator({
           ...(runtime ? { runtime } : {}),
           stdout,
           stderr,
-        })
+        }
+        if (failure) {
+          // Completed tool calls still happened; carry them to the caller,
+          // marked incomplete, so a later failure does not erase them.
+          documentationExposure.evidenceComplete = false
+          Object.defineProperty(failure, 'migratorResult', {
+            value: outcome,
+            configurable: true,
+          })
+          reject(failure)
+          return
+        }
+        resolve(outcome)
       })
     })
   } finally {

@@ -1,16 +1,17 @@
 /** Bounded newline-delimited JSON framing shared by the trusted adapter and MCP bridge.
+ * Each message is bounded at 1 MiB (UTF-16 units). The stream as a whole is
+ * not: a Run repeats many valid results, and the broker bounds each one well
+ * under this limit (`migrator.mjs`), so a lifetime cap only ended valid Runs.
  * @param {import('node:stream').Readable} stream
  * @param {(message:any)=>void} receive
  * @param {(error:Error)=>void} fail
  */
 export function readMessages(stream, receive, fail) {
   let buffer = ''
-  let total = 0
   stream.setEncoding('utf8')
   stream.on('data', (chunk) => {
-    total += chunk.length
     buffer += chunk
-    if (buffer.length > 1024 * 1024 || total > 16 * 1024 * 1024) {
+    if (buffer.length > 1024 * 1024) {
       fail(Error('Protocol output limit exceeded'))
       return
     }

@@ -106,6 +106,7 @@ async function setup(
     stopFails?: boolean
     timeoutMs?: number
     toolResponse?: { exitCode: number; stdout: string; stderr: string }
+    toolFailsOnCall?: number
   } = {},
 ) {
   const output = await mkdtemp(join(tmpdir(), 'mh-review-driver-'))
@@ -113,6 +114,7 @@ async function setup(
   const commands: IsolationOptions[] = []
   const calls: string[] = []
   const cancellations: Array<{ expected?: boolean } | undefined> = []
+  let toolCalls = 0
   const isolation = {
     prove: async () => ({
       verified: true,
@@ -133,6 +135,8 @@ async function setup(
         const result = await execute(file, args, { cwd: invocation.workspace })
         return { exitCode: 0, stdout: result.stdout, stderr: result.stderr }
       }
+      if (++toolCalls === options.toolFailsOnCall)
+        throw Object.assign(Error('isolation broke'), { infrastructure: true })
       return options.toolResponse ?? { exitCode: 0, stdout: '', stderr: '' }
     },
     stop: async (stopOptions?: { expected?: boolean }) => {
@@ -623,4 +627,29 @@ test('N3 persists private broker responses without exporting their contents in t
   })
   expect(JSON.stringify(manifest)).not.toContain('PRIVATE-RESPONSE-CANARY')
   expect(JSON.stringify(manifest)).not.toContain('PRIVATE-DIAGNOSTIC-CANARY')
+})
+
+test('an isolation failure after a completed tool call still persists that call as incomplete evidence', async () => {
+  const adapterDir = await mkdtemp(join(tmpdir(), 'mh-evidence-driver-'))
+  outputs.push(adapterDir)
+  const adapter = join(adapterDir, 'adapter.mjs')
+  await writeFile(
+    adapter,
+    `console.log(JSON.stringify({id:'first',method:'exec',command:['cat','guide.md']}));process.stdin.once('data',()=>{console.log(JSON.stringify({id:'second',method:'exec',command:['true']}));setTimeout(()=>{},10000)});`,
+  )
+  const response = { exitCode: 0, stdout: 'guide text', stderr: '' }
+  const { driver, output, manifest } = await setup({
+    command: `node '${adapter}'`,
+    toolResponse: response,
+    toolFailsOnCall: 2,
+  })
+  await expect(driver.migrate()).rejects.toThrow('isolation broke')
+  expect(
+    JSON.parse(await readFile(join(output, 'broker-evidence.json'), 'utf8')),
+  ).toEqual({
+    complete: false,
+    records: [{ id: 'first', command: ['cat', 'guide.md'], result: response }],
+  })
+  expect(manifest.artifacts?.brokerEvidence).toBe('broker-evidence.json')
+  expect(manifest.documentationExposure?.evidenceComplete).toBe(false)
 })

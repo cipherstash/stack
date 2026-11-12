@@ -64,6 +64,25 @@ test('explicit documentation retrieval is flagged for evidence review', async ()
   })
 })
 
+// `npm view readme version` asks for the `version` field of a package named
+// `readme`. Only a requested readme field, answered with content, is exposure.
+test.each([
+  [['npm', 'view', 'readme', 'version'], 'stack-docs-1.0.0', 'unknown'],
+  [['npm', 'view', 'readme'], '{"name":"readme"}', 'unknown'],
+  [['npm', 'view', '@cipherstash/stack', 'readme'], '', 'unknown'],
+  [
+    ['npm', 'info', '--json', '@cipherstash/stack', 'readme'],
+    'docs',
+    'observed',
+  ],
+])(
+  'documentation exposure from %j answering %j is %s',
+  async (command, stdout, status) => {
+    const result = await invoke(command, { exitCode: 0, stdout, stderr: '' })
+    expect(result.documentationExposure?.status).toBe(status)
+  },
+)
+
 test('an arbitrary shell command cannot establish the absence of supplementary documentation', async () => {
   const result = await invoke(['sh', '-c', 'node inspect.mjs'], {
     exitCode: 0,
