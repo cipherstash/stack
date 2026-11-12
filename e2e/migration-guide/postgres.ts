@@ -1,25 +1,22 @@
-import { csColumn, csTable } from '@cipherstash/protect'
-import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
 import type postgres from 'postgres'
-import { legacyProtect, ok } from './legacy.ts'
+import {
+  createConversion,
+  createMigrationClients,
+  ok,
+} from './postgres-conversion.ts'
 
 /** A deliberately small migration example, not a general backfill service. */
 export async function createExample(sql: postgres.Sql, table: string) {
   if (!/^[a-z][a-z0-9_]{0,39}$/.test(table))
     throw new Error('Invalid example table name')
-  const legacySchema = csTable('customers', {
-    email: csColumn('email').equality(),
-    age: csColumn('age').dataType('number').equality(),
-    notes: csColumn('notes'),
-  })
-  const schema = encryptedTable('customers', {
-    email: types.TextEq('email'),
-    age: types.IntegerEq('age'),
-    notes: types.Text('notes'),
-  })
-  const legacy = await legacyProtect([legacySchema])
-  const stack = await Encryption({ schemas: [schema] })
-  const columns = ['email', 'age', 'notes'] as const
+  const clients = createMigrationClients()
+  const { legacySchema, schema, legacy, stack, columns } = await clients
+  const { migrate, checkDependencies } = await createConversion(
+    sql,
+    table,
+    clients,
+  )
+  const relation = `public.${table}`
   const corpus = [
     { pk: 'ada', email: 'ada@example.com', age: 36, notes: 'engines' },
     { pk: 'alan', email: 'alan@example.com', age: 36, notes: 'machines' },
@@ -29,7 +26,7 @@ export async function createExample(sql: postgres.Sql, table: string) {
   async function seed() {
     // Never replace an existing table or seed a customer's database in place.
     await sql.begin(async (tx) => {
-      await tx`CREATE TABLE ${tx(table)} (
+      await tx`CREATE TABLE ${tx(relation)} (
         pk text PRIMARY KEY,
         email public.eql_v2_encrypted,
         age public.eql_v2_encrypted,
@@ -57,7 +54,7 @@ export async function createExample(sql: postgres.Sql, table: string) {
           }),
           'legacy notes',
         )
-        await tx`INSERT INTO ${tx(table)} VALUES (${row.pk}, ${tx.json(email)}, ${tx.json(age)}, ${tx.json(notes)})`
+        await tx`INSERT INTO ${tx(relation)} VALUES (${row.pk}, ${tx.json(email)}, ${tx.json(age)}, ${tx.json(notes)})`
       }
     })
   }
@@ -67,8 +64,8 @@ export async function createExample(sql: postgres.Sql, table: string) {
     // base jsonb type explicitly instead of passing serialized text to the SDK.
     const rows =
       generation === 'v2'
-        ? await sql`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${sql(table)} ORDER BY pk`
-        : await sql`SELECT pk, email_v3::jsonb AS email, age_v3::jsonb AS age, notes_v3::jsonb AS notes FROM ${sql(table)} ORDER BY pk`
+        ? await sql`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${sql(relation)} ORDER BY pk`
+        : await sql`SELECT pk, email_v3::jsonb AS email, age_v3::jsonb AS age, notes_v3::jsonb AS notes FROM ${sql(relation)} ORDER BY pk`
     return Promise.all(
       rows.map(async (row) => {
         const values = await Promise.all(
@@ -131,159 +128,11 @@ export async function createExample(sql: postgres.Sql, table: string) {
     const jsonTerm: postgres.JSONValue = JSON.parse(JSON.stringify(term))
     const rows =
       generation === 'v2'
-        ? await sql`SELECT pk FROM ${sql(table)} WHERE ${sql(column)} = ${sql.json(jsonTerm)}::jsonb ORDER BY pk`
+        ? await sql`SELECT pk FROM ${sql(relation)} WHERE ${sql(column)} = ${sql.json(jsonTerm)}::jsonb ORDER BY pk`
         : column === 'email'
-          ? await sql`SELECT pk FROM ${sql(table)} WHERE eql_v3.eq(email_v3, ${sql.json(jsonTerm)}::jsonb::eql_v3.query_text_eq) ORDER BY pk`
-          : await sql`SELECT pk FROM ${sql(table)} WHERE eql_v3.eq(age_v3, ${sql.json(jsonTerm)}::jsonb::eql_v3.query_integer_eq) ORDER BY pk`
+          ? await sql`SELECT pk FROM ${sql(relation)} WHERE eql_v3.eq(email_v3, ${sql.json(jsonTerm)}::jsonb::eql_v3.query_text_eq) ORDER BY pk`
+          : await sql`SELECT pk FROM ${sql(relation)} WHERE eql_v3.eq(age_v3, ${sql.json(jsonTerm)}::jsonb::eql_v3.query_integer_eq) ORDER BY pk`
     return rows.map((row) => row.pk)
-  }
-
-  async function checkDependencies(
-    tx: postgres.TransactionSql,
-    allowTargetIndexes: boolean,
-  ) {
-    const dependencies = await tx`SELECT
-      EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = ${table}::regclass AND NOT tgisinternal)
-      OR EXISTS (SELECT 1 FROM pg_constraint WHERE (conrelid = ${table}::regclass OR confrelid = ${table}::regclass)
-        -- PostgreSQL 18 also lists the primary key column's NOT NULL here.
-        AND NOT (contype IN ('p', 'n') AND conrelid = ${table}::regclass AND conkey = ARRAY[1]::smallint[]))
-      -- PostgreSQL 17 and earlier keep NOT NULL out of pg_constraint, so read
-      -- it from the column on every version.
-      OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = ${table}::regclass
-        AND attnum > 1 AND NOT attisdropped AND attnotnull)
-      OR EXISTS (SELECT 1 FROM pg_index ix JOIN pg_class idx ON idx.oid = ix.indexrelid
-        WHERE indrelid = ${table}::regclass AND NOT indisprimary AND NOT (
-          ${allowTargetIndexes} AND NOT indisunique AND indpred IS NULL AND indnatts = 1
-          AND ((idx.relname = ${`${table}_email_v3_idx`} AND pg_get_indexdef(indexrelid, 1, true) = 'eql_v3.eq_term(email_v3)')
-            OR (idx.relname = ${`${table}_age_v3_idx`} AND pg_get_indexdef(indexrelid, 1, true) = 'eql_v3.eq_term(age_v3)'))))
-      OR EXISTS (SELECT 1 FROM pg_depend WHERE refobjid = ${table}::regclass AND classid = 'pg_rewrite'::regclass)
-      OR (SELECT relrowsecurity OR relispartition OR relkind <> 'r' FROM pg_class WHERE oid = ${table}::regclass)
-      OR EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = ${table}::regclass)
-      OR EXISTS (SELECT 1 FROM pg_inherits WHERE inhparent = ${table}::regclass OR inhrelid = ${table}::regclass)
-      AS unsupported`
-    if (dependencies[0].unsupported)
-      throw new Error(
-        'Unsupported table dependencies: review constraints, indexes, views, triggers, policies and inheritance first',
-      )
-  }
-
-  async function migrate() {
-    await sql.begin(async (tx) => {
-      await tx`LOCK TABLE ${tx(table)} IN ACCESS EXCLUSIVE MODE`
-      // Fail before adding any columns. This example understands one exact shape.
-      const attributes =
-        await tx`SELECT attname, atttypid::regtype::text AS type
-        FROM pg_attribute WHERE attrelid = ${table}::regclass
-          AND attnum > 0 AND NOT attisdropped ORDER BY attnum`
-      if (
-        JSON.stringify(attributes.map((a) => [a.attname, a.type])) !==
-        JSON.stringify([
-          ['pk', 'text'],
-          ['email', 'eql_v2_encrypted'],
-          ['age', 'eql_v2_encrypted'],
-          ['notes', 'eql_v2_encrypted'],
-        ])
-      )
-        throw new Error(
-          'Unsupported columns: expected pk and three EQL v2 columns',
-        )
-      await checkDependencies(tx, false)
-      const rows =
-        await tx`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${tx(table)} ORDER BY pk`
-      if (rows.length === 0)
-        throw new Error('Empty source: this example requires legacy records')
-      for (const row of rows) {
-        for (const column of columns) {
-          const payload = row[column]
-          if (
-            payload?.v !== 2 ||
-            payload.k !== 'ct' ||
-            typeof payload.c !== 'string' ||
-            payload.i?.t !== 'customers' ||
-            payload.i?.c !== column ||
-            Object.keys(payload).some(
-              (key) => !['v', 'k', 'i', 'c', 'hm', 'ob', 'bf'].includes(key),
-            ) ||
-            // Protect represents unused index capabilities with null fields.
-            payload.ob != null ||
-            payload.bf != null ||
-            (column === 'notes'
-              ? payload.hm != null
-              : typeof payload.hm !== 'string')
-          ) {
-            throw new Error(`Unsupported legacy payload in ${column}`)
-          }
-          const plain = ok(
-            await legacy.decrypt(payload),
-            'validate legacy payload',
-          )
-          if (
-            column === 'age'
-              ? !Number.isSafeInteger(plain)
-              : typeof plain !== 'string'
-          ) {
-            throw new Error(`Unsupported plaintext in ${column}`)
-          }
-          if (column !== 'notes') {
-            const term =
-              column === 'email'
-                ? ok(
-                    await stack.encryptQuery(String(plain), {
-                      table: schema,
-                      column: schema.email,
-                    }),
-                    'verify email mapping',
-                  )
-                : ok(
-                    await stack.encryptQuery(Number(plain), {
-                      table: schema,
-                      column: schema.age,
-                    }),
-                    'verify age mapping',
-                  )
-            if (
-              typeof term !== 'object' ||
-              term === null ||
-              !('hm' in term) ||
-              term.hm !== payload.hm
-            ) {
-              throw new Error(`Unsupported equality mapping in ${column}`)
-            }
-          }
-        }
-      }
-      await tx`ALTER TABLE ${tx(table)}
-        ADD COLUMN email_v3 public.eql_v3_text_eq,
-        ADD COLUMN age_v3 public.eql_v3_integer_eq,
-        ADD COLUMN notes_v3 public.eql_v3_text`
-      // Rebuild only the envelope. Source columns and their bytes stay intact.
-      for (const column of columns) {
-        await tx`UPDATE ${tx(table)} SET ${tx(`${column}_v3`)} = jsonb_build_object(
-          'v', 3, 'i', ${tx(column)}::jsonb->'i', 'c', ${tx(column)}::jsonb->'c'
-        ) || CASE WHEN ${column} = 'notes' THEN '{}'::jsonb
-          ELSE jsonb_build_object('hm', ${tx(column)}::jsonb->'hm') END`
-      }
-      await tx`CREATE INDEX ${tx(`${table}_email_v3_idx`)} ON ${tx(table)} (eql_v3.eq_term(email_v3))`
-      await tx`CREATE INDEX ${tx(`${table}_age_v3_idx`)} ON ${tx(table)} (eql_v3.eq_term(age_v3))`
-      // Read through Stack before committing, so a wrong mapping rolls back DDL too.
-      const converted =
-        await tx`SELECT pk, email_v3::jsonb AS email_v3, age_v3::jsonb AS age_v3, notes_v3::jsonb AS notes_v3 FROM ${tx(table)} ORDER BY pk`
-      for (let i = 0; i < rows.length; i++) {
-        for (const column of columns) {
-          const before = rows[i][column]
-          const after = converted[i][`${column}_v3`]
-          if (
-            after.c !== before.c ||
-            (after.hm ?? null) !== (before.hm ?? null) ||
-            ok(await stack.decrypt(after), 'verify target') !==
-              ok(await legacy.decrypt(before), 'verify source')
-          ) {
-            throw new Error(`Conversion verification failed in ${column}`)
-          }
-        }
-      }
-    })
-    await sql`ANALYZE ${sql(table)}`
   }
 
   async function write() {
@@ -294,18 +143,18 @@ export async function createExample(sql: postgres.Sql, table: string) {
       notes: 'written by Stack',
     }
     const encrypted = ok(await stack.encryptModel(model, schema), 'fresh write')
-    await sql`INSERT INTO ${sql(table)} (pk, email_v3, age_v3, notes_v3)
+    await sql`INSERT INTO ${sql(relation)} (pk, email_v3, age_v3, notes_v3)
       VALUES (${model.pk}, ${sql.json(encrypted.email)}, ${sql.json(encrypted.age)}, ${sql.json(encrypted.notes)})`
     return model
   }
 
   async function rollback() {
     await sql.begin(async (tx) => {
-      await tx`LOCK TABLE ${tx(table)} IN ACCESS EXCLUSIVE MODE`
+      await tx`LOCK TABLE ${tx(relation)} IN ACCESS EXCLUSIVE MODE`
       await checkDependencies(tx, true)
       const rows =
         await tx`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes,
-        email_v3::jsonb AS email_v3, age_v3::jsonb AS age_v3, notes_v3::jsonb AS notes_v3 FROM ${tx(table)}`
+        email_v3::jsonb AS email_v3, age_v3::jsonb AS age_v3, notes_v3::jsonb AS notes_v3 FROM ${tx(relation)}`
       for (const row of rows) {
         for (const column of columns) {
           if (
@@ -322,7 +171,7 @@ export async function createExample(sql: postgres.Sql, table: string) {
       }
       // Preflight permits only our two derived indexes. PostgreSQL otherwise
       // drops same-table constraints/indexes with a column even without CASCADE.
-      await tx`ALTER TABLE ${tx(table)} DROP COLUMN email_v3, DROP COLUMN age_v3, DROP COLUMN notes_v3`
+      await tx`ALTER TABLE ${tx(relation)} DROP COLUMN email_v3, DROP COLUMN age_v3, DROP COLUMN notes_v3`
     })
   }
 

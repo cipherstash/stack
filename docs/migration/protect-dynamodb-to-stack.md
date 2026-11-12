@@ -30,7 +30,7 @@ pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=
 
 The native build needs the repository's Rust toolchain and trusted mise configuration. These commands are for maintainers verifying the guide; a customer installing Stack from npm receives prebuilt binaries. The crossover task also runs the PostgreSQL upgrade and executable DynamoDB example. Credentialed tests fail if configuration is missing; a skipped or unrun suite is not migration evidence.
 
-The [executable examples](../../e2e/migration-guide/README.md) use npm and the pinned customer packages. Run them on disposable data. The DynamoDB example uses in-memory item persistence and exercises legacy reads, new writes, normalization, bigint serialization and boolean updates (`example › runs the npm DynamoDB example through legacy reads, new writes and boolean updates`). It is not an AWS deployment test.
+The [executable examples](https://github.com/cipherstash/stack/blob/21631ecf68fd5356fdd4c2631550a46931123dc4/e2e/migration-guide/README.md) use npm and the pinned customer packages. Run them on disposable data. The DynamoDB example uses in-memory item persistence and exercises legacy reads, new writes, normalization, bigint serialization and boolean updates (`example › runs the npm DynamoDB example through legacy reads, new writes and boolean updates`). It is not an AWS deployment test.
 
 ## Why the supported scalar attributes need no re-encryption
 
@@ -44,7 +44,7 @@ Stack reads and writes the same two attributes:
 - It decrypts a legacy `__source` with no read option (`compat › every legacy item decrypts, one at a time, with no read option`, `compat › every legacy item decrypts in one bulk call`), and gets the same plaintext protect-dynamodb does (`compat › agrees with what protect-dynamodb itself decrypts`).
 - Its `encryptQuery` mints the same `__hmac` that protect-dynamodb's `createSearchTerms` did (`compat › matches protect-dynamodb createSearchTerms for the same value`), so the tested text and numeric equality queries match the expected legacy items (`compat › every equality query finds exactly the legacy rows it should`).
 - A new Stack write sits beside legacy items, and one query and one bulk read cover both (`compat › new Stack writes sit beside legacy items: one query and one bulk read cover both`).
-- Reading and querying leave the stored items byte-identical (`compat › Stack's reads and queries left every stored item byte-identical`).
+- Reading and querying leave the in-memory stored item objects byte-identical (`compat › Stack's reads and queries left every stored item byte-identical`).
 - A tampered ciphertext fails to decrypt; it never returns wrong plaintext (`compat › fails, never returns wrong plaintext, when the ciphertext is tampered with`).
 
 ## Steps
@@ -64,7 +64,21 @@ npm install --save-exact @cipherstash/stack@1.2.1
 
 If the app's `package.json` also declares `@cipherstash/schema` or `@cipherstash/protect-ffi` directly, remove those with `npm uninstall`. Commit the resulting package manifest and lockfile. Stack retains its own newer FFI dependency; do not remove that transitive dependency.
 
-Stack needs Node.js 22 or later. It reads the same four `CS_*` variables from the environment, so retain the same workspace and key access used to write the data. If the app passed credentials explicitly to Protect, populate these environment variables or configure the equivalent Stack credentials. If the app passed a `keyset` to `protect()`, pass the same keyset to `Encryption` as `config.keyset`. A client bound to a different keyset either fails to decrypt or, if it was granted the old keyset, decrypts but mints terms that match no existing `__hmac`. Keysets are untested by these suites.
+Stack needs Node.js 22 or later. It reads the same four `CS_*` variables from the environment, so retain the same workspace and key access used to write the data. If the app passed credentials explicitly to Protect, populate these environment variables or pass the same four values to `Encryption` as `config`:
+
+```typescript
+const client = await Encryption({
+  schemas: [users],
+  config: {
+    workspaceCrn: process.env.CS_WORKSPACE_CRN,
+    clientId: process.env.CS_CLIENT_ID,
+    clientKey: process.env.CS_CLIENT_KEY,
+    accessKey: process.env.CS_CLIENT_ACCESS_KEY,
+  },
+})
+```
+
+If the app passed a `keyset` to `protect()`, pass the same keyset to `Encryption` as `config.keyset`. A client bound to a different keyset either fails to decrypt or, if it was granted the old keyset, decrypts but mints terms that match no existing `__hmac`. Keysets are untested by these suites.
 
 Stack finds its service endpoints from `CS_WORKSPACE_CRN`. Protect 10.2.1 did not: outside `ap-southeast-2` it needed `CS_CTS_HOST` and `CS_ZEROKMS_HOST` set explicitly. Stack still honours both variables when they are set, so remove them from ordinary managed deployments. Keep them only for a deliberately configured private or custom endpoint, and check that endpoint before relying on it.
 
@@ -280,13 +294,17 @@ const customers = encryptedTable('customers', {
 const client = await Encryption({ schemas: [customers] })
 ```
 
+If the application receives its credentials other than through `process.env`, pass them as `config`, as shown in DynamoDB step 2.
+
 Configure reads and writes to use the `_v3` physical columns after cutover, while passing the original logical schema above to the encryption client. Handle every SDK `{ failure }` before using `{ data }`.
 
 ### 3. Stop writes and convert
 
 This first procedure requires a **write-maintenance window**. Stop all application, background and administrative writers; a transaction's table lock alone does not stop an old writer from resuming immediately after commit. Keep writes paused through verification and the rollback decision.
 
-The [executable migration](../../e2e/migration-guide/postgres.ts) performs these steps in one transaction:
+Run the conversion as a one-off script during the window, not at application startup. An application that alters its own schema on boot repeats DDL on every deploy and takes an `ACCESS EXCLUSIVE` lock while other instances are starting.
+
+The conversion performs these steps in one transaction:
 
 1. Lock the source table and reject unsupported structure/dependencies before DDL.
 2. Validate each legacy envelope and plaintext against the supported mappings. Recompute supported equality terms with Stack and compare them to the stored terms; fail on disagreement.
@@ -295,9 +313,326 @@ The [executable migration](../../e2e/migration-guide/postgres.ts) performs these
 5. Create functional equality indexes on `eql_v3.eq_term(email_v3)` and `eql_v3.eq_term(age_v3)`.
 6. Read and decrypt the target values with Stack, compare plaintext and retained bytes against the source, then commit. A failed check rolls back the added columns and indexes too.
 
+The complete script below is generated verbatim from the [canonical executable conversion](https://github.com/cipherstash/stack/blob/21631ecf68fd5356fdd4c2631550a46931123dc4/e2e/migration-guide/postgres-conversion.ts). The npm example and live suite use this same implementation; a hermetic check rejects snippet drift and strict TypeScript errors. The live suite also executes the pasted script itself (`postgres-upgrade › runs the standalone guide script against Protect-written source columns`).
+
+Prepare a **separate migration-tool directory** before the maintenance window. The new application from step 2 has removed Protect; this one-off tool deliberately retains both pinned SDKs so source validation is independent of Stack:
+
+```bash
+npm init -y
+npm pkg set type=module
+npm install --save-exact @cipherstash/protect@10.2.1 @cipherstash/stack@1.2.1 postgres@3.4.9
+```
+
+Save the complete snippet as `migrate.ts` in that directory. Retain its generated lockfile. Set the original four `CS_*` credentials and `DATABASE_URL`, then run `node --env-file=.env migrate.ts` with Node.js 22.18 or later. It defaults to `public.customers`; set `MIGRATION_TABLE` to another unqualified table name only if it has the same supported shape and logical `customers` identities. This managed-host example temporarily derives Protect's endpoints from the workspace region; adapt and rehearse it separately for private/custom endpoints or a non-default keyset.
+
+The preflight requires a primary key on `pk`, identifies its physical attribute from the catalog, and compares column type OIDs. Dropped predecessor columns and a search path without `public` are supported. Extra constraints, secondary indexes, views, triggers, policies and inheritance remain unsupported.
+
+<!-- migration-conversion:start -->
+
+```typescript
+import { pathToFileURL } from 'node:url'
+import { csColumn, csTable, protect } from '@cipherstash/protect'
+import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
+import postgres from 'postgres'
+
+/** Protect 10.2.1 needs explicit managed endpoints outside ap-southeast-2. */
+export async function legacyProtect(
+  schemas: Parameters<typeof protect>[0]['schemas'],
+) {
+  const crn = process.env.CS_WORKSPACE_CRN
+  if (!crn) throw new Error('CS_WORKSPACE_CRN is required')
+  const region = crn.split(':')[1]
+  const saved = {
+    CS_CTS_HOST: process.env.CS_CTS_HOST,
+    CS_ZEROKMS_HOST: process.env.CS_ZEROKMS_HOST,
+  }
+  process.env.CS_CTS_HOST = `https://${region}.cts.cipherstashmanaged.net`
+  process.env.CS_ZEROKMS_HOST = `https://${region}.viturhosted.net`
+  try {
+    return await protect({
+      schemas,
+      workspaceCrn: crn,
+      clientId: process.env.CS_CLIENT_ID,
+      clientKey: process.env.CS_CLIENT_KEY,
+      accessKey: process.env.CS_CLIENT_ACCESS_KEY,
+    })
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+/** Check every SDK result; never continue with a failed encryption operation. */
+export function ok<T>(
+  result: { data: T; failure?: undefined } | { failure: unknown },
+  label: string,
+): T {
+  if ('failure' in result && result.failure !== undefined) {
+    throw new Error(`${label} failed`, { cause: result.failure })
+  }
+  if ('data' in result) return result.data
+  throw new Error(`${label} returned no data`)
+}
+
+export async function createMigrationClients() {
+  const legacySchema = csTable('customers', {
+    email: csColumn('email').equality(),
+    age: csColumn('age').dataType('number').equality(),
+    notes: csColumn('notes'),
+  })
+  const schema = encryptedTable('customers', {
+    email: types.TextEq('email'),
+    age: types.IntegerEq('age'),
+    notes: types.Text('notes'),
+  })
+  const legacy = await legacyProtect([legacySchema])
+  const stack = await Encryption({ schemas: [schema] })
+  const columns = ['email', 'age', 'notes'] as const
+  return { legacySchema, schema, legacy, stack, columns }
+}
+
+/** Bulk success is not enough: reject missing, reordered or failed items. */
+function verifiedBulk(
+  items: readonly (
+    | { id?: string; data: unknown }
+    | { id?: string; error: unknown }
+  )[],
+  expected: number,
+  label: string,
+): unknown[] {
+  if (items.length !== expected) throw new Error(`${label} bulk count mismatch`)
+  return items.map((item, i) => {
+    if (item.id !== String(i) || 'error' in item || !('data' in item))
+      throw new Error(`${label} bulk item failed or reordered`)
+    return item.data
+  })
+}
+
+export async function createConversion(
+  sql: postgres.Sql,
+  table: string,
+  clients = createMigrationClients(),
+) {
+  if (!/^[a-z][a-z0-9_]{0,39}$/.test(table))
+    throw new Error('Invalid example table name')
+  const relation = `public.${table}`
+  const { legacy, stack, schema, columns } = await clients
+  async function checkDependencies(
+    tx: postgres.TransactionSql,
+    allowTargetIndexes: boolean,
+  ) {
+    // pg_get_indexdef qualifies functions only when they are not visible.
+    // Stabilize its rendering for our exact rollback-index check; SET LOCAL
+    // restores the caller's search path when this transaction ends.
+    await tx`SET LOCAL search_path = pg_catalog`
+    const dependencies = await tx`SELECT
+      NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = ${relation}::regclass AND contype = 'p'
+        AND conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = ${relation}::regclass AND attname = 'pk' AND NOT attisdropped)]::smallint[])
+      OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = ${relation}::regclass AND NOT tgisinternal)
+      OR EXISTS (SELECT 1 FROM pg_constraint WHERE (conrelid = ${relation}::regclass OR confrelid = ${relation}::regclass)
+        -- PostgreSQL 18 also lists the primary key column's NOT NULL here.
+        AND NOT (contype IN ('p', 'n') AND conrelid = ${relation}::regclass AND conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = ${relation}::regclass AND attname = 'pk' AND NOT attisdropped)]::smallint[]))
+      -- PostgreSQL 17 and earlier keep NOT NULL out of pg_constraint, so read
+      -- it from the column on every version.
+      OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = ${relation}::regclass
+        AND attnum > 0 AND attname <> 'pk' AND NOT attisdropped AND attnotnull)
+      OR EXISTS (SELECT 1 FROM pg_index ix JOIN pg_class idx ON idx.oid = ix.indexrelid
+        WHERE indrelid = ${relation}::regclass AND NOT indisprimary AND NOT (
+          ${allowTargetIndexes} AND NOT indisunique AND indpred IS NULL AND indnatts = 1
+          AND ((idx.relname = ${`${table}_email_v3_idx`} AND pg_get_indexdef(indexrelid, 1, true) = 'eql_v3.eq_term(email_v3)')
+            OR (idx.relname = ${`${table}_age_v3_idx`} AND pg_get_indexdef(indexrelid, 1, true) = 'eql_v3.eq_term(age_v3)'))))
+      OR EXISTS (SELECT 1 FROM pg_depend WHERE refobjid = ${relation}::regclass AND classid = 'pg_catalog.pg_rewrite'::regclass)
+      OR (SELECT relrowsecurity OR relispartition OR relkind <> 'r' FROM pg_class WHERE oid = ${relation}::regclass)
+      OR EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = ${relation}::regclass)
+      OR EXISTS (SELECT 1 FROM pg_inherits WHERE inhparent = ${relation}::regclass OR inhrelid = ${relation}::regclass)
+      AS unsupported`
+    if (dependencies[0].unsupported)
+      throw new Error(
+        'Unsupported table dependencies: review constraints, indexes, views, triggers, policies and inheritance first',
+      )
+  }
+
+  async function migrate() {
+    await sql.begin(async (tx) => {
+      await tx`LOCK TABLE ${tx(relation)} IN ACCESS EXCLUSIVE MODE`
+      // Fail before adding any columns. This example understands one exact shape.
+      const attributes =
+        await tx`SELECT attname, atttypid = CASE WHEN attname = 'pk' THEN 'pg_catalog.text'::regtype ELSE 'public.eql_v2_encrypted'::regtype END AS supported_type
+        FROM pg_attribute WHERE attrelid = ${relation}::regclass
+          AND attnum > 0 AND NOT attisdropped ORDER BY attnum`
+      if (
+        JSON.stringify(attributes.map((a) => [a.attname, a.supported_type])) !==
+        JSON.stringify([
+          ['pk', true],
+          ['email', true],
+          ['age', true],
+          ['notes', true],
+        ])
+      )
+        throw new Error(
+          'Unsupported columns: expected pk and three EQL v2 columns',
+        )
+      await checkDependencies(tx, false)
+      const rows =
+        await tx`SELECT pk, email::jsonb AS email, age::jsonb AS age, notes::jsonb AS notes FROM ${tx(relation)} ORDER BY pk`
+      if (rows.length === 0)
+        throw new Error('Empty source: this example requires legacy records')
+      for (const row of rows) {
+        for (const column of columns) {
+          const payload = row[column]
+          if (
+            payload?.v !== 2 ||
+            payload.k !== 'ct' ||
+            typeof payload.c !== 'string' ||
+            payload.i?.t !== 'customers' ||
+            payload.i?.c !== column ||
+            Object.keys(payload).some(
+              (key) => !['v', 'k', 'i', 'c', 'hm', 'ob', 'bf'].includes(key),
+            ) ||
+            // Protect represents unused index capabilities with null fields.
+            payload.ob != null ||
+            payload.bf != null ||
+            (column === 'notes'
+              ? payload.hm != null
+              : typeof payload.hm !== 'string')
+          ) {
+            throw new Error(`Unsupported legacy payload in ${column}`)
+          }
+        }
+      }
+      const payloads = rows.flatMap((row) =>
+        columns.map((column) => row[column]),
+      )
+      const sourcePlaintexts = verifiedBulk(
+        ok(
+          await legacy.bulkDecrypt(
+            payloads.map((data, i) => ({ id: String(i), data })),
+          ),
+          'decrypt source',
+        ),
+        payloads.length,
+        'Source',
+      )
+      for (const [i] of payloads.entries()) {
+        const column = columns[i % columns.length]
+        const plain = sourcePlaintexts[i]
+        if (
+          column === 'age'
+            ? !Number.isSafeInteger(plain)
+            : typeof plain !== 'string'
+        )
+          throw new Error(`Unsupported plaintext in ${column}`)
+      }
+      const terms = ok(
+        await stack.encryptQuery(
+          rows.flatMap((_row, i) => [
+            {
+              value: String(sourcePlaintexts[i * columns.length]),
+              table: schema,
+              column: schema.email,
+            },
+            {
+              value: Number(sourcePlaintexts[i * columns.length + 1]),
+              table: schema,
+              column: schema.age,
+            },
+          ]),
+        ),
+        'verify equality mappings',
+      )
+      if (terms.length !== rows.length * 2)
+        throw new Error('Equality term count mismatch')
+      for (const [i, term] of terms.entries()) {
+        const column = i % 2 === 0 ? 'email' : 'age'
+        if (
+          typeof term !== 'object' ||
+          term === null ||
+          !('hm' in term) ||
+          term.hm !== rows[Math.floor(i / 2)][column].hm
+        )
+          throw new Error(`Unsupported equality mapping in ${column}`)
+      }
+      await tx`ALTER TABLE ${tx(relation)}
+        ADD COLUMN email_v3 public.eql_v3_text_eq,
+        ADD COLUMN age_v3 public.eql_v3_integer_eq,
+        ADD COLUMN notes_v3 public.eql_v3_text`
+      // Rebuild only the envelope. Source columns and their bytes stay intact.
+      for (const column of columns) {
+        await tx`UPDATE ${tx(relation)} SET ${tx(`${column}_v3`)} = jsonb_build_object(
+          'v', 3, 'i', ${tx(column)}::jsonb->'i', 'c', ${tx(column)}::jsonb->'c'
+        ) || CASE WHEN ${column} = 'notes' THEN '{}'::jsonb
+          ELSE jsonb_build_object('hm', ${tx(column)}::jsonb->'hm') END`
+      }
+      await tx`CREATE INDEX ${tx(`${table}_email_v3_idx`)} ON ${tx(relation)} (eql_v3.eq_term(email_v3))`
+      await tx`CREATE INDEX ${tx(`${table}_age_v3_idx`)} ON ${tx(relation)} (eql_v3.eq_term(age_v3))`
+      // Read through Stack before committing, so a wrong mapping rolls back DDL too.
+      const converted =
+        await tx`SELECT pk, email_v3::jsonb AS email_v3, age_v3::jsonb AS age_v3, notes_v3::jsonb AS notes_v3 FROM ${tx(relation)} ORDER BY pk`
+      if (
+        converted.length !== rows.length ||
+        converted.some((row, i) => row.pk !== rows[i].pk)
+      )
+        throw new Error('Conversion verification failed: row identity mismatch')
+      const targets = converted.flatMap((row) =>
+        columns.map((column) => row[`${column}_v3`]),
+      )
+      const targetPlaintexts = verifiedBulk(
+        ok(
+          await stack.bulkDecrypt(
+            targets.map((data, i) => ({ id: String(i), data })),
+          ),
+          'decrypt target',
+        ),
+        targets.length,
+        'Target',
+      )
+      for (const [i, after] of targets.entries()) {
+        const before = payloads[i]
+        if (
+          after.c !== before.c ||
+          (after.hm ?? null) !== (before.hm ?? null) ||
+          targetPlaintexts[i] !== sourcePlaintexts[i]
+        )
+          throw new Error(
+            `Conversion verification failed in ${columns[i % columns.length]}`,
+          )
+      }
+    })
+    await sql`ANALYZE ${sql(relation)}`
+  }
+
+  return { migrate, checkDependencies }
+}
+
+// Importing this module supplies helpers; executing it runs the conversion.
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  const databaseUrl = process.env.DATABASE_URL
+  if (!databaseUrl) throw new Error('DATABASE_URL is required')
+  const sql = postgres(databaseUrl, { prepare: false })
+  try {
+    const conversion = await createConversion(
+      sql,
+      process.env.MIGRATION_TABLE ?? 'customers',
+    )
+    await conversion.migrate()
+  } finally {
+    await sql.end()
+  }
+}
+```
+
+<!-- migration-conversion:end -->
+
+**Rerunning the conversion:** after a successful commit, the table includes the three `_v3` columns. Running this conversion again fails the exact source-shape check before any DDL or data changes; the transaction rolls back without altering the completed migration. It is a one-off conversion, not an idempotent startup hook. Do not treat the mere presence of target columns as proof that a migration completed, and do not drop them to force a rerun. If a transaction failed, diagnose the failure and confirm its changes rolled back before deciding whether to retry. If the client lost the connection around commit, inspect and verify the database state first. Continue with verification and cutover after a successful migration.
+
 Only the envelope and database structure change for these proven mappings; the ciphertext and equality terms are copied unchanged. Do not generalize this to other capabilities or to v4 (`postgres-upgrade › migrates actual v2 columns, preserves ciphertext and queries, and rolls back before writes resume`).
 
-The example reads the small source table into memory and validates each value. It is not a resumable production backfill service. Rehearse duration, database lock time and key-service usage before choosing a maintenance window for your data size.
+The example reads the small source table into memory. It bulk-decrypts source values once with Protect, retains those plaintexts for comparison, batches equality-term generation, and bulk-decrypts converted values once with Stack. Every bulk result is checked for item failures, count and order. These reduce repeated SDK work; they are not a measured network-call or lock-duration guarantee. It is not a resumable production backfill service. Rehearse duration, database lock time and key-service usage before choosing a maintenance window for your data size.
 
 ### 4. Verify queries, indexes and cutover
 
@@ -332,7 +667,7 @@ In rehearsal, test fresh Stack writes beside migrated rows, reads, lookups and u
 
 ### Reproduce the PostgreSQL example
 
-Use the [npm example instructions](../../e2e/migration-guide/README.md) with a disposable database containing both EQL generations. `seed` creates a new table and refuses an existing one; `migrate` validates and creates targets; `verify` reads them; `rollback` demonstrates recovery before writes; `write` demonstrates why that recovery boundary closes. No step drops or reinstalls an EQL schema.
+Use the [npm example instructions](https://github.com/cipherstash/stack/blob/21631ecf68fd5356fdd4c2631550a46931123dc4/e2e/migration-guide/README.md) with a disposable database containing both EQL generations. `seed` creates a new table and refuses an existing one; `migrate` validates and creates targets; `verify` reads them; `rollback` demonstrates recovery before writes; `write` demonstrates why that recovery boundary closes. No step drops or reinstalls an EQL schema.
 
 ## Optional: moving values between DynamoDB and Postgres
 

@@ -1,6 +1,6 @@
 # Protect v2 to Stack v3 examples
 
-These examples accompany the [two-store migration guide](../../docs/migration/protect-dynamodb-to-stack.md). EQL v2/v3 are data generations; the target npm package is Stack 1.2.1. Nothing here uses v4.
+These examples accompany the [two-store migration guide](https://github.com/cipherstash/stack/blob/21631ecf68fd5356fdd4c2631550a46931123dc4/docs/migration/protect-dynamodb-to-stack.md). EQL v2/v3 are data generations; the target npm package is Stack 1.2.1. Nothing here uses v4.
 
 Use Node.js 22.18 or later. Copy this directory to a disposable location outside the monorepo and run:
 
@@ -56,3 +56,5 @@ The final command **must fail** because source columns do not contain the new St
 The example deliberately supports only an uncustomized table with a text primary key, text equality, safe whole-number equality and storage-only text under the fixed `customers` logical identity. It refuses extra columns, secondary indexes, non-primary constraints, dependent views, user triggers, row-level security and inheritance. Review those objects rather than removing them to bypass a refusal.
 
 Run the existing credentialed `test:protect-crossover` task from the repository to verify these functions against real Postgres and ZeroKMS. It also tests unsupported-input refusal, fresh writes and actual equality-index engagement. See the guide for the maintainer build commands.
+
+`postgres-conversion.ts` is the self-contained conversion used by the example and reproduced verbatim in the guide. To update the checked-in snippet, run `node scripts/sync-migration-guide.mjs` from the repository root; `--check` verifies it without writing. Keep Protect installed in this separate migration tool until verification and the rollback decision are complete. The new application can remove Protect independently.
