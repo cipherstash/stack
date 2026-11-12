@@ -424,7 +424,17 @@ def _is_class_level(hint: Any) -> bool:
 
 
 def _hints_unresolved(cls: type, error: Exception) -> DeclarationError:
-    field = _unresolved_field(cls)
+    unresolved = _unresolved_field(cls)
+    field = unresolved[1] if unresolved else None
+    if unresolved is not None and _is_bare_class_var(*unresolved):
+        return DeclarationError(
+            "declaration_hints_unresolved",
+            f"field {field!r} is a bare ClassVar written as a string, which "
+            "this version of Python cannot read. Give it a type: "
+            "ClassVar[int], not ClassVar.",
+            field=field,
+            reason="bare_class_var",
+        )
     where = f"field {field!r}" if field else f"a type hint of class {cls.__name__!r}"
     return DeclarationError(
         "declaration_hints_unresolved",
@@ -435,8 +445,9 @@ def _hints_unresolved(cls: type, error: Exception) -> DeclarationError:
     )
 
 
-def _unresolved_field(cls: type) -> Optional[str]:
-    """The first field whose hint does not resolve, or ``None``.
+def _unresolved_field(cls: type) -> Optional[Tuple[type, str, Any]]:
+    """The first field whose hint does not resolve, as the class that
+    declares it, its name and its hint, or ``None``.
 
     The hints are resolved one at a time, in the order ``get_type_hints``
     resolves them, with the same namespaces. On 3.14, reading a class's
@@ -451,8 +462,25 @@ def _unresolved_field(cls: type) -> Optional[str]:
             try:
                 _resolve_one(base, name, hint)
             except _UNRESOLVED:
-                return name
+                return base, name, hint
     return None
+
+
+def _is_bare_class_var(base: type, name: str, hint: Any) -> bool:
+    """Whether ``hint`` is a string that names ``ClassVar`` with no type.
+
+    Python 3.9 cannot read one, as the future import writes it. The string is
+    evaluated as ``get_type_hints`` evaluates it, so ``typing.ClassVar`` or an
+    alias of it is found too.
+    """
+    if not isinstance(hint, str):
+        return False
+    module = sys.modules.get(base.__module__)
+    global_names = dict(vars(module)) if module is not None else {}
+    try:
+        return eval(hint, global_names, dict(vars(base))) is ClassVar  # noqa: S307
+    except Exception:  # noqa: BLE001  Any other failure is not this case.
+        return False
 
 
 def _own_annotations(base: type) -> Dict[str, Any]:
