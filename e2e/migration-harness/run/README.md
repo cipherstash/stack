@@ -1,5 +1,49 @@
 # Run skeleton
 
+## PostgreSQL v2-to-v3 procedure
+
+The `postgres-fixture` directory and `postgres-behaviour.mjs` / `postgres-oracle.mjs`
+provide the separate PostgreSQL v2-to-v3 procedure tracked by #1605. They cover the
+guide's text equality, safe integer equality and storage-only text mappings.
+The oracle compares retained ciphertext and equality terms while permitting
+the documented envelope change and verifies source/target domains and indexes.
+
+Select it with `harness:run --procedure postgres-v2-to-v3 --migrator <adapter>`.
+For deterministic acceptance use `--fake reference` instead of `--migrator`.
+The default remains `--procedure dynamodb`. Both procedures record their identity,
+source and target EQL generations, exact Stack source and guide hash.
+
+The PostgreSQL procedure installs the historical EQL 2.2.1 bundle alongside v3
+and seeds each independent Store Set with Protect.js writes to v2 columns.
+Legacy reads and queries must pass before migration. As the guide prescribes a
+one-off conversion in a write-maintenance window rather than at application
+startup, the Fixture App has a separate entry point, `src/migrate.mjs`
+`migrate(env)`, and `createApp` must not alter the schema. The Oracle runs
+`migrate(env)` inside App Host (`node /harness/app-host.mjs migrate`) using the
+Oracle Store Set's application role, then runs it again: the rerun passes
+`migration.postgres-migrate-rerun` only if the Oracle snapshots before and after
+it are identical, whether it succeeded or refused with a non-zero exit; a rerun
+the isolation backend timed out fails. A failed first `migrate(env)` fails
+`migration.postgres-migrate` as a behaviour failure. Only then does App Host
+start `createApp`. The harness snapshots stored rows, domains and indexes
+independently, as the Run's own application role rather than the superuser, so
+an object a migration planted cannot run with superuser privileges. The storage
+checks must hold on the snapshot taken after the first `migrate(env)`, before
+`createApp` runs, and again after read-only application checks. The snapshot
+after the fresh write must add exactly the fresh row and leave every other row,
+retained v2 sources included, unchanged. The EQL 2.2.1 bundle is downloaded once
+per process with a timeout and refused unless its SHA-256 digest matches the
+release asset's.
+
+The hidden Reference Migration retains source columns and rebuilds only the
+envelopes the guide proves convertible. Deterministic variants `noop`, `row-loss`,
+`wrong-mapping`, `fresh-v2`, `missing-index`, `rewrite` and `missing-log` exercise the named
+failure checks. The existing credentialed CI self-test job runs this matrix
+when `HARNESS_LIVE=1`; ordinary self-tests skip it. Local unit checks alone do
+not establish a completed live PostgreSQL migration.
+
+## Running the existing baseline
+
 From the repository root:
 
 ```sh
@@ -82,12 +126,12 @@ mutations. Metadata changes alone do not fail this comparison. The mutation
 checks then run, followed by the migration layer: old Protect imports and npm
 dependencies must be gone, every FFI lockfile entry must match the actual
 version selected for the exact Stack dependency, the endpoint shim must be
-removed, and stored Mutation Data must contain no `active__hmac` after updating
-the active field. The import, dependency and shim checks read both the
-Migrator workspace and the App Host's installed copy after its lifecycle
-scripts. The Mutation Data is read straight after `setActive`, before the copy
-checks put the full record again. Missing checks or missing inspection evidence
-prevent a pass.
+removed. The import, dependency and shim checks read both the Migrator workspace
+and the App Host's installed copy after its lifecycle scripts. For the DynamoDB
+procedure only, stored Mutation Data must contain no `active__hmac` immediately
+after `setActive`, before any read or later write can repair it. PostgreSQL runs
+require `requiredPostgresChecks` instead, which has no `active__hmac` check.
+Missing checks or missing inspection evidence prevent a pass.
 
 Diff evidence uses the host-recorded fixture commit, so an adapter can commit
 its changes without hiding them. Failed Git commands fail the migration stage

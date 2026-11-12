@@ -708,17 +708,7 @@ async function migratedFiles() {
   }
   await writeFile(join(workspace, 'package.json'), JSON.stringify(manifest))
   await writeFile(join(workspace, 'package-lock.json'), JSON.stringify(lock))
-  await writeFile(
-    join(installedWorkspace, 'package-lock.json'),
-    JSON.stringify(lock),
-  )
-  await cp(join(workspace, 'src'), join(installedWorkspace, 'src'), {
-    recursive: true,
-  })
-  await writeFile(
-    join(installedWorkspace, 'package.json'),
-    JSON.stringify(manifest),
-  )
+  await cp(workspace, installedWorkspace, { recursive: true })
   return {
     workspace,
     installedWorkspace,
