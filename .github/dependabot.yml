@@ -369,12 +369,15 @@ updates:
         update-types:
           - version-update:semver-major
 
-  # ── uv (languages/python — the Python SDK's test dependencies) ──
-  # The package has no runtime dependency, so uv.lock holds only the `test`
-  # extra: pytest, attrs, Pydantic, SQLAlchemy and psycopg, and what they
-  # need. tests-python.yml installs it with `uv sync --locked`. The extra has
-  # lower bounds and no upper bounds, so a new minor or patch release changes
-  # only the lock.
+  # ── uv (languages/python — the Python SDK's test and build tools) ──
+  # The package has no runtime dependency. So uv.lock contains two sets of
+  # tools: the `test` extra (pytest, attrs, Pydantic, SQLAlchemy, psycopg and
+  # Alembic), and the `build` dependency group (maturin, the build backend),
+  # with what they need. `mise run build` installs both with
+  # `uv sync --locked`. Dependabot's uv parser reads `[dependency-groups]`
+  # as well as the extras, so maturin is updated with the rest. Both have
+  # lower bounds and no major upper bound, so a new minor or patch release
+  # changes only the lock.
   - package-ecosystem: uv
     directory: /languages/python
     # Monthly, matching the other non-npm toolchains. No `day:`, for the
