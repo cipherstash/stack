@@ -151,7 +151,7 @@ export async function runClaudeAdapter({
       fail,
     )
     const prompt =
-      'Upgrade the Fixture App in /workspace using only /workspace/migration-guide.md. Read that guide through the exec tool, follow its applicable migration procedure, and verify the migrated application. All commands and file access must use the exec tool in the isolated Migrator Environment. Record guide friction in /workspace/friction.json as a JSON array of objects with section, issue, actionable (boolean), description, and workaround. Write [] when there is no friction. Do not invent prior-run context.'
+      'Upgrade the Fixture App in /workspace using only /workspace/migration-guide.md. Read that guide through the exec tool, follow its applicable migration procedure, and verify the migrated application. All commands and file access must use the exec tool in the isolated Migrator Environment. Read /workspace/friction-schema.json for the report schema and exact accepted section IDs. Record guide friction in /workspace/friction.json as a JSON array of objects with section, issue, actionable (boolean), description, and workaround; copy section exactly from the schema enum. Write [] when there is no friction. Do not invent prior-run context.'
     // --bare never reads OAuth, so a subscription token runs without it. The
     // flags below, the empty config directory and the init check still apply.
     const args = [
