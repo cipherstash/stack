@@ -43,10 +43,13 @@ budget and a 40-minute outer deadline. The broker passes the configured turn
 budget to the adapter; Claude's documented `--max-turns` enforces it during print
 mode, even though some CLI versions omit the flag from `--help`. The broker
 separately enforces tool-call and wall-clock limits. A Claude turn-limit result
-returns exit code 124. See the [Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
+returns exit code 124, which the broker records as `model turn limit reached`. See the [Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
 
 Each invocation uses an empty temporary working/configuration directory and an
-allowlisted environment. Built-in tools, implicit MCP servers, settings sources,
+allowlisted environment. The allowlist forwards the operator's `HTTPS_PROXY`,
+`HTTP_PROXY`, `NO_PROXY` (either case) and `NODE_EXTRA_CA_CERTS` when set, so
+the CLI can reach the Anthropic API through a proxy or custom CA; it never
+forwards `ANTHROPIC_BASE_URL`. Built-in tools, implicit MCP servers, settings sources,
 slash commands, hooks, automatic memory, browser access and persistent sessions
 are disabled. The adapter checks Claude's initialization record for the expected
 tool set and permission mode, then records the CLI version, resolved model
@@ -60,8 +63,10 @@ It is not inline Editor evidence and must be redacted before any future export.
 Retention is limited to 8 MiB per Run; records that exceed the remaining budget
 are omitted and the artifact and manifest report incomplete evidence.
 
-`manifest.documentationExposure` reports `observed` for explicit successful npm
-README retrieval. Successful Migrator opens of installed Markdown/README files
+`manifest.documentationExposure` reports `observed` for a successful npm
+`view`/`info`/`show` that requests a `readme` field of a package and returns
+content (`npm view readme version` asks for a package named `readme`, and is
+not counted). Successful Migrator opens of installed Markdown/README files
 report `possible`: observer events omit open flags, so extraction writes cannot
 be distinguished from reads. Metadata-only inspection does not set this signal.
 Other execution remains `unknown`,
@@ -75,7 +80,8 @@ working directory, environment, mount or policy. The model credential is supplie
 only to the host CLI and explicitly removed from the bridge's environment. The
 adapter and CLI are trusted host code, not an additional security boundary
 against a compromised host executable. Temporary configuration and socket files
-are removed after execution.
+are created under the broker's own temporary directory (`TMPDIR`), so they are
+removed after execution even when the broker kills the adapter on a limit.
 
 ## Verification
 

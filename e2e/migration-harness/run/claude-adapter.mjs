@@ -38,7 +38,21 @@ export async function runClaudeAdapter({
   const token = randomBytes(32).toString('hex')
   // In particular, do not inherit NODE_OPTIONS, CLAUDE_*, cloud auth, CS_*, or
   // ANTHROPIC_BASE_URL. The only model provider is the public Anthropic API.
+  // The operator's proxy and CA settings are forwarded only so the CLI can
+  // reach that API from a host whose route needs them.
+  const network = Object.fromEntries(
+    [
+      'HTTPS_PROXY',
+      'https_proxy',
+      'HTTP_PROXY',
+      'http_proxy',
+      'NO_PROXY',
+      'no_proxy',
+      'NODE_EXTRA_CA_CERTS',
+    ].flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])),
+  )
   const env = {
+    ...network,
     PATH: process.env.PATH,
     HOME: directory,
     TMPDIR: directory,
