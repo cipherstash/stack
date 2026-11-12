@@ -22,11 +22,10 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use stack_auth::AutoStrategy;
 use stack_encrypt::kms::{
-    ClientOpts, ConnectionInitError, EnvKeyProvider, FallbackKeyProvider, HttpConnection,
-    HttpConnectionOpts, KeyProvider, KeyProviderError, ProfileStore, StackKms,
-    StackKmsBuilderError, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint,
+    endpoint_from_env, ClientOpts, ConnectionInitError, HttpConnection, HttpConnectionOpts,
+    KeyProvider, StackKms, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint,
 };
-use stack_encrypt::StackCipher;
+use stack_encrypt::{client_key_provider, StackCipher};
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
 use crate::credentials;
@@ -280,15 +279,14 @@ fn build() -> Result<Client, Refusal> {
 async fn init() -> Result<StackCipher<Kms>, Refusal> {
     // First: it reads one variable and sends nothing, so a bad value is
     // refused before the credentials are read.
-    let endpoint = endpoint_from_env()?;
+    // The endpoint and the client key come from the engine's own readers,
+    // the ones StackCipherBuilder uses, so the two cannot drift apart.
+    let endpoint = endpoint_from_env().map_err(|error| Refusal::of(&error))?;
     let credentials = AutoStrategy::detect().map_err(|error| credentials::refusal(&error))?;
-    let client_key = FallbackKeyProvider::new(
-        EnvKeyProvider,
-        ProfileClientKey(ProfileStore::resolve(None).ok()),
-    )
-    .client_key()
-    .await
-    .map_err(|error| Refusal::of(&error))?;
+    let client_key = client_key_provider()
+        .client_key()
+        .await
+        .map_err(|error| Refusal::of(&error))?;
     // Requests go out one at a time, as the spec states the request count:
     // ceil(values / 500) key requests "in sequence". The Go guest sets the
     // same.
@@ -302,38 +300,6 @@ async fn init() -> Result<StackCipher<Kms>, Refusal> {
         .init()
         .await
         .map_err(|error| Refusal::of(&error))
-}
-
-/// The ZeroKMS endpoint override, as `StackKmsBuilder` reads it: the first
-/// of `CS_ZEROKMS_HOST` and the legacy `CS_VITUR_HOST` that is set. `None`
-/// leaves the endpoint to the token's services claim, as every other SDK
-/// does. `init` builds the client itself to count its requests, so it reads
-/// the variable here; the builder's own reader is private.
-fn endpoint_from_env() -> Result<Option<ZeroKmsEndpoint>, Refusal> {
-    for env_var in stack_encrypt::kms::vars::CS_ZEROKMS_HOST {
-        if let Ok(value) = std::env::var(env_var) {
-            return value.parse().map(Some).map_err(|source| {
-                Refusal::of(&StackKmsBuilderError::InvalidEndpoint { env_var, source })
-            });
-        }
-    }
-    Ok(None)
-}
-
-/// The CLI's profile as a key provider, where it resolves. Where it does
-/// not, the error says what to do, as stack-encrypt's own provider does.
-struct ProfileClientKey(Option<ProfileStore>);
-
-impl KeyProvider for ProfileClientKey {
-    async fn client_key(&self) -> Result<stack_encrypt::kms::ClientKey, KeyProviderError> {
-        match &self.0 {
-            Some(store) => store.client_key().await,
-            None => Err(KeyProviderError::NotConfigured(
-                "no client key: set CS_CLIENT_ID and CS_CLIENT_KEY, or log in with `stash auth login`"
-                    .into(),
-            )),
-        }
-    }
 }
 
 /// The HTTP connection, counting every request it sends.
