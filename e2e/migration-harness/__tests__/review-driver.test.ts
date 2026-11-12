@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -273,6 +273,37 @@ test('F5 checks legacy ciphertext after reads and before mutations', async () =>
   expect(mutationBeforeSnapshot).toBe(false)
 })
 
+test('inspects the stored active field before later full puts can overwrite it', async () => {
+  const { driver, calls } = await setup()
+  await driver.snapshot()
+  await driver.installAppHost()
+  let callsAtMutationSnapshot: string[] | undefined
+  observed.snapshot.mockImplementation(async (pk?: string) => {
+    if (pk === 'mutation') callsAtMutationSnapshot = calls.slice()
+    return {
+      dynamo: { Item: { email__source: { S: 'original' } } },
+      postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
+    }
+  })
+  try {
+    await driver.behaviour()
+  } finally {
+    observed.snapshot.mockReset()
+    observed.snapshot.mockImplementation(async () => ({
+      dynamo: { Item: { email__source: { S: 'original' } } },
+      postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
+    }))
+  }
+  expect(callsAtMutationSnapshot).toBeDefined()
+  const seen = callsAtMutationSnapshot ?? []
+  const setActive = seen.lastIndexOf('setActive')
+  expect(setActive).toBeGreaterThanOrEqual(0)
+  // No later write may run between setActive and the inspected snapshot.
+  expect(seen.slice(setActive + 1)).not.toContain('put')
+  expect(seen).not.toContain('copyToPostgres')
+  expect(seen).not.toContain('copyToDynamo')
+})
+
 test('F12 disposes stores even when the isolation supervisor fails to stop', async () => {
   const { driver } = await setup({ stopFails: true })
   await expect(driver.close()).rejects.toThrow('supervisor stop failed')
@@ -340,6 +371,13 @@ async function migratedFiles() {
     join(installedWorkspace, 'package-lock.json'),
     JSON.stringify(lock),
   )
+  await cp(join(workspace, 'src'), join(installedWorkspace, 'src'), {
+    recursive: true,
+  })
+  await writeFile(
+    join(installedWorkspace, 'package.json'),
+    JSON.stringify(manifest),
+  )
   return {
     workspace,
     installedWorkspace,
@@ -366,6 +404,9 @@ test.each([
   ['ffi alias', 'migration.protect-ffi-version'],
   ['endpoint shim', 'migration.endpoint-shim-absent'],
   ['stale active hmac', 'migration.active-hmac-absent'],
+  ['installed endpoint shim', 'migration.endpoint-shim-absent'],
+  ['installed legacy import', 'migration.protect-dependencies-absent'],
+  ['installed legacy dependency', 'migration.protect-dependencies-absent'],
 ])('F3 rejects %s', async (scenario, id) => {
   const options = await migratedFiles()
   const manifestPath = join(options.workspace, 'package.json')
@@ -399,6 +440,25 @@ test.each([
     await writeFile(
       join(options.workspace, 'src/app.mjs'),
       'process.env.CS_CTS_HOST = "https://old.invalid"',
+    )
+  // A lifecycle script can rewrite the App Host's installed copy after the
+  // Migrator workspace was inspected; the installed copy is what executes.
+  if (scenario === 'installed endpoint shim')
+    await writeFile(
+      join(options.installedWorkspace, 'src/app.mjs'),
+      'process.env.CS_ZEROKMS_HOST = "https://old.invalid"',
+    )
+  if (scenario === 'installed legacy import')
+    await writeFile(
+      join(options.installedWorkspace, 'src/app.mjs'),
+      'import { protect } from "@cipherstash/protect"',
+    )
+  if (scenario === 'installed legacy dependency')
+    await writeFile(
+      join(options.installedWorkspace, 'package.json'),
+      JSON.stringify({
+        dependencies: { '@cipherstash/protect': '10.2.1' },
+      }),
     )
   if (scenario === 'stale active hmac')
     Object.assign(options.mutationSnapshot.dynamo.Item, {
