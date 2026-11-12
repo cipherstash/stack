@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { access, cp, readFile } from 'node:fs/promises'
+import { access, cp, lstat, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -70,4 +70,33 @@ export async function resolveStack({ source, root, output }) {
   if (typeof ffiRange !== 'string' || !ffiRange)
     throw Error('Could not resolve Stack FFI dependency')
   return { version, install: version, ffiRange }
+}
+
+/** The Subresource Integrity string npm records for a tarball.
+ * @param {string} tarball */
+async function integrity(tarball) {
+  const digest = createHash('sha512')
+    .update(await readFile(tarball))
+    .digest('base64')
+  return `sha512-${digest}`
+}
+
+/** Confirm the App Host lockfile records the host-resolved tarball for Stack.
+ * The workspace is actor-written, so its lockfile must be a bounded regular file.
+ * @param {{workspace:string,tarball:string}} options */
+export async function verifyInstalledTarball({ workspace, tarball }) {
+  const path = resolve(workspace, 'package-lock.json')
+  const stat = await lstat(path)
+  if (!stat.isFile() || stat.size > 8 * 1024 * 1024)
+    throw Error('Installed Stack is not the resolved tarball')
+  let entry
+  try {
+    entry = JSON.parse(await readFile(path, 'utf8'))?.packages?.[
+      'node_modules/@cipherstash/stack'
+    ]
+  } catch {
+    throw Error('Installed Stack is not the resolved tarball')
+  }
+  if (entry?.integrity !== (await integrity(tarball)))
+    throw Error('Installed Stack is not the resolved tarball')
 }

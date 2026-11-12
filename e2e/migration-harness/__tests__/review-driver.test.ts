@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -97,6 +98,8 @@ async function setup(
     gitFailure?: 'add' | 'diff'
     stopFails?: boolean
     timeoutMs?: number
+    stack?: string
+    npm?: (invocation: IsolationOptions) => Promise<void>
   } = {},
 ) {
   const output = await mkdtemp(join(tmpdir(), 'mh-review-driver-'))
@@ -124,6 +127,7 @@ async function setup(
         const result = await execute(file, args, { cwd: invocation.workspace })
         return { exitCode: 0, stdout: result.stdout, stderr: result.stderr }
       }
+      if (file === 'npm') await options.npm?.(invocation)
       return { exitCode: 0, stdout: '', stderr: '' }
     },
     stop: async (stopOptions?: { expected?: boolean }) => {
@@ -157,7 +161,7 @@ async function setup(
     credentials: { CS_CLIENT_KEY: 'app-secret' },
     manifest: {
       guideHash: 'guide',
-      stack: '1.2.1',
+      stack: options.stack ?? '1.2.1',
       agents: { limits: { timeMs: options.timeoutMs ?? 5000, turns: 5 } },
     },
   })
@@ -441,6 +445,92 @@ test.each([
     }
   },
 )
+
+/** Pack a minimal Stack tarball that resolveStack accepts. */
+async function stackTarball(directory: string, marker: string) {
+  const source = await mkdtemp(join(tmpdir(), 'mh-stack-tgz-'))
+  outputs.push(source)
+  await mkdir(join(source, 'package'))
+  await writeFile(
+    join(source, 'package/package.json'),
+    JSON.stringify({
+      name: '@cipherstash/stack',
+      version: '1.2.1',
+      description: marker,
+      dependencies: { '@cipherstash/protect-ffi': '0.33.0' },
+    }),
+  )
+  const tarball = join(directory, `${marker}.tgz`)
+  await execute('tar', ['-czf', tarball, '-C', source, 'package'])
+  return tarball
+}
+/** Record the lock entry npm writes for a local tarball install. */
+async function npmRecords(workspace: string, tarball: string) {
+  const integrity = `sha512-${createHash('sha512')
+    .update(await readFile(tarball))
+    .digest('base64')}`
+  await writeFile(
+    join(workspace, 'package-lock.json'),
+    JSON.stringify({
+      packages: {
+        'node_modules/@cipherstash/stack': {
+          version: '1.2.1',
+          resolved: 'file:resolved-stack.tgz',
+          integrity,
+        },
+      },
+    }),
+  )
+}
+
+test('App Host installs the host-resolved Stack tarball, not a Migrator substitute', async () => {
+  const sources = await mkdtemp(join(tmpdir(), 'mh-stack-sources-'))
+  outputs.push(sources)
+  const original = await stackTarball(sources, 'original')
+  const substitute = await stackTarball(sources, 'substitute')
+  const { driver, output } = await setup({
+    stack: original,
+    npm: async ({ actor, workspace }) => {
+      if (actor === 'app-host')
+        await npmRecords(workspace, join(workspace, 'resolved-stack.tgz'))
+    },
+  })
+  try {
+    await driver.snapshot()
+    // The Migrator controls its workspace, including the copied tarball.
+    await writeFile(
+      join(output, 'migrator/resolved-stack.tgz'),
+      await readFile(substitute),
+    )
+    await driver.installAppHost()
+    expect(await readFile(join(output, 'app-host/resolved-stack.tgz'))).toEqual(
+      await readFile(original),
+    )
+  } finally {
+    await driver.close()
+  }
+})
+
+test('App Host install fails when the installed Stack is not the resolved tarball', async () => {
+  const sources = await mkdtemp(join(tmpdir(), 'mh-stack-sources-'))
+  outputs.push(sources)
+  const original = await stackTarball(sources, 'original')
+  const substitute = await stackTarball(sources, 'substitute')
+  const { driver } = await setup({
+    stack: original,
+    npm: async ({ actor, workspace }) => {
+      if (actor === 'app-host') await npmRecords(workspace, substitute)
+    },
+  })
+  try {
+    await driver.snapshot()
+    await expect(driver.installAppHost()).rejects.toThrow(
+      'Installed Stack is not the resolved tarball',
+    )
+  } finally {
+    await driver.close()
+  }
+})
 
 test('F12 disposes stores even when the isolation supervisor fails to stop', async () => {
   const { driver } = await setup({ stopFails: true })
