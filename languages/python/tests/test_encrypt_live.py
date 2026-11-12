@@ -117,6 +117,18 @@ def test_1001_one_field_models_make_three_key_requests():
     assert _engine.request_count() - before == 3
 
 
+def test_the_same_value_encrypts_to_a_different_ciphertext_each_time():
+    # A reused nonce, or a deterministic seal, would give equal payloads.
+    users = Cipher(User)
+    model = User(email="same@example.com", age=3)
+
+    first, second = users.encrypt([model, model])
+    again = users.encrypt([model])[0]
+
+    ciphertexts = {json.loads(row["email"])["c"] for row in (first, second, again)}
+    assert len(ciphertexts) == 3
+
+
 def test_two_ciphers_share_one_engine_client():
     Cipher(User).encrypt([User(email="a@example.com", age=1)])
     # Read after the first call: an earlier test may have loaded the keyset

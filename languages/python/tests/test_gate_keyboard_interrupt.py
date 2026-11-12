@@ -2,7 +2,16 @@
 the GIL is raised only after that call returns.
 
 Runs only against a wheel built with the `gate-probe` cargo feature; see
-docs/gate-facts/keyboard-interrupt.md. Skipped otherwise.
+docs/gate-facts/keyboard-interrupt.md. Skipped otherwise, and CI builds no
+such wheel. So this is a check run by hand when the detach or the signal
+handling changes, not one CI keeps.
+
+What the first test shows: Python runs a signal handler only on the main
+thread, between bytecodes. So the interrupt cannot be raised while the main
+thread is inside `probe()`, whether or not the call released the GIL. The
+timing assertion therefore holds by the interpreter's design. What it does
+show is that the call returns normally, and that the interrupt is raised
+after it, with the extension still usable.
 """
 
 import sys

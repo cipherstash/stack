@@ -67,13 +67,27 @@ class _TopLevel(ast.NodeVisitor):
     def visit_alias(self, node: ast.alias) -> None:
         self.bound.add((node.asname or node.name).split(".")[0])
 
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        # `except E as name` binds `name`, which is a str, not an ast.Name.
+        if node.name:
+            self.bound.add(node.name)
+        self.generic_visit(node)
+
     def _own_scope(self, node: ast.AST) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             self.bound.add(node.name)
 
+    def _comprehension(self, node: ast.AST) -> None:
+        # A comprehension's own variables stay inside it, but a walrus
+        # (`:=`) in it binds its target in the enclosing scope.
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.NamedExpr) and isinstance(inner.target, ast.Name):
+                self.bound.add(inner.target.id)
+
     visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _own_scope
-    visit_Lambda = visit_ListComp = visit_SetComp = visit_DictComp = _own_scope
-    visit_GeneratorExp = _own_scope
+    visit_Lambda = _own_scope
+    visit_ListComp = visit_SetComp = visit_DictComp = _comprehension
+    visit_GeneratorExp = _comprehension
 
 
 def _top_level(source: str) -> _TopLevel:

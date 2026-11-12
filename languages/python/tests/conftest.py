@@ -36,7 +36,18 @@ def no_credentials(monkeypatch, tmp_path):
 def credentials(monkeypatch, no_credentials):
     """Credentials that parse, so ``Cipher`` builds, and no client key. A
     call that gets past every check fails building the engine client, with
-    no request."""
+    no request.
+
+    The engine client is shared by the whole process. Once a live test has
+    built it, a call here would reach ZeroKMS instead of failing, so the
+    test is skipped. ``mise run test`` and ``-m live`` run the two kinds of
+    test in separate processes, and skip nothing.
+    """
+    if _engine.client_builds() > 0:
+        pytest.skip(
+            "a live test built the shared engine client earlier in this "
+            "process; run the offline tests in a process of their own"
+        )
     monkeypatch.setenv("CS_CLIENT_ACCESS_KEY", ACCESS_KEY)
     monkeypatch.setenv("CS_WORKSPACE_CRN", WORKSPACE_CRN)
 

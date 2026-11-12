@@ -1,10 +1,10 @@
 """The declaration tests, with annotations evaluated as written.
 
 The tests themselves are in ``_declaration_cases.py``, compiled here without
-``from __future__ import annotations``.
+``from __future__ import annotations``, with their asserts rewritten as
+pytest rewrites a test module's (``_compiled_cases.py``).
 """
 
-import pathlib
+from _compiled_cases import compiled_cases
 
-_CASES = pathlib.Path(__file__).with_name("_declaration_cases.py")
-exec(compile(_CASES.read_text(), str(_CASES), "exec", dont_inherit=True), globals())
+exec(compiled_cases(), globals())
