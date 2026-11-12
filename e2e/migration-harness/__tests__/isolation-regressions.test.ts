@@ -72,6 +72,40 @@ beforeEach(() => {
           live.set(args[args.indexOf('--name') + 1], { actor, child })
           return
         }
+        if (actor === 'rpc-error-probe') {
+          // Answers every App Host request with an application error frame,
+          // including requests written before this mock turn ran.
+          const answer = (line: string) => {
+            const { id, args: callArgs } = JSON.parse(line)
+            const reply = {
+              id,
+              error: 'relation does not exist',
+              code: callArgs[0],
+            }
+            child.stdout.write(
+              `${JSON.stringify({
+                kind: 'stdout',
+                data: Buffer.from(`${JSON.stringify(reply)}\n`).toString(
+                  'base64',
+                ),
+              })}\n`,
+            )
+          }
+          for (const [line] of child.stdin.write.mock.calls) answer(line)
+          child.stdin.write.mockImplementation(answer)
+          child.stdin.end.mockImplementation(() => {
+            for (const value of [
+              { kind: 'actor-exit', actor, stage: 'command', exitCode: 0 },
+              { kind: 'stream-end' },
+              { kind: 'exit', exitCode: 0 },
+            ])
+              child.stdout.write(`${JSON.stringify(value)}\n`)
+            child.stdout.end()
+            child.stderr.end()
+            child.emit('close', 0)
+          })
+          return
+        }
         const frame = (value: Record<string, unknown>) =>
           child.stdout.write(`${JSON.stringify(value)}\n`)
         if (actor === 'git-tool-probe') {
@@ -162,6 +196,30 @@ test('observer termination without an actor exit record is infrastructure even w
 })
 
 afterEach(() => vi.clearAllMocks())
+
+test('an App Host error frame keeps an allowlisted PostgreSQL code across the RPC boundary', async () => {
+  const isolation = createIsolation()
+  await isolation.prove()
+  const host = await isolation.openAppHost({
+    actor: 'rpc-error-probe',
+    workspace: '/synthetic-workspace',
+  })
+  try {
+    const rejection = (code: string) =>
+      host.call('get', [code]).then(
+        () => null,
+        (error: Error & { code?: unknown }) => error,
+      )
+    const missing = await rejection('42P01')
+    expect(missing?.message).toBe('relation does not exist')
+    expect(missing?.code).toBe('42P01')
+    // Free-form codes are application data, not classification evidence.
+    const unexpected = await rejection('customer ada@example.com')
+    expect(unexpected).not.toHaveProperty('code')
+  } finally {
+    await host.close()
+  }
+})
 
 test('an App Host that already exited rejects later calls so the Run can report failure', async () => {
   const isolation = createIsolation()
