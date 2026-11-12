@@ -1,0 +1,31 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "http://127.0.0.1:41056/msi/token?api-version=2019-08-01&resource=https%3A%2F%2Fmanagedhsm.azure.net",
+      "headers": [
+        [
+          "x-identity-header",
+          "fixture-identity-header"
+        ]
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=utf-8"
+        ]
+      ],
+      "body": {
+        "access_token": "fixture-app-service-token",
+        "expires_on": "1793883600",
+        "resource": "https://managedhsm.azure.net",
+        "token_type": "Bearer",
+        "client_id": "test-only-system-assigned-id"
+      }
+    }
+  }
+]

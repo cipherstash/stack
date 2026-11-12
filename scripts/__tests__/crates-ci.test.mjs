@@ -16,7 +16,7 @@ import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
  * EQL import, and `integrationSuiteCi.test.ts` for protect-ffi's before it.
  * This file is the same guard for this set, in two halves:
  *
- *   1. Every mise task the set defines — the nine crate `tasks.toml` files the
+ *   1. Every mise task the set defines — the ten crate `tasks.toml` files the
  *      root `mise.toml` includes, and the root tasks — is reached from a root
  *      workflow, or named as exempt with a reason. The scan is a smaller copy
  *      of `eql-suite-ci.test.mjs`'s: the same `invokes` rule for "a command,
@@ -281,7 +281,7 @@ const CI_EXEMPT_TASKS = new Map([
 ])
 
 describe('the scan sees every task mise sees', () => {
-  it('reads the nine crate task files from the root mise.toml', () => {
+  it('reads the ten crate task files from the root mise.toml', () => {
     expect(INCLUDES.sort()).toEqual(
       [
         'packages/stack-auth/tasks.toml',
@@ -289,6 +289,7 @@ describe('the scan sees every task mise sees', () => {
         'packages/stack-guest-abi/tasks.toml',
         'packages/stack-kms/tasks.toml',
         'packages/stack-kms-aws/tasks.toml',
+        'packages/stack-kms-azure/tasks.toml',
         'packages/stack-kms-gcp/tasks.toml',
         'packages/stack-kms-vault/tasks.toml',
         'packages/stack-kms-vendor/tasks.toml',
@@ -342,6 +343,7 @@ describe('the scan sees every task mise sees', () => {
         'doc:stack-guest-abi',
         'doc:stack-kms',
         'doc:stack-kms-aws',
+        'doc:stack-kms-azure',
         'doc:stack-kms-gcp',
         'doc:stack-kms-vault',
         'doc:stack-kms-vendor',
@@ -401,6 +403,7 @@ describe('every task the set defines is reached by a root workflow', () => {
   const SOLE_CALLER_WORKFLOWS = [
     `${WORKFLOW_DIR}/crap-crates.yml`, // crap:*
     `${WORKFLOW_DIR}/fuzz.yml`, // fuzz:*
+    `${WORKFLOW_DIR}/integration-azure-key-vault.yml`, // test:live:stack-kms-azure
     `${WORKFLOW_DIR}/integration-gcp-kms.yml`, // test:live:stack-kms-gcp
     `${WORKFLOW_DIR}/miri.yml`, // miri:stack-guest-abi
     `${WORKFLOW_DIR}/tests-crates.yml`, // doc, test:doc, test:integration:*

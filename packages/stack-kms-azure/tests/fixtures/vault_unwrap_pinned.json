@@ -1,0 +1,35 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://cipherstash-fixture.vault.azure.net/keys/fixture-rsa-key/0a1b2c3d4e5f60718293a4b5c6d7e8f9/unwrapkey?api-version=7.4",
+      "headers": [
+        [
+          "authorization",
+          "Bearer fixture-access-token"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "alg": "RSA-OAEP-256",
+        "value": "DAWKHW2AUmqhtaN0bH02yHGNgt-5_R5TCo9TO_WjXnE30R-TB31R109oRmec9ImjDh6oVXN3fz3__gJI9NN0f9k4Sy3PS2NMmHDPOKDitGFoeXp44Gudm_hlSKMKAhAjweWxd5G6g2Dd4OjHhWm1MlSEZS4RaBcRbY4hQIYXJcbrq2K5lXYW7cQmlrTmGuJ_4Lp3pfBlSrrkqcsIkmt3b_8Qw561q0yMnAuCmZmVKOBW7YfV2fGSmVs7CyjOZNjDREhZjsAKTY986_fgU8wZZJ6XaViMFpfIVPljWqhudqQ1nDBu_luxmGVyjOhAnJqVfX9R2i8VUK-gOpumrlDnJw"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=utf-8"
+        ]
+      ],
+      "body": {
+        "kid": "https://cipherstash-fixture.vault.azure.net/keys/fixture-rsa-key/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+        "value": "AQ9GLasPvoFRUzYY5ESTCHLnjARVXWuAUsA-zUcJL6ZpQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0MAAAAAAAAA"
+      }
+    }
+  }
+]

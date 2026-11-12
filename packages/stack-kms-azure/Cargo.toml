@@ -1,0 +1,53 @@
+[package]
+name = "stack-kms-azure"
+description = "The Azure Key Vault and Managed HSM key vendor backend for Stack Encrypt: a hand-written Key Vault client with Entra ID client secret, workload identity and managed identity credentials, for native Rust and the WASI guest"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Publishable, in the `stack-kms-vendor` version group with the vendor seam it
+# implements. release-plz.toml keeps `release = false` until the first version
+# is on crates.io (published by hand; see stack-kms-vendor's Cargo.toml).
+
+[features]
+default = ["http"]
+# `AzureKeyVault::from_env`: the native transport (`HttpVendorTransport`) and
+# the default credentials over it. Native only; on wasm32 it adds nothing.
+http = ["stack-kms-vendor/http"]
+
+[dependencies]
+stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false }
+stack-kms-vendor = { path = "../stack-kms-vendor", version = "0.1.0" }
+
+vitaminc = { workspace = true, features = ["protected"] }
+base64ct = { version = "1.7", features = ["alloc"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+web-time = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+stack-kms-vendor = { path = "../stack-kms-vendor", features = ["test-support", "http"] }
+stack-encrypt = { path = "../stack-encrypt", default-features = false }
+# The fixture emulator only: RSA-OAEP-256 unwrap with a TEST-ONLY key, and
+# AES for an RFC 3394 key wrap. The crate itself does no RSA (Azure does).
+rsa = { version = "0.9.10", default-features = false, features = ["std", "sha2"] }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+aes = "0.8.4"
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
+uuid = { workspace = true }
+vitaminc = { workspace = true, features = ["protected", "random"] }
+
+# Builds `AzureKeyVault::from_env`, which needs the native transport.
+[[test]]
+name = "live"
+required-features = ["http"]
+
+[package.metadata.docs.rs]
+all-features = true
