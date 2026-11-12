@@ -211,7 +211,20 @@ export async function run({ id, manifest, driver, supervision = null }) {
     stages[6],
     'behaviour',
     async () => {
-      const checks = await driver.behaviour()
+      let checks
+      try {
+        checks = await driver.behaviour()
+      } catch (error) {
+        // A store outage after checks ran keeps their evidence in the report.
+        const completed =
+          error && typeof error === 'object' && 'checks' in error
+            ? error.checks
+            : []
+        if (Array.isArray(completed))
+          for (const check of completed)
+            evidence('behaviour', 'oracle-check', check.id, check)
+        throw error
+      }
       if (!Array.isArray(checks) || checks.length === 0)
         throw new Error('Behaviour checks must not be empty')
       for (const check of checks)

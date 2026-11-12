@@ -12,6 +12,10 @@ vi.mock('node:child_process', () => ({
 }))
 vi.mock('postgres', () => ({ default: connect }))
 
+import {
+  postgresColumns,
+  postgresSnapshotQuery,
+} from '../run/legacy-columns.mjs'
 import { createStoreSet, disposeStores } from '../run/real-stores.mjs'
 
 let dockerCalls: string[][]
@@ -77,8 +81,8 @@ beforeEach(() => {
         return []
       }
       return Object.assign(query, {
-        unsafe: async (text: string) => {
-          statements.push({ database, username, text, values: [] })
+        unsafe: async (text: string, values: unknown[] = []) => {
+          statements.push({ database, username, text, values })
           if (cleanupFailure && text.startsWith(cleanupFailure))
             throw Error(`${cleanupFailure} failed`)
           return []
@@ -174,9 +178,10 @@ test('the Oracle snapshot reads the selected record from both assigned stores', 
 
     expect(JSON.parse(requests[0]).Key).toEqual({ pk: { S: 'mutation' } })
     expect(
-      statements.find((query) => query.text.includes('SELECT pk, email::jsonb'))
-        ?.values,
+      statements.find((query) => query.text === postgresSnapshotQuery)?.values,
     ).toEqual(['mutation'])
+    for (const column of postgresColumns)
+      expect(postgresSnapshotQuery).toContain(`"${column}"::jsonb`)
   } finally {
     await disposeStores(resources)
   }

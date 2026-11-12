@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -15,12 +16,19 @@ const keys = [
   'CS_CLIENT_KEY',
   'CS_CLIENT_ACCESS_KEY',
 ]
-const enabled =
-  process.env.HARNESS_LIVE === '1' && keys.every((key) => process.env[key])
+// HARNESS_LIVE=1 asks for these Runs, so a missing credential fails them
+// rather than skipping them silently.
+const enabled = process.env.HARNESS_LIVE === '1'
+const missing = keys.filter((key) => !process.env[key])
 for (const rewrite of [false, true]) {
   test.skipIf(!enabled)(
     `real Run ${rewrite ? 'detects a read rewrite' : 'keeps Legacy Data unchanged through mutations'}`,
     async () => {
+      assert.deepEqual(
+        missing,
+        [],
+        `HARNESS_LIVE=1 requires ${keys.join(', ')}`,
+      )
       const output = await mkdtemp(resolve(tmpdir(), 'mh-no-rewrite-'))
       const isolation = createIsolation()
       const manifest = { stack: '^1.2.1', guideHash: null }
@@ -43,7 +51,8 @@ for (const rewrite of [false, true]) {
       )
       const command = `node '${adapter}'`
       const driver = createRealDriver({
-        id: `live-${Date.now()}-${rewrite}`,
+        // Store names use the first eight characters, so they must vary per Run.
+        id: randomUUID(),
         root: fileURLToPath(new URL('../../..', import.meta.url)),
         output,
         command,

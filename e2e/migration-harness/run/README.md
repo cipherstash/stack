@@ -126,9 +126,12 @@ mutations. Metadata changes alone do not fail this comparison. The mutation
 checks then run, followed by the migration layer: old Protect imports and npm
 dependencies must be gone, every FFI lockfile entry must match the actual
 version selected for the exact Stack dependency, the endpoint shim must be
-removed, and, for the DynamoDB procedure only, stored Mutation Data must
-contain no `active__hmac` after updating the active field. PostgreSQL runs
-require `requiredPostgresChecks` instead, which has no `active__hmac` check. Missing checks or missing inspection evidence prevent a pass.
+removed. The import, dependency and shim checks read both the Migrator workspace
+and the App Host's installed copy after its lifecycle scripts. For the DynamoDB
+procedure only, stored Mutation Data must contain no `active__hmac` immediately
+after `setActive`, before any read or later write can repair it. PostgreSQL runs
+require `requiredPostgresChecks` instead, which has no `active__hmac` check.
+Missing checks or missing inspection evidence prevent a pass.
 
 Diff evidence uses the host-recorded fixture commit, so an adapter can commit
 its changes without hiding them. Failed Git commands fail the migration stage
