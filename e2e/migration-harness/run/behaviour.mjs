@@ -160,11 +160,25 @@ export async function behaviour(call, afterSetActive = async () => {}) {
       await check('behaviour.balance-decimal-string', async () =>
         equal(record(await call('get', [fresh.pk])).balance, fresh.balance),
       )
+      // Inspect the stored shape before any read: a `get` that repairs a stale
+      // active__hmac would otherwise hide it from migration.active-hmac-absent.
+      // Inspection failures abort the Oracle rather than fail this check.
+      /** @type {unknown[]} */
+      const inspectionFailure = []
       await check('behaviour.set-active', async () => {
-        await call('setActive', [mutation.pk, false])
+        try {
+          await call('setActive', [mutation.pk, false])
+        } finally {
+          try {
+            await afterSetActive()
+          } catch (error) {
+            inspectionFailure.push(error)
+          }
+        }
+        if (inspectionFailure.length) return
         equal(record(await call('get', [mutation.pk])).active, false)
       })
-      await afterSetActive()
+      if (inspectionFailure.length) throw inspectionFailure[0]
       const copiedMutation = {
         ...mutation,
         active: false,
