@@ -14,6 +14,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 stack-auth = { workspace = true, features = ["http"] }
+# `SecretBuf`, to serialise saved tokens without leaving unwiped copies.
+stack-profile = { workspace = true }
 cts-common = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

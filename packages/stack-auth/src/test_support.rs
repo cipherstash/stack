@@ -10,14 +10,15 @@ use cts_common::Crn;
 
 use crate::{SecretToken, Token};
 
-/// A [`Token`] with the given raw access-token string and a far-future expiry,
-/// so it reads as valid. The access token need not be a JWT — pass any string to
-/// exercise the not-a-JWT paths.
+/// A [`Token`] with the given raw access-token string, expiring an hour from
+/// now, so it reads as valid. (Not `u64::MAX`: the engine treats a token that
+/// claims to outlive the 30-day cap as already expired.) The access token
+/// need not be a JWT — pass any string to exercise the not-a-JWT paths.
 pub(crate) fn raw_token(access_token: &str) -> Token {
     Token {
         access_token: SecretToken::new(access_token),
         token_type: "Bearer".to_string(),
-        expires_at: u64::MAX,
+        expires_at: crate::token::now_unix_secs() + 3600,
         refresh_token: Some(SecretToken::new("refresh-token")),
         region: None,
         client_id: None,

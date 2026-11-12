@@ -25,6 +25,7 @@ use std::fmt;
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
 
+use stack_profile::SecretBuf;
 use url::Url;
 use zeroize::Zeroizing;
 
@@ -343,8 +344,64 @@ pub(crate) async fn post_json<B: serde::Serialize>(
     url: Url,
     body: &B,
 ) -> Result<HttpResponse, RequestError> {
-    let body = Zeroizing::new(serde_json::to_vec(body).map_err(|e| RequestError(Box::new(e)))?);
+    let body = json_body(body)?;
     post(transport, url, "application/json", Vec::new(), body).await
+}
+
+/// `body` as JSON in a [`SecretBuf`].
+///
+/// Request bodies carry access keys, OIDC JWTs and refresh tokens, and a
+/// `SecretBuf` leaves no unwiped partial copy of them on the heap.
+pub(crate) fn json_body<B: serde::Serialize>(body: &B) -> Result<Zeroizing<Vec<u8>>, RequestError> {
+    SecretBuf::json(body).map_err(|e| RequestError(Box::new(e)))
+}
+
+/// An [`io::Write`](std::io::Write) that counts the bytes written to it and
+/// keeps none of them.
+struct ByteCount(usize);
+
+impl std::io::Write for ByteCount {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// `body` form-encoded, into a buffer that never grows.
+///
+/// `serde_urlencoded` can only write into a `String`, which would free each
+/// outgrown buffer unwiped, the same leak [`json_body`] avoids. So the
+/// `String` is given its worst-case size up front. The JSON form of the body
+/// holds every key and value character at least once, and form-encoding turns
+/// a byte into at most three (`%XX`), with one separator per key and value
+/// that JSON's own quotes more than pay for. Three times the JSON length is
+/// therefore always enough. The JSON is only measured, never stored, so it
+/// leaves no copy either.
+fn form_body<B: serde::Serialize>(body: &B) -> Result<Zeroizing<Vec<u8>>, RequestError> {
+    let mut json_len = ByteCount(0);
+    serde_json::to_writer(&mut json_len, body).map_err(|e| RequestError(Box::new(e)))?;
+    let bound = json_len.0.saturating_mul(3);
+    let mut form = Zeroizing::new(String::new());
+    form.try_reserve_exact(bound)
+        .map_err(|e| RequestError(Box::new(e)))?;
+    let capacity = form.capacity();
+    {
+        let mut encoder = form_urlencoded::Serializer::new(&mut *form);
+        let _ = body
+            .serialize(serde_urlencoded::Serializer::new(&mut encoder))
+            .map_err(|e| RequestError(Box::new(e)))?;
+    }
+    debug_assert_eq!(
+        form.capacity(),
+        capacity,
+        "the form body outgrew its reserved size, leaving an unwiped copy"
+    );
+    // `take` moves the bytes out, leaving an empty `String` behind to drop.
+    Ok(Zeroizing::new(std::mem::take(&mut *form).into_bytes()))
 }
 
 /// `POST` a form (`application/x-www-form-urlencoded`) body.
@@ -353,17 +410,12 @@ pub(crate) async fn post_form<B: serde::Serialize>(
     url: Url,
     body: &B,
 ) -> Result<HttpResponse, RequestError> {
-    let body = Zeroizing::new(
-        serde_urlencoded::to_string(body)
-            .map_err(|e| RequestError(Box::new(e)))?
-            .into_bytes(),
-    );
     post(
         transport,
         url,
         "application/x-www-form-urlencoded",
         Vec::new(),
-        body,
+        form_body(body)?,
     )
     .await
 }
@@ -464,9 +516,18 @@ impl HttpTransport for ReqwestTransport {
                 )
             })
             .collect();
-        let body = response.bytes().await?.to_vec();
+        let body = response_body(response.bytes().await?);
         Ok(HttpResponse::new(status, headers, body))
     }
+}
+
+/// The bytes of a response body, moved out of reqwest's buffer rather than
+/// copied when nothing else shares it. A minted token arrives in this body,
+/// and [`HttpResponse`] wipes its own copy on drop; a copy would free
+/// reqwest's buffer, token and all, unwiped.
+#[cfg(feature = "http")]
+fn response_body(bytes: bytes::Bytes) -> Vec<u8> {
+    Vec::from(bytes)
 }
 
 /// The bundled transport, boxed for the strategies.
@@ -739,6 +800,55 @@ mod tests {
                 "{shape}: the content type travels with the user-agent: {headers:?}"
             );
         }
+    }
+
+    /// A form body whose every byte needs percent-encoding is the worst case
+    /// for the buffer [`form_body`] reserves up front: each byte becomes three.
+    /// The bytes must match `serde_urlencoded` exactly, and (checked by the
+    /// `debug_assert` inside) the buffer must never have had to grow, since a
+    /// grown `String` frees its old allocation unwiped.
+    #[test]
+    fn form_body_encodes_like_serde_urlencoded_without_growing() {
+        let secret: String = "é&=+ /\u{1F600}%".repeat(500);
+        let body = [
+            ("grant_type", "refresh_token"),
+            ("refresh_token", secret.as_str()),
+            ("", ""),
+        ];
+
+        let encoded = form_body(&body).unwrap();
+
+        assert_eq!(
+            encoded.as_slice(),
+            serde_urlencoded::to_string(body).unwrap().as_bytes()
+        );
+    }
+
+    /// `post_json` sends exactly what `serde_json` writes, however long.
+    #[tokio::test]
+    async fn post_json_sends_the_serialised_body() {
+        let stub = Arc::new(Stub::replying(200, "{}"));
+        let transport: SharedTransport = stub.clone();
+        let body = serde_json::json!({ "accessKey": "k".repeat(20_000) });
+
+        post_json(&transport, base_url(), &body).await.unwrap();
+
+        let (_, _, _, sent) = seen(&stub);
+        assert_eq!(sent, serde_json::to_vec(&body).unwrap());
+    }
+
+    /// The response body takes over reqwest's allocation instead of copying
+    /// it, so the token in it is wiped with [`HttpResponse`].
+    #[test]
+    #[cfg(feature = "http")]
+    fn response_body_takes_over_the_buffer_it_is_given() {
+        let bytes = bytes::Bytes::from(br#"{"accessToken":"secret"}"#.to_vec());
+        let ptr = bytes.as_ptr();
+
+        let body = response_body(bytes);
+
+        assert_eq!(body, br#"{"accessToken":"secret"}"#);
+        assert_eq!(body.as_ptr(), ptr, "the buffer must be moved, not copied");
     }
 
     #[test]

@@ -120,9 +120,7 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
     let url = zerokms_url.join(CreateClientRequest::ENDPOINT)?;
 
     // Provisioning is native-only, so it always uses the bundled transport.
-    let body = zeroize::Zeroizing::new(
-        serde_json::to_vec(&request).map_err(|e| RequestError(Box::new(e)))?,
-    );
+    let body = transport::json_body(&request)?;
     let response = transport::post(
         &transport::share(ReqwestTransport::default()),
         url,

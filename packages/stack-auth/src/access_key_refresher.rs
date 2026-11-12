@@ -78,8 +78,9 @@ impl Refresher for AccessKeyRefresher {
         let auth_resp: AuthoriseResponse = resp.json()?;
 
         // The response → Token mapping (including the absolute-epoch `expiry`
-        // handling that CIP-3233 fixed) lives on `From<AuthoriseResponse>`.
-        Ok(auth_resp.into())
+        // handling that CIP-3233 fixed, and the 30-day cap) lives on
+        // `AuthoriseResponse::into_token`.
+        Ok(auth_resp.into_token(crate::token::now_unix_secs()))
     }
 }
 
@@ -207,6 +208,35 @@ mod tests {
             !token.is_expired(),
             "a fresh 15-minute token must not be reported as already expired"
         );
+    }
+
+    /// A CTS that answers with an absurd absolute `expiry` (buggy or hostile)
+    /// must not mint a token that never expires: `AutoRefresh` would then keep
+    /// sending a dead token until the process restarted. The expiry is capped
+    /// at 30 days from now, the same cap a relative `expires_in` gets.
+    #[tokio::test]
+    async fn access_key_expiry_is_capped_at_thirty_days() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.json(serde_json::json!({ "accessToken": "tok", "expiry": u64::MAX }));
+        });
+        let server = start_server(mocks).await;
+
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("CSAKid.secret"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
+        let token = refresher.refresh(&()).await.unwrap();
+
+        assert!(
+            token.expires_in() <= crate::token::MAX_TOKEN_LIFETIME_SECS,
+            "expiry must be capped at 30 days; got expires_in = {}",
+            token.expires_in()
+        );
+        assert!(!token.is_expired(), "a capped token is still a live token");
     }
 
     // ---- Initial auth tests ----

@@ -72,6 +72,7 @@ pub use device_identity::DeviceIdentity;
 pub use diagnostic::ErrorPayload;
 pub use error::ProfileError;
 pub use profile_store::{FileLockGuard, ProfileStore};
+pub use secret_buf::SecretBuf;
 
 /// A type that can be stored in a profile directory.
 pub trait ProfileData: Serialize + DeserializeOwned {
