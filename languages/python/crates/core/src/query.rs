@@ -177,11 +177,23 @@ pub fn answers(plan: &ModelPlan, field: &str, op: OpSpec) -> Result<(), Refusal>
     if operators(plan, field)?.contains(&op.name()) {
         return Ok(());
     }
+    // The marker, as the Python check names it: the EQL type, or
+    // Passthrough for a field with none.
+    let marker = plan
+        .fields()
+        .iter()
+        .find(|declared| declared.name == field)
+        .map(|declared| {
+            declared
+                .eql
+                .as_ref()
+                .map_or_else(|| "Passthrough".to_owned(), |(name, _)| name.clone())
+        });
     Err(Refusal {
         code: "query_unsupported".to_owned(),
         message: format!("field {field:?} has no index that answers {:?}.", op.name()),
         field: Some(field.to_owned()),
-        reason: None,
+        reason: marker,
     })
 }
 
@@ -193,6 +205,18 @@ mod tests {
     use super::*;
     use crate::decrypt::tests::{cipher, run, stored, users};
     use crate::encrypt::{Column, Field};
+
+    /// The refusal names the field's marker in `reason`, as the Python
+    /// check does: the EQL type, or `Passthrough`.
+    #[test]
+    fn query_unsupported_names_the_marker_in_reason() {
+        let refused = answers(&users(), "email", OpSpec::Lt).unwrap_err();
+        assert_eq!(refused.code, "query_unsupported");
+        assert_eq!(refused.reason.as_deref(), Some("TextEq"));
+
+        let refused = answers(&users(), "age", OpSpec::Eq).unwrap_err();
+        assert_eq!(refused.reason.as_deref(), Some("Passthrough"));
+    }
 
     fn term(cipher: &StackCipher<FakeDataKeySource>, email: &str) -> serde_json::Value {
         let json = run(query_with(

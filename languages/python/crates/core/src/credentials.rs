@@ -49,8 +49,11 @@ pub fn refusal(error: &AuthError) -> Refusal {
 /// no variable at all. `None` keeps the engine's message and help.
 fn message(error: &AuthError) -> Option<String> {
     let text = match error {
-        AuthError::NotAuthenticated(_) => "no credentials were found. Set CS_CLIENT_ACCESS_KEY \
-             and CS_WORKSPACE_CRN, or log in with `stash auth login`."
+        // Also raised for a profile that was found but lacks its region or
+        // client ID, so the message does not say that nothing was found.
+        AuthError::NotAuthenticated(_) => "no usable credentials were found: none are set, or \
+             the profile from `stash auth login` is incomplete. Set CS_CLIENT_ACCESS_KEY and \
+             CS_WORKSPACE_CRN, or log in again with `stash auth login`."
             .to_owned(),
         AuthError::MissingWorkspaceCrn(_) => {
             "CS_CLIENT_ACCESS_KEY is set and CS_WORKSPACE_CRN is not. Set both.".to_owned()

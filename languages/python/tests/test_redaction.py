@@ -125,6 +125,14 @@ def test_repr_and_str_seal_every_encrypted_field(declare):
     assert list(user.__rich_repr__()) == [("email", SEALED), ("age", 42)]
 
 
+def test_every_pydantic_print_hook_seals_the_encrypted_fields():
+    # Pydantic builds __repr_str__, __pretty__ (devtools' debug()) and
+    # __rich_repr__ from __repr_args__.
+    user = declare_pydantic()
+    assert list(user.__repr_args__()) == [("email", SEALED), ("age", 42)]
+    assert SECRET not in user.__repr_str__(", ")
+
+
 def test_a_hand_written_repr_is_refused():
     def build():
         @stackencrypt.model("users")
