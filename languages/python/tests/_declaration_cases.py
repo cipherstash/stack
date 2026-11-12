@@ -12,6 +12,7 @@ import decimal
 import pickle
 import re
 import sys
+import typing
 import uuid
 from typing import Annotated, ClassVar, Final, List, NamedTuple, Optional, Union
 
@@ -494,6 +495,25 @@ def test_class_level_hints_are_not_fields_on_a_class_read_from_its_hints():
             bare: ClassVar = 0
 
     assert planned(User) == [("email", TextEq)]
+
+
+def test_a_bare_class_var_python_cannot_read_is_refused_with_advice():
+    # Python 3.9 cannot read a bare ClassVar written as a string, as the
+    # future import writes it. Python 3.14 can. The test asks this Python.
+    class User(KeywordConstructor):
+        email: Annotated[str, TextEq]
+        count: ClassVar = 0
+
+    try:
+        typing.get_type_hints(User, include_extras=True)
+    except TypeError:
+        error = refusal(lambda: stackencrypt.model("users")(User))
+        assert error.code == "declaration_hints_unresolved"
+        assert error.field == "count"
+        assert error.reason == "bare_class_var"
+        assert "ClassVar[int]" in str(error)
+    else:
+        assert planned(stackencrypt.model("users")(User)) == [("email", TextEq)]
 
 
 class RefusedBase(DeclarativeBase):
