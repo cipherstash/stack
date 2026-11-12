@@ -16,8 +16,11 @@ import {
   validatePostgresBaseline,
 } from './postgres-oracle.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
-import { isSnapshotInfrastructureError } from './snapshot-errors.mjs'
-import { resolveStack } from './stack-source.mjs'
+import {
+  isSnapshotInfrastructureError,
+  snapshotErrorCode,
+} from './snapshot-errors.mjs'
+import { resolveStack, verifyInstalledTarball } from './stack-source.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
 /** @typedef {Awaited<ReturnType<typeof createStoreSet>>} StoreSet
@@ -114,7 +117,7 @@ export function createRealDriver({
       throw Error(`${actor} command exited ${result.exitCode}`)
     return result
   }
-  /** Reads the Oracle database with the harness's admin connection. A store
+  /** Reads the Oracle database from the harness as the Run's role. A store
    * transport failure is infrastructure; anything else is migration damage. */
   async function oracleSnapshot() {
     try {
@@ -131,8 +134,10 @@ export function createRealDriver({
    * workspace's `src/migrate.mjs` `migrate(env)` inside App Host against its
    * fresh database, then runs it again: a rerun must either succeed without
    * changing data or refuse without changing anything. Data, not the exit
-   * code, decides the rerun check.
-   * @returns {Promise<import('../types.js').OracleCheck[]>} */
+   * code, decides the rerun check, except that a rerun the isolation backend
+   * timed out has not refused: it was killed, so it fails. Returns the snapshot
+   * taken after the first run, before any application code starts.
+   * @returns {Promise<{checks: import('../types.js').OracleCheck[], converted: unknown}>} */
   async function postgresConversion() {
     const convert = () =>
       attempt('app-host', oracleWorkspace, oracleStores, [
@@ -142,34 +147,41 @@ export function createRealDriver({
       ])
     const first = await convert()
     if (first.exitCode !== 0)
-      return [
-        {
-          id: 'migration.postgres-migrate',
-          passed: false,
-          cause: `migrate(env) exited ${first.exitCode}`,
-        },
-        {
-          id: 'migration.postgres-migrate-rerun',
-          passed: false,
-          cause: 'Rerun not checked: the first migrate(env) failed',
-        },
-      ]
+      return {
+        converted: null,
+        checks: [
+          {
+            id: 'migration.postgres-migrate',
+            passed: false,
+            cause: `migrate(env) exited ${first.exitCode}`,
+          },
+          {
+            id: 'migration.postgres-migrate-rerun',
+            passed: false,
+            cause: 'Rerun not checked: the first migrate(env) failed',
+          },
+        ],
+      }
     const before = await oracleSnapshot()
     const rerun = await convert()
     const after = await oracleSnapshot()
     const unchanged = isDeepStrictEqual(before, after)
-    return [
-      { id: 'migration.postgres-migrate', passed: true },
-      {
-        id: 'migration.postgres-migrate-rerun',
-        passed: unchanged,
-        ...(unchanged
-          ? {}
-          : {
-              cause: `Rerunning migrate(env) changed stored data (exit ${rerun.exitCode})`,
-            }),
-      },
-    ]
+    const rerunCause = rerun.timedOut
+      ? 'Rerunning migrate(env) timed out'
+      : unchanged
+        ? null
+        : `Rerunning migrate(env) changed stored data (exit ${rerun.exitCode})`
+    return {
+      converted: before,
+      checks: [
+        { id: 'migration.postgres-migrate', passed: true },
+        {
+          id: 'migration.postgres-migrate-rerun',
+          passed: !rerunCause,
+          ...(rerunCause ? { cause: rerunCause } : {}),
+        },
+      ],
+    }
   }
   return {
     async provision() {
@@ -437,14 +449,25 @@ export function createRealDriver({
             .split(sep)
             .some((part) => ['node_modules', '.git'].includes(part)),
       })
+      // The Migrator controls its copy of the tarball. Supply the App Host with
+      // the host-resolved artifact, removing first so a planted symlink cannot
+      // redirect the write, and confirm npm installed exactly that artifact.
+      const tarball = stackSource?.tarball
+      const installed = resolve(oracleWorkspace, 'resolved-stack.tgz')
+      if (tarball) {
+        await rm(installed, { force: true })
+        await cp(tarball, installed)
+      }
       await execute('app-host', oracleWorkspace, oracleStores, [
         'npm',
         'install',
         '--save-exact',
-        stackSource?.tarball
+        tarball
           ? 'file:./resolved-stack.tgz'
           : `@cipherstash/stack@${manifest.stack}`,
       ])
+      if (tarball)
+        await verifyInstalledTarball({ workspace: oracleWorkspace, tarball })
       // PostgreSQL starts createApp only after its conversion, in behaviour().
       if (postgresUpgrade) return
       host = await isolation.openAppHost({
@@ -457,8 +480,10 @@ export function createRealDriver({
     async behaviour() {
       /** @type {import('../types.js').OracleCheck[]} */
       let conversion = []
+      /** @type {unknown} */
+      let converted = null
       if (postgresUpgrade) {
-        conversion = await postgresConversion()
+        ;({ checks: conversion, converted } = await postgresConversion())
         host = await isolation.openAppHost({
           actor: 'app-host',
           workspace: oracleWorkspace,
@@ -484,8 +509,21 @@ export function createRealDriver({
           )
           const current = await oracleSnapshot()
           result.checks.unshift(...conversion)
+          // The conversion is migrate(env)'s job: storage checks must hold
+          // before createApp runs, not only after the application has run.
+          const early = converted
+            ? postgresMigrationChecks(legacySnapshot, converted)
+            : []
           result.checks.push(
-            ...postgresMigrationChecks(legacySnapshot, current),
+            ...postgresMigrationChecks(legacySnapshot, current).map((check) => {
+              const before = early.find((entry) => entry.id === check.id)
+              return before && !before.passed
+                ? {
+                    ...before,
+                    cause: `${before.cause} (before the application started)`,
+                  }
+                : check
+            }),
           )
           const checks = await result.mutate()
           if (freshSnapshotFailure) {
@@ -499,7 +537,7 @@ export function createRealDriver({
               },
             )
           }
-          checks.push(postgresFreshWriteCheck(freshSnapshot, 'new'))
+          checks.push(postgresFreshWriteCheck(freshSnapshot, 'new', current))
           checks.push(
             ...(await migrationChecks({
               workspace,
@@ -511,42 +549,68 @@ export function createRealDriver({
           )
           return checks
         }
-        let mutationSnapshot
+        /** @type {{snapshot: unknown} | {cause: string}} */
+        let mutationRead = { snapshot: undefined }
         const result = await behaviour(
           (method, args) => application.call(method, args),
           async () => {
-            try {
-              mutationSnapshot = await assigned(oracleStores).snapshot(
-                mutation.pk,
-              )
-            } catch (error) {
-              throw Object.assign(
-                new Error('Mutation Data inspection failed', { cause: error }),
-                { infrastructure: isSnapshotInfrastructureError(error) },
-              )
-            }
+            mutationRead = await read(mutation.pk)
+            if ('cause' in mutationRead)
+              throw Object.assign(new Error(mutationRead.cause), {
+                infrastructure: false,
+                checks: [
+                  ...checks,
+                  {
+                    id: 'migration.active-hmac-absent',
+                    passed: false,
+                    cause: mutationRead.cause,
+                  },
+                ],
+              })
           },
         )
-        let current
-        try {
-          current = await assigned(oracleStores).snapshot()
-        } catch (error) {
-          throw Object.assign(
-            new Error('Oracle snapshot read failed', { cause: error }),
-            { infrastructure: isSnapshotInfrastructureError(error) },
-          )
+        const checks = result.checks
+        /** A store outage stays infrastructure and carries the checks already
+         * completed; app-caused damage (a dropped table, a renamed column)
+         * becomes a failed check, so the Editor sees what broke.
+         * @param {string} [pk]
+         * @returns {Promise<{snapshot: unknown} | {cause: string}>} */
+        async function read(pk) {
+          try {
+            return { snapshot: await assigned(oracleStores).snapshot(pk) }
+          } catch (error) {
+            if (isSnapshotInfrastructureError(error))
+              throw Object.assign(
+                new Error('Oracle snapshot read failed', { cause: error }),
+                { infrastructure: true, checks: [...checks] },
+              )
+            return {
+              cause: `Oracle snapshot read failed: ${snapshotErrorCode(error)}`,
+            }
+          }
         }
-        const comparison = noRewrite(legacySnapshot, current)
-        result.checks.push(comparison)
-        const checks = await result.mutate()
+        const current = await read()
         checks.push(
-          ...(await migrationChecks({
-            workspace,
-            installedWorkspace: oracleWorkspace,
-            stackVersion: manifest.stack,
-            ffiRange,
-            mutationSnapshot,
-          })),
+          'cause' in current
+            ? { id: 'no-rewrite.legacy-bytes', passed: false, ...current }
+            : noRewrite(legacySnapshot, current.snapshot),
+        )
+        await result.mutate()
+        const migration = await migrationChecks({
+          workspace,
+          installedWorkspace: oracleWorkspace,
+          stackVersion: manifest.stack,
+          ffiRange,
+          mutationSnapshot:
+            'snapshot' in mutationRead ? mutationRead.snapshot : undefined,
+        })
+        checks.push(
+          ...migration.map((check) =>
+            'cause' in mutationRead &&
+            check.id === 'migration.active-hmac-absent'
+              ? { ...check, passed: false, cause: mutationRead.cause }
+              : check,
+          ),
         )
         return checks
       } finally {

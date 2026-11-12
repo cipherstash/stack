@@ -178,9 +178,12 @@ export async function migrationChecks({
       })
     }
   }
+  // Inspect the Migrator's output and the App Host's installed copy: install
+  // lifecycle scripts run in the installed copy, which is the one that executes.
+  const inspected = new Set([workspace, installedWorkspace])
   // One read per check keeps a missing lockfile from hiding the independent shim result.
   await check('migration.protect-dependencies-absent', async () => {
-    for (const directory of new Set([workspace, installedWorkspace])) {
+    for (const directory of inspected) {
       const manifest = object(
         JSON.parse(await textFile(join(directory, 'package.json'))),
       )
@@ -218,7 +221,7 @@ export async function migrationChecks({
     )
   })
   await check('migration.endpoint-shim-absent', async () => {
-    for (const directory of new Set([workspace, installedWorkspace])) {
+    for (const directory of inspected) {
       if (sourceFacts(await sources(directory)).endpointShim) return false
     }
     return true

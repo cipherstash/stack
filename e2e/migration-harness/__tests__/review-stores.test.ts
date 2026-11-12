@@ -12,10 +12,19 @@ vi.mock('node:child_process', () => ({
 }))
 vi.mock('postgres', () => ({ default: connect }))
 
+import {
+  postgresColumns,
+  postgresSnapshotQuery,
+} from '../run/legacy-columns.mjs'
 import { createStoreSet, disposeStores } from '../run/real-stores.mjs'
 
 let dockerCalls: string[][]
-let statements: { database: string; text: string; values: unknown[] }[]
+let statements: {
+  database: string
+  username: string
+  text: string
+  values: unknown[]
+}[]
 let endings: string[]
 let networks: Map<string, boolean>
 let containers: Map<string, { networks: string[]; args: string[] }>
@@ -62,40 +71,44 @@ beforeEach(() => {
       throw Error('container removal failed')
     return { stdout: '', stderr: '' }
   })
-  connect.mockImplementation(({ database }: { database: string }) => {
-    const query = async (
-      strings: TemplateStringsArray,
-      ...values: unknown[]
-    ) => {
-      statements.push({ database, text: strings.join('?'), values })
-      return []
-    }
-    return Object.assign(query, {
-      unsafe: async (text: string) => {
-        statements.push({ database, text, values: [] })
-        if (cleanupFailure && text.startsWith(cleanupFailure))
-          throw Error(`${cleanupFailure} failed`)
+  connect.mockImplementation(
+    ({ database, username }: { database: string; username: string }) => {
+      const query = async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        statements.push({ database, username, text: strings.join('?'), values })
         return []
-      },
-      end: async () => {
-        endings.push(database)
-        if (cleanupFailure === 'admin end' && database === 'postgres')
-          throw Error('admin end failed')
-      },
-    })
-  })
+      }
+      return Object.assign(query, {
+        unsafe: async (text: string, values: unknown[] = []) => {
+          statements.push({ database, username, text, values })
+          if (cleanupFailure && text.startsWith(cleanupFailure))
+            throw Error(`${cleanupFailure} failed`)
+          return []
+        },
+        end: async () => {
+          endings.push(database)
+          if (cleanupFailure === 'admin end' && database === 'postgres')
+            throw Error('admin end failed')
+        },
+      })
+    },
+  )
 })
 
 afterEach(() => vi.unstubAllGlobals())
 
 async function provision(
   resources: import('../run/real-stores.mjs').Resource[],
+  postgresV2 = false,
 ) {
   return createStoreSet({
     runId: 'review',
     actor: `oracle${++actorOrdinal}`,
     eqlBundle: fileURLToPath(new URL('../run/stores.mjs', import.meta.url)),
     resources,
+    postgresV2,
   })
 }
 
@@ -165,9 +178,58 @@ test('the Oracle snapshot reads the selected record from both assigned stores', 
 
     expect(JSON.parse(requests[0]).Key).toEqual({ pk: { S: 'mutation' } })
     expect(
-      statements.find((query) => query.text.includes('SELECT pk, email::jsonb'))
-        ?.values,
+      statements.find((query) => query.text === postgresSnapshotQuery)?.values,
     ).toEqual(['mutation'])
+    for (const column of postgresColumns)
+      expect(postgresSnapshotQuery).toContain(`"${column}"::jsonb`)
+  } finally {
+    await disposeStores(resources)
+  }
+})
+
+test('the PostgreSQL snapshot runs as the Run application role, never as the superuser', async () => {
+  const resources: import('../run/real-stores.mjs').Resource[] = []
+  try {
+    const stores = await provision(resources)
+    statements = []
+    await stores.postgresSnapshot()
+    const reads = statements.filter((query) =>
+      /pg_attribute|FROM customers|pg_index/.test(query.text),
+    )
+    expect(reads.length).toBeGreaterThan(0)
+    // A migration can replace customers with a view over a SECURITY INVOKER
+    // function; read as postgres, that function would run as superuser.
+    for (const read of reads) {
+      expect(read.username).not.toBe('postgres')
+      expect(read.username).toMatch(/^mh_/)
+      expect(read.database).toBe(read.username)
+    }
+  } finally {
+    await disposeStores(resources)
+  }
+})
+
+const eqlV2Sql = 'SELECT 1; -- synthetic EQL v2 bundle'
+
+test('the EQL v2 bundle download is bounded and refused unless its digest matches', async () => {
+  const fetches: { url: string; signal: unknown }[] = []
+  vi.stubGlobal(
+    'fetch',
+    async (url: string, options?: { signal?: unknown }) => {
+      fetches.push({ url, signal: options?.signal })
+      return { ok: true, status: 200, text: async () => eqlV2Sql }
+    },
+  )
+  const resources: import('../run/real-stores.mjs').Resource[] = []
+  try {
+    const result = await provision(resources, true).then(
+      () => null,
+      (error: Error) => error.message,
+    )
+    expect(result).toMatch(/digest/i)
+    expect(fetches).toHaveLength(1)
+    expect(fetches[0].signal).toBeInstanceOf(AbortSignal)
+    expect(statements.some((query) => query.text === eqlV2Sql)).toBe(false)
   } finally {
     await disposeStores(resources)
   }

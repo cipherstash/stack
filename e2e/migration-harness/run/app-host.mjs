@@ -22,6 +22,9 @@ const methods = new Set([
   'copyToDynamo',
   'close',
 ])
+// Mounted alone at /harness/app-host.mjs, so this cannot import the pattern;
+// keep it equal to APP_HOST_ERROR_CODE in isolation.mjs.
+const errorCode = /^(?:[0-9A-Z]{5}|ECONNRESET|ECONNREFUSED|ETIMEDOUT)$/
 const mode = process.argv[2] ?? 'serve'
 if (!['serve', 'migrate'].includes(mode)) throw Error('Unknown App Host mode')
 if (mode === 'migrate') {
@@ -59,8 +62,18 @@ if (mode === 'migrate') {
         `${JSON.stringify({ id, result: result ?? null })}\n`,
       )
     } catch (error) {
+      // Only a SQLSTATE or socket code crosses the boundary; the Oracle
+      // classifies failures by it, and any other code is application data.
+      const code =
+        error && typeof error === 'object' && 'code' in error
+          ? error.code
+          : undefined
       process.stdout.write(
-        `${JSON.stringify({ id, error: error instanceof Error ? error.message : String(error) })}\n`,
+        `${JSON.stringify({
+          id,
+          error: error instanceof Error ? error.message : String(error),
+          ...(typeof code === 'string' && errorCode.test(code) ? { code } : {}),
+        })}\n`,
       )
     }
   }

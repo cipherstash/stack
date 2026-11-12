@@ -84,6 +84,38 @@ test('invalid friction remains primary while independent behaviour diagnostics r
     ['invalid-friction-log', 'behaviour'],
   )
 })
+test('provisioning failure is infrastructure, skips every dependent stage and excludes Editor', async () => {
+  const report = await run({
+    id: 'provision',
+    manifest,
+    driver: driver({
+      provision: async () => {
+        throw Error('docker unavailable')
+      },
+    }),
+  })
+  assert.equal(report.outcome, 'infrastructure')
+  assert.equal(report.migratorInvoked, false)
+  assert.deepEqual(report.failures, [
+    {
+      stage: 'provisioning',
+      category: 'infrastructure',
+      cause: 'docker unavailable',
+    },
+  ])
+  assert.equal(report.editorEligible, false)
+  assert.deepEqual(
+    report.stages.filter((s) => s.status === 'skipped').map((s) => s.name),
+    [
+      'unmigrated-install',
+      'initialization-snapshot',
+      'migrator',
+      'friction-validation',
+      'app-host-install',
+      'behaviour',
+    ],
+  )
+})
 test('pre-Migrator installation failure is infrastructure, skips dependents and excludes Editor', async () => {
   const report = await run({
     id: 'install',
@@ -189,6 +221,10 @@ test('App Host install failure outranks invalid friction', async () => {
     }),
   })
   assert.equal(report.outcome, 'install')
+  assert.deepEqual(
+    report.failures.map((f) => f.category),
+    ['invalid-friction-log', 'install'],
+  )
 })
 test('trusted successful forbidden access stops later calls and excludes Editor', async () => {
   let later = false

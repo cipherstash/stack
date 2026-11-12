@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   cp,
   mkdir,
@@ -14,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { legacy } from '../run/behaviour.mjs'
+import { dynamoColumns } from '../run/legacy-columns.mjs'
 import { migrationChecks, noRewriteCheck } from '../run/migration-checks.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
@@ -28,14 +30,7 @@ const observed = vi.hoisted(() => ({
         Item: {
           pk: { S: 'legacy' },
           ...Object.fromEntries(
-            [
-              'email',
-              'emailLower',
-              'age',
-              'balance',
-              'active',
-              'notes',
-            ].flatMap((key) => [
+            dynamoColumns.flatMap((key) => [
               [`${key}__source`, { S: 'original' }],
               [`${key}__hmac`, { S: 'term' }],
             ]),
@@ -107,6 +102,8 @@ async function setup(
     timeoutMs?: number
     toolResponse?: { exitCode: number; stdout: string; stderr: string }
     toolFailsOnCall?: number
+    stack?: string
+    npm?: (invocation: IsolationOptions) => Promise<void>
   } = {},
 ) {
   const output = await mkdtemp(join(tmpdir(), 'mh-review-driver-'))
@@ -135,6 +132,7 @@ async function setup(
         const result = await execute(file, args, { cwd: invocation.workspace })
         return { exitCode: 0, stdout: result.stdout, stderr: result.stderr }
       }
+      if (file === 'npm') await options.npm?.(invocation)
       if (++toolCalls === options.toolFailsOnCall)
         throw Object.assign(Error('isolation broke'), { infrastructure: true })
       return options.toolResponse ?? { exitCode: 0, stdout: '', stderr: '' }
@@ -163,7 +161,7 @@ async function setup(
   }
   const manifest: Manifest & { stack: string } = {
     guideHash: 'guide',
-    stack: '1.2.1',
+    stack: options.stack ?? '1.2.1',
     agents: { limits: { timeMs: options.timeoutMs ?? 5000, turns: 5 } },
   }
   const driver = createRealDriver({
@@ -456,6 +454,211 @@ test.each([
   },
 )
 
+/** Pack a minimal Stack tarball that resolveStack accepts. */
+async function stackTarball(directory: string, marker: string) {
+  const source = await mkdtemp(join(tmpdir(), 'mh-stack-tgz-'))
+  outputs.push(source)
+  await mkdir(join(source, 'package'))
+  await writeFile(
+    join(source, 'package/package.json'),
+    JSON.stringify({
+      name: '@cipherstash/stack',
+      version: '1.2.1',
+      description: marker,
+      dependencies: { '@cipherstash/protect-ffi': '0.33.0' },
+    }),
+  )
+  const tarball = join(directory, `${marker}.tgz`)
+  await execute('tar', ['-czf', tarball, '-C', source, 'package'])
+  return tarball
+}
+/** Record the lock entry npm writes for a local tarball install. */
+async function npmRecords(workspace: string, tarball: string) {
+  const integrity = `sha512-${createHash('sha512')
+    .update(await readFile(tarball))
+    .digest('base64')}`
+  await writeFile(
+    join(workspace, 'package-lock.json'),
+    JSON.stringify({
+      packages: {
+        'node_modules/@cipherstash/stack': {
+          version: '1.2.1',
+          resolved: 'file:resolved-stack.tgz',
+          integrity,
+        },
+      },
+    }),
+  )
+}
+
+test('App Host installs the host-resolved Stack tarball, not a Migrator substitute', async () => {
+  const sources = await mkdtemp(join(tmpdir(), 'mh-stack-sources-'))
+  outputs.push(sources)
+  const original = await stackTarball(sources, 'original')
+  const substitute = await stackTarball(sources, 'substitute')
+  const { driver, output } = await setup({
+    stack: original,
+    npm: async ({ actor, workspace }) => {
+      if (actor === 'app-host')
+        await npmRecords(workspace, join(workspace, 'resolved-stack.tgz'))
+    },
+  })
+  try {
+    await driver.snapshot()
+    // The Migrator controls its workspace, including the copied tarball.
+    await writeFile(
+      join(output, 'migrator/resolved-stack.tgz'),
+      await readFile(substitute),
+    )
+    await driver.installAppHost()
+    expect(await readFile(join(output, 'app-host/resolved-stack.tgz'))).toEqual(
+      await readFile(original),
+    )
+  } finally {
+    await driver.close()
+  }
+})
+
+test('App Host install fails when the installed Stack is not the resolved tarball', async () => {
+  const sources = await mkdtemp(join(tmpdir(), 'mh-stack-sources-'))
+  outputs.push(sources)
+  const original = await stackTarball(sources, 'original')
+  const substitute = await stackTarball(sources, 'substitute')
+  const { driver } = await setup({
+    stack: original,
+    npm: async ({ actor, workspace }) => {
+      if (actor === 'app-host') await npmRecords(workspace, substitute)
+    },
+  })
+  try {
+    await driver.snapshot()
+    await expect(driver.installAppHost()).rejects.toThrow(
+      'Installed Stack is not the resolved tarball',
+    )
+  } finally {
+    await driver.close()
+  }
+})
+
+async function runReal(driver: Awaited<ReturnType<typeof setup>>['driver']) {
+  try {
+    return await run({
+      id: 'snapshot-evidence',
+      manifest: { guideHash: 'guide' },
+      driver: {
+        ...driver,
+        provision: async () => {},
+        migrate: async () => ({ exitCode: 0 }),
+        friction: async () => [],
+      },
+    })
+  } finally {
+    await driver.close()
+  }
+}
+function oracleChecks(report: Awaited<ReturnType<typeof run>>) {
+  return report.evidence
+    .filter((item) => item.kind === 'oracle-check')
+    .map((item) => Object(item.payload))
+}
+
+test('a post-read schema error records a failed no-rewrite check and keeps the read checks', async () => {
+  const { driver } = await setup()
+  const baseline = await observed.snapshot()
+  observed.snapshot
+    .mockResolvedValueOnce(baseline)
+    .mockRejectedValueOnce(
+      Object.assign(Error('column "email" does not exist'), { code: '42703' }),
+    )
+  const report = await runReal(driver)
+  expect(report.outcome).toBe('behaviour')
+  const checks = oracleChecks(report)
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: 'no-rewrite.legacy-bytes',
+      passed: false,
+      cause: expect.stringContaining('42703'),
+    }),
+  )
+  expect(checks).toContainEqual(
+    expect.objectContaining({ id: 'behaviour.legacy-findPostgresAge' }),
+  )
+})
+
+test('a reset connection on the Mutation Data snapshot is infrastructure and keeps completed checks', async () => {
+  const { driver } = await setup()
+  const baseline = await observed.snapshot()
+  observed.snapshot
+    .mockResolvedValueOnce(baseline)
+    .mockResolvedValueOnce(baseline)
+    .mockRejectedValueOnce(
+      Object.assign(Error('connection reset'), { code: 'ECONNRESET' }),
+    )
+  const report = await runReal(driver)
+  expect(report.outcome).toBe('infrastructure')
+  expect(report.editorEligible).toBe(false)
+  expect(oracleChecks(report)).toContainEqual(
+    expect.objectContaining({ id: 'no-rewrite.legacy-bytes', passed: true }),
+  )
+})
+
+test('a schema error on the Mutation Data snapshot fails the active-HMAC check with its cause', async () => {
+  const { driver } = await setup()
+  const baseline = await observed.snapshot()
+  observed.snapshot
+    .mockResolvedValueOnce(baseline)
+    .mockResolvedValueOnce(baseline)
+    .mockRejectedValueOnce(
+      Object.assign(Error('relation "customers" does not exist'), {
+        code: '42P01',
+      }),
+    )
+  const report = await runReal(driver)
+  expect(report.outcome).toBe('behaviour')
+  const checks = oracleChecks(report)
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: 'migration.active-hmac-absent',
+      passed: false,
+      cause: expect.stringContaining('42P01'),
+    }),
+  )
+  expect(checks).toContainEqual(
+    expect.objectContaining({ id: 'no-rewrite.legacy-bytes', passed: true }),
+  )
+})
+
+test('inspects the stored active field before later full puts can overwrite it', async () => {
+  const { driver, calls } = await setup()
+  await driver.snapshot()
+  await driver.installAppHost()
+  let callsAtMutationSnapshot: string[] | undefined
+  observed.snapshot.mockImplementation(async (pk?: string) => {
+    if (pk === 'mutation') callsAtMutationSnapshot = calls.slice()
+    return {
+      dynamo: { Item: { email__source: { S: 'original' } } },
+      postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
+    }
+  })
+  try {
+    await driver.behaviour()
+  } finally {
+    observed.snapshot.mockReset()
+    observed.snapshot.mockImplementation(async () => ({
+      dynamo: { Item: { email__source: { S: 'original' } } },
+      postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
+    }))
+  }
+  expect(callsAtMutationSnapshot).toBeDefined()
+  const seen = callsAtMutationSnapshot ?? []
+  const setActive = seen.lastIndexOf('setActive')
+  expect(setActive).toBeGreaterThanOrEqual(0)
+  // No later write may run between setActive and the inspected snapshot.
+  expect(seen.slice(setActive + 1)).not.toContain('put')
+  expect(seen).not.toContain('copyToPostgres')
+  expect(seen).not.toContain('copyToDynamo')
+})
+
 test('F12 disposes stores even when the isolation supervisor fails to stop', async () => {
   const { driver } = await setup({ stopFails: true })
   await expect(driver.close()).rejects.toThrow('supervisor stop failed')
@@ -546,6 +749,9 @@ test.each([
   ['ffi alias', 'migration.protect-ffi-version'],
   ['endpoint shim', 'migration.endpoint-shim-absent'],
   ['stale active hmac', 'migration.active-hmac-absent'],
+  ['installed endpoint shim', 'migration.endpoint-shim-absent'],
+  ['installed legacy import', 'migration.protect-dependencies-absent'],
+  ['installed legacy dependency', 'migration.protect-dependencies-absent'],
 ])('F3 rejects %s', async (scenario, id) => {
   const options = await migratedFiles()
   const manifestPath = join(options.workspace, 'package.json')
@@ -579,6 +785,25 @@ test.each([
     await writeFile(
       join(options.workspace, 'src/app.mjs'),
       'process.env.CS_CTS_HOST = "https://old.invalid"',
+    )
+  // A lifecycle script can rewrite the App Host's installed copy after the
+  // Migrator workspace was inspected; the installed copy is what executes.
+  if (scenario === 'installed endpoint shim')
+    await writeFile(
+      join(options.installedWorkspace, 'src/app.mjs'),
+      'process.env.CS_ZEROKMS_HOST = "https://old.invalid"',
+    )
+  if (scenario === 'installed legacy import')
+    await writeFile(
+      join(options.installedWorkspace, 'src/app.mjs'),
+      'import { protect } from "@cipherstash/protect"',
+    )
+  if (scenario === 'installed legacy dependency')
+    await writeFile(
+      join(options.installedWorkspace, 'package.json'),
+      JSON.stringify({
+        dependencies: { '@cipherstash/protect': '10.2.1' },
+      }),
     )
   if (scenario === 'stale active hmac')
     Object.assign(options.mutationSnapshot.dynamo.Item, {

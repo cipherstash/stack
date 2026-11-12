@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import postgres from 'postgres'
+import { postgresSnapshotQuery } from './legacy-columns.mjs'
 import { dynamoSnapshotError } from './snapshot-errors.mjs'
 import { provisionPostgres } from './stores.mjs'
 
@@ -64,6 +65,34 @@ net.createServer((client) => {
   const match = /^127\.0\.0\.1:(\d+)$/.exec(binding)
   if (!match) throw Error('Store administration relay has no loopback binding')
   return Number(match[1])
+}
+
+// The v2 bundle is a mutable remote asset executed as superuser, so it is
+// pinned to the digest GitHub records for the eql-2.2.1 release asset.
+const EQL_V2_URL =
+  'https://github.com/cipherstash/encrypt-query-language/releases/download/eql-2.2.1/cipherstash-encrypt.sql'
+const EQL_V2_SHA256 =
+  '7f23177714e1891c97413a1fbe22277c4c633b950b9e6f68819ac6e87cc92ef9'
+const EQL_V2_TIMEOUT_MS = 60_000
+/** @type {Promise<string>|null} */
+let eqlV2Bundle = null
+/** Downloads and verifies the bundle once per process; a failure is not cached. */
+function loadEqlV2Bundle() {
+  eqlV2Bundle ??= (async () => {
+    const response = await fetch(EQL_V2_URL, {
+      signal: AbortSignal.timeout(EQL_V2_TIMEOUT_MS),
+    })
+    if (!response.ok)
+      throw Error(`EQL v2 bundle download failed: ${response.status}`)
+    const sql = await response.text()
+    if (createHash('sha256').update(sql).digest('hex') !== EQL_V2_SHA256)
+      throw Error('EQL v2 bundle digest mismatch')
+    return sql
+  })().catch((error) => {
+    eqlV2Bundle = null
+    throw error
+  })
+  return eqlV2Bundle
 }
 
 // Runs in an Iteration share one server per actor; databases and roles remain per Run.
@@ -129,14 +158,7 @@ async function initializePostgres(actor, eqlBundle, postgresV2) {
       max: 1,
     })
     try {
-      if (postgresV2) {
-        const response = await fetch(
-          'https://github.com/cipherstash/encrypt-query-language/releases/download/eql-2.2.1/cipherstash-encrypt.sql',
-        )
-        if (!response.ok)
-          throw Error(`EQL v2 bundle download failed: ${response.status}`)
-        await template.unsafe(await response.text())
-      }
+      if (postgresV2) await template.unsafe(await loadEqlV2Bundle())
       await template.unsafe(await readFile(eqlBundle, 'utf8'))
       await template.unsafe(
         'REVOKE CONNECT ON DATABASE mh_template FROM PUBLIC',
@@ -230,7 +252,9 @@ export async function createStoreSet({
     actor,
     template: 'mh_template',
   })
-  const snapshotSql = postgres({
+  // Grants on the template's EQL schemas need the superuser; this connection
+  // closes before any migrated object exists.
+  const grantSql = postgres({
     host: '127.0.0.1',
     port: pgPort,
     username: 'postgres',
@@ -238,25 +262,34 @@ export async function createStoreSet({
     database: identity.database,
     max: 1,
   })
-  resources.push(() => snapshotSql.end({ timeout: 1 }))
-  if (postgresV2) {
-    await snapshotSql.unsafe(
-      `GRANT USAGE ON SCHEMA eql_v2 TO "${identity.role}"`,
-    )
-    await snapshotSql.unsafe(
-      `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v2 TO "${identity.role}"`,
-    )
+  try {
+    for (const schema of [
+      ...(postgresV2 ? ['eql_v2'] : []),
+      'eql_v3',
+      'eql_v3_internal',
+    ]) {
+      await grantSql.unsafe(
+        `GRANT USAGE ON SCHEMA ${schema} TO "${identity.role}"`,
+      )
+      await grantSql.unsafe(
+        `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${schema} TO "${identity.role}"`,
+      )
+    }
+  } finally {
+    await grantSql.end({ timeout: 1 })
   }
-  await snapshotSql.unsafe(`GRANT USAGE ON SCHEMA eql_v3 TO "${identity.role}"`)
-  await snapshotSql.unsafe(
-    `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3 TO "${identity.role}"`,
-  )
-  await snapshotSql.unsafe(
-    `GRANT USAGE ON SCHEMA eql_v3_internal TO "${identity.role}"`,
-  )
-  await snapshotSql.unsafe(
-    `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3_internal TO "${identity.role}"`,
-  )
+  // Snapshots read objects a migration created. Read as the Run's own role so a
+  // view or function planted there runs with that role's privileges, never as
+  // the superuser that could reach other Runs on the shared server.
+  const snapshotSql = postgres({
+    host: '127.0.0.1',
+    port: pgPort,
+    username: identity.role,
+    password: identity.password,
+    database: identity.database,
+    max: 1,
+  })
+  resources.push(() => snapshotSql.end({ timeout: 1 }))
   const env = {
     DATABASE_URL: `postgresql://${identity.role}:${identity.password}@127.0.0.1:5432/${identity.database}`,
     HARNESS_DYNAMO_URL: 'http://127.0.0.1:8000',
@@ -362,8 +395,7 @@ export async function createStoreSet({
       if (!response.ok) throw dynamoSnapshotError(response.status)
       return {
         dynamo: await response.json(),
-        postgres:
-          await snapshotSql`SELECT pk, email::jsonb, age::jsonb, notes::jsonb FROM customers WHERE pk = ${pk}`,
+        postgres: await snapshotSql.unsafe(postgresSnapshotQuery, [pk]),
       }
     },
   }

@@ -46,8 +46,9 @@ const manifest = {
     await promisify(execFile)('git', ['rev-parse', 'HEAD'], { cwd: root })
   ).stdout.trim(),
   agents: {
-    migrator: command,
-    model: 'command-adapter',
+    // A deterministic Fake Migrator Run must not read as real agent evidence.
+    migrator: fakeMigration ? `fake:${fakeMigration}` : command,
+    model: fakeMigration ? 'fake-migrator' : 'command-adapter',
     limits: { timeMs: 40 * 60 * 1000, turns: 200 },
     allowlist: ['brokered isolated exec'],
   },
