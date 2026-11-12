@@ -81,7 +81,7 @@ with psycopg.connect(DATABASE_URL) as conn:
         users = cipher.decrypt(cur.fetchall())   # a list of User
 ```
 
-`decrypt` builds whole `User` instances, so the `SELECT` must name every declared column, passthrough columns included. A row without one raises `stackencrypt.DecryptError` with the code `decrypt_missing_column`. Other columns in the row are ignored.
+`decrypt` returns one `User` for each row, in the order of the rows. `decrypt` builds whole `User` instances, so the `SELECT` must name every declared column, passthrough columns included. A row without one raises `stackencrypt.DecryptError` with the code `decrypt_missing_column`. Other columns in the row are ignored.
 
 A passthrough `datetime` field needs a `timestamptz` column. psycopg reads a `timestamp` column as a naive `datetime`, with no `tzinfo`. `decrypt` refuses a naive `datetime` with `value_naive_datetime`, as `encrypt` does.
 
@@ -217,7 +217,7 @@ Each class must be declared with `stackencrypt.model` and mapped by SQLAlchemy. 
 - `declaration_table_mismatch`: the table in `stackencrypt.model` is not the `__tablename__`.
 - `declaration_column_name`: an encrypted field's column has another name than the field, as with `mapped_column("email_address")`.
 - `declaration_column_type`: an encrypted field's column is not the EQL type of its marker. Set `type_annotation_map = eql_type_map` on the base.
-- `declaration_unique_column`: an encrypted column has `unique=True` or a unique constraint. Each EQL value contains new random ciphertext, so the constraint would never find a duplicate. Use a unique index on `eql_v4.eq_term(col)`, as in "Migrations with Alembic".
+- `declaration_unique_column`: an encrypted column has `unique=True` or a unique constraint. Each EQL value contains new random ciphertext, so the constraint would never find a duplicate. Equal values have equal `eq` terms, so use a unique index on `eql_v4.eq_term(col)`, as in "Migrations with Alembic".
 - `declaration_already_configured`: another class is configured for the same table.
 
 A statement that puts an encrypted value inside its SQL, such as `insert(Customer).values(email=...)`, raises `DeclarationError` with `declaration_inline_value`. The value is not stored. Pass the values as parameters instead, as `session.add` and `session.execute(insert(Customer), rows)` do.
@@ -326,6 +326,8 @@ Nothing else is hidden. These all contain the plaintext:
 - a log line that formats a field, such as `log.info(user.email)`
 - `dataclasses.asdict`, Pydantic's `model_dump`, `vars`, and `__dict__`
 - `pickle.dumps(user)`, and anything a debugger reads from the attributes
+- a Pydantic `ValidationError`, which shows the rejected input. Set `hide_input_in_errors=True` in the model's `model_config` to leave it out.
+- FastAPI's 422 response, which repeats the input of each error. `hide_input_in_errors` does not change it. Replace FastAPI's handler for `RequestValidationError` with one that leaves out `input`.
 
 If the class defines its own `__repr__`, `__str__`, or `__rich_repr__`, the decorator refuses it. `__rich_repr__` is the method the `rich` library prints through. To keep your own methods, pass `redact=False` to `stackencrypt.model`. Your methods must then hide the plaintext themselves.
 
@@ -341,6 +343,8 @@ A model field cannot be a `uuid.UUID`. The decorator refuses it with the code `d
 
 - Leave the key column out of the model. `encrypt` never writes a column the model does not declare, and `decrypt` ignores one. Insert and select the key yourself, beside the encrypted values.
 - Declare the field as `Annotated[str, Passthrough]`. Convert with `str(key)` before `encrypt`. Select the column as `id::text`, because psycopg reads a `uuid` column as a `uuid.UUID`, and `decrypt` refuses that for a `str` field.
+
+A key the database generates, such as an `identity` column, cannot be a required field: the model is encrypted before PostgreSQL creates the key. Leave it out of the model, or declare it `Annotated[Optional[int], Ignore] = None`. Insert with `RETURNING id` to get the new key. To read it back, select it beside the encrypted columns. `decrypt` returns the instances in the order of the rows, so the key of row `n` belongs to instance `n`. With the SQLAlchemy layer, declare it `Mapped[Annotated[int, Ignore]]` with `mapped_column(primary_key=True)`, as in that section's example.
 
 ## What is not supported yet
 
