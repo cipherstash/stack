@@ -149,6 +149,29 @@ def test_a_naive_datetime_is_refused(untouched):
     assert "tzinfo" in error.message
 
 
+class NoOffset(datetime.tzinfo):
+    """A tzinfo that gives no offset: Python counts its datetime as naive."""
+
+    def utcoffset(self, dt):
+        return None
+
+
+def test_a_datetime_whose_tzinfo_gives_no_offset_is_naive(untouched):
+    cipher, User = cipher_for(seen=Annotated[datetime.datetime, Timestamp])
+    seen = datetime.datetime(2026, 1, 1, tzinfo=NoOffset())
+    error = refused(cipher, User(email=SECRET, seen=seen))
+    assert error.code == "value_naive_datetime"
+
+
+def test_a_model_of_another_class_is_the_wrong_type(untouched):
+    # Contact has the same field names, so every getattr would succeed.
+    cipher, _ = cipher_for(age=Annotated[int, Passthrough])
+    Contact = dataclasses.make_dataclass("Contact", [("email", str), ("age", int)])
+    error = refused(cipher, Contact(email=SECRET, age=3))
+    assert error.code == "value_wrong_type"
+    assert "model 0 is a Contact" in error.message
+
+
 def test_every_model_is_checked_before_any_request(untouched):
     # The bad value is in the last model of many.
     cipher, User = cipher_for(age=Annotated[int, Bigint])

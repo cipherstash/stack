@@ -9,6 +9,7 @@
 //! only after every value has been turned into a Python object, so a call
 //! that fails returns no instance.
 
+use pyo3::exceptions::{PyRecursionError, PyTypeError, PyUnicodeEncodeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString};
@@ -130,7 +131,7 @@ fn stored_row(plan: &Plan, row: &Bound<'_, PyAny>, at: usize) -> PyResult<Row> {
                     .eql(&plan.plan, field, text.as_bytes())
                     .map_err(in_row)?;
             }
-            None => passthrough(&mut stored, field, *kind, &value).map_err(in_row)?,
+            None => passthrough(&mut stored, field, *kind, &value)?.map_err(in_row)?,
         }
     }
     Ok(stored)
@@ -146,7 +147,10 @@ fn stored_row(plan: &Plan, row: &Bound<'_, PyAny>, at: usize) -> PyResult<Row> {
 /// from 3.10. The text is then copied once more, into the engine's frame.
 ///
 /// The outer error is Python's own; the inner one is the refusal, for the
-/// caller to name the row in.
+/// caller to name the row in. Only an error that is about the value
+/// becomes a refusal: a `str` with no UTF-8 encoding, or a `dict` that
+/// `json.dumps` refuses. Any other error, such as `MemoryError` or
+/// `KeyboardInterrupt`, propagates as it is.
 fn eql_text<'py>(
     field: &Field,
     value: &Bound<'py, PyAny>,
@@ -161,7 +165,14 @@ fn eql_text<'py>(
         }))
     };
     if let Ok(text) = value.cast::<PyString>() {
-        return Ok(Ok(text.encode_utf8()?));
+        // A lone surrogate is a str Python holds with no UTF-8 encoding.
+        return match text.encode_utf8() {
+            Ok(bytes) => Ok(Ok(bytes)),
+            Err(error) if error.is_instance_of::<PyUnicodeEncodeError>(py) => {
+                malformed("is a str that is not valid UTF-8".to_owned())
+            }
+            Err(error) => Err(error),
+        };
     }
     if let Ok(bytes) = value.cast::<PyBytes>() {
         return match std::str::from_utf8(bytes.as_bytes()) {
@@ -172,7 +183,14 @@ fn eql_text<'py>(
     if value.cast::<PyDict>().is_ok() {
         return match dumps(py)?.call1((value,)) {
             Ok(text) => Ok(Ok(text.cast::<PyString>()?.encode_utf8()?)),
-            Err(_) => malformed("is a dict that is not JSON".to_owned()),
+            Err(error)
+                if error.is_instance_of::<PyTypeError>(py)
+                    || error.is_instance_of::<PyValueError>(py)
+                    || error.is_instance_of::<PyRecursionError>(py) =>
+            {
+                malformed("is a dict that is not JSON".to_owned())
+            }
+            Err(error) => Err(error),
         };
     }
     if value.is_none() {
@@ -185,38 +203,34 @@ fn eql_text<'py>(
 }
 
 /// A passthrough column's value, checked by exact type as on `encrypt`.
+///
+/// An error Python raises while the value is read, such as one from a
+/// user's `tzinfo`, propagates as it is, as on `encrypt`. The inner error
+/// is the refusal.
 fn passthrough(
     stored: &mut Row,
     field: &Field,
     kind: PyKind,
     value: &Bound<'_, PyAny>,
-) -> Result<(), Refusal> {
+) -> PyResult<Result<(), Refusal>> {
     let named = |refused: Refusal| Refusal {
         message: format!("field {:?}: {}", field.name, refused.message),
         field: Some(field.name.clone()),
         reason: Some("passthrough".to_owned()),
         ..refused
     };
-    let read = match read(value, kind, "passthrough") {
-        Ok(Ok(read)) => read,
-        Ok(Err(refused)) => return Err(named(refused)),
-        Err(error) => {
-            return Err(named(Refusal {
-                code: "decrypt_malformed".to_owned(),
-                message: format!("the value could not be read: {error}"),
-                field: None,
-                reason: None,
-            }))
-        }
+    let read = match read(value, kind, "passthrough")? {
+        Ok(read) => read,
+        Err(refused) => return Ok(Err(named(refused))),
     };
-    stored.passthrough(field, read.value()).map_err(|misfit| {
+    Ok(stored.passthrough(field, read.value()).map_err(|misfit| {
         named(Refusal {
             code: misfit.code().to_owned(),
             message: "the value is outside what the engine stores.".to_owned(),
             field: None,
             reason: None,
         })
-    })
+    }))
 }
 
 /// An opened value as the Python object of its field.

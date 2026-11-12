@@ -73,7 +73,7 @@ class Cipher(Generic[T]):
         # threads may build the same plan at once; either one is kept.
         self._row_plans: Dict[FrozenSet[str], object] = {}
 
-    def encrypt(self, models: Sequence[object]) -> List[Dict[str, object]]:
+    def encrypt(self, models: Sequence[T]) -> List[Dict[str, object]]:
         """Encrypt ``models``, instances of the declared class.
 
         Returns one dict per model, from column name to column value: the
@@ -83,9 +83,23 @@ class Cipher(Generic[T]):
 
         Every value is checked first, by exact type and range. A value that
         does not fit raises ``InvalidValueError`` naming the field, and no
-        request is made. An empty list makes no request at all.
+        request is made. A model that is not an instance of the declared
+        class raises ``InvalidValueError`` with the code
+        ``value_wrong_type``. An empty list makes no request at all.
         """
-        return _engine.encrypt(self._plan, list(models))
+        models = list(models)
+        for at, model in enumerate(models):
+            # The engine reads each field by name, so a model of another
+            # class with the same field names would be encrypted under this
+            # table.
+            if not isinstance(model, self._cls):
+                raise InvalidValueError(
+                    "value_wrong_type",
+                    f"model {at} is a {type(model).__name__}, not a "
+                    f"{self._cls.__name__}. Encrypt only instances of the "
+                    "declared class.",
+                )
+        return _engine.encrypt(self._plan, models)
 
     def encrypt_rows(self, rows: Sequence[Mapping[str, object]]) -> List[Dict[str, object]]:
         """Encrypt ``rows``, mappings from field name to value, that may
@@ -108,7 +122,7 @@ class Cipher(Generic[T]):
         raises ``InvalidValueError`` with the code ``value_row_shape``. No
         request is made when any row fails. The input rows are not changed.
         """
-        rows = list(rows)
+        rows = _rows(rows, InvalidValueError, "value_row_shape")
         names = self._row_fields(rows, InvalidValueError, "value_row_shape", "Encrypt")
         if not names:
             return [dict(row) for row in rows]
@@ -138,7 +152,7 @@ class Cipher(Generic[T]):
         fields than row 0, raises ``DecryptError`` with the code
         ``decrypt_row_shape``. No request is made when any row fails.
         """
-        rows = list(rows)
+        rows = _rows(rows, DecryptError, "decrypt_row_shape")
         names = self._row_fields(rows, DecryptError, "decrypt_row_shape", "Decrypt")
         if not names:
             return [dict(row) for row in rows]
@@ -197,7 +211,9 @@ class Cipher(Generic[T]):
         field's raises ``InvalidValueError``; it is never converted. The
         call is all or nothing: no instance is built when any row fails.
         """
-        return _engine.decrypt(self._plan, self._cls, list(rows))
+        return _engine.decrypt(
+            self._plan, self._cls, _rows(rows, DecryptError, "decrypt_row_shape")
+        )
 
     def eq(self, field: str, value: object) -> str:
         """The equality query term for ``value`` on the declared field
@@ -397,6 +413,19 @@ def _not_decorated(cls: object) -> DeclarationError:
         f"class {cls.__name__!r} is not declared. {detail} Apply "
         f'@stackencrypt.model("...") to {cls.__name__!r} itself.',
     )
+
+
+def _rows(rows: object, error: Type[StashError], code: str) -> list:
+    """``rows`` as a list. Raises ``error`` with ``code`` for one row on its
+    own, such as ``cursor.fetchone()`` returns: ``list()`` of a mapping is its
+    keys, and each key would be refused as a row that is not a mapping."""
+    if isinstance(rows, Mapping):
+        raise error(
+            code,
+            "this takes a list of rows, not one row on its own. Pass [row], "
+            "or the result of fetchall().",
+        )
+    return list(rows)  # type: ignore[call-overload]
 
 
 def _build_plan(declaration: Declaration, fields: Sequence[DeclaredField]) -> object:

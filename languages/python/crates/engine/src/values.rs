@@ -153,7 +153,7 @@ impl Read<'_> {
 /// # Errors
 ///
 /// `value_none` for `None`, `value_wrong_type` for another type,
-/// `value_naive_datetime` for a datetime with no `tzinfo`, and the range
+/// `value_naive_datetime` for a datetime with no UTC offset, and the range
 /// refusals for an `int` or `Decimal` the engine cannot hold. `field` is
 /// not set: the caller names it.
 pub fn read<'a>(
@@ -197,7 +197,9 @@ pub fn read<'a>(
             other(Value::Date(ordinal - 719_163))
         }
         PyKind::DateTime => {
-            if value.getattr("tzinfo")?.is_none() {
+            // Naive as Python defines it: no tzinfo, or a tzinfo whose
+            // utcoffset() is None. The subtraction below needs an offset.
+            if value.call_method0("utcoffset")?.is_none() {
                 return Ok(Err(refusal(
                     "value_naive_datetime",
                     "is a naive datetime. Give it a tzinfo, such as timezone.utc",

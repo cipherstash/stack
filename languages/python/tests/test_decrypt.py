@@ -7,6 +7,7 @@ make no request. The live round trip is in ``test_encrypt_live.py``.
 """
 
 import dataclasses
+import datetime
 import json
 from typing import Annotated
 
@@ -55,6 +56,70 @@ def test_a_tuple_row_is_the_wrong_shape_and_names_dict_row(untouched):
     error = refused([(STORED, 3)])
     assert error.code == "decrypt_row_shape"
     assert "dict_row" in error.message
+
+
+def test_one_row_on_its_own_is_refused_as_one_row(untouched):
+    # As from cursor.fetchone(): list() of a dict is its column names.
+    error = refused({"email": STORED, "age": 3})
+    assert error.code == "decrypt_row_shape"
+    assert "not one row" in error.message
+
+
+def test_a_str_that_is_not_valid_utf8_is_malformed(untouched):
+    # A lone surrogate: a str Python holds, with no UTF-8 encoding.
+    error = refused([{"email": "\ud800", "age": 3}])
+    assert error.code == "decrypt_malformed"
+    assert error.field == "email"
+
+
+class Boom(Exception):
+    """An error that is not about the input's JSON or type."""
+
+
+class ExplodingDict(dict):
+    """A dict whose items, which json.dumps reads, raise Boom."""
+
+    def items(self):
+        raise Boom("not about the JSON")
+
+
+def test_an_error_that_is_not_about_the_json_propagates(untouched):
+    with pytest.raises(Boom):
+        Cipher(User).decrypt([{"email": ExplodingDict(i={}), "age": 3}])
+
+
+class NoOffset(datetime.tzinfo):
+    def utcoffset(self, dt):
+        return None
+
+
+class RaisingOffset(datetime.tzinfo):
+    def utcoffset(self, dt):
+        raise Boom("the user's own tzinfo")
+
+
+@stackencrypt.model("visits")
+@dataclasses.dataclass
+class Visit:
+    email: Annotated[str, TextEq]
+    seen: Annotated[datetime.datetime, Passthrough]
+
+
+VISIT_STORED = json.dumps({"i": {"t": "visits", "c": "email"}, "v": 2})
+
+
+def test_a_passthrough_datetime_whose_tzinfo_gives_no_offset_is_naive(untouched):
+    seen = datetime.datetime(2026, 1, 1, tzinfo=NoOffset())
+    with pytest.raises(InvalidValueError) as raised:
+        Cipher(Visit).decrypt([{"email": VISIT_STORED, "seen": seen}])
+    assert raised.value.code == "value_naive_datetime"
+    assert raised.value.field == "seen"
+
+
+def test_an_error_from_a_passthrough_value_propagates(untouched):
+    seen = datetime.datetime(2026, 1, 1, tzinfo=RaisingOffset())
+    with pytest.raises(Boom):
+        Cipher(Visit).decrypt([{"email": VISIT_STORED, "seen": seen}])
 
 
 def test_a_row_without_a_declared_column_names_it(untouched):

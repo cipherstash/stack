@@ -47,6 +47,12 @@ def test_rows_with_no_declared_field_come_back_unchanged_with_no_request(people,
     assert people.encrypt_rows(rows) == rows
 
 
+def test_one_row_on_its_own_is_refused_as_one_row(people, untouched):
+    error = refused(people, {"email": SECRET})
+    assert error.code == "value_row_shape"
+    assert "not one row" in error.message
+
+
 def test_a_row_that_is_not_a_mapping_is_refused(people, untouched):
     error = refused(people, [{"email": SECRET}, ("email", SECRET)])
     assert error.code == "value_row_shape"
