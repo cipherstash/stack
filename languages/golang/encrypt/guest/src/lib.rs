@@ -38,11 +38,19 @@
 //!
 //! Control stays in Rust: request assembly, key derivation, batching, and
 //! AAD/PRF context binding run unmodified inside the guest. The host
-//! provides exactly two imports (HTTP transport and the bearer token — see
-//! [`host`]); what crosses the boundary per call is a value tree in, a
-//! ciphertext/record tree out, and — inside the call — the same bytes that
-//! would cross TLS anyway. The client key enters guest memory once at
-//! `se_cipher_init`; derived data keys and index keys never leave.
+//! provides exactly one import (the ZeroKMS bearer token — see [`host`]);
+//! every HTTP request, a key vendor backend's short-lived credential and a
+//! retry's backoff go to the host through the step loop instead, so the
+//! guest never waits on the network. What crosses the boundary per call is
+//! a value tree in, a ciphertext/record tree out, and — between its steps —
+//! the same bytes that would cross TLS anyway. The client key (and a static key backend's key) enters guest
+//! memory once at `se_cipher_init`; root keys, derived data keys and index
+//! keys never leave.
+//!
+//! A client holds ZeroKMS and at most one key vendor backend (AWS KMS,
+//! Google Cloud KMS, Azure Key Vault, Vault Transit or a static key), routed
+//! by keyset ([`vendor`]). The vendor clients sign their requests here, with
+//! credentials the host supplies, through the step loop, per request.
 //!
 //! The exports are the record path (`se_encrypt_record`, `se_decrypt_record`),
 //! the term of one index under a context (`se_term`, which the Go SDK asks
@@ -69,7 +77,7 @@
 //! Split into:
 //!
 //! - [`ops`], [`options`], [`config`], [`response`], [`headers`],
-//!   [`status`], [`targets`] — everything that is pure logic over
+//!   [`status`], [`targets`], [`vendor`] — everything that is pure logic over
 //!   `StackCipher<K>` / `KeysetCipher<K>` / bytes. Compiles and unit-tests
 //!   on the native host target (`cargo test` here, no wasm toolchain
 //!   needed) against `stack_kms::FakeDataKeySource`.
@@ -103,6 +111,8 @@ mod support;
 pub mod targets;
 #[cfg(test)]
 mod test_frame;
+pub mod vendor;
+pub mod zerokms;
 
 // The ABI's packed u64 results embed 32-bit pointers, its bounds checks
 // read the wasm linear-memory size, and `host` calls imported functions —

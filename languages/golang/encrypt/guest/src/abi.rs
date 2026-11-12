@@ -106,14 +106,28 @@ use crate::status::STATUS_INTERNAL;
 #[cfg(not(feature = "deterministic-kms"))]
 use stack_encrypt::ErrorPayload;
 
-/// The key source the instance's cipher runs over: the host-transport
-/// ZeroKMS client with host-supplied tokens — or, in the `deterministic-kms`
-/// test build, the seeded source the record fixture was sealed under.
+/// The key source the instance's cipher runs over: ZeroKMS and at most one
+/// key vendor backend, routed by keyset ([`stack_kms_vendor::KeyRouter`]).
+/// ZeroKMS is the host-transport client with host-supplied tokens — or, in
+/// the `deterministic-kms` test build, the seeded source the record fixture
+/// was sealed under. The vendor is [`GuestVendor`], over the step loop; with
+/// none configured the router has no vendor and every request goes to
+/// ZeroKMS.
 #[cfg(not(feature = "deterministic-kms"))]
-type GuestKms =
-    stack_kms::StackKms<crate::host::HostTokenStrategy, crate::host::WasiHostConnection>;
+type GuestZeroKms = crate::zerokms::MaybeZeroKms<
+    stack_kms::StackKms<crate::host::HostTokenStrategy, crate::host::WasiHostConnection>,
+>;
 #[cfg(feature = "deterministic-kms")]
-type GuestKms = crate::deterministic::DeterministicSource;
+type GuestZeroKms = crate::zerokms::MaybeZeroKms<crate::deterministic::DeterministicSource>;
+
+/// The instance's key vendor backend: its requests, credentials and
+/// backoff waits go to the host through the step loop.
+type GuestVendor = crate::vendor::GuestVendor<
+    stack_guest_abi::vendor_transport::StepVendorTransport,
+    crate::host::StepCredentialImport,
+>;
+
+type GuestKms = stack_kms_vendor::KeyRouter<GuestZeroKms, GuestVendor>;
 
 /// The instance's cipher: `stack-encrypt` over [`GuestKms`].
 type GuestCipher = StackCipher<GuestKms>;
@@ -205,7 +219,7 @@ pub unsafe extern "C" fn se_cipher_init(cfg_ptr: *mut u8, cfg_len: u32) -> u64 {
 #[cfg(not(feature = "deterministic-kms"))]
 use crate::config::{parse_config as parse_init, CipherConfig as InitConfig};
 #[cfg(feature = "deterministic-kms")]
-use crate::deterministic::Seed as InitConfig;
+use crate::deterministic::SeedConfig as InitConfig;
 #[cfg(feature = "deterministic-kms")]
 fn parse_init(bytes: &[u8]) -> Result<InitConfig, u32> {
     InitConfig::parse(bytes)
@@ -215,40 +229,60 @@ fn parse_init(bytes: &[u8]) -> Result<InitConfig, u32> {
 fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
     use crate::host::{HostTokenStrategy, WasiHostConnection};
     use crate::status::STATUS_KMS_TRANSPORT;
+    use crate::zerokms::MaybeZeroKms;
     use stack_kms::{ClientOpts, StackKms};
 
     if init_refused() {
         return Err(init_out_of_order());
     }
 
-    // One request at a time: a step hands the host one request, and the
-    // first version of the step loop keeps it that way. Raising it later
-    // changes no ABI: a step's request list can hold several.
-    //
-    // `max_keys_per_req` stays at the client default (500). That is what
-    // bounds "one ZeroKMS call": a batch is assembled once, then
-    // `Client::send_chunked` splits it into sequential requests of at most
-    // that many keys — so a 1200-leaf record batch is three calls, not one.
-    // Raising it here would trade a documented, server-friendly request size
-    // for a claim the server need not honour, so the bound is kept and the
-    // docs say 500 rather than "one".
-    let opts = ClientOpts::new(config.endpoint)
-        .with_max_concurrent_reqs(1)
-        .map_err(|e| last_error::record(&e, e.payload(), STATUS_INTERNAL))?;
-    let kms = StackKms::<HostTokenStrategy, WasiHostConnection>::connect(
-        opts,
-        HostTokenStrategy,
-        config.client_key,
-    )
-    .map_err(|e| {
-        last_error::record_with(
-            &e,
-            e.payload(),
-            &crate::status::describe,
-            STATUS_KMS_TRANSPORT,
-        )
-    })?;
-
+    let vendor = config.vendor.map(build_vendor).transpose()?;
+    let kms = match (config.client_key, vendor) {
+        // A key vendor backend and no ZeroKMS (CIP-5311): no ZeroKMS client
+        // is built, no token is asked for, and the default keyset is the
+        // vendor's.
+        (None, Some(vendor)) => {
+            stack_kms_vendor::KeyRouter::new(MaybeZeroKms::Absent, vendor).with_vendor_default()
+        }
+        // `parse_config` asks for the ZeroKMS keys when there is no key
+        // vendor backend, so this config does not parse. Refuse it here
+        // too, rather than build a client with no key source.
+        (None, None) => {
+            return Err(malformed(
+                "the config has no ZeroKMS client key and no key vendor backend",
+            ))
+        }
+        (Some(client_key), vendor) => {
+            // One request at a time: a step hands the host one request, and the
+            // first version of the step loop keeps it that way. Raising it later
+            // changes no ABI: a step's request list can hold several.
+            //
+            // `max_keys_per_req` stays at the client default (500). That is what
+            // bounds "one ZeroKMS call": a batch is assembled once, then
+            // `Client::send_chunked` splits it into sequential requests of at most
+            // that many keys — so a 1200-leaf record batch is three calls, not one.
+            // Raising it here would trade a documented, server-friendly request size
+            // for a claim the server need not honour, so the bound is kept and the
+            // docs say 500 rather than "one".
+            let opts = ClientOpts::new(config.endpoint)
+                .with_max_concurrent_reqs(1)
+                .map_err(|e| last_error::record(&e, e.payload(), STATUS_INTERNAL))?;
+            let zerokms = StackKms::<HostTokenStrategy, WasiHostConnection>::connect(
+                opts,
+                HostTokenStrategy,
+                client_key,
+            )
+            .map_err(|e| {
+                last_error::record_with(
+                    &e,
+                    e.payload(),
+                    &crate::status::describe,
+                    STATUS_KMS_TRANSPORT,
+                )
+            })?;
+            router(MaybeZeroKms::Present(zerokms), vendor)
+        }
+    };
     let mut builder = StackCipher::builder().kms(kms);
     if let Some(size) = config.keyset_cache_size {
         builder = builder.keyset_cache_size(size);
@@ -266,15 +300,31 @@ fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
 }
 
 /// The `deterministic-kms` build's init: the config buffer is the
-/// deterministic source's 32-byte seed and nothing else — no client key, no
-/// endpoint, no token, no network. A test artefact, never shipped; see
+/// deterministic source's 32-byte seed, or an object of the seed and the key
+/// vendor backend keys — no client key, no endpoint, no token, and no
+/// ZeroKMS network. A test artefact, never shipped; see
 /// [`crate::deterministic`].
 #[cfg(feature = "deterministic-kms")]
-fn cipher_init(seed: InitConfig) -> Result<Vec<u8>, u32> {
+fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
     if init_refused() {
         return Err(init_out_of_order());
     }
-    let builder = StackCipher::builder().kms(seed.source());
+    // The seeded source is this build's ZeroKMS, so a default keyset of the
+    // vendor's does not apply here.
+    if config
+        .vendor
+        .as_ref()
+        .is_some_and(|v| v.default_keyset.is_some())
+    {
+        return Err(malformed(
+            "the deterministic build's default keyset is the seeded source's",
+        ));
+    }
+    let kms = router(
+        crate::zerokms::MaybeZeroKms::Present(config.seed.source()),
+        config.vendor.map(build_vendor).transpose()?,
+    );
+    let builder = StackCipher::builder().kms(kms);
     let initialising = Initialising::begin();
     run(Box::pin(async move {
         let _initialising = initialising;
@@ -310,6 +360,39 @@ impl Drop for Initialising {
     fn drop(&mut self) {
         INITIALISING.with(|i| i.set(false));
     }
+}
+
+/// The key source of a client with ZeroKMS: ZeroKMS and the key vendor
+/// backend, or ZeroKMS alone when none is configured.
+fn router(
+    zerokms: GuestZeroKms,
+    vendor: Option<stack_kms_vendor::VendorKeySource<GuestVendor>>,
+) -> GuestKms {
+    match vendor {
+        Some(vendor) => stack_kms_vendor::KeyRouter::new(zerokms, vendor),
+        None => stack_kms_vendor::KeyRouter::zerokms_only(zerokms),
+    }
+}
+
+/// Build the configured key vendor backend over the step loop: its requests,
+/// credentials and backoff waits all pause the operation for the host (no
+/// vendor call here: records are parsed and checked, keys are unwrapped on
+/// first use). A setting the vendor client refuses is
+/// `STATUS_ENCODING` naming its config key; a refused keyset record keeps
+/// its error for `se_last_error` ([`crate::status::fail_record`]).
+fn build_vendor(
+    config: crate::vendor::VendorConfig,
+) -> Result<stack_kms_vendor::VendorKeySource<GuestVendor>, u32> {
+    use crate::vendor::BuildError;
+    crate::vendor::build(
+        config,
+        stack_guest_abi::vendor_transport::StepVendorTransport,
+        crate::host::StepCredentialImport,
+    )
+    .map_err(|e| match e {
+        BuildError::Setting(key) => malformed(format!("the config's {key} is not valid")),
+        BuildError::Record(record) => crate::status::fail_record(&record),
+    })
 }
 
 /// `se_cipher_init` called a second time, while one is paused, or after
