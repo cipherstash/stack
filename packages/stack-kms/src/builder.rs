@@ -227,7 +227,7 @@ impl<C, S> StackKmsBuilder<C, S> {
     fn build_opts(self) -> Result<(ClientOpts<HttpConnectionOpts>, C, S), StackKmsBuilderError> {
         let mut connection = self.connection;
         if connection.base_url().is_none() {
-            if let Some(endpoint) = Self::base_url_from_env()? {
+            if let Some(endpoint) = endpoint_from_env()? {
                 connection = connection.with_base_url(endpoint);
             }
         }
@@ -241,24 +241,34 @@ impl<C, S> StackKmsBuilder<C, S> {
 
         Ok((opts, self.credentials, self.client_key))
     }
+}
 
-    /// Resolve the ZeroKMS endpoint from the `CS_ZEROKMS_HOST` environment
-    /// variable (or legacy `CS_VITUR_HOST`). The first variable that is set
-    /// decides: an unusable value is an error, not a fall-through.
-    fn base_url_from_env() -> Result<Option<ZeroKmsEndpoint>, StackKmsBuilderError> {
-        use crate::vars::CS_ZEROKMS_HOST;
+/// The ZeroKMS endpoint from the environment, as [`StackKmsBuilder`] reads
+/// it: `CS_ZEROKMS_HOST`, or the legacy `CS_VITUR_HOST`. The first variable
+/// that is set decides: an unusable value is an error, not a fall-through.
+/// `None` when neither is set, which leaves the endpoint to the access
+/// token's services claim.
+///
+/// Public so that a client built over its own connection, as the Python
+/// SDK builds one to count its requests, reads the endpoint the same way.
+///
+/// # Errors
+///
+/// [`StackKmsBuilderError::InvalidEndpoint`], naming the variable, when its
+/// value is not a usable endpoint.
+pub fn endpoint_from_env() -> Result<Option<ZeroKmsEndpoint>, StackKmsBuilderError> {
+    use crate::vars::CS_ZEROKMS_HOST;
 
-        for env_var in CS_ZEROKMS_HOST {
-            if let Ok(value) = std::env::var(env_var) {
-                return value
-                    .parse()
-                    .map(Some)
-                    .map_err(|source| StackKmsBuilderError::InvalidEndpoint { env_var, source });
-            }
+    for env_var in CS_ZEROKMS_HOST {
+        if let Ok(value) = std::env::var(env_var) {
+            return value
+                .parse()
+                .map(Some)
+                .map_err(|source| StackKmsBuilderError::InvalidEndpoint { env_var, source });
         }
-
-        Ok(None)
     }
+
+    Ok(None)
 }
 
 impl<C> StackKmsBuilder<C, ClientKey>
@@ -370,7 +380,7 @@ mod tests {
         const LEGACY: &str = "CS_VITUR_HOST";
 
         fn from_env() -> Result<Option<ZeroKmsEndpoint>, StackKmsBuilderError> {
-            StackKmsBuilder::<NeverStrategy>::base_url_from_env()
+            endpoint_from_env()
         }
 
         #[test]

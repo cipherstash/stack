@@ -282,6 +282,8 @@ pub mod sem;
 pub mod target;
 pub mod value;
 
+#[cfg(feature = "http")]
+pub use cipher::client_key_provider;
 pub use cipher::{
     Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,
     StackCipherBuilder, StackCipherText,

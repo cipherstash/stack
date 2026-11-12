@@ -95,7 +95,7 @@ pub mod vars;
 
 // Builder (configures the default HTTP transport)
 #[cfg(feature = "http")]
-pub use builder::{StackKmsBuilder, StackKmsBuilderError, WithKeyProvider};
+pub use builder::{endpoint_from_env, StackKmsBuilder, StackKmsBuilderError, WithKeyProvider};
 
 // Clients
 pub use client::{
