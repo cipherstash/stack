@@ -71,6 +71,7 @@ enum Host {
     Date(i64),
     Timestamp(i128),
     Decimal { mantissa: i128, scale: u32 },
+    Null,
 }
 
 impl Host {
@@ -87,6 +88,7 @@ impl Host {
                 mantissa: *mantissa,
                 scale: *scale,
             },
+            Self::Null => Value::Null,
         }
     }
 }
@@ -107,6 +109,7 @@ fn expected(kind: Option<Kind>, value: Value<'_>) -> Scalar {
             mantissa,
             scale: u8::try_from(scale).expect("an accepted scale"),
         },
+        (_, Value::Null) => Scalar::Null,
     }
 }
 
