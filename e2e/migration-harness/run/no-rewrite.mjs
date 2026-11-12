@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { dynamoColumns, hasHmac, postgresColumns } from './legacy-columns.mjs'
 import { object } from './record.mjs'
 
 /** Compare stored bytes through admin snapshots, without exporting their values.
@@ -75,26 +76,19 @@ export function validateLegacySnapshot(snapshot) {
   const row = object(data.postgres[0])
   if (object(item.pk).S !== 'legacy' || row.pk !== 'legacy')
     throw Error('Missing Legacy Data record')
-  for (const column of [
-    'email',
-    'emailLower',
-    'age',
-    'balance',
-    'active',
-    'notes',
-  ]) {
+  for (const column of dynamoColumns) {
     if (
       typeof object(item[`${column}__source`] ?? {}).S !== 'string' ||
-      (column !== 'notes' &&
+      (hasHmac(column) &&
         typeof object(item[`${column}__hmac`] ?? {}).S !== 'string')
     )
       throw Error(`Incomplete Legacy Data DynamoDB column: ${column}`)
   }
-  for (const column of ['email', 'age', 'notes']) {
+  for (const column of postgresColumns) {
     const attributes = object(row[column] ?? {})
     if (
       typeof attributes.c !== 'string' ||
-      (column !== 'notes' && typeof attributes.hm !== 'string')
+      (hasHmac(column) && typeof attributes.hm !== 'string')
     )
       throw Error(`Incomplete Legacy Data Postgres column: ${column}`)
   }

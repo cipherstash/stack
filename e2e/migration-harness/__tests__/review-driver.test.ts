@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { legacy } from '../run/behaviour.mjs'
+import { dynamoColumns } from '../run/legacy-columns.mjs'
 import { migrationChecks, noRewriteCheck } from '../run/migration-checks.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
@@ -14,10 +15,29 @@ import type { IsolationOptions } from '../types.js'
 
 const observed = vi.hoisted(() => ({
   dispose: vi.fn(async () => {}),
-  snapshot: vi.fn(async () => ({
-    dynamo: { Item: { email__source: { S: 'original' } } },
-    postgres: [{ pk: 'legacy', email: { c: 'original', hm: 'term' } }],
-  })),
+  snapshot: vi.fn(
+    async (): Promise<unknown> => ({
+      dynamo: {
+        Item: {
+          pk: { S: 'legacy' },
+          ...Object.fromEntries(
+            dynamoColumns.flatMap((key) => [
+              [`${key}__source`, { S: 'original' }],
+              [`${key}__hmac`, { S: 'term' }],
+            ]),
+          ),
+        },
+      },
+      postgres: [
+        {
+          pk: 'legacy',
+          email: { c: 'original', hm: 'term' },
+          age: { c: 'original', hm: 'term' },
+          notes: { c: 'original' },
+        },
+      ],
+    }),
+  ),
 }))
 
 vi.mock('../run/real-stores.mjs', () => ({
