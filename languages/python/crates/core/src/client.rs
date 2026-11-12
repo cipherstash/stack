@@ -3,7 +3,9 @@
 //! Every `Cipher` in the process uses the same `StackCipher`. It is built on
 //! the first operation that needs it, by whichever thread gets there first,
 //! and never rebuilt: credentials are read once, and the default keyset is
-//! loaded once (the spec in #1341, "Operations"). Beside it is one
+//! loaded once (the spec in #1341, "Operations"). The one exception is a
+//! child that `fork` made: it builds a client of its own on its first call,
+//! as described at [`shared`]. Beside it is one
 //! multi-thread tokio runtime. An operation hands its future to that runtime
 //! and blocks its own thread, with the GIL released, so calls from several
 //! Python threads run inside the engine at the same time.
@@ -16,7 +18,9 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+#[cfg(feature = "deterministic-kms")]
+use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard};
 
 use stack_auth::AutoStrategy;
 use stack_encrypt::kms::{
@@ -39,7 +43,11 @@ pub struct Client {
     runtime: tokio::runtime::Runtime,
 }
 
-static CLIENT: OnceLock<Client> = OnceLock::new();
+/// The client, with the ID of the process that built it. A child that
+/// `fork` made holds a copy of its parent's client, and that copy's runtime
+/// has no threads: a fork copies only the thread that called it. So a client
+/// is used only in the process that built it.
+static CLIENT: Mutex<Option<(u32, &'static Client)>> = Mutex::new(None);
 // Serialises the build, so two threads making their first call at once build
 // one client and load the keyset once. `OnceLock::get_or_init` would do the
 // same, but it cannot fail, and a failed build must not be cached: the user
@@ -58,7 +66,21 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// This process's client, if it has built one.
+fn current() -> Option<&'static Client> {
+    match *locked(&CLIENT) {
+        Some((pid, client)) if pid == std::process::id() => Some(client),
+        _ => None,
+    }
+}
+
 /// The shared client, built on the first call.
+///
+/// A child that `fork` made after its parent built the client builds a new
+/// one on its first call, and loads the keyset again. The parent's copy is
+/// never dropped in the child: dropping a runtime whose threads are gone
+/// could block. A fork while another thread is building the client is not
+/// safe: the child's copy of the build lock stays locked.
 ///
 /// # Errors
 ///
@@ -68,7 +90,7 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub fn shared() -> Result<&'static Client, Refusal> {
     #[cfg(feature = "deterministic-kms")]
     refuse_after_switch()?;
-    if let Some(client) = CLIENT.get() {
+    if let Some(client) = current() {
         return Ok(client);
     }
     let _building = locked(&BUILDING);
@@ -76,12 +98,15 @@ pub fn shared() -> Result<&'static Client, Refusal> {
     // it, and the live client must then not be built.
     #[cfg(feature = "deterministic-kms")]
     refuse_after_switch()?;
-    if let Some(client) = CLIENT.get() {
+    if let Some(client) = current() {
         return Ok(client);
     }
-    let client = build()?;
+    // Leaked on purpose: a client lives as long as its process, and a copy
+    // inherited through fork must never be dropped.
+    let client: &'static Client = Box::leak(Box::new(build()?));
     BUILDS.fetch_add(1, Ordering::Relaxed);
-    Ok(CLIENT.get_or_init(|| client))
+    *locked(&CLIENT) = Some((std::process::id(), client));
+    Ok(client)
 }
 
 /// Run an operation's future on the process's client, and return its result.
@@ -97,7 +122,9 @@ pub fn shared() -> Result<&'static Client, Refusal> {
 /// not the function, so code after `run!` runs in the test build too.
 macro_rules! run {
     (|$cipher:ident| $future:expr) => {{
-        'run: {
+        // The label is used only in the test build.
+        #[allow(unused_labels)]
+        let value = 'run: {
             #[cfg(feature = "deterministic-kms")]
             if let Some((cipher, runtime)) = $crate::client::deterministic() {
                 let $cipher = cipher;
@@ -106,7 +133,8 @@ macro_rules! run {
             let client = $crate::client::shared()?;
             let $cipher = client.cipher();
             client.block_on($future)
-        }
+        };
+        value
     }};
 }
 pub(crate) use run;
@@ -160,7 +188,7 @@ pub fn use_deterministic(seed: [u8; 32]) -> Result<(), Refusal> {
     // The lock `shared` builds under: a live build in flight on another
     // thread finishes before this checks, so the two never both exist.
     let _building = locked(&BUILDING);
-    if CLIENT.get().is_some() || DETERMINISTIC.get().is_some() {
+    if locked(&CLIENT).is_some() || DETERMINISTIC.get().is_some() {
         return Err(refused(
             "the process already has a client; call this before any operation".to_owned(),
         ));
@@ -188,7 +216,8 @@ pub fn deterministic() -> Option<&'static Deterministic> {
 }
 
 /// How many times the shared client has been built in this process: 0
-/// before the first operation, 1 after it. For the tests.
+/// before the first operation, 1 after it. A forked child starts from its
+/// parent's count, so its own build makes it 2. For the tests.
 pub fn build_count() -> u64 {
     BUILDS.load(Ordering::Relaxed)
 }

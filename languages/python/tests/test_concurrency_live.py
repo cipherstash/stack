@@ -48,6 +48,20 @@ def test_threads_decrypt_at_once_and_every_row_opens():
     assert decrypt_from_threads(cipher, rows) == [user(n) for n in range(THREADS * PER_THREAD)]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no fork")
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="macOS refuses its TLS certificate service in a child that fork made",
+)
+def test_a_forked_child_builds_its_own_client_and_its_calls_succeed():
+    # The child's copy of the client has a runtime with no threads: a fork
+    # copies only the thread that called it. The child builds a client of
+    # its own on its first call.
+    result = run_python([str(HERE / "_fork.py")])
+
+    assert result == {"child": "ok", "builds": 2}, result
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGINT is sent with os.kill")
 def test_an_interrupt_during_encrypt_waits_for_it_and_the_cipher_still_works():
     result = run_python([str(HERE / "_interrupt.py")])
