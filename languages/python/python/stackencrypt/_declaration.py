@@ -8,10 +8,11 @@ when one of the checks below fails.
 
 The fields are the library's own list where one exists (dataclasses, attrs,
 Pydantic, ``NamedTuple``), and otherwise the class's type hints minus
-``ClassVar`` and ``InitVar``, as on a SQLAlchemy declarative class. One generic
-class around ``Annotated`` is read by structure, so ``Mapped[Annotated[str,
-TextEq]]`` reads as ``TextEq``, with no SQLAlchemy import. A list, ``Final``
-and the other generics of the standard library are not read through.
+``ClassVar``, ``InitVar`` and dunder names such as ``__tablename__``, as on a
+SQLAlchemy declarative class. One generic class around ``Annotated`` is read
+by structure, so ``Mapped[Annotated[str, TextEq]]`` reads as ``TextEq``, with
+no SQLAlchemy import. A list, ``Final`` and the other generics of the
+standard library are not read through.
 
 Then, in this order:
 
@@ -79,6 +80,15 @@ _MARKERS = frozenset((Passthrough, Ignore) + _eql.TYPES)
 _VALUE_TYPE_MODULES = frozenset(
     {"builtins", "collections", "collections.abc", "types", "typing"}
 )
+
+# The package whose wrappers, such as Mapped, are refused inside the marker's
+# Annotated. A one-argument generic from any other package, such as
+# re.Pattern[str], may be a value type.
+_WRAPPER_PACKAGE = "sqlalchemy"
+
+# What evaluating a type hint raises when a name in it is missing or the
+# string is not an expression.
+_UNRESOLVED = (NameError, TypeError, AttributeError, SyntaxError)
 
 # The one Python type of each marker kind. A value type must be exactly this
 # type: not Optional, not a union, and not a subclass.
@@ -272,7 +282,7 @@ def _hints(cls: type) -> Dict[str, Any]:
     if not skip:
         try:
             return get_type_hints(cls, include_extras=True)
-        except (NameError, TypeError) as error:
+        except _UNRESOLVED as error:
             raise _hints_unresolved(cls, error) from error
     hints: Dict[str, Any] = {}
     # As get_type_hints does: each base's own hints in its own namespaces,
@@ -280,22 +290,28 @@ def _hints(cls: type) -> Dict[str, Any]:
     for base in reversed(cls.__mro__):
         try:
             own = _own_annotations(base)
-        except (NameError, TypeError) as error:
+        except _UNRESOLVED as error:
             raise _hints_unresolved(cls, error) from error
-        module = sys.modules.get(base.__module__)
-        global_names = dict(vars(module)) if module is not None else {}
         for name, hint in own.items():
             if name in skip:
                 continue
-
-            def probe() -> None: ...
-
-            probe.__annotations__ = {name: hint}
             try:
-                hints.update(get_type_hints(probe, global_names, dict(vars(base)), include_extras=True))
-            except (NameError, TypeError) as error:
+                hints[name] = _resolve_one(base, name, hint)
+            except _UNRESOLVED as error:
                 raise _hints_unresolved(cls, error) from error
     return hints
+
+
+def _resolve_one(base: type, name: str, hint: Any) -> Any:
+    """One hint of ``base``, resolved as ``get_type_hints`` resolves it.
+
+    The probe is a class, not a function: a function's annotation cannot be
+    a ``ClassVar``, and before 3.14 a string ``ClassVar`` hint raises there.
+    """
+    module = sys.modules.get(base.__module__)
+    global_names = dict(vars(module)) if module is not None else {}
+    probe = type("probe", (), {"__annotations__": {name: hint}})
+    return get_type_hints(probe, global_names, dict(vars(base)), include_extras=True)[name]
 
 
 def _relationships(cls: type) -> frozenset:
@@ -362,7 +378,9 @@ def _read_fields(cls: type, hints: Dict[str, Any]) -> List[_ReadField]:
         names = [
             name
             for name, hint in hints.items()
-            if not _is_class_level(hint) and name not in relationships
+            if not _is_class_level(hint)
+            and not _is_dunder(name)
+            and name not in relationships
         ]
     read = []
     for name in names:
@@ -388,6 +406,12 @@ def _library_field_names(cls: type) -> Optional[List[str]]:
     if issubclass(cls, tuple) and isinstance(named_tuple_fields, tuple):
         return list(named_tuple_fields)
     return None
+
+
+def _is_dunder(name: str) -> bool:
+    """A name such as ``__tablename__``: the class's configuration, which
+    the user cannot mark, not a field."""
+    return len(name) > 4 and name.startswith("__") and name.endswith("__")
 
 
 def _is_class_level(hint: Any) -> bool:
@@ -421,18 +445,12 @@ def _unresolved_field(cls: type) -> Optional[str]:
     for base in reversed(cls.__mro__):
         try:
             own = _own_annotations(base)
-        except (NameError, TypeError):
+        except _UNRESOLVED:
             return None
-        module = sys.modules.get(base.__module__)
-        global_names = dict(vars(module)) if module is not None else {}
         for name, hint in own.items():
-
-            def probe() -> None: ...
-
-            probe.__annotations__ = {name: hint}
             try:
-                get_type_hints(probe, global_names, dict(vars(base)), include_extras=True)
-            except (NameError, TypeError):
+                _resolve_one(base, name, hint)
+            except _UNRESOLVED:
                 return name
     return None
 
@@ -478,6 +496,14 @@ def _is_wrapper(hint: Any) -> bool:
     )
 
 
+def _is_orm_wrapper(hint: Any) -> bool:
+    """A SQLAlchemy wrapper, such as ``Mapped[str]``, found by its module."""
+    return (
+        _is_wrapper(hint)
+        and get_origin(hint).__module__.partition(".")[0] == _WRAPPER_PACKAGE
+    )
+
+
 def _without_none(value_type: Any) -> Tuple[Any, bool]:
     """``Optional[T]`` as ``(T, True)``; any other type as ``(type, False)``.
     ``Optional[T]`` is ``Union[T, None]``, and ``T | None`` from Python 3.10.
@@ -494,9 +520,10 @@ def _marker_of(name: str, hint: Any, *, from_hints: bool) -> Tuple[Type[Marker],
     """The one marker of a field and its value type, or a ``DeclarationError``.
 
     ``from_hints`` says the field list came from the type hints, as on a
-    SQLAlchemy class. Only there is a wrapper inside the marker's
+    SQLAlchemy class. Only there is a SQLAlchemy wrapper inside the marker's
     ``Annotated`` refused as misplaced: ``Annotated[Mapped[str], TextEq]``.
-    Elsewhere a generic value type is a type mismatch, checked later.
+    Any other generic value type, such as ``re.Pattern[str]``, is the value's
+    own: a sealed marker refuses it later, as a type mismatch.
     """
     if hint is None:
         raise _no_marker(name)
@@ -512,7 +539,7 @@ def _marker_of(name: str, hint: Any, *, from_hints: bool) -> Tuple[Type[Marker],
     # Annotated outermost, with the wrapper inside it, is the order reversed.
     # Inside a wrapper already read, a generic value type is the value's own,
     # as in a relationship: Mapped[Annotated[list[Post], Ignore]].
-    if from_hints and not unwrapped and markers and _is_wrapper(value_type):
+    if from_hints and not unwrapped and markers and _is_orm_wrapper(value_type):
         raise _marker_not_outermost(name, markers[0], value_type)
     if _nested_markers(hint):
         raise _marker_not_outermost(name, None, None)
@@ -627,7 +654,8 @@ def _check_constructor(cls: type, read: List[_ReadField]) -> None:
     for field in read:
         parameter = parameters.get(field.name)
         if field.marker is Ignore:
-            if parameter is not None and _required(parameter):
+            taken_as = parameters.get(_init_name(cls, field.name))
+            if taken_as is not None and _required(taken_as):
                 raise DeclarationError(
                     "declaration_ignore_required",
                     f"field {field.name!r} is marked Ignore, but the constructor "
@@ -660,18 +688,44 @@ def _takes(
     cls: type, name: str, parameter: Optional[inspect.Parameter], any_keyword: bool
 ) -> bool:
     """Whether the constructor takes field ``name`` as a keyword argument."""
-    fields = getattr(cls, "__pydantic_fields__", None)
-    info = fields.get(name) if isinstance(fields, dict) else None
+    info = _pydantic_field(cls, name)
     if info is not None:
         # Pydantic's signature shows a field's alias, not its name. Its config
         # says whether the name is taken too. With extra="allow" the signature
-        # has **kwargs, and a name that is not taken lands in the extras.
+        # has **kwargs, and a name that is not taken lands in the extras. A
+        # Pydantic dataclass keeps its config in __pydantic_config__.
         alias = getattr(info, "validation_alias", None) or getattr(info, "alias", None)
         if alias is None or alias == name:
             return True
-        config = getattr(cls, "model_config", {})
+        config = (
+            getattr(cls, "model_config", None) or getattr(cls, "__pydantic_config__", None) or {}
+        )
         return bool(config.get("populate_by_name") or config.get("validate_by_name"))
     return _keyword(parameter) or any_keyword
+
+
+def _pydantic_field(cls: type, name: str) -> Any:
+    """Pydantic's record of field ``name``, or ``None``."""
+    fields = getattr(cls, "__pydantic_fields__", None)
+    return fields.get(name) if isinstance(fields, dict) else None
+
+
+def _init_name(cls: type, name: str) -> str:
+    """The parameter name the constructor gives field ``name``.
+
+    Pydantic names it by the field's alias. attrs names a private field
+    without its leading underscore, so ``_cache`` is ``cache``.
+    """
+    info = _pydantic_field(cls, name)
+    if info is not None:
+        for alias in (getattr(info, "validation_alias", None), getattr(info, "alias", None)):
+            if isinstance(alias, str):
+                return alias
+        return name
+    for attribute in getattr(cls, "__attrs_attrs__", ()):
+        if attribute.name == name:
+            return getattr(attribute, "alias", None) or name
+    return name
 
 
 def _keyword(parameter: Optional[inspect.Parameter]) -> bool:

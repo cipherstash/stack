@@ -10,12 +10,14 @@ import dataclasses
 import datetime
 import decimal
 import pickle
+import re
 import sys
 import uuid
 from typing import Annotated, ClassVar, Final, List, NamedTuple, Optional, Union
 
 import attrs
 import pydantic
+import pydantic.dataclasses
 import pytest
 from sqlalchemy import inspect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -236,6 +238,29 @@ def test_a_collection_value_type_is_not_a_misplaced_wrapper():
     assert planned(User) == [("email", TextEq)]
 
 
+def test_a_generic_value_type_from_another_module_is_not_a_misplaced_wrapper():
+    # re.Pattern[str] is a one-argument generic, but it is a value type, not
+    # a wrapper such as Mapped.
+    @stackencrypt.model("users")
+    class User(KeywordConstructor):
+        email: Annotated[str, TextEq]
+        pattern: Annotated[re.Pattern[str], Ignore]
+
+    assert planned(User) == [("email", TextEq)]
+
+
+def test_a_dunder_annotation_is_not_a_field():
+    # As on a SQLAlchemy class: __tablename__ is configuration, not a column,
+    # and the user cannot mark it.
+    @stackencrypt.model("users")
+    class User(KeywordConstructor):
+        __tablename__: str = "users"
+        __table_args__: tuple = ()
+        email: Annotated[str, TextEq]
+
+    assert planned(User) == [("email", TextEq)]
+
+
 @pytest.mark.parametrize("kind", ["dataclass", "plain"])
 def test_a_marker_inside_a_list_or_final_is_refused(kind):
     def build_list():
@@ -303,6 +328,66 @@ def test_an_unresolved_hint_is_refused_with_its_field():
     assert error.field == "posts"
     assert "'posts'" in str(error)
     assert isinstance(error.__cause__, NameError)
+
+
+def build_with_a_bad_hint(kind):
+    if kind == "missing attribute":
+
+        @stackencrypt.model("users")
+        @dataclasses.dataclass
+        class User:
+            email: Annotated[str, TextEq]
+            posts: Annotated[List["sys.Undefined"], Ignore] = dataclasses.field(
+                default_factory=list
+            )
+
+    else:
+
+        @stackencrypt.model("users")
+        @dataclasses.dataclass
+        class User:
+            email: Annotated[str, TextEq]
+            posts: "List[" = dataclasses.field(default_factory=list)  # noqa: F722
+
+
+@pytest.mark.parametrize(
+    "kind, cause",
+    [("missing attribute", AttributeError), ("malformed string", SyntaxError)],
+)
+def test_a_hint_that_fails_to_evaluate_is_refused_with_its_field(kind, cause):
+    error = refusal(lambda: build_with_a_bad_hint(kind))
+    assert error.code == "declaration_hints_unresolved"
+    assert error.field == "posts"
+    assert isinstance(error.__cause__, cause)
+
+
+def build_with_a_class_var_before_an_unresolved_hint(kind):
+    # A ClassVar hint written as a string resolves on a class, not as a
+    # function argument. Pydantic's own bases hold such hints.
+    if kind == "dataclass":
+
+        @stackencrypt.model("users")
+        @dataclasses.dataclass
+        class User:
+            count: "ClassVar[int]" = 0
+            email: Annotated[str, TextEq] = ""
+            posts: Annotated[List["Undefined"], Ignore] = dataclasses.field(  # noqa: F821
+                default_factory=list
+            )
+
+    else:
+
+        @stackencrypt.model("users")
+        class User(pydantic.BaseModel):
+            email: Annotated[str, TextEq]
+            posts: Annotated[List["Undefined"], Ignore] = []  # noqa: F821
+
+
+@pytest.mark.parametrize("kind", ["dataclass", "pydantic"])
+def test_an_unresolved_hint_after_a_class_var_is_named(kind):
+    error = refusal(lambda: build_with_a_class_var_before_an_unresolved_hint(kind))
+    assert error.code == "declaration_hints_unresolved"
+    assert error.field == "posts"
 
 
 class LaterBase(DeclarativeBase):
@@ -615,6 +700,13 @@ def build_without_the_field_in_the_constructor(kind):
         class User:
             _email: Annotated[str, TextEq]
 
+    elif kind == "pydantic dataclass init=False field":
+
+        @stackencrypt.model("users")
+        @pydantic.dataclasses.dataclass
+        class User:
+            email: Annotated[str, TextEq] = dataclasses.field(init=False)
+
     elif kind == "pydantic alias":
 
         @stackencrypt.model("users")
@@ -635,6 +727,7 @@ def build_without_the_field_in_the_constructor(kind):
         "init=False field",
         "init=False class",
         "attrs private name",
+        "pydantic dataclass init=False field",
         "pydantic alias",
         "pydantic alias with extra=allow",
     ],
@@ -649,6 +742,16 @@ def test_a_pydantic_alias_is_accepted_when_the_name_is_taken_too():
     @stackencrypt.model("users")
     class User(pydantic.BaseModel):
         model_config = pydantic.ConfigDict(populate_by_name=True)
+        email: Annotated[str, TextEq] = pydantic.Field(alias="Email")
+
+    assert planned(User) == [("email", TextEq)]
+
+
+def test_a_pydantic_dataclass_alias_is_accepted_when_its_config_takes_the_name():
+    # A Pydantic dataclass keeps its config in __pydantic_config__.
+    @stackencrypt.model("users")
+    @pydantic.dataclasses.dataclass(config=pydantic.ConfigDict(populate_by_name=True))
+    class User:
         email: Annotated[str, TextEq] = pydantic.Field(alias="Email")
 
     assert planned(User) == [("email", TextEq)]
@@ -671,6 +774,21 @@ def build_with_a_required_ignore(kind):
             email: Annotated[str, TextEq]
             note: Annotated[str, Ignore]
 
+    elif kind == "attrs private name":
+
+        @stackencrypt.model("users")
+        @attrs.define
+        class User:
+            email: Annotated[str, TextEq]
+            _note: Annotated[str, Ignore]
+
+    elif kind == "pydantic alias":
+
+        @stackencrypt.model("users")
+        class User(pydantic.BaseModel):
+            email: Annotated[str, TextEq]
+            note: Annotated[str, Ignore] = pydantic.Field(alias="Note")
+
     else:
 
         @stackencrypt.model("users")
@@ -679,11 +797,20 @@ def build_with_a_required_ignore(kind):
             note: Annotated[str, Ignore]
 
 
-@pytest.mark.parametrize("kind", ["dataclass", "attrs", "pydantic"])
-def test_a_required_ignore_field_is_refused(kind):
+@pytest.mark.parametrize(
+    "kind, field",
+    [
+        ("dataclass", "note"),
+        ("attrs", "note"),
+        ("attrs private name", "_note"),
+        ("pydantic", "note"),
+        ("pydantic alias", "note"),
+    ],
+)
+def test_a_required_ignore_field_is_refused(kind, field):
     error = refusal(lambda: build_with_a_required_ignore(kind))
     assert error.code == "declaration_ignore_required"
-    assert error.field == "note"
+    assert error.field == field
     assert "default" in str(error)
 
 
