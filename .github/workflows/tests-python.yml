@@ -27,6 +27,9 @@ on:
   pull_request:
     paths:
       - languages/python/**
+      # The example has its own lock and its own tests, which CI does not
+      # run. A change only there must not start this workflow.
+      - '!languages/python/examples/**'
       # The crates the workspace compiles by path, in the order Cargo.lock
       # lists them. The last two are what stack-kms's `profile` feature pulls
       # in. The root manifest
@@ -38,6 +41,9 @@ on:
       - packages/stack-auth/**
       - packages/stack-profile/**
       - Cargo.toml
+      # Cargo reads the root .cargo/config.toml for this workspace too. A
+      # [patch] or [build] change there changes what this workspace compiles.
+      - .cargo/**
       # The EQL codegen and the catalog it reads. The SDK's marker names are
       # generated from the catalog (#1385). A change to either must rerun the
       # suite that reads them.
@@ -59,6 +65,9 @@ on:
       # Go workflow's eql-postgres job does, and runs the secrets pre-flight.
       - packages/eql/src/**
       - packages/eql/mise.toml
+      # The EQL build compiles eql-codegen, whose versions these two choose.
+      - packages/eql/Cargo.toml
+      - packages/eql/Cargo.lock
       - packages/eql/tasks/**
       - .github/actions/require-cs-secrets/**
       - .github/workflows/tests-python.yml
@@ -206,8 +215,9 @@ jobs:
   live:
     name: "Python live: encrypt into PostgreSQL with EQL v4"
     # A fork's pull request has no secrets: skip it rather than fail it, as
-    # the integration workflows do.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # the integration workflows do. Dependabot's pull requests come from this
+    # repository but get no Actions secrets either, so they skip too.
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     env:
@@ -439,9 +449,14 @@ jobs:
       # wheel names its engine the same way. The checkout is clean here, so
       # the `-dirty` check the script skips with the override has nothing to
       # add. python-ci.test.mjs holds the variable name to build.rs.
+      # On a pull request, HEAD is GitHub's test merge commit, which is on no
+      # branch. The pull request's head commit is the one a bug report can
+      # name, so the wheel records that one.
       - name: Read the engine commit
         id: engine
-        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
 
       # `--locked`: the Cargo.lock in the tree is the one built, as in every
       # other check of this workspace. `--out dist` puts the wheel where the
@@ -459,6 +474,9 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           rust-toolchain: ${{ steps.rust.outputs.version }}
+          # A fixed maturin, inside pyproject.toml's range. Without it the
+          # action downloads the newest release on every run.
+          maturin-version: v1.16.0
           docker-options: -e STACKENCRYPT_ENGINE_COMMIT
 
       # The build time is the number this job exists to record. The spec's
@@ -508,6 +526,8 @@ jobs:
           set -euo pipefail
           python -m pip install --no-index --no-deps languages/python/dist/*.whl
           python -c 'import stackencrypt as s; print("stackencrypt", s.__version__, "engine", s.__engine__)'
+          # A wheel must not carry the deterministic key source.
+          python -c 'from stackencrypt import _engine; assert not hasattr(_engine, "_use_deterministic_keys"), "this wheel has the deterministic-kms test feature"'
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -530,6 +550,8 @@ jobs:
   wheels-summary:
     name: one wheel per platform, build time per platform
     needs: [wheels]
+    # Run when a leg fails too, so the table still shows the legs that built.
+    if: ${{ !cancelled() }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:

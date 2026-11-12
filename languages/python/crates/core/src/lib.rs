@@ -24,6 +24,16 @@ compile_error!(
     "stackencrypt-core needs its `eql` feature: every build of the SDK holds the EQL types"
 );
 
+// The deterministic key source takes every key from a fixed seed. A wheel
+// built with it would export `_use_deterministic_keys`, which switches every
+// key in the process to that seed. Only the test build uses it, and that
+// build is the dev profile. A release build with the feature is refused here,
+// so a release wheel cannot carry it.
+#[cfg(all(feature = "deterministic-kms", not(debug_assertions)))]
+compile_error!(
+    "the `deterministic-kms` feature is for test builds only: a release build must not carry it"
+);
+
 // The EQL resolver: the Go guest's own file, compiled here too, so the two
 // SDKs run one resolver and cannot drift apart. It switches on this crate's
 // `eql` feature. Its tests run here as well as in the guest. `HOLDS_EQL` is
