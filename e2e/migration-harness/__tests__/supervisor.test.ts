@@ -435,6 +435,59 @@ test('observer does not resurrect a reused child that also exits before clone re
   )
 })
 
+test.each(['ECONNREFUSED', 'ETIMEDOUT', '111'])(
+  'observer treats SO_ERROR %s as a failed connection despite successful getsockopt',
+  async (error) => {
+    const frames = await observe([
+      {
+        stage: 'startup-probe',
+        calls: [
+          'connect(18<TCP:[127.0.0.1:49000]>, {sa_family=AF_INET, sin_port=htons(32768), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 EINPROGRESS (Operation now in progress)',
+          `getsockopt(18<TCP:[127.0.0.1:49000->127.0.0.1:32768]>, SOL_SOCKET, SO_ERROR, [${error}], [4]) = 0`,
+        ],
+      },
+    ])
+    expect(frames.filter((frame) => frame.kind === 'stream-error')).toEqual([])
+    expect(
+      frames.find((frame) => frame.event?.operation === 'getsockopt')?.event,
+    ).toMatchObject({
+      resource: '127.0.0.1:32768',
+      decision: 'forbidden',
+      result: 'denied',
+    })
+    expect(frames).toContainEqual(
+      expect.objectContaining({ kind: 'actor-exit', exitCode: 0 }),
+    )
+  },
+)
+
+test.each([
+  ['SO_ERROR', '[0]'],
+  ['SO_ERROR', '[UNKNOWN]'],
+  ['SO_ERROR', '0xffffdead'],
+  ['SO_TYPE', '[SOCK_STREAM]'],
+])(
+  'observer keeps successful forbidden-peer getsockopt %s %s fail-closed',
+  async (option, value) => {
+    const frames = await observe([
+      {
+        stage: 'startup-probe',
+        calls: [
+          `getsockopt(18<TCP:[127.0.0.1:49000->127.0.0.1:32768]>, SOL_SOCKET, ${option}, ${value}, [4]) = 0`,
+        ],
+      },
+    ])
+    expect(
+      frames.find((frame) => frame.event?.operation === 'getsockopt')?.event,
+    ).toMatchObject({
+      resource: '127.0.0.1:32768',
+      decision: 'forbidden',
+      result: 'success',
+    })
+    expect(frames.some((frame) => frame.kind === 'actor-exit')).toBe(false)
+  },
+)
+
 test.each([
   [
     'unmatched ptrace syscall continuation',
