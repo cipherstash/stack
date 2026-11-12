@@ -21,6 +21,9 @@
 //! checkout there is nothing to check it against. With neither, the build
 //! fails: an "unknown" engine in a wheel is a report nobody can act on.
 
+#[path = "engine_commit_rules.rs"]
+mod engine_commit_rules;
+
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -36,13 +39,15 @@ const DEPENDENCY_FILES: [&str; 2] = ["../../../../Cargo.toml", "../../Cargo.lock
 
 fn main() {
     println!("cargo:rerun-if-env-changed={ENV_OVERRIDE}");
-    let (commit, source) = match env::var(ENV_OVERRIDE) {
-        Ok(value) if !value.is_empty() => (value.to_ascii_lowercase(), "env"),
-        _ => (commit_from_git(), "git"),
+    let given = env::var(ENV_OVERRIDE)
+        .ok()
+        .and_then(|value| engine_commit_rules::from_override(&value));
+    let (commit, source) = match given {
+        Some(commit) => (commit, "env"),
+        None => (commit_from_git(), "git"),
     };
-    let sha = commit.strip_suffix("-dirty").unwrap_or(&commit);
     assert!(
-        sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+        engine_commit_rules::is_valid(&commit),
         "the engine commit must be a full 40-character hex SHA (optionally `-dirty`), got {commit:?}"
     );
     println!("cargo:rustc-env={ENV_OVERRIDE}={commit}");

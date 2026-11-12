@@ -9,7 +9,7 @@
 //! does not check the bytes of a real decrypt result. It does not decrypt:
 //! it proves the reading half, which is the half the extension owns.
 
-use stack_encrypt::dynamic::frame::Frame;
+use stack_encrypt::dynamic::frame::{Frame, FrameWriter};
 use stack_encrypt::dynamic::plaintext::{
     Encrypt, Error, FixedType, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError, Width,
 };
@@ -233,6 +233,55 @@ fn an_outside_sink_reads_a_typed_null_a_sequence_and_a_nested_map() {
             seen("tags", None, "text", false),
             seen("tags", None, "int", false),
             seen("city", None, "text", false),
+        ],
+    );
+}
+
+/// A batch of two records, written the way `dynamic::decrypt` writes one
+/// (`write_record` in stack-encrypt's `record.rs`): a plain `FrameWriter`,
+/// a sequence, one map per record, and each field's `ValueFrame` walked into
+/// its entry. The reader must see the same fields as in a `ValueFrame::of`
+/// record, once for each record.
+#[test]
+fn an_outside_sink_reads_a_batch_written_as_decrypt_writes_it() {
+    let record = |email: &str, age: i64| {
+        vec![
+            ("email", ValueFrame::of(email).expect("a str frames")),
+            ("age", ValueFrame::of(age).expect("an i64 frames")),
+        ]
+    };
+    let rows = [
+        record("ada@example.com", 36),
+        record("grace@example.com", 85),
+    ];
+
+    let mut bytes = Vec::new();
+    let mut seq = FrameWriter::new(&mut bytes)
+        .seq(Some(rows.len()))
+        .expect("a sequence starts");
+    for fields in rows {
+        let mut map = seq
+            .element()
+            .expect("an element")
+            .map(Some(fields.len()))
+            .expect("a map starts");
+        for (name, value) in fields {
+            value
+                .visit(map.entry(name).expect("an entry"))
+                .expect("a field walks");
+        }
+        map.end().expect("a map ends");
+    }
+    seq.end().expect("the sequence ends");
+
+    let frame = Frame::parse(&bytes).expect("the batch is one frame");
+    assert_eq!(
+        read(frame),
+        vec![
+            seen("email", None, "text", false),
+            seen("age", None, "int", false),
+            seen("email", None, "text", false),
+            seen("age", None, "int", false),
         ],
     );
 }

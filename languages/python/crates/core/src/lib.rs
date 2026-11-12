@@ -55,8 +55,33 @@ pub fn engine_commit() -> &'static str {
 }
 
 #[cfg(test)]
+#[path = "../engine_commit_rules.rs"]
+mod engine_commit_rules;
+
+#[cfg(test)]
 mod tests {
     use super::engine_commit;
+    use super::engine_commit_rules::{from_override, is_valid};
+
+    const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    /// The override rules: an empty value reads git, a value is lower-cased,
+    /// and only a full hex SHA, with `-dirty` or not, is a commit.
+    #[test]
+    fn the_override_is_lower_cased_and_checked() {
+        assert_eq!(from_override(""), None);
+        assert_eq!(
+            from_override(&SHA.to_ascii_uppercase()).as_deref(),
+            Some(SHA)
+        );
+        assert!(is_valid(SHA));
+        assert!(is_valid(&format!("{SHA}-dirty")));
+        assert!(!is_valid(&SHA[..39]));
+        assert!(!is_valid(&format!("{SHA}0")));
+        assert!(!is_valid(&SHA.replace('a', "g")));
+        assert!(!is_valid(&SHA.to_ascii_uppercase()));
+        assert!(!is_valid(&format!("{SHA}-clean")));
+    }
     use std::process::Command;
 
     #[test]
