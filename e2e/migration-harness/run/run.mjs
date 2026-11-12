@@ -100,6 +100,28 @@ export async function run({ id, manifest, driver, supervision = null }) {
         }
         for (const event of events) {
           evidence(name, 'isolation-event', event.actor, event, false)
+          if (
+            event.actor === 'migrator' &&
+            event.stage === 'command' &&
+            event.result === 'success' &&
+            event.decision === 'allowed' &&
+            ['open', 'openat', 'openat2'].includes(event.operation ?? '') &&
+            /\/node_modules\/.*\/(?:readme(?:\.[^/]*)?|[^/]+\.md)$/i.test(
+              event.resource,
+            )
+          ) {
+            // Opens may be package extraction writes: the observer does not
+            // export open flags, so this is a review signal rather than proof of reading.
+            manifest.documentationExposure = {
+              status:
+                manifest.documentationExposure?.status === 'observed'
+                  ? 'observed'
+                  : 'possible',
+              reviewRequired: true,
+              evidenceComplete:
+                manifest.documentationExposure?.evidenceComplete ?? false,
+            }
+          }
           if (event.result === 'success' && event.decision === 'forbidden') {
             stopped = true
             report.failures.push({

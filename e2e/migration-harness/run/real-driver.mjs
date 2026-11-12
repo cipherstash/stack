@@ -303,6 +303,40 @@ export function createRealDriver({
       )
     },
     async migrate() {
+      /** Write the Migrator's evidence, runtime and transcript artifacts.
+       * @param {import('../types.js').MigratorResult & {stdout?:string,stderr?:string}} result
+       */
+      async function record(result) {
+        if ('brokerEvidence' in result && result.brokerEvidence) {
+          await writeFile(
+            resolve(output, 'broker-evidence.json'),
+            JSON.stringify({
+              complete: result.documentationExposure?.evidenceComplete ?? false,
+              records: result.brokerEvidence,
+            }),
+            { mode: 0o600, flag: 'wx' },
+          )
+          manifest.documentationExposure = result.documentationExposure
+        }
+        if ('runtime' in result && result.runtime)
+          manifest.agents = { ...manifest.agents, runtime: result.runtime }
+        await writeFile(
+          resolve(output, 'migrator-transcript.log'),
+          `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
+        )
+        manifest.artifacts = {
+          transcript: 'migrator-transcript.log',
+          ...('brokerEvidence' in result
+            ? { brokerEvidence: 'broker-evidence.json' }
+            : {}),
+          snapshot: 'legacy-snapshot.json',
+        }
+      }
+      manifest.documentationExposure = {
+        status: 'unknown',
+        reviewRequired: true,
+        evidenceComplete: false,
+      }
       if (!stackSource) throw Error('Stack source not resolved')
       if (stackSource.tarball)
         await cp(stackSource.tarball, resolve(workspace, 'resolved-stack.tgz'))
@@ -329,19 +363,15 @@ export function createRealDriver({
                 forwards: forwards(migratorStores),
                 timeoutMs,
               }),
+          }).catch(async (error) => {
+            // The broker attaches the tool calls that completed before it
+            // failed. Persist them, marked incomplete, before rethrowing.
+            if (error?.migratorResult) await record(error.migratorResult)
+            throw error
           })
-      if ('runtime' in result && result.runtime)
-        manifest.agents = { ...manifest.agents, runtime: result.runtime }
+      await record(result)
       if (fakeMigration && fakeMigration !== 'noop')
         await execute('migrator', workspace, migratorStores, ['npm', 'install'])
-      await writeFile(
-        resolve(output, 'migrator-transcript.log'),
-        `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
-      )
-      manifest.artifacts = {
-        transcript: 'migrator-transcript.log',
-        snapshot: 'legacy-snapshot.json',
-      }
       // A timed-out broker has stopped its isolated tools and proof relays.
       // Preserve its agent-limit result rather than restarting work for a diff.
       if (result.exitCode !== 0 || result.limit) return result
@@ -383,6 +413,9 @@ export function createRealDriver({
       await writeFile(resolve(output, 'migration.diff'), diff.stdout)
       manifest.artifacts = {
         transcript: 'migrator-transcript.log',
+        ...('brokerEvidence' in result
+          ? { brokerEvidence: 'broker-evidence.json' }
+          : {}),
         diff: 'migration.diff',
         snapshot: 'legacy-snapshot.json',
       }

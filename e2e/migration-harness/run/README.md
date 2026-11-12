@@ -93,6 +93,12 @@ a response to the adapter's stdin:
 {"id":"read-guide","result":{"exitCode":0,"stdout":"...","stderr":""}}
 ```
 
+The harness bounds each of `stdout` and `stderr` in a response to 192 Ki
+characters of escaped JSON. Longer output is cut and ends with a
+`[harness: output truncated; …]` marker, so the adapter can retry with a
+narrower command; the private broker evidence keeps the full response. Each
+protocol line is limited to 1 MiB.
+
 Only `id`, `method` and `command` are accepted in requests. IDs must be unique
 nonempty strings of at most 128 characters. Commands are nonempty arrays of
 strings. Requests are processed in order; nonzero tool exits are returned so the
@@ -112,7 +118,10 @@ does not claim those restrictions exist merely because a command was supplied.
 The harness enforces the wall-clock deadline and a separate limit on broker
 requests (`agents.limits.toolCalls`, default 200). On timeout it terminates the
 adapter process group and isolated tools, preserves `agent-limit`, and skips
-post-agent Git commands. `HARNESS_MAX_MODEL_TURNS` communicates
+post-agent Git commands. Adapter temporary files go under `TMPDIR`, a directory
+the harness owns and always removes, because a killed adapter cannot clean up.
+If the broker fails after earlier tool calls completed, their records are still
+written to `broker-evidence.json`, marked incomplete. `HARNESS_MAX_MODEL_TURNS` communicates
 `agents.limits.turns` (default 200) to the trusted adapter, which must configure
 its model runtime to enforce that budget. Tool-call counts are not model-turn
 counts. `HARNESS_MAX_TOOL_CALLS` and
