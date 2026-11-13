@@ -6,8 +6,10 @@
 //! marker the test's plaintext carries, and fails the test on one. It is the
 //! regression test for the opened `String` an EQL decrypt used to free
 //! unwiped (`Plaintext::into_frame`), and holds every text target's three
-//! paths to the same rule. stack-encrypt's `tests/heap_hygiene.rs` holds
-//! its dynamic paths the same way.
+//! paths to the same rule: on success, when the plaintext grows as it is
+//! indexed, when the value is refused or fails to open, and when the
+//! pending work is dropped before its keys arrive. stack-encrypt's
+//! `tests/heap_hygiene.rs` holds its dynamic paths the same way.
 //!
 //! One free is excluded by name: vitaminc-encrypt 0.6.0's aws-lc backend
 //! (`backend::aws_lc::CipherKey::seal`, native builds only) frees an unwiped
@@ -22,14 +24,22 @@
 #![cfg(unix)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::ffi::c_void;
-use std::sync::Mutex;
+use std::future::IntoFuture;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Waker};
 
 use eql_bindings::encryption::targets;
 use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::{Label, StackCipher};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::{Label, Pending, StackCipher};
+use stack_kms::{
+    DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
+    IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
+};
+use uuid::Uuid;
 
 /// What every plaintext under test carries.
 const MARK: &[u8] = b"zq-heap-marker-7f3a9c";
@@ -239,6 +249,283 @@ fn a_text_target_leaves_no_plaintext_on_the_heap() {
             });
         }
     }
+}
+
+fn cipher(rt: &tokio::runtime::Runtime) -> StackCipher<FakeDataKeySource> {
+    rt.block_on(async {
+        StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .unwrap()
+    })
+}
+
+/// Text that grows while it is indexed: a match index folds it to lower
+/// case, and `İ` is longer folded than it is. The marker comes first, so a
+/// buffer sized to the text and grown as it is folded would be freed with
+/// the marker in it.
+fn growing(tail: &str) -> String {
+    let text = joined(&[&marked(tail), " ", &"İ".repeat(64)]);
+    assert!(
+        text.to_lowercase().len() > text.len(),
+        "the text lengthens when it is folded"
+    );
+    text
+}
+
+#[test]
+fn a_text_target_whose_plaintext_grows_leaves_no_plaintext_on_the_heap() {
+    let rt = runtime();
+    let cipher = cipher(&rt);
+    let keyset = cipher.default_keyset();
+    let label = Label::new(["users", "email"]).unwrap();
+    for target in text_targets() {
+        let name = target.name;
+        let plaintext = text(&growing("stored"));
+        let stored = watched(&format!("{name} encrypt (growing)"), || {
+            rt.block_on(async {
+                targets::encrypt(name, &keyset, &label, plaintext)
+                    .unwrap()
+                    .await
+                    .unwrap()
+            })
+        });
+        watched(&format!("{name} decrypt (growing)"), || {
+            let opened = rt.block_on(async {
+                targets::decrypt(name, &cipher, &label, &stored)
+                    .unwrap()
+                    .await
+                    .unwrap()
+            });
+            drop(opened);
+        });
+        if target.query.is_none() {
+            continue;
+        }
+        for index in indexes_of(target) {
+            let query = text(&growing("query"));
+            watched(
+                &format!("{name} query through {} (growing)", index.key()),
+                || {
+                    rt.block_on(async {
+                        targets::query(name, &index, &keyset, &label, query)
+                            .unwrap()
+                            .await
+                            .unwrap()
+                    })
+                },
+            );
+        }
+    }
+}
+
+/// A producible EQL type that does not store text, to open a stored text
+/// value as.
+fn another_family() -> &'static targets::Target {
+    targets::targets()
+        .iter()
+        .find(|target| target.family == "integer" && target.producible)
+        .expect("the table lists a producible integer type")
+}
+
+/// The refusals: a plaintext of another kind, refused before any key is
+/// minted, with the value it was handed wiped; and a stored value opened
+/// under another column or as another type, which fails after its bytes
+/// were read and, for a type, after they were opened.
+#[test]
+fn a_refused_or_failed_text_target_leaves_no_plaintext_on_the_heap() {
+    let rt = runtime();
+    let cipher = cipher(&rt);
+    let keyset = cipher.default_keyset();
+    let label = Label::new(["users", "email"]).unwrap();
+    let other = Label::new(["users", "name"]).unwrap();
+    let integer = another_family().name;
+    for target in text_targets() {
+        let name = target.name;
+        // Bytes, where the type stores text.
+        let bytes = ValueFrame::of(marked("bytes").into_bytes()).unwrap();
+        watched(
+            &format!("{name} encrypt, a plaintext of another kind"),
+            || {
+                assert!(targets::encrypt(name, &keyset, &label, bytes).is_err());
+            },
+        );
+        if target.query.is_some() {
+            for index in indexes_of(target) {
+                let bytes = ValueFrame::of(marked("bytes").into_bytes()).unwrap();
+                watched(
+                    &format!(
+                        "{name} query through {}, a plaintext of another kind",
+                        index.key()
+                    ),
+                    || {
+                        assert!(targets::query(name, &index, &keyset, &label, bytes).is_err());
+                    },
+                );
+            }
+        }
+        let stored = rt.block_on(async {
+            targets::encrypt(name, &keyset, &label, text(&marked("stored")))
+                .unwrap()
+                .await
+                .unwrap()
+        });
+        watched(&format!("{name} decrypt, under another column"), || {
+            let opened = targets::decrypt(name, &cipher, &other, &stored)
+                .map(|pending| rt.block_on(async { pending.await }));
+            assert!(!matches!(opened, Ok(Ok(_))), "another column opens nothing");
+        });
+        watched(&format!("{name} decrypt, as {integer}"), || {
+            let opened = targets::decrypt(integer, &cipher, &label, &stored)
+                .map(|pending| rt.block_on(async { pending.await }));
+            assert!(
+                !matches!(opened, Ok(Ok(_))),
+                "text does not open as {integer}"
+            );
+        });
+    }
+}
+
+/// A key source that can stop answering: a request made while `block` is
+/// set never completes.
+struct Stalling {
+    inner: FakeDataKeySource,
+    block: Arc<AtomicBool>,
+    requests: Arc<AtomicUsize>,
+}
+
+impl Stalling {
+    async fn requested(&self) {
+        self.requests.fetch_add(1, Ordering::SeqCst);
+        if self.block.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+impl DataKeySource for Stalling {
+    async fn generate_keys(
+        &self,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset: Option<Uuid>,
+        context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
+        self.requested().await;
+        self.inner.generate_keys(payloads, keyset, context).await
+    }
+
+    async fn retrieve_keys(
+        &self,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset: Option<Uuid>,
+        context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, stack_kms::Error> {
+        self.requested().await;
+        self.inner.retrieve_keys(payloads, keyset, context).await
+    }
+}
+
+impl IndexKeySource for Stalling {
+    async fn load_index_key(
+        &self,
+        keyset: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+        self.inner.load_index_key(keyset).await
+    }
+}
+
+/// Run `pending` until it is waiting on a key request, then drop it.
+/// `Some` with its output when it finishes without waiting: a query term
+/// that needs no data key does.
+fn poll_then_drop<T>(pending: Pending<'_, T, Stalling>) -> Option<T> {
+    let mut future = pending.into_future();
+    match future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        std::task::Poll::Ready(output) => Some(output.unwrap()),
+        std::task::Poll::Pending => None,
+    }
+}
+
+/// Pending work dropped before it has run, and dropped while its key
+/// request is in flight: the plaintext it planned is wiped as it is on
+/// success, though no key ever arrives.
+#[test]
+fn a_cancelled_text_target_leaves_no_plaintext_on_the_heap() {
+    let rt = runtime();
+    let (block, requests) = (Arc::new(AtomicBool::new(false)), Arc::default());
+    let source = Stalling {
+        inner: FakeDataKeySource::new(),
+        block: Arc::clone(&block),
+        requests: Arc::clone(&requests),
+    };
+    let cipher = rt
+        .block_on(StackCipher::builder().kms(source).init())
+        .unwrap();
+    let keyset = cipher.default_keyset();
+    let label = Label::new(["users", "email"]).unwrap();
+    for target in text_targets() {
+        let name = target.name;
+        let stored = rt.block_on(async {
+            targets::encrypt(name, &keyset, &label, text(&marked("stored")))
+                .unwrap()
+                .await
+                .unwrap()
+        });
+        block.store(true, Ordering::SeqCst);
+        requests.store(0, Ordering::SeqCst);
+
+        let plaintext = text(&marked("unpolled"));
+        watched(&format!("{name} encrypt, dropped unpolled"), || {
+            drop(targets::encrypt(name, &keyset, &label, plaintext).unwrap());
+        });
+        assert_eq!(requests.load(Ordering::SeqCst), 0, "no key was requested");
+
+        let plaintext = text(&marked("in-flight"));
+        watched(&format!("{name} encrypt, dropped in flight"), || {
+            let pending = targets::encrypt(name, &keyset, &label, plaintext).unwrap();
+            assert!(poll_then_drop(pending).is_none(), "the request stalls");
+        });
+        assert_eq!(requests.load(Ordering::SeqCst), 1, "one request in flight");
+
+        // An opening holds no plaintext until its key arrives; dropping
+        // it frees only what is stored.
+        watched(&format!("{name} decrypt, dropped in flight"), || {
+            let pending = targets::decrypt(name, &cipher, &label, &stored).unwrap();
+            assert!(poll_then_drop(pending).is_none(), "the request stalls");
+        });
+
+        if target.query.is_some() {
+            for index in indexes_of(target) {
+                let query = text(&marked("unpolled-query"));
+                watched(
+                    &format!("{name} query through {}, dropped unpolled", index.key()),
+                    || drop(targets::query(name, &index, &keyset, &label, query).unwrap()),
+                );
+                let query = text(&marked("in-flight-query"));
+                watched(
+                    &format!("{name} query through {}, dropped in flight", index.key()),
+                    || {
+                        let pending = targets::query(name, &index, &keyset, &label, query).unwrap();
+                        // Stalled or finished, by whether the term needs a
+                        // data key: either way its plaintext is wiped.
+                        drop(poll_then_drop(pending));
+                    },
+                );
+            }
+        }
+        block.store(false, Ordering::SeqCst);
+    }
+    // The source is not poisoned: the same work runs once keys arrive.
+    let name = text_targets()[0].name;
+    rt.block_on(async {
+        targets::encrypt(name, &keyset, &label, text("after"))
+            .unwrap()
+            .await
+            .unwrap()
+    });
 }
 
 /// A JSON document at the engine's boundary: the parser a binding's text

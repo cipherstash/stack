@@ -106,7 +106,10 @@ impl JsonPath {
         let Some(mut rest) = text.strip_prefix('$') else {
             return refuse("expected `$`", text);
         };
-        let mut segments = Vec::new();
+        // The steps are read into the path itself, so a refusal part way
+        // drops a path, which wipes the keys already read.
+        let mut path = Self::default();
+        let segments = &mut path.segments;
         while !rest.is_empty() {
             if let Some(after) = rest.strip_prefix('.') {
                 let end = after.find(['.', '[']).unwrap_or(after.len());
@@ -155,7 +158,7 @@ impl JsonPath {
                 return refuse("expected `.` or `[`", rest);
             }
         }
-        Ok(Self { segments })
+        Ok(path)
     }
 
     /// The steps, from the root down. Empty for the root itself.
@@ -371,6 +374,10 @@ pub(crate) const fn key_step_len(len: usize) -> usize {
 /// The JSON string at the front of `text`, which starts at its opening
 /// quote: its value and the text after its closing quote. The escapes are
 /// JSON's. The refusal is the reason; the caller names the offset.
+///
+/// A key is plaintext. Its value is decoded into a buffer sized for it,
+/// which is wiped on a refusal; the caller moves it into a path, which
+/// wipes it.
 fn quoted(text: &str) -> Result<(String, &str), &'static str> {
     let mut escaped = false;
     for (end, byte) in text.bytes().enumerate().skip(1) {
@@ -378,9 +385,9 @@ fn quoted(text: &str) -> Result<(String, &str), &'static str> {
             (true, _) => escaped = false,
             (false, b'\\') => escaped = true,
             (false, b'"') => {
-                let key: String = serde_json::from_str(&text[..=end])
-                    .map_err(|_| "the quoted name is not a JSON string")?;
-                return Ok((key, &text[end + 1..]));
+                let mut key = super::string_text(&text.as_bytes()[..=end])
+                    .ok_or("the quoted name is not a JSON string")?;
+                return Ok((std::mem::take(&mut *key), &text[end + 1..]));
             }
             (false, _) => {}
         }

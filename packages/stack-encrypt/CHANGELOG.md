@@ -604,6 +604,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `StackCipherText` and `Encrypted<Terms>` wipe it instead.
   - `json_document()` now guards its copy of the document before it checks
     the context. So a refused context wipes that copy.
+- **Four copies of plaintext are no longer freed unwiped** (#1468). Each
+  was made in a buffer that grew, or was dropped, with the plaintext
+  still in it.
+  - A match index folds its text to lower case. Text that is longer
+    folded than it was, such as text holding `İ`, was folded in a buffer
+    that grew. The tokens are the same as before.
+  - A string literal or a quoted key with an escape in a JSON predicate
+    (`$.name == "a\nb"`) was decoded through `serde_json`'s scratch
+    buffer.
+  - A quoted key with an escape in a `JsonPath` (`$["a\nb"]`) was decoded
+    the same way. A path refused after a key was read dropped that key
+    unwiped.
+  - A JSON index document with a sealed root was parsed by `serde_json`
+    when it was opened, so a string with an escape left a copy behind. It
+    is now parsed by `json::parse_text`, which reads every document the
+    index seals.
 
 ## [0.3.0] - 2026-10-27
 

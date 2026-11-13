@@ -51,8 +51,8 @@ use stack_encrypt::AsProtectedRef as _;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use common::frames::{frame, object};
 use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, Op, Scope, ValueFrame};
@@ -769,6 +769,387 @@ fn a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap() {
     });
 }
 
+/// A match index folds its text to lower case, and `İ` is longer folded
+/// than it is: three bytes for two. The marker comes first, so a buffer
+/// sized to the text and grown while it is folded would be freed with the
+/// marker in it. The fold sizes its buffers for the folded text instead.
+#[test]
+fn a_word_that_lengthens_when_folded_leaves_no_plaintext_on_the_heap() {
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let plan = plan();
+    let dotted = "İ".repeat(64);
+    let text = joined(&[&marked("folded"), " ", &dotted]);
+    assert!(
+        text.to_lowercase().len() > text.len(),
+        "the text lengthens when it is folded"
+    );
+    let source = object(vec![
+        ("email", frame(text.as_str())),
+        ("doc", frame(1u64)),
+        ("id", frame(7u64)),
+    ]);
+    watched("record::encrypt (a word that lengthens)", || {
+        rt.block_on(async {
+            record::encrypt(&keyset, &source, &plan)
+                .unwrap()
+                .await
+                .unwrap()
+        });
+    });
+    let query = frame(text.as_str());
+    watched("query_term (a word that lengthens)", || {
+        rt.block_on(async {
+            query_term(&keyset, &plan, "email", Op::Matches, &query, &NoTargets)
+                .unwrap()
+                .await
+                .unwrap()
+        });
+    });
+    let page = frame(vec![frame(text.as_str())]);
+    watched("verify (a word that lengthens)", || {
+        let values = page.elements().unwrap();
+        let matched = verify(&plan, "email", Op::Matches, &query, values, &NoTargets).unwrap();
+        assert_eq!(matched, [true]);
+    });
+    drop((source, query, page, text));
+}
+
+/// A map's keys are not held to this suite's rule, and this is why: a
+/// sealed document stores them in the clear, beside the values it seals
+/// (and binds each into its value's associated data). So the copies of a
+/// key made while a document is sealed or opened hold nothing the stored
+/// record does not, and the engine does not wipe them. A value under a
+/// marked key is sealed, and is watched by every test above.
+#[test]
+fn a_map_key_is_stored_in_the_clear() {
+    use stack_encrypt::{CipherText, StackCipherText};
+
+    /// Every map key in `tree`, at any depth.
+    fn keys(tree: &StackCipherText, found: &mut Vec<String>) {
+        match tree {
+            CipherText::Map(entries) => {
+                for (key, child) in entries {
+                    found.push(key.clone());
+                    keys(child, found);
+                }
+            }
+            CipherText::Sequence(children) => children.iter().for_each(|child| keys(child, found)),
+            _ => {}
+        }
+    }
+
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let key = marked("key");
+    let source = object(vec![
+        ("email", frame(marked("email"))),
+        ("doc", object(vec![(key.as_str(), frame(marked("value")))])),
+        ("id", frame(7u64)),
+    ]);
+    let sealed = rt.block_on(async {
+        record::encrypt(&keyset, &source, &plan())
+            .unwrap()
+            .await
+            .unwrap()
+    });
+    let mut found = Vec::new();
+    keys(&sealed, &mut found);
+    assert!(
+        found.contains(&key),
+        "the stored record names the key: {found:?}"
+    );
+    assert!(
+        !found.iter().any(|name| name.contains("value")),
+        "and not the value under it: {found:?}"
+    );
+}
+
+/// A predicate's string literal and quoted key are decoded when either has
+/// an escape, not borrowed. Each is decoded into a buffer sized for it,
+/// which is wiped; a decoder that grew a scratch buffer would free the
+/// marker written before the escape.
+#[test]
+fn an_escaped_literal_in_a_predicate_leaves_no_plaintext_on_the_heap() {
+    let wire = serde_json::json!({
+        "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                    "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
+    });
+    let plan = record::plan_with(
+        stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Documents,
+    )
+    .unwrap();
+    let mark = marked("literal");
+    let pad = "x".repeat(160);
+    let predicates = [
+        joined(&[r#"$.name == ""#, &mark, r"\n", &pad, r#"""#]),
+        joined(&[r#"$.""#, &mark, r"\n", &pad, r#"" == 1"#]),
+        // Refused: the escape names no character.
+        joined(&[r#"$.name == ""#, &mark, r"\x", &pad, r#"""#]),
+    ];
+    let inputs = predicates
+        .iter()
+        .map(|predicate| object(vec![("predicate", frame(predicate.as_str()))]));
+    for (input, accepted) in inputs.zip([true, true, false]) {
+        watched("check_query (an escaped literal)", || {
+            let checked = stack_encrypt::dynamic::check_query(
+                &plan,
+                "profile",
+                Op::Match,
+                &input,
+                &Documents,
+            );
+            assert_eq!(checked.is_ok(), accepted, "{checked:?}");
+        });
+    }
+}
+
+/// A path's quoted key is decoded when it has an escape, into a buffer
+/// sized for it, and the path wipes its keys when it is dropped. A path
+/// refused after a key was read wipes that key too.
+#[test]
+fn a_quoted_key_in_a_path_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::json::JsonPath;
+    let mark = marked("path-key");
+    let pad = "x".repeat(160);
+    let path = joined(&[r#"$[""#, &mark, r"\n", &pad, r#""].inner"#]);
+    let plain = joined(&["$.", &mark, r#"["inner"]"#]);
+    let refused = [
+        // The escape names no character.
+        joined(&[r#"$[""#, &mark, r"\x", &pad, r#""]"#]),
+        // Refused after its first two keys were read.
+        joined(&["$.", &mark, r#"[""#, &mark, r"\n", &pad, r#""]!"#]),
+    ];
+    watched("JsonPath::parse", || {
+        for text in [&path, &plain] {
+            let parsed = JsonPath::parse(text).expect("a path");
+            assert_eq!(parsed.segments().len(), 2);
+            drop(parsed);
+        }
+        for text in &refused {
+            assert!(JsonPath::parse(text).is_err(), "{text:?}");
+        }
+    });
+}
+
+/// Pending work dropped before it has run, and dropped while its key
+/// request is in flight: the plaintext it planned is wiped as it is on
+/// success, though no key ever arrives. `lifecycle_conformance` shows the
+/// same drops release what the work owns; these show what is released is
+/// wiped.
+mod cancellation {
+    use super::*;
+
+    use std::borrow::Cow;
+    use std::future::IntoFuture;
+    use std::task::{Context, Waker};
+
+    use stack_encrypt::{Ciphertext, EncryptInto, OpaqueBlob, Pending, StackCipher};
+    use stack_kms::{
+        DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload,
+        IdentifiedBy, IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
+    };
+    use uuid::Uuid;
+
+    /// A key source that can stop answering: a request made while `block`
+    /// is set never completes.
+    struct Stalling {
+        inner: FakeDataKeySource,
+        block: Arc<AtomicBool>,
+        requests: Arc<AtomicUsize>,
+    }
+
+    impl Stalling {
+        async fn requested(&self) {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            if self.block.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+        }
+    }
+
+    impl DataKeySource for Stalling {
+        async fn generate_keys(
+            &self,
+            payloads: Vec<GenerateKeyPayload<'_>>,
+            keyset: Option<Uuid>,
+            context: Option<Cow<'_, UnverifiedContext>>,
+        ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
+            self.requested().await;
+            self.inner.generate_keys(payloads, keyset, context).await
+        }
+
+        async fn retrieve_keys(
+            &self,
+            payloads: Vec<RetrieveKeyPayload<'_>>,
+            keyset: Option<Uuid>,
+            context: Option<&UnverifiedContext>,
+        ) -> Result<Vec<DataKey>, stack_kms::Error> {
+            self.requested().await;
+            self.inner.retrieve_keys(payloads, keyset, context).await
+        }
+    }
+
+    impl IndexKeySource for Stalling {
+        async fn load_index_key(
+            &self,
+            keyset: Option<IdentifiedBy>,
+        ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+            self.inner.load_index_key(keyset).await
+        }
+    }
+
+    /// A cipher over a [`Stalling`] source, the switch that stalls it, and
+    /// the count of key requests it has been sent.
+    fn cipher(
+        rt: &tokio::runtime::Runtime,
+    ) -> (StackCipher<Stalling>, Arc<AtomicBool>, Arc<AtomicUsize>) {
+        let (block, requests) = (Arc::default(), Arc::default());
+        let source = Stalling {
+            inner: FakeDataKeySource::new(),
+            block: Arc::clone(&block),
+            requests: Arc::clone(&requests),
+        };
+        let cipher = rt
+            .block_on(StackCipher::builder().kms(source).init())
+            .unwrap();
+        (cipher, block, requests)
+    }
+
+    /// Drop `pending` without running it: no key is requested.
+    fn drop_unpolled<T>(pending: Pending<'_, T, Stalling>, requests: &AtomicUsize) {
+        drop(pending);
+        assert_eq!(requests.load(Ordering::SeqCst), 0, "no key was requested");
+    }
+
+    /// Run `pending` until its key request is in flight, then drop it.
+    fn drop_in_flight<T>(pending: Pending<'_, T, Stalling>, requests: &AtomicUsize) {
+        let mut future = pending.into_future();
+        assert!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending(),
+            "the key request does not complete"
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1, "one request in flight");
+        drop(future);
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, zeroize::Zeroize)]
+    struct Note {
+        title: String,
+        /// Written after the marked field, so the blob's buffer regrows
+        /// while it holds it.
+        body: String,
+    }
+
+    fn note() -> OpaqueBlob<Note> {
+        OpaqueBlob::new(Note {
+            title: marked("note"),
+            body: "x".repeat(8 * 1024),
+        })
+    }
+
+    #[test]
+    fn work_dropped_before_it_runs_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let (cipher, _, requests) = cipher(&rt);
+        let keyset = cipher.default_keyset();
+        let plan = plan();
+        let source = row();
+        watched("record::encrypt, dropped unpolled", || {
+            drop_unpolled(record::encrypt(&keyset, &source, &plan).unwrap(), &requests);
+        });
+        drop(source);
+        let column = vec![marked("first"), marked("second")];
+        watched("Vec<String> -> Vec<Ciphertext>, dropped unpolled", || {
+            drop_unpolled::<Vec<Ciphertext>>(column.encrypt_into(&keyset), &requests);
+        });
+        let text = marked("scalar");
+        watched("String -> Ciphertext, dropped unpolled", || {
+            drop_unpolled(keyset.encrypt(text), &requests);
+        });
+        let blob = note();
+        watched_for_leaks("OpaqueBlob -> Ciphertext, dropped unpolled", || {
+            drop_unpolled(keyset.encrypt_with_context(blob, "docs/body"), &requests);
+        });
+        let query = frame(marked("query"));
+        watched("query_term, dropped unpolled", || {
+            drop_unpolled(
+                query_term(&keyset, &plan, "email", Op::Matches, &query, &NoTargets).unwrap(),
+                &requests,
+            );
+        });
+    }
+
+    #[test]
+    fn work_dropped_with_its_key_request_in_flight_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let (cipher, block, requests) = cipher(&rt);
+        let keyset = cipher.default_keyset();
+        let plan = plan();
+        let stored = rt.block_on(async {
+            record::encrypt(&keyset, row(), &plan)
+                .unwrap()
+                .await
+                .unwrap()
+        });
+        block.store(true, Ordering::SeqCst);
+        let in_flight = |what: &str, start: &mut dyn FnMut()| {
+            requests.store(0, Ordering::SeqCst);
+            watched(what, start);
+        };
+
+        let source = row();
+        in_flight("record::encrypt, dropped in flight", &mut || {
+            drop_in_flight(record::encrypt(&keyset, &source, &plan).unwrap(), &requests);
+        });
+        drop(source);
+        let mut column = Some(vec![marked("first"), marked("second")]);
+        in_flight(
+            "Vec<String> -> Vec<Ciphertext>, dropped in flight",
+            &mut || {
+                let column = column.take().unwrap();
+                drop_in_flight::<Vec<Ciphertext>>(column.encrypt_into(&keyset), &requests);
+            },
+        );
+        let mut text = Some(marked("scalar"));
+        in_flight("String -> Ciphertext, dropped in flight", &mut || {
+            drop_in_flight(keyset.encrypt(text.take().unwrap()), &requests);
+        });
+        let mut blob = Some(note());
+        in_flight("OpaqueBlob -> Ciphertext, dropped in flight", &mut || {
+            let blob = blob.take().unwrap();
+            drop_in_flight(keyset.encrypt_with_context(blob, "docs/body"), &requests);
+        });
+        // An opening holds no plaintext until its key arrives; dropping it
+        // in flight frees only what is stored.
+        let mut stored = Some(stored);
+        in_flight("record::decrypt, dropped in flight", &mut || {
+            let stored = stored.take().unwrap();
+            drop_in_flight(
+                record::decrypt(Scope::Client(&cipher), stored, &plan, None).unwrap(),
+                &requests,
+            );
+        });
+
+        // The cipher is not poisoned: the same work runs once keys arrive.
+        block.store(false, Ordering::SeqCst);
+        let sealed: Ciphertext = rt.block_on(async { keyset.encrypt(7u64).await }).unwrap();
+        assert_eq!(
+            rt.block_on(async { keyset.decrypt::<u64>(sealed).await })
+                .unwrap(),
+            7
+        );
+    }
+}
+
 /// `parts` joined into a string sized for them before it is written, so
 /// building a marked input frees no marked block that a later allocation
 /// could reuse and a watch then find.
@@ -1180,6 +1561,7 @@ mod json_index {
         json!({
             marked("key"): {"inner": marked("short"), "list": [marked("element"), 1, null]},
             "long": long,
+            "escaped": format!("{}\n\"", marked("escaped")),
             "n": 7,
         })
     }

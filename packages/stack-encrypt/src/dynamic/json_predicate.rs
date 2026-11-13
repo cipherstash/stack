@@ -41,7 +41,7 @@ use super::json_query::{
 };
 use super::query::{Op, Operand};
 use super::{Error, Reason};
-use crate::json::{parse_text, JsonOptions, JsonPath, Segment, MAX_DEPTH};
+use crate::json::{parse_text, string_text, JsonOptions, JsonPath, Segment, MAX_DEPTH};
 use crate::{KeysetCipher, Label, Pending};
 
 /// How deeply a predicate may nest parentheses, `!` and `exists`. The
@@ -639,9 +639,8 @@ impl<'t> Parser<'t> {
                 (true, _) => escaped = false,
                 (false, b'\\') => escaped = true,
                 (false, b'"') => {
-                    let decoded = serde_json::from_str(&text[..=end])
-                        .map(Zeroizing::new)
-                        .map_err(|_| Refusal::syntax(C_STRING, at))?;
+                    let decoded = string_text(&text.as_bytes()[..=end])
+                        .ok_or_else(|| Refusal::syntax(C_STRING, at))?;
                     return Ok((decoded, end + 1));
                 }
                 (false, _) => {}

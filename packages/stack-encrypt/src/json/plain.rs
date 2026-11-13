@@ -38,9 +38,13 @@ impl PlainJson {
         Self(value)
     }
 
-    /// Parse JSON text into a value to be wrapped by the caller.
+    /// Parse JSON text into a value to be wrapped by the caller. The
+    /// parser is this crate's ([`parse_text`](super::parse_text)), which
+    /// frees no buffer with part of the text in it: serde_json's decodes a
+    /// string that has an escape through a scratch buffer it grows and
+    /// frees unwiped.
     pub(crate) fn parse(bytes: &[u8]) -> Option<Self> {
-        serde_json::from_slice(bytes).ok().map(Self)
+        super::parse_text(bytes).ok().map(Self)
     }
 
     /// The value, for the caller that asked for it. Only at that
