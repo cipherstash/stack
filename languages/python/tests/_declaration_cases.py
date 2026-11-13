@@ -707,7 +707,11 @@ def test_a_json_field_has_no_python_type_yet():
     assert error.reason == "json"
 
 
-def test_an_unproducible_marker_is_refused_with_the_catalog_reason():
+def test_an_unproducible_marker_is_refused_with_the_catalog_reason(monkeypatch):
+    # The catalog has no unproducible type now, so Json stands in for one.
+    monkeypatch.setattr(_eql.Json, "producible", False)
+    monkeypatch.setattr(_eql.Json, "reason", "how it is sealed is not decided")
+
     def build():
         @stackencrypt.model("users")
         @dataclasses.dataclass

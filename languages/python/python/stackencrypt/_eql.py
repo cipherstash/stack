@@ -57,6 +57,7 @@ __all__ = [
     "DoubleOrdOre",
     "DoubleOrd",
     "DoubleOrdOpe",
+    "Json",
     "JsonSearch",
 ]
 
@@ -946,19 +947,19 @@ class DoubleOrdOpe(Marker):
 class Json(Marker):
     """The EQL type stored in public.eql_v4_json: the json family with no index.
 
-    The engine cannot produce it yet: a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided.
+    The engine produces it from a json.
     """
 
     name = "Json"
     family = "json"
     suffix = ""
-    plaintext = None
+    plaintext = "json"
     sql_domain = "public.eql_v4_json"
     indexes = ()
     query = None
     query_sql_domain = None
-    producible = False
-    reason = "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided"
+    producible = True
+    reason = None
 
 
 class JsonSearch(Marker):

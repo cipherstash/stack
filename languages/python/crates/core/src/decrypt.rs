@@ -17,7 +17,9 @@ use stack_encrypt::dynamic::plaintext::{FixedType, Logical, MapSink, Physical, S
 use stack_encrypt::dynamic::record::{self, EQL_KEY};
 use stack_encrypt::dynamic::{Output, Scope, ValueFrame};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
-use stack_encrypt::{CipherText, Encrypt, PassthroughFrame, StackCipher, StackCipherText};
+use stack_encrypt::{
+    CipherText, Controlled as _, Encrypt, PassthroughFrame, StackCipher, StackCipherText,
+};
 
 use crate::client;
 use crate::encrypt::{engine_fault, Field, ModelPlan};
@@ -136,8 +138,12 @@ fn eql_frame(json: &[u8]) -> Vec<u8> {
             serializer.serialize_bytes(self.0)
         }
     }
-    // One bytes scalar always encodes.
-    frame::serde::to_vec(&Bytes(json)).expect("a bytes scalar encodes as a frame")
+    // One bytes scalar always encodes. The frame comes back in vitaminc's
+    // wiped Buffer, made for plaintext; this one holds ciphertext, and a
+    // passthrough frame takes plain bytes.
+    frame::serde::to_vec(&Bytes(json))
+        .expect("a bytes scalar encodes as a frame")
+        .risky_unwrap()
 }
 
 /// The `i.t` and `i.c` of an EQL value's JSON text, or `None` when it is not

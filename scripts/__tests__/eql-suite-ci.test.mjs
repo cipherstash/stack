@@ -609,14 +609,15 @@ const RUST_CACHE_STEPS = workflowFiles().flatMap((relPath) => {
 const workspacesOf = (step) =>
   String(step?.with?.workspaces ?? '')
     .split('\n')
-    .map((line) => line.trim())
+    // rust-cache's `dir -> target` form: the workspace is the part before.
+    .map((line) => line.split('->')[0].trim())
     .filter(Boolean)
 
 /**
  * Whether `dir` is the root of another Cargo workspace: a directory outside
  * the EQL tree with its own `Cargo.lock`. A member of the EQL workspace, or
  * the monorepo root, is not another workspace, so the check below still
- * catches both.
+ * catches a step that names either one instead of the EQL root.
  */
 const isAnotherWorkspace = (dir) =>
   dir !== '.' &&
@@ -676,12 +677,18 @@ describe('the shared Rust cache is pointed and saved correctly', () => {
     // Held non-empty, so a change to `isEqlJob` cannot empty the check.
     expect(EQL_RUST_CACHE_STEPS.length).toBeGreaterThan(0)
     // The step names the EQL root, and any other entry is another
-    // workspace's root, never an EQL member or the monorepo root.
+    // workspace's root, never an EQL member. The monorepo root is the root
+    // Cargo workspace: it may be named beside the EQL root, as by
+    // tests-golang.yml's wasi-check, which builds both, but never instead
+    // of it.
     const wrong = EQL_RUST_CACHE_STEPS.filter(({ step }) => {
       const dirs = workspacesOf(step)
       return (
         !dirs.includes(CARGO_WORKSPACE) ||
-        !dirs.every((dir) => dir === CARGO_WORKSPACE || isAnotherWorkspace(dir))
+        !dirs.every(
+          (dir) =>
+            dir === CARGO_WORKSPACE || dir === '.' || isAnotherWorkspace(dir),
+        )
       )
     }).map((entry) =>
       stepLabel(entry, `workspaces: ${entry.step?.with?.workspaces}`),

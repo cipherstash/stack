@@ -8,6 +8,7 @@
 
 use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use stack_encrypt::dynamic::{self, record};
+use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::ErrorPayload as _;
 
 use crate::refusal::Refusal;
@@ -46,7 +47,8 @@ pub fn build(table: &str, fields: &[(&str, Column<'_>)]) -> Result<record::Plan,
     // A frame of strings and lists of strings always encodes.
     let frame = dynamic::frame::serde::to_vec(&Wire { table, fields })
         .expect("a plan of strings encodes as a frame");
-    record::plan_with(&frame, &targets::resolver()).map_err(|error| refusal(&error))
+    record::plan_with(frame.as_protected_ref(), &targets::resolver())
+        .map_err(|error| refusal(&error))
 }
 
 pub fn refusal(error: &dynamic::Error) -> Refusal {
@@ -144,9 +146,11 @@ mod tests {
         assert_eq!(refused.reason, None);
     }
 
+    // The catalog has no unproducible type now: Json was the last, and the
+    // engine produces it. The Python declaration still refuses a JSON
+    // field, as it has no Python type yet (#1341).
     #[test]
-    fn an_unproducible_eql_type_is_refused_by_the_resolver() {
-        let refused = check("users", &[("doc", Column::Eql("Json"))]).unwrap_err();
-        assert_eq!(refused.code, "stack_encrypt_target_unproducible");
+    fn json_is_accepted_by_the_resolver() {
+        check("users", &[("doc", Column::Eql("Json"))]).unwrap();
     }
 }

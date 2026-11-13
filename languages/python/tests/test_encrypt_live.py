@@ -453,9 +453,10 @@ def test_100_queries_make_no_request():
     assert len(terms) == 100
 
 
-# One field per producible type. JsonSearch is out of scope: the json kind
-# has no Python type in this version, and the decorator refuses it.
-PRODUCIBLE = [m for m in _eql.TYPES if m.producible and m.name != "JsonSearch"]
+# One field per producible type. The json kind (Json and JsonSearch) is out
+# of scope: it has no Python type in this version, and the decorator refuses
+# it.
+PRODUCIBLE = [m for m in _eql.TYPES if m.producible and m.plaintext != "json"]
 
 # A value and its Python type for each plaintext kind, near the edge of
 # what the kind holds.
@@ -487,7 +488,7 @@ def every_type_model():
     return stackencrypt.model("every_type")(cls)
 
 
-def test_every_producible_type_except_json_search_is_covered():
+def test_every_producible_type_except_the_json_kind_is_covered():
     assert {m.plaintext for m in PRODUCIBLE} == set(KIND_VALUES)
     assert len(PRODUCIBLE) == 49
 

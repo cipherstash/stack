@@ -14,6 +14,7 @@ use stack_encrypt::dynamic::plaintext::{
     Encrypt, Error, FixedType, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError, Width,
 };
 use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::{Buffer, Controlled as _};
 
 /// A record the way a Python model would describe itself: text, an integer,
 /// a date and a passthrough subtree.
@@ -255,7 +256,7 @@ fn an_outside_sink_reads_a_batch_written_as_decrypt_writes_it() {
         record("grace@example.com", 85),
     ];
 
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::with_capacity(0);
     let mut seq = FrameWriter::new(&mut bytes)
         .seq(Some(rows.len()))
         .expect("a sequence starts");
@@ -274,6 +275,8 @@ fn an_outside_sink_reads_a_batch_written_as_decrypt_writes_it() {
     }
     seq.end().expect("the sequence ends");
 
+    // The test reads back what it wrote: the sample values are not secret.
+    let bytes = bytes.risky_unwrap();
     let frame = Frame::parse(&bytes).expect("the batch is one frame");
     assert_eq!(
         read(frame),

@@ -7,7 +7,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use stackencrypt_core::query::{self as core, OpSpec};
+use stackencrypt_core::query::{self as core, Op};
 use stackencrypt_core::refusal::Refusal;
 
 use crate::encrypt::{field_value, Plan};
@@ -29,7 +29,7 @@ pub fn query(
     operator: &str,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<String> {
-    let Some(op) = OpSpec::parse(operator) else {
+    let Some(op) = Op::parse(operator) else {
         return Err(raise(py, unknown_operator(field, operator)));
     };
     let found = plan

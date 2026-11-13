@@ -154,8 +154,10 @@ def test_render_item_adds_the_imports_the_type_needs():
     assert {"import stackencrypt", "import stackencrypt.sqlalchemy"} <= autogen.imports
 
 
-def test_render_item_names_a_marker_the_package_does_not_export_by_its_module():
-    # Json is in _eql only: no model can declare it yet.
+def test_render_item_names_a_marker_the_package_does_not_export_by_its_module(monkeypatch):
+    # A marker the engine cannot produce stays in _eql only. The catalog has
+    # none now, so Json stands in for one.
+    monkeypatch.delattr(stackencrypt, "Json", raising=False)
     autogen = AutogenContext(MigrationContext.configure(dialect_name="postgresql"))
 
     rendered = render_item("type", EqlType(_eql.Json), autogen)

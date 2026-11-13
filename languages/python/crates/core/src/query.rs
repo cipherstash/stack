@@ -8,7 +8,7 @@
 //! loaded keyset, so no ZeroKMS request is made once the shared client is
 //! built.
 
-pub use stack_encrypt::dynamic::OpSpec;
+pub use stack_encrypt::dynamic::Op;
 use stack_encrypt::dynamic::{self, Operand};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
 use stack_encrypt::op::{Limit, Stats};
@@ -35,7 +35,7 @@ use crate::values::{Kind, Typed, Value};
 pub fn query(
     plan: &ModelPlan,
     field: &str,
-    op: OpSpec,
+    op: Op,
     kind: Kind,
     value: Value<'_>,
 ) -> Result<String, Refusal> {
@@ -52,7 +52,7 @@ pub async fn query_with<K>(
     keyset: &KeysetCipher<'_, K>,
     plan: &ModelPlan,
     field: &str,
-    op: OpSpec,
+    op: Op,
     kind: Kind,
     value: Value<'_>,
 ) -> Result<String, Refusal>
@@ -93,11 +93,11 @@ pub fn verify(
     text: &str,
     values: &[&str],
 ) -> Result<Vec<bool>, Refusal> {
-    answers(plan, field, OpSpec::Matches)?;
+    answers(plan, field, Op::Matches)?;
     dynamic::verify(
         plan.plan(),
         field,
-        OpSpec::Matches,
+        Op::Matches,
         Typed(Some(Kind::String), Value::Text(text)),
         values
             .iter()
@@ -127,7 +127,7 @@ pub fn target_limit(
     histogram: Option<&[(u32, u64)]>,
     confidence: Option<f64>,
 ) -> Result<Option<u64>, Refusal> {
-    answers(plan, field, OpSpec::Matches)?;
+    answers(plan, field, Op::Matches)?;
     let mut stats = match histogram {
         Some(histogram) => Stats::measured(rows, histogram.iter().copied()),
         None => Stats::declared(rows),
@@ -138,7 +138,7 @@ pub fn target_limit(
     let limit = dynamic::target_limit(
         plan.plan(),
         field,
-        OpSpec::Matches,
+        Op::Matches,
         term.as_bytes(),
         want,
         &stats,
@@ -173,7 +173,7 @@ pub fn operators(plan: &ModelPlan, field: &str) -> Result<Vec<&'static str>, Ref
 /// # Errors
 ///
 /// `query_unsupported`, or the engine's refusal of the field.
-pub fn answers(plan: &ModelPlan, field: &str, op: OpSpec) -> Result<(), Refusal> {
+pub fn answers(plan: &ModelPlan, field: &str, op: Op) -> Result<(), Refusal> {
     if operators(plan, field)?.contains(&op.name()) {
         return Ok(());
     }
@@ -210,11 +210,11 @@ mod tests {
     /// check does: the EQL type, or `Passthrough`.
     #[test]
     fn query_unsupported_names_the_marker_in_reason() {
-        let refused = answers(&users(), "email", OpSpec::Lt).unwrap_err();
+        let refused = answers(&users(), "email", Op::Lt).unwrap_err();
         assert_eq!(refused.code, "query_unsupported");
         assert_eq!(refused.reason.as_deref(), Some("TextEq"));
 
-        let refused = answers(&users(), "age", OpSpec::Eq).unwrap_err();
+        let refused = answers(&users(), "age", Op::Eq).unwrap_err();
         assert_eq!(refused.reason.as_deref(), Some("Passthrough"));
     }
 
@@ -223,7 +223,7 @@ mod tests {
             &cipher.default_keyset(),
             &users(),
             "email",
-            OpSpec::Eq,
+            Op::Eq,
             Kind::String,
             Value::Text(email),
         ))
@@ -273,7 +273,7 @@ mod tests {
         .unwrap()
     }
 
-    const ORDER: [OpSpec; 4] = [OpSpec::Lt, OpSpec::Lte, OpSpec::Gt, OpSpec::Gte];
+    const ORDER: [Op; 4] = [Op::Lt, Op::Lte, Op::Gt, Op::Gte];
 
     #[test]
     fn an_order_field_answers_every_order_operator() {
@@ -330,7 +330,7 @@ mod tests {
             &cipher.default_keyset(),
             &notes(),
             "notes",
-            OpSpec::Matches,
+            Op::Matches,
             Kind::String,
             Value::Text(text),
         ))
@@ -440,7 +440,7 @@ mod tests {
             )
             .unwrap();
 
-            let refused = answers(&plan, "rank", OpSpec::Eq).unwrap_err();
+            let refused = answers(&plan, "rank", Op::Eq).unwrap_err();
 
             assert_eq!(refused.code, "query_unsupported", "{eql}");
             assert_eq!(refused.field.as_deref(), Some("rank"));
@@ -449,13 +449,13 @@ mod tests {
 
     #[test]
     fn a_field_with_an_eq_index_answers_equality() {
-        answers(&users(), "email", OpSpec::Eq).unwrap();
+        answers(&users(), "email", Op::Eq).unwrap();
     }
 
     #[test]
     fn a_passthrough_field_answers_no_equality() {
         assert_eq!(
-            answers(&users(), "age", OpSpec::Eq).unwrap_err().code,
+            answers(&users(), "age", Op::Eq).unwrap_err().code,
             "query_unsupported"
         );
     }
@@ -468,7 +468,7 @@ mod tests {
             &cipher.default_keyset(),
             &users(),
             "age",
-            OpSpec::Eq,
+            Op::Eq,
             Kind::Int64,
             Value::Int(1),
         ))
