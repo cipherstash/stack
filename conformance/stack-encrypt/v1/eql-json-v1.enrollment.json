@@ -76,7 +76,7 @@
           "the_table::every_row_is_a_compiled_domain_type_and_so_is_its_query",
           "the_table::the_producible_types_are_the_ones_with_a_rust_plaintext",
           "given_an_unknown_name::every_entry_point_says_no_such_type",
-          "given_a_name_the_engine_cannot_produce::every_entry_point_refuses_it_with_the_table_reason"
+          "given_an_unknown_name::the_name_is_refused_before_the_label_or_the_value_is_read"
         ],
         "eql-record": [
           "the_engine_and_the_table_agree_on_which_targets_take_json_options"
