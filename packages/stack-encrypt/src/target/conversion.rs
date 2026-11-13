@@ -48,6 +48,10 @@ pub trait EncryptTarget<S: Zeroize>: Sized + 'static {
             Self::encryption::<K>().shapes(),
             move |source: S, cipher, context| {
                 let guarded = Protected::new(source);
+                // The borrowed description takes a plain `&S`, not a
+                // protected borrow: a declaration takes a field out of a
+                // borrowed struct (`Encryption::project`), and a
+                // `ProtectedRef` of a struct cannot lend one of its fields.
                 let pending = cipher.run(Self::encryption(), guarded.risky_ref(), context);
                 drop(guarded);
                 pending

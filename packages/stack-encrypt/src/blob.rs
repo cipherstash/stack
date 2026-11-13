@@ -354,7 +354,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use vitaminc_aead_frame::serde::PathSegment;
 use vitaminc_aead_frame::storage::{self, ErrorKind};
-use vitaminc_protected::{Buffer, Controlled, Protected};
+use vitaminc_protected::{AsProtectedRef, Buffer, Controlled, Protected};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::scalar::sealed;
@@ -481,7 +481,7 @@ impl<T: Serialize + Zeroize + Send + 'static> sealed::Encode for OpaqueBlob<T> {
         // into the pending's own guarded leaf here, and `blob` is wiped when
         // this returns. The caller's source is wiped by the owned conversion
         // that called us.
-        crate::target::core::encrypt_opaque(blob.risky_ref().as_slice(), cipher, context)
+        crate::target::core::encrypt_opaque(blob.as_protected_ref(), cipher, context)
             .try_map(Ciphertext::from_tree)
     }
 }

@@ -106,7 +106,10 @@ impl JsonPath {
         let Some(mut rest) = text.strip_prefix('$') else {
             return refuse("expected `$`", text);
         };
-        let mut segments = Vec::new();
+        // The steps are read into the path itself, so a refusal part way
+        // drops a path, which wipes the keys already read.
+        let mut path = Self::default();
+        let segments = &mut path.segments;
         while !rest.is_empty() {
             if let Some(after) = rest.strip_prefix('.') {
                 let end = after.find(['.', '[']).unwrap_or(after.len());
@@ -126,14 +129,14 @@ impl JsonPath {
                     segments.push(Segment::Wildcard);
                     rest = next;
                 } else if after.starts_with('"') {
-                    let (key, next) = match quoted(after) {
+                    let (mut key, next) = match quoted(after) {
                         Ok(parts) => parts,
                         Err(reason) => return refuse(reason, after),
                     };
                     let Some(next) = next.strip_prefix(']') else {
                         return refuse("expected `]` after the quoted name", next);
                     };
-                    segments.push(Segment::Key(key));
+                    segments.push(Segment::Key(std::mem::take(&mut *key)));
                     rest = next;
                 } else if after.starts_with(|c: char| c.is_ascii_digit()) {
                     let end = after
@@ -155,7 +158,7 @@ impl JsonPath {
                 return refuse("expected `.` or `[`", rest);
             }
         }
-        Ok(Self { segments })
+        Ok(path)
     }
 
     /// The steps, from the root down. Empty for the root itself.
@@ -270,6 +273,14 @@ impl JsonPath {
         Self { segments }
     }
 
+    /// Add one step to the end of this path. A parser reads its steps
+    /// into a path with this, so the keys it has read are wiped if it
+    /// refuses the text part way.
+    #[cfg(feature = "dynamic")]
+    pub(crate) fn push(&mut self, segment: Segment) {
+        self.segments.push(segment);
+    }
+
     /// This path with one more step.
     pub(crate) fn then(&self, segment: Segment) -> Self {
         let mut segments = Vec::with_capacity(self.segments.len() + 1);
@@ -371,21 +382,16 @@ pub(crate) const fn key_step_len(len: usize) -> usize {
 /// The JSON string at the front of `text`, which starts at its opening
 /// quote: its value and the text after its closing quote. The escapes are
 /// JSON's. The refusal is the reason; the caller names the offset.
-fn quoted(text: &str) -> Result<(String, &str), &'static str> {
-    let mut escaped = false;
-    for (end, byte) in text.bytes().enumerate().skip(1) {
-        match (escaped, byte) {
-            (true, _) => escaped = false,
-            (false, b'\\') => escaped = true,
-            (false, b'"') => {
-                let key: String = serde_json::from_str(&text[..=end])
-                    .map_err(|_| "the quoted name is not a JSON string")?;
-                return Ok((key, &text[end + 1..]));
-            }
-            (false, _) => {}
-        }
-    }
-    Err("unterminated quoted name")
+///
+/// A key is plaintext. Its value is decoded into a buffer sized for it and
+/// is wiped when it is dropped, so a caller that refuses the text after it
+/// leaves nothing behind. A caller that keeps the key takes it out into a
+/// path, which wipes it.
+fn quoted(text: &str) -> Result<(Zeroizing<String>, &str), &'static str> {
+    let end = super::string_end(text.as_bytes()).ok_or("unterminated quoted name")?;
+    let key = super::string_text(&text.as_bytes()[..=end])
+        .ok_or("the quoted name is not a JSON string")?;
+    Ok((key, &text[end + 1..]))
 }
 
 impl FromStr for JsonPath {

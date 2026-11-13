@@ -148,21 +148,19 @@ pub(crate) fn tokens(text: &str, options: &MatchOptions) -> Result<Tokens, Norma
 /// still reaches [`MatchOptions::validate`]'s refusal.
 ///
 /// The text is plaintext, so the copies made on the way are zeroized when
-/// they are dropped: the folded text, its characters, which are collected
-/// into a buffer sized up front, and each n-gram, which is built at its
-/// final size. Neither reallocates, so no freed buffer holds plaintext. The
-/// one exception is inside `str::to_lowercase`, which grows its output when
-/// folding lengthens the text (as `İ` does). A short word is copied out of
-/// the folded text at its final size. The tokens returned are the caller's
-/// to zeroize.
+/// they are dropped: the folded text ([`lowercase`]), its characters, which
+/// are collected into a buffer sized up front, and each n-gram, which is
+/// built at its final size. None reallocates, so no freed buffer holds
+/// plaintext. A short word is copied out of the folded text at its final
+/// size. The tokens returned are the caller's to zeroize.
 ///
 /// [`MatchOptions::validate`]: super::MatchOptions
 pub(crate) fn tokenize(text: &str, options: &MatchOptions) -> Tokens {
-    let text = Zeroizing::new(if options.downcase {
-        text.to_lowercase()
+    let text = if options.downcase {
+        lowercase(text)
     } else {
-        text.to_string()
-    });
+        Zeroizing::new(text.to_string())
+    };
     let short_words = match options.tokenizer {
         Tokenizer::Ngram { length } if options.short_words => short_words(&text, length),
         // `MatchOptions::validate` refuses the option beside the standard
@@ -173,6 +171,51 @@ pub(crate) fn tokenize(text: &str, options: &MatchOptions) -> Tokens {
         tokenizer: tokenizer_tokens(&text, options.tokenizer),
         short_words,
     }
+}
+
+/// `text` in lower case: exactly `str::to_lowercase`, which is what stored
+/// tokens were cut from, in buffers that never grow.
+///
+/// `str::to_lowercase` writes into a buffer as long as its input, and grows
+/// it when folding lengthens the text (`İ` folds to two characters, three
+/// bytes for two). The buffer it frees on the way holds plaintext. So the
+/// text is folded in two steps, neither of which grows:
+///
+/// 1. Each character is folded on its own into a buffer sized for the
+///    result. `Σ` is left as it is: it folds to `σ` or to `ς` by where it
+///    sits in its word, which one character cannot say.
+/// 2. `str::to_lowercase` folds that, if it holds a `Σ`. Only `Σ` is left
+///    to change, and both of its forms are as long as it is.
+///
+/// The second step finds every `Σ` where the first left it in its word:
+/// folding a character changes neither whether it is a cased letter nor
+/// whether it is skipped in looking for the end of a word.
+fn lowercase(text: &str) -> Zeroizing<String> {
+    let folded_len: usize = text.chars().map(folded_len).sum();
+    let mut folded = Zeroizing::new(String::with_capacity(folded_len));
+    let mut sigma = false;
+    for c in text.chars() {
+        if c == SIGMA {
+            sigma = true;
+            folded.push(c);
+        } else {
+            folded.extend(c.to_lowercase());
+        }
+    }
+    if !sigma {
+        return folded;
+    }
+    Zeroizing::new(folded.to_lowercase())
+}
+
+/// The capital sigma: the one character whose lower case depends on the
+/// characters around it.
+const SIGMA: char = 'Σ';
+
+/// The length in bytes of `c` in lower case. `Σ` is as long as either of its
+/// lower-case forms.
+fn folded_len(c: char) -> usize {
+    c.to_lowercase().map(char::len_utf8).sum()
 }
 
 /// Every word of `text` at least [`SHORTEST_WORD`] characters long and
@@ -618,6 +661,99 @@ mod tests {
                 !row.hold(&as_gram),
                 "a word token does not stand in for a token of the tokenizer's"
             );
+        }
+    }
+
+    mod given_text_to_lowercase {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Every character, beside a `Σ` on either side and between a `Σ`
+        /// and a letter: each place where it decides which lower case the
+        /// `Σ` takes, as a letter or as a mark the search for a word's end
+        /// skips.
+        fn beside_a_sigma(c: char) -> [String; 7] {
+            [
+                format!("{c}"),
+                format!("{c}Σ"),
+                format!("Σ{c}"),
+                format!("a{c}Σ"),
+                format!("aΣ{c}"),
+                format!("aΣ{c}a"),
+                format!("{c}Σ{c}"),
+            ]
+        }
+
+        #[test]
+        fn every_character_folds_as_the_standard_library_folds_it() {
+            for c in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
+                for text in beside_a_sigma(c) {
+                    assert_eq!(
+                        *lowercase(&text),
+                        text.to_lowercase(),
+                        "the lower case of {text:?}"
+                    );
+                }
+            }
+        }
+
+        /// What keeps the second step from growing its buffer: a character
+        /// that folding produced takes no more bytes when it is folded
+        /// again.
+        #[test]
+        fn a_folded_character_does_not_lengthen_when_it_is_folded_again() {
+            for c in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
+                for folded in c.to_lowercase() {
+                    assert!(
+                        folded_len(folded) <= folded.len_utf8(),
+                        "{folded:?}, from {c:?}, lengthens"
+                    );
+                }
+            }
+        }
+
+        /// The first step's buffer is sized by `folded_len`; a `Σ` is left
+        /// in it unfolded, so it must be as long as its lower case.
+        #[test]
+        fn the_length_counted_for_a_character_is_the_length_it_is_written_at() {
+            assert_eq!(folded_len(SIGMA), SIGMA.len_utf8());
+            assert_eq!(folded_len('İ'), 3, "longer than the two bytes of İ");
+            assert_eq!(folded_len('A'), 1);
+            assert_eq!(folded_len('\u{212A}'), 1, "the Kelvin sign folds to k");
+        }
+
+        #[test]
+        fn a_sigma_folds_by_its_place_in_the_word() {
+            for (text, folded) in [
+                ("ΟΔΟΣ", "οδος"),
+                ("ΟΔΟΣ ΣΟΦΙΑ", "οδος σοφια"),
+                ("Σ", "σ"),
+                ("İΣ", "i\u{307}ς"),
+                ("ΑΣ'", "ας'"),
+                ("ΑΣ'Α", "ασ'α"),
+            ] {
+                assert_eq!(*lowercase(text), folded, "the lower case of {text:?}");
+            }
+        }
+
+        proptest! {
+            /// Text of letters that lengthen, shorten and keep their length
+            /// when folded, `Σ` in every place in a word, and the marks the
+            /// search for a word's end skips.
+            #[test]
+            fn any_text_folds_as_the_standard_library_folds_it(
+                text in prop::collection::vec(
+                    prop::sample::select(vec![
+                        'Σ', 'σ', 'ς', 'İ', 'I', 'i', 'Ⱥ', 'ß', 'ẞ', '\u{212A}', 'A', 'é', 'É',
+                        '李', '\'', '.', ':', '\u{307}', '\u{301}', '\u{2bc}', ' ', '-', '1',
+                        '\u{1c5}',
+                    ]),
+                    0..24,
+                )
+                .prop_map(|chars| chars.into_iter().collect::<String>()),
+            ) {
+                prop_assert_eq!(&*lowercase(&text), &text.to_lowercase());
+            }
         }
     }
 }

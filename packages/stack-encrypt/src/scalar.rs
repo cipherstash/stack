@@ -5,7 +5,7 @@ use crate::target::{
     OptionalContext, Pending, ScalarContext,
 };
 use crate::{CipherText, ContextPiece, Decrypt, Error, KeysetCipher, LeafBytesError, SealedValue};
-use vitaminc_aead::plaintext::{Encrypt, Scalar, Sink};
+use vitaminc_aead::plaintext::Scalar;
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroize;
 
@@ -22,14 +22,6 @@ pub(crate) mod sealed {
             cipher: &'a KeysetCipher<'_, K>,
             context: ContextPiece<'static>,
         ) -> Pending<'a, Ciphertext, K>;
-    }
-
-    /// A scalar's own Vitamin C encoding, by reference: what `ScalarRef`
-    /// forwards to.
-    pub(crate) trait Scalar {
-        const DEPTH: Option<usize>;
-        const FIXED: Option<vitaminc_aead::plaintext::FixedType>;
-        fn visit<S: vitaminc_aead::plaintext::Sink>(&self, sink: S) -> Result<S::Ok, S::Error>;
     }
 
     /// How one sealed leaf opens to a value. The leaf authenticates inside
@@ -135,19 +127,10 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 /// [`Error::OpenedType`].
 pub trait OpaqueDecode: sealed::Decode + Zeroize + Send + 'static {}
 
-// The bridge from an owned `S` to its borrow's walk: `OpaqueEncode`'s
-// callers hold `&S`, and only this impl's where clause knows `&S` encrypts.
-impl<S> sealed::Scalar for S
-where
-    S: Zeroize + Send + 'static,
-    for<'a> &'a S: Scalar,
-{
-    const DEPTH: Option<usize> = <&S as Encrypt>::DEPTH;
-    const FIXED: Option<vitaminc_aead::plaintext::FixedType> = <&S as Encrypt>::FIXED;
-    fn visit<V: Sink>(&self, sink: V) -> Result<V::Ok, V::Error> {
-        Encrypt::visit(self, sink)
-    }
-}
+// An owned `S` is sealed through a borrow of it. `&S` is one of Vitamin C's
+// scalars, so the borrow is walked as it is: nothing is copied out of the
+// caller's value, and the fixed width of the type is the borrow's own, which
+// is what pads an absent value to a present one's length.
 impl<S> sealed::Encode for S
 where
     S: Zeroize + Send + 'static,
@@ -158,8 +141,7 @@ where
         cipher: &'a KeysetCipher<'_, K>,
         context: ContextPiece<'static>,
     ) -> Pending<'a, Ciphertext, K> {
-        crate::target::core::encrypt_opaque(ScalarRef(self), cipher, context)
-            .try_map(Ciphertext::from_tree)
+        crate::target::core::encrypt_opaque(self, cipher, context).try_map(Ciphertext::from_tree)
     }
 }
 impl<S> OpaqueEncode for S
@@ -178,18 +160,6 @@ impl<P: Decrypt + Zeroize + Send + 'static> sealed::Decode for P {
     }
 }
 impl<P: Decrypt + Zeroize + Send + 'static> OpaqueDecode for P {}
-
-pub(crate) struct ScalarRef<'a, S>(pub &'a S);
-// The owned conversion keeps the source in Protected and hands this a borrow.
-// It carries the scalar's encoding metadata through `sealed::Scalar`, whose
-// blanket impl is what lets a generic caller walk `&S` at all.
-impl<S: sealed::Scalar> Encrypt for ScalarRef<'_, S> {
-    const DEPTH: Option<usize> = <S as sealed::Scalar>::DEPTH;
-    const FIXED: Option<vitaminc_aead::plaintext::FixedType> = <S as sealed::Scalar>::FIXED;
-    fn visit<V: Sink>(self, sink: V) -> Result<V::Ok, V::Error> {
-        sealed::Scalar::visit(self.0, sink)
-    }
-}
 
 /// One opaque ciphertext, with no exposed structural node variants.
 ///
@@ -363,11 +333,13 @@ impl<K: 'static> KeysetCipher<'_, K> {
 
 #[cfg(test)]
 mod tests {
-    use super::ScalarRef;
     use crate::{CipherText, StackCipher};
 
+    /// An owned scalar is sealed through a borrow of it. The borrow keeps
+    /// the type's fixed width, so an absent value is padded to a present
+    /// one's length.
     #[tokio::test]
-    async fn scalar_ref_preserves_fixed_width_nullable_padding() {
+    async fn a_borrowed_nullable_scalar_is_padded_to_its_fixed_width() {
         let cipher = StackCipher::builder()
             .kms(stack_kms::FakeDataKeySource::new())
             .init()
@@ -377,14 +349,8 @@ mod tests {
         macro_rules! check {
             ($value:expr, $ty:ty) => {{
                 let value: $ty = $value;
-                let some = keyset
-                    .encrypt_tree(Some(ScalarRef(&value)), "nullable")
-                    .await
-                    .unwrap();
-                let none = keyset
-                    .encrypt_tree(None::<ScalarRef<'_, $ty>>, "nullable")
-                    .await
-                    .unwrap();
+                let some = keyset.encrypt_tree(Some(&value), "nullable").await.unwrap();
+                let none = keyset.encrypt_tree(None::<&$ty>, "nullable").await.unwrap();
                 let (CipherText::Single(present), CipherText::Single(absent)) = (&some, &none)
                 else {
                     panic!("nullable scalars must remain single leaves");

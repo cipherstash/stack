@@ -130,6 +130,27 @@ pub fn to_text(value: &Value) -> Result<Vec<u8>, serde_json::Error> {
     to_wiped_text(value).map(|mut text| std::mem::take(&mut *text))
 }
 
+/// The text of one JSON string, quotes included, decoded; `None` for text
+/// that is not exactly one string. The decoded text is wiped when it is
+/// dropped. Its buffer is sized to the raw text before anything is written,
+/// so it never grows, and it is wiped on a refusal.
+pub(crate) fn string_text(text: &[u8]) -> Option<Zeroizing<String>> {
+    let mut parser = Parser { text, rest: text };
+    if parser.peek() != Some(b'"') {
+        return None;
+    }
+    let decoded = Zeroizing::new(parser.string().ok()?);
+    parser.rest.is_empty().then_some(decoded)
+}
+
+/// Where the JSON string at the front of `text` ends: the offset of its
+/// closing quote. `text` starts at the opening quote. `None` for a string
+/// with no closing quote. An escaped quote does not close it.
+pub(crate) fn string_end(text: &[u8]) -> Option<usize> {
+    let end = 1 + raw_len(text.get(1..)?);
+    (end < text.len()).then_some(end)
+}
+
 /// [`to_text`] into a buffer that is wiped when it is dropped: the text a
 /// document is sealed as. The buffer is allocated once at the text's
 /// length, so writing it leaves no shorter copy behind, and it is wiped if
@@ -572,6 +593,74 @@ fn push_wiping(items: &mut Vec<Value>, value: Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn string_end_is_the_offset_of_the_closing_quote() {
+        for (text, end) in [
+            (r#""""#, Some(1)),
+            (r#""ab" rest"#, Some(3)),
+            (r#""a\"b" rest"#, Some(5)),
+            (r#""a\\" rest"#, Some(4)),
+            (r#""a\\\"b""#, Some(7)),
+            (r#""unterminated"#, None),
+            (r#""ends in an escape\""#, None),
+            (r#"""#, None),
+            ("", None),
+        ] {
+            assert_eq!(string_end(text.as_bytes()), end, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn string_text_decodes_exactly_one_json_string() {
+        let decoded = |text: &str| string_text(text.as_bytes()).map(|text| text.to_string());
+        assert_eq!(decoded(r#""plain""#).as_deref(), Some("plain"));
+        assert_eq!(decoded(r#""""#).as_deref(), Some(""));
+        assert_eq!(
+            decoded(r#""a\n\"b\" é 😀""#).as_deref(),
+            Some("a\n\"b\" é 😀")
+        );
+        for refused in [
+            "",
+            "plain",
+            r#" "leading space""#,
+            r#""unterminated"#,
+            r#""one" "two""#,
+            r#""trailing" "#,
+            r#""bad \x escape""#,
+            r#""lone \ud83d surrogate""#,
+            "\"raw\nnewline\"",
+            "1",
+            "null",
+        ] {
+            assert_eq!(decoded(refused), None, "{refused:?}");
+        }
+    }
+
+    /// A predicate's literals and a path's quoted keys are JSON strings by
+    /// `serde_json`'s rules: every string it reads is read the same here,
+    /// and every one it refuses is refused.
+    #[test]
+    fn string_text_reads_what_serde_json_reads() {
+        for text in [
+            r#""""#,
+            r#""a""#,
+            r#""\"\\\/\b\f\n\r\t""#,
+            r#""Aé中""#,
+            r#""😀""#,
+            r#""\ude00\ud83d""#,
+            r#""\ud83d""#,
+            r#""\u12""#,
+            r#""\q""#,
+            "\"\u{1}\"",
+            "\"é中😀\"",
+            r#""a"b""#,
+        ] {
+            let ours = string_text(text.as_bytes()).map(|text| text.to_string());
+            let theirs = serde_json::from_str::<String>(text).ok();
+            assert_eq!(ours, theirs, "{text:?}");
+        }
+    }
 
     #[test]
     fn reads_every_kind_of_value() {

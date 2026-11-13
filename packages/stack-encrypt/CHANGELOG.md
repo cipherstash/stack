@@ -632,6 +632,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `StackCipherText` and `Encrypted<Terms>` wipe it instead.
   - `json_document()` now guards its copy of the document before it checks
     the context. So a refused context wipes that copy.
+- **Copies of plaintext are no longer freed unwiped** (#1468). Each was
+  made in a buffer that grew, or was dropped, with the plaintext still in
+  it.
+  - A match index folds its text to lower case. Text that is longer
+    folded than it was, such as text holding `İ`, was folded in a buffer
+    that grew. The tokens are the same as before.
+  - A string literal or a quoted key with an escape in a JSON predicate
+    (`$.name == "a\nb"`) was decoded through `serde_json`'s scratch
+    buffer.
+  - A quoted key with an escape in a `JsonPath` (`$["a\nb"]`) was decoded
+    the same way.
+  - A path or a predicate refused after a key was read (`$.secret[abc]`,
+    `$.secret.x()`, an ordering at a wildcard such as `$.secret[*] < 5`)
+    dropped that key unwiped, quoted or not.
+  - A predicate's variable names, and the path and member text of a
+    document operator's input (`eq_at`, `between_at`, `selector`,
+    `children`, `subtree`, `element_match` and a read), were held in plain
+    `String`s.
+  - A JSON index document with a sealed root was parsed by `serde_json`
+    when it was opened, so a string with an escape left a copy behind. It
+    is now parsed by `json::parse_text`.
+- **A JSON index document with a sealed root is sealed only if it will
+  open** (#1468). `json::parse_text`, which now opens a sealed root,
+  refuses a number that is neither a 64-bit integer nor a double. A
+  `serde_json::Value` holds one only with `serde_json`'s
+  `arbitrary_precision` feature. Such a document is now refused as
+  `Error::Aead` before any key is requested. A sealed root that a build
+  with that feature has already stored with such a number no longer
+  opens.
 
 ## [0.3.0] - 2026-10-27
 

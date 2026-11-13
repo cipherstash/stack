@@ -282,6 +282,34 @@ impl<'de> Deserialize<'de> for JsonText {
     }
 }
 
+/// The text of a path, or of a member of one, in an operator's input. It
+/// names keys, which are plaintext, so it is wiped on drop. It is copied
+/// from the input at its own length and never grows.
+pub(super) struct PathText(Zeroizing<String>);
+
+impl std::ops::Deref for PathText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for PathText {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl Visitor<'_> for V {
+            type Value = PathText;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a path, as text")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<PathText, E> {
+                Ok(PathText(Zeroizing::new(v.to_owned())))
+            }
+        }
+        d.deserialize_str(V)
+    }
+}
+
 /// A document parsed from an input, wiped when it drops.
 #[derive(PartialEq)]
 pub(super) struct Parsed(pub(super) Value);
@@ -322,14 +350,14 @@ struct DocumentInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AtInput {
-    path: String,
+    path: PathText,
     json: JsonText,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BetweenInput {
-    path: String,
+    path: PathText,
     low: JsonText,
     high: JsonText,
 }
@@ -337,13 +365,13 @@ struct BetweenInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PathInput {
-    path: String,
+    path: PathText,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReadInput {
-    path: String,
+    path: PathText,
     #[serde(default)]
     wildcard_bound: Option<u32>,
 }
@@ -351,7 +379,7 @@ struct ReadInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ElementsInput {
-    path: String,
+    path: PathText,
     #[serde(default)]
     wildcard_bound: Option<u32>,
     predicates: Vec<PredicateInput>,
@@ -360,7 +388,7 @@ struct ElementsInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PredicateInput {
-    member: String,
+    member: PathText,
     op: String,
     #[serde(default)]
     json: Option<JsonText>,
@@ -587,7 +615,11 @@ fn read_predicate(
 /// own text.
 fn member_path(options: &JsonOptions, base: &JsonPath, member: &str) -> Result<JsonPath, Error> {
     let prefix = if member.starts_with('[') { "$" } else { "$." };
-    let relative = JsonPath::parse(&format!("{prefix}{member}")).map_err(|error| {
+    // Sized before it is written, and wiped: the member names keys.
+    let mut rooted = Zeroizing::new(String::with_capacity(prefix.len() + member.len()));
+    rooted.push_str(prefix);
+    rooted.push_str(member);
+    let relative = JsonPath::parse(&rooted).map_err(|error| {
         let error = crate::json::JsonPathError {
             at: error.at.saturating_sub(prefix.len()),
             ..error
@@ -883,7 +915,7 @@ fn elements<'a, K: 'static>(
 #[serde(deny_unknown_fields)]
 struct ReadRequest {
     operation: String,
-    path: String,
+    path: PathText,
     #[serde(default)]
     wildcard_bound: Option<u32>,
 }
@@ -1035,4 +1067,28 @@ fn opened_frame(mut groups: Vec<Vec<Value>>) -> Result<ValueFrame, crate::Error>
         .collect();
     groups.iter_mut().flatten().for_each(wipe_value);
     ValueFrame::of(&texts?).map_err(|error| crate::Error::Other(Box::new(error)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::value::{Error as ValueError, StrDeserializer, U8Deserializer};
+
+    #[test]
+    fn a_path_is_read_from_text() {
+        let path = PathText::deserialize(StrDeserializer::<ValueError>::new("$.a"))
+            .unwrap_or_else(|error| panic!("text is a path: {error}"));
+        assert_eq!(&*path, "$.a");
+    }
+
+    #[test]
+    fn a_path_that_is_not_text_is_refused_naming_what_was_expected() {
+        let Err(error) = PathText::deserialize(U8Deserializer::<ValueError>::new(7)) else {
+            panic!("a number is not a path");
+        };
+        assert!(
+            error.to_string().contains("a path, as text"),
+            "the refusal names what a path is: {error}"
+        );
+    }
 }

@@ -834,6 +834,11 @@ type Finish<T> = fn(bool, Vec<(Option<String>, ValueFrame)>) -> Result<T, Decode
 /// The children of one container, each written into its own frame as it is
 /// walked, and handed to `finish` when the container ends. The map form
 /// keeps a repeated key for `finish` to refuse.
+///
+/// Each key is copied out and held unwiped. A map this walks is a stored
+/// one being opened, and a stored map's keys are in the clear beside its
+/// sealed values ([`StackCipherText`](crate::StackCipherText)), so a copy
+/// of one holds nothing the stored record does not.
 pub struct Children<T> {
     map: bool,
     children: Vec<(Option<String>, Buffer)>,
@@ -1294,6 +1299,8 @@ impl SeqSink for NotARow<'_> {
 /// names the entry's key in any refusal.
 pub(super) struct RowMap<O> {
     out: O,
+    // A row's keys are its field names, which the plan and the stored
+    // record both name in the clear, so they are held unwiped.
     entries: Vec<(String, Buffer)>,
 }
 

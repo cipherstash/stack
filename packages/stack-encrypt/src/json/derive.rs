@@ -814,6 +814,13 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         Err(error) => return Pending::failed(cipher, error.into()),
     };
     let whole = if options.sealed_root {
+        // A document is sealed only if opening can read it back.
+        let opens = |number: &serde_json::Number| {
+            number_text(number).is_some_and(|text| number_text_opens(&text))
+        };
+        if !every_number(value.risky_ref().value(), &opens) {
+            return Pending::failed(cipher, Error::Aead);
+        }
         match sealed_root_plaintext(value.risky_ref().value()) {
             Ok(bytes) => Some(bytes),
             Err(error) => return Pending::failed(cipher, Error::Other(Box::new(error))),
@@ -948,6 +955,44 @@ fn sealed_root_plaintext(value: &Value) -> Result<Protected<Vec<u8>>, serde_json
         serde_json::to_writer(&mut out, value)?;
         Ok(out)
     })
+}
+
+/// Whether `check` holds of every number in `value`, at any depth.
+///
+/// A sealed root is opened by the rules of
+/// [`parse_text`](super::parse_text), which refuse a number that is
+/// neither a 64-bit integer nor a double. A `Value` holds one only with
+/// `serde_json`'s `arbitrary_precision` feature. Sealing checks each number
+/// with this, so a root is sealed only if it will open.
+///
+/// `value` nests no deeper than [`MAX_DEPTH`]: the walk has refused a
+/// deeper one before this is called.
+fn every_number(value: &Value, check: &impl Fn(&serde_json::Number) -> bool) -> bool {
+    match value {
+        Value::Number(number) => check(number),
+        Value::Array(items) => items.iter().all(|item| every_number(item, check)),
+        Value::Object(members) => members.values().all(|member| every_number(member, check)),
+        _ => true,
+    }
+}
+
+/// The text `number` is written as. The buffer holds any 64-bit integer
+/// or double without growing, and is wiped when it is dropped.
+fn number_text(number: &serde_json::Number) -> Option<Zeroizing<String>> {
+    use std::fmt::Write as _;
+    let mut text = Zeroizing::new(String::with_capacity(NUMBER_TEXT_LEN));
+    write!(text, "{number}").ok()?;
+    Some(text)
+}
+
+/// The longest text of a 64-bit integer or a double, with room to spare:
+/// `-1.7976931348623157e308` is 23 bytes.
+const NUMBER_TEXT_LEN: usize = 32;
+
+/// Whether `text` is one number by the rules of
+/// [`parse_text`](super::parse_text).
+fn number_text_opens(text: &str) -> bool {
+    matches!(super::parse_text(text.as_bytes()), Ok(Value::Number(_)))
 }
 
 /// Seal the walked nodes under `key`, from the leaves up, each at the slot
@@ -2223,6 +2268,80 @@ impl<K> KeysetCipher<'_, K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sealed root is sealed only if opening reads it back: each of its
+    /// numbers must be one by the rules opening parses the root with.
+    #[test]
+    fn a_number_opens_when_it_is_a_64_bit_integer_or_a_double() {
+        for text in [
+            "0",
+            "-1",
+            "18446744073709551615",
+            "-9223372036854775808",
+            "1.5e3",
+            "1e308",
+        ] {
+            assert!(number_text_opens(text), "{text} opens");
+        }
+        // What a `Value` can hold with serde_json's `arbitrary_precision`,
+        // and text that is not one number.
+        for text in [
+            "123456789012345678901234567890",
+            "18446744073709551616",
+            "1e400",
+            "",
+            "1 2",
+            "\"1\"",
+            "[1]",
+            "null",
+        ] {
+            assert!(!number_text_opens(text), "{text:?} does not open");
+        }
+    }
+
+    #[test]
+    fn every_number_is_checked_at_any_depth() {
+        use serde_json::json;
+        let not_two = |number: &serde_json::Number| number.as_u64() != Some(2);
+        for value in [
+            json!(null),
+            json!("2"),
+            json!(1),
+            json!([1, 3]),
+            json!({"a": [1, {"b": 3.5}], "c": "x"}),
+        ] {
+            assert!(every_number(&value, &not_two), "{value} holds no 2");
+        }
+        for value in [
+            json!(2),
+            json!([1, 2]),
+            json!({"a": 1, "b": 2}),
+            json!({"a": [1, {"b": [3, 2]}]}),
+            json!([{"a": 2}, 1]),
+        ] {
+            assert!(!every_number(&value, &not_two), "{value} holds a 2");
+        }
+    }
+
+    /// The text of the widest numbers is the number's own, and fits the
+    /// buffer it is written to.
+    #[test]
+    fn a_numbers_text_is_written_without_growing() {
+        for text in [
+            f64::MIN.to_string(),
+            f64::MIN_POSITIVE.to_string(),
+            u64::MAX.to_string(),
+            i64::MIN.to_string(),
+            "0".to_owned(),
+        ] {
+            let number: serde_json::Number = text.parse().unwrap();
+            let written = number_text(&number).expect("a number writes");
+            assert_eq!(*written, number.to_string());
+            assert!(written.len() <= NUMBER_TEXT_LEN, "{number}");
+            assert_eq!(written.capacity(), NUMBER_TEXT_LEN, "{number} did not grow");
+            assert!(number_text_opens(&written), "{number} opens");
+        }
+    }
     use serde_json::json;
     use vitaminc_prf::PrfKeyInit;
 
