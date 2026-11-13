@@ -17,6 +17,7 @@ on:
       - packages/stack-kms-vendor/**
       - packages/stack-kms-aws/**
       - packages/stack-kms-vault/**
+      - packages/stack-kms-gcp/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
@@ -39,6 +40,7 @@ on:
       - packages/stack-kms-vendor/**
       - packages/stack-kms-aws/**
       - packages/stack-kms-vault/**
+      - packages/stack-kms-gcp/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
