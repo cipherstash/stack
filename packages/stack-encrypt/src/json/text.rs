@@ -612,9 +612,9 @@ mod tests {
         }
     }
 
-    /// The decoder a predicate's literals and a path's quoted keys went
-    /// through before: every string it read is read the same, and every
-    /// one it refused is refused.
+    /// A predicate's literals and a path's quoted keys are JSON strings by
+    /// `serde_json`'s rules: every string it reads is read the same here,
+    /// and every one it refuses is refused.
     #[test]
     fn string_text_reads_what_serde_json_reads() {
         for text in [

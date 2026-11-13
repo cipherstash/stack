@@ -772,7 +772,7 @@ fn a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap() {
 /// A match index folds its text to lower case, and `İ` is longer folded
 /// than it is: three bytes for two. The marker comes first, so a buffer
 /// sized to the text and grown while it is folded would be freed with the
-/// marker in it. The fold sizes its buffers for the folded text instead.
+/// marker in it. The fold's buffers are sized for the folded text.
 #[test]
 fn a_word_that_lengthens_when_folded_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();
@@ -816,12 +816,14 @@ fn a_word_that_lengthens_when_folded_leaves_no_plaintext_on_the_heap() {
     drop((source, query, page, text));
 }
 
-/// A map's keys are not held to this suite's rule, and this is why: a
-/// sealed document stores them in the clear, beside the values it seals
-/// (and binds each into its value's associated data). So the copies of a
-/// key made while a document is sealed or opened hold nothing the stored
-/// record does not, and the engine does not wipe them. A value under a
-/// marked key is sealed, and is watched by every test above.
+/// The keys of a map in a record are not held to this suite's rule, and
+/// this is why: a sealed record stores them in the clear, beside the
+/// values it seals (and binds each into its value's associated data). So
+/// the copies of a key made while a record is sealed or opened hold nothing
+/// the stored record does not, and the engine does not wipe them. A value
+/// under a marked key is sealed, and is watched by every test above. The
+/// keys of a JSON index document are sealed, and [`json_index`] holds them
+/// to the rule.
 #[test]
 fn a_map_key_is_stored_in_the_clear() {
     use stack_encrypt::{CipherText, StackCipherText};
@@ -891,11 +893,15 @@ fn an_escaped_literal_in_a_predicate_leaves_no_plaintext_on_the_heap() {
         joined(&[r#"$.""#, &mark, r"\n", &pad, r#"" == 1"#]),
         // Refused: the escape names no character.
         joined(&[r#"$.name == ""#, &mark, r"\x", &pad, r#"""#]),
+        // Refused after a quoted key, and after a plain one, was read into
+        // the path: the step that follows is not supported.
+        joined(&[r#"$.""#, &mark, r"\n", &pad, r#"".** == 1"#]),
+        joined(&["$.", &mark, ".** == 1"]),
     ];
     let inputs = predicates
         .iter()
         .map(|predicate| object(vec![("predicate", frame(predicate.as_str()))]));
-    for (input, accepted) in inputs.zip([true, true, false]) {
+    for (input, accepted) in inputs.zip([true, true, false, false, false]) {
         watched("check_query (an escaped literal)", || {
             let checked = stack_encrypt::dynamic::check_query(
                 &plan,
@@ -924,6 +930,8 @@ fn a_quoted_key_in_a_path_leaves_no_plaintext_on_the_heap() {
         joined(&[r#"$[""#, &mark, r"\x", &pad, r#""]"#]),
         // Refused after its first two keys were read.
         joined(&["$.", &mark, r#"[""#, &mark, r"\n", &pad, r#""]!"#]),
+        // Refused with a quoted key decoded and not yet a step: no `]`.
+        joined(&[r#"$[""#, &mark, r"\n", &pad, r#""x"#]),
     ];
     watched("JsonPath::parse", || {
         for text in [&path, &plain] {
@@ -949,6 +957,8 @@ mod cancellation {
     use std::future::IntoFuture;
     use std::task::{Context, Waker};
 
+    use stack_encrypt::json::JsonPlaintext;
+    use stack_encrypt::target::{json_document, Borrowed};
     use stack_encrypt::{Ciphertext, EncryptInto, OpaqueBlob, Pending, StackCipher};
     use stack_kms::{
         DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload,
@@ -1086,6 +1096,31 @@ mod cancellation {
                 &requests,
             );
         });
+        let value = json_index::document();
+        for sealed_root in [true, false] {
+            let options = json_index::options(sealed_root);
+            watched(
+                &format!("JSON index document (sealed_root: {sealed_root}), dropped unpolled"),
+                || {
+                    drop_unpolled(
+                        keyset.run(
+                            json_document::<_, Borrowed>(options),
+                            &value,
+                            json_index::context(),
+                        ),
+                        &requests,
+                    );
+                },
+            );
+        }
+        drop(value);
+        let document = JsonPlaintext::from(json_plaintext::document());
+        watched_for_leaks("JsonPlaintext -> Ciphertext, dropped unpolled", || {
+            drop_unpolled(
+                keyset.encrypt_with_context(document, "docs/body"),
+                &requests,
+            );
+        });
     }
 
     #[test]
@@ -1138,6 +1173,39 @@ mod cancellation {
                 &requests,
             );
         });
+
+        // A JSON index document, under either root option: the walked
+        // nodes, and with a sealed root the document's text, wait on the
+        // key. And a document sealed as one ciphertext.
+        let value = json_index::document();
+        for sealed_root in [true, false] {
+            let options = json_index::options(sealed_root);
+            in_flight(
+                &format!("JSON index document (sealed_root: {sealed_root}), dropped in flight"),
+                &mut || {
+                    drop_in_flight(
+                        keyset.run(
+                            json_document::<_, Borrowed>(options.clone()),
+                            &value,
+                            json_index::context(),
+                        ),
+                        &requests,
+                    );
+                },
+            );
+        }
+        drop(value);
+        let mut document = Some(JsonPlaintext::from(json_plaintext::document()));
+        in_flight(
+            "JsonPlaintext -> Ciphertext, dropped in flight",
+            &mut || {
+                let document = document.take().unwrap();
+                drop_in_flight(
+                    keyset.encrypt_with_context(document, "docs/body"),
+                    &requests,
+                );
+            },
+        );
 
         // The cipher is not poisoned: the same work runs once keys arrive.
         block.store(false, Ordering::SeqCst);
@@ -1348,7 +1416,7 @@ mod json_plaintext {
     use stack_encrypt::json::JsonPlaintext;
     use stack_encrypt::Error;
 
-    fn document() -> Value {
+    pub(super) fn document() -> Value {
         let mut members = serde_json::Map::new();
         members.insert(marked("key"), json!([marked("in-array"), 1.5, null]));
         members.insert(
@@ -1535,7 +1603,7 @@ mod json_index {
 
     /// The root option, with the long string and the marked key's `inner`
     /// ordered, so the ordering terms over marked text are derived too.
-    fn options(sealed_root: bool) -> JsonOptions {
+    pub(super) fn options(sealed_root: bool) -> JsonOptions {
         let inner = format!("$[\"{}\"].inner", marked("key"));
         JsonOptions {
             sealed_root,
@@ -1545,7 +1613,7 @@ mod json_index {
         .unwrap()
     }
 
-    fn context() -> CallerContext {
+    pub(super) fn context() -> CallerContext {
         CallerContext::from(nonempty!("users").with("profile"))
     }
 
@@ -1555,7 +1623,7 @@ mod json_index {
 
     /// A document with the marker in a key name, in a short string, in a
     /// string past 128 bytes, and in an array element under an object.
-    fn document() -> Value {
+    pub(super) fn document() -> Value {
         let mut long = marked("long");
         long.push_str(&"x".repeat(160));
         json!({

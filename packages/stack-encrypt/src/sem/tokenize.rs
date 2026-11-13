@@ -693,7 +693,8 @@ mod tests {
         }
 
         /// What keeps the second step from growing its buffer: a character
-        /// that folding produced is no longer in lower case than it is.
+        /// that folding produced takes no more bytes when it is folded
+        /// again.
         #[test]
         fn a_folded_character_does_not_lengthen_when_it_is_folded_again() {
             for c in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {

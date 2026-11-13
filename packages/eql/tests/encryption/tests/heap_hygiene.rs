@@ -451,7 +451,8 @@ fn poll_then_drop<T>(pending: Pending<'_, T, Stalling>) -> Option<T> {
 
 /// Pending work dropped before it has run, and dropped while its key
 /// request is in flight: the plaintext it planned is wiped as it is on
-/// success, though no key ever arrives.
+/// success, though no key ever arrives. Storing and opening wait on a data
+/// key; a query term does not, so it is dropped unpolled and then run.
 #[test]
 fn a_cancelled_text_target_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();
@@ -506,12 +507,13 @@ fn a_cancelled_text_target_leaves_no_plaintext_on_the_heap() {
                 );
                 let query = text(&marked("in-flight-query"));
                 watched(
-                    &format!("{name} query through {}, dropped in flight", index.key()),
+                    &format!("{name} query through {}, polled once", index.key()),
                     || {
                         let pending = targets::query(name, &index, &keyset, &label, query).unwrap();
-                        // Stalled or finished, by whether the term needs a
-                        // data key: either way its plaintext is wiped.
-                        drop(poll_then_drop(pending));
+                        // A query term needs the index key alone, which
+                        // the cipher loaded when it was built, so it has
+                        // no key request to wait on and finishes here.
+                        assert!(poll_then_drop(pending).is_some(), "no request");
                     },
                 );
             }

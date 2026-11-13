@@ -653,8 +653,11 @@ impl<'t> Parser<'t> {
     /// accessors refused by name. A step past a document's depth is
     /// refused before it is read, so the path held is never deeper than
     /// [`MAX_DEPTH`].
+    ///
+    /// The steps are read into the path itself, so a refusal part way
+    /// drops a path, which wipes the keys already read.
     fn steps(&mut self, start: usize) -> Result<PathAt, Refusal> {
-        let mut segments = Vec::new();
+        let mut path = JsonPath::root();
         loop {
             self.space()?;
             let at = self.pos;
@@ -662,7 +665,7 @@ impl<'t> Parser<'t> {
             if !rest.starts_with(['.', '[']) {
                 break;
             }
-            if segments.len() >= MAX_DEPTH {
+            if path.segments().len() >= MAX_DEPTH {
                 return Err(Refusal {
                     reason: Reason::JsonPredicateTooDeep,
                     construct: C_NESTING,
@@ -681,7 +684,7 @@ impl<'t> Parser<'t> {
                 if after_space.starts_with('"') {
                     let (mut key, len) = self.string_at(at + 1 + gap)?;
                     self.pos = at + 1 + gap + len;
-                    segments.push(Segment::Key(std::mem::take(&mut *key)));
+                    path.push(Segment::Key(std::mem::take(&mut *key)));
                     continue;
                 }
                 self.pos = at + 1;
@@ -692,13 +695,13 @@ impl<'t> Parser<'t> {
                 if self.peek()? == Some('(') {
                     return Err(Refusal::unsupported(C_METHOD, at));
                 }
-                segments.push(Segment::Key(name.to_owned()));
+                path.push(Segment::Key(name.to_owned()));
             } else {
                 self.pos += 1;
                 self.space()?;
                 if self.eat("*")? {
                     self.expect("]")?;
-                    segments.push(Segment::Wildcard);
+                    path.push(Segment::Wildcard);
                 } else if self.rest().starts_with(|c: char| c.is_ascii_digit()) {
                     let digits = self
                         .rest()
@@ -721,10 +724,7 @@ impl<'t> Parser<'t> {
                 }
             }
         }
-        Ok(PathAt {
-            path: JsonPath::of(segments),
-            at: start,
-        })
+        Ok(PathAt { path, at: start })
     }
 }
 

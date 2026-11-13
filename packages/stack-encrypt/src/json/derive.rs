@@ -815,6 +815,8 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     };
     let whole = if options.sealed_root {
         match sealed_root_plaintext(value.risky_ref().value()) {
+            // A document is sealed only if opening can read it back.
+            Ok(bytes) if !opens(&bytes) => return Pending::failed(cipher, Error::Aead),
             Ok(bytes) => Some(bytes),
             Err(error) => return Pending::failed(cipher, Error::Other(Box::new(error))),
         }
@@ -948,6 +950,25 @@ fn sealed_root_plaintext(value: &Value) -> Result<Protected<Vec<u8>>, serde_json
         serde_json::to_writer(&mut out, value)?;
         Ok(out)
     })
+}
+
+/// Whether a sealed root's plaintext is one opening reads: the text after
+/// its first byte is a document by the rules of
+/// [`parse_text`](super::parse_text), which is what opening parses it with.
+/// A `Value` holds a number those rules refuse only with `serde_json`'s
+/// `arbitrary_precision` feature: one that is neither a 64-bit integer nor
+/// a double. The parsed copy is wiped before this returns.
+fn opens(plaintext: &Protected<Vec<u8>>) -> bool {
+    let Some(text) = plaintext.risky_ref().get(1..) else {
+        return false;
+    };
+    match super::parse_text(text) {
+        Ok(mut value) => {
+            super::wipe_value(&mut value);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Seal the walked nodes under `key`, from the leaves up, each at the slot
@@ -2223,6 +2244,36 @@ impl<K> KeysetCipher<'_, K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sealed root is sealed only if opening reads it back: its text
+    /// must be a document by the rules opening parses it with.
+    #[test]
+    fn a_sealed_root_is_checked_against_the_rules_opening_reads_it_by() {
+        let root = |text: &str| {
+            let mut bytes = vec![SEALED_ROOT];
+            bytes.extend_from_slice(text.as_bytes());
+            Protected::new(bytes)
+        };
+        for text in [
+            r#"{"a": [1, -2, 1.5e3, "x\n", null]}"#,
+            "18446744073709551615",
+            "1e308",
+        ] {
+            assert!(opens(&root(text)), "{text} opens");
+        }
+        // What a `Value` can hold with serde_json's `arbitrary_precision`.
+        for text in [
+            "123456789012345678901234567890",
+            "1e400",
+            r#"{"a": 1e400}"#,
+            "",
+        ] {
+            assert!(!opens(&root(text)), "{text:?} does not open");
+        }
+        assert!(!opens(&Protected::new(Vec::new())), "no root byte");
+        let sealed = sealed_root_plaintext(&serde_json::json!({"a": [1, "x\n"]})).unwrap();
+        assert!(opens(&sealed), "what sealing writes opens");
+    }
     use serde_json::json;
     use vitaminc_prf::PrfKeyInit;
 

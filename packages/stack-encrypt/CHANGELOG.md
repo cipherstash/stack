@@ -618,8 +618,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     unwiped.
   - A JSON index document with a sealed root was parsed by `serde_json`
     when it was opened, so a string with an escape left a copy behind. It
-    is now parsed by `json::parse_text`, which reads every document the
-    index seals.
+    is now parsed by `json::parse_text`. A sealed root is checked against
+    the same rules before it is sealed, so a document that would not open
+    is refused as `Error::Aead` and nothing is stored. Only a number that
+    is neither a 64-bit integer nor a double is refused this way, and a
+    `serde_json::Value` holds one only with `serde_json`'s
+    `arbitrary_precision` feature.
 
 ## [0.3.0] - 2026-10-27
 
