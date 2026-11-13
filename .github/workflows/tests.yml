@@ -98,11 +98,10 @@ jobs:
               - '!docs/**'
               # The Go module, and the Rust crates no binding these jobs build
               # depends on. The auth and profile bindings compile stack-auth and
-              # stack-profile, which stay in.
+              # stack-profile, and the auth binding compiles the key vendor
+              # crates for `stash keyset` and, through them, stack-kms,
+              # stack-encrypt and stack-encrypt-derive; all of those stay in.
               - '!languages/golang/**'
-              - '!packages/stack-encrypt/**'
-              - '!packages/stack-encrypt-derive/**'
-              - '!packages/stack-kms/**'
               - '!packages/stack-guest-abi/**'
               - '!packages/stack-auth/fuzz/**'
               # EQL's SQL sources, test suites, codegen and tasks. What the

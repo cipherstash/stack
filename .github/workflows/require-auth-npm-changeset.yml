@@ -6,6 +6,9 @@ name: "Require @cipherstash/auth changeset"
 # and the npm API does not move: the npm binary is built from that crate, and
 # nothing else would release it.
 #
+# The key vendor crates are listed too: the binding compiles them in for
+# `stash keyset` (CIP-5312), so a change to one changes the npm binary.
+#
 # Changes that never ship (tests, examples, devDependencies) are filtered out
 # by `check-auth-npm-changeset.mjs --shipped`.
 #
@@ -18,6 +21,16 @@ on:
     paths:
       - packages/stack-auth/Cargo.toml
       - packages/stack-auth/src/**
+      - packages/stack-kms-vendor/Cargo.toml
+      - packages/stack-kms-vendor/src/**
+      - packages/stack-kms-aws/Cargo.toml
+      - packages/stack-kms-aws/src/**
+      - packages/stack-kms-vault/Cargo.toml
+      - packages/stack-kms-vault/src/**
+      - packages/stack-kms-gcp/Cargo.toml
+      - packages/stack-kms-gcp/src/**
+      - packages/stack-kms-azure/Cargo.toml
+      - packages/stack-kms-azure/src/**
       - languages/typescript/packages/auth/**
       - languages/typescript/packages/stack-auth-wasm/**
       - scripts/check-auth-npm-changeset.mjs
@@ -84,6 +97,16 @@ jobs:
             git diff --name-only --no-renames "${BASE_SHA}...HEAD" -- \
               packages/stack-auth/Cargo.toml \
               packages/stack-auth/src \
+              packages/stack-kms-vendor/Cargo.toml \
+              packages/stack-kms-vendor/src \
+              packages/stack-kms-aws/Cargo.toml \
+              packages/stack-kms-aws/src \
+              packages/stack-kms-vault/Cargo.toml \
+              packages/stack-kms-vault/src \
+              packages/stack-kms-gcp/Cargo.toml \
+              packages/stack-kms-gcp/src \
+              packages/stack-kms-azure/Cargo.toml \
+              packages/stack-kms-azure/src \
               languages/typescript/packages/auth \
               languages/typescript/packages/stack-auth-wasm
           )"; then

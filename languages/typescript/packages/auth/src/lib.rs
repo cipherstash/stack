@@ -13,6 +13,11 @@ use stack_auth::{
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroizing;
 
+mod keyset;
+pub use keyset::{
+    keyset_create, keyset_rewrap, KeysetCreateOptions, KeysetResult, KeysetRewrapOptions,
+};
+
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------

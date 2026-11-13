@@ -342,6 +342,19 @@ npx stash decrypt status
 
 The backfill loads your encryption client exactly as `encrypt backfill` does (client file or Prisma Next contract), so export the `CS_*` credentials of the environment that wrote the data.
 
+### `npx stash keyset` — keysets in a key vendor backend
+
+**ZeroKMS users never need these commands.** They are for a keyset kept in a key vendor backend instead of ZeroKMS: AWS KMS, Google Cloud KMS, Azure Managed HSM, HashiCorp Vault Transit, or a static key. Only the Rust crates and the Go SDK can use such a keyset today; `@cipherstash/stack` cannot yet.
+
+```bash
+npx stash keyset create --backend aws --vendor-key arn:aws:kms:us-east-1:111122223333:key/<id> --name users
+npx stash keyset rewrap --in keyset.env --out keyset.env --force
+```
+
+`keyset create` makes a **keyset record** and prints it as a dotenv line, `CS_KEYSET_RECORD_<NAME>=stack-keyset:…` (or `CS_KEYSET_RECORD` with no `--name`). The record is not secret. No SDK reads that variable by itself: pass its value to `encrypt.WithKeysetRecords` (Go) or `KeysetRecord::parse` (Rust). The SDK derives the data keys from the record's root key, which it caches for a TTL (`--mode derived`, the default and the only key mode in this release). The static backend prints a generated key as `CS_STATIC_KEY` unless `--key-env` names the variable that holds one. Credentials come from each vendor's environment chain; `npx stash keyset create --help` lists the variables.
+
+`keyset rewrap` wraps the record's root key again, under the same vendor key after a rotation or under another key of the same backend. It does not re-key stored data, and every stored value still opens. The `stash-cli` agent skill has the full flag reference.
+
 ---
 
 ## Migration mode
