@@ -451,6 +451,25 @@ export const messages = {
     nameRequiresValue: '--name requires a value',
     unexpectedArgument: 'Unexpected argument',
   },
+  keyset: {
+    /**
+     * `stash keyset` copy that the unit and e2e suites assert on. Every one
+     * of these fires before the native binding loads or a vendor is called.
+     */
+    zeroKmsNote:
+      'ZeroKMS users never need stash keyset: it is only for keysets in a key vendor backend (AWS KMS, Google Cloud KMS, Azure Managed HSM, Vault Transit, or a static key).',
+    unknownSubcommand: 'Unknown keyset command',
+    missingCreateFlags: 'stash keyset create needs',
+    unknownBackend: 'Unknown key backend',
+    missingRecord:
+      'Pass the keyset record to rewrap, as an argument or with --in <file>',
+    generatedStaticKeyWarning:
+      'A new static key was generated (CS_STATIC_KEY). It is a secret and the only copy: put it in a secret store now. Without it, nothing sealed under this keyset can be read.',
+    rewrapNote:
+      'Replace the old record with the new one in every app. Stored values are not re-keyed, and they stay readable: a record may move to any key of its backend.',
+    vendorConfigHint:
+      'The vendor client reads its settings and credentials from the environment, as the SDKs do. Run `stash keyset create --help` for the variables of each backend.',
+  },
   plan: {
     /**
      * Stable leader of the refusal shown when `plan --complete-rollout` runs
