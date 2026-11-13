@@ -31,6 +31,10 @@ mod aad;
 mod ciphertext;
 mod container;
 mod context;
+#[cfg(feature = "jiff")]
+mod date_value;
+#[cfg(feature = "rust_decimal")]
+mod decimal_value;
 mod encrypt_sink;
 pub mod frame;
 #[cfg(feature = "hlist")]
@@ -47,6 +51,8 @@ pub mod tags;
 mod timestamp;
 pub mod typed;
 mod unspecified;
+#[cfg(feature = "uuid")]
+mod uuid_value;
 mod walk;
 
 // The data model: sources, sinks and the scalar kinds.
@@ -77,11 +83,18 @@ pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, Decrypt
 // The frame: a value as transport bytes, and back.
 #[doc(inline)]
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
-// A UTC instant that is wiped when dropped, and always encrypts.
+// Wipeable scalars: a UTC instant that always encrypts, and a date, a
+// decimal and a uuid, each the leaf of the type it wraps.
+#[cfg(feature = "jiff")]
+pub use date_value::Date;
+#[cfg(feature = "rust_decimal")]
+pub use decimal_value::Decimal;
 #[cfg(feature = "jiff")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[doc(inline)]
 pub use timestamp::{OutOfRange, Timestamp};
+#[cfg(feature = "uuid")]
+pub use uuid_value::Uuid;
 
 #[doc(inline)]
 #[allow(deprecated)]
