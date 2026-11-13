@@ -46,9 +46,10 @@
 //! statistics) carries no secret and is read from its frame with serde.
 
 use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext, Frame};
-use stack_encrypt::dynamic::{self, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, ValueFrame};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
+use stack_encrypt::CipherRef;
 use stack_encrypt::ErrorPayload;
 use stack_encrypt::{
     AsProtectedRef, CipherText, Controlled, KeysetCipher, Label, Node, Protected, ProtectedRef,
@@ -211,11 +212,11 @@ where
 ///
 /// The plan's opener runs in the engine; awaiting it here is the one
 /// batched `retrieve_keys` per invocation, dispatched as one ZeroKMS call
-/// per 500 keyed leaves and, under [`Scope::Client`], per keyset the leaves
+/// per 500 keyed leaves and, through a client reference, per keyset the leaves
 /// were sealed under. The output buffer contains plaintext — the ABI layer's
 /// ownership rules govern its wiping.
-pub async fn decrypt_record<K>(
-    scope: Scope<'_, K>,
+pub async fn decrypt_record<'a, K>(
+    scope: impl Into<CipherRef<'a, K>>,
     record: &[u8],
     plan: &Bytes,
     expected: Option<Label>,
@@ -980,13 +981,8 @@ mod tests {
 
         // Opens back through the EQL type's own decryption.
         validate::record_tree(&sealed, &protect(&plan), None).expect("the tree fits");
-        let opened = block_on(decrypt_record(
-            Scope::Client(&cipher),
-            &sealed,
-            &protect(&plan),
-            None,
-        ))
-        .expect("opens");
+        let opened =
+            block_on(decrypt_record(&cipher, &sealed, &protect(&plan), None)).expect("opens");
         let Tree::Object(values) = Tree::from_frame(&opened).expect("a value") else {
             panic!("an object")
         };

@@ -1,0 +1,21 @@
+error[E0277]: the trait bound `StackCipher<FakeDataKeySource>: Into<CipherRef<'_, _>>` is not satisfied
+ --> tests/ui/cipher_ref_by_value.rs:9:43
+  |
+9 |     let _ = i32::decrypt_from(ciphertext, cipher);
+  |             -----------------             ^^^^^^ the trait `Into<CipherRef<'_, _>>` is not implemented for `StackCipher<FakeDataKeySource>`
+  |             |
+  |             required by a bound introduced by this call
+  |
+  = note: required for `StackCipher<FakeDataKeySource>` to implement `Into<CipherRef<'_, _>>`
+note: required by a bound in `stack_encrypt::DecryptFrom::decrypt_from`
+ --> src/target/conversion.rs
+  |
+  |     fn decrypt_from<'a, S, K: 'static>(
+  |        ------------ required by a bound in this associated function
+  |         source: S,
+  |         cipher: impl Into<CipherRef<'a, K>>,
+  |                      ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from`
+help: consider borrowing here
+  |
+9 |     let _ = i32::decrypt_from(ciphertext, &cipher);
+  |                                           +

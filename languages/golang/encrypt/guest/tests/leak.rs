@@ -26,7 +26,6 @@ mod support;
 
 use stack_encrypt::dynamic::frame::encode_ciphertext;
 use stack_encrypt::dynamic::plaintext::Logical;
-use stack_encrypt::dynamic::Scope;
 use stack_encrypt::{CipherText, Descriptor, Node, PassthroughFrame, StackCipher};
 use stack_encrypt_guest::options::{parse_options, Side};
 use stack_encrypt_guest::status::fail_error;
@@ -466,7 +465,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 &["stack_guest_abi::malformed_input"],
                 || {
                     block_on(ops::decrypt_record(
-                        Scope::Client(&cipher),
+                        &cipher,
                         CIPHERTEXT,
                         &protect(&plan_under(label("email"))),
                         None,
@@ -479,7 +478,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("leaf", &["stack_encrypt::leaf_version"], || {
                 let record = tree_with_leaf(CipherText::Single(CIPHERTEXT.to_vec()));
                 block_on(ops::decrypt_record(
-                    Scope::Client(&cipher),
+                    &cipher,
                     &record,
                     &protect(&plan_under(label("email"))),
                     None,
@@ -494,7 +493,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 || {
                     let record = tree_with_leaf(clear(Tree::Bytes(CIPHERTEXT.to_vec())));
                     block_on(ops::decrypt_record(
-                        Scope::Client(&cipher),
+                        &cipher,
                         &record,
                         &protect(&plan_under(label("email"))),
                         None,
@@ -510,12 +509,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     ("nick", field(label("nick"), &["c"], None)),
                 ]));
                 let record = sealed(&cipher, &plan_under(label("email")));
-                block_on(ops::decrypt_record(
-                    Scope::Client(&cipher),
-                    &record,
-                    &protect(&plan),
-                    None,
-                ))
+                block_on(ops::decrypt_record(&cipher, &record, &protect(&plan), None))
             }),
         ),
         (
@@ -523,7 +517,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("aead", &["stack_encrypt::aead"], || {
                 let record = sealed(&cipher, &plan_under(label("email")));
                 block_on(ops::decrypt_record(
-                    Scope::Client(&cipher),
+                    &cipher,
                     &record,
                     &protect(&plan_under(extended("email", CONTEXT))),
                     None,
@@ -538,7 +532,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                         .expect("keyset");
                 let record = sealed(&cipher, &plan_under(label("email")));
                 block_on(ops::decrypt_record(
-                    Scope::Keyset(globex),
+                    globex,
                     &record,
                     &protect(&plan_under(label("email"))),
                     None,
@@ -568,7 +562,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("retrieve", &["stack_kms::key_not_retrieved"], || {
                 let record = sealed(&cipher, &plan_under(label("email")));
                 block_on(ops::decrypt_record(
-                    Scope::Client(&failing),
+                    &failing,
                     &record,
                     &protect(&plan_under(label("email"))),
                     None,
@@ -755,12 +749,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             )]);
             let mut record = Vec::new();
             encode_ciphertext(&tree, &mut record).expect("encode tree");
-            block_on(ops::decrypt_record(
-                Scope::Client(&cipher),
-                &record,
-                &protect(&plan),
-                None,
-            ))
+            block_on(ops::decrypt_record(&cipher, &record, &protect(&plan), None))
         }),
     ));
     // A cause from another library this guest does not vouch for: the PRF
@@ -871,7 +860,7 @@ fn a_foreign_keyset_carries_both_keyset_ids() {
     let record = sealed(&cipher, &plan_under(label("email")));
     let error = failure("foreign", &["stack_encrypt::foreign_keyset"], || {
         block_on(ops::decrypt_record(
-            Scope::Keyset(globex),
+            globex,
             &record,
             &protect(&plan_under(label("email"))),
             None,

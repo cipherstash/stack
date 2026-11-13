@@ -31,7 +31,7 @@ use common::frames::{frame, object, payload};
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{Scope, TermBytes, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{TermBytes, ValueFrame, ValueKind};
 use stack_encrypt::plan::{pick, FieldValues};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::{Encrypted, IndexSpec};
@@ -384,7 +384,7 @@ async fn open_lowered(
     plan: &DataPlan,
 ) -> Json {
     json_of_opened(
-        record::decrypt(Scope::Client(cipher), tree, plan, None)
+        record::decrypt(cipher, tree, plan, None)
             .expect("the record fits")
             .await
             .expect("the lowering opens it"),
@@ -691,7 +691,7 @@ async fn open_note_lowered(
     expected: Option<Label>,
 ) -> Result<Json, Error> {
     Ok(json_of_opened(
-        record::decrypt(Scope::Client(cipher), tree, plan, expected)
+        record::decrypt(cipher, tree, plan, expected)
             .expect("the record fits")
             .await?,
     ))
@@ -839,7 +839,7 @@ async fn the_fixture_records_are_bound_to_their_labels() {
             other => other.into(),
         };
     }
-    let result = record::decrypt(Scope::Client(&cipher), CipherText::Map(fields), &plan, None)
+    let result = record::decrypt(&cipher, CipherText::Map(fields), &plan, None)
         .expect("the shape fits")
         .await;
     match result {

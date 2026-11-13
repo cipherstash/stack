@@ -627,7 +627,7 @@ pub use stack_kms as kms;
 /// crate, so a binding encodes an error from any of them the same way.
 pub use stack_kms::{diagnostic, ErrorPayload};
 pub use target::{
-    CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, DecryptSource, Decryptable,
+    CallerContext, CipherRef, DecryptField, DecryptFrom, DecryptInto, DecryptSource, Decryptable,
     Decryption, EncryptFrom, EncryptInto, EncryptTarget, Encrypted, Encryption, Equality, Index,
     IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request,
     Responses, TermSet,

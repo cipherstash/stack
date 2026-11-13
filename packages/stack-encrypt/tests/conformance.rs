@@ -13,7 +13,7 @@ use common::frames::{frame, object};
 use common::{hex, unhex};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use stack_encrypt::dynamic::{self, record, Fidelity, NoTargets, Op, Operand, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, record, Fidelity, NoTargets, Op, Operand, ValueFrame};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{
     CipherText, Ciphertext, Error, KeysetCipher, Label, SealedValue, StackCipherText,
@@ -243,7 +243,7 @@ async fn shared_record_scalar_profile() {
             .await
             .unwrap();
         let stored_term = stored_outputs(&fresh, &corpus.field).unwrap().0;
-        let opened = record::decrypt(Scope::Keyset(keyset.clone()), fresh, &plan, None)
+        let opened = record::decrypt(keyset.clone(), fresh, &plan, None)
             .unwrap()
             .await
             .unwrap();
@@ -296,15 +296,10 @@ async fn shared_record_scalar_profile() {
                 "{}: {origin} scalar cross-open",
                 case.id
             );
-            let opened = record::decrypt(
-                Scope::Keyset(keyset.clone()),
-                stored(&corpus, candidate),
-                &plan,
-                None,
-            )
-            .unwrap()
-            .await
-            .unwrap();
+            let opened = record::decrypt(keyset.clone(), stored(&corpus, candidate), &plan, None)
+                .unwrap()
+                .await
+                .unwrap();
             assert_eq!(
                 opened.risky_ref(),
                 expected_row.risky_ref(),

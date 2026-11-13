@@ -200,7 +200,7 @@ pub use operations::{
     passthrough, scalar_ciphertext, DecryptField, DecryptInto, Decryptable, Decryption,
     EncryptFrom, Encryption, Layout,
 };
-pub use pending::{CipherScope, Pending, PendingFuture};
+pub use pending::{CipherRef, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};

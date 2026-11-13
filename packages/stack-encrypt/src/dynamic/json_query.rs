@@ -991,7 +991,7 @@ pub(super) fn open<'a, K: 'static>(
     };
     let context = || AeadContext::from(NonEmpty::from(label.clone()));
     // Opened through the client, confined to the deriving keyset, as a
-    // record's leaves are under `Scope::Keyset`: the read's key is that
+    // record's leaves are through a keyset reference: the read's key is that
     // keyset's, so a document sealed under another cannot answer it.
     let opener_cipher = keyset.cipher();
     let confine = keyset.keyset_id();

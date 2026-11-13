@@ -27,7 +27,7 @@ use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{
-    context, query_term, NoTargets, Op, Operand, Reason, Scope, ValueFrame, ValueKind,
+    context, query_term, NoTargets, Op, Operand, Reason, ValueFrame, ValueKind,
 };
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{CipherText, KeysetCipher, SealedValue, StackCipher, StackCipherText};
@@ -313,7 +313,7 @@ async fn open(
     tree: StackCipherText,
     plan: &DataPlan,
 ) -> String {
-    hex(record::decrypt(Scope::Client(cipher), tree, plan, None)
+    hex(record::decrypt(cipher, tree, plan, None)
         .expect("the record fits")
         .await
         .expect("the lowering opens it")

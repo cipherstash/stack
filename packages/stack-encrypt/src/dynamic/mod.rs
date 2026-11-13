@@ -51,7 +51,9 @@
 //!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats),
 //!   and [`field_operators`], the operators a plan field answers, for a
 //!   generator to ask before the program runs.
-//! * [`Scope`] — which cipher an opening operation decrypts through.
+//! * [`CipherRef`](crate::CipherRef) — the cipher that a decrypt
+//!   operation runs through. Pass `&cipher`, or pass `&keyset` to limit
+//!   the operation to one keyset.
 //!
 //! # What is not here
 //!
@@ -84,8 +86,7 @@
 //! [`IndexSpec`] and [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's
 //! usual rule for public enums: a new output is a wire-format addition every
 //! binding has to be taught, and an exhaustive match is how the compiler
-//! tells a binding author that. [`Scope`] is exhaustive for a different
-//! reason, given on the type.
+//! tells a binding author that.
 mod context;
 mod json;
 mod json_predicate;
@@ -138,45 +139,6 @@ pub use vitaminc_aead::plaintext;
 pub use vitaminc_aead_frame as frame;
 
 use crate::target::IndexSpec;
-use crate::{KeysetCipher, StackCipher};
-
-/// Which cipher an opening operation decrypts through: the client, or one
-/// of its keysets.
-///
-/// This is the runtime form of the crate's *scope* (what a `Pending` is
-/// built through, and so what it may open — [`CipherScope`](crate::CipherScope)
-/// is the trait both ciphers implement). [`StackCipher`] and
-/// [`KeysetCipher`] both open, and neither is the other's supertype: the
-/// client opens a leaf sealed under any of its keysets, while a keyset
-/// cipher opens only its own and fails a foreign leaf with
-/// [`Error::ForeignKeyset`](crate::Error::ForeignKeyset). That refusal is
-/// the keyset cipher's, made when the pending is built and before any key
-/// is retrieved; this enum only names which of the two a call goes through,
-/// because a binding's caller makes that choice at runtime and a typed
-/// caller makes it by naming the cipher.
-///
-/// Not `#[non_exhaustive]`: the two variants are the two ciphers this crate
-/// has, and a binding dispatches on them (the Go guest does, per selector).
-/// A third would be a new cipher type, which is a larger change than adding
-/// a variant here.
-pub enum Scope<'c, K> {
-    /// Leaves from any keyset the client holds: one batched retrieval per
-    /// keyset the leaves were sealed under.
-    Client(&'c StackCipher<K>),
-    /// Leaves from this keyset only.
-    Keyset(KeysetCipher<'c, K>),
-}
-
-// By hand rather than derived, so `K: Debug` is not demanded: neither cipher
-// demands it of its own `Debug`, and a data-key source rarely offers one.
-impl<K> fmt::Debug for Scope<'_, K> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Scope::Client(cipher) => f.debug_tuple("Client").field(cipher).finish(),
-            Scope::Keyset(keyset) => f.debug_tuple("Keyset").field(keyset).finish(),
-        }
-    }
-}
 
 /// Bytes, written as a frame's bytes leaf rather than a list of integers.
 struct WireBytes<'a>(&'a [u8]);

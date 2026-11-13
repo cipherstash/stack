@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
 
 use common::frames::frame;
-use stack_encrypt::dynamic::{record, Scope, ValueFrame};
+use stack_encrypt::dynamic::{record, ValueFrame};
 use stack_encrypt::{Ciphertext, EncryptInto, Pending, StackCipher, StackCipherText};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyError,
@@ -210,7 +210,7 @@ async fn dropping_unpolled_decrypt_releases_captures_without_key_io() {
     let stored = sealed(&cipher, 2).await;
     let drops = Arc::new(AtomicUsize::new(0));
     let pending = observed(
-        record::decrypt(Scope::Client(&cipher), stored, &plan(), None).unwrap(),
+        record::decrypt(&cipher, stored, &plan(), None).unwrap(),
         drops.clone(),
     );
     assert_eq!(drops.load(Ordering::SeqCst), 0);
@@ -228,7 +228,7 @@ async fn cancelling_in_flight_decrypt_drops_provider_and_captures() {
     calls.block.store(true, Ordering::SeqCst);
     let drops = Arc::new(AtomicUsize::new(0));
     let mut future = observed(
-        record::decrypt(Scope::Client(&cipher), stored, &plan(), None).unwrap(),
+        record::decrypt(&cipher, stored, &plan(), None).unwrap(),
         drops.clone(),
     )
     .into_future();
@@ -244,7 +244,7 @@ async fn cancelling_in_flight_decrypt_drops_provider_and_captures() {
     assert_eq!(calls.retrieve_drops.load(Ordering::SeqCst), 1);
     // Cancellation does not poison the cipher or execute the abandoned work.
     calls.block.store(false, Ordering::SeqCst);
-    let opened = record::decrypt(Scope::Client(&cipher), retry, &plan(), None)
+    let opened = record::decrypt(&cipher, retry, &plan(), None)
         .unwrap()
         .await
         .unwrap();

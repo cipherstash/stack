@@ -12,7 +12,7 @@ use common::{
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use stack_encrypt::dynamic::{record, Scope};
+use stack_encrypt::dynamic::record;
 use stack_encrypt::{
     AsProtectedRef as _, CipherText, Controlled as _, ErrorPayload, Node, PassthroughFrame,
     SealedValue, StackCipher, StackCipherText,
@@ -315,7 +315,7 @@ async fn shared_raw_frame_profile() {
             (_, Err(error)) => fail(format!("check_record refused a fitting tree: {error:?}")),
             (_, Ok(())) => {}
         }
-        let result = record::decrypt(Scope::Keyset(keyset.clone()), tree, &plan, None);
+        let result = record::decrypt(keyset.clone(), tree, &plan, None);
         match (case.class, result) {
             (Class::Shape, Err(error)) => {
                 if let Err(message) = refusal(&error, want.unwrap()) {

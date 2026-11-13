@@ -116,6 +116,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`CipherRef` replaces `target::CipherScope` and `dynamic::Scope`**
+  (#1488). A `CipherRef` is one borrowed value: a connection, and the
+  keyset it is confined to, if any. It is built from `&StackCipher`,
+  `&KeysetCipher`, or an owned `KeysetCipher`, and in no other way.
+  - Every entry point that took `impl CipherScope` takes
+    `impl Into<CipherRef>`. A call that passes `&cipher` or `&keyset`
+    compiles unchanged. These are `DecryptFrom::decrypt_from` and
+    `decrypt_from_with_context`, the legacy `decrypt_into`, `decrypt_from`
+    and `decrypt_from_with_context`, and `Pending::ready`, `failed`,
+    `request` and `all`.
+  - A function of your own that took `impl CipherScope<'a, K>` takes
+    `impl Into<CipherRef<'a, K>>` instead.
+  - These entry points now also take an owned `KeysetCipher`.
+  - A pending built through `&keyset` now lives as long as the
+    connection, not as long as the borrow of the keyset handle. So
+    `i32::decrypt_from(ciphertext, &cipher.default_keyset())` compiles
+    when the pending is stored and awaited later.
+  - `dynamic::record::decrypt` and `decrypt_with` take
+    `impl Into<CipherRef>` too. Write `&cipher` in place of
+    `Scope::Client(&cipher)`, and `&keyset` or `keyset` in place of
+    `Scope::Keyset(keyset)`.
+  - The rules do not change. A reference to a `StackCipher` opens a leaf
+    from any keyset the client can use. A reference to a `KeysetCipher`
+    refuses a leaf from another keyset with `ForeignKeyset`, before any key
+    is retrieved.
+  - `CipherRef::keyset_id()` returns the keyset the reference is confined
+    to. `CipherRef` is re-exported from the crate root.
+
 - **Every operator is declared once, and `op::Supports` has one method**
   (#1279, #1318). The `op` module lists each operator with its type, its
   arity and its wire name; the dynamic enum `Op` (`dynamic::OpSpec` until

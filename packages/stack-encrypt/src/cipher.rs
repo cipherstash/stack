@@ -1059,7 +1059,7 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
         T: Decrypt,
         A: IntoContext<'a>,
     {
-        decrypt_through(self, ciphertext, context).await
+        decrypt_through(self.into(), ciphertext, context).await
     }
 }
 
@@ -1075,7 +1075,7 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
 /// `for_sequence_element`, `for_map_entry`, `for_leaf` — and that
 /// derivation is the library's to compute, never the caller's to supply.
 async fn decrypt_through<'s, 'a, T, K: DataKeySource + IndexKeySource + 's>(
-    scope: impl crate::target::CipherScope<'s, K>,
+    scope: crate::target::CipherRef<'s, K>,
     ciphertext: StackCipherText,
     aad: impl IntoContext<'a>,
 ) -> Result<T, Error>
@@ -1129,7 +1129,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
         T: Decrypt,
         A: IntoContext<'a>,
     {
-        decrypt_through(self, ciphertext, context).await
+        decrypt_through(self.into(), ciphertext, context).await
     }
 }
 

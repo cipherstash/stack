@@ -20,7 +20,6 @@ use std::future::IntoFuture;
 mod support;
 
 use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext};
-use stack_encrypt::dynamic::Scope;
 use stack_encrypt::sem::DefaultMatch;
 use stack_encrypt::{
     nonempty, CipherText, Label, Node, PassthroughFrame, PendingStackCipherText, SealedValue,
@@ -28,6 +27,7 @@ use stack_encrypt::{
 };
 use stack_encrypt::{Controlled, Protected};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
+use stack_encrypt_guest::options::{scope_for, KeysetSelector};
 use stack_encrypt_guest::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_TERM,
 };
@@ -430,7 +430,7 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 1);
 
     let pt = block_on(ops::decrypt_record(
-        Scope::Client(&cipher),
+        &cipher,
         &record,
         &protect(&plan()),
         None,
@@ -487,7 +487,7 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
 
     assert_eq!(
         block_on(ops::decrypt_record(
-            Scope::Client(&cipher),
+            &cipher,
             &forged,
             &protect(&plan()),
             None
@@ -707,7 +707,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let plan_with = |context: Tree| single_field_plan("age", context);
 
     let opened = block_on(ops::decrypt_record(
-        Scope::Client(&cipher),
+        &cipher,
         &record,
         &protect(&plan_with(extended("age"))),
         None,
@@ -720,7 +720,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
 
     assert_eq!(
         block_on(ops::decrypt_record(
-            Scope::Client(&cipher),
+            &cipher,
             &record,
             &protect(&plan_with(label("age"))),
             None
@@ -778,7 +778,7 @@ fn a_structured_plan_context_is_validated_at_parse() {
     ))
     .expect("a label extended by an empty part is never empty");
     assert!(block_on(ops::decrypt_record(
-        Scope::Client(&cipher),
+        &cipher,
         &sealed,
         &protect(&plan_with(Tree::Array(vec![label("f"), s("")]))),
         None
@@ -903,7 +903,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
     );
     assert_eq!(
         block_on(ops::decrypt_record(
-            Scope::Client(&cipher),
+            &cipher,
             &source,
             &protect(&bad_plan),
             None
@@ -928,7 +928,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
     ))
     .expect("encrypt");
     let opened = block_on(ops::decrypt_record(
-        Scope::Client(&cipher),
+        &cipher,
         &sealed,
         &protect(&odd_plan),
         None,
@@ -987,7 +987,7 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
 
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
     let pt = block_on(ops::decrypt_record(
-        Scope::Client(&cipher),
+        &cipher,
         &batch,
         &protect(&plan()),
         None,
@@ -1005,15 +1005,32 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
 
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
     assert_eq!(
-        block_on(ops::decrypt_record(
-            Scope::Keyset(acme),
-            &batch,
-            &protect(&plan()),
-            None
-        )),
+        block_on(ops::decrypt_record(acme, &batch, &protect(&plan()), None)),
         Err(STATUS_FOREIGN_KEYSET)
     );
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), before);
+}
+
+/// Each opening selector names the reference a decrypt runs through:
+/// `{"any"}` the client, confined to no keyset, and every other selector
+/// the keyset it resolves to.
+#[test]
+fn each_opening_selector_names_its_keyset() {
+    let cipher = cipher();
+    let acme = keyset_named(&cipher, "acme").keyset_id();
+    let keyset_of =
+        |selector: KeysetSelector| block_on(scope_for(&cipher, &selector)).map(|r| r.keyset_id());
+
+    assert_eq!(keyset_of(KeysetSelector::Any), Ok(None));
+    assert_eq!(
+        keyset_of(KeysetSelector::Default),
+        Ok(Some(cipher.default_keyset().keyset_id()))
+    );
+    let name = zerokms_protocol::Name::try_from("acme")
+        .ok()
+        .expect("a valid name");
+    assert_eq!(keyset_of(KeysetSelector::Name(name)), Ok(Some(acme)));
+    assert_eq!(keyset_of(KeysetSelector::Id(acme)), Ok(Some(acme)));
 }
 
 /// Terms derive under the selected keyset's index key: the same probe
@@ -1283,12 +1300,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
             "{label} must be refused by validation"
         );
         assert_eq!(
-            block_on(ops::decrypt_record(
-                Scope::Client(&cipher),
-                &tree,
-                &protect(&plan),
-                None
-            )),
+            block_on(ops::decrypt_record(&cipher, &tree, &protect(&plan), None)),
             Err(STATUS_ENCODING),
             "{label} must be refused by the op too"
         );
@@ -2216,13 +2228,8 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
     };
     assert_ne!(eq_of(&rows[0]), eq_of(&rows[1]));
 
-    let opened = block_on(ops::decrypt_record(
-        Scope::Client(&cipher),
-        &record,
-        &protect(&plan),
-        None,
-    ))
-    .expect("each record opens under the context it stores");
+    let opened = block_on(ops::decrypt_record(&cipher, &record, &protect(&plan), None))
+        .expect("each record opens under the context it stores");
     let Tree::Array(opened) = decode(&opened) else {
         panic!("an array of rows");
     };
@@ -2240,7 +2247,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
     assert_eq!(
         block_on(ops::decrypt_record(
-            Scope::Client(&cipher),
+            &cipher,
             &record,
             &protect(&plan),
             Some(acme.clone()),
@@ -2276,7 +2283,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         Ok(())
     );
     let opened = block_on(ops::decrypt_record(
-        Scope::Client(&cipher),
+        &cipher,
         &record,
         &protect(&plan),
         Some(acme),

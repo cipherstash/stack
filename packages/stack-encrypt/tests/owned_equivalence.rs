@@ -17,7 +17,7 @@ mod common;
 use common::frames::{frame, object, payload};
 use serde::Deserialize;
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{Scope, ValueFrame};
+use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{
     passthrough, Borrowed, DeclaredContext, DeclaredScopes, DecryptSource, Decryption,
@@ -255,7 +255,7 @@ struct Opened {
     email: String,
 }
 async fn open_dynamic(cipher: &StackCipher<common::RecordingSource>, stored: &Stored) -> User {
-    let opened = record::decrypt(Scope::Client(cipher), stored.tree(), &data_plan(), None)
+    let opened = record::decrypt(cipher, stored.tree(), &data_plan(), None)
         .expect("the record fits the plan")
         .await
         .expect("the lowering opens it");

@@ -1,7 +1,7 @@
 //! Owned conversions over core-owned declarations.
 
 use super::{
-    AcceptsContext, AllowsNoContext, CipherScope, ContextInput, Decryption, Encryption, IndexSpec,
+    AcceptsContext, AllowsNoContext, CipherRef, ContextInput, Decryption, Encryption, IndexSpec,
     Owned, Pending,
 };
 use crate::KeysetCipher;
@@ -124,7 +124,7 @@ pub trait DecryptFrom: Zeroize + Sized + 'static {
     /// Decrypt with explicitly omitted caller context.
     fn decrypt_from<'a, S, K: 'static>(
         source: S,
-        cipher: impl CipherScope<'a, K>,
+        cipher: impl Into<CipherRef<'a, K>>,
     ) -> Pending<'a, Self, K>
     where
         S: DecryptSource<Self>,
@@ -138,7 +138,7 @@ pub trait DecryptFrom: Zeroize + Sized + 'static {
     /// Decrypt with the context supplied at encryption.
     fn decrypt_from_with_context<'a, S, K: 'static>(
         source: S,
-        cipher: impl CipherScope<'a, K>,
+        cipher: impl Into<CipherRef<'a, K>>,
         context: impl Into<<S::ContextInput as AcceptsContext>::Value>,
     ) -> Pending<'a, Self, K>
     where

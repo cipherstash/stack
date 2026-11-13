@@ -72,7 +72,7 @@ use super::query::{field_operators, find, query_term, QueryTerm};
 use super::record::{self, Absent, Context, FieldPlan, Plan, Verb};
 use super::target::{NoTargets, TargetResolver};
 use super::value_frame::ValueFrame;
-use super::{Error, Op, Reason, Scope, TermBytes};
+use super::{Error, Op, Reason, TermBytes};
 use crate::contexts::{self, CallerShape, Contexts, LeafContext, Placeholder};
 use crate::plan::{field_label, join, FieldValues, IntoLabel, Slot, FROM_CALL, FROM_PLAN};
 use crate::target::{
@@ -413,7 +413,7 @@ where
             value, resolver, ..
         } = self;
         Decryption::from_open(move |cipher| {
-            match record::decrypt_with(Scope::Client(cipher), value, &plan, None, &resolver) {
+            match record::decrypt_with(cipher, value, &plan, None, &resolver) {
                 Ok(pending) => pending,
                 Err(error) => Pending::failed(cipher, wrap(error)),
             }

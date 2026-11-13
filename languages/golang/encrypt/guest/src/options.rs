@@ -41,7 +41,7 @@
 //! it is objects, strings, bytes and nothing else, and this module is its
 //! one home. The Go bindings plan points here.
 
-use stack_encrypt::dynamic::Scope;
+use stack_encrypt::CipherRef;
 use stack_encrypt::{KeysetCipher, Label, StackCipher};
 use stack_kms::{IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
@@ -239,20 +239,23 @@ impl KeysetSelector {
     }
 }
 
-/// The [`Scope`] a decrypt-side selector names: the client for `{"any"}`,
-/// which opens a leaf sealed under any of its keysets, or one keyset's
-/// cipher, which opens only its own and refuses the rest before any key is
-/// retrieved.
+/// Returns the [`CipherRef`] for the keyset selector of a decrypt call.
+///
+/// - For `{"any"}`, the result is the client. The client opens a leaf
+///   sealed under any of its keysets.
+/// - For one keyset, the result is that keyset's cipher. That cipher only
+///   opens leaves from its own keyset. The cipher refuses any other leaf
+///   before it retrieves any key.
 pub async fn scope_for<'c, K>(
     cipher: &'c StackCipher<K>,
     selector: &KeysetSelector,
-) -> Result<Scope<'c, K>, u32>
+) -> Result<CipherRef<'c, K>, u32>
 where
     K: IndexKeySource,
 {
     match selector {
-        KeysetSelector::Any => Ok(Scope::Client(cipher)),
-        other => other.resolve(cipher).await.map(Scope::Keyset),
+        KeysetSelector::Any => Ok(CipherRef::from(cipher)),
+        other => other.resolve(cipher).await.map(CipherRef::from),
     }
 }
 

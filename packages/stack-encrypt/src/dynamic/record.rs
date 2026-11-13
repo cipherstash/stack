@@ -155,13 +155,11 @@ use vitaminc_aead::{DecodeError, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
 
 use super::planned::{check_stored, check_values, compose, opening, opening_base};
-use super::{
-    not_admitted, Error, NoTargets, Reason, Scope, TargetError, TargetResolver, TermBytes,
-};
+use super::{not_admitted, Error, NoTargets, Reason, TargetError, TargetResolver, TermBytes};
 use crate::plan::FieldValues;
 use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
 use crate::{
-    CipherText, ContextPiece, KeysetCipher, Label, NonEmpty, PassthroughFrame, Pending,
+    CipherRef, CipherText, ContextPiece, KeysetCipher, Label, NonEmpty, PassthroughFrame, Pending,
     StackCipherText,
 };
 use vitaminc_aead::IntoContext as _;
@@ -1756,7 +1754,7 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{record, Scope, ValueFrame};
+/// use stack_encrypt::dynamic::{record, ValueFrame};
 /// use stack_encrypt::{AsProtectedRef, StackCipher};
 /// use stack_encrypt::kms::FakeDataKeySource;
 ///
@@ -1781,7 +1779,7 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 ///
 /// // Only the ciphertext comes back, as the record's frame; the term is
 /// // one-way.
-/// let opened = record::decrypt(Scope::Client(&cipher), sealed, &plan, None)?.await?;
+/// let opened = record::decrypt(&cipher, sealed, &plan, None)?.await?;
 /// assert_eq!(opened, frame);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
@@ -2046,7 +2044,7 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 /// is [`check_record`], and it is where [`Error::Record`] comes from. What
 /// comes back is the plan's opener as a [`Pending`]: one batched
 /// `retrieve_keys` for every ciphertext leaf when it is awaited and, when
-/// opening through [`Scope::Client`], one per keyset the leaves were sealed
+/// opening through a reference to the client, one per keyset the leaves were sealed
 /// under. Its value is one [`ValueFrame`]: a map per record holding the
 /// plan's fields that come back, in plan order, or a sequence of them for a
 /// batch. Each field opens straight into a frame of its own, which is walked
@@ -2077,8 +2075,8 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 ///
 /// [`Error::Record`] if the stored tree does not fit the plan, decided
 /// here. A failure of the pending is the engine's: a wrong context, a wrong
-/// key, a tampered ciphertext, a leaf from a keyset other than a
-/// [`Scope::Keyset`]'s ([`Error::ForeignKeyset`](crate::Error::ForeignKeyset),
+/// key, a tampered ciphertext, a leaf from a keyset other than the one a
+/// keyset reference names ([`Error::ForeignKeyset`](crate::Error::ForeignKeyset),
 /// before any key is retrieved), a stored context field that is not the
 /// one expected ([`Error::ContextMismatch`](crate::Error::ContextMismatch),
 /// likewise before any key is retrieved), or a typed field that opens to a
@@ -2090,7 +2088,7 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 /// [`decrypt_with`]. This runs under [`NoTargets`], so such a plan is
 /// refused ([`Error::Target`]).
 pub fn decrypt<'a, K: 'static>(
-    scope: Scope<'a, K>,
+    scope: impl Into<CipherRef<'a, K>>,
     record: StackCipherText,
     plan: &Plan,
     expected: Option<Label>,
@@ -2108,19 +2106,17 @@ pub fn decrypt<'a, K: 'static>(
 /// As [`decrypt`], plus [`Error::Target`] for a stored value that is not
 /// the type, or a name the resolver refuses.
 pub fn decrypt_with<'a, K: 'static>(
-    scope: Scope<'a, K>,
+    scope: impl Into<CipherRef<'a, K>>,
     record: StackCipherText,
     plan: &Plan,
     expected: Option<Label>,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
+    let scope: CipherRef<'a, K> = scope.into();
     let rows = record_rows(record, plan)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
-    let (cipher, keyset) = match &scope {
-        Scope::Client(cipher) => (*cipher, None),
-        Scope::Keyset(keyset) => (keyset.cipher(), Some(keyset.keyset_id())),
-    };
+    let (cipher, keyset) = (scope.cipher(), scope.keyset_id());
     let mut pendings = Vec::new();
     let mut targets = |row: StoredRow| -> Result<(Absent, FieldValues, usize), Error> {
         let fields = plan
@@ -3092,7 +3088,7 @@ mod tests {
     }
 
     async fn open(cipher: &StackCipher<Counting>, record: StackCipherText, plan: &Plan) -> Tree {
-        decrypt(Scope::Client(cipher), record, plan, None)
+        decrypt(cipher, record, plan, None)
             .expect("the record fits the plan")
             .await
             .expect("decrypt")
@@ -4134,7 +4130,7 @@ mod tests {
             let plan = the_plan();
             let sealed = seal(&keyset, row(34), &plan).await;
 
-            let pending = decrypt(Scope::Client(&cipher), sealed, &plan, None).expect("fits");
+            let pending = decrypt(&cipher, sealed, &plan, None).expect("fits");
             assert_eq!(
                 retrieves(&cipher),
                 0,
@@ -4159,7 +4155,7 @@ mod tests {
             // Through the keyset it was sealed under, too.
             let sealed = seal(&keyset, row(35), &plan).await;
             let fields = object(
-                decrypt(Scope::Keyset(keyset.clone()), sealed, &plan, None)
+                decrypt(keyset.clone(), sealed, &plan, None)
                     .expect("fits")
                     .await
                     .expect("decrypt through the keyset"),
@@ -4779,7 +4775,7 @@ mod tests {
 
             let before = retrieves(&cipher);
             for (label_, record) in cases {
-                let err = decrypt(Scope::Client(&cipher), record, &plan, None).err();
+                let err = decrypt(&cipher, record, &plan, None).err();
                 assert!(
                     matches!(err, Some(Error::Record { .. })),
                     "{label_}: decrypt must refuse it as a misfit record: {err:?}"
@@ -5209,14 +5205,9 @@ mod tests {
             let retrieved = retrieves(&cipher);
 
             let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
-            let refused = decrypt(
-                Scope::Client(&cipher),
-                sealed,
-                &plan,
-                expected("tenants/globex"),
-            )
-            .expect("the shape fits")
-            .await;
+            let refused = decrypt(&cipher, sealed, &plan, expected("tenants/globex"))
+                .expect("the shape fits")
+                .await;
             match refused {
                 Err(crate::Error::ContextMismatch { stored }) => {
                     assert_eq!(stored.to_string(), "tenants/acme")
@@ -5249,15 +5240,10 @@ mod tests {
 
             let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
             let opened = object(
-                decrypt(
-                    Scope::Client(&cipher),
-                    sealed,
-                    &plan,
-                    expected("tenants/acme"),
-                )
-                .expect("fits")
-                .await
-                .expect("the expected context opens"),
+                decrypt(&cipher, sealed, &plan, expected("tenants/acme"))
+                    .expect("fits")
+                    .await
+                    .expect("the expected context opens"),
             );
             assert_eq!(u32_of(&opened[1].1), 34);
 
@@ -5269,14 +5255,9 @@ mod tests {
             )
             .await;
             let retrieved = retrieves(&cipher);
-            let refused = decrypt(
-                Scope::Client(&cipher),
-                batch,
-                &plan,
-                expected("tenants/acme"),
-            )
-            .expect("fits")
-            .await;
+            let refused = decrypt(&cipher, batch, &plan, expected("tenants/acme"))
+                .expect("fits")
+                .await;
             assert!(matches!(refused, Err(crate::Error::ContextMismatch { .. })));
             assert_eq!(retrieves(&cipher), retrieved);
         }
@@ -5291,7 +5272,7 @@ mod tests {
             let plan = the_plan();
             let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
             let result = decrypt(
-                Scope::Client(&cipher),
+                &cipher,
                 with_stored_context(sealed, "tenants/globex"),
                 &plan,
                 None,
@@ -5350,7 +5331,7 @@ mod tests {
             let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
             let retrieved = retrieves(&cipher);
             let failed = decrypt(
-                Scope::Client(&cipher),
+                &cipher,
                 with_stored_context(sealed, "tenants/(acme)"),
                 &plan,
                 None,
@@ -5378,7 +5359,7 @@ mod tests {
                 Err(Error::Record { .. })
             ));
             let sealed = seal(&keyset, super::row(34), &plan).await;
-            let failed = decrypt(Scope::Client(&cipher), sealed, &plan, expected("users"))
+            let failed = decrypt(&cipher, sealed, &plan, expected("users"))
                 .expect("the shape fits")
                 .await;
             assert!(matches!(
@@ -5465,15 +5446,10 @@ mod tests {
 
             let sealed = seal(&keyset, source(), &plan).await;
             let opened = object(
-                decrypt(
-                    Scope::Client(&cipher),
-                    sealed,
-                    &plan,
-                    expected("tenants/acme"),
-                )
-                .expect("fits")
-                .await
-                .expect("opens under the expected context"),
+                decrypt(&cipher, sealed, &plan, expected("tenants/acme"))
+                    .expect("fits")
+                    .await
+                    .expect("opens under the expected context"),
             );
             assert_eq!(opened[0].0, "age");
             assert_eq!(u32_of(&opened[0].1), 34);
@@ -5482,14 +5458,9 @@ mod tests {
 
             let sealed = seal(&keyset, source(), &plan).await;
             let retrieved = retrieves(&cipher);
-            let refused = decrypt(
-                Scope::Client(&cipher),
-                sealed,
-                &plan,
-                expected("tenants/globex"),
-            )
-            .expect("fits")
-            .await;
+            let refused = decrypt(&cipher, sealed, &plan, expected("tenants/globex"))
+                .expect("fits")
+                .await;
             assert!(matches!(refused, Err(crate::Error::ContextMismatch { .. })));
             assert_eq!(retrieves(&cipher), retrieved, "before any key");
         }
@@ -5535,16 +5506,11 @@ mod tests {
                 row("tenants/acme", 3, Some(30)),
             ]);
             let sealed = seal(&keyset, batch, &plan).await;
-            let opened = decrypt(
-                Scope::Client(&cipher),
-                sealed,
-                &plan,
-                expected("tenants/acme"),
-            )
-            .expect("fits")
-            .await
-            .expect("every row is acme's")
-            .tree();
+            let opened = decrypt(&cipher, sealed, &plan, expected("tenants/acme"))
+                .expect("fits")
+                .await
+                .expect("every row is acme's")
+                .tree();
             assert_eq!(
                 opened,
                 Tree::Array(vec![
@@ -5573,14 +5539,9 @@ mod tests {
             ]);
             let sealed = seal(&keyset, batch, &plan).await;
             let retrieved = retrieves(&cipher);
-            let refused = decrypt(
-                Scope::Client(&cipher),
-                sealed,
-                &plan,
-                expected("tenants/acme"),
-            )
-            .expect("fits")
-            .await;
+            let refused = decrypt(&cipher, sealed, &plan, expected("tenants/acme"))
+                .expect("fits")
+                .await;
             match refused {
                 Err(crate::Error::ContextMismatch { stored }) => {
                     assert_eq!(stored.to_string(), "tenants/globex")
@@ -5607,7 +5568,7 @@ mod tests {
             let plan = the_plan();
 
             let sealed = seal(&acme, row(34), &plan).await;
-            let err = decrypt(Scope::Keyset(globex.clone()), sealed, &plan, None)
+            let err = decrypt(globex.clone(), sealed, &plan, None)
                 .expect("the record fits")
                 .await
                 .err();
@@ -5627,7 +5588,7 @@ mod tests {
 
             let sealed = seal(&acme, row(34), &plan).await;
             let opened = object(
-                decrypt(Scope::Keyset(acme.clone()), sealed, &plan, None)
+                decrypt(acme.clone(), sealed, &plan, None)
                     .expect("fits")
                     .await
                     .expect("its own keyset opens it"),
@@ -5644,16 +5605,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn debug_names_the_cipher_it_opens_through() {
+        async fn debug_names_the_keyset_a_reference_is_confined_to() {
             let cipher = cipher().await;
-            assert!(
-                format!("{:?}", Scope::Client(&cipher)).starts_with("Client("),
-                "the client scope says so"
-            );
-            assert!(
-                format!("{:?}", Scope::Keyset(cipher.default_keyset())).starts_with("Keyset("),
-                "the keyset scope says so"
-            );
+            let any = format!("{:?}", CipherRef::from(&cipher));
+            assert!(any.contains("keyset_id: None"), "{any}");
+            let keyset = cipher.default_keyset();
+            let one = format!("{:?}", CipherRef::from(&keyset));
+            assert!(one.contains(&format!("{:?}", keyset.keyset_id())), "{one}");
         }
     }
 
@@ -6239,7 +6197,7 @@ mod tests {
             let sealed = seal(&keyset, obj(vec![("age", Tree::UInt64(34))]), &untyped).await;
             let as_int64 =
                 plan(obj(vec![("age", typed(label("age"), &["c"], "int64"))])).expect("plan");
-            let result = decrypt(Scope::Client(&cipher), sealed, &as_int64, None)
+            let result = decrypt(&cipher, sealed, &as_int64, None)
                 .expect("the shape fits")
                 .await;
             assert_eq!(
@@ -6271,7 +6229,7 @@ mod tests {
             let sealed = seal(&keyset, rows, &untyped).await;
             let as_uint64 =
                 plan(obj(vec![("age", typed(label("age"), &["c"], "uint64"))])).expect("plan");
-            let result = decrypt(Scope::Client(&cipher), sealed, &as_uint64, None)
+            let result = decrypt(&cipher, sealed, &as_uint64, None)
                 .expect("the shape fits")
                 .await;
             assert_eq!(
@@ -6442,7 +6400,7 @@ mod tests {
                 .expect("the type is not visible without opening");
 
             let sealed = seal(&keyset, obj(vec![("age", Tree::UInt32(34))]), &untyped).await;
-            let result = decrypt(Scope::Client(&cipher), sealed, &as_uint64, None)
+            let result = decrypt(&cipher, sealed, &as_uint64, None)
                 .expect("the shape fits")
                 .await;
             assert!(
@@ -6537,8 +6495,7 @@ mod tests {
                 "id".to_string(),
                 CipherText::Map(vec![("passthrough".to_string(), forged(Tree::UInt32(7)))]),
             ));
-            let refused =
-                decrypt(Scope::Client(&cipher), CipherText::Map(fields), &plan, None).err();
+            let refused = decrypt(&cipher, CipherText::Map(fields), &plan, None).err();
             assert!(matches!(refused, Some(Error::Record { .. })), "{refused:?}");
         }
     }
@@ -7083,16 +7040,10 @@ mod tests {
 
             // `node` took the inspected entry out; a fresh record opens.
             let record = seal_mixed(&keyset, &plan).await;
-            let opened = decrypt_with(
-                Scope::Client(&cipher),
-                CipherText::Map(record),
-                &plan,
-                None,
-                &FakeEql,
-            )
-            .expect("the record fits")
-            .await
-            .expect("opens");
+            let opened = decrypt_with(&cipher, CipherText::Map(record), &plan, None, &FakeEql)
+                .expect("the record fits")
+                .await
+                .expect("opens");
             assert_eq!(
                 retrieves(&cipher),
                 1,
@@ -7107,7 +7058,7 @@ mod tests {
             // like every other leaf's.
             let record = seal_mixed(&keyset, &plan).await;
             let opened = decrypt_with(
-                Scope::Keyset(cipher.default_keyset()),
+                cipher.default_keyset(),
                 CipherText::Map(record),
                 &plan,
                 None,
@@ -7138,7 +7089,7 @@ mod tests {
                 1,
                 "three rows, two leaves each, one request"
             );
-            let opened = decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &FakeEql)
+            let opened = decrypt_with(&cipher, sealed, &plan, None, &FakeEql)
                 .expect("the batch fits")
                 .await
                 .expect("opens");
@@ -7169,7 +7120,7 @@ mod tests {
                 .await
                 .expect("seals");
             assert_eq!(generates(&cipher), 1);
-            let opened = decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &FakeEql)
+            let opened = decrypt_with(&cipher, sealed, &plan, None, &FakeEql)
                 .expect("fits")
                 .await
                 .expect("opens");
@@ -7210,12 +7161,7 @@ mod tests {
             assert!(matches!(error, TargetError::NoTargets { .. }), "{error}");
             assert_eq!(generates(&cipher), 0, "nothing minted");
             let sealed = CipherText::Map(seal_mixed(&keyset, &plan).await);
-            let error = target_error(refused(decrypt(
-                Scope::Client(&cipher),
-                sealed,
-                &plan,
-                None,
-            )));
+            let error = target_error(refused(decrypt(&cipher, sealed, &plan, None)));
             assert!(matches!(error, TargetError::NoTargets { .. }), "{error}");
             assert_eq!(retrieves(&cipher), 0, "nothing retrieved");
         }
@@ -7399,7 +7345,7 @@ mod tests {
                 .unwrap()
                 .await
                 .unwrap();
-            let result = decrypt_with(Scope::Keyset(globex), sealed, &plan, None, &FakeEql)
+            let result = decrypt_with(globex, sealed, &plan, None, &FakeEql)
                 .expect("the record fits")
                 .await;
             match result {
@@ -7417,7 +7363,7 @@ mod tests {
                 .unwrap()
                 .await
                 .unwrap();
-            let opened = decrypt_with(Scope::Keyset(acme), sealed, &plan, None, &FakeEql)
+            let opened = decrypt_with(acme, sealed, &plan, None, &FakeEql)
                 .unwrap()
                 .await
                 .expect("its own keyset opens it");
@@ -7451,7 +7397,7 @@ mod tests {
                 CipherText::Map(vec![(EQL_KEY.to_string(), forged(s("x")))]),
             ));
             let error = refused(decrypt_with(
-                Scope::Client(&cipher),
+                &cipher,
                 CipherText::Map(row),
                 &plan,
                 None,
@@ -7754,11 +7700,7 @@ mod tests {
             let retrieved = retrieves(&cipher);
             let record = with_email(seal_mixed(&keyset, &plan).await, eql_node(b"not json"));
             let error = target_error(refused(decrypt_with(
-                Scope::Client(&cipher),
-                record,
-                &plan,
-                None,
-                &FakeEql,
+                &cipher, record, &plan, None, &FakeEql,
             )));
             assert!(
                 matches!(&error, TargetError::Stored { name, target, .. } if name == "email" && target == TEXT_EQ),
@@ -7767,7 +7709,7 @@ mod tests {
             assert_eq!(retrieves(&cipher), retrieved, "nothing retrieved");
             // An untouched record still opens.
             let record = CipherText::Map(seal_mixed(&keyset, &plan).await);
-            let opened = decrypt_with(Scope::Client(&cipher), record, &plan, None, &FakeEql)
+            let opened = decrypt_with(&cipher, record, &plan, None, &FakeEql)
                 .unwrap()
                 .await
                 .unwrap();
@@ -7871,13 +7813,7 @@ mod tests {
                     bytes_node(b"{}".to_vec()).unwrap(),
                 )]),
             )]);
-            let error = target_error(refused(decrypt_with(
-                Scope::Client(&cipher),
-                junk,
-                &plan,
-                None,
-                &FakeEql,
-            )));
+            let error = target_error(refused(decrypt_with(&cipher, junk, &plan, None, &FakeEql)));
             match error {
                 TargetError::Stored { name, .. } => assert_eq!(name, "email"),
                 other => panic!("{other}"),
@@ -8041,7 +7977,7 @@ mod tests {
                 "age".to_string(),
                 CipherText::Map(vec![("c".to_string(), derived.c)]),
             )]);
-            let opened = decrypt(Scope::Client(&cipher), stored, &plan, None)
+            let opened = decrypt(&cipher, stored, &plan, None)
                 .expect("the shape fits")
                 .await
                 .expect("the lowering opens the derive's leaf");
