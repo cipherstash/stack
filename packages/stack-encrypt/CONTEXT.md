@@ -351,13 +351,56 @@ and whose ZeroKMS key requests are queued but not sent. Pendings compose
 (`zip`, `map`, `all`) so a whole struct or `Vec` settles in one batched call.
 _Avoid_: future, promise
 
+**Settle**:
+A pending's key requests going out and coming back as one batched round
+trip to the key backend; composed pendings settle together.
+_Avoid_: operation (that is what produces a target), request, flush
+
 **Keyset**:
-The ZeroKMS key domain a data key is minted under and an index key belongs
-to — one per tenant is the common shape. A client may use any number;
-`StackCipher` is scoped to the client, not to a keyset. Its **id** (a UUID)
-is its identity: globally unique, carried in every sealed leaf, never
-re-checked.
-_Avoid_: dataset, key ring, tenant (a tenant *has* a keyset)
+The key domain a data key is minted under and an index key belongs to —
+one per tenant is the common shape. A keyset lives in exactly one key
+backend: in ZeroKMS it is a ZeroKMS keyset; in a third-party vendor's KMS
+it is a keyset record the customer creates, naming the vendor key that
+protects it. A client may use any number; `StackCipher` is scoped to the
+client, not to a keyset. Its **id** (a UUID) is its identity: globally
+unique, carried in every sealed leaf, never re-checked.
+_Avoid_: dataset, key ring, tenant (a tenant *has* a keyset), vendor key
+(that is what protects a keyset, not the keyset)
+
+**Key backend**:
+The service a keyset's data keys and index key come from: ZeroKMS, or one
+key vendor backend. Every keyset lives in exactly one.
+_Avoid_: KMS (ambiguous between ZeroKMS and a vendor's), key provider (that
+is the source of ZeroKMS client credentials), key source
+
+**Key vendor backend**:
+A key backend that is not ZeroKMS: AWS KMS, Azure Managed HSM, HashiCorp
+Vault Transit, Google Cloud KMS, or a static key. It works at less than
+ZeroKMS parity, and each gap is a stated trade-off: what it cannot do it
+refuses, never ignores.
+_Avoid_: vendor KMS, third-party KMS, BYOK (that is ZeroKMS rooted in a
+customer's KMS, not ZeroKMS replaced by it)
+
+**Keyset record**:
+The customer-held description of a keyset in a key vendor backend: its id,
+its backend, its key mode, the vendor key that protects it, and the wrapped
+root key. ZeroKMS keeps its own keysets, so a ZeroKMS user never holds
+or persists one.
+_Avoid_: keyset config, key file
+
+**Derived data key**:
+The key mode where a keyset's root key is wrapped by the vendor key, and
+each value's data key is derived from it locally. Opening a value costs no
+vendor call once the root key is unwrapped; the vendor sees and can refuse
+the keyset, not the value.
+_Avoid_: local mode, cached mode
+
+**Root key**:
+Under derived data keys, the keyset secret every data key and the index key
+are derived from. The vendor key source holds it unwrapped in the
+application's memory for a TTL. The index key derived from it stays in the
+cipher's keyset cache until eviction, as a ZeroKMS index key does.
+_Avoid_: master key, KEK (the vendor key is the one that wraps)
 
 **Keyset cipher**:
 `KeysetCipher`, the cipher bound to one keyset, and what every operation
