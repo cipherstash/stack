@@ -323,9 +323,9 @@ jobs:
           path: ${{ runner.temp }}/exchange-conformance/*.json
           if-no-files-found: error
 
-      # The Rust suite opens the committed v4_rows.json and
-      # v4_smallint_rows.json, whose ciphertexts the Go SDK sealed when each
-      # file was last regenerated. This also hands it the rows the Go SDK
+      # The Rust suite opens the committed v4_rows.json,
+      # v4_smallint_rows.json and v4_json_rows.json, whose ciphertexts the Go
+      # SDK sealed when each file was last regenerated. This also hands it the rows the Go SDK
       # seals in this run, so a Go guest and a native Rust build that stop
       # agreeing on today's ciphertexts fail here rather than when someone
       # next regenerates a file. Both filters are exact, so each test named
@@ -335,9 +335,10 @@ jobs:
         run: |
           rows="$RUNNER_TEMP/v4_rows.json"
           smallint_rows="$RUNNER_TEMP/v4_smallint_rows.json"
-          (cd languages/golang && CGO_ENABLED=0 EQL_V4_ROWS_OUT="$rows" EQL_V4_SMALLINT_ROWS_OUT="$smallint_rows" go test -count=1 -run '^(TestV4RowsMatchTheCommittedFixture|TestV4SmallintRowsMatchTheCommittedFixture)$' ./encrypt)
-          test -s "$rows" && test -s "$smallint_rows"
-          EQL_V4_ROWS="$rows" EQL_V4_SMALLINT_ROWS="$smallint_rows" cargo test --locked --manifest-path packages/eql/Cargo.toml -p eql-encryption-tests --test v4_types -- --exact rows_the_go_sdk_sealed_open_in_rust smallint_rows_the_go_sdk_sealed_open_in_rust
+          json_rows="$RUNNER_TEMP/v4_json_rows.json"
+          (cd languages/golang && CGO_ENABLED=0 EQL_V4_ROWS_OUT="$rows" EQL_V4_SMALLINT_ROWS_OUT="$smallint_rows" EQL_V4_JSON_ROWS_OUT="$json_rows" go test -count=1 -run '^(TestV4RowsMatchTheCommittedFixture|TestV4SmallintRowsMatchTheCommittedFixture|TestV4JSONRowsMatchTheCommittedFixture)$' ./encrypt)
+          test -s "$rows" && test -s "$smallint_rows" && test -s "$json_rows"
+          EQL_V4_ROWS="$rows" EQL_V4_SMALLINT_ROWS="$smallint_rows" EQL_V4_JSON_ROWS="$json_rows" cargo test --locked --manifest-path packages/eql/Cargo.toml -p eql-encryption-tests --test v4_types -- --exact rows_the_go_sdk_sealed_open_in_rust smallint_rows_the_go_sdk_sealed_open_in_rust json_rows_the_go_sdk_sealed_open_in_rust
 
       # What is encrypted is fixed before the program ships: every generated
       # file is committed, and this fails when `go generate` would change

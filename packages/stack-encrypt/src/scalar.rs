@@ -58,6 +58,8 @@ pub(crate) mod sealed {
 /// - the fixed-width signed integers
 /// - the unsigned integers from `u16` to `u128`
 /// - the byte strings `Vec<u8>` and `[u8; N]`
+/// - [`JsonPlaintext`](crate::json::JsonPlaintext), a JSON document, which
+///   is sealed as its JSON text
 ///
 /// A type of your own meets them if its borrow implements `Scalar` and the
 /// type implements `Zeroize`.

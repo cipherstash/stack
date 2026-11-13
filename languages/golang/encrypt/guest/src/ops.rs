@@ -911,21 +911,17 @@ mod tests {
                 Ok(()),
                 "the eql build runs TextEq"
             );
-            // A type the engine cannot produce, and one that does not exist,
-            // are refused at plan_check.
-            for name in ["Json", "Nope"] {
-                let refused = encoded(object(vec![(
+            // The storage-only document is a target too, and a type that
+            // does not exist is refused at plan_check.
+            for (name, expected) in [("Json", Ok(())), ("Nope", Err(STATUS_ENCODING))] {
+                let named = encoded(object(vec![(
                     "email",
                     object(vec![
                         ("context", Tree::Array(vec![text("users"), text("email")])),
                         ("target", text(name)),
                     ]),
                 )]));
-                assert_eq!(
-                    plan_check(&protect(&refused)),
-                    Err(STATUS_ENCODING),
-                    "{name}"
-                );
+                assert_eq!(plan_check(&protect(&named)), expected, "{name}");
             }
         } else {
             assert_eq!(

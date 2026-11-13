@@ -6,6 +6,7 @@ use crate::encryption::targets::{
 };
 use crate::v4::plaintext::Date;
 use crate::v4::plaintext::Decimal;
+use crate::v4::plaintext::JsonPlaintext;
 use crate::v4::plaintext::Timestamp;
 use crate::Identifier;
 use stack_encrypt::dynamic::ValueFrame;
@@ -609,15 +610,13 @@ pub const TARGETS: &[Target] = &[
         name: "Json",
         family: "json",
         suffix: "",
-        plaintext: None,
+        plaintext: Some("json"),
         sql_domain: "public.eql_v4_json",
         indexes: &[],
         query: None,
         query_sql_domain: None,
-        producible: false,
-        reason: Some(
-            "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "JsonSearch",
@@ -869,6 +868,9 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "Json" => run_target::<super::json::Json, Option<JsonPlaintext>, K>(
+            "Json", keyset, column, plaintext,
+        ),
         _ => Err(refuse(name)),
     }
 }
@@ -1084,6 +1086,9 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
             opener,
             column,
             stored,
+        ),
+        "Json" => open_target::<super::json::Json, Option<JsonPlaintext>, K>(
+            "Json", opener, column, stored,
         ),
         _ => Err(refuse(name)),
     }

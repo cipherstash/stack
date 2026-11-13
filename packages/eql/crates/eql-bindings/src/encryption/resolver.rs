@@ -235,10 +235,12 @@ mod tests {
         assert_eq!(text_eq.plaintext, Some(ValueKind::String));
         assert_eq!(text_eq.indexes, ["eq"]);
         assert_eq!(text_eq.query.as_deref(), Some("TextEqQuery"));
-        assert!(matches!(
-            EqlTargets.resolve("Json"),
-            Err(dynamic::TargetError::Unproducible { .. })
-        ));
+        // The storage-only document: a `json` field, with no index and no
+        // query.
+        let json = EqlTargets.resolve("Json").unwrap();
+        assert_eq!(json.plaintext, Some(ValueKind::Json));
+        assert!(json.indexes.is_empty());
+        assert_eq!(json.query, None);
         assert!(matches!(
             EqlTargets.resolve("Nope"),
             Err(dynamic::TargetError::Unknown { .. })
@@ -323,11 +325,11 @@ mod tests {
         ));
         assert!(matches!(
             dynamic::TargetError::from(TargetError::Unproducible {
-                name: "Json",
+                name: "Waiting",
                 reason: "not yet",
             }),
             dynamic::TargetError::Unproducible { name, reason }
-                if name == "Json" && reason == "not yet"
+                if name == "Waiting" && reason == "not yet"
         ));
         // A value that is not a document keeps the engine's code, and no
         // byte of the value.

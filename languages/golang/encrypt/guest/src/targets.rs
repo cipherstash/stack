@@ -124,14 +124,11 @@ mod tests {
                 "DoubleOrdOre",
                 "DoubleOrd",
                 "DoubleOrdOpe",
+                "Json",
                 "JsonSearch"
             ],
             "the engine's producible types, in catalog order"
         );
-        assert!(matches!(
-            resolver().resolve("Json"),
-            Err(TargetError::Unproducible { .. })
-        ));
         assert!(matches!(
             resolver().resolve("Nope"),
             Err(TargetError::Unknown { .. })

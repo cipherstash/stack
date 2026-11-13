@@ -62,7 +62,7 @@ var Types = []Type{
 	{Name: "DoubleOrdOre", GoName: "DoubleOrdOre", Family: "double", Suffix: "OrdOre", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ore", Indexes: []string{"ore_block"}, Query: "DoubleOrdOreQuery", QuerySQLDomain: "eql_v4.query_double_ord_ore", Producible: true, Reason: ""},
 	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v4.query_double_ord", Producible: true, Reason: ""},
 	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v4.query_double_ord_ope", Producible: true, Reason: ""},
-	{Name: "Json", GoName: "JSON", Family: "json", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_json", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided"},
+	{Name: "Json", GoName: "JSON", Family: "json", Suffix: "", Plaintext: "json", SQLDomain: "public.eql_v4_json", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "JsonSearch", GoName: "JSONSearch", Family: "json_tree", Suffix: "", Plaintext: "json", SQLDomain: "public.eql_v4_json_search", Indexes: []string{"json"}, Query: "JsonSearchQuery", QuerySQLDomain: "eql_v4.query_json", Producible: true, Reason: ""},
 }
 
@@ -3988,7 +3988,7 @@ func (v DoubleOrdOpeQuery) Reveal() string {
 }
 
 // JSON is the EQL type stored in public.eql_v4_json: the json family with no index.
-// The engine cannot produce it yet: a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided.
+// The engine produces it from a json.
 type JSON []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.

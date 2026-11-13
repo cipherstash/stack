@@ -338,13 +338,15 @@ mod tests {
         // has no v4 type.
         assert_eq!(out.matches("\ntype JSON []byte\n").count(), 1);
         assert!(!out.contains("SteVec"));
-        // TextEq is producible and says so; Json is not and says why.
+        // TextEq is producible and says so. So is Json, the storage-only
+        // document, from the `json` plaintext kind.
         assert!(out.contains("// TextEq is the EQL type stored in public.eql_v4_text_eq"));
         assert!(out.contains("Producible: true, Reason: \"\""));
-        assert!(
-            out.contains("Name: \"Json\"")
-                && out.contains("a JSON value seals as a tree of leaves")
-        );
+        assert!(out.contains(
+            "Name: \"Json\", GoName: \"JSON\", Family: \"json\", Suffix: \"\", \
+             Plaintext: \"json\", SQLDomain: \"public.eql_v4_json\", Indexes: nil, \
+             Query: \"\", QuerySQLDomain: \"\", Producible: true, Reason: \"\""
+        ));
         // Every table row is one line: the shape gofmt leaves alone.
         for line in out.lines().filter(|l| l.starts_with("\t{Name: ")) {
             assert!(line.ends_with("},"), "{line}");

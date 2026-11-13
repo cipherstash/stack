@@ -9,12 +9,12 @@ error[E0277]: the trait bound `for<'a> &'a Profile: Scalar` is not satisfied
    = help: the following other types implement trait `Scalar`:
              &&'b T
              &'a Protected<T>
+             &JsonPlaintext
              &ProtectedRef<'a, T>
              &Raw<'_>
              &Vec<u8>
              &[u8; N]
              &[u8]
-             &bool
            and $N others
    = note: required for `Profile` to implement `OpaqueEncode`
 note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::encrypt`

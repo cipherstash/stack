@@ -2,9 +2,10 @@
 //!
 //! A field of kind [`json`](ValueKind::Json) carries its document as UTF-8
 //! JSON text, in a text leaf or a bytes leaf of the transport frame. The
-//! engine parses it once, by [`parse_text`]'s rules, where it is sealed,
-//! queried or compared, so every language seals the same document for the
-//! same text. An opened document comes back as its text in a bytes leaf.
+//! engine parses it once, by [`parse_text`](crate::json::parse_text)'s
+//! rules, where it is sealed, queried or compared, so every language seals
+//! the same document for the same text. An opened document comes back as
+//! its text in a bytes leaf.
 //!
 //! A document's `null` is the text `null`, a present value. A field's
 //! absent value is the frame's null, which a `json` field stores as SQL
@@ -18,7 +19,7 @@ use zeroize::Zeroizing;
 
 use super::term::OneScalar;
 use super::{ValueFrame, ValueKind};
-use crate::json::{parse_text, to_text, wipe_value, JsonTextError};
+use crate::json::{to_text, JsonPlaintext, JsonTextError};
 
 /// Why a `json` field's value is not a document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -44,23 +45,6 @@ impl JsonValueError {
     }
 }
 
-/// A JSON document a binding handed over, parsed. Wiped when it drops: the
-/// caller holds the plaintext only as long as it reads it.
-pub struct JsonPlaintext(Value);
-
-impl JsonPlaintext {
-    /// The document.
-    pub fn value(&self) -> &Value {
-        &self.0
-    }
-}
-
-impl Drop for JsonPlaintext {
-    fn drop(&mut self) {
-        wipe_value(&mut self.0);
-    }
-}
-
 /// Parse a `json` field's value: the document its text or bytes leaf
 /// holds.
 ///
@@ -68,7 +52,7 @@ impl Drop for JsonPlaintext {
 ///
 /// [`JsonValueError::NotText`] for a value that is not a text or bytes
 /// leaf, and [`JsonValueError::Text`] for text that is not a document by
-/// [`parse_text`]'s rules.
+/// [`parse_text`](crate::json::parse_text)'s rules.
 pub fn read_json(value: &ValueFrame) -> Result<JsonPlaintext, JsonValueError> {
     if !ValueKind::Json.holds(value.kind()) {
         return Err(JsonValueError::NotText);
@@ -76,13 +60,12 @@ pub fn read_json(value: &ValueFrame) -> Result<JsonPlaintext, JsonValueError> {
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
-                (None, Physical::Text(text)) => Ok(parse_text(text.as_bytes())),
-                (None, Physical::Bytes(bytes)) => Ok(parse_text(bytes)),
+                (None, Physical::Text(text)) => Ok(JsonPlaintext::parse(text)),
+                (None, Physical::Bytes(bytes)) => Ok(JsonPlaintext::parse_bytes(bytes)),
                 _ => Err(None),
             },
         ))
         .map_err(|_| JsonValueError::NotText)?
-        .map(JsonPlaintext)
         .map_err(JsonValueError::Text)
 }
 

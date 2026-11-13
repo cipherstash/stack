@@ -102,8 +102,12 @@ mod value_frame;
 
 use std::fmt;
 
+/// The document a `json` field's value holds, as [`read_json`] returns it:
+/// [`crate::json::JsonPlaintext`], named here for a binding that reaches
+/// the engine through this module.
+pub use crate::json::JsonPlaintext;
 pub use context::{borrowed, context};
-pub use json::{json_frame, read_json, JsonPlaintext, JsonValueError};
+pub use json::{json_frame, read_json, JsonValueError};
 /// The value kinds, the type a plan field declares in its `"type"` key. A
 /// kind's names are frozen wire format; see [`admits`] and [`read`] for what
 /// a kind means to this engine.

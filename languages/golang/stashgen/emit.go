@@ -679,7 +679,7 @@ func (w *writer) fieldEntries(f *genFile) {
 	}
 	w.nl()
 	for _, g := range sealed {
-		if g.isJSON() {
+		if g.isSearchableJSON() {
 			w.b.WriteString(wrapComment(fmt.Sprintf("%s provides operations for the sealed fields of %s. Each entry binds queries and encrypts updates using its field's declaration.", f.fieldsVar, f.typeName), 80))
 			break
 		}
@@ -690,7 +690,7 @@ func (w *writer) fieldEntries(f *genFile) {
 	}
 	w.p("}{")
 	for _, g := range sealed {
-		if g.isJSON() {
+		if g.isSearchableJSON() {
 			constructor := "NewField"
 			if g.holdsStruct {
 				constructor = "NewDocumentField"
@@ -703,7 +703,7 @@ func (w *writer) fieldEntries(f *genFile) {
 	w.p("}")
 	for _, g := range sealed {
 		w.nl()
-		if g.isJSON() {
+		if g.isSearchableJSON() {
 			w.jsonEntry(g, f.pathsVar)
 			continue
 		}
@@ -780,7 +780,7 @@ func planQueries(f *genFile) error {
 	for i := range f.fields {
 		g := &f.fields[i]
 		g.queries = nil
-		if g.isJSON() {
+		if g.isSearchableJSON() {
 			// A document's operators have methods of their own: see
 			// jsonEntry.
 			if err := planJSON(f, g); err != nil {
@@ -996,10 +996,24 @@ func joinNames(names []string) string {
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
-// isJSON reports whether the field is stored as a JSONSearch document:
-// a json.RawMessage, or a struct, map or slice type, sealed into an EQL type.
+// isJSON reports whether the field is stored as a JSON document: a
+// json.RawMessage, or a struct, map or slice type, sealed into an EQL type
+// that holds one (JsonSearch or Json).
 func (g genField) isJSON() bool {
 	return g.Verb == VerbEncryptInto && (g.GoType.Kind == KindJSON || g.GoType.Kind == KindJSONValue)
+}
+
+// isSearchableJSON reports whether the field is a document of an EQL type
+// that has a query type: a JsonSearch field, which gets the document entry
+// jsonEntry writes. A document of a storage-only type (Json) has none, and
+// gets the entry every sealed field with no query gets: Encrypt alone.
+//
+// The answer is the EQL type's, from the engine's table, and not whether
+// the engine answered an operator on the field. So a JsonSearch field the
+// engine answers nothing on reaches planJSON, which refuses it, and is
+// never written as a field that only encrypts.
+func (g genField) isSearchableJSON() bool {
+	return g.isJSON() && g.queryType != ""
 }
 
 // jsonOperators are the operators a document field answers, and what each

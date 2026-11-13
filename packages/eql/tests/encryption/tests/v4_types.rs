@@ -1,7 +1,6 @@
 //! The EQL v4 types Stack Encrypt produces besides `TextEq`: the
-//! storage-only integer, smallint, bigint, boolean, float and text types, the
-//! integer and float equality types, and `TextMatch`. `Json` is not producible yet: a
-//! JSON value seals as a tree of leaves and EQL's `c` holds one.
+//! storage-only integer, smallint, bigint, boolean, float, text and JSON
+//! types, the integer and float equality types, and `TextMatch`.
 //!
 //! Each type must round-trip through both entry points (the typed
 //! `encrypt_as` and the by-name dispatch a Go plan reaches), seal exactly the
@@ -14,12 +13,13 @@ mod common;
 use eql_bindings::encryption::targets::{self as targets, TargetError};
 use eql_bindings::encryption::{CiphertextVisitor, NativeCiphertextVisitor as NativeLeaf};
 use eql_bindings::v3::terms::Ciphertext;
-use eql_bindings::v4::{bigint, boolean, double, integer, plaintext, real, smallint, text};
+use eql_bindings::v4::plaintext::JsonPlaintext;
+use eql_bindings::v4::{bigint, boolean, double, integer, json, plaintext, real, smallint, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::target::transcode::{Reader, Visitor};
-use stack_encrypt::{CipherText, Encrypt, Label, NonEmpty};
+use stack_encrypt::{CipherText, DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
 /// A Rust value as the engine's runtime plaintext: its frame.
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -362,6 +362,306 @@ async fn booleans_and_floats_round_trip_as_storage_only_types() {
     }
 }
 
+/// The document the storage-only `Json` tests seal.
+fn profile() -> serde_json::Value {
+    serde_json::json!({
+        "name": "Ada Lovelace",
+        "age": 36,
+        "tags": ["maths", "engines"],
+        "nickname": null,
+        "address": {"city": "London", "since": 1835.5},
+    })
+}
+
+/// [`profile`] as the engine writes it: the text `c` holds.
+fn profile_text() -> String {
+    serde_json::to_string(&profile()).unwrap()
+}
+
+/// The document a `json` field opened to: its text, in a bytes value.
+fn document_of(opened: &ValueFrame) -> serde_json::Value {
+    assert_eq!(
+        opened.kind(),
+        Some(ValueKind::Bytes),
+        "a document opens to its text, in bytes"
+    );
+    stack_encrypt::dynamic::read_json(opened)
+        .expect("a document")
+        .value()
+        .clone()
+}
+
+/// The storage-only `Json` type: one ciphertext, no index. The document is
+/// sealed as its JSON text in one text leaf, so `c` opens as that text.
+#[tokio::test]
+async fn a_json_document_round_trips_as_a_storage_only_type() {
+    let (cipher, calls) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    for document in [
+        profile(),
+        serde_json::json!(null),
+        serde_json::json!(true),
+        serde_json::json!(-7),
+        serde_json::json!(18_446_744_073_709_551_615u64),
+        serde_json::json!(0.1),
+        serde_json::json!("text"),
+        serde_json::json!([]),
+        serde_json::json!({}),
+    ] {
+        let stored: json::Json = keyset
+            .encrypt_as(&JsonPlaintext::from(document.clone()), column())
+            .await
+            .unwrap();
+        assert_v4_envelope(&stored, &["v", "i", "c"]);
+        let opened: JsonPlaintext = cipher
+            .decrypt_as(stored.clone(), column().into())
+            .await
+            .unwrap();
+        assert_eq!(opened.value(), &document);
+        // `c` holds the document's compact JSON text, as a text leaf: the
+        // leaf a plain text field holding that text seals.
+        let text = serde_json::to_string(&document).unwrap();
+        assert!(same(
+            &as_frame(&cipher, stored.c).await,
+            &frame(text.as_str())
+        ));
+    }
+    let calls = calls.lock().unwrap();
+    assert!(
+        calls.generate.iter().flatten().all(|d| d == "users/age"),
+        "each document is one key, under the column's descriptor: {:?}",
+        calls.generate
+    );
+    assert!(
+        calls.generate.iter().all(|request| request.len() == 1),
+        "one key for each document: {:?}",
+        calls.generate
+    );
+}
+
+/// The owned API: `encrypt_into` wipes the plaintext it is given, and
+/// `decrypt_from` returns one that wipes itself. An `Option` seals a null
+/// for `None`, and a JSON `null` is a document, not a `None`.
+#[tokio::test]
+async fn a_json_document_round_trips_through_the_owned_api() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: json::Json = JsonPlaintext::from(profile())
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
+    assert_v4_envelope(&stored, &["v", "i", "c"]);
+    // The stored identifier is the context: no column is passed to open it.
+    let opened = JsonPlaintext::decrypt_from(stored.clone(), &keyset)
+        .await
+        .unwrap();
+    assert_eq!(opened.value(), &profile());
+    let opened = JsonPlaintext::decrypt_from_with_context(stored.clone(), &keyset, column())
+        .await
+        .unwrap();
+    assert_eq!(opened.value(), &profile());
+    // Under another column the value is refused.
+    let other = Identifier::for_column("users", "other").unwrap();
+    assert!(
+        JsonPlaintext::decrypt_from_with_context(stored, &keyset, other)
+            .await
+            .is_err()
+    );
+
+    let present: json::Json = Some(JsonPlaintext::from(serde_json::Value::Null))
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
+    let opened = Option::<JsonPlaintext>::decrypt_from(present.clone(), &keyset)
+        .await
+        .unwrap()
+        .expect("a JSON null is a document");
+    assert_eq!(opened.value(), &serde_json::Value::Null);
+    let absent: json::Json = None::<JsonPlaintext>
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
+    assert!(
+        Option::<JsonPlaintext>::decrypt_from(absent.clone(), &keyset)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // A sealed null is not a document, and has no padding: it is shorter
+    // than the four characters of a JSON `null`.
+    assert!(JsonPlaintext::decrypt_from(absent.clone(), &keyset)
+        .await
+        .is_err());
+    assert!(absent.c.0.len() < present.c.0.len());
+}
+
+/// The by-name dispatch a data plan reaches: the document crosses as JSON
+/// text, in a text or a bytes value, and opens to its text in a bytes
+/// value. It runs the plan the typed call runs.
+#[tokio::test]
+async fn a_json_document_dispatches_by_name() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    // Spacing, member order and the spelling of a number are the caller's;
+    // the document is stored as values.
+    let spaced = r#" { "tags" : ["maths","engines"], "name":"Ada Lovelace", "nickname":null,
+        "age": 36, "address": {"since": 1.8355e3, "city": "London"} } "#;
+    for value in [frame(spaced), frame(spaced.as_bytes().to_vec())] {
+        let stored: json::Json = by_name(&keyset, "Json", value).await;
+        assert_v4_envelope(&stored, &["v", "i", "c"]);
+        assert!(same(
+            &as_frame(&cipher, stored.c.clone()).await,
+            &frame(profile_text().as_str())
+        ));
+        // The typed call opens what the dispatch sealed.
+        let opened: JsonPlaintext = cipher
+            .decrypt_as(stored.clone(), column().into())
+            .await
+            .unwrap();
+        assert_eq!(opened.value(), &profile());
+        // And the dispatch opens it, through both openers.
+        let bytes = serde_json::to_vec(&stored).unwrap();
+        for opened in [
+            targets::decrypt("Json", &cipher, &label(), &bytes)
+                .unwrap()
+                .await
+                .unwrap(),
+            targets::decrypt("Json", &keyset, &label(), &bytes)
+                .unwrap()
+                .await
+                .unwrap(),
+        ] {
+            assert_eq!(document_of(&opened), profile());
+            assert!(same(&opened, &frame(profile_text().into_bytes())));
+        }
+    }
+    // The dispatch opens what the typed call sealed.
+    let typed: json::Json = keyset
+        .encrypt_as(&JsonPlaintext::from(profile()), column())
+        .await
+        .unwrap();
+    let opened = targets::decrypt(
+        "Json",
+        &cipher,
+        &label(),
+        &serde_json::to_vec(&typed).unwrap(),
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    assert_eq!(document_of(&opened), profile());
+
+    // A storage-only type answers no query, and takes no options.
+    let error = refused(targets::query(
+        "Json",
+        &common::index_of("Json"),
+        &keyset,
+        &label(),
+        frame("{}"),
+    ));
+    assert!(
+        matches!(error, TargetError::NoQuery { name: "Json" }),
+        "{error}"
+    );
+    let options = stack_encrypt::dynamic::TargetOptions::Json(Default::default());
+    let error = refused(targets::encrypt_with(
+        "Json",
+        Some(&options),
+        &keyset,
+        &label(),
+        frame("{}"),
+    ));
+    assert!(
+        matches!(error, TargetError::Options { name: "Json" }),
+        "{error}"
+    );
+}
+
+/// A value that is not a JSON document is refused before any key is
+/// requested, with a code and none of the value.
+#[tokio::test]
+async fn a_value_that_is_not_a_json_document_is_refused_before_minting() {
+    let (cipher, calls) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let secret = "s3cret-value";
+    for (value, code) in [
+        (
+            frame(format!(r#"{{"k": "{secret}""#).as_str()),
+            "json_syntax",
+        ),
+        (
+            frame(format!(r#"{{"k": "{secret}", "k": 1}}"#).as_str()),
+            "json_duplicate_key",
+        ),
+        (frame("18446744073709551616"), "json_integer_range"),
+        (frame(b"\xff".to_vec()), "json_syntax"),
+        // A document crosses as text or bytes: a number is not one.
+        (frame(36i64), "json_not_text"),
+        (frame(vec!["{}".to_owned()]), "json_not_text"),
+    ] {
+        let error = refused(targets::encrypt("Json", &keyset, &label(), value));
+        assert!(
+            matches!(&error, TargetError::Json { target: "Json", source } if source.code() == code),
+            "{code}: {error}"
+        );
+        assert!(!error.to_string().contains(secret), "{error}");
+    }
+    assert!(
+        calls.lock().unwrap().generate.is_empty(),
+        "nothing was minted"
+    );
+}
+
+/// A stored value that is not a `Json` document. A leaf that opens but is
+/// not JSON text was written as another type; bytes of another shape are
+/// not this type.
+#[tokio::test]
+async fn a_stored_value_that_is_not_a_json_document_is_refused() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    // JSON text a plain text field sealed is a document: `c` is the same
+    // leaf either way.
+    let c = sealed_from_frame(&keyset, frame(profile_text().as_str())).await;
+    let opened: JsonPlaintext = cipher
+        .decrypt_as(stored_as::<json::Json>(c), column().into())
+        .await
+        .unwrap();
+    assert_eq!(opened.value(), &profile());
+    // Text that is not JSON, the bytes of JSON text, and a number are not.
+    for value in [
+        frame("not a document"),
+        frame(r#"{"a": 1, "a": 2}"#),
+        frame(b"{}".to_vec()),
+        frame(36i64),
+        frame(None::<String>),
+    ] {
+        let c = sealed_from_frame(&keyset, value).await;
+        let error = cipher
+            .decrypt_as::<JsonPlaintext, _>(stored_as::<json::Json>(c), column().into())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                stack_encrypt::Error::OpenedType {
+                    expected: "JSON document"
+                }
+            ),
+            "{error}"
+        );
+    }
+    // A searchable document is another type, with another shape.
+    let searchable = targets::encrypt("JsonSearch", &keyset, &label(), frame("{}"))
+        .unwrap()
+        .await
+        .unwrap();
+    let error = refused(targets::decrypt("Json", &cipher, &label(), &searchable));
+    assert!(
+        matches!(error, TargetError::Stored { target: "Json", .. }),
+        "{error}"
+    );
+}
+
 /// The direction `LeafVisitor` and `BoolVisitor` implement: a leaf sealed
 /// from a frame, as a plain Go field writes it, opens as the typed plaintext.
 #[tokio::test]
@@ -410,9 +710,11 @@ async fn a_leaf_sealed_from_a_frame_opens_as_the_typed_plaintext() {
 async fn every_producible_type_dispatches_by_name() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    // A type that stores a JSON document takes JSON text and answers the
-    // JSON operators, not one query per index: tests/json_tree_data_plan.rs
-    // runs it by name.
+    // A type produced from a JSON document takes JSON text, and opens to
+    // text the engine wrote, not the text it was given. `JsonSearch`
+    // answers the JSON operators, not one query per index:
+    // tests/json_tree_data_plan.rs runs it by name. The storage-only
+    // `Json` is run by name in the JSON tests below.
     let producible: Vec<_> = targets::targets()
         .iter()
         .filter(|t| t.producible && t.plaintext != Some("json"))
@@ -867,7 +1169,8 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
             ratio public.eql_v4_real,
             score public.eql_v4_double,
             note public.eql_v4_text,
-            name public.eql_v4_text_match
+            name public.eql_v4_text_match,
+            profile public.eql_v4_json
         );",
     )
     .unwrap();
@@ -904,6 +1207,10 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                     .encrypt_as::<_, text::TextMatch>(&format!("user{id}@example.com"), column())
                     .await
                     .unwrap(),
+                keyset
+                    .encrypt_as::<_, json::Json>(&JsonPlaintext::from(profile()), column())
+                    .await
+                    .unwrap(),
             )
         });
         db.execute(
@@ -914,7 +1221,8 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                 $5::text::jsonb::public.eql_v4_real,
                 $6::text::jsonb::public.eql_v4_double,
                 $7::text::jsonb::public.eql_v4_text,
-                $8::text::jsonb::public.eql_v4_text_match)",
+                $8::text::jsonb::public.eql_v4_text_match,
+                $9::text::jsonb::public.eql_v4_json)",
             &[
                 &id,
                 &json(&row.0),
@@ -924,6 +1232,7 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                 &json(&row.4),
                 &json(&row.5),
                 &json(&row.6),
+                &json(&row.7),
             ],
         )
         .unwrap();
@@ -971,7 +1280,8 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
     // Every stored value reads back from its domain and opens.
     let row = db
         .query_one(
-            "SELECT age::text, balance::text, active::text, ratio::text, score::text, note::text
+            "SELECT age::text, balance::text, active::text, ratio::text, score::text, note::text,
+                    profile::text
              FROM v4_types WHERE id = 2",
             &[],
         )
@@ -1026,7 +1336,44 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
             .await
             .unwrap();
         assert_eq!(opened, "note");
+        let opened: JsonPlaintext = cipher
+            .decrypt_as(
+                serde_json::from_str::<json::Json>(&open(6)).unwrap(),
+                column().into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened.value(), &profile());
     });
+
+    // The storage-only JSON domain holds the flat `{v, i, c}` payload and
+    // nothing else: a searchable document is refused by the column.
+    let searchable = runtime.block_on(async {
+        targets::encrypt("JsonSearch", &keyset, &label(), frame("{}"))
+            .unwrap()
+            .await
+            .unwrap()
+    });
+    let err = db
+        .execute(
+            "INSERT INTO v4_types (id, profile) VALUES (9, $1::text::jsonb::public.eql_v4_json)",
+            &[&String::from_utf8(searchable).unwrap()],
+        )
+        .unwrap_err();
+    assert!(
+        err.as_db_error().is_some(),
+        "the domain's check refuses it: {err}"
+    );
+    // Nothing inside a storage-only document is queried: containment is
+    // blocked, not answered as jsonb over the payload.
+    let err = db
+        .query("SELECT id FROM v4_types WHERE profile @> profile", &[])
+        .unwrap_err();
+    let message = err.as_db_error().map(|e| e.message()).unwrap_or_default();
+    assert!(
+        message.contains("is not supported for public.eql_v4_json"),
+        "{message}"
+    );
 
     // A storage-only column has no equality operator: it is blocked, not
     // silently compared as jsonb.
@@ -1369,6 +1716,121 @@ async fn smallint_rows_the_go_sdk_sealed_open_in_rust() {
     let cipher = go_rows::cipher(&fixture.seed).await;
     for row in &fixture.rows {
         go_tally::open_row(&cipher, row).await;
+    }
+}
+
+mod go_settings {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(serde::Deserialize)]
+    pub struct Fixture {
+        pub seed: String,
+        pub table: String,
+        pub rows: Vec<Row>,
+    }
+    #[derive(serde::Deserialize)]
+    pub struct Row {
+        pub id: i32,
+        /// Each document as the Go test wrote it: `raw` and `labels`
+        /// always, `prefs` only where the row has them.
+        pub plaintext: BTreeMap<String, serde_json::Value>,
+        pub stored: BTreeMap<String, serde_json::Value>,
+    }
+
+    fn read(path: std::path::PathBuf) -> Fixture {
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    /// The committed rows, or the file `EQL_V4_JSON_ROWS` names: CI points
+    /// it at rows the Go SDK sealed in the same job, so today's Go
+    /// ciphertexts reach Rust, not only the committed ones.
+    pub fn fixture() -> Fixture {
+        read(std::env::var_os("EQL_V4_JSON_ROWS").map_or_else(
+            || {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("fixtures/v4_json_rows.json")
+            },
+            std::path::PathBuf::from,
+        ))
+    }
+
+    /// The frozen rows. No variable redirects this: the file is the test.
+    pub fn frozen() -> Fixture {
+        read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("fixtures/stored_v4_json_rows_v1.json"),
+        )
+    }
+
+    /// Open every document of `row` as the storage-only `Json` type, under
+    /// the column it was stored under, and check it against what Go sealed.
+    /// A document Go did not store (nil preferences, SQL `NULL`) has no
+    /// stored value and no plaintext.
+    pub async fn open_row(
+        cipher: &stack_encrypt::StackCipher<stack_kms::DeterministicSource>,
+        row: &Row,
+    ) {
+        assert!(
+            row.stored.contains_key("raw") && row.stored.contains_key("labels"),
+            "row {}: the required documents are stored",
+            row.id
+        );
+        assert_eq!(
+            row.stored.keys().collect::<Vec<_>>(),
+            row.plaintext.keys().collect::<Vec<_>>(),
+            "row {}: a document is stored exactly where the row has one",
+            row.id
+        );
+        for (name, stored) in &row.stored {
+            let stored: json::Json = serde_json::from_value(stored.clone())
+                .unwrap_or_else(|error| panic!("row {} {name}: {error}", row.id));
+            let column = Identifier::for_column("settings", name.as_str()).unwrap();
+            let opened: JsonPlaintext = cipher.decrypt_as(stored, column.into()).await.unwrap();
+            assert_eq!(
+                opened.value(),
+                &row.plaintext[name],
+                "row {} {name}",
+                row.id
+            );
+        }
+    }
+}
+
+/// What the Go SDK sealed as the storage-only `Json` type parses as it and
+/// opens in Rust, document by document: a raw document, one of a Go type,
+/// and a map.
+#[tokio::test]
+async fn json_rows_the_go_sdk_sealed_open_in_rust() {
+    let fixture = go_settings::fixture();
+    assert_eq!(fixture.table, "settings");
+    assert!(fixture.rows.len() > 1);
+    assert!(
+        fixture
+            .rows
+            .iter()
+            .any(|row| !row.stored.contains_key("prefs")),
+        "one row stores no preferences"
+    );
+    let cipher = go_rows::cipher(&fixture.seed).await;
+    for row in &fixture.rows {
+        go_settings::open_row(&cipher, row).await;
+    }
+}
+
+/// The frozen `Json` rows, in the v1 stored format, still parse and open.
+/// Unlike `v4_json_rows.json` this file is never regenerated, so a change
+/// that breaks stored documents fails here.
+#[tokio::test]
+async fn frozen_json_rows_the_go_sdk_stored_still_open() {
+    let fixture = go_settings::frozen();
+    assert_eq!(fixture.table, "settings");
+    assert!(!fixture.rows.is_empty());
+    let cipher = go_rows::cipher(&fixture.seed).await;
+    for row in &fixture.rows {
+        go_settings::open_row(&cipher, row).await;
     }
 }
 

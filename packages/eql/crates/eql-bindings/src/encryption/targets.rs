@@ -559,10 +559,17 @@ pub(crate) fn no_index(name: &'static str, index: &IndexSpec) -> TargetError {
 }
 
 /// Refuse a name the dispatch has no arm for, as the table explains it.
+/// The first check of every entry point, so a name is refused before its
+/// label or its value is read.
 fn producible(name: &str) -> Result<(), TargetError> {
-    match target(name) {
+    permitted(target(name), name)
+}
+
+/// [`producible`], given the table's row for `name`, if it has one.
+fn permitted(row: Option<&'static Target>, name: &str) -> Result<(), TargetError> {
+    match row {
         Some(target) if target.producible => Ok(()),
-        _ => Err(refuse(name)),
+        row => Err(refusal(row, name)),
     }
 }
 
@@ -587,7 +594,12 @@ fn no_query(target: Option<&'static Target>) -> Option<TargetError> {
 }
 
 pub(crate) fn refuse(name: &str) -> TargetError {
-    match target(name) {
+    refusal(target(name), name)
+}
+
+/// [`refuse`], given the table's row for `name`, if it has one.
+fn refusal(target: Option<&'static Target>, name: &str) -> TargetError {
+    match target {
         Some(target) => TargetError::Unproducible {
             name: target.name,
             // A producible type reaching here is a generator bug: the table
@@ -614,6 +626,7 @@ mod sealed {
     impl Sealed for crate::v4::plaintext::Date {}
     impl Sealed for crate::v4::plaintext::Timestamp {}
     impl Sealed for crate::v4::plaintext::Decimal {}
+    impl Sealed for crate::v4::plaintext::JsonPlaintext {}
     impl<S: super::Plaintext> Sealed for Option<S> {}
 }
 
@@ -708,6 +721,29 @@ mod logical {
         Timestamp => Timestamp,
         Decimal => Decimal,
     );
+}
+
+/// A JSON document crosses as its text, in a text or bytes value, and
+/// opens back to its text in a bytes value: the form a `json` field has in
+/// a data plan. The text is parsed by the engine's rules
+/// ([`stack_encrypt::json::parse_text`]) before any key is requested, and
+/// the parsed document is wiped when it is dropped.
+impl Plaintext for crate::v4::plaintext::JsonPlaintext {
+    const KIND: ValueKind = ValueKind::Json;
+
+    /// # Errors
+    ///
+    /// [`TargetError::Json`] for a value that is not text or bytes, or
+    /// whose text is not a document. It carries a code, and never any of
+    /// the text.
+    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+        stack_encrypt::dynamic::read_json(value)
+            .map_err(|source| TargetError::Json { target, source })
+    }
+
+    fn into_frame(self) -> Result<ValueFrame, Error> {
+        stack_encrypt::dynamic::json_frame(self.value())
+    }
 }
 
 /// The plaintext of a type whose terms a null has (a storage-only type, or
@@ -840,6 +876,21 @@ mod tests {
         Label::new(segments).unwrap()
     }
 
+    /// A type the table lists and the engine cannot produce yet. Every
+    /// catalog type is producible today, so the refusal's tests build one.
+    static WAITING: Target = Target {
+        name: "Waiting",
+        family: "waiting",
+        suffix: "",
+        plaintext: None,
+        sql_domain: "public.eql_v4_waiting",
+        indexes: &[],
+        query: None,
+        query_sql_domain: None,
+        producible: false,
+        reason: Some("its encoding is not decided"),
+    };
+
     #[test]
     fn a_two_segment_label_is_the_column_identifier() {
         let column = Identifier::from_label(&label(&["users", "email"])).unwrap();
@@ -905,15 +956,38 @@ mod tests {
             no_query(target("TextEq")).is_none(),
             "TextEq answers a query"
         );
-        assert!(
-            no_query(target("Json")).is_none(),
-            "an unproducible type without a query twin is refused as unproducible"
-        );
+        // `Json` is producible and storage-only too.
         assert!(matches!(
             refuse_query("Json"),
-            TargetError::Unproducible { .. }
+            TargetError::NoQuery { name: "Json" }
         ));
+        assert!(
+            no_query(Some(&WAITING)).is_none(),
+            "an unproducible type without a query twin is refused as unproducible"
+        );
         assert!(matches!(refuse_query("Nope"), TargetError::Unknown { .. }));
+    }
+
+    /// A row the engine cannot produce yet, on the wire: its plaintext is
+    /// `null`, not absent, and it says why.
+    #[test]
+    fn an_unproducible_row_serializes_with_a_null_plaintext_and_its_reason() {
+        assert_eq!(
+            serde_json::to_value(WAITING).unwrap(),
+            serde_json::json!({
+                "name": "Waiting",
+                "family": "waiting",
+                "suffix": "",
+                "plaintext": null,
+                "sql_domain": "public.eql_v4_waiting",
+                "indexes": [],
+                "query": null,
+                "query_sql_domain": null,
+                "producible": false,
+                "reason": "its encoding is not decided"
+            })
+        );
+        assert_eq!(WAITING.plaintext_kind(), None);
     }
 
     #[test]
@@ -941,9 +1015,25 @@ mod tests {
     fn refusals_name_the_type_and_its_reason() {
         assert!(matches!(refuse("Nope"), TargetError::Unknown { name } if name == "Nope"));
         assert!(matches!(
-            refuse("Json"),
-            TargetError::Unproducible { name: "Json", reason } if reason.contains("a JSON value seals as a tree of leaves")
+            refusal(Some(&WAITING), "Waiting"),
+            TargetError::Unproducible { name: "Waiting", reason } if reason == "its encoding is not decided"
         ));
+        assert_eq!(
+            refusal(Some(&WAITING), "Waiting").to_string(),
+            "the engine cannot produce Waiting yet: its encoding is not decided"
+        );
+        // What every entry point checks first: a row marked not producible
+        // is refused with its reason, and a name with no row as unknown.
+        assert!(matches!(
+            permitted(Some(&WAITING), "Waiting"),
+            Err(TargetError::Unproducible { name: "Waiting", reason }) if reason == "its encoding is not decided"
+        ));
+        assert!(matches!(
+            permitted(None, "Nope"),
+            Err(TargetError::Unknown { name }) if name == "Nope"
+        ));
+        assert!(permitted(target("Json"), "Json").is_ok());
+        assert!(producible("Json").is_ok());
         assert!(producible("TextEq").is_ok());
         assert!(producible("TextOrdOre").is_ok());
         assert!(producible("DateOrdOre").is_ok());

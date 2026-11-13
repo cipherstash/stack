@@ -163,7 +163,8 @@
         "heap": [
           "a_late_read_type_failure_leaves_no_plaintext_on_the_heap",
           "a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap",
-          "opaque_blob::an_opaque_blob_of_another_shape_leaves_no_plaintext_on_the_heap"
+          "opaque_blob::an_opaque_blob_of_another_shape_leaves_no_plaintext_on_the_heap",
+          "json_plaintext::text_that_is_not_a_document_leaves_no_plaintext_on_the_heap"
         ],
         "collections": [
           "a_late_element_failure_wipes_the_plaintext_recovered_before_it",
@@ -194,7 +195,9 @@
           "the_spy_sees_an_unwiped_free",
           "the_spy_sees_a_leaked_block",
           "opaque_blob::an_opaque_blob_encrypted_leaves_no_plaintext_on_the_heap",
-          "opaque_blob::an_opaque_blob_decrypted_leaves_no_plaintext_on_the_heap"
+          "opaque_blob::an_opaque_blob_decrypted_leaves_no_plaintext_on_the_heap",
+          "json_plaintext::a_json_plaintext_encrypted_leaves_no_plaintext_on_the_heap",
+          "json_plaintext::a_json_plaintext_decrypted_leaves_no_plaintext_on_the_heap"
         ],
         "collections": [
           "owned_elements_are_wiped_before_the_pending_is_returned",

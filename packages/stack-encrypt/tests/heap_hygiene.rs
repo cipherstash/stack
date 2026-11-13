@@ -954,6 +954,116 @@ mod opaque_blob {
     }
 }
 
+/// `JsonPlaintext`: the owned document, the JSON text it is written as to
+/// be sealed, the planned leaf, and on decrypt the opened text the document
+/// is parsed from, all freed wiped, and none of them leaked rather than
+/// freed. The marker sits in a key, in a string with an escape (so the
+/// writer and the parser each handle it, rather than copy it through) and
+/// beside a string long enough to make a short buffer regrow.
+mod json_plaintext {
+    use super::*;
+
+    use serde_json::{json, Value};
+    use stack_encrypt::json::JsonPlaintext;
+    use stack_encrypt::Error;
+
+    fn document() -> Value {
+        let mut members = serde_json::Map::new();
+        members.insert(marked("key"), json!([marked("in-array"), 1.5, null]));
+        members.insert(
+            "escaped".to_owned(),
+            Value::String(format!("{}\n\"", marked("escaped"))),
+        );
+        members.insert("pad".to_owned(), Value::String("x".repeat(8 * 1024)));
+        Value::Object(members)
+    }
+
+    #[test]
+    fn a_json_plaintext_encrypted_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        watched_for_leaks("JsonPlaintext encrypt", || {
+            rt.block_on(async {
+                keyset
+                    .encrypt_with_context(source, "docs/body")
+                    .await
+                    .unwrap()
+            });
+        });
+    }
+
+    #[test]
+    fn a_json_plaintext_decrypted_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let sealed = rt.block_on(async {
+            keyset
+                .encrypt_with_context(JsonPlaintext::from(document()), "docs/body")
+                .await
+                .unwrap()
+        });
+        watched_for_leaks("JsonPlaintext decrypt", || {
+            let opened = rt.block_on(async {
+                keyset
+                    .decrypt_with_context::<JsonPlaintext>(sealed, "docs/body")
+                    .await
+                    .unwrap()
+            });
+            // The opened document holds the plaintext until it is dropped.
+            // Dropping it, with no explicit wipe, must leave none on the
+            // heap.
+            assert!(opened.value()["escaped"]
+                .as_str()
+                .unwrap()
+                .as_bytes()
+                .windows(MARK.len())
+                .any(|w| w == MARK));
+            drop(opened);
+        });
+    }
+
+    /// Text that is not a document is refused after the leaf opens. The
+    /// part of the document the parser built, and the opened text, are
+    /// wiped with the refusal.
+    #[test]
+    fn text_that_is_not_a_document_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        // A marked member, then the same key again: refused at the repeat,
+        // after the first member was built.
+        let text = joined(&[
+            r#"{""#,
+            &marked("key"),
+            r#"": ""#,
+            &marked("value"),
+            r#"\n", ""#,
+            &marked("key"),
+            r#"": 1}"#,
+        ]);
+        let sealed = rt.block_on(async {
+            keyset
+                .encrypt_with_context(text, "docs/body")
+                .await
+                .unwrap()
+        });
+        watched_for_leaks(
+            "JsonPlaintext decrypt of text that is not a document",
+            || {
+                let refused = rt.block_on(async {
+                    keyset
+                        .decrypt_with_context::<JsonPlaintext>(sealed, "docs/body")
+                        .await
+                });
+                assert!(matches!(refused, Err(Error::OpenedType { .. })));
+            },
+        );
+    }
+}
+
 /// The JSON index: sealing a document under either root option, opening it
 /// whole (from the sealed root, and by walking its chain with the root
 /// open), opening a subtree read's rows and an extracted entry, and

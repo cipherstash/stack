@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt/policy"
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // GenerateFor is generateFor for the external tests, which name the message's
@@ -21,3 +22,11 @@ func GenerateForNamed(ctx context.Context, engine Engine, notices io.Writer, out
 
 // MessageType is messageType for the external tests.
 var MessageType = messageType
+
+// DocumentType is an EQL type that holds a JSON document, for an external
+// test's engine: its plaintext kind is the engine's json, which only this
+// package can set. query is the type's query type, "" for a storage-only
+// type.
+func DocumentType(name, query string) EQLType {
+	return EQLType{Name: name, Plaintext: KindJSON, Query: query, Producible: true, wire: record.JSON}
+}

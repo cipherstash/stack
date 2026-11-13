@@ -18,8 +18,11 @@ import (
 // a type defined over one, or a pointer to either, whose nil is sealed as a
 // null as long as a value or stored as SQL NULL — and seals as vitaminc's
 // tagged leaf, which a
-// Rust record opens when its field is a Value (not a bare u32 or String). A struct, slice or map seals only as part of an opaque struct,
-// which crosses as one storage blob and is one leaf; stashgen refuses it
+// Rust record opens when its field is a Value (not a bare u32 or String). A
+// struct, slice or map is not a Ciphertext field. It seals as part of an
+// opaque struct, which crosses as one storage blob and is one leaf, or as a
+// JSON document in a field that names an EQL type which holds one
+// (encrypt_into=Json or encrypt_into=JsonSearch). stashgen refuses it
 // anywhere else, because the engine would seal it as a tree of leaves and a
 // column holds one.
 type Ciphertext []byte

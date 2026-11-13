@@ -14,10 +14,22 @@ use ts_rs::TS;
     doc,
     doc = " See the [EQL JSON reference](https://cipherstash.com/docs/reference/eql/json) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`JsonPlaintext`](crate::v4::plaintext::JsonPlaintext). Implements `EncryptTarget<JsonPlaintext>` and `DecryptSource<JsonPlaintext>`.
+///
+/// Both traits are also implemented for `Option<JsonPlaintext>`. A JSON document has no fixed length, so a `None` is sealed without padding. The length of the sealed null can show that the value is absent. A JSON `null` is a document, not a `None`. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
+#[stash(plaintext = crate::v4::plaintext::JsonPlaintext)]
+#[stash(plaintext = Option<crate::v4::plaintext::JsonPlaintext>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Json {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
 }

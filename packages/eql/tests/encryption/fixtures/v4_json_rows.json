@@ -1,0 +1,123 @@
+{
+  "_comment": "Setting rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below, as the storage-only Json type; the Rust suite opens them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4JSONRows, do not edit.",
+  "seed": "encrypt round-trip tests seed v1",
+  "table": "settings",
+  "rows": [
+    {
+      "id": 1,
+      "plaintext": {
+        "raw": {
+          "name": "Alice",
+          "age": 34,
+          "tags": [
+            "a",
+            "b"
+          ],
+          "score": 1.5,
+          "big": 18446744073709551615
+        },
+        "prefs": {
+          "theme": "dark",
+          "beta": true
+        },
+        "labels": {
+          "region": "eu",
+          "tier": "gold"
+        }
+      },
+      "stored": {
+        "labels": {
+          "v": 4,
+          "i": {
+            "t": "settings",
+            "c": "labels"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABhslgHxmx4gPsnTV5/dfpDIAD923A4mtmj40gbGaWwVHvu0yV6IFCOehZ1D+WY1ZTNggIPyTG3FSd4aiuYHSMrNZdtzzDSBRsgDWhx9aGLw5r+Uwb82U/UfqUboZZ06jq7whNpCb1oCmi4EJxO"
+        },
+        "prefs": {
+          "v": 4,
+          "i": {
+            "t": "settings",
+            "c": "prefs"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABQ80Cw77yBB4XJW4BgMQ0bIADw1xzFTeS7p1UBJpYYhq8Zr3s4Jmbw1mifTHRxzdMY0gKzfowXa+lHdvLMm74IKYcCTCG+aw6JhCdttlr+mUwDfDhYkHJPNoz1Bt1ToJX76JmjUXYMEmh6M/E="
+        },
+        "raw": {
+          "v": 4,
+          "i": {
+            "t": "settings",
+            "c": "raw"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAA3T0qzX/Ba0GuY6Qz7+TKzIAD9hMdxQfO17QPb83Ur5gOi7+AC8245SqnnzuKZgl0/GQJSNbvDiowApnDunEsxEO1vC9Fe2KujcqnJsLePdHO2+yoAYEPDSPADFvVTz8XkM6H3CkJsBm1JAaqe35XPpgwqdVgp6//VTMPs54Joubh4W2Z++D1A7yRw5svjyR7L8N3HzsNSY4kxodHWa4anlQ=="
+        }
+      }
+    },
+    {
+      "id": 2,
+      "plaintext": {
+        "raw": [
+          1,
+          2.5,
+          null,
+          "é"
+        ],
+        "labels": {}
+      },
+      "stored": {
+        "labels": {
+          "v": 4,
+          "i": {
+            "t": "settings",
+            "c": "labels"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAClAR81i3Opqbd3nWekptzPIADCQGM1XDunASCrFQMcL8m0uw5stJK10atTa19cwg/9LAIEQOJPjQpezy/gjLjoyUhahNreRNjK6Sys2kIhaW7o"
+        },
+        "raw": {
+          "v": 4,
+          "i": {
+            "t": "settings",
+            "c": "raw"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAACz/ujSserD7BX03gKq05OIAAdEO8Ekk3ISfcT8Go08m8GeXfWHSsuY82ltQZ1k1tAxAKTEBqJhbkZCzQ4Hd+kyBqSiU9rj86LWx9mU7OVOyDwlvMs5Uq+zSkrGCJV8eV+"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "plaintext": {
+        "raw": null,
+        "prefs": {
+          "theme": "",
+          "beta": false
+        },
+        "labels": null
+      },
+      "stored": {
+        "labels": {
+          "v": 4,
+          "i": {
+            "t": "settings",
+            "c": "labels"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABEvINP4/sQzZLQ9/a+8cDNIAA8FlpdDp/esamwEtqRe4fqmfl129E0PSX2rkDYme0nmAI0yfxbdIGwoUjYpdlvzAX/T33gCGBDaHevTLuBErV18zE="
+        },
+        "prefs": {
+          "v": 4,
+          "i": {
+            "t": "settings",
+            "c": "prefs"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAC9QQ8wk4mabg+0P8WGbo05IADj0JHAdFV3x9cz6OOofB/Aq8rPXGX0WB0Ho7/LYG8cDAJfmLXDJRadveMWUM4QGgPikstHJ369/0AMrmLl3LP30cNHxjt1lTMC9DGs/Vgb5+hwiR1D+UE="
+        },
+        "raw": {
+          "v": 4,
+          "i": {
+            "t": "settings",
+            "c": "raw"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABMmqMKU2OsXr1BzZWkRpS1IAAlcBlvhygX3OkGnXRE3ewHZjoKK+R87dOTxzlmgkthyALfzu7H+ORgX2nd2qa4KwrRLGKDmJ+kr+CcBoPAmYzTcDY="
+        }
+      }
+    }
+  ]
+}

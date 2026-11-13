@@ -648,7 +648,8 @@ fn render_query_projections(
 
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
 /// `stack-encrypt` derives: the storage and equality domains of every family
-/// whose plaintext eql-bindings names (`plaintext_of`), the ordered domains
+/// whose plaintext eql-bindings names (`plaintext_of`), which for the `json`
+/// family is the storage domain alone, the ordered domains
 /// (`ord` and `ord_ope` with an OPE term, `ord_ore` with a block ORE term) of
 /// those whose order terms the engine derives, and text match and search
 /// (`search` and `search_ore`). Every other stored domain has a reason
@@ -707,6 +708,7 @@ pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("double", "ord_ore"),
     ("double", "ord"),
     ("double", "ord_ope"),
+    ("json", ""),
 ];
 
 /// Why no `eql_v3` struct derives Stack Encrypt's traits.
@@ -721,6 +723,9 @@ pub const V3_ENCRYPTION_GAP: &str =
 /// are Stack Encrypt's own types (`stack_encrypt::value`, re-exported as
 /// `v4::plaintext`), which can be wiped where chrono's and rust_decimal's
 /// cannot.
+/// A JSON document is Stack Encrypt's `JsonPlaintext`, re-exported
+/// there too: it can be wiped where a `serde_json::Value` cannot, and it
+/// seals as one leaf, the document's JSON text.
 pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
     Some(match family {
         "text" => ("string", "String"),
@@ -733,6 +738,7 @@ pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
         "date" => ("date", "crate::v4::plaintext::Date"),
         "timestamp" => ("timestamp", "crate::v4::plaintext::Timestamp"),
         "numeric" => ("decimal", "crate::v4::plaintext::Decimal"),
+        "json" => ("json", "crate::v4::plaintext::JsonPlaintext"),
         _ => return None,
     })
 }
@@ -754,9 +760,6 @@ pub fn encryption_gap(
     }
     Some(if !domain.is_scalar() {
         "the JSON index is a new operation in the engine (#1060)"
-    } else if family.name == "json" {
-        "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document \
-         becomes one sealed leaf is not decided"
     } else if plaintext_of(family.name).is_none() {
         "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK \
          carry the kind"
@@ -817,6 +820,10 @@ fn encryption_attrs(
             let length = if family.name == "text" {
                 " Text has no fixed length, so a `None` is sealed without padding. The length of \
                  the sealed null can show that the value is absent."
+            } else if family.name == "json" {
+                " A JSON document has no fixed length, so a `None` is sealed without padding. \
+                 The length of the sealed null can show that the value is absent. A JSON \
+                 `null` is a document, not a `None`."
             } else {
                 " A `None` is sealed with padding, to the length of a value."
             };
@@ -2306,8 +2313,6 @@ mod tests {
                     let full = domain.full_name(family.name);
                     let expected = if !domain.is_scalar() {
                         "JSON index"
-                    } else if family.name == "json" {
-                        "tree of leaves"
                     } else if plaintext_of(family.name).is_none() {
                         "no Rust plaintext type for this family"
                     } else {

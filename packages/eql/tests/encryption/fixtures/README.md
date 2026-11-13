@@ -10,7 +10,9 @@
 | `v4_ledger_rows.json` | the Go SDK's `TestV4LedgerRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `text_eq_query.json`, `ste_vec_selectors.json` | `tests/text_eq.rs`, `tests/ste_vec_selectors.rs` | yes, see each test |
 | `v4_smallint_rows.json` | the Go SDK's `TestV4SmallintRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
+| `v4_json_rows.json` | the Go SDK's `TestV4JSONRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `stored_v4_rows_v1.json` | copied from `v4_rows.json` at the next build | **never: frozen** |
+| `stored_v4_json_rows_v1.json` | copied from `v4_json_rows.json`: the v1 stored format of the `Json` type | **never: frozen** |
 
 `v4_ordered_queries.json` and `v4_ordered_rows.json` are not frozen: their
 `op` bytes are the order terms Stack Encrypt writes today, so a change that moves
@@ -42,6 +44,25 @@ to another file. **If either test fails, the change broke stored data.** Do
 not regenerate the file. Fix the change, or, for a deliberate change to the
 stored format, add `stored_v4_rows_v2.json` beside this one, keep v1, and
 say in the CHANGELOG how v1 rows migrate.
+
+## `stored_v4_json_rows_v1.json` (FROZEN)
+
+`Setting` rows the Go SDK's generated code stored as the storage-only `Json`
+type (`public.eql_v4_json`), in its v1 stored format: a raw document, a
+document of a Go type, and a map. Each stored value is `{v, i, c}`, and `c`
+holds the document's JSON text in one text leaf. The file follows the same
+rule as `stored_v4_rows_v1.json`: it is never regenerated or edited.
+
+- `tests/v4_types.rs` (`frozen_json_rows_the_go_sdk_stored_still_open`)
+  parses every stored value as `Json` and opens it to the row's document.
+- `languages/golang/encrypt/eql_v4_json_test.go`
+  (`TestFrozenV4JSONRowsStillOpen`) seals the rows' documents again and
+  requires the same envelopes (everything but each `c`), and opens every
+  committed `c`.
+
+**If either test fails, the change broke stored documents.** Do not
+regenerate the file. For a deliberate change to the stored format, add
+`stored_v4_json_rows_v2.json` beside this one and keep v1.
 
 The data-plan records Stack Encrypt stores outside EQL are frozen the same
 way in `packages/stack-encrypt/tests/fixtures/stored_rows_v1.json`.
