@@ -218,7 +218,9 @@ const PERMISSIVE_NEEDS = {
  * switched on by `CLAUDE_REVIEW_ENABLED`; left unset it would read as skipped
  * on every event, and the fork guard would be credited with the skip.
  */
-const PERMISSIVE_VARS = { CLAUDE_REVIEW_ENABLED: 'true' }
+const PERMISSIVE_VARS = {
+  CLAUDE_REVIEW_ENABLED: 'true',
+}
 
 /**
  * `github.event` carries the webhook payload of the triggering event, so on a

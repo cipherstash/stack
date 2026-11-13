@@ -38,6 +38,15 @@ const GROUPS = {
   'stack-encrypt-derive': 'stack-encrypt',
 }
 const PUBLISHED = Object.keys(GROUPS).sort()
+// Publishable crates whose first version is not on crates.io yet. crates.io
+// Trusted Publishing needs an existing crate, so the first version is
+// published by hand; until then release-plz.toml names their version group
+// but keeps `release = false` and `publish = false`, so `release-crates` does
+// not fail trying. Arming one moves it from here to GROUPS.
+const STAGED = {
+  'stack-kms-vendor': 'stack-kms-vendor',
+}
+const PUBLISHABLE = [...PUBLISHED, ...Object.keys(STAGED)].sort()
 
 /** The root workspace's members, as `{ path, name, publish }`. */
 function rootMembers() {
@@ -93,7 +102,7 @@ describe('root release-plz.toml', () => {
       .filter((member) => member.publish)
       .map((member) => member.name)
       .sort()
-    expect(publishable).toEqual(PUBLISHED)
+    expect(publishable).toEqual(PUBLISHABLE)
 
     const released = [...packages]
       .filter(([, config]) => config.release)
@@ -106,8 +115,20 @@ describe('root release-plz.toml', () => {
     }
   })
 
+  it('stages each crate not yet on crates.io in its version group', () => {
+    for (const [name, group] of Object.entries(STAGED)) {
+      expect(packages.get(name), name).toEqual({
+        versionGroup: group,
+        release: false,
+        publish: false,
+      })
+    }
+  })
+
   it('opts every unpublished member out of publishing here too', () => {
-    const unpublished = members.filter((member) => !member.publish)
+    const unpublished = members.filter(
+      (member) => !member.publish && !(member.name in STAGED),
+    )
     expect(unpublished.length).toBeGreaterThan(0)
     for (const { name } of unpublished) {
       expect(packages.get(name)?.publish, name).toBe(false)
@@ -123,7 +144,7 @@ describe('root release-plz.toml', () => {
     // behind from building and releasing.
     const versions = new Map()
     for (const { name, version } of members) {
-      const group = GROUPS[name]
+      const group = GROUPS[name] ?? STAGED[name]
       if (!group) continue
       expect(version, name).toBeTruthy()
       versions.set(group, [

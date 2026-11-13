@@ -14,6 +14,7 @@ on:
       - packages/stack-auth/**
       - packages/stack-profile/**
       - packages/stack-kms/**
+      - packages/stack-kms-vendor/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
@@ -33,6 +34,7 @@ on:
       - packages/stack-auth/**
       - packages/stack-profile/**
       - packages/stack-kms/**
+      - packages/stack-kms-vendor/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
