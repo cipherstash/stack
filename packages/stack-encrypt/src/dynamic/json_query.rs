@@ -1068,3 +1068,27 @@ fn opened_frame(mut groups: Vec<Vec<Value>>) -> Result<ValueFrame, crate::Error>
     groups.iter_mut().flatten().for_each(wipe_value);
     ValueFrame::of(&texts?).map_err(|error| crate::Error::Other(Box::new(error)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::value::{Error as ValueError, StrDeserializer, U8Deserializer};
+
+    #[test]
+    fn a_path_is_read_from_text() {
+        let path = PathText::deserialize(StrDeserializer::<ValueError>::new("$.a"))
+            .unwrap_or_else(|error| panic!("text is a path: {error}"));
+        assert_eq!(&*path, "$.a");
+    }
+
+    #[test]
+    fn a_path_that_is_not_text_is_refused_naming_what_was_expected() {
+        let Err(error) = PathText::deserialize(U8Deserializer::<ValueError>::new(7)) else {
+            panic!("a number is not a path");
+        };
+        assert!(
+            error.to_string().contains("a path, as text"),
+            "the refusal names what a path is: {error}"
+        );
+    }
+}
