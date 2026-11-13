@@ -16,11 +16,12 @@ import (
 )
 
 // Client is one wasm instance holding one ZeroKMS client: its key, its
-// default keyset, and the keysets it has loaded since. It is safe for
+// default keyset, and the keysets it has loaded since — and, when it is
+// given one, a key vendor backend with its keyset records. It is safe for
 // concurrent use; the guest runs one call's step at a time, because a wasm
 // instance is single-threaded, but never waits on the network inside one:
-// a ZeroKMS request is performed between steps, with the client free for
-// other callers (see step.go). Close it when done, as with any resource.
+// a ZeroKMS or key vendor request is performed between steps, with the
+// client free for other callers (see step.go). Close it when done, as with any resource.
 //
 // A call whose context ends fails with the context's error, and only that
 // call: one request's cancellation or deadline never closes the client for
@@ -86,17 +87,38 @@ type Client struct {
 // With no options it is a working client: the credentials are
 // [AutoCredentials], and every other setting has a default. Each
 // [ClientOption] changes one.
+//
+// With [WithKeyVendor] and [WithKeysetRecords] the client also holds a key
+// vendor backend. NewClient parses and checks the records but makes no
+// vendor call: a record key is unwrapped on the first use of its keyset.
 func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error) {
 	var cfg clientOptions
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	// A StaticKey is consumed like the client key: wiped whatever the
+	// outcome, a refused config and a replaced option included.
+	defer func() {
+		wipeVendorKey(cfg.keyVendor)
+		for _, v := range cfg.supersededVendors {
+			wipeVendorKey(v)
+		}
+	}()
 	rt := cfg.transport
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
+	// A key vendor backend is an alternative to ZeroKMS: with one and no
+	// WithCredentials, the client has no ZeroKMS, and no ZeroKMS
+	// credentials are looked for. WithCredentials(AutoCredentials()) gives
+	// both.
+	vendorOnly := cfg.keyVendor != nil && cfg.credentials == nil && len(cfg.superseded) == 0
 	creds := cfg.credentials
-	if creds == nil {
+	switch {
+	case creds != nil:
+	case vendorOnly:
+		creds = noZeroKMS{}
+	default:
 		creds = AutoCredentials()
 	}
 	// Credentials a later WithCredentials replaced are never resolved, but
@@ -114,9 +136,20 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	// for. A refused config still consumes an explicit key, as
 	// WithCredentials promises; any other Credentials has not been asked
 	// yet, so holds nothing of this client's.
-	zerokmsURL, err := zerokmsEndpoint(cfg.zerokmsURL)
+	var zerokmsURL string
+	if !vendorOnly {
+		// A client with no ZeroKMS has no ZeroKMS endpoint to pin.
+		zerokmsURL, err = zerokmsEndpoint(cfg.zerokmsURL)
+	}
 	if err == nil && cfg.keysetCacheSize < 0 {
 		err = fmt.Errorf("%w: WithKeysetCacheSize must not be negative", ErrEncoding)
+	}
+	var vendor *vendorSpec
+	if err == nil {
+		vendor, err = keyVendorConfig(cfg.keyVendor, cfg.keysetRecords)
+	}
+	if err == nil {
+		err = checkVendorOnlyOptions(&cfg, vendorOnly)
 	}
 	if explicit, ok := creds.(*explicitCredentials); ok && err == nil && explicit.token == nil {
 		// Knowable from the credentials as they were built: the one place
@@ -173,6 +206,11 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 		clientKey:       resolved.ClientKey,
 		zerokmsURL:      zerokmsURL,
 		keysetCacheSize: cfg.keysetCacheSize,
+		vendor:          vendor,
+		keysetRecords:   cfg.keysetRecords,
+		vendorOnly:      vendorOnly,
+		defaultKeyset:   cfg.defaultKeyset,
+		rootKeyTTL:      cfg.rootKeyTTL,
 	})
 	if err != nil {
 		return nil, err
@@ -184,7 +222,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	// whatever the init's outcome.
 	resolved.ClientKey.Wipe()
 
-	t := &transport{rt: rt, token: resolved.Token}
+	t := &transport{rt: rt, token: resolved.Token, vendor: vendor}
 	inst, err := newInstance(ctx, wasm, t, guest.PolicyFor(cfg.requireLockedMemory))
 	if err != nil {
 		return nil, err
@@ -304,11 +342,23 @@ type initConfig struct {
 	clientKey       *ClientKey
 	zerokmsURL      string
 	keysetCacheSize int
+	// vendor and keysetRecords are the key vendor backend, nil and empty
+	// when the client has none.
+	vendor        *vendorSpec
+	keysetRecords []string
+	// vendorOnly is a client with the key vendor backend and no ZeroKMS:
+	// the config then has no client id, client key or ZeroKMS endpoint.
+	vendorOnly    bool
+	defaultKeyset KeysetSelector
+	rootKeyTTL    *time.Duration
 }
 
 // encodeConfig renders the se_cipher_init object. The result holds the
 // client key; the caller wipes it, and the key it was read from.
 func encodeConfig(cfg initConfig) ([]byte, error) {
+	if cfg.vendorOnly {
+		return vcffi.Marshal(cfg.vendorFields())
+	}
 	if cfg.clientID == "" || cfg.clientKey.IsZero() {
 		return nil, errors.New("encrypt: the credentials' client id and client key are required")
 	}
@@ -330,7 +380,28 @@ func encodeConfig(cfg initConfig) ([]byte, error) {
 	if cfg.keysetCacheSize > 0 {
 		fields = append(fields, vcvalue.Field{Key: "keyset_cache_size", Value: strconv.Itoa(cfg.keysetCacheSize)})
 	}
+	fields = append(fields, cfg.vendorFields()...)
 	return vcffi.Marshal(fields)
+}
+
+// vendorFields renders the key vendor backend's config keys: none without
+// one. The result can hold a StaticKey's key; the caller wipes what it
+// encodes.
+func (cfg initConfig) vendorFields() vcvalue.Object {
+	if cfg.vendor == nil {
+		return nil
+	}
+	fields := cfg.vendor.configFields(cfg.keysetRecords)
+	if cfg.keysetCacheSize > 0 && cfg.vendorOnly {
+		fields = append(fields, vcvalue.Field{Key: "keyset_cache_size", Value: strconv.Itoa(cfg.keysetCacheSize)})
+	}
+	if cfg.defaultKeyset != nil {
+		fields = append(fields, vcvalue.Field{Key: "default_keyset", Value: cfg.defaultKeyset.selector()})
+	}
+	if cfg.rootKeyTTL != nil {
+		fields = append(fields, vcvalue.Field{Key: "root_key_ttl_ms", Value: strconv.FormatInt(cfg.rootKeyTTL.Milliseconds(), 10)})
+	}
+	return fields
 }
 
 // Close shuts the guest down — the client key and every loaded index key
@@ -375,7 +446,9 @@ func (c *Client) Keyset(sel KeysetSelector) *Cipher {
 
 // DefaultKeyset binds the client to its default keyset — the one a ZeroKMS
 // administrator set for this client, which is what naming no keyset
-// resolves to: Rust's StackCipher::default_keyset. Loaded at NewClient, so
+// resolves to: Rust's StackCipher::default_keyset. A client with a key
+// vendor backend and no ZeroKMS has a vendor keyset as its default: its only
+// keyset record, or the one [WithDefaultKeyset] names. Loaded at NewClient, so
 // using it never touches ZeroKMS. There is no way to redefine it from here;
 // which keyset is the default is the server's to say. Any other keyset is
 // [Client.Keyset].
@@ -466,6 +539,8 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 	step, resumed := f, false
 	var handle uint64
 	var responses []byte
+	var op operation
+	defer op.end()
 	for {
 		out, io, err := c.step(ctx, token, tokenErr, step)
 		if resumed {
@@ -483,6 +558,11 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			return nil, ctx.Err()
 		}
 		if io == nil {
+			// The guest reports a failed credential request as a transport
+			// failure and no more; the credential source said why.
+			if err != nil && op.credErr != nil {
+				err = fmt.Errorf("%w (key vendor credential source: %w)", err, op.credErr)
+			}
 			return settle(ctx, out, err)
 		}
 		// A caller that gave up while the guest ran sends no request.
@@ -491,7 +571,7 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 			c.abort(io.handle)
 			return nil, fmt.Errorf("%w: %w", err, ErrTransport)
 		}
-		responses, err = c.transport.performStep(ctx, io)
+		responses, err = c.transport.performStep(ctx, io, &op)
 		if err != nil {
 			c.abort(io.handle)
 			return nil, err
