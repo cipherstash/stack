@@ -31,18 +31,19 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    // The by-reference impl, for `&'__r Name<..>`: every type parameter is
-    // bound by reference, and every lifetime outlives the borrow.
+    // The by-reference impl, for `&'__r Name<..>`: every type parameter can
+    // be walked by reference (`EncryptRef`), which is what a field of `T`,
+    // `Vec<T>` or `Option<T>` walked by reference needs. No lifetime is
+    // bounded on `'__r`: `&'__r Name<'a>` being well formed already says
+    // `'a: '__r`, and saying it again makes `for<'r> &'r Name<'a>: Encrypt`,
+    // which a container of `Name<'a>` needs, demand `'a: 'static`.
     let mut ref_generics = input.generics.clone();
-    for lifetime in ref_generics.lifetimes_mut() {
-        lifetime.bounds.push(parse_quote!('__r));
-    }
     let ref_predicates: Vec<syn::WherePredicate> = input
         .generics
         .type_params()
         .map(|param| {
             let ident = &param.ident;
-            parse_quote!(&'__r #ident: #krate::Encrypt)
+            parse_quote!(#ident: #krate::EncryptRef)
         })
         .collect();
     ref_generics
@@ -147,7 +148,7 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool)
     let expr = |by_ref: bool| -> TokenStream {
         let of = |ty: &syn::Type| {
             if by_ref {
-                quote!(<&'__r #ty as #krate::Encrypt>::DEPTH)
+                quote!(<#ty as #krate::EncryptRef>::REF_DEPTH)
             } else {
                 quote!(<#ty as #krate::Encrypt>::DEPTH)
             }
@@ -238,7 +239,7 @@ fn fixed(
             let ty = &field.ty;
             (
                 decl(quote!(<#ty as #krate::Encrypt>::FIXED)),
-                decl(quote!(<&'__r #ty as #krate::Encrypt>::FIXED)),
+                decl(quote!(<#ty as #krate::EncryptRef>::REF_FIXED)),
             )
         }
         Shape::Enum(_) => {
@@ -315,7 +316,7 @@ fn newtype_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
 fn newtype_ref_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
     let member = &field.member;
     quote! {
-        #krate::Encrypt::visit(&self.#member, __sink)
+        #krate::EncryptRef::visit_ref(&self.#member, __sink)
     }
 }
 
@@ -394,7 +395,7 @@ fn map_ref_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             }
         } else {
             quote! {
-                #krate::Encrypt::visit(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
+                #krate::EncryptRef::visit_ref(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
             }
         }
     });
@@ -532,7 +533,7 @@ mod tests {
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(
+            quote!(::vitaminc_aead::EncryptRef::visit_ref(
                 &self.name,
                 ::vitaminc_aead::MapSink::entry(&mut __map, "name")?
             )),
@@ -549,7 +550,7 @@ mod tests {
         ));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(&self.0, __sink)),
+            quote!(::vitaminc_aead::EncryptRef::visit_ref(&self.0, __sink)),
         );
     }
 
@@ -762,7 +763,7 @@ mod tests {
             &out,
             quote!(
                 const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
-                    <&'__r u32 as ::vitaminc_aead::Encrypt>::FIXED;
+                    <u32 as ::vitaminc_aead::EncryptRef>::REF_FIXED;
             ),
         );
 
@@ -820,8 +821,9 @@ mod tests {
 
         assert_contains(&out, quote!(impl<'a, T: ::vitaminc_aead::Encrypt>));
         assert_contains(&out, quote!(for Holder<'a, T>));
-        assert_contains(&out, quote!(impl<'__r, 'a: '__r, T>));
-        assert_contains(&out, quote!(&'__r T: ::vitaminc_aead::Encrypt));
+        assert_contains(&out, quote!(impl<'__r, 'a, T>));
+        assert_contains(&out, quote!(T: ::vitaminc_aead::EncryptRef));
+        assert_lacks(&out, quote!('a: '__r));
         assert_contains(&out, quote!(for &'__r Holder<'a, T>));
     }
 
@@ -875,7 +877,7 @@ mod tests {
         );
         assert_contains(
             &out,
-            quote!(<&'__r String as ::vitaminc_aead::Encrypt>::DEPTH),
+            quote!(<String as ::vitaminc_aead::EncryptRef>::REF_DEPTH),
         );
         assert_lacks(&out, quote!(Vec<Vec<u32>>));
         assert_contains(

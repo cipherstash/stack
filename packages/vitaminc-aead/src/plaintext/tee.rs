@@ -57,8 +57,8 @@ impl<A: Sink, B: Sink<Error = A::Error>> Sink for Tee<A, B> {
         a.map(len).and_then(|a| b.map(len).map(|b| Tee(a, b)))
     }
 
-    /// The one call a tee cannot share: each side walks the subtree for
-    /// itself, so it is cloned. Passthrough is cleartext by contract.
+    /// Each side walks the subtree for itself, and both are lent the same
+    /// one, so it is never copied.
     fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<Self::Ok, A::Error> {
         let (a, b) = (self.0, self.1);
         a.passthrough(value)
