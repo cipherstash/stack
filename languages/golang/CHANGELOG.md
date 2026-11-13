@@ -10,6 +10,22 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+## [0.1.0-rc.4] - 2026-11-13
+
+### Upgrading from rc.3
+
+The EQL v4 SQL has not changed since rc.3, so a database with the rc.3
+bundle installed needs nothing new. That includes the new `Json` type: the
+rc.3 bundle already defines its column type, `public.eql_v4_json`.
+
+In the code:
+
+1. Remove one of the two order indexes from any field tagged with both
+   (`index=ore;ope` or `index=ore;ore_block`) before you run `stashgen`
+   again. `stashgen` now refuses such a field.
+2. Rename `Cipher.Extend` to `Cipher.Scope` and `Cipher.Extension` to
+   `Cipher.Scopes`. The old names still work until 0.1.0.
+
 ### Breaking
 
 - **A field declares at most one order index** (#1233). The engine refuses
@@ -69,6 +85,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `encrypttest.Extension()`, and renders as the engine prints it, so a Rust
   test states the same parts. The failure names the first field whose
   context differs. `encrypttest.Contexts` returns the engine's text.
+
+### Changed
+
+- The embedded WASI guests are built with Vitamin C 0.9. Its frame codec
+  writes plaintext into a buffer that wipes each allocation it outgrows, not
+  only the last one. Stored values do not change, and rows that rc.3 wrote
+  still open.
 
 ## [0.1.0-rc.3] - 2026-11-02
 
