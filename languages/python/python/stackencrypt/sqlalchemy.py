@@ -11,11 +11,13 @@ query decrypts them. The app reads and writes plaintext attributes.
   every engine runs it. For each INSERT or UPDATE on the Table object of a
   listed class, it encrypts the parameters of all the statement's rows with
   one ``Cipher.encrypt_rows`` call.
-- Reads: the ``load`` and ``refresh`` events of each listed class record the
-  objects a query builds. A ``do_orm_execute`` hook then decrypts them, with
-  one ``Cipher.decrypt_rows`` call for each class and set of fields. The
-  plaintext is set with ``set_committed_value``, so the objects are not
-  marked as changed.
+- Reads: the ``load`` and ``refresh`` events of each listed class, and of
+  its single-table subclasses, record the objects a query builds. A
+  ``do_orm_execute`` hook then decrypts them, with one
+  ``Cipher.decrypt_rows`` call for each class and set of fields in each
+  chunk of rows the ORM builds: one chunk for ``.all()``, one for each
+  ``yield_per`` batch. The plaintext is set with ``set_committed_value``,
+  so the objects are not marked as changed.
 
 On a write, every declared field goes through ``encrypt_rows``, so a
 passthrough value is checked as ``encrypt`` checks it, and stored unchanged.
@@ -37,7 +39,9 @@ On a read, only the encrypted fields are decrypted.
 - Sorting: ``order_by`` on an encrypted column sorts by its order term, such
   as ``eql_v4.ord_term(col)``, in both hooks. A bare ``ORDER BY col`` on an
   EQL v4 column sorts the stored JSON, in a wrong order (ADR-0004, decision
-  9). A column with no order index cannot be sorted.
+  9). A column with no order index cannot be sorted. A bare encrypted
+  column in an ORDER BY the hooks do not rewrite, such as a window's or a
+  UNION's, raises ``QueryError``.
 - Search: the column type that ``eql_type_map`` gives each encrypted field
   turns ``==``, ``<``, ``<=``, ``>`` and ``>=`` into a comparison with a query
   term, made by ``Cipher.eq``, ``lt``, ``lte``, ``gt`` or ``gte``. Any other
@@ -47,10 +51,13 @@ On a read, only the encrypted fields are decrypted.
 This module imports SQLAlchemy. The rest of the package does not.
 """
 
+import hashlib
+import itertools
 from typing import Annotated, Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple, Type
 
 from sqlalchemy import (
     Index,
+    PrimaryKeyConstraint,
     String,
     Table,
     UniqueConstraint,
@@ -75,12 +82,13 @@ from sqlalchemy.sql.elements import (
     ColumnClause,
     Grouping,
     Label,
+    _anonymous_label,
     _label_reference,
     _textual_label_reference,
 )
 from sqlalchemy.sql.dml import Insert, Update
 from sqlalchemy.sql.functions import FunctionElement
-from sqlalchemy.sql.selectable import Select
+from sqlalchemy.sql.selectable import CompoundSelect, Select
 from sqlalchemy.types import UserDefinedType
 
 import stackencrypt
@@ -214,6 +222,10 @@ _MATCH = "stackencrypt_match"
 # searches it checked and verifies.
 _VERIFIED = "stackencrypt_match_verified"
 
+# The execution option the session hook sets on a select it has checked and
+# sorted, so that the engine hook does not walk it again.
+_SCANNED = "stackencrypt_scanned"
+
 # The operators that send no value to the database.
 _NO_VALUE = frozenset({operators.is_, operators.is_not})
 
@@ -258,14 +270,30 @@ def _add_indexes(mapper: Any, cls: type) -> None:
             if kind not in _INDEXES:
                 continue
             function, method = _INDEXES[kind]
-            name = f"ix_{table.name}_{column.name}_{kind}"
+            name = _index_name(f"ix_{table.name}_{column.name}_{kind}")
             if any(index.name == name for index in table.indexes):
                 continue
             # The model declares an index on this term itself, such as a
-            # unique btree on eq_term: that one serves the search.
-            if f"eql_v4.{function}({column.name})" in declared:
+            # unique btree on eq_term: that one serves the search. Compared
+            # as _index_term writes it: with no quotes, in lower case.
+            if f"eql_v4.{function}({column.name})".lower() in declared:
                 continue
             Index(name, getattr(func.eql_v4, function)(column), postgresql_using=method)
+
+
+# PostgreSQL's longest identifier, in bytes.
+_MAX_NAME = 63
+
+
+def _index_name(name: str) -> str:
+    """``name``, or, when PostgreSQL would refuse it as too long, its start
+    and a short hash of the whole of it, so that two long names still
+    differ."""
+    if len(name.encode()) <= _MAX_NAME:
+        return name
+    digest = hashlib.sha256(name.encode()).hexdigest()[:8]
+    start = name.encode()[: _MAX_NAME - len(digest) - 1].decode(errors="ignore")
+    return f"{start}_{digest}"
 
 
 def _index_term(expression: Any) -> str:
@@ -421,11 +449,21 @@ def configure_encryption(classes: Sequence[type]) -> None:
     It still raises ``DeclarationError`` when the class changed since it
     was declared, or when another class is configured for its table.
 
+    A subclass that SQLAlchemy maps to its base's table, by single-table
+    inheritance, is encrypted and decrypted as its base is. It needs no
+    declaration of its own, and listing it with its base, or after it, does
+    nothing.
+
     Every class is checked first. A class that fails raises
     ``DeclarationError``, and none of the classes is configured. The check
     makes no request.
     """
-    checked = [_check(cls) for cls in classes]  # refuses a changed class too
+    listed = set(classes)
+    checked = [
+        _check(cls)  # refuses a changed class too
+        for cls in classes
+        if _covering_class(cls, listed) is None
+    ]
     owners = dict(_TABLE_CLASSES)
     new = []
     for cls, cipher, sealed in checked:
@@ -445,12 +483,35 @@ def configure_encryption(classes: Sequence[type]) -> None:
         _CONFIGURED[cls] = (cipher, sealed)
         _TABLES[table] = cipher
         _TABLE_CLASSES[table] = cls
-        event.listen(cls, "load", _remember_load)
-        event.listen(cls, "refresh", _remember_refresh)
+        # propagate: a single-table subclass's objects are loaded as its own.
+        event.listen(cls, "load", _remember_load, propagate=True)
+        event.listen(cls, "refresh", _remember_refresh, propagate=True)
     if not event.contains(Engine, "before_execute", _encrypt_parameters):
         event.listen(Engine, "before_execute", _encrypt_parameters, retval=True)
     if not event.contains(Session, "do_orm_execute", _decrypt_loaded):
         event.listen(Session, "do_orm_execute", _decrypt_loaded)
+
+
+def _covering_class(cls: type, listed: Any = ()) -> Optional[type]:
+    """The configured or listed base class whose table ``cls`` is mapped to,
+    by single-table inheritance, or ``None``."""
+    mapper = inspect(cls, raiseerr=False) if isinstance(cls, type) else None
+    table = getattr(mapper, "local_table", None)
+    for base in cls.__mro__[1:] if isinstance(cls, type) else ():
+        if base in _CONFIGURED or base in listed:
+            base_mapper = inspect(base, raiseerr=False)
+            if table is not None and getattr(base_mapper, "local_table", None) is table:
+                return base
+    return None
+
+
+def _configured_for(cls: type) -> Tuple[Cipher, FrozenSet[str]]:
+    """The cipher and sealed fields of ``cls``, or of the configured base
+    that a single-table subclass is mapped as."""
+    for base in cls.__mro__:
+        if base in _CONFIGURED:
+            return _CONFIGURED[base]
+    raise KeyError(cls)
 
 
 def _check(cls: type) -> Tuple[type, Cipher, FrozenSet[str]]:
@@ -489,20 +550,33 @@ def _check(cls: type) -> Tuple[type, Cipher, FrozenSet[str]]:
         if field.marker is Passthrough:
             continue
         column = mapper.columns[field.name]
-        unique = column.unique or any(
-            # contains_column, not `in`: a column collection takes only a
-            # string key with `in`, and raises ArgumentError for a Column.
-            isinstance(constraint, UniqueConstraint) and constraint.columns.contains_column(column)
-            for constraint in mapper.local_table.constraints
+        table = mapper.local_table
+        unique = (
+            column.unique
+            or column.primary_key
+            or any(
+                # contains_column, not `in`: a column collection takes only
+                # a string key with `in`, and raises ArgumentError for a
+                # Column. A primary key is a unique constraint too.
+                isinstance(constraint, (UniqueConstraint, PrimaryKeyConstraint))
+                and constraint.columns.contains_column(column)
+                for constraint in table.constraints
+            )
+            # An index on the column itself, not on a term of it.
+            or any(
+                index.unique and any(expression is column for expression in index.expressions)
+                for index in table.indexes
+            )
         )
         if unique:
             raise DeclarationError(
                 "declaration_unique_column",
-                f"field {field.name!r} of {cls.__qualname__} is an encrypted column with a "
-                "unique constraint. Each EQL value contains new random ciphertext, so the "
-                "constraint never finds a duplicate. Use a unique index on its equality "
-                f"term instead: Index(..., text(\"eql_v4.eq_term({field.name})\"), unique=True) "
-                "in __table_args__.",
+                f"field {field.name!r} of {cls.__qualname__} is an encrypted column in a "
+                "primary key, or with a unique constraint or index. Each EQL value contains "
+                "new random ciphertext, so the database never finds a duplicate. Use a "
+                "unique index on its equality term instead: "
+                f"Index(..., text(\"eql_v4.eq_term({field.name})\"), unique=True) in "
+                "__table_args__.",
                 field=field.name,
             )
         column_type = column.type
@@ -521,18 +595,18 @@ def _check(cls: type) -> Tuple[type, Cipher, FrozenSet[str]]:
 
 def _encrypt_parameters(conn, clause, multiparams, params, execution_options):  # type: ignore[no-untyped-def]
     """The write hook, on SQLAlchemy's ``Engine`` class: every engine runs it."""
-    if not execution_options.get(_VERIFIED):
-        matches = _matches_in(clause)
-        if matches:
-            column, _ = matches[0]._annotations[_MATCH]
-            raise _match_refused(column, "is not run through a session.")
-    if isinstance(clause, Select):
+    if execution_options.get(_SCANNED):
+        # A select the session hook checked and sorted already.
+        return clause, multiparams, params
+    matches, sorted_ = _scan(clause)
+    if matches and not execution_options.get(_VERIFIED):
+        column, _ = matches[0]._annotations[_MATCH]
+        raise _match_refused(column, "is not run through a session.")
+    if isinstance(clause, (Select, CompoundSelect)):
         # Every select, ORM-marked or not. SQLAlchemy marks a select as
         # ORM when it names a mapped class or attribute, even when it
-        # runs on a connection, where the session hook does not run. A
-        # select from a session reaches here already rewritten, and
-        # comes back unchanged.
-        return _sorted_by_terms(clause), multiparams, params
+        # runs on a connection, where the session hook does not run.
+        return (_sorted_by_terms(clause) if sorted_ else clause), multiparams, params
     if not isinstance(clause, (Insert, Update)):
         return clause, multiparams, params
     cls = _configured_class(clause.table)
@@ -540,7 +614,7 @@ def _encrypt_parameters(conn, clause, multiparams, params, execution_options):  
         return clause, multiparams, params
     cipher, sealed = _CONFIGURED[cls]
     rows = [dict(row) for row in multiparams] if multiparams else [dict(params or {})]
-    _refuse_inline_values(conn, clause, sealed, rows)
+    _refuse_inline_values(clause, sealed, rows)
     # Passthrough fields too: encrypt_rows checks them as encrypt does,
     # and returns them unchanged.
     names = _declared(cipher).intersection(rows[0])
@@ -569,14 +643,21 @@ def _declared(cipher: Cipher) -> FrozenSet[str]:
     return frozenset(field.name for field in cipher.declaration.fields)
 
 
-def _refuse_inline_values(conn, clause, sealed: FrozenSet[str], rows: List[Dict[str, Any]]) -> None:  # type: ignore[no-untyped-def]
-    """Refuse a statement that carries a sealed value in its SQL, such as
-    ``insert(table).values(email=...)``: the hook can only change the
-    parameters passed beside the statement, so the value would be stored
-    as plaintext."""
-    inline = clause.compile(dialect=conn.dialect).params
-    for name in sorted(sealed):
-        if inline.get(name) is not None and not any(name in row for row in rows):
+def _refuse_inline_values(clause: Any, sealed: FrozenSet[str], rows: List[Dict[str, Any]]) -> None:
+    """Refuse a statement that carries a sealed value in its own SQL, in any
+    form: ``values(email=...)``, a list of rows in ``values([...])``, a SQL
+    expression that holds a value, such as ``func.lower(...)`` or ``case``,
+    a ``bindparam`` of another name, or the SET of an ON CONFLICT. The hook
+    encrypts only the parameters passed beside the statement under the
+    field's own name, so any other value would be stored as plaintext.
+
+    The statement's values are read as it holds them, not compiled: a
+    compile here would run outside SQLAlchemy's compiled cache."""
+    for name, value, own_name in _written_values(clause):
+        if name not in sealed:
+            continue
+        overridden = own_name and any(name in row for row in rows)
+        if not overridden and _sends_value(value, name if own_name else None):
             raise DeclarationError(
                 "declaration_inline_value",
                 f"the statement writes {name!r} of table {clause.table.name!r} as a value "
@@ -584,6 +665,54 @@ def _refuse_inline_values(conn, clause, sealed: FrozenSet[str], rows: List[Dict[
                 "parameters, as session.add and session.execute(insert(...), rows) do.",
                 field=name,
             )
+
+
+def _written_values(clause: Any) -> List[Tuple[str, Any, bool]]:
+    """Each value the statement holds itself, as its column's name, the value,
+    and whether the parameter of the field's own name sets it: that is true
+    of ``values(...)`` with one row, whose parameter takes the column's name,
+    and of nothing else."""
+    found: List[Tuple[str, Any, bool]] = []
+    columns = list(clause.table.columns)
+
+    def name_of(key: Any) -> str:
+        return key if isinstance(key, str) else getattr(key, "key", str(key))
+
+    for key, value in (getattr(clause, "_values", None) or {}).items():
+        found.append((name_of(key), value, True))
+    for key, value in getattr(clause, "_ordered_values", None) or ():
+        found.append((name_of(key), value, True))
+    for rows in getattr(clause, "_multi_values", None) or ():
+        for row in rows:
+            items = row.items() if isinstance(row, dict) else zip(columns, row)
+            for key, value in items:
+                found.append((name_of(key), value, False))
+    # The SET of an ON CONFLICT DO UPDATE, on PostgreSQL and SQLite.
+    on_conflict = getattr(clause, "_post_values_clause", None)
+    sets = getattr(on_conflict, "update_values_to_set", None) or {}
+    for key, value in sets.items() if isinstance(sets, dict) else sets:
+        found.append((name_of(key), value, False))
+    return found
+
+
+def _sends_value(value: Any, own_name: Optional[str]) -> bool:
+    """Whether ``value`` puts a Python value into the SQL. A NULL does not,
+    and neither does a column, such as ``excluded.email``. Where the
+    field's own parameter sets the value, ``own_name`` is the field's name,
+    and ``bindparam(own_name)`` takes that parameter, which the hook
+    encrypts."""
+    if not isinstance(value, ClauseElement):
+        return value is not None
+    for element in visitors.iterate(value):
+        if not isinstance(element, BindParameter):
+            continue
+        if element.callable is not None or element.value is not None:
+            return True
+        # A placeholder of its own name would take a parameter the hook
+        # does not encrypt. An anonymous one is a NULL.
+        if not isinstance(element.key, _anonymous_label) and not (element is value and element.key == own_name):
+            return True
+    return False
 
 
 def _remember_load(target: object, context: object) -> None:
@@ -602,21 +731,56 @@ def _remember(target: object, attrs: Any) -> None:
 
 
 def _decrypt_loaded(state: Any) -> Any:
-    matches = _matches_in(state.statement)
+    matches, sorted_ = _scan(state.statement)
     if matches and not state.is_select:
         column, _ = matches[0]._annotations[_MATCH]
         raise _match_refused(column, "is in an UPDATE or a DELETE, so it would change rows that do not hold the text.")
     if not state.is_select:
         return None
     searches = _checked_matches(state.statement, matches)
-    state.statement = _sorted_by_terms(state.statement)
-    # Freezing reads every row, so every load and refresh event has fired.
-    options = {_VERIFIED: True} if searches else {}
-    result = state.invoke_statement(execution_options=options).freeze()
-    pending = state.session.info.pop(_PENDING, [])
+    if sorted_:
+        state.statement = _sorted_by_terms(state.statement)
+    # The engine hook need not scan the statement again.
+    options: Dict[str, Any] = {_SCANNED: True}
+    if searches:
+        options[_VERIFIED] = True
+    result = state.invoke_statement(execution_options=options)
+    positions = _encrypted_columns(state.statement)
+    chunks = getattr(result, "chunks", None)
+    if chunks is None:
+        # Not the ORM's own result, such as one another hook made: read it
+        # whole.
+        frozen = result.freeze()
+        rows = _opened(state.session, positions, searches, list(frozen.data))
+        return frozen.with_new_rows([_as_tuple(row) for row in rows])()
+
+    # The ORM builds the rows a chunk at a time, as the app reads them: all
+    # of them for .all(), and yield_per's number under yield_per. Each
+    # chunk's objects are decrypted when the chunk is built, after their
+    # load events have fired and before the app sees them. Uniqueness, and
+    # SQLAlchemy's refusal of a joined eager load with no .unique(), still
+    # apply to the rows as the ORM gives them.
+    def opened_chunks(size: Optional[int]) -> Any:
+        for rows in chunks(size):
+            yield _opened(state.session, positions, searches, list(rows))
+
+    result.chunks = opened_chunks
+    result.iterator = itertools.chain.from_iterable(opened_chunks(result._yield_per))
+    return result
+
+
+def _as_tuple(row: Any) -> Any:
+    return row if isinstance(row, (tuple, Row)) else (row,)
+
+
+def _opened(session: Any, positions: Dict[Cipher, Dict[int, str]], searches: List[Any], rows: List[Any]) -> List[Any]:
+    """``rows`` with the objects loaded for them decrypted, the encrypted
+    result columns decrypted, and the rows that fail a match search
+    removed."""
+    pending = session.info.pop(_PENDING, [])
     groups: Dict[Tuple[type, FrozenSet[str]], List[object]] = {}
     for target, names in pending:
-        cipher, sealed = _CONFIGURED[type(target)]
+        cipher, sealed = _configured_for(type(target))
         loaded = target.__dict__
         fields = frozenset(
             name
@@ -626,17 +790,18 @@ def _decrypt_loaded(state: Any) -> Any:
         if fields:
             groups.setdefault((type(target), fields), []).append(target)
     for (cls, fields), targets in groups.items():
-        cipher, _ = _CONFIGURED[cls]
+        cipher, _ = _configured_for(cls)
         opened = cipher.decrypt_rows(
             [{name: target.__dict__[name] for name in fields} for target in targets]
         )
         for target, values in zip(targets, opened):
             for name, value in values.items():
                 set_committed_value(target, name, value)
-    result = _decrypt_columns(state.statement, result)
+    if positions:
+        rows = _decrypt_columns(positions, rows)
     if searches:
-        result = _verify(searches, result)
-    return result()
+        rows = _verify(searches, rows)
+    return rows
 
 
 # A match search the hook verifies: the result position of its class's
@@ -669,7 +834,11 @@ def _checked_matches(statement: Any, matches: List[Any]) -> List[_Condition]:
             (
                 i
                 for i, description in enumerate(descriptions)
-                if description.get("type") is cls and description.get("expr") is cls
+                # A single-table subclass's objects are its base's too.
+                if isinstance(description.get("type"), type)
+                and cls is not None
+                and issubclass(description["type"], cls)
+                and description.get("expr") is description.get("type")
             ),
             None,
         )
@@ -736,11 +905,10 @@ def _item(row: Any, at: int) -> Any:
     return row[at] if isinstance(row, (tuple, Row)) else row
 
 
-def _verify(conditions: List[_Condition], result: Any) -> Any:
+def _verify(conditions: List[_Condition], rows: List[Any]) -> List[Any]:
     """Keep the rows that pass every condition: for each, at least one
     branch whose match searches all pass ``verify``. A field that is NULL
     fails its search, and so does an object an outer join leaves out."""
-    rows = list(result.data)
     passed: Dict[int, List[bool]] = {}
 
     def results(search: _Search) -> List[bool]:
@@ -763,36 +931,35 @@ def _verify(conditions: List[_Condition], result: Any) -> Any:
         )
         for i in range(len(rows))
     ]
-    # with_new_rows takes one tuple for each row, whatever the shape it keeps.
-    return result.with_new_rows(
-        [row if isinstance(row, (tuple, Row)) else (row,) for row, kept in zip(rows, keep) if kept]
-    )
+    return [row for row, kept in zip(rows, keep) if kept]
 
 
-def _decrypt_columns(statement: Any, result: Any) -> Any:
-    """Decrypt the result columns that are encrypted fields, such as
-    ``email`` in ``select(Customer.email, Customer.plan)``: with one
-    ``decrypt_rows`` call for each class and set of fields. A column of a
-    whole object, as in ``select(Customer)``, is left to the load events."""
-    descriptions = getattr(statement, "column_descriptions", None)
-    if not descriptions:
-        return result
-    # Each result column that is an encrypted field: its position, by cipher.
+def _encrypted_columns(statement: Any) -> Dict[Cipher, Dict[int, str]]:
+    """The result columns of ``statement`` that are encrypted fields, such
+    as ``email`` in ``select(Customer.email, Customer.plan)``: their
+    positions and field names, by cipher. A column of a whole object, as in
+    ``select(Customer)``, is left to the load events."""
     positions: Dict[Cipher, Dict[int, str]] = {}
-    for at, description in enumerate(descriptions):
+    for at, description in enumerate(getattr(statement, "column_descriptions", None) or ()):
         column = _column_of(description.get("expr"))
         if column is None or not isinstance(column.type, EqlType):
             continue
         cipher = _TABLES.get(getattr(column, "table", None))
         if cipher is not None:
             positions.setdefault(cipher, {})[at] = column.key
-    if not positions:
-        return result
-    rows = [list(row) if isinstance(row, (tuple, Row)) else [row] for row in result.data]
+    return positions
+
+
+def _decrypt_columns(positions: Dict[Cipher, Dict[int, str]], rows: List[Any]) -> List[Any]:
+    """``rows`` with the encrypted columns at ``positions`` decrypted: with
+    one ``decrypt_rows`` call for each class and set of fields that are not
+    NULL. A row of one column, as from ``select(Customer.email)``, is the
+    value itself."""
+    single = bool(rows) and not isinstance(rows[0], (tuple, Row))
+    lists = [[row] if single else list(row) for row in rows]
     for cipher, fields in positions.items():
-        # Rows grouped by which of these fields are not NULL.
         groups: Dict[FrozenSet[int], List[List[Any]]] = {}
-        for row in rows:
+        for row in lists:
             present = frozenset(at for at in fields if row[at] is not None)
             if present:
                 groups.setdefault(present, []).append(row)
@@ -803,7 +970,7 @@ def _decrypt_columns(statement: Any, result: Any) -> Any:
             for row, values in zip(members, opened):
                 for at in present:
                     row[at] = values[fields[at]]
-    return result.with_new_rows([tuple(row) for row in rows])
+    return [row[0] if single else tuple(row) for row in lists]
 
 
 def _column_of(expression: Any) -> Any:
@@ -868,6 +1035,84 @@ def _sorted_by_terms(statement: Any) -> Any:
             select._order_by_clauses = _select_sort_keys(select)
 
     return visitors.cloned_traverse(statement, {}, {"select": visit_select})
+
+
+# The elements with an ORDER BY of their own that the hooks do not rewrite:
+# a window, WITHIN GROUP, and an aggregate's ORDER BY.
+_OWN_ORDER_BY = frozenset({"over", "withingroup", "aggregateorderby", "aggregate_order_by"})
+
+
+def _scan(statement: Any) -> Tuple[List[Any], bool]:
+    """One walk of ``statement``: its match searches, and whether any select
+    in it has an ORDER BY for ``_sorted_by_terms`` to look at. Raises
+    ``QueryError`` for an encrypted column sorted where the hooks cannot
+    sort it by its order term."""
+    matches = []
+    sorted_ = False
+    for element in visitors.iterate(statement):
+        if _MATCH in getattr(element, "_annotations", {}):
+            matches.append(element)
+        if isinstance(element, Select) and element._order_by_clauses:
+            sorted_ = True
+        elif isinstance(element, CompoundSelect) and element._order_by_clauses:
+            _refuse_compound_sort(element)
+        elif getattr(element, "__visit_name__", None) in _OWN_ORDER_BY:
+            column = _bare_eql_column(getattr(element, "order_by", None))
+            if column is not None:
+                raise _sort_refused(
+                    column,
+                    "in a window, WITHIN GROUP, or an aggregate's ORDER BY. Sort it by "
+                    "its order term: pass Model.field.asc() or .desc() instead.",
+                )
+    return matches, sorted_
+
+
+def _refuse_compound_sort(compound: Any) -> None:
+    """A UNION's ORDER BY names its result columns, so it cannot sort by an
+    order term. Refuse an encrypted column there, named or by a string."""
+    named = {}
+    if compound.selects:
+        named = dict(compound.selects[0].selected_columns.items())
+    for clause in compound._order_by_clauses:
+        column = _bare_eql_column(clause)
+        if column is None:
+            for element in visitors.iterate(clause):
+                if isinstance(element, (_label_reference, _textual_label_reference)):
+                    name = element.element
+                    found = named.get(name) if isinstance(name, str) else None
+                    if _is_eql_column(found):
+                        column = found
+        if column is not None:
+            raise _sort_refused(
+                column,
+                "in the ORDER BY of a UNION, or another compound select. That ORDER BY "
+                "sorts the result columns, so it cannot sort by the order term. Sort "
+                "each select, or select the order term as a column and sort by it.",
+            )
+
+
+def _bare_eql_column(clause: Any) -> Any:
+    """An encrypted column in ``clause`` that is not inside an order term,
+    or ``None``."""
+    pending = [clause] if clause is not None else []
+    while pending:
+        element = pending.pop()
+        if isinstance(element, FunctionElement) and getattr(element, "name", None) in _ORDER_TERMS.values():
+            continue
+        if _is_eql_column(element):
+            return element
+        pending.extend(element.get_children())
+    return None
+
+
+def _sort_refused(column: Any, where: str) -> QueryError:
+    return QueryError(
+        "query_unsupported",
+        f"the encrypted column {_column_name(column)} is sorted {where} A bare sort of an "
+        "EQL column sorts the stored JSON, in a wrong order.",
+        field=getattr(column, "key", None),
+        reason="order",
+    )
 
 
 def _select_sort_keys(select: Any) -> Any:
@@ -962,15 +1207,6 @@ def _match_refused(column: Any, why: str) -> QueryError:
         field=getattr(column, "key", None),
         reason="match",
     )
-
-
-def _matches_in(statement: Any) -> List[Any]:
-    """Every match search in ``statement``, as the annotated expressions."""
-    return [
-        element
-        for element in visitors.iterate(statement)
-        if _MATCH in getattr(element, "_annotations", {})
-    ]
 
 
 def _refused(column: Any, op: Callable[..., Any]) -> QueryError:

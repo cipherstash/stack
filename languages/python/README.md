@@ -208,6 +208,8 @@ with Session(engine) as session:
 - **Other operators** that would send a value, such as `like`, `contains`, `between`, and `in_` with a subquery, raise `QueryError` with `query_unsupported` when you build the query. The value would reach the database as plaintext, and could never match. `is_(None)` and `is_not(None)` send no value, so they work.
 - **Sorting:** `order_by` on an encrypted field sorts by its order term, such as `eql_v4.ord_term(level)`. This covers `.asc()`, `.desc()`, `.nulls_first()`, `.nulls_last()`, `sqlalchemy.asc(col)`, and a bare `order_by(col)`. It works in a session and on a connection, on an aliased class, in a subquery, and for a column named by a label or a string, as in `order_by(col.label("x"))`, `order_by("x")`, or `order_by(desc("level"))`. The field's marker must have an order index, such as `IntegerOrd`, `NumericOrd`, or `TextOrd`. Sorting a field with no order index raises `QueryError` with `query_unsupported`.
 
+  A bare encrypted column in an ORDER BY the SDK does not rewrite raises `QueryError` with `query_unsupported` and reason `order`. That covers a window, as in `over(order_by=col)`, `within_group(col)`, an aggregate's `aggregate_order_by`, and the ORDER BY of a `union` or another compound select. In the first three, pass `col.asc()` or `col.desc()`, which sort by the order term. A compound select's ORDER BY sorts its result columns, so it cannot sort by the order term at all.
+
   The SDK rewrites the sort because of a gap in EQL v4. A bare `ORDER BY level` on an EQL v4 column sorts in a wrong order, with no error. The EQL column types have no sort order of their own, so PostgreSQL sorts the stored JSON. The order term sorts by the plaintext, and the SDK's index on it serves the sort. If you write SQL by hand, sort by `eql_v4.ord_term(col)` too.
 - A comparison on a class that is not configured raises `QueryError` with `query_not_configured`.
 
@@ -217,10 +219,14 @@ Each class must be declared with `stackencrypt.model` and mapped by SQLAlchemy. 
 - `declaration_table_mismatch`: the table in `stackencrypt.model` is not the `__tablename__`.
 - `declaration_column_name`: an encrypted field's column has another name than the field, as with `mapped_column("email_address")`.
 - `declaration_column_type`: an encrypted field's column is not the EQL type of its marker. Set `type_annotation_map = eql_type_map` on the base.
-- `declaration_unique_column`: an encrypted column has `unique=True` or a unique constraint. Each EQL value contains new random ciphertext, so the constraint would never find a duplicate. Equal values have equal `eq` terms, so use a unique index on `eql_v4.eq_term(col)`, as in "Migrations with Alembic".
+- `declaration_unique_column`: an encrypted column has `unique=True`, a unique constraint, a unique index on the column itself, or is in the primary key. Each EQL value contains new random ciphertext, so the database would never find a duplicate. Equal values have equal `eq` terms, so use a unique index on `eql_v4.eq_term(col)`, as in "Migrations with Alembic".
 - `declaration_already_configured`: another class is configured for the same table.
 
-A statement that puts an encrypted value inside its SQL, such as `insert(Customer).values(email=...)`, raises `DeclarationError` with `declaration_inline_value`. The value is not stored. Pass the values as parameters instead, as `session.add` and `session.execute(insert(Customer), rows)` do.
+A subclass that SQLAlchemy maps to its base's table, by single-table inheritance, is encrypted and decrypted as its base is. It needs no `stackencrypt.model` of its own, and listing it in `configure_encryption` with or after its base does nothing.
+
+A statement that puts an encrypted value inside its SQL raises `DeclarationError` with `declaration_inline_value`. The value is not stored. That covers `insert(Customer).values(email=...)`, a list of rows in `values([...])`, a SQL expression that holds a value, such as `func.lower(...)` or `case(...)`, a `bindparam` of another name than the field, and the SET of an ON CONFLICT. Pass the values as parameters instead, as `session.add` and `session.execute(insert(Customer), rows)` do. An ON CONFLICT SET from the new row, such as `set_={"email": statement.excluded.email}`, sends no value, so it works.
+
+A select through a session decrypts its rows as the app reads them. With `yield_per`, each chunk is decrypted when it is read.
 
 ### Migrations with Alembic
 
@@ -232,6 +238,8 @@ A class mapped with `eql_type_map` gets a database index for each search its fie
 | `ope` | `btree (eql_v4.ord_term(col))` |
 | `ore_block` | `btree (eql_v4.ord_term_ore(col))` |
 | `match` | `gin (eql_v4.match_term(col))` |
+
+A name longer than PostgreSQL's 63 bytes is cut short and ends with a short hash of the whole name.
 
 If the model declares its own index on the same term of the same column, the SDK adds none for that term. Declare it in `__table_args__`. For example, a unique email needs a unique btree index, because PostgreSQL cannot make a hash index unique:
 

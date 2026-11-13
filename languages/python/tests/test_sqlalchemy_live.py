@@ -97,6 +97,21 @@ class Player(Base):
     level: Mapped[Annotated[int, IntegerOrd]]
 
 
+@stackencrypt.model("members")
+class Member(Base):
+    __tablename__ = "members"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    kind: Mapped[Annotated[str, Passthrough]]
+    email: Mapped[Annotated[str, TextEq]]
+    __mapper_args__ = {"polymorphic_on": "kind", "polymorphic_identity": "member"}
+
+
+class GoldMember(Member):
+    """Single-table inheritance: stored in ``members``, with no declaration."""
+
+    __mapper_args__ = {"polymorphic_identity": "gold"}
+
+
 @pytest.fixture(scope="module")
 def engine():
     schema = f"sa_{uuid.uuid4().hex[:12]}"
@@ -110,7 +125,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))
     Base.metadata.create_all(engine)
-    configure_encryption([Customer, Order, Player, Profile, Venue, Trip, Guide, Run])
+    configure_encryption([Customer, Order, Player, Profile, Venue, Trip, Guide, Run, Member, GoldMember])
     yield engine
     with engine.begin() as conn:
         conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
@@ -120,7 +135,7 @@ def engine():
 @pytest.fixture(autouse=True)
 def empty(engine):
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE orders, customers, players, profiles, venues, guides, trips, runs RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE orders, customers, players, profiles, venues, guides, trips, runs, members RESTART IDENTITY"))
 
 
 def stored(engine, sql):
@@ -178,6 +193,46 @@ def test_a_relationship_load_decrypts_the_related_objects(engine):
     with Session(engine) as session:
         ann = session.scalars(select(Customer)).one()
         assert sorted(order.note for order in ann.orders) == ["first order", "second order"]
+
+
+def test_a_joined_eager_load_decrypts_both_classes(engine):
+    from sqlalchemy.orm import joinedload
+
+    add_ann(engine)
+    with Session(engine) as session:
+        rows = (
+            session.execute(select(Customer, Order).join(Customer.orders).options(joinedload(Customer.orders)))
+            .unique()
+            .all()
+        )
+        assert len(rows) == 2
+        assert {customer.email for customer, _ in rows} == {"ann@example.com"}
+        assert sorted(order.note for _, order in rows) == ["first order", "second order"]
+
+
+def test_yield_per_decrypts_every_chunk(engine):
+    with Session(engine) as session:
+        session.add_all([Customer(email=f"c{i}@example.com", name=f"C{i}", plan="free") for i in range(5)])
+        session.commit()
+    with Session(engine) as session:
+        result = session.scalars(select(Customer).order_by(Customer.id).execution_options(yield_per=2))
+        assert [customer.email for customer in result] == [f"c{i}@example.com" for i in range(5)]
+
+
+def test_a_single_table_subclass_is_encrypted_and_decrypted_as_its_base(engine):
+    with Session(engine) as session:
+        session.add(GoldMember(email="gold@example.com"))
+        session.commit()
+    [(kind, email)] = stored(engine, "SELECT kind, email::text FROM members")
+    assert kind == "gold"
+    assert "gold@example.com" not in email
+    with Session(engine) as session:
+        gold = session.scalars(select(GoldMember).where(GoldMember.email == "gold@example.com")).one()
+        assert gold.email == "gold@example.com"
+    with Session(engine) as session:
+        [member] = session.scalars(select(Member)).all()
+        assert isinstance(member, GoldMember)
+        assert member.email == "gold@example.com"
 
 
 def test_an_attribute_read_after_commit_is_decrypted(engine):

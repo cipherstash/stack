@@ -38,7 +38,7 @@ Each encrypted value needs its own data key from ZeroKMS, CipherStash's key serv
 **B. Hooks that work on a whole statement or result (chosen).**
 
 - Writes: a `before_execute` hook on SQLAlchemy's `Engine` class, so every engine runs it. For each `INSERT` or `UPDATE` on a configured table, it encrypts the parameters of every row with one `Cipher.encrypt_rows` call.
-- Reads: the `load` and `refresh` events of each class record the objects a query builds. A `do_orm_execute` hook then decrypts them, with one `Cipher.decrypt_rows` call for each class and set of fields. It sets the plaintext with `set_committed_value`, so the objects are not marked as changed.
+- Reads: the `load` and `refresh` events of each class record the objects a query builds. A `do_orm_execute` hook then decrypts them, with one `Cipher.decrypt_rows` call for each class and set of fields in each chunk of rows the ORM builds: one chunk for `.all()`, and one for each `yield_per` batch. A single-table subclass of a configured class is decrypted as its base. It sets the plaintext with `set_committed_value`, so the objects are not marked as changed.
 - Reads of columns: the same hook decrypts the result columns that are encrypted fields, as in `select(Customer.email, Customer.plan)`. It makes one `decrypt_rows` call for each class and set of fields.
 
 ### Why B
@@ -63,7 +63,7 @@ It checks each class first, and raises `DeclarationError` before any query:
 | `declaration_table_mismatch` | a `__tablename__` that is not the table in `stackencrypt.model` |
 | `declaration_column_name` | an encrypted field whose column has another name |
 | `declaration_column_type` | an encrypted field whose column is not its marker's EQL type |
-| `declaration_unique_column` | an encrypted field with a unique constraint |
+| `declaration_unique_column` | an encrypted field with a unique constraint or index, or in the primary key |
 | `declaration_already_configured` | a table that another class is configured for |
 
 ### Every engine, once in a process
@@ -87,9 +87,9 @@ The hooks use field names, and SQLAlchemy uses column names in statement paramet
 
 The hooks can change only the parameters passed beside a statement. Three cases would put plaintext where the hooks cannot reach it. Each one raises an error before anything is sent.
 
-- **A value inside the SQL**, such as `insert(Customer).values(email=...)`. It raises `DeclarationError` with `declaration_inline_value`.
+- **A value inside the SQL**, such as `insert(Customer).values(email=...)`, a list of rows in `values([...])`, an expression that holds a value, a `bindparam` of another name, or the SET of an ON CONFLICT. It raises `DeclarationError` with `declaration_inline_value`.
 - **An operator that would send a value as plaintext**, such as `like`, `contains`, `between`, or `in_` with a subquery. It raises `QueryError` with `query_unsupported` when the app builds the query. The value could also never match an EQL value.
-- **A unique constraint on an encrypted column.** Each EQL value contains new random ciphertext, so the constraint never finds a duplicate. A unique index on `eql_v4.eq_term(col)` works instead.
+- **A unique constraint or index on an encrypted column, or a primary key that contains one.** Each EQL value contains new random ciphertext, so the database never finds a duplicate. A unique index on `eql_v4.eq_term(col)` works instead.
 
 A comparison with another SQL expression is allowed when the expression holds no Python value, such as another column. It sends no value. An expression that holds one, such as `literal("x")` or `func.lower("x")`, is refused: the hooks cannot encrypt a value inside an expression. SQLAlchemy itself compares columns this way when it copies a statement.
 

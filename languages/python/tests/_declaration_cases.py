@@ -21,7 +21,7 @@ import pydantic
 import pydantic.dataclasses
 import pytest
 from sqlalchemy import inspect
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, MappedAsDataclass, mapped_column, relationship
 from sqlalchemy import ForeignKey
 
 import stackencrypt
@@ -906,3 +906,50 @@ def test_a_plan_the_engine_refuses_is_a_declaration_error():
     error = refusal(build)
     assert error.code == "stack_encrypt_dynamic_plan"
     assert error.reason == "no_fields"
+
+
+class DataclassBase(MappedAsDataclass, DeclarativeBase):
+    pass
+
+
+def test_a_relationship_of_a_mapped_dataclass_needs_no_marker(credentials):
+    # dataclasses.fields lists the relationship, though it is never a column.
+    @stackencrypt.model("shelves")
+    class Shelf(DataclassBase):
+        __tablename__ = "shelves"
+        id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+        label: Mapped[Annotated[str, TextEq]]
+        boxes: Mapped[List["Crate"]] = relationship(default_factory=list)
+
+    @stackencrypt.model("cupboards")
+    class Cupboard(DataclassBase):
+        __tablename__ = "cupboards"
+        id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+        label: Mapped[Annotated[str, TextEq]]
+        # init=False: under Annotated, SQLAlchemy cannot tell the collection
+        # type, so it takes no default_factory.
+        boxes: Mapped[Annotated[List["Crate"], Ignore]] = relationship(init=False)
+
+    class Crate(DataclassBase):
+        __tablename__ = "crates"
+        id: Mapped[int] = mapped_column(primary_key=True, init=False)
+        shelf_id: Mapped[Optional[int]] = mapped_column(ForeignKey("shelves.id"), default=None)
+        cupboard_id: Mapped[Optional[int]] = mapped_column(ForeignKey("cupboards.id"), default=None)
+
+    assert planned(Shelf) == [("id", Passthrough), ("label", TextEq)]
+    assert planned(Cupboard) == [("id", Passthrough), ("label", TextEq)]
+
+
+def test_a_field_named_like_a_module_its_hint_uses_resolves_from_the_module():
+    # The class attribute `datetime` is the mapped column. The hint names
+    # the module, as get_type_hints(cls) resolves it. A relationship makes
+    # the hints resolve one at a time.
+    @stackencrypt.model("diary_days")
+    class Day(Base):
+        __tablename__ = "diary_days"
+        id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+        datetime: Mapped[Annotated[datetime.date, Passthrough]]
+        user_id: Mapped[Annotated[int, Passthrough]] = mapped_column(ForeignKey("users.id"))
+        user: Mapped["User"] = relationship()
+
+    assert planned(Day) == [("id", Passthrough), ("datetime", Passthrough), ("user_id", Passthrough)]

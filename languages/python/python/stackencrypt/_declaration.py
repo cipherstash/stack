@@ -304,11 +304,19 @@ def _hints(cls: type) -> Dict[str, Any]:
 
 
 def _namespaces(base: type) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """The global and local names a hint of ``base`` resolves in, as
-    ``get_type_hints`` uses them: its module's, and the class's own. Built
-    once per class, not once per hint."""
+    """The global and local names a hint of ``base`` is evaluated in, in the
+    order ``get_type_hints(cls)`` gives them to ``eval``. Built once per
+    class, not once per hint.
+
+    From 3.10, ``get_type_hints(cls)`` puts the module's names first, as
+    the locals, and the class's own names after them: so a hint that names
+    the ``datetime`` module finds it, not a field named ``datetime``. On
+    3.9 it uses the module's names only."""
     module = sys.modules.get(base.__module__)
-    return (dict(vars(module)) if module is not None else {}), dict(vars(base))
+    module_names = dict(vars(module)) if module is not None else {}
+    if sys.version_info < (3, 10):
+        return module_names, {}
+    return dict(vars(base)), module_names
 
 
 def _resolve_one(
@@ -382,17 +390,18 @@ def _check_no_hand_written_methods(cls: type) -> None:
 
 
 def _read_fields(cls: type, hints: Dict[str, Any]) -> List[_ReadField]:
+    # A relationship is never a column, whichever list the names come
+    # from: a MappedAsDataclass model's dataclass fields include it.
+    relationships = _relationships(cls)
     names = _library_field_names(cls)
     from_hints = names is None
     if names is None:
-        relationships = _relationships(cls)
         names = [
             name
             for name, hint in hints.items()
-            if not _is_class_level(hint)
-            and not _is_dunder(name)
-            and name not in relationships
+            if not _is_class_level(hint) and not _is_dunder(name)
         ]
+    names = [name for name in names if name not in relationships]
     read = []
     for name in names:
         marker, value_type = _marker_of(name, hints.get(name), from_hints=from_hints)
