@@ -85,6 +85,21 @@ use crate::Encrypt;
 /// So whitespace, the order of an object's members, and the spelling of a
 /// number (`1.0` or `1e0`) are not kept.
 ///
+/// ## Documents that are refused
+///
+/// A document is sealed only if decrypting can read it back. The text is
+/// parsed by the rules of [`parse_text`] before it is sealed, and a
+/// document those rules refuse is [`Error::Aead`](crate::Error::Aead), the
+/// error for any value that cannot be sealed as given. No key is requested
+/// and nothing is stored. A `Value` can hold two such documents:
+///
+/// - one nested deeper than 127 levels of arrays and objects;
+/// - with `serde_json`'s `arbitrary_precision` feature, a number that is
+///   not a 64-bit integer or a double. Without that feature every number
+///   in a `Value` is one of those.
+///
+/// [`parse`](Self::parse) refuses both when the document is built.
+///
 /// ## Decryption
 ///
 /// The ciphertext is checked before the text is parsed. The leaf is opened
@@ -101,6 +116,24 @@ use crate::Encrypt;
 /// decrypted as a `String` gives the JSON text, and a `String` that holds
 /// JSON text decrypts as a `JsonPlaintext`. The context is checked either
 /// way, so neither lets a caller read data they could not read before.
+////// ## Equality terms
+///
+/// A `JsonPlaintext` is a single value, so a target that derives an
+/// equality term from a single value can derive one from a document. The
+/// term is the equality term of the document's JSON text, the same term a
+/// `String` holding that text has. Two documents have the same term when
+/// they are written as the same text.
+///
+/// Equal documents are written as the same text when `serde_json` keeps an
+/// object's members in key order, which is its default. With its
+/// `preserve_order` feature, two objects with the same members in a
+/// different order are equal values with different texts, and so have
+/// different terms. Numbers compare as `serde_json` compares them: `1` and
+/// `1.0` are different values.
+///
+/// An equality term shows which rows hold the same document. Encrypting a
+/// document with `encrypt`, or into a target that has only a ciphertext,
+/// derives no term.
 ///
 /// ## What the ciphertext reveals
 ///
@@ -191,13 +224,26 @@ impl fmt::Debug for JsonPlaintext {
 /// A document describes itself to Vitamin C as one text scalar: its JSON
 /// text. The text is written into a buffer of its final size, read by the
 /// sink in place, and wiped when the sink returns.
+///
+/// The text is parsed once before the sink sees it, by the rules decrypting
+/// uses, so a document that would not open is a source error here and is
+/// never sealed.
 impl Encrypt for &JsonPlaintext {
     const DEPTH: Option<usize> = depth::SCALAR;
     const FIXED: Option<FixedType> = None;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let text = to_wiped_text(&self.0).map_err(|e| S::Error::source(SourceError::new(e)))?;
-        // serde_json writes UTF-8. The check costs one pass and keeps the
-        // text out of an unchecked conversion.
+        // What is sealed must open. Decrypting reads the text with
+        // `parse_text`, which refuses text a `Value` can hold, so the text
+        // is read the same way here and a document that would never open is
+        // refused before it is sealed. The document read back is wiped.
+        match parse_text(&text) {
+            Ok(mut read) => plain::wipe(&mut read),
+            Err(refused) => return Err(S::Error::source(SourceError::new(refused))),
+        }
+        // `parse_text` accepts only UTF-8, so this conversion does not fail.
+        // It is checked, not assumed, to keep the text out of an unchecked
+        // conversion.
         let text = std::str::from_utf8(&text)
             .map_err(|_| S::Error::source(SourceError::msg("JSON text that is not UTF-8")))?;
         sink.scalar(None, Physical::Text(text))
@@ -270,6 +316,34 @@ mod tests {
             let read = sealed.as_str().visit(JsonPlaintext::sink()).unwrap();
             assert_eq!(read.value(), &value, "{sealed}");
         }
+    }
+
+    /// A document of `levels` nested arrays.
+    fn nested(levels: usize) -> Value {
+        (0..levels).fold(Value::Null, |inner, _| Value::Array(vec![inner]))
+    }
+
+    #[test]
+    fn a_document_the_parser_would_not_read_back_is_refused_as_a_source() {
+        // 127 levels is the deepest text `parse_text` reads.
+        let deepest = JsonPlaintext::from(nested(127));
+        let sealed = text(&deepest);
+        assert_eq!(sealed.len(), 127 * 2 + 4, "127 brackets each side of null");
+        assert!(JsonPlaintext::parse(&sealed).is_ok());
+
+        let deeper = JsonPlaintext::from(nested(128));
+        let refused = (&deeper).visit(String::sink()).unwrap_err();
+        assert!(
+            matches!(refused, vitaminc_aead::DecodeError::Source(_)),
+            "the source refuses, not the sink: {refused:?}"
+        );
+        // The refusal is the parser's, and names no part of the document.
+        let vitaminc_aead::DecodeError::Source(source) = refused else {
+            unreachable!()
+        };
+        assert!(source.inner().is::<JsonTextError>());
+        // The owned form refuses the same way.
+        assert!(deeper.visit(String::sink()).is_err());
     }
 
     #[test]

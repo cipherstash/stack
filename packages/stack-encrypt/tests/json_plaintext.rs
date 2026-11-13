@@ -3,13 +3,22 @@
 //! cleanup. No service credentials are needed.
 use proptest::prelude::*;
 use serde_json::{json, Value};
+use std::sync::atomic::Ordering;
+
 use stack_encrypt::json::JsonPlaintext;
-use stack_encrypt::{Ciphertext, Controlled, DecryptFrom, EncryptInto, Error, Protected};
+use stack_encrypt::sem::EqualityTerm;
+use stack_encrypt::target::{equality, Borrowed, CallerContext};
+use stack_encrypt::{nonempty, Ciphertext, Controlled, DecryptFrom, EncryptInto, Error, Protected};
 use zeroize::Zeroize;
 
 mod common;
 
 const COLUMN: (&str, &str) = ("users", "profile");
+
+/// A document of `levels` nested arrays: `[[[..]]]`.
+fn nested(levels: usize) -> Value {
+    (0..levels).fold(Value::Null, |inner, _| Value::Array(vec![inner]))
+}
 
 fn profile() -> Value {
     json!({
@@ -160,6 +169,93 @@ mod given_the_stored_format {
             lengths.push(stored.to_bytes().len());
         }
         assert_eq!(lengths[1], lengths[0] + 1);
+    }
+}
+
+/// A document is sealed only if decrypting can read it back. The parser
+/// reads at most 127 levels of containers, and a `Value` can hold more.
+mod given_a_document_that_would_not_open {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_deepest_document_the_parser_reads_round_trips() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored = keyset
+            .encrypt_with_context(JsonPlaintext::from(nested(127)), COLUMN)
+            .await
+            .unwrap();
+        let opened = keyset
+            .decrypt_with_context::<JsonPlaintext>(stored, COLUMN)
+            .await
+            .unwrap();
+        assert_eq!(opened.value(), &nested(127));
+    }
+
+    #[tokio::test]
+    async fn a_deeper_document_is_refused_before_any_key_is_requested() {
+        let (cipher, generates, _) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        for levels in [128, 200] {
+            let refused = keyset
+                .encrypt_with_context(JsonPlaintext::from(nested(levels)), COLUMN)
+                .await
+                .unwrap_err();
+            assert!(matches!(refused, Error::Aead), "{levels}: {refused:?}");
+        }
+        assert_eq!(
+            generates.load(Ordering::SeqCst),
+            0,
+            "nothing was sealed, so no key was requested"
+        );
+        // The same document as text is refused when it is built.
+        let text = serde_json::to_string(&nested(128)).unwrap();
+        assert!(JsonPlaintext::parse(&text).is_err());
+    }
+}
+
+/// A document is a single value, so a target that derives an equality term
+/// from one can derive it from a document: the term of its JSON text.
+mod given_an_equality_term {
+    use super::*;
+
+    fn caller() -> CallerContext {
+        CallerContext::from(nonempty!("users/profile"))
+    }
+
+    #[tokio::test]
+    async fn it_is_the_term_of_the_documents_json_text() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        // The equality term of a value of type `$ty`, under one context.
+        macro_rules! term {
+            ($ty:ty, $value:expr) => {{
+                let value: $ty = $value;
+                let term: EqualityTerm = keyset
+                    .run(equality::<$ty, _, Borrowed>(), &value, caller())
+                    .await
+                    .unwrap();
+                term
+            }};
+        }
+        macro_rules! term_of_document {
+            ($document:expr) => {
+                term!(JsonPlaintext, JsonPlaintext::from($document))
+            };
+        }
+        let document = term_of_document!(json!({"b": [1, 2.5], "a": "x"}));
+        let text = term!(String, r#"{"a":"x","b":[1,2.5]}"#.to_owned());
+        assert_eq!(document.as_bytes(), text.as_bytes());
+        // Equal documents have one term, whatever order they were built in.
+        let reordered = term_of_document!(json!({"a": "x", "b": [1, 2.5]}));
+        assert_eq!(document.as_bytes(), reordered.as_bytes());
+        // A different document has another, and `1` is not `1.0`.
+        let other = term_of_document!(json!({"a": "y", "b": [1, 2.5]}));
+        assert_ne!(document.as_bytes(), other.as_bytes());
+        assert_ne!(
+            term_of_document!(json!(1)).as_bytes(),
+            term_of_document!(json!(1.0)).as_bytes()
+        );
     }
 }
 

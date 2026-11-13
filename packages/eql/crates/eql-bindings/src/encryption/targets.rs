@@ -559,10 +559,17 @@ pub(crate) fn no_index(name: &'static str, index: &IndexSpec) -> TargetError {
 }
 
 /// Refuse a name the dispatch has no arm for, as the table explains it.
+/// The first check of every entry point, so a name is refused before its
+/// label or its value is read.
 fn producible(name: &str) -> Result<(), TargetError> {
-    match target(name) {
+    permitted(target(name), name)
+}
+
+/// [`producible`], given the table's row for `name`, if it has one.
+fn permitted(row: Option<&'static Target>, name: &str) -> Result<(), TargetError> {
+    match row {
         Some(target) if target.producible => Ok(()),
-        _ => Err(refuse(name)),
+        row => Err(refusal(row, name)),
     }
 }
 
@@ -961,6 +968,28 @@ mod tests {
         assert!(matches!(refuse_query("Nope"), TargetError::Unknown { .. }));
     }
 
+    /// A row the engine cannot produce yet, on the wire: its plaintext is
+    /// `null`, not absent, and it says why.
+    #[test]
+    fn an_unproducible_row_serializes_with_a_null_plaintext_and_its_reason() {
+        assert_eq!(
+            serde_json::to_value(WAITING).unwrap(),
+            serde_json::json!({
+                "name": "Waiting",
+                "family": "waiting",
+                "suffix": "",
+                "plaintext": null,
+                "sql_domain": "public.eql_v4_waiting",
+                "indexes": [],
+                "query": null,
+                "query_sql_domain": null,
+                "producible": false,
+                "reason": "its encoding is not decided"
+            })
+        );
+        assert_eq!(WAITING.plaintext_kind(), None);
+    }
+
     #[test]
     fn a_query_through_an_index_the_type_lacks_is_refused() {
         let text_eq = target("TextEq").unwrap();
@@ -993,6 +1022,17 @@ mod tests {
             refusal(Some(&WAITING), "Waiting").to_string(),
             "the engine cannot produce Waiting yet: its encoding is not decided"
         );
+        // What every entry point checks first: a row marked not producible
+        // is refused with its reason, and a name with no row as unknown.
+        assert!(matches!(
+            permitted(Some(&WAITING), "Waiting"),
+            Err(TargetError::Unproducible { name: "Waiting", reason }) if reason == "its encoding is not decided"
+        ));
+        assert!(matches!(
+            permitted(None, "Nope"),
+            Err(TargetError::Unknown { name }) if name == "Nope"
+        ));
+        assert!(permitted(target("Json"), "Json").is_ok());
         assert!(producible("Json").is_ok());
         assert!(producible("TextEq").is_ok());
         assert!(producible("TextOrdOre").is_ok());

@@ -1820,9 +1820,9 @@ async fn json_rows_the_go_sdk_sealed_open_in_rust() {
     }
 }
 
-/// The frozen `Json` rows the Go SDK stored when the type was first
-/// produced still parse and open. Unlike `v4_json_rows.json` this file is
-/// never regenerated, so a change that breaks stored documents fails here.
+/// The frozen `Json` rows, in the v1 stored format, still parse and open.
+/// Unlike `v4_json_rows.json` this file is never regenerated, so a change
+/// that breaks stored documents fails here.
 #[tokio::test]
 async fn frozen_json_rows_the_go_sdk_stored_still_open() {
     let fixture = go_settings::frozen();

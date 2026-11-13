@@ -356,54 +356,6 @@ mod given_text_eq {
     }
 }
 
-mod given_a_name_the_engine_cannot_produce {
-    use super::*;
-
-    /// Every type the table marks as not producible is refused by all three
-    /// entry points, with the table's reason, before any key is touched.
-    /// The catalog has no such type today, so this holds for one added
-    /// later; the refusal itself is tested on a row built for it, in
-    /// `eql_bindings::encryption::targets`.
-    #[tokio::test]
-    async fn every_entry_point_refuses_it_with_the_table_reason() {
-        let (cipher, calls) = common::cipher().await;
-        let keyset = cipher.default_keyset();
-        let unproducible = |error: TargetError, name: &str| {
-            let reason = targets::target(name).unwrap().reason.unwrap();
-            assert!(
-                matches!(&error, TargetError::Unproducible { name: n, reason: r } if *n == name && *r == reason),
-                "{name}: {error}"
-            );
-        };
-        for target in targets::targets().iter().filter(|t| !t.producible) {
-            let name = target.name;
-            unproducible(
-                refused(targets::encrypt(name, &keyset, &email(), text("x"))),
-                name,
-            );
-            unproducible(
-                refused(targets::query(
-                    name,
-                    &common::index_of(name),
-                    &keyset,
-                    &email(),
-                    text("x"),
-                )),
-                name,
-            );
-            unproducible(
-                refused(targets::decrypt(name, &cipher, &email(), b"{}")),
-                name,
-            );
-        }
-        let calls = calls.lock().unwrap();
-        assert!(
-            calls.generate.is_empty() && calls.retrieve.is_empty(),
-            "no key was touched"
-        );
-    }
-}
-
 mod given_an_unknown_name {
     use super::*;
 
@@ -436,6 +388,43 @@ mod given_an_unknown_name {
         assert_eq!(
             refused(targets::encrypt("Nope", &keyset, &email(), text("x"))).to_string(),
             "no such EQL type: Nope"
+        );
+    }
+
+    /// The name is checked first: a name with no type is refused as that,
+    /// whatever its label and value are, and no key is touched.
+    #[tokio::test]
+    async fn the_name_is_refused_before_the_label_or_the_value_is_read() {
+        let (cipher, calls) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let not_a_column = Label::new(["one"]).unwrap();
+        let error = refused(targets::encrypt(
+            "Nope",
+            &keyset,
+            &not_a_column,
+            frame(None::<i32>),
+        ));
+        assert!(matches!(error, TargetError::Unknown { .. }), "{error}");
+        let error = refused(targets::decrypt(
+            "Nope",
+            &cipher,
+            &not_a_column,
+            b"not json",
+        ));
+        assert!(matches!(error, TargetError::Unknown { .. }), "{error}");
+        // The same label and value under a real type are refused for
+        // themselves.
+        let error = refused(targets::encrypt(
+            "TextEq",
+            &keyset,
+            &not_a_column,
+            frame(None::<i32>),
+        ));
+        assert!(matches!(error, TargetError::Context { .. }), "{error}");
+        let calls = calls.lock().unwrap();
+        assert!(
+            calls.generate.is_empty() && calls.retrieve.is_empty(),
+            "no key was touched"
         );
     }
 }
@@ -686,7 +675,9 @@ mod the_table {
                 "JsonSearch"
             ],
         );
-        // That is every row: no type waits for an encoding today.
+        // That is every row: no type waits for an encoding today. A type
+        // added as not producible fails here. Give it a test that
+        // `encrypt`, `query` and `decrypt` each refuse it with its reason.
         for row in targets::targets() {
             assert!(row.producible, "{}", row.name);
             assert_eq!(row.reason, None, "{}", row.name);

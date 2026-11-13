@@ -167,6 +167,64 @@ func TestRefusals(t *testing.T) {
 // crmPackage stands in for a package the program does not own.
 const crmPackage = "package crm\n\ntype Contact struct {\n\tID    int64\n\tEmail string\n}\n"
 
+// documentEngine is an engine with the two EQL types that hold a JSON
+// document. It accepts every declaration, and answers the operators it
+// holds on each field.
+type documentEngine struct{ operators []stashgen.Operator }
+
+func (documentEngine) EQLTypes(context.Context) ([]stashgen.EQLType, error) {
+	return []stashgen.EQLType{
+		stashgen.DocumentType("Json", ""),
+		stashgen.DocumentType("JsonSearch", "JsonSearchQuery"),
+	}, nil
+}
+
+func (e documentEngine) Check(_ context.Context, d stashgen.Declaration) (map[string][]stashgen.Operator, error) {
+	answered := map[string][]stashgen.Operator{}
+	for _, f := range d.Fields {
+		answered[f.Name] = e.operators
+	}
+	return answered, nil
+}
+
+// A document field is searchable when its EQL type has a query type, and
+// not when the engine happened to answer an operator on it. So a JsonSearch
+// field the engine answers nothing on is refused, and never written as a
+// field that only encrypts; a Json field, which has no query type, is
+// written with Encrypt alone.
+func TestADocumentFieldIsSearchableByItsEQLType(t *testing.T) {
+	document := func(tag string) string {
+		return "package users\n\nimport \"encoding/json\"\n\ntype User struct {\n" + ctx +
+			"\tProfile json.RawMessage `stash:\"profile," + tag + "\"`\n}\n"
+	}
+	run := func(tag string) (*stashgen.File, error) {
+		dir := writeModule(t, map[string]string{"model.go": document(tag), "crm/contact.go": crmPackage})
+		return stashgen.FromTags(context.Background(), documentEngine{}, stashgen.Request{Dir: dir, Type: "User"})
+	}
+
+	_, err := run("encrypt_into=JsonSearch")
+	var fieldErr *stashgen.FieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Field != "Profile" || !strings.Contains(err.Error(), "the engine answers no document operator on JsonSearch") {
+		t.Fatalf("a JsonSearch field with no operators: %v", err)
+	}
+
+	file, err := run("encrypt_into=Json")
+	if err != nil {
+		t.Fatalf("a Json field: %v", err)
+	}
+	content := string(file.Content)
+	for _, want := range []string{"Profile eql.JSON", "func (f ProfileField) Encrypt("} {
+		if !strings.Contains(content, want) {
+			t.Errorf("the generated file lacks %q:\n%s", want, content)
+		}
+	}
+	for _, unwanted := range []string{"Contains(", "Selector(", "Match("} {
+		if strings.Contains(content, unwanted) {
+			t.Errorf("a storage-only document has no query method, and the file has %q", unwanted)
+		}
+	}
+}
+
 func TestForTypeInAnotherPackage(t *testing.T) {
 	// crm.Contact lives in its own package; the tagged struct names it.
 	dir := writeModule(t, map[string]string{

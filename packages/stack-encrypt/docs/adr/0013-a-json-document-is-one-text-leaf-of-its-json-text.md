@@ -74,6 +74,22 @@ parser refuses. As ADR-0010 says, that refusal means the data was written
 as something else. It does not mean the data was tampered with. A leaf
 that does not open is `Error::Aead`.
 
+### A document is sealed only if it will open
+
+A `serde_json::Value` can hold a document the strict parser refuses: one
+nested deeper than 127 levels, or, with `serde_json`'s
+`arbitrary_precision` feature, a number that is not a 64-bit integer or a
+double. Sealing such a document would store a ciphertext that never opens.
+
+So the text is parsed by the same rules before it is sealed. A document
+they refuse is not sealed, and no key is requested. The refusal is
+`Error::Aead`, as it is for any value that cannot be sealed as given, such
+as a record nested deeper than the envelope carries.
+
+The check is the parser itself, not a second set of rules. So what is
+sealed and what opens cannot drift apart. It costs one more pass over the
+text for each document sealed.
+
 ### A document is a scalar to the cipher
 
 `JsonPlaintext` implements Vitamin C's `Encrypt`, `Scalar` and
@@ -92,6 +108,19 @@ value is an `Option` that is `None`. Text has no fixed length, so a `None`
 is sealed with no padding, and its length can show that the value is
 absent. A data plan stores an absent `json` field as SQL `NULL`.
 
+### An equality term is the term of the text
+
+The engine derives an equality term from any single value. So a target
+that declares one for a document gets the equality term of its JSON text,
+the same term a `String` holding that text has. No EQL type declares one:
+`Json` has a ciphertext and nothing else.
+
+Equal documents have one term when `serde_json` keeps an object's members
+in key order, which is its default. With its `preserve_order` feature, two
+objects with the same members in a different order are equal values with
+different texts and different terms. A target that needs document equality
+under that feature is not served by this term.
+
 ## What is not claimed
 
 - **Length hiding.** The ciphertext is as long as the JSON text, plus a
@@ -103,6 +132,9 @@ absent. A data plan stores an absent `json` field as SQL `NULL`.
   before.
 - **Search or partial reads.** Nothing inside the ciphertext can be
   queried or read on its own. The JSON index is for those needs.
+- **A named refusal on encrypt.** A document that would not open is
+  refused as `Error::Aead`, which does not say why. `JsonPlaintext::parse`
+  names the reason when a document is built from text.
 - **The caller's text.** A document is stored as values. Two texts that
   parse to the same value are stored as the same text.
 

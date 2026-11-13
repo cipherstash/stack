@@ -317,9 +317,9 @@ func TestV4JSONRowsMatchTheCommittedFixture(t *testing.T) {
 	jsonRowsOpenToTheirPlaintexts(t, c, committed.Rows)
 }
 
-// TestFrozenV4JSONRowsStillOpen holds stored_v4_json_rows_v1.json, rows the
-// Go SDK stored as the Json type when the type was first produced. Unlike
-// v4_json_rows.json it is never regenerated: nothing writes it. Sealing its
+// TestFrozenV4JSONRowsStillOpen holds stored_v4_json_rows_v1.json, rows in
+// the v1 stored format of the Json type. Unlike v4_json_rows.json it is
+// never regenerated: nothing writes it. Sealing its
 // plaintexts today must give the same rows apart from each `c`, and its
 // committed `c` values must still open to its plaintexts. A failure here
 // means a change broke rows already stored; see the README in that

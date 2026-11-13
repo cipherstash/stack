@@ -20,10 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The stored plaintext is the document's JSON text, sealed as one text
     leaf. It is the text `serde_json` writes, with no whitespace. Key
     order, whitespace and the spelling of a number are not kept.
+  - A document is sealed only if it will open. The text is parsed by the
+    strict rules before it is sealed, so a `Value` nested deeper than 127
+    levels is refused as `Error::Aead` and no key is requested.
   - On decrypt the leaf is authenticated first, then the text is parsed by
     the same strict rules. A leaf that is not text, or text that is not a
     document, is `Error::OpenedType`. The ciphertext is authentic in that
     case: it was sealed as something else.
+  - A target that derives an equality term from a single value derives
+    the term of the document's JSON text. Equal documents have one term
+    while `serde_json` keeps members in key order, its default.
   - `dynamic::JsonPlaintext` is now this type, re-exported, so
     `dynamic::read_json` returns it. It gains `Clone`, `Zeroize`, a
     redacted `Debug`, `From<Value>` and `parse`.

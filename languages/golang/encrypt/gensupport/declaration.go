@@ -49,8 +49,8 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
-	// JSON is a field stored as a JSONSearch document: it crosses as
-	// its JSON text, which the engine parses. A json.RawMessage is that
+	// JSON is a field stored as a JSON document (the EQL types JSONSearch
+	// and JSON): it crosses as its JSON text, which the engine parses. A json.RawMessage is that
 	// text; a field of another Go type is marshalled with encoding/json
 	// ([Field.Encrypt]) and opened with [GetDocument].
 	JSON Kind = "json"
@@ -60,7 +60,8 @@ const (
 // sealed as one value under <context>/value. The struct crosses the binding
 // as one storage blob (vitaminc's storage profile, version 1) — the engine
 // seals a composite value as a tree of leaves, and an opaque struct is one
-// column. A value an earlier release sealed is a JSON document, which
+// column. A field of a struct, map or slice type that names an EQL type
+// holding a JSON document is the other way one is stored as one column. A value an earlier release sealed is a JSON document, which
 // [Opaque] still reads.
 const OpaqueField = "value"
 

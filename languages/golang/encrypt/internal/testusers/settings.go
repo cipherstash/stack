@@ -9,6 +9,10 @@ import "encoding/json"
 // back whole, and nothing inside it is queried. Its raw document is JSON
 // text, its preferences are a Go type and are SQL NULL when nil, and its
 // labels are a map.
+//
+// Setting's rows are frozen in stored_v4_json_rows_v1.json, which is never
+// regenerated: a change to a field here changes what those rows store.
+// Put a new case in a model of its own.
 type Setting struct {
 	_      struct{}          `stash:"context=settings"`
 	ID     int64             `stash:"id,passthrough"`

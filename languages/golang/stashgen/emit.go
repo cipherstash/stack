@@ -1003,12 +1003,17 @@ func (g genField) isJSON() bool {
 	return g.Verb == VerbEncryptInto && (g.GoType.Kind == KindJSON || g.GoType.Kind == KindJSONValue)
 }
 
-// isSearchableJSON reports whether the field is a document the engine
-// answers operators on: a JsonSearch field, which gets the document entry
-// jsonEntry writes. A document of a storage-only type (Json) answers none.
-// It gets the entry every sealed field with no query gets: Encrypt alone.
+// isSearchableJSON reports whether the field is a document of an EQL type
+// that has a query type: a JsonSearch field, which gets the document entry
+// jsonEntry writes. A document of a storage-only type (Json) has none, and
+// gets the entry every sealed field with no query gets: Encrypt alone.
+//
+// The answer is the EQL type's, from the engine's table, and not whether
+// the engine answered an operator on the field. So a JsonSearch field the
+// engine answers nothing on reaches planJSON, which refuses it, and is
+// never written as a field that only encrypts.
 func (g genField) isSearchableJSON() bool {
-	return g.isJSON() && len(g.operators) > 0
+	return g.isJSON() && g.queryType != ""
 }
 
 // jsonOperators are the operators a document field answers, and what each
