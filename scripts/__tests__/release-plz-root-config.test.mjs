@@ -46,6 +46,7 @@ const PUBLISHED = Object.keys(GROUPS).sort()
 const STAGED = {
   'stack-kms-vendor': 'stack-kms-vendor',
   'stack-kms-aws': 'stack-kms-vendor',
+  'stack-kms-vault': 'stack-kms-vendor',
 }
 const PUBLISHABLE = [...PUBLISHED, ...Object.keys(STAGED)].sort()
 
