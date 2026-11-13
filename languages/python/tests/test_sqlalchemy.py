@@ -10,12 +10,12 @@ import dataclasses
 from typing import Annotated, Optional
 
 import pytest
-from sqlalchemy import String, UniqueConstraint, create_engine, func, literal, select
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import ForeignKey, String, UniqueConstraint, create_engine, func, literal, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 import stackencrypt
 from stackencrypt import DeclarationError, Ignore, InvalidValueError, Passthrough, TextEq
-from stackencrypt import IntegerOrd, QueryError, Text, _eql
+from stackencrypt import IntegerOrd, QueryError, StashError, Text, _eql
 from stackencrypt.sqlalchemy import EqlType, configure_encryption, eql_type_map
 
 pytestmark = pytest.mark.usefixtures("credentials")
@@ -635,3 +635,277 @@ def test_a_plaintext_label_with_an_encrypted_columns_name_is_left_alone(untouche
     assert sent[-2].split("ORDER BY", 1)[1].strip() == "seconds"
     # Here the label "rank" names the encrypted column, so the sort is its term.
     assert sent[-1].split("ORDER BY", 1)[1].strip() == "eql_v4.ord_term(heats.seconds)"
+
+
+# A sealed value the statement carries itself, in any form the hook does not
+# encrypt.
+
+SECRET = "secret@example.com"
+
+
+@stackencrypt.model("inline_leads")
+class InlineLead(Base):
+    __tablename__ = "inline_leads"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    email: Mapped[Annotated[str, TextEq]]
+
+
+@pytest.fixture
+def leads(credentials):
+    """An SQLite engine with a configured ``inline_leads`` table, and its class."""
+    Lead = InlineLead
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE inline_leads (id INTEGER PRIMARY KEY, email TEXT)")
+    configure_encryption([Lead])
+    return engine, Lead
+
+
+def _inline_writes(Lead):
+    from sqlalchemy import bindparam, case, insert, update
+    from sqlalchemy.dialects import sqlite
+
+    upsert = sqlite.insert(Lead).values(id=1, email=None)
+    return {
+        "multi-row values": (insert(Lead).values([{"email": SECRET}, {"email": SECRET}]), None),
+        "a function of a value": (insert(Lead).values(email=func.lower(SECRET)), None),
+        "a bindparam of another name": (
+            insert(Lead).values(email=bindparam("new_email")),
+            [{"new_email": SECRET}, {"new_email": SECRET}],
+        ),
+        "a case with a value": (
+            update(Lead).values(email=case((Lead.id == 1, SECRET), else_=SECRET)),
+            None,
+        ),
+        "an on-conflict set": (
+            upsert.on_conflict_do_update(index_elements=["id"], set_={"email": SECRET}),
+            None,
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    "form",
+    ["multi-row values", "a function of a value", "a bindparam of another name", "a case with a value", "an on-conflict set"],
+)
+def test_a_sealed_value_in_any_form_of_the_statement_is_refused(leads, untouched, form):
+    engine, Lead = leads
+    statement, rows = _inline_writes(Lead)[form]
+    with engine.begin() as conn, pytest.raises(DeclarationError) as raised:
+        conn.execute(statement, rows) if rows else conn.execute(statement)
+    assert raised.value.code == "declaration_inline_value"
+    assert raised.value.field == "email"
+    assert SECRET not in str(raised.value)
+    with engine.connect() as conn:
+        assert conn.execute(select(Lead.__table__)).all() == []
+
+
+def test_an_on_conflict_set_from_the_excluded_row_is_encrypted_not_refused(leads):
+    from sqlalchemy.dialects import sqlite
+
+    engine, Lead = leads
+    statement = sqlite.insert(Lead)
+    statement = statement.on_conflict_do_update(
+        index_elements=["id"], set_={"email": statement.excluded.email}
+    )
+    # Past the refusal, the hook encrypts the row: with no client key, that
+    # fails building the client, before the database.
+    with engine.begin() as conn, pytest.raises(StashError) as raised:
+        conn.execute(statement, [{"id": 1, "email": SECRET}])
+    assert not isinstance(raised.value, DeclarationError)
+
+
+# The session hook reads rows as the app asks for them.
+
+
+class Shelf(Base):
+    __tablename__ = "plain_shelves"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    boxes: Mapped[list["Box"]] = relationship()
+
+
+class Box(Base):
+    __tablename__ = "plain_boxes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    shelf_id: Mapped[int] = mapped_column(ForeignKey("plain_shelves.id"))
+
+
+@pytest.fixture
+def shelves(untouched):
+    """Two shelves of two boxes in SQLite, with the hooks installed."""
+    from sqlalchemy.orm import Session
+
+    configure_encryption([Customer])  # installs the hooks, if no test did
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine, tables=[Shelf.__table__, Box.__table__])
+    with Session(engine) as session:
+        session.add_all([Shelf(id=1, boxes=[Box(id=1), Box(id=2)]), Shelf(id=2, boxes=[Box(id=3), Box(id=4)])])
+        session.commit()
+    return engine
+
+
+def test_a_joined_eager_load_of_two_entities_with_unique_works(shelves):
+    from sqlalchemy.orm import Session, joinedload
+
+    with Session(shelves) as session:
+        rows = (
+            session.execute(select(Shelf, Box).join(Shelf.boxes).options(joinedload(Shelf.boxes)))
+            .unique()
+            .all()
+        )
+    assert len(rows) == 4
+
+
+def test_a_joined_eager_load_with_no_unique_is_still_refused_by_sqlalchemy(shelves):
+    from sqlalchemy.exc import InvalidRequestError
+    from sqlalchemy.orm import Session, joinedload
+
+    with Session(shelves) as session, pytest.raises(InvalidRequestError, match="unique"):
+        session.execute(select(Shelf).options(joinedload(Shelf.boxes))).all()
+
+
+def test_yield_per_reads_the_rows_a_chunk_at_a_time(shelves):
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    loaded = []
+    listener = lambda target, context: loaded.append(target.id)  # noqa: E731
+    event.listen(Box, "load", listener)
+    try:
+        with Session(shelves) as session:
+            result = session.execute(select(Box).order_by(Box.id).execution_options(yield_per=1))
+            first = next(iter(result.scalars()))
+            assert first.id == 1
+            assert loaded == [1]
+            result.close()
+    finally:
+        event.remove(Box, "load", listener)
+
+
+# A single-table subclass of a configured class.
+
+
+@stackencrypt.model("members_plus")
+class MemberPlus(Base):
+    __tablename__ = "members_plus"
+    id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+    kind: Mapped[Annotated[str, Passthrough]]
+    email: Mapped[Annotated[str, TextEq]]
+    __mapper_args__ = {"polymorphic_on": "kind", "polymorphic_identity": "member"}
+
+
+class GoldMember(MemberPlus):
+    __mapper_args__ = {"polymorphic_identity": "gold"}
+
+
+def test_a_subclass_on_its_bases_table_is_accepted_when_its_base_is_configured(untouched):
+    configure_encryption([MemberPlus])
+    configure_encryption([GoldMember])
+    configure_encryption([MemberPlus, GoldMember])
+
+
+def test_a_subclass_load_is_decrypted_like_its_base(untouched):
+    from sqlalchemy.orm import Session
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE members_plus (id INTEGER PRIMARY KEY, kind TEXT, email TEXT)")
+        conn.exec_driver_sql("""INSERT INTO members_plus VALUES (1, 'gold', '{"i": {"t": "members_plus", "c": "email"}, "v": 2, "c": "x"}')""")
+    configure_encryption([MemberPlus])
+    # The hook tries to decrypt the stored value: with no client key, that
+    # fails, instead of returning the stored JSON as the email.
+    with Session(engine) as session, pytest.raises(StashError):
+        session.execute(select(GoldMember)).scalars().all()
+
+
+# Unique indexes and primary keys on an encrypted column.
+
+
+def test_an_encrypted_column_in_a_unique_index_is_refused(engine):
+    from sqlalchemy import Index
+
+    @stackencrypt.model("tags")
+    class Tag(Base):
+        __tablename__ = "tags"
+        __table_args__ = (Index("ux_tags_label", "label", unique=True),)
+        id: Mapped[Annotated[int, Ignore]] = mapped_column(primary_key=True)
+        label: Mapped[Annotated[str, TextEq]]
+
+    error = refused([Tag])
+    assert error.code == "declaration_unique_column"
+    assert error.field == "label"
+
+
+def test_an_encrypted_primary_key_is_refused(engine):
+    @stackencrypt.model("badges")
+    class Badge(Base):
+        __tablename__ = "badges"
+        code: Mapped[Annotated[str, TextEq]] = mapped_column(primary_key=True)
+
+    error = refused([Badge])
+    assert error.code == "declaration_unique_column"
+    assert error.field == "code"
+
+
+# ORDER BY outside a select's own ORDER BY.
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: select(Score.id).union(select(Score.id)).order_by(Score.level),
+        lambda: select(func.row_number().over(order_by=Score.level)),
+        lambda: select(func.percentile_disc(0.5).within_group(Score.level)),
+        lambda: select(_aggregate_order_by(func.array_agg(Score.id), Score.level)),
+    ],
+    ids=["union", "over", "within_group", "aggregate_order_by"],
+)
+def test_a_bare_encrypted_column_sorted_where_the_hooks_cannot_rewrite_it_is_refused(scores, untouched, build):
+    with create_engine("sqlite://").connect() as conn, pytest.raises(QueryError) as raised:
+        conn.execute(build())
+    assert raised.value.code == "query_unsupported"
+    assert raised.value.reason == "order"
+
+
+def test_a_window_sorted_by_asc_of_an_encrypted_column_uses_its_order_term(scores, untouched):
+    statement = select(func.row_number().over(order_by=Score.level.asc()))
+    from sqlalchemy.dialects import postgresql
+
+    assert "eql_v4.ord_term(scores.level)" in str(statement.compile(dialect=postgresql.dialect()))
+
+
+def _aggregate_order_by(target, order_by):
+    from sqlalchemy.dialects.postgresql import aggregate_order_by
+
+    return aggregate_order_by(target, order_by)
+
+
+# Index names.
+
+
+def test_an_index_name_longer_than_postgres_allows_is_shortened():
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.schema import CreateIndex
+
+    class Event(Base):
+        __tablename__ = "customer_subscription_events"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        billing_contact_email_address: Mapped[Annotated[str, TextEq]]
+
+    names = [index.name for index in Event.__table__.indexes]
+    assert len(names) == 1
+    assert len(names[0]) <= 63
+    for index in Event.__table__.indexes:
+        CreateIndex(index).compile(dialect=postgresql.dialect())
+
+
+def test_a_mixed_case_columns_own_index_on_its_term_is_kept_alone():
+    from sqlalchemy import Index, text
+
+    class Contact(Base):
+        __tablename__ = "mixed_contacts"
+        __table_args__ = (Index("ux_mixed_email", text('eql_v4.eq_term("Email")'), unique=True),)
+        id: Mapped[int] = mapped_column(primary_key=True)
+        Email: Mapped[Annotated[str, TextEq]]
+
+    assert [index.name for index in Contact.__table__.indexes] == ["ux_mixed_email"]
