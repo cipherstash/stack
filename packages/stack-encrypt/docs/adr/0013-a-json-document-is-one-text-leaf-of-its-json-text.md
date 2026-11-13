@@ -81,14 +81,21 @@ nested deeper than 127 levels, or, with `serde_json`'s
 `arbitrary_precision` feature, a number that is not a 64-bit integer or a
 double. Sealing such a document would store a ciphertext that never opens.
 
-So the text is parsed by the same rules before it is sealed. A document
-they refuse is not sealed, and no key is requested. The refusal is
+So the document's depth is checked, and then its text is parsed by the
+same rules, before it is sealed. A document they refuse is not sealed,
+and no key is requested. The refusal is
 `Error::Aead`, as it is for any value that cannot be sealed as given, such
 as a record nested deeper than the envelope carries.
 
 The check is the parser itself, not a second set of rules. So what is
 sealed and what opens cannot drift apart. It costs one more pass over the
 text for each document sealed.
+
+The depth check comes first and is separate for one reason. Writing a
+document as text recurses once per level, so a document nested a few
+thousand levels deep would overflow the stack before the parser could
+refuse it. The depth check walks no deeper than the limit. It uses the
+parser's limit, and a test holds the two to the same answer at that limit.
 
 ### A document is a scalar to the cipher
 

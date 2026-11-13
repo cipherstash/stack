@@ -127,17 +127,14 @@ pub fn parse_text(text: &[u8]) -> Result<Value, JsonTextError> {
 ///
 /// None in practice: every `Value` serializes. The `Result` is serde_json's.
 pub fn to_text(value: &Value) -> Result<Vec<u8>, serde_json::Error> {
-    let mut counter = Counter(0);
-    serde_json::to_writer(&mut counter, value)?;
-    let mut text = Vec::with_capacity(counter.0);
-    serde_json::to_writer(&mut text, value)?;
-    Ok(text)
+    to_wiped_text(value).map(|mut text| std::mem::take(&mut *text))
 }
 
 /// [`to_text`] into a buffer that is wiped when it is dropped: the text a
 /// document is sealed as. The buffer is allocated once at the text's
 /// length, so writing it leaves no shorter copy behind, and it is wiped if
-/// the writer fails part way.
+/// the writer fails part way. The one place a document is written as text:
+/// [`to_text`] takes its buffer from here.
 pub(crate) fn to_wiped_text(value: &Value) -> Result<Zeroizing<Vec<u8>>, serde_json::Error> {
     let mut counter = Counter(0);
     serde_json::to_writer(&mut counter, value)?;
@@ -161,7 +158,24 @@ impl std::io::Write for Counter {
 
 /// How deep containers nest: serde_json's limit, so a document either
 /// parser reads, the other reads too.
-const MAX_DEPTH: usize = 127;
+pub(super) const MAX_DEPTH: usize = 127;
+
+/// Whether `value` nests at most `limit` levels of arrays and objects, the
+/// way the parser counts them: a scalar is no level, `[1]` is one. The walk
+/// goes no deeper than `limit`, so it is safe on a document of any depth,
+/// where writing or parsing one recurses once per level.
+pub(super) fn nests_within(value: &Value, limit: usize) -> bool {
+    match value {
+        Value::Array(items) => limit > 0 && items.iter().all(|item| nests_within(item, limit - 1)),
+        Value::Object(members) => {
+            limit > 0
+                && members
+                    .values()
+                    .all(|member| nests_within(member, limit - 1))
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
+    }
+}
 
 /// The parser's place: the whole text, for reporting a position, and the
 /// part not read yet. It moves by re-slicing `rest`, never by index

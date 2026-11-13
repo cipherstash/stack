@@ -7,7 +7,7 @@ use vitaminc_aead::plaintext::{depth, Error as _, Scalar, SourceError};
 use vitaminc_aead::{FixedType, FromScalar, Logical, Physical, Sink};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use super::text::{parse_text, to_wiped_text};
+use super::text::{nests_within, parse_text, to_wiped_text, MAX_DEPTH};
 use super::{plain, JsonTextError};
 use crate::Encrypt;
 
@@ -87,10 +87,12 @@ use crate::Encrypt;
 ///
 /// ## Documents that are refused
 ///
-/// A document is sealed only if decrypting can read it back. The text is
-/// parsed by the rules of [`parse_text`] before it is sealed, and a
-/// document those rules refuse is [`Error::Aead`](crate::Error::Aead), the
-/// error for any value that cannot be sealed as given. No key is requested
+/// A document is sealed only if decrypting can read it back. Its depth is
+/// checked, and its text is parsed by the rules of [`parse_text`], before
+/// it is sealed. A document those rules refuse is
+/// [`Error::Aead`](crate::Error::Aead), the error for any value that
+/// cannot be sealed as given. The depth check does not recurse past the
+/// limit, so a document of any depth is refused and not a stack overflow. No key is requested
 /// and nothing is stored. A `Value` can hold two such documents:
 ///
 /// - one nested deeper than 127 levels of arrays and objects;
@@ -116,7 +118,8 @@ use crate::Encrypt;
 /// decrypted as a `String` gives the JSON text, and a `String` that holds
 /// JSON text decrypts as a `JsonPlaintext`. The context is checked either
 /// way, so neither lets a caller read data they could not read before.
-////// ## Equality terms
+///
+/// ## Equality terms
 ///
 /// A `JsonPlaintext` is a single value, so a target that derives an
 /// equality term from a single value can derive one from a document. The
@@ -221,17 +224,26 @@ impl fmt::Debug for JsonPlaintext {
     }
 }
 
+/// The refusal of a document nested deeper than the parser reads.
+const TOO_DEEP: &str = "a JSON document nested deeper than 127 levels";
+
 /// A document describes itself to Vitamin C as one text scalar: its JSON
 /// text. The text is written into a buffer of its final size, read by the
 /// sink in place, and wiped when the sink returns.
 ///
-/// The text is parsed once before the sink sees it, by the rules decrypting
-/// uses, so a document that would not open is a source error here and is
-/// never sealed.
+/// The document's depth is checked, and then its text is parsed once
+/// before the sink sees it, by the rules decrypting uses. So a document
+/// that would not open is a source error here and is never sealed.
 impl Encrypt for &JsonPlaintext {
     const DEPTH: Option<usize> = depth::SCALAR;
     const FIXED: Option<FixedType> = None;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        // Depth first, with a walk that stops at the limit: writing a
+        // document recurses once per level, so one nested deep enough would
+        // overflow the stack before the parser below could refuse it.
+        if !nests_within(&self.0, MAX_DEPTH) {
+            return Err(S::Error::source(SourceError::msg(TOO_DEEP)));
+        }
         let text = to_wiped_text(&self.0).map_err(|e| S::Error::source(SourceError::new(e)))?;
         // What is sealed must open. Decrypting reads the text with
         // `parse_text`, which refuses text a `Value` can hold, so the text
@@ -337,13 +349,47 @@ mod tests {
             matches!(refused, vitaminc_aead::DecodeError::Source(_)),
             "the source refuses, not the sink: {refused:?}"
         );
-        // The refusal is the parser's, and names no part of the document.
+        // The depth check refuses it, before any text is written, and its
+        // message names no part of the document.
         let vitaminc_aead::DecodeError::Source(source) = refused else {
             unreachable!()
         };
-        assert!(source.inner().is::<JsonTextError>());
+        assert_eq!(source.to_string(), TOO_DEEP);
         // The owned form refuses the same way.
         assert!(deeper.visit(String::sink()).is_err());
+        // So does a document far deeper than writing one could recurse.
+        assert!(JsonPlaintext::from(nested(3_000))
+            .visit(String::sink())
+            .is_err());
+    }
+
+    /// The depth walk counts levels as the parser does, for arrays and
+    /// objects alike, and agrees with it at the limit.
+    #[test]
+    fn the_depth_walk_counts_levels_as_the_parser_does() {
+        let object =
+            |levels: usize| (0..levels).fold(Value::Null, |inner, _| json!({ "k": inner }));
+        assert!(nests_within(&json!(1), 0), "a scalar is no level");
+        assert!(!nests_within(&json!([]), 0), "an empty array is one level");
+        assert!(!nests_within(&json!({}), 0), "an empty object is one level");
+        assert!(nests_within(&json!([]), 1));
+        assert!(nests_within(&json!({}), 1));
+        // The deepest member decides, wherever it sits.
+        assert!(nests_within(&json!([1, [2], 3]), 2));
+        assert!(!nests_within(&json!([1, [2, [3]], 4]), 2));
+        assert!(!nests_within(&json!({"a": 1, "b": {"c": [1]}}), 2));
+        for (value, levels) in [
+            (nested(127), 127),
+            (object(127), 127),
+            (nested(128), 128),
+            (object(128), 128),
+        ] {
+            let fits = levels <= MAX_DEPTH;
+            assert_eq!(nests_within(&value, MAX_DEPTH), fits, "{levels} levels");
+            // The parser agrees, on the text of the same document.
+            let text = serde_json::to_vec(&value).unwrap();
+            assert_eq!(parse_text(&text).is_ok(), fits, "{levels} levels");
+        }
     }
 
     #[test]

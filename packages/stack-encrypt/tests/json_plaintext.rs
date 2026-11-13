@@ -196,7 +196,7 @@ mod given_a_document_that_would_not_open {
     async fn a_deeper_document_is_refused_before_any_key_is_requested() {
         let (cipher, generates, _) = common::counting_cipher().await;
         let keyset = cipher.default_keyset();
-        for levels in [128, 200] {
+        for levels in [128, 200, 3_000] {
             let refused = keyset
                 .encrypt_with_context(JsonPlaintext::from(nested(levels)), COLUMN)
                 .await
