@@ -184,8 +184,8 @@ pub(crate) fn tokenize(text: &str, options: &MatchOptions) -> Tokens {
 /// 1. Each character is folded on its own into a buffer sized for the
 ///    result. `Σ` is left as it is: it folds to `σ` or to `ς` by where it
 ///    sits in its word, which one character cannot say.
-/// 2. `str::to_lowercase` folds that. Only `Σ` is left to change, and both
-///    of its forms are as long as it is.
+/// 2. `str::to_lowercase` folds that, if it holds a `Σ`. Only `Σ` is left
+///    to change, and both of its forms are as long as it is.
 ///
 /// The second step finds every `Σ` where the first left it in its word:
 /// folding a character changes neither whether it is a cased letter nor
@@ -193,12 +193,17 @@ pub(crate) fn tokenize(text: &str, options: &MatchOptions) -> Tokens {
 fn lowercase(text: &str) -> Zeroizing<String> {
     let folded_len: usize = text.chars().map(folded_len).sum();
     let mut folded = Zeroizing::new(String::with_capacity(folded_len));
+    let mut sigma = false;
     for c in text.chars() {
         if c == SIGMA {
+            sigma = true;
             folded.push(c);
         } else {
             folded.extend(c.to_lowercase());
         }
+    }
+    if !sigma {
+        return folded;
     }
     Zeroizing::new(folded.to_lowercase())
 }

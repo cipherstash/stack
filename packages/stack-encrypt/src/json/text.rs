@@ -143,6 +143,14 @@ pub(crate) fn string_text(text: &[u8]) -> Option<Zeroizing<String>> {
     parser.rest.is_empty().then_some(decoded)
 }
 
+/// Where the JSON string at the front of `text` ends: the offset of its
+/// closing quote. `text` starts at the opening quote. `None` for a string
+/// with no closing quote. An escaped quote does not close it.
+pub(crate) fn string_end(text: &[u8]) -> Option<usize> {
+    let end = 1 + raw_len(text.get(1..)?);
+    (end < text.len()).then_some(end)
+}
+
 /// [`to_text`] into a buffer that is wiped when it is dropped: the text a
 /// document is sealed as. The buffer is allocated once at the text's
 /// length, so writing it leaves no shorter copy behind, and it is wiped if
@@ -585,6 +593,23 @@ fn push_wiping(items: &mut Vec<Value>, value: Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn string_end_is_the_offset_of_the_closing_quote() {
+        for (text, end) in [
+            (r#""""#, Some(1)),
+            (r#""ab" rest"#, Some(3)),
+            (r#""a\"b" rest"#, Some(5)),
+            (r#""a\\" rest"#, Some(4)),
+            (r#""a\\\"b""#, Some(7)),
+            (r#""unterminated"#, None),
+            (r#""ends in an escape\""#, None),
+            (r#"""#, None),
+            ("", None),
+        ] {
+            assert_eq!(string_end(text.as_bytes()), end, "{text:?}");
+        }
+    }
 
     #[test]
     fn string_text_decodes_exactly_one_json_string() {

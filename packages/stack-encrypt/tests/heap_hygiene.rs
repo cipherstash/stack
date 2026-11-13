@@ -915,6 +915,79 @@ fn an_escaped_literal_in_a_predicate_leaves_no_plaintext_on_the_heap() {
     }
 }
 
+/// A document operator's input names keys in its path and its members, and
+/// a predicate names them in its paths and its variables. Each is held in
+/// a wiping buffer, whether the input is accepted or refused.
+#[test]
+fn a_key_in_an_operators_input_leaves_no_plaintext_on_the_heap() {
+    let wire = serde_json::json!({
+        "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                    "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
+    });
+    let plan = record::plan_with(
+        stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Documents,
+    )
+    .unwrap();
+    let mark = marked("key");
+    let path = joined(&["$.", &mark]);
+    let elements = joined(&["$.", &mark, "[*]"]);
+    let predicate = |text: &[&str]| object(vec![("predicate", frame(joined(text).as_str()))]);
+    let inputs = [
+        (
+            Op::EqAt,
+            object(vec![("path", frame(path.as_str())), ("json", frame("1"))]),
+        ),
+        (
+            Op::GtAt,
+            object(vec![("path", frame(path.as_str())), ("json", frame("1"))]),
+        ),
+        (
+            Op::BetweenAt,
+            object(vec![
+                ("path", frame(path.as_str())),
+                ("low", frame("1")),
+                ("high", frame("2")),
+            ]),
+        ),
+        (Op::Selector, object(vec![("path", frame(path.as_str()))])),
+        (Op::Children, object(vec![("path", frame(path.as_str()))])),
+        (Op::ChildCount, object(vec![("path", frame(path.as_str()))])),
+        (Op::Subtree, object(vec![("path", frame(path.as_str()))])),
+        (
+            Op::ElementMatch,
+            object(vec![
+                ("path", frame(elements.as_str())),
+                (
+                    "predicates",
+                    frame(vec![object(vec![
+                        ("member", frame(mark.as_str())),
+                        ("op", frame("eq")),
+                        ("json", frame("1")),
+                    ])]),
+                ),
+            ]),
+        ),
+        // An ordering at a wildcard, with no member after it.
+        (Op::Match, predicate(&[r#"$.""#, &mark, r#""[*] < 5"#])),
+        (Op::Match, predicate(&["$.", &mark, "[*] < 5"])),
+        // A variable, named plainly and in quotes with an escape.
+        (Op::Match, predicate(&["$.a == $", &mark])),
+        (Op::Match, predicate(&[r#"$.a == $""#, &mark, r#"\n""#])),
+    ];
+    for (operator, input) in &inputs {
+        watched(&format!("check_query ({operator:?}, a marked key)"), || {
+            // Accepted or refused, by the operator: either way the input's
+            // keys are wiped.
+            drop(stack_encrypt::dynamic::check_query(
+                &plan, "profile", *operator, input, &Documents,
+            ));
+        });
+    }
+}
+
 /// A path's quoted key is decoded when it has an escape, into a buffer
 /// sized for it, and the path wipes its keys when it is dropped. A path
 /// refused after a key was read wipes that key too.

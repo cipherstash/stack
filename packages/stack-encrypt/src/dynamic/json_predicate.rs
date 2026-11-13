@@ -41,7 +41,7 @@ use super::json_query::{
 };
 use super::query::{Op, Operand};
 use super::{Error, Reason};
-use crate::json::{parse_text, string_text, JsonOptions, JsonPath, Segment, MAX_DEPTH};
+use crate::json::{parse_text, string_end, string_text, JsonOptions, JsonPath, Segment, MAX_DEPTH};
 use crate::{KeysetCipher, Label, Pending};
 
 /// How deeply a predicate may nest parentheses, `!` and `exists`. The
@@ -178,7 +178,7 @@ enum ValueAt {
     /// `start..end`, which are JSON text.
     Literal { start: usize, end: usize },
     /// `$name` or `$"name"`.
-    Variable { name: String, at: usize },
+    Variable { name: Zeroizing<String>, at: usize },
 }
 
 impl ValueAt {
@@ -559,9 +559,9 @@ impl<'t> Parser<'t> {
             '$' => {
                 let after = &rest[1..];
                 if after.starts_with('"') {
-                    let (mut name, len) = self.string_at(at + 1)?;
+                    let (name, len) = self.string_at(at + 1)?;
                     self.pos = at + 1 + len;
-                    return self.variable(std::mem::take(&mut *name), at);
+                    return self.variable(name, at);
                 }
                 if after.starts_with(|c: char| !special(c)) {
                     self.pos += 1;
@@ -569,7 +569,7 @@ impl<'t> Parser<'t> {
                         return Err(Refusal::syntax(C_TEXT, self.pos));
                     };
                     self.pos += name.len();
-                    return self.variable(name.to_owned(), at);
+                    return self.variable(Zeroizing::new(name.to_owned()), at);
                 }
                 if in_filter {
                     return Err(Refusal::unsupported(C_DOLLAR_IN_FILTER, at));
@@ -618,8 +618,9 @@ impl<'t> Parser<'t> {
         }
     }
 
-    /// A variable named `name`, which takes no accessor.
-    fn variable(&mut self, name: String, at: usize) -> Result<Side, Refusal> {
+    /// A variable named `name`, which takes no accessor. The name is the
+    /// caller's text, and is wiped when the predicate is dropped.
+    fn variable(&mut self, name: Zeroizing<String>, at: usize) -> Result<Side, Refusal> {
         self.space()?;
         if self.rest().starts_with(['.', '[']) {
             return Err(Refusal::unsupported(C_VARIABLE_PATH, self.pos));
@@ -632,21 +633,10 @@ impl<'t> Parser<'t> {
     /// literal's is a value, read only to check it, and a key's is moved
     /// into its path, which wipes it.
     fn string_at(&self, at: usize) -> Result<(Zeroizing<String>, usize), Refusal> {
-        let text = &self.text[at..];
-        let mut escaped = false;
-        for (end, byte) in text.bytes().enumerate().skip(1) {
-            match (escaped, byte) {
-                (true, _) => escaped = false,
-                (false, b'\\') => escaped = true,
-                (false, b'"') => {
-                    let decoded = string_text(&text.as_bytes()[..=end])
-                        .ok_or_else(|| Refusal::syntax(C_STRING, at))?;
-                    return Ok((decoded, end + 1));
-                }
-                (false, _) => {}
-            }
-        }
-        Err(Refusal::syntax(C_STRING, at))
+        let text = &self.text.as_bytes()[at..];
+        string_end(text)
+            .and_then(|end| Some((string_text(&text[..=end])?, end + 1)))
+            .ok_or_else(|| Refusal::syntax(C_STRING, at))
     }
 
     /// The steps after `$` or `@`: `.name`, `."name"`, `[*]`, and the
@@ -898,7 +888,7 @@ impl Compiler<'_> {
                 }),
             ValueAt::Variable { name, at } => self
                 .vars
-                .get(name)
+                .get(name.as_str())
                 .map(|value| Parsed(value.clone()))
                 .ok_or_else(|| {
                     Refusal {
@@ -972,17 +962,19 @@ impl Compiler<'_> {
             // An ordering at a wildcard: some element's field, which is
             // `element_match` on the array through the last wildcard.
             let value = self.ordered(&value)?;
-            let mut segments = path.path.segments().to_vec();
-            let last = segments
+            let steps = path.path.segments();
+            let last = steps
                 .iter()
                 .rposition(|segment| *segment == Segment::Wildcard)
                 .unwrap_or_default();
-            let member = segments.split_off(last + 1);
-            if member.is_empty() {
+            // Each half is copied straight into a path, which wipes its
+            // keys, before anything can refuse.
+            let (base, member) = steps.split_at(last + 1);
+            let (base, member) = (JsonPath::of(base.to_vec()), JsonPath::of(member.to_vec()));
+            if member.segments().is_empty() {
                 return Err(Refusal::unsupported(C_ELEMENTS_THEMSELVES, at).into());
             }
-            let base = JsonPath::of(segments);
-            let predicate = self.member(&base, JsonPath::of(member), compare, value)?;
+            let predicate = self.member(&base, member, compare, value)?;
             Node::Leaf(
                 Op::ElementMatch,
                 Input::Elements(self.bound, vec![predicate]),

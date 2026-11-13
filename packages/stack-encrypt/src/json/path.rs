@@ -388,20 +388,10 @@ pub(crate) const fn key_step_len(len: usize) -> usize {
 /// leaves nothing behind. A caller that keeps the key takes it out into a
 /// path, which wipes it.
 fn quoted(text: &str) -> Result<(Zeroizing<String>, &str), &'static str> {
-    let mut escaped = false;
-    for (end, byte) in text.bytes().enumerate().skip(1) {
-        match (escaped, byte) {
-            (true, _) => escaped = false,
-            (false, b'\\') => escaped = true,
-            (false, b'"') => {
-                let key = super::string_text(&text.as_bytes()[..=end])
-                    .ok_or("the quoted name is not a JSON string")?;
-                return Ok((key, &text[end + 1..]));
-            }
-            (false, _) => {}
-        }
-    }
-    Err("unterminated quoted name")
+    let end = super::string_end(text.as_bytes()).ok_or("unterminated quoted name")?;
+    let key = super::string_text(&text.as_bytes()[..=end])
+        .ok_or("the quoted name is not a JSON string")?;
+    Ok((key, &text[end + 1..]))
 }
 
 impl FromStr for JsonPath {
