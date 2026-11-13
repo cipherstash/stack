@@ -572,6 +572,47 @@ impl UnknownLogical {
 /// The largest decimal scale `rust_decimal` represents.
 pub const MAX_DECIMAL_SCALE: u8 = 28;
 
+/// Digits in the largest 96-bit mantissa, and so the most trailing zeros
+/// one can have.
+const DECIMAL_DIGITS: u32 = 29;
+
+/// `5⁻¹ mod 2¹²⁸`, so that dividing by ten (when exact) is a shift and a
+/// multiply rather than a hardware division.
+const INV5: u128 = 0xCCCC_CCCC_CCCC_CCCC_CCCC_CCCC_CCCC_CCCD;
+
+/// The largest `u128` divisible by 5. Multiplication by [`INV5`] is a
+/// bijection that maps the multiples of 5 onto `[0, MAX_DIV_5]`, so
+/// `x.wrapping_mul(INV5) <= MAX_DIV_5` exactly when `5 | x`.
+const MAX_DIV_5: u128 = u128::MAX / 5;
+
+/// Divide by ten while the trailing digit is zero: the stripped value and
+/// how many zeros were removed. Zero strips to `(0, 0)`. Constant time for
+/// every mantissa below `10^29`, which every 96-bit one is: the decimal
+/// encoder and the wipeable `Decimal`'s equality both rest on it.
+///
+/// A fixed `DECIMAL_DIGITS` iterations, each selecting by mask. Division by
+/// ten, valid only when exact, is a halving and a multiply by `INV5`;
+/// divisibility by ten is divisibility by two (the low bit) and by five
+/// (the `MAX_DIV_5` test), with the comparison done by `overflowing_sub`
+/// so it lowers to a borrow rather than a branch.
+pub fn strip_trailing_zeros(mut mantissa: u128) -> (u128, i32) {
+    let mut exponent: i32 = 0;
+    for _ in 0..DECIMAL_DIGITS {
+        let div = (mantissa >> 1).wrapping_mul(INV5);
+        let q5 = mantissa.wrapping_mul(INV5);
+        let (_, borrow) = MAX_DIV_5.overflowing_sub(q5);
+        let div_by_5 = (borrow as u128) ^ 1;
+        let div_by_2 = (mantissa & 1) ^ 1;
+        let div_by_10 = div_by_5 & div_by_2;
+        let mantissa_nz = (mantissa | mantissa.wrapping_neg()) >> 127;
+        let do_strip = mantissa_nz & div_by_10;
+        let mask = 0u128.wrapping_sub(do_strip);
+        mantissa = (div & mask) | (mantissa & !mask);
+        exponent = exponent.wrapping_add(do_strip as i32);
+    }
+    (mantissa, exponent)
+}
+
 /// Decimal mantissas are 96-bit: `|mantissa| < 2^96`.
 const DECIMAL_MANTISSA_LIMIT: i128 = 1 << 96;
 
@@ -995,6 +1036,24 @@ impl fmt::Display for Logical {
 
 #[cfg(test)]
 mod tests {
+    use super::strip_trailing_zeros;
+
+    #[test]
+    fn strip_trailing_zeros_edge_cases() {
+        assert_eq!(strip_trailing_zeros(0), (0, 0));
+        for d in 1u128..=9 {
+            assert_eq!(strip_trailing_zeros(d), (d, 0), "input {d}");
+        }
+        for k in 0..=28u32 {
+            assert_eq!(strip_trailing_zeros(10u128.pow(k)), (1, k as i32), "10^{k}");
+        }
+        let u96_max = (1u128 << 96) - 1;
+        assert_eq!(strip_trailing_zeros(u96_max), (u96_max, 0));
+        assert_eq!(strip_trailing_zeros(12_340_000), (1234, 4));
+        assert_eq!(strip_trailing_zeros(50), (5, 1));
+        assert_eq!(strip_trailing_zeros(100_500), (1005, 2));
+    }
+
     use super::*;
 
     #[test]

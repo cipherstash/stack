@@ -3,7 +3,7 @@
 use vitaminc_protected::{Choice, OpaqueDebug, TimingSafeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::plaintext::kinds::{decimal as conv, MAX_DECIMAL_SCALE};
+use crate::plaintext::kinds::{decimal as conv, strip_trailing_zeros};
 use crate::plaintext::{depth, Encrypt, FixedType, Int, Logical, Physical, Scalar, Sink, Width};
 use crate::typed::FromScalar;
 
@@ -60,82 +60,35 @@ impl Decimal {
         conv::decimal(self.scale, Int::I128(self.mantissa)).unwrap_or_default()
     }
 
-    /// The value with trailing zeros taken off the mantissa, as its sign,
-    /// its magnitude in three 32-bit limbs and its scale. Constant time:
-    /// every value takes the same 28 steps, each a division by ten of the
-    /// three limbs (multiplies and shifts, no division instruction, see
-    /// `div10`) and a masked choice. The caller wipes what it returns.
-    fn normalized(&self) -> (Choice, [u32; 3], u8) {
-        let negative = Choice::from((self.mantissa >> 127) as u8 & 1);
-        let sign = (self.mantissa >> 127) as u128;
-        let mut magnitude = ((self.mantissa as u128) ^ sign).wrapping_sub(sign);
-        let mut limbs = [
-            magnitude as u32,
-            (magnitude >> 32) as u32,
-            (magnitude >> 64) as u32,
-        ];
+    /// The value as its sign (0, or 0xFF when negative), its significand with every trailing zero
+    /// taken off, and the power of ten that scales it: `1.50` and `1.5` are
+    /// both `(+, 15, -1)`. Constant time, through
+    /// [`strip_trailing_zeros`]: fixed steps, masks, no branch and no
+    /// division. The caller wipes what it returns.
+    fn canonical(&self) -> (u8, u128, i32) {
+        let sign = self.mantissa >> 127;
+        let mut magnitude = ((self.mantissa ^ sign).wrapping_sub(sign)) as u128;
+        let (significand, trailing) = strip_trailing_zeros(magnitude);
         magnitude.zeroize();
-        let mut scale = self.scale;
-        for _ in 0..MAX_DECIMAL_SCALE {
-            let (mut quotient, mut remainder) = div10(limbs);
-            let strip = remainder.ts_eq(&0) & !scale.ts_eq(&0);
-            for (limb, q) in limbs.iter_mut().zip(quotient) {
-                *limb = select_u32(*limb, q, strip);
-            }
-            scale = select_u8(scale, scale.wrapping_sub(1), strip);
-            quotient.zeroize();
-            remainder.zeroize();
-        }
-        (negative, limbs, scale)
+        (
+            sign as u8,
+            significand,
+            trailing.wrapping_sub(i32::from(self.scale)),
+        )
     }
 }
 
-/// Three little-endian 32-bit limbs divided by ten, and the remainder.
-///
-/// No division instruction: a hardware divide can take a time that depends
-/// on its operands, and a compiler keeps one for `/ 10` in an unoptimised
-/// build and on wasm32 at every level. Each step multiplies by the
-/// reciprocal of ten instead (exact for every `u64`) and subtracts.
-fn div10(limbs: [u32; 3]) -> ([u32; 3], u32) {
-    let mut quotient = [0u32; 3];
-    let mut remainder = 0u64;
-    for i in (0..3).rev() {
-        let current = (remainder << 32) | u64::from(limbs[i]);
-        let q = div10_u64(current);
-        quotient[i] = q as u32;
-        remainder = current - q * 10;
-    }
-    (quotient, remainder as u32)
-}
-
-/// `n / 10` for every `u64`, as a multiply by `⌈2^67 / 10⌉` and a shift.
-fn div10_u64(n: u64) -> u64 {
-    ((u128::from(n) * 0xCCCC_CCCC_CCCC_CCCD) >> 67) as u64
-}
-
-fn select_u32(a: u32, b: u32, choose_b: Choice) -> u32 {
-    let mask = u32::from(choose_b.unwrap_u8()).wrapping_neg();
-    (a & !mask) | (b & mask)
-}
-
-fn select_u8(a: u8, b: u8, choose_b: Choice) -> u8 {
-    let mask = choose_b.unwrap_u8().wrapping_neg();
-    (a & !mask) | (b & mask)
-}
-
-/// Equal as numbers: `1.5` equals `1.50`, as `rust_decimal` has it.
+/// Equal as numbers: `1.5` equals `1.50`, as `rust_decimal` has it. Two
+/// zeros are equal whatever their scales.
 impl TimingSafeEq for Decimal {
     fn ts_eq(&self, other: &Self) -> Choice {
-        let (a_negative, mut a_limbs, a_scale) = self.normalized();
-        let (b_negative, mut b_limbs, b_scale) = other.normalized();
-        let mut equal =
-            a_negative.unwrap_u8().ts_eq(&b_negative.unwrap_u8()) & a_scale.ts_eq(&b_scale);
-        for (a, b) in a_limbs.iter().zip(&b_limbs) {
-            equal &= a.ts_eq(b);
-        }
-        a_limbs.zeroize();
-        b_limbs.zeroize();
-        equal
+        let (a_negative, mut a, a_exponent) = self.canonical();
+        let (b_negative, mut b, b_exponent) = other.canonical();
+        let both_zero = a.ts_eq(&0) & b.ts_eq(&0);
+        let same = a_negative.ts_eq(&b_negative) & a.ts_eq(&b) & a_exponent.ts_eq(&b_exponent);
+        a.zeroize();
+        b.zeroize();
+        both_zero | same
     }
 }
 
@@ -227,6 +180,7 @@ mod tests {
             assert_eq!(held.to_decimal().scale(), value.scale(), "{value}");
             assert_eq!(frame(&held), frame(value), "{value}");
             assert_eq!(frame(Decimal::new(value)), frame(value), "{value}");
+            assert_eq!(rust_decimal::Decimal::from(Decimal::from(value)), value);
         }
         assert_eq!(
             <Decimal as Encrypt>::FIXED,
@@ -272,52 +226,19 @@ mod tests {
             rust_decimal::Decimal::new(10_i64.pow(18), 28),
             rust_decimal::Decimal::from_i128_with_scale((1 << 96) - 1, 28),
             rust_decimal::Decimal::from_i128_with_scale((1 << 96) - 1, 0),
+            // Values that differ only above the low 32 or 64 bits.
+            rust_decimal::Decimal::from_i128_with_scale(1 << 32, 0),
+            rust_decimal::Decimal::from_i128_with_scale(1 << 33, 0),
+            rust_decimal::Decimal::from_i128_with_scale(1 << 64, 0),
+            rust_decimal::Decimal::from_i128_with_scale(1 << 65, 0),
+            rust_decimal::Decimal::from_i128_with_scale(10 << 64, 1),
+            rust_decimal::Decimal::from_i128_with_scale(-(1 << 64), 0),
         ]);
         for a in &all {
             for b in &all {
                 assert_eq!(Decimal::new(*a) == Decimal::new(*b), a == b, "{a} and {b}");
             }
         }
-    }
-
-    /// The multiply-and-shift quotient is the true one, across the range
-    /// `div10` uses it in and at the edges of `u64`.
-    #[test]
-    fn the_reciprocal_divides_by_ten_exactly() {
-        let edges = [
-            0u64,
-            1,
-            9,
-            10,
-            11,
-            99,
-            100,
-            u64::from(u32::MAX),
-            10 << 32,
-            (10 << 32) - 1,
-        ];
-        let ends = [
-            u64::MAX,
-            u64::MAX - 1,
-            u64::MAX / 10 * 10,
-            u64::MAX / 10 * 10 - 1,
-        ];
-        for n in edges
-            .into_iter()
-            .chain(ends)
-            .chain((0..100_000).map(|i| i * 4_294_967 + 7))
-        {
-            assert_eq!(div10_u64(n), n / 10, "{n}");
-        }
-        let (q, r) = div10([7, 3, 2]);
-        let n = (2u128 << 64) | (3u128 << 32) | 7;
-        assert_eq!(
-            (
-                u128::from(q[0]) | u128::from(q[1]) << 32 | u128::from(q[2]) << 64,
-                u128::from(r)
-            ),
-            (n / 10, n % 10)
-        );
     }
 
     #[test]
