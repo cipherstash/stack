@@ -13,6 +13,7 @@ pub(crate) enum V {
     I32(i32),
     U32(u32),
     U64(u64),
+    I64(i64),
     Bool(bool),
     Null,
 }
@@ -57,6 +58,7 @@ pub(crate) fn frame(v: &V) -> Vec<u8> {
         V::I32(n) => scalar(to_vec(n)),
         V::U32(n) => scalar(to_vec(n)),
         V::U64(n) => scalar(to_vec(n)),
+        V::I64(n) => scalar(to_vec(n)),
         V::Bool(b) => scalar(to_vec(b)),
         V::Null => scalar(to_vec(&())),
     }

@@ -17,8 +17,9 @@ use stack_encrypt::dynamic::frame::serde::from_slice;
 use stack_guest_abi::last_error::malformed;
 use zeroize::Zeroize;
 
-/// The `deterministic-kms` build's whole config: the source's 32-byte seed,
-/// a frame holding bytes and nothing else. Wiped when it drops.
+/// The `deterministic-kms` build's ZeroKMS stand-in config: the source's
+/// 32-byte seed, a frame holding bytes and nothing else. Wiped when it
+/// drops.
 #[derive(Deserialize)]
 #[serde(try_from = "&[u8]")]
 pub struct Seed([u8; 32]);
@@ -40,13 +41,77 @@ impl Drop for Seed {
     }
 }
 
-impl Seed {
-    /// Read the seed frame the host sent in place of a config.
-    pub fn parse(bytes: &[u8]) -> Result<Self, u32> {
-        from_slice(bytes)
-            .map_err(|_| malformed("the deterministic build's config is a 32-byte seed"))
-    }
+/// The `deterministic-kms` build's whole config: the seed, and a key vendor
+/// backend when one is configured. The host sends the bare seed, or, for
+/// the hermetic Go tests of the vendor path, an object of the seed and the
+/// key vendor backend keys ([`crate::config`] has them):
+/// `{"seed": bytes, "key_vendor": .., ..}`.
+pub struct SeedConfig {
+    pub seed: Seed,
+    pub vendor: Option<crate::vendor::VendorConfig>,
+}
 
+impl SeedConfig {
+    /// Read the config the host sent.
+    pub fn parse(bytes: &[u8]) -> Result<Self, u32> {
+        if let Ok(seed) = from_slice::<Seed>(bytes) {
+            return Ok(Self { seed, vendor: None });
+        }
+        let wire: SeededWire<'_> = from_slice(bytes).map_err(|_| {
+            malformed(
+                "the deterministic build's config is a 32-byte seed, or an object of a seed and the key vendor backend keys",
+            )
+        })?;
+        let vendor = crate::config::vendor_wire!(wire)
+            .config()
+            .map_err(|e| malformed(format!("the config: {e}")))?;
+        Ok(Self {
+            seed: wire.seed,
+            vendor,
+        })
+    }
+}
+
+/// The object form of the deterministic config.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SeededWire<'a> {
+    seed: Seed,
+    #[serde(default, borrow, deserialize_with = "present")]
+    key_vendor: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    keyset_records: Option<Vec<&'a str>>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    aws_region: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    aws_endpoint: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    vault_address: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    vault_namespace: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    vault_mount: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    gcp_endpoint: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    static_key_ref: Option<&'a str>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    static_key: Option<&'a [u8]>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    default_keyset: Option<crate::config::KeysetSelectorWire<'a>>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    root_key_ttl_ms: Option<&'a str>,
+}
+
+/// Absent is `None`. Present, a value must be of its type: a null is
+/// refused.
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
+impl Seed {
     /// The key source this seed drives.
     pub fn source(&self) -> DeterministicSource {
         DeterministicSource::new(self.0)
@@ -55,8 +120,8 @@ impl Seed {
 
 #[cfg(test)]
 mod tests {
-    use super::Seed;
-    use crate::test_frame::{frame, V};
+    use super::{Seed, SeedConfig};
+    use crate::test_frame::{frame, obj, s, V};
     use stack_encrypt::dynamic::frame::serde::from_slice;
 
     /// A seed is 32 bytes, and only bytes: 32 characters of text are refused.
@@ -65,5 +130,31 @@ mod tests {
         assert!(from_slice::<Seed>(&frame(&V::Bytes(vec![7; 32]))).is_ok());
         assert!(from_slice::<Seed>(&frame(&V::Bytes(vec![7; 31]))).is_err());
         assert!(from_slice::<Seed>(&frame(&V::Str("x".repeat(32)))).is_err());
+    }
+
+    /// The object form adds a key vendor backend beside the seed; a bare
+    /// seed has none.
+    #[test]
+    fn a_seed_object_carries_a_key_vendor_backend() {
+        let bare = SeedConfig::parse(&frame(&V::Bytes(vec![7; 32]))).unwrap();
+        assert!(bare.vendor.is_none());
+        let with = SeedConfig::parse(&frame(&obj(vec![
+            ("seed", V::Bytes(vec![7; 32])),
+            ("key_vendor", s("static")),
+            ("keyset_records", V::Arr(vec![s("stack-keyset:AQ")])),
+            ("static_key_ref", s("local")),
+            ("static_key", V::Bytes(vec![9; 32])),
+        ])))
+        .unwrap();
+        assert!(matches!(
+            with.vendor.map(|v| v.settings),
+            Some(crate::vendor::VendorSettings::Static { .. })
+        ));
+        assert!(SeedConfig::parse(&frame(&obj(vec![("seed", V::Bytes(vec![7; 31]))]))).is_err());
+        assert!(SeedConfig::parse(&frame(&obj(vec![
+            ("seed", V::Bytes(vec![7; 32])),
+            ("other", s("x")),
+        ])))
+        .is_err());
     }
 }
