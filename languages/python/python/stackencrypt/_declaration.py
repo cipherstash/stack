@@ -292,26 +292,37 @@ def _hints(cls: type) -> Dict[str, Any]:
             own = _own_annotations(base)
         except _UNRESOLVED as error:
             raise _hints_unresolved(cls, error) from error
+        namespaces = _namespaces(base)
         for name, hint in own.items():
             if name in skip:
                 continue
             try:
-                hints[name] = _resolve_one(base, name, hint)
+                hints[name] = _resolve_one(name, hint, namespaces)
             except _UNRESOLVED as error:
                 raise _hints_unresolved(cls, error) from error
     return hints
 
 
-def _resolve_one(base: type, name: str, hint: Any) -> Any:
-    """One hint of ``base``, resolved as ``get_type_hints`` resolves it.
+def _namespaces(base: type) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """The global and local names a hint of ``base`` resolves in, as
+    ``get_type_hints`` uses them: its module's, and the class's own. Built
+    once per class, not once per hint."""
+    module = sys.modules.get(base.__module__)
+    return (dict(vars(module)) if module is not None else {}), dict(vars(base))
+
+
+def _resolve_one(
+    name: str, hint: Any, namespaces: Tuple[Dict[str, Any], Dict[str, Any]]
+) -> Any:
+    """One hint, resolved as ``get_type_hints`` resolves it, in the
+    ``namespaces`` of the class that declares it (see ``_namespaces``).
 
     The probe is a class, not a function: a function's annotation cannot be
     a ``ClassVar``, and before 3.14 a string ``ClassVar`` hint raises there.
     """
-    module = sys.modules.get(base.__module__)
-    global_names = dict(vars(module)) if module is not None else {}
+    global_names, local_names = namespaces
     probe = type("probe", (), {"__annotations__": {name: hint}})
-    return get_type_hints(probe, global_names, dict(vars(base)), include_extras=True)[name]
+    return get_type_hints(probe, global_names, local_names, include_extras=True)[name]
 
 
 def _relationships(cls: type) -> frozenset:
@@ -458,9 +469,10 @@ def _unresolved_field(cls: type) -> Optional[Tuple[type, str, Any]]:
             own = _own_annotations(base)
         except _UNRESOLVED:
             return None
+        namespaces = _namespaces(base)
         for name, hint in own.items():
             try:
-                _resolve_one(base, name, hint)
+                _resolve_one(name, hint, namespaces)
             except _UNRESOLVED:
                 return base, name, hint
     return None
@@ -475,10 +487,9 @@ def _is_bare_class_var(base: type, name: str, hint: Any) -> bool:
     """
     if not isinstance(hint, str):
         return False
-    module = sys.modules.get(base.__module__)
-    global_names = dict(vars(module)) if module is not None else {}
+    global_names, local_names = _namespaces(base)
     try:
-        return eval(hint, global_names, dict(vars(base))) is ClassVar  # noqa: S307
+        return eval(hint, global_names, local_names) is ClassVar  # noqa: S307
     except Exception:  # noqa: BLE001  Any other failure is not this case.
         return False
 

@@ -170,6 +170,16 @@ def test_a_datetime_whose_tzinfo_gives_no_offset_is_naive(untouched):
     assert error.code == "value_naive_datetime"
 
 
+def test_one_model_on_its_own_is_refused(untouched):
+    # A Pydantic model or a NamedTuple is iterable, so list() would split
+    # it into its fields.
+    cipher, User = cipher_for(age=Annotated[int, Passthrough])
+    with pytest.raises(InvalidValueError) as raised:
+        cipher.encrypt(User(email=SECRET, age=3))
+    assert raised.value.code == "value_wrong_type"
+    assert "list of models" in raised.value.message
+
+
 def test_a_model_of_another_class_is_the_wrong_type(untouched):
     # Contact has the same field names, so every getattr would succeed.
     cipher, _ = cipher_for(age=Annotated[int, Passthrough])

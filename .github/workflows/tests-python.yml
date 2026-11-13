@@ -221,9 +221,12 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     # The CS_* credentials are given to the `Live tests` step alone, not the
-    # job. Every other step, the builds above all, runs third-party code: each
-    # dependency's build.rs and proc-macros, and maturin. None of it runs with
-    # the credentials set.
+    # job. The other steps run third-party code: each dependency's build.rs
+    # and proc-macros, and maturin. That code no longer runs with the
+    # credentials set. It still shares this runner with the test step, so a
+    # file a build step leaves behind, or the compiled extension itself, runs
+    # with them later. Building the wheel in a job with no secrets, and
+    # installing only that wheel here, would close that gap.
     services:
       postgres:
         image: postgres:17
@@ -385,8 +388,12 @@ jobs:
       - name: Keep LF line endings
         run: git config --global core.autocrlf false
 
+      # The pull request's head commit, not GitHub's test merge commit: the
+      # wheel records the head commit as its engine commit, so it must be
+      # built from that commit's files.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       # One source of truth for the Rust version: the root mise.toml the

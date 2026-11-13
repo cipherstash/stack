@@ -247,10 +247,33 @@ describe('tests-python.yml', () => {
       'pyproject.toml has a [tool.maturin] features list',
     ).not.toBeNull()
     const normal = [...declared[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
-    const task = read(`${PYTHON_ROOT}/mise.toml`).match(/--features ([^\s"]+)/)
+    // The test:deterministic task's own body: test:cargo names --features
+    // too, so the first match in the file depends on the order of tasks.
+    const body = read(`${PYTHON_ROOT}/mise.toml`).match(
+      /^\[tasks\."test:deterministic"\]\n([\s\S]*?)(?=^\[|(?![\s\S]))/m,
+    )
+    expect(body, 'mise.toml has a test:deterministic task').not.toBeNull()
+    const task = body[1].match(/--features ([^\s"]+)/)
     expect(task, 'test:deterministic passes --features').not.toBeNull()
     expect(task[1].split(',').sort()).toEqual(
       [...normal, 'deterministic-kms'].sort(),
+    )
+  })
+
+  it('builds the wheels with the maturin version uv.lock locks', () => {
+    // The live job and mise run build use uv.lock's maturin; the wheels job
+    // pins its own. Dependabot updates the lock alone, so the two can part.
+    const lock = read(`${PYTHON_ROOT}/uv.lock`)
+    const locked = lock.match(/^name = "maturin"\nversion = "([^"]+)"/m)
+    expect(locked, 'uv.lock locks maturin').not.toBeNull()
+    const pins = [...read(WORKFLOW).matchAll(/maturin-version: v?(\S+)/g)].map(
+      (m) => m[1],
+    )
+    expect(pins.length, 'maturin-version pins in the workflow').toBeGreaterThan(
+      0,
+    )
+    expect(new Set(pins), "every maturin-version equals uv.lock's").toEqual(
+      new Set([locked[1]]),
     )
   })
 

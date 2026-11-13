@@ -18,7 +18,8 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
+use std::time::Duration;
 
 use stack_auth::AutoStrategy;
 use stack_encrypt::kms::{
@@ -49,6 +50,10 @@ static BUILT_IN: AtomicU32 = AtomicU32::new(0);
 // same, but it cannot fail, and a failed build must not be cached: the user
 // fixes the credentials and calls again.
 static BUILDING: Mutex<()> = Mutex::new(());
+/// The ID of the process whose thread holds `BUILDING`, or 0 when no thread
+/// does. A forked child that finds it set to another process's ID holds a
+/// copy of a lock no thread will release (see [`build_lock`]).
+static BUILDER: AtomicU32 = AtomicU32::new(0);
 static BUILDS: AtomicU64 = AtomicU64::new(0);
 // Every request sent, by its ZeroKMS endpoint, such as `load-keyset`.
 static REQUESTS: Mutex<BTreeMap<&'static str, u64>> = Mutex::new(BTreeMap::new());
@@ -78,16 +83,59 @@ fn current() -> Result<Option<&'static Client>, Refusal> {
     if BUILT_IN.load(Ordering::Acquire) == std::process::id() {
         return Ok(Some(client));
     }
-    Err(Refusal {
+    Err(forked())
+}
+
+/// The refusal of a child that `fork` made after, or during, the build of
+/// its parent's client.
+fn forked() -> Refusal {
+    Refusal {
         code: "stack_forked".to_owned(),
-        message: "this process was forked after the engine client was built, and a forked \
-                  process cannot use it. Make the first encrypt, decrypt or query call after \
-                  the fork: with Gunicorn, do not use --preload; with multiprocessing, use \
-                  the spawn start method."
+        message: "this process was forked after the engine client was built, or while it was \
+                  being built, and a forked process cannot use it. Make the first encrypt, \
+                  decrypt or query call after the fork: with Gunicorn, do not use --preload; \
+                  with multiprocessing, use the spawn start method."
             .to_owned(),
         field: None,
         reason: None,
-    })
+    }
+}
+
+/// `BUILDING`, held, with this process's ID in `BUILDER` until the guard
+/// drops. Dropping the guard clears the ID, then releases the lock.
+struct BuildGuard(#[allow(dead_code)] MutexGuard<'static, ()>);
+
+impl Drop for BuildGuard {
+    fn drop(&mut self) {
+        BUILDER.store(0, Ordering::Release);
+    }
+}
+
+/// Take `BUILDING`, or refuse with `stack_forked` in a forked child.
+///
+/// A child forked while a thread of its parent held the lock has a copy of
+/// that lock in its locked state, and no thread to release it. Blocking on
+/// it would never return. So a waiter polls the lock, and refuses as soon
+/// as it sees that the holder is another process. One gap remains: a fork
+/// after the parent's thread took the lock and before it stored its process
+/// ID leaves `BUILDER` at 0, and the child then waits.
+fn build_lock() -> Result<BuildGuard, Refusal> {
+    loop {
+        let guard = match BUILDING.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                let holder = BUILDER.load(Ordering::Acquire);
+                if holder != 0 && holder != std::process::id() {
+                    return Err(forked());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+        };
+        BUILDER.store(std::process::id(), Ordering::Release);
+        return Ok(BuildGuard(guard));
+    }
 }
 
 /// The shared client, built on the first call.
@@ -105,7 +153,7 @@ pub fn shared() -> Result<&'static Client, Refusal> {
     if let Some(client) = current()? {
         return Ok(client);
     }
-    let _building = locked(&BUILDING);
+    let _building = build_lock()?;
     // Again under the lock: a switch can finish while this thread waits for
     // it, and the live client must then not be built.
     #[cfg(feature = "deterministic-kms")]
@@ -197,7 +245,7 @@ pub fn use_deterministic(seed: [u8; 32]) -> Result<(), Refusal> {
     };
     // The lock `shared` builds under: a live build in flight on another
     // thread finishes before this checks, so the two never both exist.
-    let _building = locked(&BUILDING);
+    let _building = build_lock()?;
     if CLIENT.get().is_some() || DETERMINISTIC.get().is_some() {
         return Err(refused(
             "the process already has a client; call this before any operation".to_owned(),

@@ -57,6 +57,10 @@ def test_threads_decrypt_at_once_and_every_row_opens():
         ("after", "stack_forked"),
         # No client existed at the fork, so the child builds its own.
         ("before", "ok"),
+        # Another thread was building the client at the fork. The child's
+        # copy of the build lock is never released, so the child is refused
+        # rather than wait on it.
+        ("during", "stack_forked"),
     ],
 )
 def test_a_forked_child_is_refused_only_when_the_client_was_built_before_the_fork(
