@@ -1,0 +1,39 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://cloudkms.googleapis.com/v1/projects/test-only-project/locations/global/keyRings/cipherstash-fixture/cryptoKeys/fixture-key:decrypt",
+      "headers": [
+        [
+          "authorization",
+          "Bearer fixture-access-token"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "ciphertext": "CiQAJGkadvNFiRYxQukGpPXsH5mn+UILBKXRpfGmC4+IrCQ/q1wYG9KKCbZDl992riv68erBgpebX9t6NChYAE82r0cYIwZ+w5BcZ963iIyCwVmuqBRxcsEdBT4j1zKcVVun5CBPLuCO",
+        "additionalAuthenticatedData": "BQAAAAAAAAAlAAAAAAAAAHN0YWNrLWttcy12ZW5kb3Iva2V5c2V0LXJlY29yZC1rZXkvdjEIAAAAAAAAAHJvb3Qta2V5EAAAAAAAAAAPHi08S1ppeIeWpbTD0uHxAQAAAAAAAAACAQAAAAAAAAAC",
+        "ciphertextCrc32c": "2110219672",
+        "additionalAuthenticatedDataCrc32c": "1799140326"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "plaintext": "Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0M=",
+        "plaintextCrc32c": "1618493874",
+        "usedPrimary": false,
+        "protectionLevel": "SOFTWARE"
+      }
+    }
+  }
+]

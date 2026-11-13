@@ -1,0 +1,76 @@
+name: Integration — stack-kms-gcp (Google Cloud KMS)
+
+# stack-kms-gcp against real Google Cloud KMS (tests/live.rs). Google
+# publishes no Cloud KMS emulator, so unlike the LocalStack and Vault jobs in
+# tests-crates.yml this needs a real crypto key and real credentials. Every
+# other stack-kms-gcp test runs in tests-crates.yml, against fixtures and an
+# in-process emulator.
+#
+# OPT-IN. The job runs only when the repository variable
+# STACK_KMS_GCP_LIVE_KEY is set, so the workflow is inert until someone sets
+# up the Google Cloud side. To turn it on:
+#
+#   1. Create a symmetric ENCRYPT_DECRYPT crypto key for this test only.
+#   2. Create a service account with roles/cloudkms.cryptoKeyEncrypterDecrypter
+#      on that key and nothing else, and make a JSON key for it.
+#   3. Set the repository variable STACK_KMS_GCP_LIVE_KEY to the crypto key
+#      name (projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>), and the
+#      repository secret STACK_KMS_GCP_SERVICE_ACCOUNT_KEY to the JSON key.
+#
+# Once the variable is set, a missing or empty secret FAILS the job (the
+# pre-flight in _test-kms-live.yml): a credentialed job that skips for want
+# of a secret reads exactly like one that passes.
+#
+# The job itself is _test-kms-live.yml, shared with
+# integration-azure-managed-hsm.yml. This file keeps the triggers, the opt-in,
+# the fork-PR condition and the names of the variable and the secret.
+#
+# Fork PRs have no secrets, so the job skips them; every other event runs.
+# Enforced by scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packages/stack-kms-gcp/**
+      - packages/stack-kms-vendor/**
+      - packages/stack-kms/**
+      - Cargo.lock
+      - .github/workflows/integration-gcp-kms.yml
+      - .github/workflows/_test-kms-live.yml
+  pull_request:
+    # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
+    paths:
+      - packages/stack-kms-gcp/**
+      - packages/stack-kms-vendor/**
+      - packages/stack-kms/**
+      - Cargo.lock
+      - .github/workflows/integration-gcp-kms.yml
+      - .github/workflows/_test-kms-live.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    name: stack-kms-gcp against Cloud KMS
+    if: >-
+      vars.STACK_KMS_GCP_LIVE_KEY != ''
+      && (github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository)
+    uses: ./.github/workflows/_test-kms-live.yml
+    with:
+      crate: stack-kms-gcp
+      name: stack-kms-gcp against Cloud KMS
+      live-key-variable: STACK_KMS_GCP_LIVE_KEY
+      required-secrets: credentials-json STACK_KMS_GCP_SERVICE_ACCOUNT_KEY
+      live-env: STACK_KMS_GCP_LIVE_KEY=${{ vars.STACK_KMS_GCP_LIVE_KEY }}
+      # The test reads the service account key file this names.
+      credentials-file-env: GOOGLE_APPLICATION_CREDENTIALS
+    secrets:
+      credentials-json: ${{ secrets.STACK_KMS_GCP_SERVICE_ACCOUNT_KEY }}
