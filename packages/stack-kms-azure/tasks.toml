@@ -1,0 +1,32 @@
+# Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
+# warning fails the build. The root `doc` task fans out over every
+# `doc:<crate>`; the root `test:doc` runs the doc examples.
+["doc:stack-kms-azure"]
+description = "Build docs for stack-kms-azure with all features (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc -p stack-kms-azure --no-deps --all-features"
+
+# The Azure backend against a real Managed HSM (tests/live.rs). Microsoft
+# publishes no Managed HSM emulator, so this needs a real key and credentials.
+# NOT RUN YET: we have no live Managed HSM, so the workflow that calls this
+# task, integration-azure-managed-hsm.yml, stays off (its variable is unset).
+# The test skips itself when STACK_KMS_AZURE_LIVE_KEY is unset, which is right
+# for `cargo nextest run --workspace` and wrong here: a skip would read as a
+# pass. So this task refuses to run without the key and the credentials.
+#
+#   STACK_KMS_AZURE_LIVE_KEY=https://<hsm>.managedhsm.azure.net/keys/<name> \
+#   AZURE_TENANT_ID=... AZURE_CLIENT_ID=... AZURE_CLIENT_SECRET=... \
+#     mise run test:live:stack-kms-azure
+["test:live:stack-kms-azure"]
+description = "Run the stack-kms-azure tests against a real Azure Managed HSM (needs STACK_KMS_AZURE_LIVE_KEY and credentials)"
+run = """
+if [ -z "${STACK_KMS_AZURE_LIVE_KEY:-}" ]; then
+  echo "error: set STACK_KMS_AZURE_LIVE_KEY to a Managed HSM key identifier (https://<hsm>.managedhsm.azure.net/keys/<name>)" >&2
+  exit 1
+fi
+if [ -z "${AZURE_CLIENT_SECRET:-}" ] && [ -z "${AZURE_MANAGED_HSM_ACCESS_TOKEN:-}" ] && [ -z "${AZURE_FEDERATED_TOKEN_FILE:-}" ]; then
+  echo "error: set AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET (or AZURE_MANAGED_HSM_ACCESS_TOKEN)" >&2
+  exit 1
+fi
+mise x --env test -- cargo nextest run --locked -p stack-kms-azure --all-features --test live --no-tests=fail
+"""
