@@ -28,6 +28,19 @@ In the code:
 
 ### Breaking
 
+- **An order index on bytes is refused** (#1577). A `[]byte` field tagged
+  `index=ore` or `index=ope` is now a field error from `stashgen`. A plan
+  built by hand with an `ore`, `ope` or `ore_block` output on a `bytes`
+  field is refused by the guest (`index_not_admitted`) before any key is
+  requested. No ordering operator
+  is answered over bytes, so the field stored an order term that anyone
+  who read the column could compare and that no query could use.
+  `stashgen`'s notice for an index no generated method queries is gone
+  with the case it described. To upgrade, remove the index from the tag
+  and generate again. Rows stored with the term still open: opening
+  ignores a stored term the plan does not declare. The stored terms stay
+  in the database until the row is written again or the column is dropped.
+
 - **A field declares at most one order index** (#1233). The engine refuses
   a field tagged `index=ore;ope` (or `ore;ore_block`), so `stashgen` now
   reports it as a field error at generate time, and a plan built by hand
@@ -35,8 +48,7 @@ In the code:
   is requested. Before, the field stored both terms and every query used
   the ORE one; the OPE term cost a write and told anyone who read the
   column how its values order. `stashgen`'s notice for a second order index
-  is gone with the case it described; the notice for an order index on
-  bytes stays.
+  is gone with the case it described.
 
 - **`Cipher.Extend` is now `Cipher.Scope`, and `Cipher.Bind` is new**
   (#1487). A scope narrows the data and the queries over it. A binding ties

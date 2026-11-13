@@ -2155,6 +2155,16 @@ review. The rules are the query artifact's.
      generated from the `op` types. Each index declares its operators and admitted
      plaintexts once, and `index_for` reads them. Overlap is refused on
      both paths. A test shows the typed and dynamic faces agree.
+     An index admits exactly the plaintexts one of its operators
+     answers. The typed path enforces this with a trait bound, not a
+     test: each order index, and each low-level order operation an
+     index can be built from, is declared over `op::Ordered`, the trait
+     its operators need. So an order index on bytes does not compile
+     (#1577). The dynamic path refuses the declaration, in
+     `dynamic::admits`, as `index_not_admitted`. A row stored under
+     such a declaration still opens once the index is removed from the
+     plan, because opening ignores a stored term the plan does not
+     declare.
   2. Derivation once, refusals once. The `sem` query functions, the
      analyzer in place of `MatchCase`, and `Match<Dynamic>` arrive.
      `check`, `verifier`, `admit`, `QueryToken`, `check_input`, and the

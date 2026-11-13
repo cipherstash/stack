@@ -188,9 +188,16 @@ impl fmt::Display for IndexSpec {
 
 /// An operation that derives one search term of `S`.
 ///
-/// Implemented for exactly the plaintexts the index's scheme is defined
-/// over, which is what makes an inapplicable index a compile error: there is
-/// no `Index<u32>` for [`Match`](struct@Match), because match is defined over text.
+/// An index implements `Index<S>` only for the plaintext types `S` that
+/// its operators accept. An index on any other type does not compile. For
+/// example, there is no `Index<u32>` for [`Match`](struct@Match), because
+/// a match query needs text.
+///
+/// An order index ([`Ore`], [`Ope`], or [`OreBlock`]) implements
+/// `Index<S>` for the types that the ordering operators accept
+/// ([`op::Ordered`](crate::op::Ordered)). The order scheme can also order
+/// bytes. No ordering operator accepts bytes, so there is no
+/// `Index<Vec<u8>>` for [`Ore`].
 ///
 /// An index does not seal anything. [`indexed`] puts a ciphertext beside the
 /// indexes of a field; [`operation`](Self::operation) on its own is the term
@@ -201,7 +208,7 @@ impl fmt::Display for IndexSpec {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an index of `{S}`",
     label = "this index is not defined over `{S}`",
-    note = "an index applies only to the plaintexts its scheme is defined over: `Match` takes text, and `Equality`, `Ore` and `Ope` take the types their schemes encode"
+    note = "`Match` accepts text; `Equality` accepts the types its scheme encodes; `Ore`, `Ope` and `OreBlock` accept the types that implement `op::Ordered`"
 )]
 pub trait Index<S> {
     /// The term this index derives.
@@ -226,8 +233,24 @@ pub trait Index<S> {
 pub struct Equality;
 
 /// The order-revealing index: a CLLW ORE ciphertext of the value, under a
-/// key derived from the field's context. Defined for every `S` the scheme
-/// can order (text and integers among them).
+/// key derived from the field's context.
+///
+/// `Ore` accepts every type `S` that the ordering operators accept
+/// ([`op::Ordered`](crate::op::Ordered)): the integers of 16 bits and
+/// wider, the floats, text, dates, timestamps, and decimals.
+///
+/// `Ore` does not accept bytes. The scheme can order a `Vec<u8>`, but no
+/// ordering operator accepts bytes.
+///
+/// A stored term of bytes would reveal the order of the rows. No query
+/// could use that term. An order index on bytes therefore does not
+/// compile:
+///
+/// ```compile_fail
+/// use stack_encrypt::{Ore, Plan};
+///
+/// let _ = Plan::context("files/digest").with::<Vec<u8>, _>(Ore);
+/// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Ore;
 
@@ -354,9 +377,14 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
         matching()
     }
 }
+
+// Each order index needs `Ordered`, the trait that the ordering operators
+// need. `Orderable` is wider: it also covers bytes. An index stores a term
+// that reveals the order of the rows, so an index only accepts a type
+// that an ordering operator accepts.
 impl<S> Index<S> for Ore
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Term = OreTerm<S>;
     fn spec(&self) -> IndexSpec {
@@ -373,7 +401,7 @@ where
 }
 impl<S> Index<S> for Ope
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Term = OpeTerm<S>;
     fn spec(&self) -> IndexSpec {
@@ -390,7 +418,7 @@ where
 }
 impl<S> Index<S> for OreBlock
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Term = OreBlockTerm<S>;
     fn spec(&self) -> IndexSpec {
@@ -753,21 +781,21 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> TermSet<S> for MatchTerms<O> {
 }
 impl<S> TermSet<S> for OreTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Indexes = Ore;
     const INDEXES: Ore = Ore;
 }
 impl<S> TermSet<S> for OpeTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Indexes = Ope;
     const INDEXES: Ope = Ope;
 }
 impl<S> TermSet<S> for OreBlockTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::op::Ordered,
 {
     type Indexes = OreBlock;
     const INDEXES: OreBlock = OreBlock;

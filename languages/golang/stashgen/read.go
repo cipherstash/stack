@@ -58,7 +58,7 @@ type genFile struct {
 	notices         []string
 	printsPlaintext bool
 	unexported      []string
-	unqueried       []string // stderr notices about one field: an index no generated method queries, an array with no Elements accessor
+	unqueried       []string // stderr notices about one field: an array with no Elements accessor
 	redact          bool
 	redactRecv      string
 

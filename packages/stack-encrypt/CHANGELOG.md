@@ -116,6 +116,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A data plan refuses an order index on bytes** (#1577).
+  `dynamic::admits` no longer admits `ore`, `ope` or `ore_block` on a
+  `bytes` field, so `record::plan` refuses the declaration with
+  `index_not_admitted`. Go reaches the same check through the guest.
+  Before, the declaration was accepted, each row stored an order term
+  that anyone who held two rows could compare, and every ordering query
+  was refused as `operator_not_answered`.
+  - To upgrade, remove the index from the plan. A row stored with the
+    term still opens under the new plan: opening ignores a stored term,
+    and an index-only field, that the plan does not declare. The stored
+    terms stay in the database until the row is written again.
+  - `IndexSpec::defines` is unchanged. It reports whether the scheme has
+    a term for a value, and it has an order term for bytes.
+  - The conformance corpus follows. In `record-declarations-v1` the
+    cases `type-bytes-ore`, `type-bytes-ope` and `type-bytes-ore_block`
+    are now refused. `record-values-v1` no longer has an `unanswered`
+    list. In `record-query-refusals-v1` the bytes field declares
+    equality alone, and the six `*-on-bytes-order-index` cases are
+    renamed `*-on-bytes`.
+  - `tests/fixtures/stored_rows_v1.json` is not changed. Its `every_kind`
+    plan declares an order index on two bytes fields. The test now opens
+    those rows under the plan with the indexes removed.
+
+- **An order index on bytes does not compile** (#1577). `Ore`, `Ope` and
+  `OreBlock` are indexes over `op::Ordered`, the trait their operators
+  need. Until now they were indexes over `sem::Orderable`, which also
+  covers `Vec<u8>`. So a plan or a record could declare an order index on
+  bytes. Each row then stored a term that reveals its order, and no query
+  could use the term, because no ordering operator is answered over
+  bytes.
+  - These no longer compile: `.with::<Vec<u8>, _>(Ore)` on a plan, a
+    record field `Encrypted<OreTerm<Vec<u8>>>`, and `OreTerm<Vec<u8>>`,
+    `OpeTerm<Vec<u8>>` or `OreBlockTerm<Vec<u8>>` as a target.
+  - The low-level operations `target::ore`, `target::ope` and
+    `target::ore_block` are bounded on `op::Ordered` too. An index or a
+    target of another crate is built from them, so it could otherwise
+    store an order term over bytes.
+  - Remove the order index from the field. Its ciphertext and its
+    equality term are unchanged.
+  - Rows stored before stay readable. A record that only opens
+    (`DecryptInto`, `DecryptSource`) can still name
+    `Encrypted<OreTerm<Vec<u8>>>`.
+  - The keyset's term functions `ore_term`, `ope_term` and
+    `ore_block_term` still take bytes. Each derives one term. It is not a
+    description, so no plan, record or target can be built from it.
+  - The dynamic interface is unchanged. It still admits an order index on
+    bytes. How it should treat a declaration that Go rc.3 accepted is not
+    decided yet.
+
 - **`CipherRef` replaces `target::CipherScope` and `dynamic::Scope`**
   (#1488). A `CipherRef` is one borrowed value: a connection, and the
   keyset it is confined to, if any. It is built from `&StackCipher`,

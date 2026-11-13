@@ -572,6 +572,20 @@ impl<S: 'static> Input<Pair> for (S, S) {
 /// timestamps by the microsecond, so instants within one microsecond tie;
 /// and decimals by value, so `1.5` ties `1.50`.
 ///
+/// `Ordered` is also the bound on these:
+///
+/// - the order indexes: [`Ore`], [`Ope`], and [`OreBlock`]
+/// - the terms of those indexes, when a term is a target
+/// - the low-level operations that the indexes use, such as
+///   [`target::ore`](crate::target::ore)
+///
+/// An order index therefore accepts exactly the types that the ordering
+/// operators accept.
+///
+/// Bytes have an order term ([`Orderable`]). Bytes are not `Ordered`, so
+/// an order index on bytes does not compile. The stored term would reveal
+/// the order of the rows. No query could use that term.
+///
 /// Sealed: a type joins only when the order its terms compare in is the
 /// one its operators promise, so a type whose terms could order otherwise
 /// (a newtype over folded text, say) must not be able to join. A type that

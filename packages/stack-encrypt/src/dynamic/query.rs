@@ -191,12 +191,8 @@ impl Op {
         // answers is the one. A document field's JSON index answers the
         // document operators over a document alone; every other index
         // answers over the kinds it is defined for.
-        // An order index over bytes stores a term and answers no ordering:
-        // the orderings are answered over the integers, the floats, text,
-        // decimals, dates and timestamps.
-        if self.is_ordering() && !ordered(kind) {
-            return None;
-        }
+        // `admits` refuses an order index over bytes, the one kind with an
+        // order term and no ordering, so no ordering is answered there.
         indexes.iter().find(|index| {
             index.answers(self)
                 && match index {
@@ -205,38 +201,6 @@ impl Op {
                 }
         })
     }
-
-    /// Whether this is an ordering operator over a scalar: `lt`, `lte`,
-    /// `gt`, `gte` or `between`.
-    fn is_ordering(self) -> bool {
-        matches!(self, Op::Lt | Op::Lte | Op::Gt | Op::Gte | Op::Between)
-    }
-}
-
-/// The kinds the ordering operators are answered over: the integers of 16
-/// bits and wider, `int16` to `uint128`, the floats, text, and dates,
-/// timestamps and decimals, as [`op::Ordered`](crate::op::Ordered) covers
-/// them in the typed path. Not `int8` or `uint8`, which have no order term.
-/// Each orders by its order key; a `float32` is ordered as the
-/// `f64` it widens to, as the typed path asks.
-fn ordered(kind: ValueKind) -> bool {
-    matches!(
-        kind,
-        ValueKind::Int16
-            | ValueKind::Int32
-            | ValueKind::Int64
-            | ValueKind::Int128
-            | ValueKind::UInt16
-            | ValueKind::UInt32
-            | ValueKind::UInt64
-            | ValueKind::UInt128
-            | ValueKind::Float32
-            | ValueKind::Float64
-            | ValueKind::String
-            | ValueKind::Decimal
-            | ValueKind::Date
-            | ValueKind::Timestamp
-    )
 }
 
 /// How far the server's answer to an operator can be trusted, as a catalog

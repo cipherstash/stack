@@ -42,15 +42,17 @@ note: required by a bound in `OpeTerm`
    | pub struct OpeTerm<T: Orderable>(OpeClww8VariableV1, PhantomData<fn() -> T>);
    |                       ^^^^^^^^^ required by this bound in `OpeTerm`
 
-error[E0277]: the trait bound `i8: Orderable` is not satisfied
+error[E0277]: `i8` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
   --> tests/ui/order_term_of_an_8_bit_integer.rs:15:60
    |
 15 |     let rank_plan = Plan::context("users/rank").with::<i8, _>(Ore).build().unwrap();
-   |                                                 ----       ^ the trait `Orderable` is not implemented for `i8`
+   |                                                 ----       ^ no ordering operator over this type
    |                                                 |
    |                                                 required by a bound introduced by this call
    |
-   = help: the following other types implement trait `Orderable`:
+   = help: the trait `Ordered` is not implemented for `i8`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
              f32
              f64
              i128
@@ -80,5 +82,5 @@ error[E0599]: the method `build` exists for struct `ValuePlanBuilder<i8, Indexed
    | --------------------- doesn't satisfy `Indexed<stack_encrypt::Ore>: ValueLayout<i8>`
    |
    = note: the following trait bounds were not satisfied:
-           `i8: Orderable`
+           `i8: Ordered`
            which is required by `Indexed<stack_encrypt::Ore>: ValueLayout<i8>`

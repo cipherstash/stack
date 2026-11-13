@@ -1039,21 +1039,34 @@ term_operation!(
 );
 term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.
-    /// The bound is the leaf's own: it says which `S` has an order target.
+    ///
+    /// `S` must be a type that the ordering operators accept
+    /// ([`op::Ordered`](crate::op::Ordered)). The [`Ore`](super::Ore)
+    /// index has the same bound. Another crate can build an index or a
+    /// target from this operation, so the operation accepts no type that
+    /// the index refuses.
+    ///
+    /// Bytes have an order term, but no ordering operator accepts bytes.
+    /// A stored term of bytes would reveal the order of the rows. No
+    /// query could use that term.
+    ///
+    /// The keyset method [`ore_term`](crate::KeysetCipher::ore_term) still
+    /// derives an order term of bytes, for tests of the term. That method
+    /// does not return a description, so no plan or target can use it.
     ore, crate::sem::OreTerm<S>, consume, [],
-    [S: crate::sem::Orderable]
+    [S: crate::op::Ordered]
 );
 term_operation!(
     /// The order-preserving term of `S` under the context the tree hands it,
     /// with the same bounds as [`ore`].
     ope, crate::sem::OpeTerm<S>, consume, [],
-    [S: crate::sem::Orderable]
+    [S: crate::op::Ordered]
 );
 term_operation!(
     /// The block ORE term of `S` under the context the tree hands it, with
     /// the same bounds as [`ore`].
     ore_block, crate::sem::OreBlockTerm<S>, consume, [],
-    [S: crate::sem::Orderable]
+    [S: crate::op::Ordered]
 );
 
 /// The JSON index's terms of a document under the context the tree hands
@@ -1654,7 +1667,7 @@ impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
 }
 impl<S> EncryptFrom<S> for crate::sem::OreTerm<S>
 where
-    S: crate::sem::Orderable + Clone,
+    S: crate::op::Ordered + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -1669,7 +1682,7 @@ where
 }
 impl<S> EncryptFrom<S> for crate::sem::OpeTerm<S>
 where
-    S: crate::sem::Orderable + Clone,
+    S: crate::op::Ordered + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -1684,7 +1697,7 @@ where
 }
 impl<S> EncryptFrom<S> for crate::sem::OreBlockTerm<S>
 where
-    S: crate::sem::Orderable + Clone,
+    S: crate::op::Ordered + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -1762,7 +1775,7 @@ impl<S: AsRef<str> + zeroize::Zeroize, O: crate::sem::MatchConfig + 'static> Enc
 }
 macro_rules! owned_order_term {
     ($($ty:ident, $operation:ident;)+) => {$(
-        impl<S: crate::sem::Orderable + Clone + zeroize::Zeroize> EncryptTarget<S> for crate::sem::$ty<S> {
+        impl<S: crate::op::Ordered + Clone + zeroize::Zeroize> EncryptTarget<S> for crate::sem::$ty<S> {
             type ContextInput = RequiredContext<CallerContext>;
             fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
             where

@@ -1,0 +1,323 @@
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:20:13
+   |
+20 |     digest: Encrypted<OreTerm<Vec<u8>>>,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `OreTerm<Vec<u8>>` to implement `TermSet<Vec<u8>>`
+   = note: required for `Encrypted<OreTerm<Vec<u8>>>` to implement `EncryptTarget<Vec<u8>>`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:20:13
+   |
+20 |     digest: Encrypted<OreTerm<Vec<u8>>>,
+   |             ^^^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `OreTerm<Vec<u8>>` to implement `TermSet<Vec<u8>>`
+   = note: required for `Encrypted<OreTerm<Vec<u8>>>` to implement `EncryptTarget<Vec<u8>>`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:24:59
+   |
+24 |     let _ = Plan::context("files/digest").with::<Vec<u8>, _>(Ore);
+   |                                           ----            ^ no ordering operator over this type
+   |                                           |
+   |                                           required by a bound introduced by this call
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `stack_encrypt::Ore` to implement `stack_encrypt::Index<Vec<u8>>`
+   = note: required for `stack_encrypt::Ore` to implement `Indexes<Vec<u8>>`
+note: required by a bound in `plan::value::<impl PlanContext>::with`
+  --> src/plan/value.rs
+   |
+   |     pub fn with<S, X: Indexes<S>>(self, indexes: X) -> ValuePlanBuilder<S, Indexed<X>> {
+   |                       ^^^^^^^^^^ required by this bound in `plan::value::<impl PlanContext>::with`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:25:59
+   |
+25 |     let _ = Plan::context("files/digest").with::<Vec<u8>, _>(Ope);
+   |                                           ----            ^ no ordering operator over this type
+   |                                           |
+   |                                           required by a bound introduced by this call
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `stack_encrypt::Ope` to implement `stack_encrypt::Index<Vec<u8>>`
+   = note: required for `stack_encrypt::Ope` to implement `Indexes<Vec<u8>>`
+note: required by a bound in `plan::value::<impl PlanContext>::with`
+  --> src/plan/value.rs
+   |
+   |     pub fn with<S, X: Indexes<S>>(self, indexes: X) -> ValuePlanBuilder<S, Indexed<X>> {
+   |                       ^^^^^^^^^^ required by this bound in `plan::value::<impl PlanContext>::with`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:26:59
+   |
+26 |     let _ = Plan::context("files/digest").with::<Vec<u8>, _>(OreBlock);
+   |                                           ----            ^ no ordering operator over this type
+   |                                           |
+   |                                           required by a bound introduced by this call
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `stack_encrypt::OreBlock` to implement `stack_encrypt::Index<Vec<u8>>`
+   = note: required for `stack_encrypt::OreBlock` to implement `Indexes<Vec<u8>>`
+note: required by a bound in `plan::value::<impl PlanContext>::with`
+  --> src/plan/value.rs
+   |
+   |     pub fn with<S, X: Indexes<S>>(self, indexes: X) -> ValuePlanBuilder<S, Indexed<X>> {
+   |                       ^^^^^^^^^^ required by this bound in `plan::value::<impl PlanContext>::with`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:27:13
+   |
+27 |     let _ = <OreTerm<Vec<u8>> as EncryptTarget<Vec<u8>>>::encryption::<()>();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `OreTerm<Vec<u8>>` to implement `EncryptTarget<Vec<u8>>`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:28:13
+   |
+28 |     let _ = <OpeTerm<Vec<u8>> as EncryptTarget<Vec<u8>>>::encryption::<()>();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `OpeTerm<Vec<u8>>` to implement `EncryptTarget<Vec<u8>>`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:29:13
+   |
+29 |     let _ = <OreBlockTerm<Vec<u8>> as EncryptTarget<Vec<u8>>>::encryption::<()>();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `OreBlockTerm<Vec<u8>>` to implement `EncryptTarget<Vec<u8>>`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:30:14
+   |
+30 |     let _ = <OreTerm<Vec<u8>> as EncryptFrom<Vec<u8>>>::indexes();
+   |              ^^^^^^^^^^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `OreTerm<Vec<u8>>` to implement `EncryptFrom<Vec<u8>>`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:31:14
+   |
+31 |     let _ = <OpeTerm<Vec<u8>> as EncryptFrom<Vec<u8>>>::indexes();
+   |              ^^^^^^^^^^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `OpeTerm<Vec<u8>>` to implement `EncryptFrom<Vec<u8>>`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:32:14
+   |
+32 |     let _ = <OreBlockTerm<Vec<u8>> as EncryptFrom<Vec<u8>>>::indexes();
+   |              ^^^^^^^^^^^^^^^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+   = note: required for `OreBlockTerm<Vec<u8>>` to implement `EncryptFrom<Vec<u8>>`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:33:27
+   |
+33 |     let _ = target::ore::<Vec<u8>, (), Borrowed>();
+   |                           ^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+note: required by a bound in `stack_encrypt::target::ore`
+  --> src/target/operations.rs
+   |
+   |     ore, crate::sem::OreTerm<S>, consume, [],
+   |     --- required by a bound in this function
+   |     [S: crate::op::Ordered]
+   |         ^^^^^^^^^^^^^^^^^^ required by this bound in `ore`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:34:27
+   |
+34 |     let _ = target::ope::<Vec<u8>, (), Borrowed>();
+   |                           ^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+note: required by a bound in `stack_encrypt::target::ope`
+  --> src/target/operations.rs
+   |
+   |     ope, crate::sem::OpeTerm<S>, consume, [],
+   |     --- required by a bound in this function
+   |     [S: crate::op::Ordered]
+   |         ^^^^^^^^^^^^^^^^^^ required by this bound in `ope`
+
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
+  --> tests/ui/order_index_on_bytes.rs:35:33
+   |
+35 |     let _ = target::ore_block::<Vec<u8>, (), Borrowed>();
+   |                                 ^^^^^^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
+   = help: the following other types implement trait `Ordered`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             stack_encrypt::value::Date
+             stack_encrypt::value::Decimal
+           and $N others
+note: required by a bound in `stack_encrypt::target::ore_block`
+  --> src/target/operations.rs
+   |
+   |     ore_block, crate::sem::OreBlockTerm<S>, consume, [],
+   |     --------- required by a bound in this function
+   |     [S: crate::op::Ordered]
+   |         ^^^^^^^^^^^^^^^^^^ required by this bound in `ore_block`

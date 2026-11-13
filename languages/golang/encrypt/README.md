@@ -238,7 +238,7 @@ or a type defined over one (`type Email string`):
 | Go field | Seals as | Indexes it can store | Query methods |
 |---|---|---|---|
 | `string` | text | `equality`, `match`, `ore`, `ope` | `Eq`, `Matches`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
-| `[]byte` | bytes | `equality`, `ore`, `ope` | `Eq` |
+| `[]byte` | bytes | `equality` | `Eq` |
 | `bool` | a boolean | none | none |
 | `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
 | `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` | the same |
@@ -249,9 +249,10 @@ or a type defined over one (`type Email string`):
 | `encrypt.Date` | a calendar date | `equality` | `Eq` |
 | `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
 
-Each query method needs its index declared. An `ore` or `ope` index on bytes
-stores its term, but the engine answers no ordering through it, so such a
-field has no `Lt` (see [Queries](#queries)).
+Each query method needs its index declared. A field of bytes takes no `ore`
+or `ope` index: the engine answers no ordering over bytes, so the term
+would be stored and never queried, and `stashgen` refuses the declaration
+(see [Queries](#queries)).
 
 `encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
 types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
@@ -333,11 +334,9 @@ one value, and every NaN is one value, above `+Inf`, so `Between(math.NaN(),
 math.Inf(1))` matches nothing. A `float32` orders as the `float64` it
 widens to.
 
-An order index on bytes stores its term but answers no ordering
-operator, so such a field has no `Lt`; nor does the `ope` index of a field
-that declares `ore` too, since `ore` answers the orderings. stashgen prints a notice for each such index, on stderr and in
-the generated file: the terms are stored, and only your own code can compare
-them. A match index on an index-only field (`index=match` with no `encrypt`)
+An order index on bytes is refused: no ordering operator is answered over
+bytes, so the term would be stored, where anyone who reads the column can
+compare it, and no query could use it. A match index on an index-only field (`index=match` with no `encrypt`)
 is refused, because `Verify` checks a match query's rows by decrypting them.
 
 Every query type implements `driver.Valuer`, so it binds as a parameter in

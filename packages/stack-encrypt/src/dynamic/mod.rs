@@ -561,7 +561,8 @@ reasons! {
         /// `"type"` is not a string naming a value type.
         UnknownType => "unknown_type", r#""type" does not name a value type"#;
         /// The field's declared type has no such index: match on an integer,
-        /// equality or an order index on a boolean, any index on a composite.
+        /// equality or an order index on a boolean, an order index on an
+        /// 8-bit integer or on bytes, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
         /// The field declares the JSON index as an output. A data plan
         /// reaches the JSON index through a target that stores a document

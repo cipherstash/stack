@@ -17,9 +17,8 @@ import (
 
 // Property tests of term ordering: random plaintexts, the terms the guest
 // stores for them through the generated Probe and ProbeOpe fields' Encrypt,
-// comparison in Go. A query method derives the same bytes, but only over
-// integers, floats and text, so the stored terms reach every index and
-// kind; a field declares one order index, so ORE and OPE are two records. ORE is
+// comparison in Go. A field declares one order index, so ORE and OPE are
+// two records. ORE is
 // probabilistic — a wrong comparator or a wrong derivation still agrees
 // with plaintext order on many pairs — so a fixed vector set says little;
 // hundreds of random pairs per type say more. The index key is the
@@ -259,13 +258,6 @@ func TestTermOrderIsPlaintextOrder(t *testing.T) {
 				}
 				values = append(values, math.SmallestNonzeroFloat32, -math.SmallestNonzeroFloat32, math.MaxFloat32)
 				adjacentProperty(t, cipher, ope, d, values, floatOrder[float32])
-			})
-			t.Run("bytes", func(t *testing.T) {
-				d := probeTerm(ope,
-					f.B.Encrypt, func(e testusers.EncryptedProbeB) []byte { return e.Ore },
-					p.B.Encrypt, func(e testusers.EncryptedProbeOpeB) []byte { return e.Ope })
-				orderProperty(t, cipher, ope, d, bytes.Compare)
-				adjacentProperty(t, cipher, ope, d, [][]byte{{}, {0}, {0, 0}, {0, 1}, {1}, {255}, {255, 0}}, bytes.Compare)
 			})
 		})
 	}
