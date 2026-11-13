@@ -1,0 +1,222 @@
+[
+  {
+    "name": "ThrottlingException",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/x-amz-json-1.1"
+        ],
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": {
+        "__type": "ThrottlingException",
+        "message": "You have exceeded the rate at which you may call KMS. Reduce the frequency of your calls."
+      }
+    },
+    "kind": "Throttled"
+  },
+  {
+    "name": "AccessDeniedException",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/x-amz-json-1.1"
+        ],
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": {
+        "__type": "AccessDeniedException",
+        "Message": "User: arn:aws:iam::111122223333:user/app is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab because no identity-based policy allows the kms:Decrypt action"
+      }
+    },
+    "kind": "AccessDenied"
+  },
+  {
+    "name": "NotFoundException",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/x-amz-json-1.1"
+        ],
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": {
+        "__type": "NotFoundException",
+        "message": "Key 'arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab' does not exist"
+      }
+    },
+    "kind": "NotFound"
+  },
+  {
+    "name": "InvalidCiphertextException",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/x-amz-json-1.1"
+        ],
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": {
+        "__type": "InvalidCiphertextException"
+      }
+    },
+    "kind": "InvalidCiphertext"
+  },
+  {
+    "name": "IncorrectKeyException",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/x-amz-json-1.1"
+        ],
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": {
+        "__type": "IncorrectKeyException",
+        "message": "The key ID in the request does not identify a CMK that can perform this operation."
+      }
+    },
+    "kind": "InvalidCiphertext"
+  },
+  {
+    "name": "KMSInternalException",
+    "response": {
+      "status": 500,
+      "headers": [
+        [
+          "content-type",
+          "application/x-amz-json-1.1"
+        ],
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": {
+        "__type": "KMSInternalException",
+        "message": "An internal error occurred."
+      }
+    },
+    "kind": "Unavailable"
+  },
+  {
+    "name": "DependencyTimeoutException",
+    "response": {
+      "status": 503,
+      "headers": [
+        [
+          "content-type",
+          "application/x-amz-json-1.1"
+        ],
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": {
+        "__type": "DependencyTimeoutException",
+        "message": "The system timed out while trying to fulfill the request."
+      }
+    },
+    "kind": "Unavailable"
+  },
+  {
+    "name": "a bare 503 from a load balancer",
+    "response": {
+      "status": 503,
+      "headers": [
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": "<html><body>Service Unavailable</body></html>"
+    },
+    "kind": "Unavailable"
+  },
+  {
+    "name": "UnrecognizedClientException",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/x-amz-json-1.1"
+        ],
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": {
+        "__type": "UnrecognizedClientException",
+        "message": "The security token included in the request is invalid."
+      }
+    },
+    "kind": "AccessDenied"
+  },
+  {
+    "name": "the code in the x-amzn-ErrorType header only",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ],
+        [
+          "x-amzn-ErrorType",
+          "ThrottlingException:http://internal.amazon.com/coral/com.amazon.coral.availability/"
+        ]
+      ],
+      "body": ""
+    },
+    "kind": "Throttled"
+  },
+  {
+    "name": "a namespaced __type",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/x-amz-json-1.1"
+        ],
+        [
+          "x-amzn-requestid",
+          "0f9c1b2a-3d4e-4f50-8a6b-7c8d9e0f1a2b"
+        ]
+      ],
+      "body": {
+        "__type": "com.amazonaws.kms#NotFoundException",
+        "message": "Alias 'alias/missing' is not found."
+      }
+    },
+    "kind": "NotFound"
+  }
+]
