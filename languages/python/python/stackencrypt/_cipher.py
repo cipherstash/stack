@@ -95,6 +95,13 @@ class Cipher(Generic[T]):
         class raises ``InvalidValueError`` with the code
         ``value_wrong_type``. An empty list makes no request at all.
         """
+        if isinstance(models, self._cls):
+            # A Pydantic model or a NamedTuple is iterable: list() would
+            # split it into its fields.
+            raise InvalidValueError(
+                "value_wrong_type",
+                "encrypt takes a list of models, not one model on its own. Pass [model].",
+            )
         models = list(models)
         for at, model in enumerate(models):
             # The engine reads each field by name, so a model of another
@@ -432,15 +439,44 @@ def _not_decorated(cls: object) -> DeclarationError:
 
 def _rows(rows: object, error: Type[StashError], code: str) -> list:
     """``rows`` as a list. Raises ``error`` with ``code`` for one row on its
-    own, such as ``cursor.fetchone()`` returns: ``list()`` of a mapping is its
-    keys, and each key would be refused as a row that is not a mapping."""
+    own, in any of three forms:
+
+    - a mapping, such as ``cursor.fetchone()`` returns with ``dict_row``:
+      ``list()`` of it is its keys;
+    - a SQLAlchemy ``Row``: ``list()`` of it is its column values;
+    - a tuple row: ``list()`` of it is its column values too. A sealed
+      column's value is an EQL value, which would read as a row with no
+      declared field, and come back unchanged with no error.
+    """
     if isinstance(rows, Mapping):
         raise error(
             code,
             "this takes a list of rows, not one row on its own. Pass [row], "
             "or the result of fetchall().",
         )
-    return list(rows)  # type: ignore[call-overload]
+    if hasattr(rows, "_mapping"):
+        raise error(
+            code,
+            "this takes a list of rows, not one SQLAlchemy Row. Pass "
+            "[row._mapping], or result.mappings().all().",
+        )
+    rows = list(rows)  # type: ignore[call-overload]
+    for at, row in enumerate(rows):
+        if _is_eql_value(row):
+            raise error(
+                code,
+                f"row {at} is one EQL value, not a row: one row was passed on "
+                "its own, and split into its column values. Pass a list of "
+                "mappings, such as [row._mapping] or the rows of dict_row.",
+            )
+    return rows
+
+
+def _is_eql_value(row: object) -> bool:
+    """Whether ``row`` is an EQL value: a mapping whose ``i`` names a table
+    and a column. A row of columns is never one."""
+    identifier = row.get("i") if isinstance(row, Mapping) else None
+    return isinstance(identifier, Mapping) and "t" in identifier and "c" in identifier
 
 
 def _build_plan(declaration: Declaration, fields: Sequence[DeclaredField]) -> object:

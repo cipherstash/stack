@@ -125,6 +125,17 @@ def test_repr_and_str_seal_every_encrypted_field(declare):
     assert list(user.__rich_repr__()) == [("email", SEALED), ("age", 42)]
 
 
+def test_an_attrs_class_with_a_generated_str_is_redacted():
+    # attrs builds the __str__ of str=True as a plain function in
+    # attr/_make.py, not under its "<attrs generated" file name.
+    @stackencrypt.model("users")
+    @attrs.define(str=True)
+    class User:
+        email: Annotated[str, TextEq]
+
+    assert str(User(email=SECRET)) == "User(email=<sealed>)"
+
+
 def test_every_pydantic_print_hook_seals_the_encrypted_fields():
     # Pydantic builds __repr_str__, __pretty__ (devtools' debug()) and
     # __rich_repr__ from __repr_args__.

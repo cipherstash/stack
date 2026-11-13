@@ -107,7 +107,8 @@ description = "Install the EQL v4 bundle into the database EQL_TEST_DATABASE_URL
 shell = "bash -c"
 # Builds nothing, so CI can run the builds in a step with no credentials and
 # give the credentials to this task alone: a dependency's build script then
-# never runs with them set (tests-python.yml's live job). It needs the
+# does not run with them set (tests-python.yml's live job). The two steps
+# share a runner, so this does not stop the build from leaving code behind. It needs the
 # extension in .venv and the bundle under packages/eql/release first; locally,
 # run test:live, which builds both. The tests skip without credentials or a
 # database, so a skip here is a failure: this task is where both are given.

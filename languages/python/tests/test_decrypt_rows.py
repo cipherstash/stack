@@ -64,6 +64,26 @@ def test_one_row_on_its_own_is_refused_as_one_row(people, untouched):
     assert "not one row" in error.message
 
 
+def test_one_tuple_row_on_its_own_is_refused_as_one_row(people, untouched):
+    # A tuple row is a sequence of its column values. Passed alone, each
+    # EQL value would be read as a row with no declared field, and come
+    # back unchanged with no error.
+    value = json.loads(STORED)
+    error = refused(people, (value, value))
+    assert error.code == "decrypt_row_shape"
+    assert "one EQL value" in error.message
+
+
+def test_a_sqlalchemy_row_on_its_own_is_refused(people, untouched):
+    from sqlalchemy import create_engine, text
+
+    with create_engine("sqlite://").connect() as connection:
+        row = connection.execute(text("SELECT 1 AS age")).first()
+    error = refused(people, row)
+    assert error.code == "decrypt_row_shape"
+    assert "_mapping" in error.message
+
+
 def test_a_row_that_is_not_a_mapping_is_refused(people, untouched):
     error = refused(people, [{"email": STORED}, (STORED,)])
     assert error.code == "decrypt_row_shape"

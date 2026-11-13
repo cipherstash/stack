@@ -17,10 +17,6 @@ use stackencrypt_core::values::{self, Kind, Scalar, Typed};
 
 const CORPUS: &str = include_str!("../testdata/value-conformance.json");
 
-/// The vectors whose kind the SDK never writes: no Python type maps to it
-/// (`int8`, the unsigned and 128-bit integers, `uuid`), it is not a scalar
-/// (`array`, `object`), or it is a timestamp in a unit other than the
-/// nanoseconds the SDK writes.
 /// The vectors the SDK writes, in corpus order: every scalar kind it has,
 /// from the corpus at this commit. A vector added on a refresh fails the
 /// test with its name.
@@ -46,6 +42,10 @@ const WRITTEN: &[&str] = &[
     "decimal-small",
 ];
 
+/// The vectors whose kind the SDK never writes: no Python type maps to it
+/// (`int8`, the unsigned and 128-bit integers, `uuid`), it is not a scalar
+/// (`array`, `object`), or it is a timestamp in a unit other than the
+/// nanoseconds the SDK writes.
 const NOT_WRITTEN: &[&str] = &[
     "null",
     "undefined",

@@ -75,6 +75,13 @@ def test_a_dict_that_is_not_json_is_malformed(untouched):
     assert "row 0" in error.message
 
 
+def test_one_tuple_row_of_eql_values_is_refused_as_one_row(untouched):
+    value = json.loads(STORED)
+    error = refused((value, 3))
+    assert error.code == "decrypt_row_shape"
+    assert "one EQL value" in error.message
+
+
 def test_a_str_that_is_not_valid_utf8_is_malformed(untouched):
     # A lone surrogate: a str Python holds, with no UTF-8 encoding.
     error = refused([{"email": "\ud800", "age": 3}])

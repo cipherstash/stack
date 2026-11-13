@@ -18,6 +18,7 @@ code. A method inherited from a base is replaced on the declared class only.
 import collections
 import inspect
 import os
+import sys
 import types
 from typing import Any, Callable, Iterator, Sequence, Tuple
 
@@ -89,6 +90,13 @@ def _generated(method: object) -> bool:
     filename = code.co_filename
     if filename.startswith(_ATTRS_GENERATED):
         return True
+    # attrs builds the __str__ of `str=True` as a plain function in its own
+    # module, not under the generated file name. The module is looked up,
+    # not imported: a class that attrs made has already imported it.
+    attrs_make = getattr(sys.modules.get("attr._make"), "__file__", None)
+    if attrs_make is not None and code.co_name == "__str__":
+        if os.path.realpath(filename) == os.path.realpath(attrs_make):
+            return True
     if filename == _DATACLASS_FILE:
         return inner.__qualname__.startswith(_DATACLASS_QUALNAME)
     return _COLLECTIONS_FILE is not None and os.path.realpath(filename) == _COLLECTIONS_FILE
