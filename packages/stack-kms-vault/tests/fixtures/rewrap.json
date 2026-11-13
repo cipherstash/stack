@@ -1,0 +1,57 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:8200/v1/transit/rewrap/cipherstash-fixture",
+      "headers": [
+        [
+          "x-vault-token",
+          "fixture-root-token"
+        ],
+        [
+          "x-vault-request",
+          "true"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "batch_input": [
+          {
+            "ciphertext": "vault:v1:B8Ml/QTZ57adlJVybdCDSu0iJgVTPRNP4ZOj/zjy3Wcf10C7zjefJURY1SdVpAjFmXA+BBq3CAMtzQeGW42ZJ0G/BJ40JdkaF8gOCMACuVE6yand1+n/a/6c19V2"
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "auth": null,
+        "data": {
+          "batch_results": [
+            {
+              "ciphertext": "vault:v2:ccW2g83FKwqDAw7NQoxVmdZvXBYXJk9IKJT/upHifUtCRwcOakItzXox+L2pSNSgBMZFpwtzaqBgz8G9Bram5TCKaBRPMn4NtZd4gBmZRZExT3tbv44JAG/SrvOQ",
+              "key_version": 2,
+              "reference": ""
+            }
+          ]
+        },
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "transit",
+        "renewable": false,
+        "request_id": "544ba5f0-4a9d-a3cf-96ee-abce49ac9c7a",
+        "warnings": null,
+        "wrap_info": null
+      }
+    }
+  }
+]
