@@ -1049,3 +1049,51 @@ fn a_timestamp_field_round_trips_and_reads_as_a_jiff_timestamp() {
         EventAsJiff { at: instant }
     );
 }
+
+// A struct of the wipeable scalars round-trips, and reads back as the
+// struct of the types they wrap: each field is the same leaf.
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
+struct Wiped {
+    day: vitaminc_aead::Date,
+    price: vitaminc_aead::Decimal,
+    id: vitaminc_aead::Uuid,
+    maybe: Option<vitaminc_aead::Date>,
+}
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
+struct Foreign {
+    day: jiff::civil::Date,
+    price: rust_decimal::Decimal,
+    id: uuid::Uuid,
+    maybe: Option<jiff::civil::Date>,
+}
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[test]
+fn wipeable_scalar_fields_round_trip_and_read_as_their_foreign_types() {
+    let day = jiff::civil::date(2026, 11, 14);
+    let price = rust_decimal::Decimal::new(150, 2);
+    let id = uuid::Uuid::from_u128(7);
+    let wiped = || Wiped {
+        day: vitaminc_aead::Date::new(day),
+        price: vitaminc_aead::Decimal::new(price),
+        id: vitaminc_aead::Uuid::new(id),
+        maybe: None,
+    };
+    assert_eq!(round_trip::<Wiped>(wiped()).expect("decodes"), wiped());
+    let foreign = round_trip::<Foreign>(wiped()).expect("decodes");
+    assert_eq!(
+        foreign,
+        Foreign {
+            day,
+            price,
+            id,
+            maybe: None
+        }
+    );
+    assert_eq!(foreign.price.scale(), 2, "the scale is kept");
+    assert_eq!(round_trip::<Wiped>(foreign).expect("decodes"), wiped());
+}

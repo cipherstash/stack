@@ -290,3 +290,47 @@ fn a_typed_null_with_nonzero_padding_is_refused() {
     let read: Result<Option<u32>, _> = decrypt(&Mock, CipherText::Single(forged), "ctx");
     assert!(matches!(read, Err(DecryptError::Malformed)), "{read:?}");
 }
+
+/// The wipeable scalars hide absence exactly as the types they wrap: a
+/// `None` of one is the same sealed leaf as a `None` of the other.
+#[cfg(feature = "jiff")]
+#[test]
+fn a_wipeable_date_hides_absence_as_a_jiff_date() {
+    let day = || jiff::civil::date(1999, 12, 31);
+    hides_absence(vitaminc_aead::Date::new(day()));
+    assert_eq!(
+        sealed(None::<vitaminc_aead::Date>),
+        sealed(None::<jiff::civil::Date>)
+    );
+    assert_eq!(
+        sealed(Some(vitaminc_aead::Date::new(day()))),
+        sealed(Some(day()))
+    );
+}
+
+#[cfg(feature = "rust_decimal")]
+#[test]
+fn a_wipeable_decimal_hides_absence_as_a_decimal() {
+    let price = || rust_decimal::Decimal::new(150, 2);
+    hides_absence(vitaminc_aead::Decimal::new(price()));
+    assert_eq!(
+        sealed(None::<vitaminc_aead::Decimal>),
+        sealed(None::<rust_decimal::Decimal>)
+    );
+    assert_eq!(
+        sealed(Some(vitaminc_aead::Decimal::new(price()))),
+        sealed(Some(price()))
+    );
+}
+
+#[cfg(feature = "uuid")]
+#[test]
+fn a_wipeable_uuid_hides_absence_as_a_uuid() {
+    let id = uuid::Uuid::from_bytes([0xAB; 16]);
+    hides_absence(vitaminc_aead::Uuid::new(id));
+    assert_eq!(
+        sealed(None::<vitaminc_aead::Uuid>),
+        sealed(None::<uuid::Uuid>)
+    );
+    assert_eq!(sealed(Some(vitaminc_aead::Uuid::new(id))), sealed(Some(id)));
+}
