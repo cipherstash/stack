@@ -186,7 +186,7 @@ pub fn walk<S: Sink>(node: Node<Opened>, sink: S) -> Result<S::Ok, DecryptError<
         }
         CipherText::Passthrough(frame) => {
             let frame = frame.parse().map_err(|_| DecryptError::Malformed)?;
-            Ok(sink.passthrough(frame)?)
+            Ok(sink.passthrough(&frame)?)
         }
     }
 }
@@ -285,7 +285,7 @@ mod tests {
         impl Encrypt for Doc {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut map = sink.map(Some(2))?;
-                map.entry("id")?.passthrough(vec![7u16])?;
+                map.entry("id")?.passthrough(&vec![7u16])?;
                 "secret".visit(map.entry("name")?)?;
                 map.end()
             }

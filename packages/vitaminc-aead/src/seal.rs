@@ -966,7 +966,7 @@ mod tests {
         struct Pass;
         impl crate::Encrypt for Pass {
             fn visit<S: crate::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-                sink.passthrough("public")
+                sink.passthrough(&"public")
             }
         }
         let remote = Remote::new(true);

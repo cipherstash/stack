@@ -240,9 +240,9 @@ fn map_target(
 
             // A passthrough is unauthenticated, so it must never stand in
             // for a sealed struct.
-            fn passthrough<__P>(self, _: __P) -> ::core::result::Result<Self::Ok, Self::Error>
+            fn passthrough<__P>(self, _: &__P) -> ::core::result::Result<Self::Ok, Self::Error>
             where
-                __P: #krate::Encrypt + ::core::clone::Clone,
+                __P: ?::core::marker::Sized + #krate::EncryptRef,
             {
                 ::core::result::Result::Err(#krate::DecodeError::Expected(#expected))
             }

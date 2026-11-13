@@ -20,6 +20,8 @@
 //! code implements `Encrypt`, usually by derive.
 
 pub mod depth;
+#[cfg(test)]
+mod encrypt_ref_tests;
 pub mod kinds;
 mod path;
 mod sources;
@@ -107,6 +109,83 @@ pub trait Encrypt {
 
     /// Describe `self` to `sink`, consuming it.
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error>;
+}
+
+/// A source that can be described by reference: `&T` is an [`Encrypt`]
+/// source for every lifetime. The bound generic code writes when it holds a
+/// borrowed plaintext and must not copy it.
+///
+/// Implemented for every `T` whose borrow is a source, so a type gets it
+/// by implementing `Encrypt for &T`, as every built-in source and
+/// `#[derive(Encrypt)]` already do. Hand it on with [`lend`](Self::lend).
+///
+/// It says the same as `for<'a> &'a T: Encrypt`, without naming a lifetime,
+/// and is the bound this crate's own containers (`&Option<T>`, `&Vec<T>`,
+/// the maps, `Protected<T>`) put on what they hold. Those used to bound on
+/// `&'a T: Encrypt`, and with `T` still being inferred the trait solver
+/// tried `&Option<U>`, `&Option<Option<U>>`, and so on until it overflowed
+/// (`E0275`). Bounding on `T` itself stops it at `U`, which waits until
+/// `U` is known.
+///
+/// ```
+/// use vitaminc_aead::{Encrypt, EncryptRef};
+///
+/// // Generic over a borrowed plaintext, with no copy and no `Clone`.
+/// fn depth<T: ?Sized + EncryptRef>(value: &T) -> Option<usize> {
+///     fn of<P: Encrypt>(_: P) -> Option<usize> {
+///         P::DEPTH
+///     }
+///     of(value.lend())
+/// }
+///
+/// assert_eq!(depth(&42i32), Some(0));
+/// assert_eq!(depth("text"), Some(0));
+/// assert_eq!(depth(&vec![Some(1u16)]), Some(1));
+/// ```
+pub trait EncryptRef {
+    /// [`Encrypt::DEPTH`] of `&Self`. Named apart from it, so `T::DEPTH`
+    /// stays unambiguous where both traits are in scope.
+    const REF_DEPTH: Option<usize>;
+    /// [`Encrypt::FIXED`] of `&Self`, named apart as `REF_DEPTH` is.
+    const REF_FIXED: Option<FixedType>;
+
+    /// Describe `self` to `sink` by reference, leaving it where it is.
+    fn visit_ref<S: Sink>(&self, sink: S) -> Result<S::Ok, S::Error>;
+
+    /// `self` as an [`Encrypt`] source that reads it in place.
+    fn lend(&self) -> Lent<'_, Self> {
+        Lent(self)
+    }
+}
+
+impl<T: ?Sized> EncryptRef for T
+where
+    for<'a> &'a T: Encrypt,
+{
+    const REF_DEPTH: Option<usize> = <&T as Encrypt>::DEPTH;
+    const REF_FIXED: Option<FixedType> = <&T as Encrypt>::FIXED;
+    fn visit_ref<S: Sink>(&self, sink: S) -> Result<S::Ok, S::Error> {
+        self.visit(sink)
+    }
+}
+
+/// A borrowed plaintext as an [`Encrypt`] source: what
+/// [`EncryptRef::lend`] returns. It walks exactly as `&T` does.
+pub struct Lent<'a, T: ?Sized>(&'a T);
+
+impl<T: ?Sized> Clone for Lent<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T: ?Sized> Copy for Lent<'_, T> {}
+
+impl<T: ?Sized + EncryptRef> Encrypt for Lent<'_, T> {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.0.visit_ref(sink)
+    }
 }
 
 /// A source whose walk is exactly one leaf.
@@ -288,10 +367,11 @@ pub trait Sink: Sized {
     /// A subtree that travels in the clear. It is walked like anything
     /// else; the sink decides what "in the clear" means for it.
     ///
-    /// The value is `Clone` so that a sink which is really several sinks
-    /// (see [`Tee`]) can give the subtree to each of them. Passthrough is
-    /// non-sensitive by contract, so the copy carries no secret.
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<Self::Ok, Self::Error>;
+    /// The subtree is lent, not handed over: a sink walks it in place
+    /// ([`EncryptRef::visit_ref`]), and a sink which is really several sinks
+    /// (see [`Tee`]) lends the same subtree to each of them, so it is never
+    /// copied.
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<Self::Ok, Self::Error>;
 }
 
 /// The sink for a sequence's elements.
@@ -460,9 +540,9 @@ pub(crate) mod record {
             Ok(self)
         }
 
-        fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), RecordError> {
+        fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), RecordError> {
             self.0.push(Event::Passthrough);
-            value.visit(Record(self.0))
+            value.visit_ref(Record(self.0))
         }
     }
 

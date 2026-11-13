@@ -412,7 +412,7 @@ fn a_logical_scalar_and_a_passthrough_are_refused() {
         let mut map = FrameWriter::new(&mut bytes).map(Some(1)).expect("map");
         map.entry("p")
             .expect("entry")
-            .passthrough(1u32)
+            .passthrough(&1u32)
             .expect("passthrough");
         map.end().expect("end");
     }
@@ -1169,7 +1169,7 @@ fn a_key_only_a_host_chose_is_placed_by_position() {
             .expect("known");
         map.entry("secret_looking_key")
             .expect("entry")
-            .passthrough(1u32)
+            .passthrough(&1u32)
             .expect("passthrough");
         map.end().expect("end");
     }
@@ -1485,7 +1485,7 @@ fn a_string_reads_only_text_and_bytes_only_bytes() {
             .expect("map");
         map.entry("p")
             .expect("entry")
-            .passthrough(1u32)
+            .passthrough(&1u32)
             .expect("passthrough");
         map.end().expect("end");
     }

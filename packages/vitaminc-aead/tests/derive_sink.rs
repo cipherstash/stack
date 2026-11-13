@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use vitaminc_aead::{
-    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Encrypt, FixedType, Int,
-    IntoAad, Logical, MapSink, Physical, Raw, SeqSink, Sink, SourceError,
+    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Encrypt, EncryptRef,
+    FixedType, Int, IntoAad, Logical, MapSink, Physical, Raw, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::ZeroizeOnDrop;
@@ -73,9 +73,9 @@ impl Sink for Record<'_> {
         Ok(self)
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), RecordError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), RecordError> {
         self.0.push(Event::Passthrough);
-        value.visit(Record(self.0))
+        value.visit_ref(Record(self.0))
     }
 }
 
@@ -318,7 +318,7 @@ fn a_missing_option_or_passthrough_field_is_refused() {
     impl Encrypt for NoTenant {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(3))?;
-            map.entry("tags")?.passthrough(vec![1u32])?;
+            map.entry("tags")?.passthrough(&vec![1u32])?;
             "123".visit(map.entry("ssn")?)?;
             "hi".visit(map.entry("n")?)?;
             map.end()
@@ -355,7 +355,7 @@ fn a_struct_target_refuses_a_scalar_a_sequence_and_a_passthrough() {
     struct Clear;
     impl Encrypt for Clear {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-            sink.passthrough(ada())
+            sink.passthrough(&ada())
         }
     }
     assert!(matches!(
@@ -438,8 +438,8 @@ fn a_passthrough_field_refuses_a_sealed_value_and_a_sealed_field_refuses_a_passt
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(4))?;
             "acme".visit(map.entry("tenant")?)?;
-            map.entry("tags")?.passthrough(vec![1u32])?;
-            map.entry("ssn")?.passthrough("123")?;
+            map.entry("tags")?.passthrough(&vec![1u32])?;
+            map.entry("ssn")?.passthrough(&"123")?;
             "hi".visit(map.entry("n")?)?;
             map.end()
         }
@@ -452,9 +452,9 @@ fn a_passthrough_field_refuses_a_sealed_value_and_a_sealed_field_refuses_a_passt
     impl Encrypt for SealedPassthrough {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(4))?;
-            map.entry("tenant")?.passthrough("acme")?;
-            map.entry("tags")?.passthrough(vec![1u32])?;
-            map.entry("ssn")?.passthrough("123")?;
+            map.entry("tenant")?.passthrough(&"acme")?;
+            map.entry("tags")?.passthrough(&vec![1u32])?;
+            map.entry("ssn")?.passthrough(&"123")?;
             "hi".visit(map.entry("n")?)?;
             map.end()
         }
@@ -474,8 +474,8 @@ fn an_entry_under_a_skipped_key_is_refused() {
     impl Encrypt for WithCached {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(5))?;
-            map.entry("tenant")?.passthrough("acme")?;
-            map.entry("tags")?.passthrough(vec![1u32])?;
+            map.entry("tenant")?.passthrough(&"acme")?;
+            map.entry("tags")?.passthrough(&vec![1u32])?;
             "123".visit(map.entry("ssn")?)?;
             9u64.visit(map.entry("cached")?)?;
             "hi".visit(map.entry("n")?)?;
@@ -675,7 +675,7 @@ fn a_newtype_over_a_container_is_transparent_and_refuses_a_passthrough() {
     struct Clear;
     impl Encrypt for Clear {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-            sink.passthrough(vec![1u16])
+            sink.passthrough(&vec![1u16])
         }
     }
     assert!(matches!(
@@ -852,7 +852,7 @@ impl Sink for StopAt {
         Ok(self)
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), RecordError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), RecordError> {
         Ok(())
     }
 }

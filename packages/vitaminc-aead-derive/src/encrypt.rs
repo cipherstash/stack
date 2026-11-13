@@ -346,7 +346,7 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             // even its key. That is what lets the entry be an ordinary
             // database column other queries read and write independently of
             // the encrypted ones.
-            quote!(#krate::Sink::passthrough(__entry, #value))
+            quote!(#krate::Sink::passthrough(__entry, &#value))
         } else {
             quote!(#krate::Encrypt::visit(#value, __entry))
         };
@@ -601,7 +601,7 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Sink::passthrough(__entry, self.tenant)),
+            quote!(::vitaminc_aead::Sink::passthrough(__entry, &self.tenant)),
         );
         assert_contains(
             &out,

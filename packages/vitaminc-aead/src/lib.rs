@@ -52,8 +52,9 @@ mod walk;
 // The data model: sources, sinks and the scalar kinds.
 #[doc(inline)]
 pub use plaintext::{
-    Bytes, Encrypt, FixedType, Float, Int, Kind, KnownLogical, Logical, MapSink, Physical, Raw,
-    Scalar, SeqSink, Sink, SourceError, Tee, TimeUnit, UnknownLogical, UnknownLogicalId, Width,
+    Bytes, Encrypt, EncryptRef, FixedType, Float, Int, Kind, KnownLogical, Lent, Logical, MapSink,
+    Physical, Raw, Scalar, SeqSink, Sink, SourceError, Tee, TimeUnit, UnknownLogical,
+    UnknownLogicalId, Width,
 };
 /// Derive [`Encrypt`] for a struct or a fieldless enum. A struct walks as
 /// a map keyed by field name; a fieldless enum as an int leaf holding the
