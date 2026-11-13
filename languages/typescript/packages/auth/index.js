@@ -242,6 +242,10 @@ module.exports = {
   OAuthStrategy: DeviceSessionStrategy,
   beginDeviceCodeFlow: wrapAsync(native.beginDeviceCodeFlow),
   bindClientDevice: wrapAsync(native.bindClientDevice),
+  // Keyset records for the key vendor backends (`stash keyset`). Their
+  // failures use the same sentinel, with `KeysetFailure` codes.
+  keysetCreate: wrapAsync(native.keysetCreate),
+  keysetRewrap: wrapAsync(native.keysetRewrap),
 };
 
 if (native.beginDeviceCodeFlowWithBaseUrl) {
