@@ -1,7 +1,17 @@
-//! An abstraction over the ZeroKMS data-key operations that higher-level
-//! encryption layers (e.g. `stack-encrypt`) depend on.
+//! An abstraction over the data-key operations of a **key backend** that
+//! higher-level encryption layers (e.g. `stack-encrypt`) depend on.
 //!
-//! [`StackKms`](crate::StackKms) is the production implementation. Downstream
+//! A key backend is ZeroKMS or one key vendor backend (AWS KMS, Azure Key
+//! Vault, HashiCorp Vault Transit, Google Cloud KMS, or a static key). The
+//! vendor-neutral part of each request is its descriptor, its iv and tag,
+//! and its keyset id. The key context, the decryption policy and the
+//! [`UnverifiedContext`] are ZeroKMS-only extensions: a key vendor backend
+//! refuses them with [`Error::ZeroKmsOnly`] (see
+//! [`refuse_zerokms_extensions`](crate::refuse_zerokms_extensions)) and
+//! never ignores them. A key vendor backend reports its own failures as
+//! [`Error::Backend`].
+//!
+//! [`StackKms`](crate::StackKms) is the ZeroKMS implementation. Downstream
 //! crates take a `K: DataKeySource` rather than a concrete client so their
 //! encrypt/decrypt logic can be unit-tested against a deterministic in-memory
 //! fake (see [`FakeDataKeySource`], enabled by the `test-support` feature)
@@ -71,6 +81,18 @@ pub trait IndexKeySource {
         keyset_id: Option<IdentifiedBy>,
     ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>> + MaybeSend;
 }
+
+/// A key source that stands for ZeroKMS: the ZeroKMS side of a router that
+/// adds a key vendor backend (`stack_kms_vendor::KeyRouter`).
+///
+/// It is a marker. The router asks for it so that its ZeroKMS side cannot be
+/// another router, which would put two key vendor backends in one cipher
+/// (ADR-0014: ZeroKMS and at most one vendor). Implement it only for a
+/// source that talks to ZeroKMS, or that takes its place in a test. Never
+/// implement it for a source that routes to a key vendor backend.
+pub trait ZeroKmsKeySource {}
+
+impl<C, Conn> ZeroKmsKeySource for crate::StackKms<C, Conn> {}
 
 impl<C, Conn> DataKeySource for crate::StackKms<C, Conn>
 where
@@ -220,6 +242,8 @@ mod fake {
         }
     }
 
+    impl super::ZeroKmsKeySource for FakeDataKeySource {}
+
     impl DataKeySource for FakeDataKeySource {
         async fn generate_keys(
             &self,
@@ -345,6 +369,8 @@ mod deterministic {
             hasher.finalize().into()
         }
     }
+
+    impl super::ZeroKmsKeySource for DeterministicSource {}
 
     impl DataKeySource for DeterministicSource {
         async fn generate_keys(

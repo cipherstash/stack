@@ -340,6 +340,15 @@ mod codes {
             },
             Error::InvalidEndpoint(_) => Error::InvalidEndpoint(InvalidEndpoint::Userinfo),
             Error::Unexpected(_) => Error::Unexpected("unexpected".into()),
+            Error::Backend { .. } => Error::Backend {
+                backend: crate::KeyVendor::Static.into(),
+                kind: BackendErrorKind::NotFound,
+                source: Box::new(std::io::Error::other("no key")),
+            },
+            Error::ZeroKmsOnly { .. } => Error::ZeroKmsOnly {
+                vendor: crate::KeyVendor::Static,
+                feature: crate::payload::ZeroKmsFeature::Context,
+            },
         ]));
         errors.extend(boxed(variants![
             InvalidEndpoint::Parse(_) => InvalidEndpoint::Parse(url::ParseError::EmptyHost),
@@ -498,6 +507,53 @@ mod codes {
                 "{error:?}"
             );
         }
+    }
+
+    /// A backend failure gives its vendor and kind, never the vendor's own
+    /// error, which stays behind `source()`.
+    #[test]
+    fn a_backend_failure_gives_the_vendor_and_kind_and_not_the_source() {
+        use serde_json::json;
+        for kind in [
+            BackendErrorKind::NotFound,
+            BackendErrorKind::AccessDenied,
+            BackendErrorKind::Throttled,
+            BackendErrorKind::Unavailable,
+            BackendErrorKind::InvalidCiphertext,
+        ] {
+            let error = Error::Backend {
+                backend: crate::KeyVendor::Aws.into(),
+                kind,
+                source: Box::new(std::io::Error::other("marker-detail")),
+            };
+            assert_eq!(
+                serde_json::Value::Object(error.payload()),
+                json!({ "vendor": "aws-kms", "kind": format!("{kind:?}") })
+            );
+            assert_eq!(kind.to_string(), format!("{kind:?}"));
+            let shown = error.to_string();
+            assert_eq!(shown, format!("Key backend aws-kms failed: {kind:?}"));
+            assert!(!shown.contains("marker-detail"), "{shown}");
+            assert!(std::error::Error::source(&error)
+                .is_some_and(|source| source.to_string() == "marker-detail"));
+        }
+    }
+
+    #[test]
+    fn a_zerokms_only_refusal_names_the_vendor_and_the_feature() {
+        use serde_json::json;
+        let error = Error::ZeroKmsOnly {
+            vendor: crate::KeyVendor::Vault,
+            feature: crate::payload::ZeroKmsFeature::DecryptionPolicy,
+        };
+        assert_eq!(
+            serde_json::Value::Object(error.payload()),
+            json!({ "vendor": "vault-transit", "feature": "decryption_policy" })
+        );
+        assert_eq!(
+            error.to_string(),
+            "Key backend vault-transit does not support the ZeroKMS feature decryption_policy"
+        );
     }
 
     /// The builder's help names the variable that is wrong.
@@ -751,6 +807,76 @@ pub enum Error {
     #[error("Unexpected error: {0}")]
     #[diagnostic(code(stack_kms::unexpected))]
     Unexpected(String),
+
+    /// A key backend failed. `backend` names it (the payload's `vendor`
+    /// field is its [`KeyBackend::name`](crate::KeyBackend::name), for
+    /// example `"aws-kms"`) and `kind` says what failed, in terms that hold
+    /// for every vendor. The vendor's own error is behind `source()`; the
+    /// message carries only the backend and the kind.
+    #[error("Key backend {backend} failed: {kind}")]
+    #[diagnostic(
+        code(stack_kms::backend),
+        help("Read the `kind` field. NotFound and AccessDenied are configuration; Throttled and Unavailable can be retried; InvalidCiphertext means the stored key or value is damaged, or belongs to another key.")
+    )]
+    Backend {
+        backend: crate::KeyBackend,
+        kind: BackendErrorKind,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+
+    /// A key vendor backend was asked for an input that only ZeroKMS can
+    /// honour (a key context, a decryption policy, an unverified context).
+    /// The backend refuses it rather than ignore it.
+    #[error("Key backend {vendor} does not support the ZeroKMS feature {feature}")]
+    #[diagnostic(
+        code(stack_kms::zerokms_only),
+        help("Lock contexts, decryption policies and unverified contexts need ZeroKMS. Use a ZeroKMS keyset, or remove the feature from the request.")
+    )]
+    ZeroKmsOnly {
+        vendor: crate::KeyVendor,
+        feature: crate::payload::ZeroKmsFeature,
+    },
+}
+
+/// What failed in a key vendor backend, in terms that hold for every vendor.
+///
+/// Each vendor client maps its own errors to one of these, so that a caller
+/// can act on a failure without knowing the vendor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum BackendErrorKind {
+    /// The vendor key, or the key material it protects, does not exist.
+    NotFound,
+    /// The vendor refused the credential, or the credential has no grant
+    /// for this key or operation.
+    AccessDenied,
+    /// The vendor rate-limited the request. Retry later.
+    Throttled,
+    /// The vendor could not be reached, or did not answer. Retry later.
+    Unavailable,
+    /// The vendor could not unwrap the key material: it is damaged, or it
+    /// was wrapped by another key.
+    InvalidCiphertext,
+}
+
+impl BackendErrorKind {
+    /// The kind as error payloads spell it.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotFound => "NotFound",
+            Self::AccessDenied => "AccessDenied",
+            Self::Throttled => "Throttled",
+            Self::Unavailable => "Unavailable",
+            Self::InvalidCiphertext => "InvalidCiphertext",
+        }
+    }
+}
+
+impl std::fmt::Display for BackendErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl ErrorPayload for Error {
@@ -760,6 +886,14 @@ impl ErrorPayload for Error {
             Self::RetrieveKey(error) => error.payload(),
             Self::LoadKeyset(error) => error.payload(),
             Self::Auth(error) => error.payload(),
+            Self::Backend { backend, kind, .. } => payload([
+                ("vendor", backend.name().into()),
+                ("kind", kind.as_str().into()),
+            ]),
+            Self::ZeroKmsOnly { vendor, feature } => payload([
+                ("vendor", vendor.name().into()),
+                ("feature", feature.as_str().into()),
+            ]),
             Self::ConnectionInit(_) | Self::InvalidEndpoint(_) | Self::Unexpected(_) => {
                 serde_json::Map::new()
             }
