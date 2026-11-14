@@ -824,17 +824,22 @@ pub struct FromEnv;
 /// workspace's `secretkey.json` in the profile directory. A profile directory
 /// that cannot be resolved is not an error here — env-only setups (CI) have
 /// none — it just leaves the environment as the only source.
+///
+/// This is the provider [`StackCipherBuilder::init`] uses. It is public so
+/// that a client built over its own connection, as the Python SDK builds one
+/// to count its requests, finds the client key the same way.
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
-fn client_key_provider() -> FallbackKeyProvider<EnvKeyProvider, ProfileClientKey> {
+pub fn client_key_provider() -> impl KeyProvider {
     FallbackKeyProvider::new(
         EnvKeyProvider,
         ProfileClientKey(ProfileStore::resolve(None).ok()),
     )
 }
 
-/// wasm32 has no filesystem, so no profile: the environment is the only source.
+/// The client key from the environment: wasm32 has no filesystem, so no
+/// profile, and the environment is the only source.
 #[cfg(all(feature = "http", target_arch = "wasm32"))]
-fn client_key_provider() -> EnvKeyProvider {
+pub fn client_key_provider() -> impl stack_kms::KeyProvider {
     EnvKeyProvider
 }
 

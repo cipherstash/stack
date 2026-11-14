@@ -20,6 +20,12 @@
 //! The Go module embeds both: `encrypt` the build without EQL types,
 //! `encrypt/eql` the build with them, registered on import, so a program
 //! that names an EQL type links the build that has it.
+//!
+//! The Python SDK compiles this file too, in place, from
+//! `languages/python/crates/core` through `#[path]`, with its own `eql`
+//! feature. A change here is a change to both SDKs, and
+//! `tests-python.yml` runs on it. A crate this file starts to use must also
+//! go into that crate's `Cargo.toml`.
 
 /// The resolver this build installs.
 #[cfg(feature = "eql")]

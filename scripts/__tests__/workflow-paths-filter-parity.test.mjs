@@ -123,6 +123,14 @@ const EXPECTED_ASYMMETRIES = new Map([
     'push is deliberately unfiltered (branches: [main]), so main runs a superset of what PRs run',
   ],
   [
+    '.github/workflows/tests-python.yml',
+    // The same shape as tests-rust.yml: `push:` is `branches: [main]` with no
+    // `paths:`, as #1383 asks ("on every push to main"), and only pull
+    // requests are filtered. The pull_request list is held to the Python
+    // workspace's Cargo.lock by python-ci.test.mjs, which is the second copy.
+    'push is deliberately unfiltered (branches: [main]), so main runs a superset of what PRs run',
+  ],
+  [
     '.github/workflows/tests.yml',
     // `push: branches: [main]` has no `paths:`, so main runs everything and only
     // pull requests skip `docs/plans/**`. A `push` filter narrower than the

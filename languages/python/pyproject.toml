@@ -1,0 +1,68 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "stackencrypt"
+description = "Searchable encryption for Python over the CipherStash Stack engine. Not released."
+requires-python = ">=3.9"
+# The version lives in crates/engine/Cargo.toml; maturin reads it from there.
+dynamic = ["version"]
+classifiers = ["Private :: Do Not Upload"]
+
+[project.optional-dependencies]
+# attrs, Pydantic and SQLAlchemy only for the tests that declare a model of
+# each kind. The package imports none of them, except `stackencrypt.sqlalchemy`,
+# which imports SQLAlchemy when an app imports it. They have lower bounds
+# and no upper bounds on purpose. They are the libraries users build their
+# classes with, so the tests meet each new release soon after users do. A new
+# release that fails a test is a finding about users' classes. uv.lock fixes
+# the versions the tests install. Each month, Dependabot proposes new minor
+# and patch releases together in one pull request, after a 7-day cooldown.
+# Major releases are updated by hand.
+#
+# psycopg for the live tests, which insert an encrypted row (#1389). The
+# binary extra ships libpq, so the tests need no system Postgres client.
+#
+# Alembic for the tests of the migrations it generates from models that use
+# `stackencrypt.sqlalchemy`.
+test = [
+    "pytest>=8",
+    "attrs>=23",
+    "pydantic>=2",
+    "sqlalchemy>=2",
+    "psycopg[binary]>=3.1",
+    "alembic>=1.13",
+]
+
+# maturin, the build backend, for `mise run build`. uv.lock records its
+# version and hash, and Dependabot updates it with the test extra, after the
+# same 7-day cooldown. The build installs it into .venv and builds with
+# --no-build-isolation, so uv downloads no unlocked build tool. The range is
+# [build-system]'s, which stays for an install by any other route.
+[dependency-groups]
+build = ["maturin>=1.9,<2.0"]
+
+[tool.maturin]
+# The pure-Python package is the distribution; the Rust extension is its
+# `_engine` submodule, so the Python side can change without a recompile.
+module-name = "stackencrypt._engine"
+python-source = "python"
+# The engine crate, not the workspace root: maturin builds one cdylib.
+manifest-path = "crates/engine/Cargo.toml"
+# Never set in the crate manifest: see crates/engine/Cargo.toml for why. A
+# build that passes `--features` replaces this list, and names it again:
+# the `test:deterministic` task in mise.toml.
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/_sync_contract.py is shared with tests_deterministic/.
+pythonpath = ["tests"]
+# `live` marks the tests that need credentials and a database. They skip
+# without them; `mise run test:live` runs only them and fails on a skip.
+markers = [
+    "live: needs CipherStash credentials, and some a PostgreSQL with EQL v4",
+    "models: the models module of an Alembic test project, in test_sqlalchemy_migrations_live.py",
+]
+addopts = "--strict-markers"

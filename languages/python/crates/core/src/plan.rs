@@ -1,0 +1,156 @@
+//! A model's plan, checked by the engine when the class is declared.
+//!
+//! The Python decorator reads the fields and their markers. This module
+//! writes them as the plan frame every binding sends, and runs the engine's
+//! own reader over it (`record::plan_with`) with the EQL resolver. So the
+//! engine sees the same declaration a Rust or Go caller would, and its
+//! refusal reaches Python unchanged: its code, message, field and reason.
+
+use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
+use stack_encrypt::dynamic::{self, record};
+use stack_encrypt::AsProtectedRef as _;
+use stack_encrypt::ErrorPayload as _;
+
+use crate::refusal::Refusal;
+use crate::targets;
+
+/// What one plan field stores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Column<'a> {
+    /// A field sealed as the EQL type of this name, such as `TextEq`.
+    Eql(&'a str),
+    /// As [`Column::Eql`], for a field that can be missing. The engine
+    /// stores nothing for a null (`"null": "sql"`), so the column holds SQL
+    /// `NULL`, and opens a missing value as a null.
+    NullableEql(&'a str),
+    /// A field stored as it is.
+    Passthrough,
+}
+
+/// Check the plan of a model stored in `table`, with `fields` in
+/// declaration order. Each field's context is `[table, field]`.
+///
+/// # Errors
+///
+/// The engine's refusal, as a [`Refusal`].
+pub fn check(table: &str, fields: &[(&str, Column<'_>)]) -> Result<(), Refusal> {
+    build(table, fields).map(drop)
+}
+
+/// The engine's plan for a model stored in `table`, with `fields` in
+/// declaration order: what [`check`] checks, kept for `encrypt`.
+///
+/// # Errors
+///
+/// As [`check`].
+pub fn build(table: &str, fields: &[(&str, Column<'_>)]) -> Result<record::Plan, Refusal> {
+    // A frame of strings and lists of strings always encodes.
+    let frame = dynamic::frame::serde::to_vec(&Wire { table, fields })
+        .expect("a plan of strings encodes as a frame");
+    record::plan_with(frame.as_protected_ref(), &targets::resolver())
+        .map_err(|error| refusal(&error))
+}
+
+pub fn refusal(error: &dynamic::Error) -> Refusal {
+    let payload = error.payload();
+    Refusal {
+        field: payload
+            .get("field")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        // Only the engine's own reason tokens. A resolver's reason, such as
+        // the catalog's for an unproducible type, is prose and stays in the
+        // message.
+        reason: error.reason().map(|reason| reason.as_str().to_owned()),
+        ..Refusal::of(error)
+    }
+}
+
+/// The plan frame: `{field: {"context": [table, field], "target": name}}`
+/// for an EQL field, `"outputs": ["passthrough"]` for a passthrough field.
+struct Wire<'a> {
+    table: &'a str,
+    fields: &'a [(&'a str, Column<'a>)],
+}
+
+impl Serialize for Wire<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(self.fields.len()))?;
+        for (name, column) in self.fields {
+            map.serialize_entry(
+                name,
+                &Spec {
+                    context: [self.table, name],
+                    column: *column,
+                },
+            )?;
+        }
+        map.end()
+    }
+}
+
+struct Spec<'a> {
+    context: [&'a str; 2],
+    column: Column<'a>,
+}
+
+impl Serialize for Spec<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // The frame needs each container's exact length.
+        let len = if matches!(self.column, Column::NullableEql(_)) {
+            3
+        } else {
+            2
+        };
+        let mut spec = serializer.serialize_struct("Spec", len)?;
+        spec.serialize_field("context", &self.context)?;
+        match self.column {
+            Column::Eql(name) => spec.serialize_field("target", name)?,
+            Column::NullableEql(name) => {
+                spec.serialize_field("target", name)?;
+                spec.serialize_field("null", "sql")?;
+            }
+            Column::Passthrough => spec.serialize_field("outputs", &["passthrough"])?,
+        }
+        spec.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_plan_of_eql_and_passthrough_fields_is_accepted() {
+        let fields = [
+            ("email", Column::Eql("TextEq")),
+            ("age", Column::Eql("IntegerOrd")),
+            ("note", Column::Passthrough),
+        ];
+        assert_eq!(check("users", &fields), Ok(()));
+    }
+
+    #[test]
+    fn an_empty_plan_is_refused_with_the_engine_code_and_reason() {
+        let refused = check("users", &[]).unwrap_err();
+        assert_eq!(refused.code, "stack_encrypt_dynamic_plan");
+        assert_eq!(refused.field, None);
+        assert_eq!(refused.reason.as_deref(), Some("no_fields"));
+    }
+
+    #[test]
+    fn an_unknown_eql_type_is_refused_by_the_resolver() {
+        let refused = check("users", &[("email", Column::Eql("Nope"))]).unwrap_err();
+        assert_eq!(refused.code, "stack_encrypt_target_unknown");
+        assert!(refused.message.contains("Nope"), "{refused:?}");
+        assert_eq!(refused.reason, None);
+    }
+
+    // The catalog has no unproducible type now: Json was the last, and the
+    // engine produces it. The Python declaration still refuses a JSON
+    // field, as it has no Python type yet (#1341).
+    #[test]
+    fn json_is_accepted_by_the_resolver() {
+        check("users", &[("doc", Column::Eql("Json"))]).unwrap();
+    }
+}

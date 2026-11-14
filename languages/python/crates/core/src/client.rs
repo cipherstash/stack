@@ -1,0 +1,386 @@
+//! The one engine client a process shares, and the runtime it runs on.
+//!
+//! Every `Cipher` in the process uses the same `StackCipher`. It is built on
+//! the first operation that needs it, by whichever thread gets there first,
+//! and never rebuilt: credentials are read once, and the default keyset is
+//! loaded once (the spec in #1341, "Operations"). A child that `fork` made
+//! after the client was built cannot use it, and is refused, as described at
+//! [`shared`]. Beside it is one
+//! multi-thread tokio runtime. An operation hands its future to that runtime
+//! and blocks its own thread, with the GIL released, so calls from several
+//! Python threads run inside the engine at the same time.
+//!
+//! The client is built over a ZeroKMS connection that counts every request
+//! it sends, by endpoint. The counts are for the tests: the spec's request
+//! rules (one key request per 500 values, one keyset load per process) are
+//! observed through them, not assumed.
+
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
+use std::time::Duration;
+
+use stack_auth::AutoStrategy;
+use stack_encrypt::kms::{
+    endpoint_from_env, ClientOpts, ConnectionInitError, HttpConnection, HttpConnectionOpts,
+    KeyProvider, StackKms, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint,
+};
+use stack_encrypt::{client_key_provider, StackCipher};
+use zerokms_protocol::{ViturRequest, ViturRequestError};
+
+use crate::credentials;
+use crate::refusal::Refusal;
+
+/// The ZeroKMS client the shared cipher is built over.
+pub type Kms = StackKms<AutoStrategy, Counting>;
+
+/// The shared engine client with its runtime.
+pub struct Client {
+    cipher: StackCipher<Kms>,
+    runtime: tokio::runtime::Runtime,
+}
+
+static CLIENT: OnceLock<Client> = OnceLock::new();
+/// The ID of the process that built `CLIENT`. Set before `CLIENT`, so a
+/// thread that sees the client sees its process ID.
+static BUILT_IN: AtomicU32 = AtomicU32::new(0);
+// Serialises the build, so two threads making their first call at once build
+// one client and load the keyset once. `OnceLock::get_or_init` would do the
+// same, but it cannot fail, and a failed build must not be cached: the user
+// fixes the credentials and calls again.
+static BUILDING: Mutex<()> = Mutex::new(());
+/// The ID of the process whose thread holds `BUILDING`, or 0 when no thread
+/// does. A forked child that finds it set to another process's ID holds a
+/// copy of a lock no thread will release (see [`build_lock`]).
+static BUILDER: AtomicU32 = AtomicU32::new(0);
+static BUILDS: AtomicU64 = AtomicU64::new(0);
+// Every request sent, by its ZeroKMS endpoint, such as `load-keyset`.
+static REQUESTS: Mutex<BTreeMap<&'static str, u64>> = Mutex::new(BTreeMap::new());
+
+/// `mutex`, locked. A thread that panicked while it held a lock here left
+/// nothing half-written: a build is either cached or not, and a count is
+/// one addition. So a poisoned lock is used as it is.
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The client, if this process built it. A refusal if another process
+/// built it: this process is a child that `fork` made after the build.
+///
+/// The child's copy of the client cannot work: its runtime has no threads,
+/// because a fork copies only the thread that called it. A new runtime is
+/// not safe in the child either: tokio's locks keep a process-wide table of
+/// waiting threads, and the child's copy lists the parent's threads. A new
+/// runtime there blocked in 8 of 15 runs on Linux. So the child is refused.
+/// No lock is taken here, so the refusal cannot block.
+fn current() -> Result<Option<&'static Client>, Refusal> {
+    let Some(client) = CLIENT.get() else {
+        return Ok(None);
+    };
+    if BUILT_IN.load(Ordering::Acquire) == std::process::id() {
+        return Ok(Some(client));
+    }
+    Err(forked())
+}
+
+/// The refusal of a child that `fork` made after, or during, the build of
+/// its parent's client.
+fn forked() -> Refusal {
+    Refusal {
+        code: "stack_forked".to_owned(),
+        message: "this process was forked after the engine client was built, or while it was \
+                  being built, and a forked process cannot use it. Make the first encrypt, \
+                  decrypt or query call after the fork: with Gunicorn, do not use --preload; \
+                  with multiprocessing, use the spawn start method."
+            .to_owned(),
+        field: None,
+        reason: None,
+    }
+}
+
+/// `BUILDING`, held, with this process's ID in `BUILDER` until the guard
+/// drops. Dropping the guard clears the ID, then releases the lock.
+struct BuildGuard(#[allow(dead_code)] MutexGuard<'static, ()>);
+
+impl Drop for BuildGuard {
+    fn drop(&mut self) {
+        BUILDER.store(0, Ordering::Release);
+    }
+}
+
+/// Take `BUILDING`, or refuse with `stack_forked` in a forked child.
+///
+/// A child forked while a thread of its parent held the lock has a copy of
+/// that lock in its locked state, and no thread to release it. Blocking on
+/// it would never return. So a waiter polls the lock, and refuses as soon
+/// as it sees that the holder is another process. One gap remains: a fork
+/// after the parent's thread took the lock and before it stored its process
+/// ID leaves `BUILDER` at 0, and the child then waits.
+fn build_lock() -> Result<BuildGuard, Refusal> {
+    loop {
+        let guard = match BUILDING.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                let holder = BUILDER.load(Ordering::Acquire);
+                if holder != 0 && holder != std::process::id() {
+                    return Err(forked());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+        };
+        BUILDER.store(std::process::id(), Ordering::Release);
+        return Ok(BuildGuard(guard));
+    }
+}
+
+/// The shared client, built on the first call.
+///
+/// # Errors
+///
+/// `stack_forked` in a child that `fork` made after the client was built
+/// (see [`current`]). Otherwise the refusal of whatever failed: the
+/// credentials (`stack_auth_*`), the client key or the ZeroKMS client
+/// (`stack_kms_*`), or the keyset load (`stack_encrypt_*`). Nothing is
+/// cached on failure.
+pub fn shared() -> Result<&'static Client, Refusal> {
+    #[cfg(feature = "deterministic-kms")]
+    refuse_after_switch()?;
+    if let Some(client) = current()? {
+        return Ok(client);
+    }
+    let _building = build_lock()?;
+    // Again under the lock: a switch can finish while this thread waits for
+    // it, and the live client must then not be built.
+    #[cfg(feature = "deterministic-kms")]
+    refuse_after_switch()?;
+    if let Some(client) = current()? {
+        return Ok(client);
+    }
+    let client = build()?;
+    BUILDS.fetch_add(1, Ordering::Relaxed);
+    BUILT_IN.store(std::process::id(), Ordering::Release);
+    Ok(CLIENT.get_or_init(|| client))
+}
+
+/// Run an operation's future on the process's client, and return its result.
+///
+/// `run!(|cipher| future)` names the `StackCipher` the body builds its future
+/// from. The body is written once and compiled for each client: the live
+/// one, and in the test build the deterministic one, which takes its place
+/// after the switch. The two have different key source types, so a function
+/// that returned "the current client" would still leave each operation to
+/// write a branch per client.
+///
+/// Both branches give the macro's value: the test branch leaves the block,
+/// not the function, so code after `run!` runs in the test build too.
+macro_rules! run {
+    (|$cipher:ident| $future:expr) => {{
+        // The label is used only in the test build.
+        #[allow(unused_labels)]
+        let value = 'run: {
+            #[cfg(feature = "deterministic-kms")]
+            if let Some((cipher, runtime)) = $crate::client::deterministic() {
+                let $cipher = cipher;
+                break 'run runtime.block_on($future);
+            }
+            let client = $crate::client::shared()?;
+            let $cipher = client.cipher();
+            client.block_on($future)
+        };
+        value
+    }};
+}
+pub(crate) use run;
+
+/// The client of the `deterministic-kms` test build, with its own runtime.
+#[cfg(feature = "deterministic-kms")]
+pub type Deterministic = (
+    StackCipher<stack_kms::DeterministicSource>,
+    tokio::runtime::Runtime,
+);
+
+#[cfg(feature = "deterministic-kms")]
+static DETERMINISTIC: OnceLock<Deterministic> = OnceLock::new();
+
+/// In the test build, an operation that asks for the live client after the
+/// switch has not checked for the deterministic client, and would send
+/// requests to ZeroKMS from a test process. Refuse it, so a new operation
+/// that skips the check fails its test instead.
+#[cfg(feature = "deterministic-kms")]
+fn refuse_after_switch() -> Result<(), Refusal> {
+    if DETERMINISTIC.get().is_none() {
+        return Ok(());
+    }
+    Err(Refusal {
+        code: "stack_test_build".to_owned(),
+        message: "this operation asked for the live client after the switch to the \
+                  deterministic one; call client::deterministic() first"
+            .to_owned(),
+        field: None,
+        reason: None,
+    })
+}
+
+/// Make every later operation in the process use a client whose keys come
+/// from `seed` through `DeterministicSource`, not from ZeroKMS. For the
+/// `deterministic-kms` test build only: rows sealed under the same seed open
+/// in any process, the Go SDK's frozen rows among them.
+///
+/// # Errors
+///
+/// A refusal when the live client is already built, when a deterministic
+/// client is already in place, or when the client does not build.
+#[cfg(feature = "deterministic-kms")]
+pub fn use_deterministic(seed: [u8; 32]) -> Result<(), Refusal> {
+    let refused = |message: String| Refusal {
+        code: "stack_test_build".to_owned(),
+        message,
+        field: None,
+        reason: None,
+    };
+    // The lock `shared` builds under: a live build in flight on another
+    // thread finishes before this checks, so the two never both exist.
+    let _building = build_lock()?;
+    if CLIENT.get().is_some() || DETERMINISTIC.get().is_some() {
+        return Err(refused(
+            "the process already has a client; call this before any operation".to_owned(),
+        ));
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| refused(format!("the runtime could not start: {error}")))?;
+    let cipher = runtime
+        .block_on(
+            StackCipher::builder()
+                .kms(stack_kms::DeterministicSource::new(seed))
+                .init(),
+        )
+        .map_err(|error| Refusal::of(&error))?;
+    DETERMINISTIC
+        .set((cipher, runtime))
+        .map_err(|_| refused("a deterministic client is already in place".to_owned()))
+}
+
+/// The deterministic client, once `use_deterministic` has made one.
+#[cfg(feature = "deterministic-kms")]
+pub fn deterministic() -> Option<&'static Deterministic> {
+    DETERMINISTIC.get()
+}
+
+/// How many times the shared client has been built in this process: 0
+/// before the first operation, 1 after it. For the tests.
+pub fn build_count() -> u64 {
+    BUILDS.load(Ordering::Relaxed)
+}
+
+/// How many requests the shared client has sent to ZeroKMS in this process,
+/// the keyset load included. For the tests.
+pub fn request_count() -> u64 {
+    requests().values().sum()
+}
+
+/// The requests the shared client has sent to ZeroKMS in this process, by
+/// endpoint. A request counts when it is sent, whether or not it succeeds.
+/// For the tests: `load-keyset` is 1 after the first operation, however
+/// many threads made it at once.
+pub fn requests() -> BTreeMap<&'static str, u64> {
+    locked(&REQUESTS).clone()
+}
+
+impl Client {
+    /// The cipher itself.
+    pub fn cipher(&self) -> &StackCipher<Kms> {
+        &self.cipher
+    }
+
+    /// Run `future` to completion on the shared runtime, blocking this
+    /// thread. The caller releases the GIL around this.
+    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+}
+
+fn build() -> Result<Client, Refusal> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| Refusal {
+            code: "stack_runtime".to_owned(),
+            message: format!("the engine's runtime could not start: {error}"),
+            field: None,
+            reason: None,
+        })?;
+    let cipher = runtime.block_on(init())?;
+    Ok(Client { cipher, runtime })
+}
+
+/// What `StackCipher::builder().init()` does, with the counting connection
+/// in place of the plain one: the credentials from `AutoStrategy`, the
+/// client key from the environment or the profile, one ZeroKMS client, and
+/// the default keyset loaded.
+async fn init() -> Result<StackCipher<Kms>, Refusal> {
+    // First: it reads one variable and sends nothing, so a bad value is
+    // refused before the credentials are read.
+    // The endpoint and the client key come from the engine's own readers,
+    // the ones StackCipherBuilder uses, so the two cannot drift apart.
+    let endpoint = endpoint_from_env().map_err(|error| Refusal::of(&error))?;
+    let credentials = AutoStrategy::detect().map_err(|error| credentials::refusal(&error))?;
+    let client_key = client_key_provider()
+        .client_key()
+        .await
+        .map_err(|error| Refusal::of(&error))?;
+    // Requests go out one at a time, as the spec states the request count:
+    // ceil(values / 500) key requests "in sequence". The Go guest sets the
+    // same.
+    let options = ClientOpts::new(HttpConnectionOpts::new(endpoint))
+        .with_max_concurrent_reqs(1)
+        .map_err(|error| Refusal::of(&error))?;
+    let kms =
+        Kms::connect(options, credentials, client_key).map_err(|error| Refusal::of(&error))?;
+    StackCipher::builder()
+        .kms(kms)
+        .init()
+        .await
+        .map_err(|error| Refusal::of(&error))
+}
+
+/// The HTTP connection, counting every request it sends.
+pub struct Counting(HttpConnection);
+
+impl ZeroKMSConnectionInit for Counting {
+    type ConnectionOpts = HttpConnectionOpts;
+    type Error = ConnectionInitError;
+
+    fn init(opts: Self::ConnectionOpts) -> Result<Self, Self::Error> {
+        HttpConnection::init(opts).map(Self)
+    }
+}
+
+impl ZeroKMSConnection for Counting {
+    async fn send<Request: ViturRequest>(
+        &self,
+        request: Request,
+        access_token: &str,
+    ) -> Result<Request::Response, ViturRequestError> {
+        // Before the send: a request that fails is still a request, which
+        // the tests of a refused call rely on.
+        *locked(&REQUESTS).entry(Request::ENDPOINT).or_default() += 1;
+        self.0.send(request, access_token).await
+    }
+
+    // Both forwarded: the trait's defaults would tell the client the base
+    // URL is set when the connection underneath has none.
+    fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
+        self.0.ensure_base_url(url);
+    }
+
+    fn has_base_url(&self) -> bool {
+        self.0.has_base_url()
+    }
+}

@@ -21,6 +21,7 @@
       "!packages/eql/tests/encryption/fixtures/stored_v4_rows_v1.json",
       "!packages/eql/tests/encryption/fixtures/v4_json_rows.json",
       "!packages/eql/tests/encryption/fixtures/stored_v4_json_rows_v1.json",
+      "!languages/python/crates/core/testdata/value-conformance.json",
       "!packages/eql/crates/eql-bindings/bindings",
       "!packages/eql/crates/eql-bindings/schema",
       "!packages/eql/packages/eql/src/generated",

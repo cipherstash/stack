@@ -249,10 +249,10 @@ updates:
 
   # ── Cargo (the root workspace — the stack-* crates) ─────────────
   # The root workspace (the six stack-* crates and the three node binding
-  # crates) and the six detached workspaces beside it: the three cargo-fuzz
-  # crates, the two Go WASI guests and the EQL ORE timing harness's ciphertext
-  # generator. Each has its own Cargo.lock, and each is its own workspace
-  # root, so each is listed.
+  # crates) and the detached workspaces beside it: the three cargo-fuzz
+  # crates, the two Go WASI guests, the EQL ORE timing harness's ciphertext
+  # generator, and the Python SDK. Each has its own Cargo.lock, and each is
+  # its own workspace root, so each is listed.
   - package-ecosystem: cargo
     directories:
       - /
@@ -262,9 +262,10 @@ updates:
       - /languages/golang/encrypt/guest
       - /languages/golang/auth/guest
       - /packages/eql/tests/timing/ore_block_256/ctgen
+      - /languages/python
     # Lockfile only, like the other two cargo entries. Every one of these
-    # workspaces shares crates by path with another: the fuzz crates and both
-    # guests depend on root-workspace crates, the encrypt guest also on
+    # workspaces shares crates by path with another: the fuzz crates, both
+    # guests and the Python SDK depend on root-workspace crates, the encrypt guest also on
     # eql-bindings, and the EQL workspace on stack-encrypt and stack-kms. Those
     # root crates take `{ workspace = true }` requirements from the root
     # Cargo.toml, so a manifest edit made for any one of these lockfiles can
@@ -358,6 +359,45 @@ updates:
       # impact-gate constrains lizard (it excludes 1.24.0), so the set moves
       # together in one PR rather than as conflicting per-package bumps.
       impact-gate-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  # ── uv (languages/python — the Python SDK's test and build tools) ──
+  # The package has no runtime dependency. So uv.lock contains two sets of
+  # tools: the `test` extra (pytest, attrs, Pydantic, SQLAlchemy, psycopg and
+  # Alembic), and the `build` dependency group (maturin, the build backend),
+  # with what they need. `mise run build` installs both with
+  # `uv sync --locked`. Dependabot's uv parser reads `[dependency-groups]`
+  # as well as the extras, so maturin is updated with the rest. Both have
+  # lower bounds and no major upper bound, so a new minor or patch release
+  # changes only the lock.
+  - package-ecosystem: uv
+    directory: /languages/python
+    # Monthly, matching the other non-npm toolchains. No `day:`, for the
+    # reason recorded on the cargo entries.
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      # One pull request for the set, so the tests run once against all the
+      # new versions together.
+      python-test-minor-patch:
         patterns:
           - "*"
         update-types:

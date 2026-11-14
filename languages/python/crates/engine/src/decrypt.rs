@@ -1,0 +1,276 @@
+//! `decrypt` at the boundary: the rows psycopg returned into the engine's
+//! stored record, and the opened values into instances of the model class.
+//!
+//! Every row is read and checked with the GIL held, before any key request
+//! (the spec in #1341, "Errors"): it is a mapping, it has every plan field's
+//! column, each EQL column is EQL JSON stored under this table and column,
+//! and each passthrough value has the field's exact type. Then the GIL is
+//! released and the engine opens the whole list. The instances are built
+//! only after every value has been turned into a Python object, so a call
+//! that fails returns no instance.
+
+use pyo3::exceptions::{PyRecursionError, PyTypeError, PyUnicodeEncodeError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyBytes, PyDict, PyList, PyString};
+use stackencrypt_core::decrypt::{self as core, Row, Rows};
+use stackencrypt_core::encrypt::Field;
+use stackencrypt_core::refusal::Refusal;
+use stackencrypt_core::values::Scalar;
+
+use crate::encrypt::Plan;
+use crate::errors::raise;
+use crate::values::{read, to_python, PyKind};
+
+/// Decrypt `rows` under `plan` into instances of `cls`, one per row, built
+/// with the plan's fields as keyword arguments.
+///
+/// An empty list returns an empty list and touches nothing.
+#[pyfunction]
+pub fn decrypt<'py>(
+    py: Python<'py>,
+    plan: &Plan,
+    cls: &Bound<'py, PyAny>,
+    rows: Vec<Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyList>> {
+    if rows.is_empty() {
+        return Ok(PyList::empty(py));
+    }
+    let mut stored = Rows::with_capacity(rows.len());
+    for (at, row) in rows.iter().enumerate() {
+        stored.push(stored_row(plan, row, at)?);
+    }
+    let opened = py
+        .detach(|| core::decrypt(&plan.plan, stored))
+        .map_err(|refused| raise(py, refused))?;
+    // Every value first, then every instance: a value Python cannot hold
+    // fails the call before any constructor runs. Borrowed, not moved: each
+    // value is wiped in its row's buffer when `opened` drops.
+    let mut arguments = Vec::with_capacity(opened.len());
+    for values in &opened {
+        let kwargs = PyDict::new(py);
+        for (field, value) in plan.plan.fields().iter().zip(values) {
+            kwargs.set_item(&field.name, python_value(py, field, value)?)?;
+        }
+        arguments.push(kwargs);
+    }
+    let out = PyList::empty(py);
+    for kwargs in arguments {
+        // The class's own constructor: an error it raises propagates as it is.
+        out.append(cls.call((), Some(&kwargs))?)?;
+    }
+    Ok(out)
+}
+
+/// One row as the engine's stored row, checked.
+fn stored_row(plan: &Plan, row: &Bound<'_, PyAny>, at: usize) -> PyResult<Row> {
+    let py = row.py();
+    if !row.is_instance(mapping(py)?)? {
+        return Err(raise(
+            py,
+            Refusal {
+                code: "decrypt_row_shape".to_owned(),
+                message: format!(
+                    "row {at} is a {}, not a mapping of column names to values. Read the \
+                     rows with psycopg's dict_row: cursor(row_factory=dict_row).",
+                    type_name(row)
+                ),
+                field: None,
+                reason: None,
+            },
+        ));
+    }
+    let mut stored = Row::new();
+    for (field, kind) in plan.plan.fields().iter().zip(&plan.kinds) {
+        if !row.contains(&field.name)? {
+            return Err(raise(
+                py,
+                Refusal {
+                    code: "decrypt_missing_column".to_owned(),
+                    message: format!(
+                        "row {at} has no column {:?}. Select every declared column of the \
+                         model, passthrough columns included.",
+                        field.name
+                    ),
+                    field: Some(field.name.clone()),
+                    reason: None,
+                },
+            ));
+        }
+        let value = row.get_item(&field.name)?;
+        let in_row = |refused: Refusal| {
+            raise(
+                py,
+                Refusal {
+                    message: format!("row {at}, {}", refused.message),
+                    ..refused
+                },
+            )
+        };
+        // A field declared Optional, stored as SQL NULL: an EQL field has no
+        // entry, which opens as a null; a passthrough is a null.
+        if field.nullable && value.is_none() {
+            if field.eql.is_none() {
+                stored
+                    .passthrough(field, stackencrypt_core::values::Value::Null)
+                    .map_err(|misfit| {
+                        in_row(Refusal {
+                            code: misfit.code().to_owned(),
+                            message: format!("field {:?}: a null does not fit", field.name),
+                            field: Some(field.name.clone()),
+                            reason: Some("passthrough".to_owned()),
+                        })
+                    })?;
+            }
+            continue;
+        }
+        match &field.eql {
+            Some(_) => {
+                let text = eql_text(field, &value)?.map_err(in_row)?;
+                stored
+                    .eql(&plan.plan, field, text.as_bytes())
+                    .map_err(in_row)?;
+            }
+            None => passthrough(&mut stored, field, *kind, &value)?.map_err(in_row)?,
+        }
+    }
+    Ok(stored)
+}
+
+/// An EQL column's JSON text, as UTF-8 bytes: from a `str`, from `bytes`
+/// that are UTF-8, or from a `dict` the driver already parsed.
+///
+/// A `bytes` value is used as it is. A `str` is encoded once, by Python,
+/// and the encoded `bytes` are used as they are. `PyString::to_cow` is not
+/// used: under `abi3-py39` it encodes and then copies again, on every
+/// Python version, because borrowing a `str`'s UTF-8 is limited API only
+/// from 3.10. The text is then copied once more, into the engine's frame.
+///
+/// The outer error is Python's own; the inner one is the refusal, for the
+/// caller to name the row in. Only an error that is about the value
+/// becomes a refusal: a `str` with no UTF-8 encoding, or a `dict` that
+/// `json.dumps` refuses. Any other error, such as `MemoryError` or
+/// `KeyboardInterrupt`, propagates as it is.
+fn eql_text<'py>(
+    field: &Field,
+    value: &Bound<'py, PyAny>,
+) -> PyResult<Result<Bound<'py, PyBytes>, Refusal>> {
+    let py = value.py();
+    let malformed = |what: String| {
+        Ok(Err(Refusal {
+            code: "decrypt_malformed".to_owned(),
+            message: format!("field {:?}: the column value {what}.", field.name),
+            field: Some(field.name.clone()),
+            reason: None,
+        }))
+    };
+    if let Ok(text) = value.cast::<PyString>() {
+        // A lone surrogate is a str Python holds with no UTF-8 encoding.
+        return match text.encode_utf8() {
+            Ok(bytes) => Ok(Ok(bytes)),
+            Err(error) if error.is_instance_of::<PyUnicodeEncodeError>(py) => {
+                malformed("is a str that is not valid UTF-8".to_owned())
+            }
+            Err(error) => Err(error),
+        };
+    }
+    if let Ok(bytes) = value.cast::<PyBytes>() {
+        return match std::str::from_utf8(bytes.as_bytes()) {
+            Ok(_) => Ok(Ok(bytes.clone())),
+            Err(_) => malformed("is bytes that are not UTF-8".to_owned()),
+        };
+    }
+    if value.cast::<PyDict>().is_ok() {
+        return match dumps(py)?.call1((value,)) {
+            Ok(text) => Ok(Ok(text.cast::<PyString>()?.encode_utf8()?)),
+            Err(error)
+                if error.is_instance_of::<PyTypeError>(py)
+                    || error.is_instance_of::<PyValueError>(py)
+                    || error.is_instance_of::<PyRecursionError>(py) =>
+            {
+                malformed("is a dict that is not JSON".to_owned())
+            }
+            Err(error) => Err(error),
+        };
+    }
+    if value.is_none() {
+        return malformed("is None, a SQL NULL, not an EQL value".to_owned());
+    }
+    malformed(format!(
+        "is a {}, not the str, bytes or dict of an EQL value",
+        type_name(value)
+    ))
+}
+
+/// A passthrough column's value, checked by exact type as on `encrypt`.
+///
+/// An error Python raises while the value is read, such as one from a
+/// user's `tzinfo`, propagates as it is, as on `encrypt`. The inner error
+/// is the refusal.
+fn passthrough(
+    stored: &mut Row,
+    field: &Field,
+    kind: PyKind,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<Result<(), Refusal>> {
+    let named = |refused: Refusal| Refusal {
+        message: format!("field {:?}: {}", field.name, refused.message),
+        field: Some(field.name.clone()),
+        reason: Some("passthrough".to_owned()),
+        ..refused
+    };
+    let read = match read(value, kind, "passthrough")? {
+        Ok(read) => read,
+        Err(refused) => return Ok(Err(named(refused))),
+    };
+    Ok(stored.passthrough(field, read.value()).map_err(|misfit| {
+        named(Refusal {
+            code: misfit.code().to_owned(),
+            message: "the value is outside what the engine stores.".to_owned(),
+            field: None,
+            reason: None,
+        })
+    }))
+}
+
+/// An opened value as the Python object of its field.
+fn python_value(py: Python<'_>, field: &Field, value: &Scalar) -> PyResult<Py<PyAny>> {
+    to_python(py, value)?.map_err(|unfit| {
+        raise(
+            py,
+            Refusal {
+                code: "decrypt_not_representable".to_owned(),
+                message: format!(
+                    "field {:?}: the opened value does not fit its Python type: {}.",
+                    field.name,
+                    unfit.cause()
+                ),
+                field: Some(field.name.clone()),
+                reason: None,
+            },
+        )
+    })
+}
+
+fn mapping(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
+    static MAPPING: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+    let mapping = MAPPING.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
+        Ok(py.import("collections.abc")?.getattr("Mapping")?.unbind())
+    })?;
+    Ok(mapping.bind(py))
+}
+
+fn dumps(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
+    static DUMPS: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+    let dumps = DUMPS.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
+        Ok(py.import("json")?.getattr("dumps")?.unbind())
+    })?;
+    Ok(dumps.bind(py))
+}
+
+fn type_name(value: &Bound<'_, PyAny>) -> String {
+    value.get_type().name().map_or_else(
+        |_| "value of an unknown type".to_owned(),
+        |name| name.to_string(),
+    )
+}

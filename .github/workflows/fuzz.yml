@@ -1,9 +1,11 @@
 name: Fuzz (crates)
 
 # libFuzzer fuzzing for the stack crates' untrusted-input parsers (the
-# detached `packages/*/fuzz/` crates and the `fuzz:*` mise tasks). Ported from
-# cipherstash-suite's `fuzz.yml`, for the six targets in the imported set; the
-# suite keeps its three cts-common targets. Two jobs with different roles:
+# detached `packages/*/fuzz/` crates and the `fuzz:*` mise tasks), and the
+# Python SDK's value conversion (`languages/python/crates/core/fuzz/`). Ported from
+# cipherstash-suite's `fuzz.yml`, which keeps its three cts-common targets.
+# The two matrices below list every target here. Two jobs with different
+# roles:
 #
 #   * fuzz-regression (pull_request and manual, blocking on PRs): builds every harness, which
 #     catches harness and API drift, and replays the committed seed corpus with
@@ -24,6 +26,18 @@ on:
       - packages/stack-auth/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      # Every other crate a target compiles, from each fuzz crate's
+      # Cargo.lock: scripts/__tests__/fuzz-workflow-paths.test.mjs derives
+      # this list and fails when a path dependency is missing from it.
+      - packages/stack-profile/**
+      - packages/stack-encrypt-derive/**
+      - packages/eql/crates/eql-bindings/**
+      # The Python SDK's core crate, the manifest its dependencies come
+      # from, and the Go guest's EQL resolver it compiles by #[path]: the
+      # fuzz:python-values target.
+      - languages/python/crates/core/**
+      - languages/python/Cargo.toml
+      - languages/golang/encrypt/guest/src/targets.rs
       - Cargo.toml
       - Cargo.lock
       - mise.toml
@@ -116,6 +130,7 @@ jobs:
           - { task: "fuzz:plan-build", slug: plan-build }
           - { task: "fuzz:json-wire", slug: json-wire }
           - { task: "fuzz:json-text", slug: json-text }
+          - { task: "fuzz:python-values", slug: python-values }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -140,6 +155,7 @@ jobs:
             packages/stack-auth/fuzz
             packages/stack-kms/fuzz
             packages/stack-encrypt/fuzz
+            languages/python/crates/core/fuzz
           key: ${{ matrix.slug }}
 
       # `-runs=0` replays the committed seed corpus once and exits without
@@ -166,6 +182,7 @@ jobs:
           - { task: "fuzz:plan-build",   slug: plan-build,   dir: packages/stack-encrypt, target: plan_build }
           - { task: "fuzz:json-wire",    slug: json-wire,    dir: packages/stack-encrypt, target: json_wire_decode }
           - { task: "fuzz:json-text",    slug: json-text,    dir: packages/stack-encrypt, target: json_text }
+          - { task: "fuzz:python-values", slug: python-values, dir: languages/python/crates/core, target: value_frame }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -205,13 +222,16 @@ jobs:
         run: mise run ${{ matrix.task }} -- "-max_total_time=$MAX_TOTAL_TIME"
 
       # Drops inputs that add no coverage, so the saved corpus stays small.
-      # Skipped when the fuzz step found a crash.
+      # Skipped when the fuzz step found a crash. Run from the root, naming
+      # the fuzz crate: from languages/python, mise would load that folder's
+      # mise.toml and install its Python and uv, which this job does not
+      # cache.
       - name: Minimise the corpus (${{ matrix.slug }})
-        working-directory: ${{ matrix.dir }}
         env:
           TARGET: ${{ matrix.target }}
+          FUZZ_DIR: ${{ matrix.dir }}/fuzz
         run: |
-          cargo +nightly fuzz cmin "$TARGET" --sanitizer none --target "$(rustc -vV | sed -n 's/^host: //p')"
+          cargo +nightly fuzz cmin "$TARGET" --fuzz-dir "$FUZZ_DIR" --sanitizer none --target "$(rustc -vV | sed -n 's/^host: //p')"
 
       # Saved even on a crash: the grown corpus is still worth keeping, and the
       # crash input lives in artifacts/, not corpus/.

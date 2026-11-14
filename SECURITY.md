@@ -38,6 +38,10 @@ from the stack-* crates), released by `.github/workflows/release-golang.yml`
 as `languages/golang/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
+The Python SDK at `languages/python` (`stackencrypt`, a pyo3 extension over
+`stack-encrypt`) is in the tree and is not released: no wheel is published
+and nothing in `.github/workflows` builds one for distribution.
+
 The five stack-* crates are licensed under the PolyForm Internal Use License
 1.0.0 (each crate's `LICENSE`), not the repository's MIT licence: they may be
 used for internal business operations only, and not redistributed. That
@@ -147,7 +151,7 @@ The following are **in scope**:
 
 The following are **out of scope**:
 
-- Example applications in the `languages/typescript/examples` dir (though we are still grateful for any relevant disclosures there)
+- Example applications in the `languages/typescript/examples` and `languages/python/examples` dirs (though we are still grateful for any relevant disclosures there)
 - Social engineering, physical attacks, or denial-of-service
 - Attacks requiring privileged access to developer machines or CI/CD infrastructure
 

@@ -1,0 +1,53 @@
+[package]
+name = "stackencrypt-core"
+description = "The Python SDK's engine-side logic, with no pyo3, linked and tested without a Python interpreter"
+# This crate's version is not the wheel's. The wheel takes its version from
+# crates/engine (see pyproject.toml, `dynamic = ["version"]`).
+version = "0.0.0"
+edition.workspace = true
+# Literal, not inherited: scripts/__tests__/cargo-publish-opt-out.test.mjs
+# greps each member for this exact line.
+publish = false
+repository.workspace = true
+
+[features]
+default = ["eql"]
+# Not a switch. `src/lib.rs` compiles the EQL resolver from the Go guest's
+# own file (`languages/golang/encrypt/guest/src/targets.rs`), and that file
+# reads a feature of exactly this name. Every build of the SDK holds the EQL
+# types, so the crate refuses to compile without it.
+eql = []
+# A test build: the shared client takes its keys from stack-kms's
+# `DeterministicSource` and a seed, not from ZeroKMS, once
+# `client::use_deterministic` is called. The frozen-row tests read rows the Go
+# SDK sealed under the same source (the Go guest's `deterministic-kms` build).
+# Never in a wheel a user installs.
+deterministic-kms = ["stack-kms/test-support"]
+
+[dependencies]
+# By path, like every other eql-bindings dependency in the repository: the
+# SQL that stores a payload and the Rust that emits it must agree
+# (scripts/lint-no-eql-registry-pins.mjs).
+eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["targets"] }
+# For the engine error's diagnostic code.
+miette = "7.5.0"
+# For the plan's frame: the fields in declaration order. With derive, for
+# the `i` of a stored EQL value, read before any key request.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+stack-auth = { workspace = true }
+stack-encrypt = { workspace = true }
+stack-kms = { workspace = true }
+# One multi-thread runtime per process, beside the shared client: an
+# operation blocks its own thread on it with the GIL released.
+tokio = { version = "1", features = ["rt-multi-thread"] }
+# To wipe the opened text and bytes a `Scalar` holds when it is dropped.
+# The version the workspace already resolves.
+zeroize = "1"
+# For the request-counting connection: the trait a ZeroKMS request
+# implements. The version stack-kms resolves.
+zerokms-protocol = "0.12.31"
+
+[dev-dependencies]
+# The engine's in-memory key source, for the round trip with no ZeroKMS.
+stack-kms = { workspace = true, features = ["test-support"] }

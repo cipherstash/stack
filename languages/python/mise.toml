@@ -1,0 +1,127 @@
+# The Python SDK (languages/python): a Cargo workspace of its own plus the
+# pure-Python package `stackencrypt`. mise reads this file from this folder
+# and merges the repo-root mise.toml above it, so the Rust version is the root's.
+#
+# Tasks live here and not in the root mise.toml on purpose:
+# scripts/__tests__/crates-ci.test.mjs fails a root task no workflow runs,
+# and .github/workflows/tests-python.yml is their caller. Run them from this
+# directory: `mise run build`, `mise run test`, `mise run test:cargo`.
+
+[tools]
+# The interpreter the build task links and tests against locally. CI
+# (tests-python.yml) runs the same tasks on this version and on the oldest
+# supported one, 3.9, by setting MISE_PYTHON_VERSION over this version. uv makes
+# the virtualenv and installs the package.
+python = "3.14"
+uv = "0.8.24"
+
+[tasks.build]
+description = "Build the stackencrypt wheel with maturin and install it, with pytest, into .venv"
+shell = "bash -c"
+run = """
+set -euo pipefail
+# The interpreter is named: uv prefers its own managed interpreters over the
+# one on PATH, and the one on PATH is the python3 `[tools]` names, the one
+# the Rust tests link. A `.venv` made for another interpreter version is
+# recreated, so a change to `[tools]` cannot leave the tests on the old one.
+# The `test` extra comes from uv.lock, with --locked, so a lock that does not
+# match pyproject.toml fails the build. Dependabot updates the lock. The
+# package has no runtime dependency, so the lock fixes tool versions alone:
+# the test extra, and maturin, the build backend, in the `build` group.
+want="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+have="$([ -x .venv/bin/python ] && .venv/bin/python -c 'import sys; print("%d.%d" % sys.version_info[:2])' || true)"
+if [ "$have" != "$want" ]; then
+  rm -rf .venv
+  uv venv --python "$(command -v python3)" .venv
+fi
+# The dev profile for the local loop: maturin builds release by default, and
+# a release build of the stack-encrypt graph takes minutes per rebuild. The
+# `wheels` job in tests-python.yml builds release, because the time it records
+# is the cost of the wheel a user would install.
+export MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:---profile dev}"
+# The `test` extra and the `build` group at the locked versions. The project
+# itself is left out: uv sync would install it editable.
+uv sync --locked --extra test --group build --no-install-project --python .venv/bin/python
+# The package itself, built by the locked maturin in .venv through the PEP
+# 517 backend. --no-build-isolation keeps uv from downloading a maturin of
+# its own, outside the lock. Always reinstall it so a Rust change is picked
+# up. Its dependencies are the ones above, so none is resolved here.
+uv pip install --python .venv/bin/python --no-build-isolation --reinstall-package stackencrypt --no-deps .
+.venv/bin/python -c 'import stackencrypt as s; print("stackencrypt", s.__version__, "engine", s.__engine__)'
+"""
+
+[tasks.test]
+description = "Run the pure-Python test suite against the package `build` installed"
+depends = ["build"]
+run = ".venv/bin/python -m pytest"
+
+[tasks."test:deterministic"]
+description = "Build the extension with the deterministic-kms test feature into .venv and run tests_deterministic/: Python against the Go SDK's frozen EQL rows, with no credentials"
+shell = "bash -c"
+# The deterministic client replaces the live one for the whole process, so
+# these tests run in their own pytest process, from their own folder. The
+# build is a test build: run `mise run build` afterwards for a normal one.
+# `--features` replaces pyproject.toml's list, so it names
+# pyo3/extension-module again. Maturin 1.10 and later also set
+# PYO3_BUILD_EXTENSION_MODULE, but pyproject.toml allows 1.9.
+run = """
+set -euo pipefail
+MATURIN_PEP517_ARGS="--profile dev --features pyo3/extension-module,deterministic-kms" mise run build
+.venv/bin/python -m pytest tests_deterministic
+"""
+
+[tasks."test:cargo"]
+description = "Run both crates' Rust tests with --locked; puts libpython on the loader path so the engine crate's tests link"
+shell = "bash -c"
+run = """
+set -euo pipefail
+# The engine crate links libpython (no `extension-module` outside a wheel),
+# so the test binary must find it at run time. pyo3 links against the
+# interpreter PYO3_PYTHON names; the same interpreter says where its library
+# is. Both loader variables are set because macOS reads one and Linux the
+# other, and an unused one is harmless.
+export PYO3_PYTHON="${PYO3_PYTHON:-$(command -v python3)}"
+libdir="$("$PYO3_PYTHON" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+export DYLD_FALLBACK_LIBRARY_PATH="${libdir}${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cargo test --locked --workspace
+# The deterministic switch is for the whole process, so its test is a binary
+# of its own, built with the test feature.
+cargo test --locked -p stackencrypt-core --features deterministic-kms --test deterministic_switch
+"""
+
+[tasks."build:eql-bundle"]
+description = "Build the EQL v4 bundle from the tree, for the live tests"
+# Built from packages/eql, as the Go task go:test:postgres builds it: the
+# copy under crates/eql-bindings/sql is the released bundle and moves only at
+# the lockstep bump.
+run = "mise -C ../../packages/eql run build"
+
+[tasks."test:live"]
+description = "Build the extension and the EQL v4 bundle, then run test:live:run; needs the four CS_* credentials and EQL_TEST_DATABASE_URL"
+depends = ["build", "build:eql-bundle"]
+run = "mise run test:live:run"
+
+[tasks."test:live:run"]
+description = "Install the EQL v4 bundle into the database EQL_TEST_DATABASE_URL names, and run the live tests against it and ZeroKMS; builds nothing"
+shell = "bash -c"
+# Builds nothing, so CI can run the builds in a step with no credentials and
+# give the credentials to this task alone: a dependency's build script then
+# does not run with them set (tests-python.yml's live job). The two steps
+# share a runner, so this does not stop the build from leaving code behind. It needs the
+# extension in .venv and the bundle under packages/eql/release first; locally,
+# run test:live, which builds both. The tests skip without credentials or a
+# database, so a skip here is a failure: this task is where both are given.
+run = """
+set -euo pipefail
+: "${EQL_TEST_DATABASE_URL:?set EQL_TEST_DATABASE_URL to a libpq connection string for a disposable PostgreSQL}"
+bundle=../../packages/eql/release/cipherstash-encrypt-v4.sql
+[ -f "$bundle" ] || { echo "error: $bundle is missing; run mise run build:eql-bundle first" >&2; exit 1; }
+psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$bundle"
+log="${TMPDIR:-/tmp}/stackencrypt-live.log"
+.venv/bin/python -m pytest -m live -v -rs | tee "$log"
+if grep -q ' SKIPPED' "$log"; then
+  echo "error: a live test skipped; set the four CS_* credentials and EQL_TEST_DATABASE_URL" >&2
+  exit 1
+fi
+"""

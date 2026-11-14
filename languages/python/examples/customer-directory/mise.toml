@@ -1,0 +1,37 @@
+# The tools come from languages/python/mise.toml, which mise merges with this
+# file. Run these tasks from this folder.
+
+[env]
+DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5438/customer_directory"
+
+[tasks.setup]
+description = "Reset the example's database, install EQL v4 and the table, and install the SDK from this checkout"
+shell = "bash -c"
+run = """
+set -euo pipefail
+# Built from the tree, because the released copy moves only at a version bump.
+# Built first, so a failed build leaves the database as it was.
+mise -C ../../../../packages/eql run build
+docker compose down --volumes
+docker compose up --detach --wait
+psql_in_db() {
+  docker compose exec -T db psql -U postgres -d customer_directory -v ON_ERROR_STOP=1 -q
+}
+psql_in_db < ../../../../packages/eql/release/cipherstash-encrypt-v4.sql
+psql_in_db < schema.sql
+# The dev profile, because a release build of the engine takes minutes. uv
+# does not notice a Rust change, so the SDK is always reinstalled.
+MATURIN_PEP517_ARGS="--profile dev" uv sync --locked --reinstall-package stackencrypt
+"""
+
+[tasks.dev]
+description = "Run the service on http://127.0.0.1:8000"
+run = "uv run --locked --no-sync uvicorn app:app --reload"
+
+[tasks."dev:sqlalchemy"]
+description = "Run the SQLAlchemy version of the service on http://127.0.0.1:8001"
+run = "uv run --locked --no-sync uvicorn app_sqlalchemy:app --reload --port 8001"
+
+[tasks.test]
+description = "Run the live tests. They need real credentials and `mise run setup` first"
+run = "uv run --locked --no-sync pytest"

@@ -5,7 +5,12 @@ import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { includes } from './lib/rust-compiled-files.mjs'
-import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
+import {
+  readWorkflow,
+  runWorkingDirectory,
+  WORKFLOW_DIR,
+  workflowFiles,
+} from './lib/workflows.mjs'
 
 /**
  * Guards that the EQL suite is RUN, not merely present.
@@ -69,21 +74,37 @@ const SUITE_TASKS = [
 ]
 
 /**
- * The part of a workflow that actually does something: `jobs:` and everything
- * under it, with comment lines stripped.
+ * The part of a workflow that runs an EQL task: the `run:` bodies of the steps
+ * that execute inside `packages/eql`, with shell comment lines stripped.
  *
- * Lifted from `integrationSuiteCi.test.ts`, and for the reason recorded there —
- * a claim satisfied by prose rather than by a step. Every assertion below is a
- * substring search, and this file's own header names all three suite tasks. Cut
- * at `jobs:` and the `on:`/`paths:` block goes too, which is what makes "a
- * `paths:` filter naming the suite is a trigger, not a run" true rather than
- * merely intended.
+ * Only `run:` bodies, so a claim is satisfied by a step and not by prose.
+ * That is the reason `integrationSuiteCi.test.ts` cuts at `jobs:`. This
+ * file's own header names all three suite tasks. So does a `paths:` filter,
+ * and a filter is a trigger, not a run.
+ *
+ * Only the steps whose working directory is under `packages/eql`. A mise
+ * task name is scoped to the config mise finds from the current directory,
+ * and to nothing else. `mise run test` from `languages/python` runs THAT
+ * workspace's `test` task. Read without the directory, it counted as EQL's
+ * `test`, and EQL's `test` depends on `test:sqlx` and `test:lint`. So the
+ * two exemptions below were wrong from the first commit of
+ * `tests-python.yml`. They were a false "CI runs this", the direction this
+ * file exists to rule out. The directory is resolved by `runWorkingDirectory`.
+ * AGENTS.md records that every EQL task must run that way, and every EQL
+ * workflow does. A composite action's bodies are appended by the caller
+ * unscoped, as before. An action is reached by `uses:`, and `uses:` has no
+ * working directory of its own.
  */
-function executablePart(body) {
-  const jobsAt = body.search(/^jobs:/m)
-  // No `jobs:` key means nothing runs, so nothing can match. Returning the
-  // whole body here would hand every assertion the header comments instead.
-  return jobsAt === -1 ? '' : body.slice(jobsAt).replace(/^[ \t]*#.*$/gm, '')
+const EQL_DIR = EQL_PREFIX.slice(0, -1)
+const insideEql = (dir) =>
+  dir !== undefined &&
+  (String(dir) === EQL_DIR || String(dir).startsWith(EQL_PREFIX))
+function eqlRunBodies(wf) {
+  return Object.values(wf?.jobs ?? {}).flatMap((job) =>
+    (Array.isArray(job?.steps) ? job.steps : [])
+      .filter((step) => insideEql(runWorkingDirectory(wf, job, step)))
+      .map((step) => String(step?.run ?? '').replace(/^[ \t]*#.*$/gm, '')),
+  )
 }
 
 /** The two spellings GitHub accepts for a composite action's manifest. */
@@ -158,16 +179,89 @@ const workflowSteps = (wf) =>
  * makes the mutation test below report a workflow as its own sole caller.
  */
 const rootWorkflows = workflowFiles().map((relPath) => {
-  const actions = workflowSteps(readWorkflow(relPath))
+  const wf = readWorkflow(relPath)
+  const actions = workflowSteps(wf)
     .map((step) => String(step?.uses ?? ''))
     .map((uses) => actionRunBodies(uses))
   return {
     relPath,
-    body: [
-      executablePart(readFileSync(join(REPO_ROOT, relPath), 'utf8')),
-      ...actions,
-    ].join('\n'),
+    body: [...eqlRunBodies(wf), ...actions].join('\n'),
   }
+})
+
+describe('a `mise run` counts as an EQL task only from inside packages/eql', () => {
+  const step = (run, dir) =>
+    dir === undefined ? { run } : { run, 'working-directory': dir }
+  const workflow = (jobs, defaults) => ({ defaults, jobs })
+
+  it('reads the step, the job default and the workflow default, in that order', () => {
+    const wf = workflow(
+      {
+        own: { steps: [step('mise run test:schema', 'packages/eql')] },
+        job: {
+          defaults: { run: { 'working-directory': 'packages/eql' } },
+          steps: [step('mise run test:crates')],
+        },
+        nested: {
+          steps: [step('mise run build', 'packages/eql/packages/eql')],
+        },
+        overridden: {
+          defaults: { run: { 'working-directory': 'packages/eql' } },
+          steps: [step('mise run test:cargo', 'languages/python')],
+        },
+      },
+      { run: { 'working-directory': 'packages/eql' } },
+    )
+    expect(eqlRunBodies(wf)).toEqual([
+      'mise run test:schema',
+      'mise run test:crates',
+      'mise run build',
+    ])
+  })
+
+  it("does not read another workspace's task of the same name as EQL's", () => {
+    // tests-python.yml's `python` job: `mise run test` and `mise run
+    // test:cargo` under languages/python. EQL has a `test` task too, and it
+    // depends on `test:sqlx` and `test:lint`; counted here, both read as run
+    // by CI and their exemptions below as stale.
+    const wf = workflow({
+      python: {
+        defaults: { run: { 'working-directory': 'languages/python' } },
+        steps: [step('mise run test:cargo'), step('mise run test')],
+      },
+      root: { steps: [step('mise run test:doc')] },
+    })
+    expect(eqlRunBodies(wf)).toEqual([])
+  })
+
+  it('does not read a sibling folder with the same prefix as packages/eql', () => {
+    const wf = workflow({
+      sibling: { steps: [step('mise run test:sqlx', 'packages/eql-bench')] },
+      slash: { steps: [step('mise run test:schema', 'packages/eql/')] },
+    })
+    expect(eqlRunBodies(wf)).toEqual(['mise run test:schema'])
+  })
+
+  it('strips shell comment lines, so a mention in a comment is not a run', () => {
+    const wf = workflow({
+      eql: {
+        steps: [
+          step(
+            '# run mise run test:sqlx first\nmise run test:schema',
+            'packages/eql',
+          ),
+        ],
+      },
+    })
+    expect(eqlRunBodies(wf)).toEqual(['\nmise run test:schema'])
+  })
+
+  it('finds a real step this way, so the scan is not fixture-only', () => {
+    const real = rootWorkflows.find(
+      ({ relPath }) => relPath === `${WORKFLOW_DIR}/test-eql.yml`,
+    )
+    expect(real?.body).toContain('test:sqlx:partition')
+  })
 })
 
 describe('a root workflow runs the EQL SQLx suite', () => {
@@ -505,8 +599,42 @@ const RUST_CACHE_STEPS = workflowFiles().flatMap((relPath) => {
   )
 })
 
-/** The rust-cache steps in EQL's jobs. */
-const EQL_RUST_CACHE_STEPS = RUST_CACHE_STEPS.filter(({ eql }) => eql)
+/**
+ * The workspaces a rust-cache step names: one per line of `workspaces:`, as
+ * rust-cache reads it. A job that builds EQL and another workspace
+ * (tests-python.yml's `live` builds the Python wheel and the EQL bundle)
+ * lists both in one step. Two steps would each prune the shared cargo
+ * registry to their own crates before they save.
+ */
+const workspacesOf = (step) =>
+  String(step?.with?.workspaces ?? '')
+    .split('\n')
+    // rust-cache's `dir -> target` form: the workspace is the part before.
+    .map((line) => line.split('->')[0].trim())
+    .filter(Boolean)
+
+/**
+ * Whether `dir` is the root of another Cargo workspace: a directory outside
+ * the EQL tree with its own `Cargo.lock`. A member of the EQL workspace, or
+ * the monorepo root, is not another workspace, so the check below still
+ * catches a step that names either one instead of the EQL root.
+ */
+const isAnotherWorkspace = (dir) =>
+  dir !== '.' &&
+  dir !== CARGO_WORKSPACE &&
+  !dir.startsWith(`${CARGO_WORKSPACE}/`) &&
+  existsSync(join(REPO_ROOT, dir, 'Cargo.lock'))
+
+/** A step that caches other workspaces only, and not EQL's. */
+const namesAnotherWorkspace = ({ step }) => {
+  const dirs = workspacesOf(step)
+  return dirs.length > 0 && dirs.every(isAnotherWorkspace)
+}
+
+/** The rust-cache steps in EQL's jobs that cache the EQL workspace. */
+const EQL_RUST_CACHE_STEPS = RUST_CACHE_STEPS.filter(
+  (entry) => entry.eql && !namesAnotherWorkspace(entry),
+)
 
 const stepLabel = ({ relPath, jobName }, detail) =>
   `${relPath} (${jobName}): ${detail}`
@@ -548,13 +676,21 @@ describe('the shared Rust cache is pointed and saved correctly', () => {
     // root workspace, and rust-cache's default (`. -> target`) is right there.
     // Held non-empty, so a change to `isEqlJob` cannot empty the check.
     expect(EQL_RUST_CACHE_STEPS.length).toBeGreaterThan(0)
-    const wrong = EQL_RUST_CACHE_STEPS.filter(
-      ({ step }) =>
-        !String(step?.with?.workspaces ?? '')
-          .split('\n')
-          .map((line) => line.split('->')[0].trim())
-          .includes(CARGO_WORKSPACE),
-    ).map((entry) =>
+    // The step names the EQL root, and any other entry is another
+    // workspace's root, never an EQL member. The monorepo root is the root
+    // Cargo workspace: it may be named beside the EQL root, as by
+    // tests-golang.yml's wasi-check, which builds both, but never instead
+    // of it.
+    const wrong = EQL_RUST_CACHE_STEPS.filter(({ step }) => {
+      const dirs = workspacesOf(step)
+      return (
+        !dirs.includes(CARGO_WORKSPACE) ||
+        !dirs.every(
+          (dir) =>
+            dir === CARGO_WORKSPACE || dir === '.' || isAnotherWorkspace(dir),
+        )
+      )
+    }).map((entry) =>
       stepLabel(entry, `workspaces: ${entry.step?.with?.workspaces}`),
     )
     expect(

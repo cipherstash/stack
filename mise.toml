@@ -2,8 +2,8 @@
 # workspace in Cargo.toml (the stack-* crates and the three node bindings) and
 # the Go module in languages/golang.
 #
-# EQL (packages/eql) and protect-ffi (languages/typescript/packages/protect-ffi)
-# keep their own mise.toml. A tool they pin there overrides the pin here, in
+# EQL (packages/eql), protect-ffi (languages/typescript/packages/protect-ffi)
+# and the Python SDK (languages/python) keep their own mise.toml. A tool they pin there overrides the pin here, in
 # their folder only.
 
 [task_config]
@@ -362,6 +362,21 @@ cargo clippy --target wasm32-wasip1 -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --target wasm32-wasip1
 mise x --env test -- cargo nextest run
 """
+
+# Fuzz the Python SDK's value conversion (stackencrypt-core's `values`
+# module) both ways: a value the write check accepts must frame and read
+# back as itself, and as the bytes the plain Rust type frames to; arbitrary
+# bytes read as a passthrough must never panic. Same flags as the stack-*
+# fuzz tasks. The fuzz crate lives in `languages/python/crates/core/fuzz/`
+# (detached). The task is here, not in `languages/python/mise.toml`,
+# because `fuzz.yml` runs every fuzz task from the repository root.
+# It runs from the root too, naming the crate with `--fuzz-dir`: from a
+# folder under `languages/python`, mise would also load that folder's
+# mise.toml and install its Python and uv, which CI does not cache.
+[tasks."fuzz:python-values"]
+description = "Fuzz the Python SDK's value conversion, stackencrypt-core's values::write and values::read (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}"
+run = "mise x --env test -- cargo +nightly fuzz run value_frame --fuzz-dir languages/python/crates/core/fuzz --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 [tasks."go:test"]
 description = "Format check, vet and test the Go module (languages/golang: encrypt, auth and the internal packages) against the embedded guests; needs `wasm:guest:build` and `wasm:auth-guest:build` first"
