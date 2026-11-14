@@ -1,0 +1,7 @@
+# Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
+# warning fails the build. The root `doc` task fans out over every
+# `doc:<crate>`; the root `test:doc` runs the doc examples.
+["doc:stack-kms-vendor"]
+description = "Build docs for stack-kms-vendor with all features (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc -p stack-kms-vendor --no-deps --all-features"
