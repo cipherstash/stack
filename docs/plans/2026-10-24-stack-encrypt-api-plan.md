@@ -292,9 +292,9 @@ use eql_bindings::Identifier;
 let email = Identifier::for_column("members", "email")?;
 let age = Identifier::for_column("members", "age")?;
 
-// Not on `next` yet: the new traits for EQL types, and a borrowed value
-// and context. Today this needs `keyset.encrypt_as(&value, context)`
-// with an owned context.
+// Not on `next` yet: a borrowed value, and a context built with
+// `Scope::new`. Today this needs an owned value and an owned context:
+// `"alice@example.com".to_owned().encrypt_into_with_context(&keyset, email.clone())`.
 let by_email: TextEqQuery = "alice@example.com"
     .encrypt_into_with_context(&keyset, Scope::new(&email))
     .await?;
@@ -1987,8 +1987,8 @@ table.
 
 #### Remove the structural API
 
-- **What to build.** Remove `EncryptFrom`, `DecryptInto`, `encrypt_as`, and
-  the helpers in `target::legacy`. Remove the plan builder:
+- **What to build.** Remove `EncryptFrom`, `DecryptInto`, `encrypt_as` and
+  `decrypt_as`. Remove the plan builder:
   `plan/build.rs`, `plan/chain.rs`, `plan/value.rs`, and
   `plan/field_ref.rs`, with `pick!`, `FieldRef`, `Runs`, and `Opens`.
   `Plan::encryption` moves into `Planned` (ADR-0007, amended 9 November

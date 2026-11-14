@@ -329,8 +329,9 @@ Keep these agreed spellings:
 There is no `using` method. A typed query starts from the field marker.
 
 Keep the direct `cipher.decrypt` and `decrypt_with_context`. As already
-agreed, remove `.encrypt` on plaintext, the redundant `encrypt_as`, and
-the public `decrypt_into`.
+agreed, remove `.encrypt` on plaintext and the redundant `encrypt_as` and
+`decrypt_as`. The public `decrypt_into` is already removed, with
+`target::legacy`.
 
 ### Definition, layout, seal, and open
 
