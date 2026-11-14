@@ -76,7 +76,7 @@ terms do not match new query terms either. Re-encrypt that data.
 
 | Record | Encryption needs | Decryption needs |
 |---|---|---|
-| With a `context_field` of type `T` | A `NonEmpty<T>`, which the record stores in that field | An `ExpectedContext<T>`. See [Check where a record with a `context_field` came from](#check-where-a-record-with-a-context_field-came-from) |
+| With a `context_field` of type `T` | A `NonEmpty<T>`, which the record stores in that field | Nothing, or the `NonEmpty<T>` the caller expects. See [Check where a record with a `context_field` came from](#check-where-a-record-with-a-context_field-came-from) |
 | `struct = ..` | No context from the caller. Each field has its own | The same |
 | `plaintext = ..` | A `CallerContext`, built from a `NonEmpty<T>` or an integer | The same |
 
@@ -102,13 +102,13 @@ The plaintext type must implement `Zeroize`.
 ### The context a call takes
 
 Each kind of record decides whether the caller must pass a context, may
-pass one, or must not pass one. Its `ContextInput` type says which:
+pass one, or must not pass one. This table shows which:
 
 | Record | Encrypt input | Decrypt input | Example call |
 |---|---|---|---|
 | `struct = User, scope = "users"` | `DeclaredScopes`, which takes no context from the caller | The same as for encryption | `user.encrypt_into(&keyset)` |
 | `plaintext = T` | `RequiredContext<CallerContext>`, or `RequiredContext<AeadContext>` with `context_type = AeadContext` | The same as for encryption | `value.encrypt_into_with_context(&keyset, nonempty!("users/email"))` |
-| With a `context_field` of type `C` | `RequiredContext<NonEmpty<C>>` | `ExpectedContext<C>` | `T::decrypt_from_with_context(record, &cipher, nonempty!(..))`, which checks the stored context before it decrypts |
+| With a `context_field` of type `C` | `RequiredContext<NonEmpty<C>>` | Nothing, or the `NonEmpty<C>` the caller expects | `T::decrypt_from_with_context(record, &cipher, nonempty!(..))`, which checks the stored context before it decrypts |
 
 #### Check where a record with a `context_field` came from
 

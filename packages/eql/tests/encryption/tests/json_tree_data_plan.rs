@@ -28,7 +28,7 @@ use eql_bindings::Identifier;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{self, record, TargetError, ValueFrame};
 use stack_encrypt::json::{JsonDocument, JsonOptions, JsonQuery};
-use stack_encrypt::target::{ExpectedContext, Layout};
+use stack_encrypt::target::Layout;
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty};
 
 /// The options the documents are sealed under on both paths.
@@ -231,7 +231,7 @@ async fn the_data_plan_and_the_typed_layout_agree() {
 
         // The typed path opens the data plan's document...
         let opened: Value = cipher
-            .decrypt_as::<Value, JsonTreeDocument>(data, ExpectedContext::from(column()))
+            .decrypt_as::<Value, JsonTreeDocument>(data, column().into())
             .await
             .unwrap();
         assert_eq!(opened, document);

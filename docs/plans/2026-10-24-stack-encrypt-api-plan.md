@@ -1739,7 +1739,11 @@ records only the work.
   and with it every chain state and its `.context(..)`, `.extend(..)`,
   and `.keyset(..)`. A stored part passed on decrypt is checked against
   the row before any key is fetched. That check is what `ExpectedContext`
-  does today. It stops being a public type.
+  does today. It stops being a public type. That last step is done
+  (#1612): the type is hidden from the documentation and from compile
+  errors, and is public only so that code the derives emit can name it.
+  A caller passes a `NonEmpty<T>` or nothing. The rest of this item is
+  not done.
 - **Why.** The typed API already pairs its entry points (#1404). A value
   for the context reads the same on both layers. A builder state for the
   context, and a part added later in a chain, are the mistakes the context

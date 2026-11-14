@@ -667,7 +667,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// context field says otherwise with
     /// [`Error::ContextMismatch`](crate::Error::ContextMismatch), before any
     /// key is requested. That is the derive's `#[stash(context_field)]`
-    /// check ([`ExpectedContext`]). A context field changed in storage
+    /// check. A context field changed in storage
     /// opens nothing either way: every field was sealed under the original.
     ///
     /// The field's value must be a plain label (`"tenants/acme"`), read

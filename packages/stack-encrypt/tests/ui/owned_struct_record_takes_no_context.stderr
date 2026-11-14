@@ -12,9 +12,6 @@ help: the following other types implement trait `AcceptsContext`
 ...
    | impl<C> AcceptsContext for OptionalContext<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
-...
-   | impl<T> AcceptsContext for ExpectedContext<T> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
 
 error[E0277]: the trait bound `DeclaredScopes: AcceptsContext` is not satisfied
   --> tests/ui/owned_struct_record_takes_no_context.rs:25:45
@@ -32,9 +29,6 @@ help: the following other types implement trait `AcceptsContext`
 ...
    | impl<C> AcceptsContext for OptionalContext<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
-...
-   | impl<T> AcceptsContext for ExpectedContext<T> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
 note: required by a bound in `stack_encrypt::DecryptFrom::decrypt_from_with_context`
   --> src/target/conversion.rs
    |

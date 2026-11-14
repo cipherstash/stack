@@ -116,6 +116,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`target::ExpectedContext` is no longer part of the API** (#1488). It
+  is the check that a `#[stash(context_field)]` record runs on decrypt:
+  the stored context must equal the one the caller expects, if the caller
+  names one. It is now hidden from the documentation and from the lists
+  of implementors in compile errors. It stays public only so that code
+  the derives emit, and the EQL types in `eql-bindings`, can name it.
+  Code that names it still compiles, but the type is outside semver and
+  may change in any release.
+  - To upgrade, do not name the type. For a record whose context field
+    has type `C` and whose plaintext has type `P`, pass the
+    `NonEmpty<C>` you expect, or `()` for no check, and let `Into`
+    convert it: `cipher.decrypt_as(record, expected.into())`, or
+    `P::decrypt_from_with_context(record, &cipher, expected)`. For no
+    check, `P::decrypt_from(record, &cipher)` also works.
+  - `ValuePlan::decryption_with_context` takes an `Option<NonEmpty<C>>`
+    in place of an `ExpectedContext<C>`. `None` checks only that the
+    stored context is not empty.
+
 - **`CipherRef` replaces `target::CipherScope` and `dynamic::Scope`**
   (#1488). A `CipherRef` is one borrowed value: a connection, and the
   keyset it is confined to, if any. It is built from `&StackCipher`,

@@ -64,8 +64,8 @@
 //! the one context the caller supplies. That context is a
 //! [`RequiredContext<CallerContext>`], or a `RequiredContext<AeadContext>`
 //! with `context_type = AeadContext`. A `#[stash(context_field)]` record
-//! requires the `NonEmpty<T>` it stores, and opens under an
-//! [`ExpectedContext`].
+//! requires the `NonEmpty<T>` it stores. On decrypt the caller may pass that
+//! `NonEmpty<T>` again, and the stored value must then equal it.
 //!
 //! Both derives also implement the structural traits ([`EncryptFrom`],
 //! [`DecryptInto`] and [`DecryptField`]). So an owned record can be a field
@@ -92,7 +92,7 @@
 //!
 //! The derives compose each semantic field's declaration. `#[stash(context_field)]`
 //! on an identifier of type `T` makes the encryption context `NonEmpty<T>` and
-//! stores its inner value. Opening takes an [`ExpectedContext`]: by default it checks only that the stored identifier is nonempty and opens under it as stored; a `NonEmpty<T>` also requires it to equal the destination the caller names, and a mismatch is refused before any key is retrieved.
+//! stores its inner value. Opening takes the context the caller expects, or none: by default it checks only that the stored identifier is nonempty and opens under it as stored; a `NonEmpty<T>` also requires it to equal the destination the caller names, and a mismatch is refused before any key is retrieved.
 //! Record envelope names do not add cryptographic map keys.
 //!
 //! Generic targets use [`CallerContext`] (ciphertext and terms) or [`AeadContext`]
@@ -184,9 +184,17 @@ pub mod transcode;
 mod tuples;
 
 pub(crate) use self::core::{bind_pending, seal_pending};
+/// The check that a `#[stash(context_field)]` record runs on decrypt.
+///
+/// `ExpectedContext` is not part of the API. Only the derives and the EQL
+/// types name it, and a caller passes a `NonEmpty<T>` or nothing. The type
+/// is public only because the derives emit code in other crates that
+/// names it. The definition is hidden too.
+#[doc(hidden)]
+pub use context::ExpectedContext;
 pub use context::{
-    AeadContext, Bind, BindPart, CallerContext, CheckedInput, DeclaredContext, ExpectedContext,
-    Extends, NoBind, NoScope, Parts, Scope, ScopePart, Scopes, StoredParts,
+    AeadContext, Bind, BindPart, CallerContext, CheckedInput, DeclaredContext, Extends, NoBind,
+    NoScope, Parts, Scope, ScopePart, Scopes, StoredParts,
 };
 pub use index::{
     indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock,

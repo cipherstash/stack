@@ -1242,7 +1242,7 @@ mod cancellation {
         in_flight("record::decrypt, dropped in flight", &mut || {
             let stored = stored.take().unwrap();
             drop_in_flight(
-                record::decrypt(Scope::Client(&cipher), stored, &plan, None).unwrap(),
+                record::decrypt(&cipher, stored, &plan, None).unwrap(),
                 &requests,
             );
         });

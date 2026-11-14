@@ -914,6 +914,12 @@ impl DeclaredContext {
 /// descriptor is HMAC'd into the tag, so altering a stored identifier makes
 /// the retrieve fail rather than succeed, and nobody reaches a key they are
 /// not entitled to.
+// `#[doc(hidden)]` must be on this definition, and not only on the
+// re-export. rustc reads the attribute here when a compile error lists the
+// types that implement a trait. rustdoc reads it here when the docs of
+// another crate name the type. With the attribute on the re-export alone,
+// both still showed the type.
+#[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct ExpectedContext<T>(Option<NonEmpty<T>>);
 impl<T> Default for ExpectedContext<T> {

@@ -17,10 +17,11 @@ use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::target::{
     AeadContext, CallerContext, DeclaredContext, DecryptField, Decryptable, Decryption, Encrypted,
-    Encryption, ExpectedContext, IndexSpec,
+    Encryption, IndexSpec,
 };
 use stack_encrypt::{
-    nonempty, DecryptInto, EncryptFrom, Error, NonEmpty, Plan, PlanError, StackCipherText,
+    nonempty, DecryptInto, EmptyError, EncryptFrom, Error, NonEmpty, Plan, PlanError,
+    StackCipherText,
 };
 
 // --- A `plaintext = T` record ------------------------------------------------
@@ -309,7 +310,7 @@ async fn a_context_field_plan_carries_and_checks_the_context() {
     let other = NonEmpty::new("tenants/globex/email".to_string()).unwrap();
     let record = seal().await.unwrap();
     let refused = keyset
-        .run_decryption(plan.decryption_with_context(record, other.into()))
+        .run_decryption(plan.decryption_with_context(record, Some(other)))
         .await;
     assert!(
         matches!(refused, Err(Error::ContextMismatch { .. })),
@@ -321,13 +322,13 @@ async fn a_context_field_plan_carries_and_checks_the_context() {
     // The expected one, and an unchecked one, open it.
     let record = seal().await.unwrap();
     let opened = keyset
-        .run_decryption(plan.decryption_with_context(record, tenant().into()))
+        .run_decryption(plan.decryption_with_context(record, Some(tenant())))
         .await
         .unwrap();
     assert_eq!(opened, value);
     let record = seal().await.unwrap();
     let opened = keyset
-        .run_decryption(plan.decryption_with_context(record, ExpectedContext::default()))
+        .run_decryption(plan.decryption_with_context(record, None))
         .await
         .unwrap();
     assert_eq!(opened, value);
@@ -743,11 +744,14 @@ async fn a_context_field_plan_refuses_an_empty_stored_context_before_any_request
 
     // The stored context is not authenticated: a row can hold an empty one.
     let refused = keyset
-        .run_decryption(
-            plan.decryption_with_context((String::new(), sealed), ExpectedContext::default()),
-        )
+        .run_decryption(plan.decryption_with_context((String::new(), sealed), None))
         .await;
-    assert!(refused.is_err(), "{:?}", refused.ok());
+    // The empty-context refusal, not a mismatch: with no expected context
+    // there is nothing for the stored one to differ from.
+    assert!(
+        matches!(&refused, Err(Error::Other(error)) if error.is::<EmptyError>()),
+        "{refused:?}"
+    );
     assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
 }
 
@@ -765,7 +769,7 @@ async fn a_context_field_record_and_its_plan_open_each_other() {
     let derived: Scoped = keyset.encrypt_as(&value, tenant()).await.unwrap();
     let opened = keyset
         .run_decryption(
-            plan.decryption_with_context((derived.i, (derived.c, derived.hm)), tenant().into()),
+            plan.decryption_with_context((derived.i, (derived.c, derived.hm)), Some(tenant())),
         )
         .await
         .unwrap();

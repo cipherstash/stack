@@ -6,7 +6,7 @@
 //! | [`RequiredContext<C>`] | Refused | `C` | The caller supplies the context, or the part of it that the declaration selects. |
 //! | [`OptionalContext<C>`] | Allowed | `C` | For an opaque scalar. A context left out is the empty context. |
 //! | [`DeclaredScopes`] | Allowed | Refused | A derived `struct = ..` record. Each field has its own context. A record that contains it, or a plan, passes that field's context. |
-//! | [`ExpectedContext<T>`](super::ExpectedContext) | Allowed | `NonEmpty<T>` | A context left out opens under the stored context, unchecked. A context passed is checked against the stored one. |
+//! | The decrypt input of a `#[stash(context_field)]` record | Allowed | `NonEmpty<T>` | A context left out opens under the stored context, unchecked. A context passed is checked against the stored one. |
 //!
 //! A trait bound decides whether a method is available ([`AllowsNoContext`]
 //! or [`AcceptsContext`]). It is never inferred from `C: Default`. For
@@ -200,8 +200,7 @@ impl<C: Into<CallerContext>> From<RequiredContext<C>> for CallerContext {
 /// expects, or none.
 ///
 /// - If the caller passes a `NonEmpty<T>`, the stored context must equal it. A
-///   different stored context is refused before any key is retrieved
-///   ([`ExpectedContext::validate`]).
+///   different stored context is refused before any key is retrieved.
 /// - If the caller leaves the context out, the record opens under whatever
 ///   context it stores, after a check that the context is not empty.
 ///
