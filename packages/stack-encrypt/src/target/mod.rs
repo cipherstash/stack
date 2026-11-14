@@ -192,8 +192,8 @@ pub(crate) use self::core::{bind_pending, seal_pending};
 #[doc(hidden)]
 pub use context::ExpectedContext;
 pub use context::{
-    AeadContext, Bind, BindPart, CallerContext, CheckedInput, DeclaredContext, Extends, NoBind,
-    NoScope, Parts, Scope, ScopePart, Scopes, StoredParts,
+    AeadContext, Bind, BindPart, CallerContext, CheckedInput, DeclaredContext, Extends,
+    FromFieldContext, NoBind, NoScope, Parts, Scope, ScopePart, Scopes, StoredParts,
 };
 pub use conversion::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
 pub use index::{
@@ -201,7 +201,7 @@ pub use index::{
     Select, TermSet, Whole,
 };
 pub use input::{
-    AcceptsContext, AllowsNoContext, ContextInput, DeclaredScopes, NoCallerContext,
+    AcceptsContext, AllowsNoContext, ContextInput, DeclaredScopes, FromCaller, NoCallerContext,
     OptionalContext, RequiredContext, ScalarContext,
 };
 #[cfg(feature = "dynamic")]

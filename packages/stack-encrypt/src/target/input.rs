@@ -13,8 +13,8 @@
 //! example, `RequiredContext<u64>` stays required, although `u64` has a
 //! default of zero.
 
-use super::context::{CallerContext, DeclaredContext, ExpectedContext};
-use crate::{ContextPiece, IntoContext, NonEmpty};
+use super::context::{CallerContext, DeclaredContext, ExpectedContext, FromFieldContext};
+use crate::{ContextPiece, Error, IntoContext, NonEmpty};
 
 mod sealed {
     pub trait Sealed {}
@@ -142,6 +142,46 @@ impl From<CallerContext> for DeclaredScopes {
 impl<C: From<CallerContext>> From<CallerContext> for RequiredContext<C> {
     fn from(context: CallerContext) -> Self {
         Self::supplied(C::from(context))
+    }
+}
+
+/// The context a record field's declaration takes, built from the context
+/// the record gives the field. [`Encryption::under`](super::Encryption::under)
+/// converts through it.
+///
+/// A context that converts from a [`CallerContext`] cannot fail. A field
+/// type that stores its context ([`FromFieldContext`]) can refuse the one
+/// the record gives it, before any key is requested.
+///
+/// **This trait is for generated code.** A field type implements
+/// [`FromFieldContext`], not this.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "a field whose type takes `{Self}` cannot be a field of a `struct = ..` record",
+    label = "this field's type cannot take the context the record gives it",
+    note = "the record gives each field its scope and the field's name as a `CallerContext`; a field's type takes it if its context input converts from `CallerContext`, or is `RequiredContext<NonEmpty<T>>` where `T` implements `FromFieldContext`"
+)]
+pub trait FromCaller: Sized {
+    /// Convert the field's context, or refuse it.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanError::ContextNotStorable`](crate::PlanError::ContextNotStorable)
+    /// when the field's type cannot store the context.
+    fn from_caller(context: CallerContext) -> Result<Self, Error>;
+}
+impl<C: From<CallerContext>> FromCaller for C {
+    fn from_caller(context: CallerContext) -> Result<Self, Error> {
+        Ok(C::from(context))
+    }
+}
+// A field whose type stores its context takes the record's context for the
+// field as that type, or refuses it.
+impl<T: FromFieldContext> FromCaller for RequiredContext<NonEmpty<T>> {
+    fn from_caller(context: CallerContext) -> Result<Self, Error> {
+        T::from_field_context(&context)
+            .map(Self::supplied)
+            .ok_or_else(|| crate::plan::PlanError::ContextNotStorable.into())
     }
 }
 // A record that derives terms gives its ciphertext fields the AEAD part of the

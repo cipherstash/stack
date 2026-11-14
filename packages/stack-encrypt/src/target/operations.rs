@@ -18,7 +18,7 @@ use super::context::{AeadContext, CallerContext, DeclaredContext, Extends, Store
 use super::conversion::{DecryptSource, EncryptTarget};
 use super::core::{encrypt_native, open_native, Term};
 use super::index::{Index, IndexSpec, Json};
-use super::input::{AcceptsContext, NoCallerContext, RequiredContext};
+use super::input::{AcceptsContext, FromCaller, NoCallerContext, RequiredContext};
 use super::source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 use super::{CipherRef, Pending};
 use crate::contexts::{self, Contexts, Placeholder, Shape, Shapes, SuppliedContext};
@@ -363,15 +363,15 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
         own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
     ) -> Encryption<'s, S, T, K, DeclaredContext, M>
     where
-        Ctx: From<CallerContext>,
+        Ctx: FromCaller,
     {
         let own = contexts::piece_of(own);
         self.shapes = contexts::substitute(self.shapes, &Shape::under(own.get().clone()));
         let Self { build, shapes } = self;
         Encryption {
             build: Box::new(move |source, cipher, cx: DeclaredContext| {
-                match cx.checked_under(own) {
-                    Ok(context) => build(source, cipher, context.into()),
+                match cx.checked_under(own).and_then(Ctx::from_caller) {
+                    Ok(context) => build(source, cipher, context),
                     Err(error) => Pending::failed(cipher, error),
                 }
             }),

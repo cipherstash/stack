@@ -672,9 +672,11 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         }
         P::BindInQuery => (None, Reason::BindInQuery),
         P::EmptyPart => (None, Reason::EmptyBinding),
-        P::IdentityWithoutField | P::MixedCiphers | P::TwoContextSources { .. } | P::NoContext => {
-            (None, Reason::Refused)
-        }
+        P::IdentityWithoutField
+        | P::MixedCiphers
+        | P::TwoContextSources { .. }
+        | P::NoContext
+        | P::ContextNotStorable => (None, Reason::Refused),
     }
 }
 

@@ -921,10 +921,22 @@ impl DeclaredContext {
 // both still showed the type.
 #[doc(hidden)]
 #[derive(Clone, Debug)]
-pub struct ExpectedContext<T>(Option<NonEmpty<T>>);
+pub struct ExpectedContext<T>(Expected<T>);
+
+/// What [`ExpectedContext`] checks the stored context against.
+#[derive(Clone, Debug)]
+enum Expected<T> {
+    /// Any nonempty stored context.
+    Any,
+    /// A stored context equal to this one.
+    Exactly(NonEmpty<T>),
+    /// Nothing: a record gave the field a context its type cannot store, so
+    /// no stored context can be the one expected.
+    NotStorable,
+}
 impl<T> Default for ExpectedContext<T> {
     fn default() -> Self {
-        Self(None)
+        Self(Expected::Any)
     }
 }
 impl<T> From<()> for ExpectedContext<T> {
@@ -934,8 +946,39 @@ impl<T> From<()> for ExpectedContext<T> {
 }
 impl<T> From<NonEmpty<T>> for ExpectedContext<T> {
     fn from(value: NonEmpty<T>) -> Self {
-        Self(Some(value))
+        Self(Expected::Exactly(value))
     }
+}
+/// A record field whose type stores its context expects the context the
+/// record gives the field. A context the type cannot store is refused when
+/// the field is opened, before any key is requested.
+impl<T: FromFieldContext> From<CallerContext> for ExpectedContext<T> {
+    fn from(context: CallerContext) -> Self {
+        Self(match T::from_field_context(&context) {
+            Some(expected) => Expected::Exactly(expected),
+            None => Expected::NotStorable,
+        })
+    }
+}
+
+/// A context type that a record field's type stores in the row, and can
+/// rebuild from the context the record gives the field.
+///
+/// A derived `struct = ..` record gives each field the record's scope and
+/// the field's name, extended by the caller's scopes and bindings, as a
+/// [`CallerContext`]. A field type that stores its context takes that
+/// context as the type it stores, so it can be a field of a record.
+/// `eql_bindings::Identifier` implements this: an EQL type stores a table
+/// and a column, so it takes `("members", "email")` and refuses a context
+/// with a caller scope or a binding.
+///
+/// The rebuilt context must give the same context as the one the record
+/// gave. Then the field writes the bytes it writes on its own under that
+/// context.
+pub trait FromFieldContext: Sized {
+    /// The context the field's type stores, rebuilt from the context the
+    /// record gives the field, or `None` when the type cannot store it.
+    fn from_field_context(context: &CallerContext) -> Option<NonEmpty<Self>>;
 }
 impl<'c, T: MaybeEmpty + PartialEq + IntoContext<'c>> ExpectedContext<T> {
     /// Check the stored context against this expectation and prove it
@@ -949,11 +992,15 @@ impl<'c, T: MaybeEmpty + PartialEq + IntoContext<'c>> ExpectedContext<T> {
     /// context is data the record was handed, not something the cipher has
     /// authenticated yet: both checks happen before any key is requested.
     pub fn validate(self, stored: T) -> Result<NonEmpty<T>, Error> {
-        if let Some(expected) = self.0 {
-            if expected.into_inner() != stored {
-                let stored = Descriptor::from_piece(&stored.into_context());
-                return Err(Error::ContextMismatch { stored });
+        match self.0 {
+            Expected::Any => {}
+            Expected::Exactly(expected) => {
+                if expected.into_inner() != stored {
+                    let stored = Descriptor::from_piece(&stored.into_context());
+                    return Err(Error::ContextMismatch { stored });
+                }
             }
+            Expected::NotStorable => return Err(crate::plan::PlanError::ContextNotStorable.into()),
         }
         nonempty(stored)
     }

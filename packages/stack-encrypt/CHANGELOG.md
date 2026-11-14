@@ -53,6 +53,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The builder state is `WithAuthStrategy<C, P>`, behind the `http`
     feature.
   - Needs stack-auth 0.44.0 and stack-kms 0.2.0.
+
+- **A field type that stores its context can be a record field** (#1658).
+  A derived `struct = ..` record gives each field its scope and the
+  field's name. A type that stores its context in the row, such as an EQL
+  type that stores a table and a column, implements the new trait
+  `target::FromFieldContext` to take that context as the one it stores.
+  - `FromFieldContext::from_field_context` rebuilds the stored context
+    from the field's `CallerContext`, or returns `None` when the type
+    cannot store it.
+  - A context the type cannot store is refused before any key is
+    requested, on encrypt and on decrypt, with the new
+    `PlanError::ContextNotStorable`
+    (`stack_encrypt::plan_context_not_storable`). A record that lists a
+    caller scope or a binding gives its fields such a context.
+  - On decrypt, the stored context must equal the field's, as a
+    standalone decrypt with an expected context checks it.
+  - `Encryption::under` now converts the field's context through the
+    hidden trait `target::FromCaller`, which every
+    `From<CallerContext>` type implements. A caller of `under` compiles
+    unchanged.
+
 - **`json::JsonPlaintext`, a JSON document as one ciphertext** (#1636).
   `JsonPlaintext` holds a `serde_json::Value` and wipes it when it is
   dropped. Build one with `JsonPlaintext::from(value)` or

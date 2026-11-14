@@ -251,6 +251,17 @@ pub enum PlanError {
         help("Give the scope or binding a value. An empty part would put every row under one context.")
     )]
     EmptyPart,
+    /// A record field's type stores its context in the row, and the record
+    /// gives the field a context it cannot store. An EQL type stores a
+    /// table and a column, so it takes the record's scope and the field's
+    /// name, and nothing more: no caller scope and no binding. Refused
+    /// before any key is requested.
+    #[error("the field's type cannot store the context the record gives it")]
+    #[diagnostic(
+        code(stack_encrypt::plan_context_not_storable),
+        help("A field whose type stores its context, such as an EQL type, takes the record's scope and the field's name alone. Remove the record's caller scope and binding, or give the field a type that does not store its context.")
+    )]
+    ContextNotStorable,
     /// A field was declared both as a typed target (`encrypt_into`) and with
     /// a data verb. A field is one or the other: the target's type decides
     /// its layout and its queries.
@@ -326,7 +337,8 @@ impl crate::ErrorPayload for PlanError {
             | Self::MixedCiphers
             | Self::NoContext
             | Self::BindInQuery
-            | Self::EmptyPart => serde_json::Map::new(),
+            | Self::EmptyPart
+            | Self::ContextNotStorable => serde_json::Map::new(),
         }
     }
 }
