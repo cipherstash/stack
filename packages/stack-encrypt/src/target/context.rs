@@ -69,6 +69,11 @@ pub struct CallerContext {
     /// binding spelled as data ([`from_piece`](Self::from_piece)) is not
     /// checked here: the dynamic grammar allows an empty extension part.
     empty_part: bool,
+    /// The record field this context was built for: the field's own
+    /// context, as [`DeclaredContext::under`] and [`extend`](Self::extend)
+    /// were given it. It comes from the declaration, never from the
+    /// caller, so an error can name the field with it.
+    field: Option<Descriptor>,
 }
 impl<'c, T> From<NonEmpty<T>> for CallerContext
 where
@@ -97,6 +102,7 @@ impl<S: ScopePart, B: BindPart> From<Parts<S, B>> for CallerContext {
             scopes,
             bindings: binding.into_iter().collect(),
             empty_part: empty_scope || empty_bind,
+            field: None,
         }
     }
 }
@@ -132,6 +138,7 @@ impl CallerContext {
             scopes: Some(piece),
             bindings: Vec::new(),
             empty_part: false,
+            field: None,
         }
     }
     /// Refuse an empty part. A context with no scope passes: a record
@@ -212,6 +219,7 @@ impl CallerContext {
             scopes: None,
             bindings: vec![piece],
             empty_part: false,
+            field: None,
         }
     }
     /// The parts a record stores in its row, as the caller context the
@@ -223,6 +231,7 @@ impl CallerContext {
             scopes: stored.scope,
             bindings: stored.bind.into_iter().collect(),
             empty_part: stored.empty_part,
+            field: None,
         }
     }
     /// The own context `own`, extended by this caller context: the field's
@@ -234,6 +243,7 @@ impl CallerContext {
     pub fn extend<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> Self {
         let own = own.into_context().into_owned();
         Self {
+            field: Some(Descriptor::from_piece(&own)),
             scopes: Some(match self.scopes {
                 Some(scopes) => nest(own, scopes),
                 None => own,
@@ -254,7 +264,20 @@ impl CallerContext {
         }
         self.bindings.extend(part.bindings);
         self.empty_part |= part.empty_part;
+        self.field = self.field.or(part.field);
         self
+    }
+    /// The refusal of a record field whose type cannot store this context,
+    /// naming the field by its own context.
+    pub(crate) fn not_storable(&self) -> Error {
+        crate::plan::PlanError::ContextNotStorable {
+            field: self
+                .field
+                .as_ref()
+                .map(|field| field.as_str().to_owned())
+                .unwrap_or_default(),
+        }
+        .into()
     }
     /// The scopes and the bindings, for [`Contexts`](crate::Contexts).
     #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
@@ -725,6 +748,7 @@ impl StoredParts {
             scopes: None,
             bindings: Vec::new(),
             empty_part: empty_scope || empty_bind,
+            field: None,
         };
         match (&self.scope, scope) {
             (Some(stored), Some(passed)) if *stored != passed => {
@@ -868,9 +892,11 @@ impl DeclaredContext {
     /// `((("users", "age"), id), region)` under `id` then `region`. The
     /// bindings of every part follow the scopes, in order.
     pub fn under<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> CallerContext {
-        self.0
-            .into_iter()
-            .fold(CallerContext::from(own), CallerContext::then)
+        let own = own.into_context().into_owned();
+        let field = Descriptor::from_piece(&own);
+        let mut context = CallerContext::scopes(own);
+        context.field = Some(field);
+        self.0.into_iter().fold(context, CallerContext::then)
     }
 
     /// [`under`](Self::under), refusing a part the caller passed empty.
@@ -931,8 +957,9 @@ enum Expected<T> {
     /// A stored context equal to this one.
     Exactly(NonEmpty<T>),
     /// Nothing: a record gave the field a context its type cannot store, so
-    /// no stored context can be the one expected.
-    NotStorable,
+    /// no stored context can be the one expected. The context names the
+    /// field in the refusal.
+    NotStorable(CallerContext),
 }
 impl<T> Default for ExpectedContext<T> {
     fn default() -> Self {
@@ -956,7 +983,7 @@ impl<T: FromFieldContext> From<CallerContext> for ExpectedContext<T> {
     fn from(context: CallerContext) -> Self {
         Self(match T::from_field_context(&context) {
             Some(expected) => Expected::Exactly(expected),
-            None => Expected::NotStorable,
+            None => Expected::NotStorable(context),
         })
     }
 }
@@ -968,12 +995,12 @@ impl<T: FromFieldContext> From<CallerContext> for ExpectedContext<T> {
 /// the field's name, extended by the caller's scopes and bindings, as a
 /// [`CallerContext`]. A field type that stores its context takes that
 /// context as the type it stores, so it can be a field of a record.
-/// `eql_bindings::Identifier` implements this: an EQL type stores a table
-/// and a column, so it takes `("members", "email")` and refuses a context
-/// with a caller scope or a binding.
+/// For example, a type that stores a table and a column takes
+/// `("members", "email")`, and refuses a context with a caller scope or a
+/// binding, since it has nowhere to store them.
 ///
 /// The rebuilt context must give the same context as the one the record
-/// gave. Then the field writes the bytes it writes on its own under that
+/// gave. Then the field writes the terms it writes on its own under that
 /// context.
 pub trait FromFieldContext: Sized {
     /// The context the field's type stores, rebuilt from the context the
@@ -1000,7 +1027,7 @@ impl<'c, T: MaybeEmpty + PartialEq + IntoContext<'c>> ExpectedContext<T> {
                     return Err(Error::ContextMismatch { stored });
                 }
             }
-            Expected::NotStorable => return Err(crate::plan::PlanError::ContextNotStorable.into()),
+            Expected::NotStorable(context) => return Err(context.not_storable()),
         }
         nonempty(stored)
     }

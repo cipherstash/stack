@@ -13,14 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of a Stack Encrypt `#[derive(EncryptTarget, DecryptSource)]` record
   with `struct = ..`. The field's column is the record's scope and the
   field's name: `scope = "members"` and the field `email` store
-  `{"t": "members", "c": "email"}` in `i`. The field writes the bytes the
+  `{"t": "members", "c": "email"}` in `i`. The field writes the terms the
   type writes on its own under `Identifier::for_column("members",
-  "email")`, and what a data plan that names the type writes.
+  "email")`, and the terms a data plan that names the type writes.
   - `Identifier` implements `stack_encrypt::target::FromFieldContext`.
   - A record that lists a caller scope or a binding cannot have an EQL
     field: an EQL payload stores a table and a column, and nothing more.
-    Every call is refused with `PlanError::ContextNotStorable`, before
-    any key is requested.
+    Every call is refused with `PlanError::ContextNotStorable`, which
+    names the field (`members/email`), before any key is requested.
   - A query from the field's marker, such as `EncryptedMember::EMAIL.eq(..)`,
     gives the term stored in the row, for the types that answer it.
 

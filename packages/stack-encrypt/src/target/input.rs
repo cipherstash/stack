@@ -177,11 +177,17 @@ impl<C: From<CallerContext>> FromCaller for C {
 }
 // A field whose type stores its context takes the record's context for the
 // field as that type, or refuses it.
+//
+// This impl and the blanket one above do not overlap only because
+// `RequiredContext<NonEmpty<T>>` does not implement `From<CallerContext>`.
+// The `From<CallerContext>` impl for `RequiredContext<C>` needs
+// `C: From<CallerContext>`, and `NonEmpty<T>` has no such impl. Adding one
+// would stop this from compiling.
 impl<T: FromFieldContext> FromCaller for RequiredContext<NonEmpty<T>> {
     fn from_caller(context: CallerContext) -> Result<Self, Error> {
         T::from_field_context(&context)
             .map(Self::supplied)
-            .ok_or_else(|| crate::plan::PlanError::ContextNotStorable.into())
+            .ok_or_else(|| context.not_storable())
     }
 }
 // A record that derives terms gives its ciphertext fields the AEAD part of the

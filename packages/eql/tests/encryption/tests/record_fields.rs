@@ -11,10 +11,12 @@
 //! - each field writes the terms the type writes on its own, and each value
 //!   opens through the other path;
 //! - a query from the field's marker gives the stored term;
-//! - the derive and a data plan write the same terms, and each opens the
-//!   other's value;
+//! - the derive and a data plan write the same terms for a field of each
+//!   kind (equality, storage only, order, JSON document), and each opens
+//!   the other's value;
 //! - a record that lists a caller scope or a binding cannot store an EQL
-//!   field, and is refused before any key is requested;
+//!   field, nor can a record nested in another, and each is refused before
+//!   any key is requested;
 //! - a field that stores another column is refused before any key is
 //!   requested;
 //! - a JSON document, `JsonTreeDocument`, encrypts from a `JsonPlaintext`
@@ -22,8 +24,6 @@
 //!   is a record field too.
 
 mod common;
-
-use std::collections::BTreeMap;
 
 use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::integer::IntegerOrd;
@@ -36,8 +36,8 @@ use stack_encrypt::dynamic::{self, record, ValueFrame};
 use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::target::{Bind, Layout, Scope};
 use stack_encrypt::{
-    AsProtectedRef as _, CipherText, Controlled as _, DecryptFrom, DecryptSource, Encrypt,
-    EncryptInto, EncryptTarget, Error, NonEmpty, PlanError, StackCipherText,
+    AsProtectedRef as _, CipherText, Controlled as _, DecryptFrom, DecryptSource, EncryptInto,
+    EncryptTarget, Error, NonEmpty, PlanError, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -165,17 +165,32 @@ async fn a_query_from_the_field_marker_gives_the_stored_term() {
     assert_ne!(other.hm, stored.email.hm);
 }
 
-#[derive(Clone, Debug, PartialEq, Zeroize)]
+#[derive(Clone, Zeroize)]
 struct Contact {
     email: String,
     name: String,
+    age: i32,
+    profile: JsonPlaintext,
 }
 
+fn contact() -> Contact {
+    Contact {
+        email: "ada@example.com".into(),
+        name: "Ada".into(),
+        age: 36,
+        profile: profile().into(),
+    }
+}
+
+/// A field of each kind: equality, storage only, order, and a JSON
+/// document.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = Contact, scope = "contacts")]
 struct EncryptedContact {
     email: TextEq,
     name: Text,
+    age: IntegerOrd,
+    profile: JsonTreeDocument,
 }
 
 /// The data plan that declares the record's fields with EQL targets, as a
@@ -184,6 +199,8 @@ fn contact_plan() -> record::Plan {
     let wire = serde_json::json!({
         "email": {"context": ["contacts", "email"], "target": "TextEq"},
         "name": {"context": ["contacts", "name"], "target": "Text"},
+        "age": {"context": ["contacts", "age"], "target": "IntegerOrd"},
+        "profile": {"context": ["contacts", "profile"], "target": "JsonSearch"},
     });
     record::plan_with(
         dynamic::frame::serde::to_vec(&wire)
@@ -194,8 +211,24 @@ fn contact_plan() -> record::Plan {
     .unwrap()
 }
 
-fn frame<T: Encrypt>(value: T) -> ValueFrame {
-    ValueFrame::of(value).unwrap()
+/// A contact as a binding sends it to a data plan: the JSON document as
+/// its text.
+#[derive(Serialize)]
+struct ContactRow {
+    email: String,
+    name: String,
+    age: i32,
+    profile: String,
+}
+
+/// A contact as a data plan opens it: the JSON document as the bytes of
+/// its text.
+#[derive(serde::Deserialize)]
+struct OpenedContact {
+    email: String,
+    name: String,
+    age: i32,
+    profile: Bytes,
 }
 
 /// The EQL value of `field`, in a row a data plan sealed.
@@ -258,43 +291,66 @@ async fn the_derive_and_a_data_plan_write_the_same_row() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let plan = contact_plan();
-    let contact = Contact {
+    let derived: EncryptedContact = contact().encrypt_into(&keyset).await.unwrap();
+    let source = ContactRow {
         email: "ada@example.com".into(),
         name: "Ada".into(),
+        age: 36,
+        profile: profile().to_string(),
     };
-    let derived: EncryptedContact = contact.clone().encrypt_into(&keyset).await.unwrap();
-    let source = BTreeMap::from([("email", "ada@example.com"), ("name", "Ada")]);
-    let mut row = record::encrypt_with(&keyset, frame(&source), &plan, &EqlTargets)
+    let source = ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(&source)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap();
+    let mut row = record::encrypt_with(&keyset, source, &plan, &EqlTargets)
         .unwrap()
         .await
         .unwrap();
 
     let planned_email: TextEq = read_eql(&mut row, "email");
     let planned_name: Text = read_eql(&mut row, "name");
+    let planned_age: IntegerOrd = read_eql(&mut row, "age");
+    let planned_profile: JsonTreeDocument = read_eql(&mut row, "profile");
     assert_eq!(terms_of(&derived.email), terms_of(&planned_email));
     assert_eq!(terms_of(&derived.name), terms_of(&planned_name));
+    assert_eq!(terms_of(&derived.age), terms_of(&planned_age));
+    assert_eq!(
+        document_terms(&derived.profile),
+        document_terms(&planned_profile)
+    );
 
     // The data plan's values open as the record's fields.
     let record = EncryptedContact {
         email: planned_email,
         name: planned_name,
+        age: planned_age,
+        profile: planned_profile,
     };
-    assert_eq!(
-        Contact::decrypt_from(record, &keyset).await.unwrap(),
-        contact
-    );
+    let opened = Contact::decrypt_from(record, &keyset).await.unwrap();
+    assert_eq!(opened.email, "ada@example.com");
+    assert_eq!(opened.name, "Ada");
+    assert_eq!(opened.age, 36);
+    assert_eq!(opened.profile.value(), &profile());
 
     // The record's values, in the data plan's row, open through the plan.
     write_eql(&mut row, "email", &derived.email);
     write_eql(&mut row, "name", &derived.name);
+    write_eql(&mut row, "age", &derived.age);
+    write_eql(&mut row, "profile", &derived.profile);
     let opened = record::decrypt_with(&cipher, row, &plan, None, &EqlTargets)
         .unwrap()
         .await
         .unwrap();
-    let opened: BTreeMap<String, String> =
-        dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
-    assert_eq!(opened["email"], contact.email);
-    assert_eq!(opened["name"], contact.name);
+    let opened: OpenedContact = dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    assert_eq!(opened.email, "ada@example.com");
+    assert_eq!(opened.name, "Ada");
+    assert_eq!(opened.age, 36);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&opened.profile.0).unwrap(),
+        profile()
+    );
 }
 
 #[derive(Clone, Zeroize)]
@@ -317,9 +373,12 @@ struct EncryptedBound {
     email: TextEq,
 }
 
+/// The refusal names the field by the record's scope and its name.
 fn assert_not_storable<T>(result: Result<T, Error>) {
     match result {
-        Err(Error::Plan(PlanError::ContextNotStorable)) => {}
+        Err(Error::Plan(PlanError::ContextNotStorable { field })) => {
+            assert_eq!(field, "members/email");
+        }
         Err(other) => panic!("expected ContextNotStorable, got {other:?}"),
         Ok(_) => panic!("expected ContextNotStorable, got a value"),
     }
@@ -353,11 +412,53 @@ async fn a_record_with_a_caller_scope_or_binding_cannot_store_an_eql_field() {
         .encrypt_into_with_context(&keyset, column("email"))
         .await
         .unwrap();
-    let record = EncryptedTenanted { email };
+    let record = EncryptedTenanted {
+        email: email.clone(),
+    };
     let opened = Tenanted::decrypt_from_with_context(record, &keyset, Scope::new(42u64)).await;
+    assert_not_storable(opened);
+    let record = EncryptedBound { email };
+    let opened = Tenanted::decrypt_from_with_context(record, &keyset, Bind::new(9u128)).await;
     assert_not_storable(opened);
     assert!(
         calls.lock().unwrap().retrieve.is_empty(),
+        "refused before any key is requested"
+    );
+}
+
+/// A record with an EQL field and nothing the caller supplies.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Tenanted, scope = "members")]
+struct EncryptedPlain {
+    email: TextEq,
+}
+
+#[derive(Clone, Zeroize)]
+struct Holder {
+    member: Tenanted,
+}
+
+/// That record as a field of another. Its EQL field's context is then its
+/// own pair, extended by the outer record's.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Holder, scope = "holders")]
+struct EncryptedHolder {
+    member: EncryptedPlain,
+}
+
+#[tokio::test]
+async fn an_eql_field_of_a_nested_record_is_refused() {
+    let (cipher, calls) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let holder = Holder {
+        member: Tenanted {
+            email: "ada@example.com".into(),
+        },
+    };
+    let nested: Result<EncryptedHolder, _> = holder.encrypt_into(&keyset).await;
+    assert_not_storable(nested);
+    assert!(
+        calls.lock().unwrap().generate.is_empty(),
         "refused before any key is requested"
     );
 }
@@ -408,6 +509,24 @@ fn search_terms(document: &JsonTreeDocument) -> Vec<(String, String, bool)> {
     terms
 }
 
+/// A stored document without what differs between two seals of it: the
+/// key header `h`, sealed under a new key each time, and the entries' own
+/// ciphertexts. The search terms of every entry and the query group are
+/// kept, sorted, since both are stored in a random order.
+fn document_terms(document: &JsonTreeDocument) -> (Value, Vec<(String, String, bool)>) {
+    let mut json = serde_json::to_value(document).unwrap();
+    let object = json.as_object_mut().unwrap();
+    assert!(object.remove("h").is_some(), "a document carries `h`");
+    assert!(object.remove("sv").is_some(), "a document carries `sv`");
+    let group = object["q"].as_object_mut().unwrap();
+    for list in group.values_mut() {
+        list.as_array_mut()
+            .unwrap()
+            .sort_by_key(|entry| entry.to_string());
+    }
+    (json, search_terms(document))
+}
+
 #[tokio::test]
 async fn a_json_document_encrypts_from_a_json_plaintext() {
     let (cipher, calls) = common::cipher().await;
@@ -422,11 +541,10 @@ async fn a_json_document_encrypts_from_a_json_plaintext() {
         .run(JsonTree::default().encryption(), &profile(), column())
         .await
         .unwrap();
-    assert_eq!(stored.i, old.i);
     assert_eq!(
-        search_terms(&stored),
-        search_terms(&old),
-        "the same search terms"
+        document_terms(&stored),
+        document_terms(&old),
+        "the same envelope and search terms"
     );
 
     // Each path opens what the other sealed.
@@ -496,7 +614,7 @@ async fn a_json_document_is_a_record_field() {
         )
         .await
         .unwrap();
-    assert_eq!(search_terms(&stored.profile), search_terms(&old));
+    assert_eq!(document_terms(&stored.profile), document_terms(&old));
 
     let opened = Customer::decrypt_from(stored, &keyset).await.unwrap();
     assert_eq!(opened.id, 3);

@@ -175,7 +175,9 @@ mod tests {
             },
             PlanError::EmptyIndexes => PlanError::EmptyIndexes,
             PlanError::EmptyPart => PlanError::EmptyPart,
-            PlanError::ContextNotStorable => PlanError::ContextNotStorable,
+            PlanError::ContextNotStorable { .. } => PlanError::ContextNotStorable {
+                field: "users/email".into(),
+            },
             PlanError::NotInPlan { .. } => PlanError::NotInPlan { field: field() },
             PlanError::NotInValue { .. } => PlanError::NotInValue { field: field() },
             PlanError::FieldType { .. } => PlanError::FieldType {

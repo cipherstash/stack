@@ -256,12 +256,17 @@ pub enum PlanError {
     /// table and a column, so it takes the record's scope and the field's
     /// name, and nothing more: no caller scope and no binding. Refused
     /// before any key is requested.
-    #[error("the field's type cannot store the context the record gives it")]
+    #[error("field {field:?}: its type cannot store the context the record gives it")]
     #[diagnostic(
         code(stack_encrypt::plan_context_not_storable),
         help("A field whose type stores its context, such as an EQL type, takes the record's scope and the field's name alone. Remove the record's caller scope and binding, or give the field a type that does not store its context.")
     )]
-    ContextNotStorable,
+    ContextNotStorable {
+        /// The field, as its own context renders: the record's scope and
+        /// the field's name, `members/email`. Empty when the context was
+        /// not built for a record field.
+        field: String,
+    },
     /// A field was declared both as a typed target (`encrypt_into`) and with
     /// a data verb. A field is one or the other: the target's type decides
     /// its layout and its queries.
@@ -288,7 +293,8 @@ impl crate::ErrorPayload for PlanError {
             | Self::NotInPlan { field }
             | Self::NotInValue { field }
             | Self::NoSuchField { field }
-            | Self::TargetWithVerbs { field } => payload([("field", field.as_str().into())]),
+            | Self::TargetWithVerbs { field }
+            | Self::ContextNotStorable { field } => payload([("field", field.as_str().into())]),
             Self::SharedIdentity {
                 identity,
                 first,
@@ -337,8 +343,7 @@ impl crate::ErrorPayload for PlanError {
             | Self::MixedCiphers
             | Self::NoContext
             | Self::BindInQuery
-            | Self::EmptyPart
-            | Self::ContextNotStorable => serde_json::Map::new(),
+            | Self::EmptyPart => serde_json::Map::new(),
         }
     }
 }

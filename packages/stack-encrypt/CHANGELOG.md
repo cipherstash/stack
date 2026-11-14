@@ -65,7 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A context the type cannot store is refused before any key is
     requested, on encrypt and on decrypt, with the new
     `PlanError::ContextNotStorable`
-    (`stack_encrypt::plan_context_not_storable`). A record that lists a
+    (`stack_encrypt::plan_context_not_storable`), which names the field
+    by the record's scope and its name (`members/email`). A record that lists a
     caller scope or a binding gives its fields such a context.
   - On decrypt, the stored context must equal the field's, as a
     standalone decrypt with an expected context checks it.

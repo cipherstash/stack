@@ -116,9 +116,12 @@ struct BoundUser {
     email: Stored,
 }
 
+/// The refusal names the field by the record's scope and its name.
 fn assert_not_storable<T>(result: Result<T, Error>) {
     match result {
-        Err(Error::Plan(PlanError::ContextNotStorable)) => {}
+        Err(Error::Plan(PlanError::ContextNotStorable { field })) => {
+            assert_eq!(field, "users/email");
+        }
         Err(other) => panic!("expected ContextNotStorable, got {other:?}"),
         Ok(_) => panic!("expected ContextNotStorable, got a value"),
     }

@@ -432,15 +432,17 @@ let query = EncryptedMember::EMAIL.eq("alice@example.com").encrypt(&keyset).awai
 let opened = Member::decrypt_from(stored, &keyset).await?;
 ```
 
-Each field writes what its type writes on its own under
-`Identifier::for_column("members", <field>)`, and what a data plan that
+Each field writes the terms its type writes on its own under
+`Identifier::for_column("members", <field>)`, and the terms a data plan that
 names the type writes. On decrypt, each field's stored `i` must be its own
 column, checked before any key is requested.
 
 An EQL value stores a table and a column, and nothing more. So a record that
 lists a caller scope (`scope(tenant: u64)`) or a binding (`bind(row: u128)`)
 cannot have an EQL field. Every call to it is refused with
-`PlanError::ContextNotStorable`, before any key is requested.
+`PlanError::ContextNotStorable`, which names the field, before any key is
+requested. The same goes for an EQL field of a record nested in another: its
+context has more parts than a table and a column.
 
 ### EQL types as plan field targets
 

@@ -27,8 +27,8 @@ use stack_encrypt::json::{
     JsonSelector, JsonSubtree, JsonSubtreeKey,
 };
 use stack_encrypt::target::{
-    AeadContext, DecryptSource, EncryptTarget, ExpectedContext, IndexSpec, Json, Layout,
-    RequiredContext,
+    AeadContext, CallerContext, DecryptSource, EncryptTarget, ExpectedContext, IndexSpec, Json,
+    Layout, RequiredContext,
 };
 use stack_encrypt::{
     DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption, Error, NonEmpty,
@@ -485,6 +485,25 @@ impl JsonTree {
     }
 }
 
+impl JsonTree {
+    /// Seal a document under these options, under the column that the
+    /// caller's context `C` holds. `column` takes the column out of it.
+    fn sealing<'s, K: 'static, C>(
+        &self,
+        column: fn(C) -> Identifier,
+    ) -> Encryption<'s, Value, JsonTreeDocument, K, C>
+    where
+        C: Into<CallerContext> + Clone + Send + 'static,
+    {
+        Layout::<Value>::encryption::<K>(&self.index)
+            .accepting::<C>()
+            .map_with_context(|document, context: C| (context, document))
+            .try_map(move |(context, document)| {
+                JsonTreeDocument::envelope(column(context), &document)
+            })
+    }
+}
+
 /// A document seals as the JSON index lays it out under the layout's
 /// options, under the column it is stored in: the [`Identifier`] is the
 /// context the data key is minted under and every selector derives
@@ -495,10 +514,7 @@ impl Layout<Value> for JsonTree {
     fn encryption<'s, K: 'static>(
         &self,
     ) -> Encryption<'s, Value, JsonTreeDocument, K, NonEmpty<Identifier>> {
-        Layout::<Value>::encryption::<K>(&self.index)
-            .accepting::<NonEmpty<Identifier>>()
-            .map_with_context(|document, i: NonEmpty<Identifier>| (i, document))
-            .try_map(|(i, document)| JsonTreeDocument::envelope(i.into_inner(), &document))
+        self.sealing(NonEmpty::into_inner)
     }
     fn index(&self) -> &Json {
         &self.index
@@ -564,24 +580,22 @@ impl EncryptTarget<JsonPlaintext> for JsonTreeDocument {
     where
         JsonPlaintext: 's,
     {
-        Layout::<Value>::encryption::<K>(JsonTree::default().index())
+        JsonTree::default()
+            .sealing(|column: Self::ContextInput| column.into_inner().into_inner())
             .project(JsonPlaintext::value)
-            .accepting::<Self::ContextInput>()
-            .map_with_context(|document, column: Self::ContextInput| (column, document))
-            .try_map(|(column, document)| {
-                JsonTreeDocument::envelope(column.into_inner().into_inner(), &document)
-            })
     }
     fn indexes() -> Vec<IndexSpec> {
         JsonTree::default().specs()
     }
 }
 
-/// Decrypts to the plaintext document, under the stored column. Pass the
-/// column you expect, `column.into()`, and the stored column must equal
-/// it. Pass `().into()`, or decrypt with `decrypt_from`, and the document
-/// opens under the stored column without that check. Either way the check
-/// runs before any key is requested.
+/// Decrypts to the plaintext document, under the stored column.
+///
+/// - `decrypt_from_with_context(document, &keyset, column)` checks that the
+///   stored column is `column`. The check runs before any key is
+///   requested.
+/// - `decrypt_from(document, &keyset)` opens the document under the column
+///   it stores, without that check.
 impl DecryptSource<JsonPlaintext> for JsonTreeDocument {
     type ContextInput = ExpectedContext<Identifier>;
     fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
@@ -589,8 +603,8 @@ impl DecryptSource<JsonPlaintext> for JsonTreeDocument {
     }
 }
 
-/// The structural form of [`DecryptSource<JsonPlaintext>`], which a record
-/// field opens through, as it is for every other EQL type.
+/// The same as [`DecryptSource<JsonPlaintext>`]. A field of a derived
+/// record opens through this trait, as every other EQL type does.
 impl DecryptInto<JsonPlaintext> for JsonTreeDocument {
     type Context = ExpectedContext<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<JsonPlaintext, K> {

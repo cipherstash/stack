@@ -215,6 +215,8 @@ impl FromFieldContext for Identifier {
         if context.has_bindings() {
             return None;
         }
+        // A caller scope nests the field's pair inside a longer list, so a
+        // context with one is not two text parts and is refused below.
         let query = context.query();
         let ContextPiece::List(parts) = &query else {
             return None;

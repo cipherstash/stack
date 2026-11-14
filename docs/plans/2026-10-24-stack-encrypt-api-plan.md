@@ -1492,19 +1492,23 @@ Base64.
   `PlanError::ContextNotStorable`, before any key is requested.
 - **Why.** This gives the [EQL field example](#store-a-field-as-an-eql-type)
   and the [JSON example](#encrypt-a-json-document).
-- **Done already.** All of it, in #1658. A Rust record with EQL fields
-  encrypts, decrypts and queries through the new API, and writes the
-  terms a data plan writes for the same declaration, which is the path
-  Go takes (`packages/eql/tests/encryption/tests/record_fields.rs`).
-  `JsonTreeDocument` implements `EncryptTarget<JsonPlaintext>` and
-  `DecryptSource<JsonPlaintext>`. Order queries from a marker are not
-  answered by the EQL types: only the equality and match types implement
-  `Answers`.
+- **Done already.** In #1658:
+  - A Rust record with EQL fields encrypts and decrypts through the new
+    API.
+  - For a field of each kind (equality, storage only, order, and a JSON
+    document), it writes the terms that a data plan writes for the same
+    declaration. A data plan is the path Go takes. Each path opens the
+    other's values (`packages/eql/tests/encryption/tests/record_fields.rs`).
+  - `JsonTreeDocument` implements `EncryptTarget<JsonPlaintext>` and
+    `DecryptSource<JsonPlaintext>`.
+  - A query from a field's marker works for the equality and match
+    types. The order types do not implement `Answers` yet, so a marker
+    cannot query them.
 - **Tracked in.** Issue #1658. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `FromFieldContext` must come before the `eql-bindings` release that uses it.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
-    the new API;
-  - it writes the same bytes as a Go record with the same declaration.
+    the new API, including order queries;
+  - it writes the same terms as a Go record with the same declaration.
 
 #### A ready-made EQL resolver
 

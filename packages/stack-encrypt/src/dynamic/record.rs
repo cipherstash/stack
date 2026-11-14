@@ -676,7 +676,7 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         | P::MixedCiphers
         | P::TwoContextSources { .. }
         | P::NoContext
-        | P::ContextNotStorable => (None, Reason::Refused),
+        | P::ContextNotStorable { .. } => (None, Reason::Refused),
     }
 }
 
