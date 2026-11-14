@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **EQL types as record fields** (#1658). An EQL v4 type can be a field
+  of a Stack Encrypt `#[derive(EncryptTarget, DecryptSource)]` record
+  with `struct = ..`. The field's column is the record's scope and the
+  field's name: `scope = "members"` and the field `email` store
+  `{"t": "members", "c": "email"}` in `i`. The field writes the bytes the
+  type writes on its own under `Identifier::for_column("members",
+  "email")`, and what a data plan that names the type writes.
+  - `Identifier` implements `stack_encrypt::target::FromFieldContext`.
+  - A record that lists a caller scope or a binding cannot have an EQL
+    field: an EQL payload stores a table and a column, and nothing more.
+    Every call is refused with `PlanError::ContextNotStorable`, before
+    any key is requested.
+  - A query from the field's marker, such as `EncryptedMember::EMAIL.eq(..)`,
+    gives the term stored in the row, for the types that answer it.
+
+- **`JsonTreeDocument` implements `EncryptTarget<JsonPlaintext>` and
+  `DecryptSource<JsonPlaintext>`** (#1658). It encrypts from a
+  `JsonPlaintext` under the default options, with the column as its
+  context, and writes the search terms that `JsonTree::default()` writes
+  for the same document. It can be a record field too. It also
+  implements `DecryptInto<JsonPlaintext>`, the form a record field opens
+  through, as every other EQL type does.
+
 - **`Target::leaf_query_sql_domain`** (`targets` feature, #1350): the
   domain a document type's ordering at a path binds as,
   `eql_v4.query_json_leaf` for `JsonSearch` and `None` for every

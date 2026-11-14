@@ -23,10 +23,13 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
-    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSelector,
-    JsonSubtree, JsonSubtreeKey,
+    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonQuery,
+    JsonSelector, JsonSubtree, JsonSubtreeKey,
 };
-use stack_encrypt::target::{AeadContext, ExpectedContext, IndexSpec, Json, Layout};
+use stack_encrypt::target::{
+    AeadContext, DecryptSource, EncryptTarget, ExpectedContext, IndexSpec, Json, Layout,
+    RequiredContext,
+};
 use stack_encrypt::{
     DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption, Error, NonEmpty,
 };
@@ -524,6 +527,14 @@ impl EncryptFrom<Value> for JsonTreeDocument {
 impl DecryptInto<Value> for JsonTreeDocument {
     type Context = ExpectedContext<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
+        self.open(context)
+    }
+}
+
+impl JsonTreeDocument {
+    /// Open the document under the stored column, once it has passed the
+    /// caller's check. The check runs before any key is requested.
+    fn open<K: 'static>(self, context: ExpectedContext<Identifier>) -> Decryption<Value, K> {
         let column = match context.validate(self.i.clone()) {
             Ok(column) => column,
             Err(error) => return Decryption::failed(error),
@@ -532,6 +543,58 @@ impl DecryptInto<Value> for JsonTreeDocument {
             Ok(document) => document.decryption(AeadContext::from(column)),
             Err(error) => Decryption::failed(error),
         }
+    }
+}
+
+/// A [`JsonPlaintext`] seals into a document as a `serde_json::Value` does,
+/// under the default options ([`JsonTree::default`]), with the column as
+/// its context:
+///
+/// ```ignore
+/// let document: JsonTreeDocument = profile
+///     .encrypt_into_with_context(&keyset, Identifier::for_column("customers", "profile")?)
+///     .await?;
+/// ```
+///
+/// It can be a field of a derived `struct = ..` record. The field's column
+/// is then the record's scope and the field's name.
+impl EncryptTarget<JsonPlaintext> for JsonTreeDocument {
+    type ContextInput = RequiredContext<NonEmpty<Identifier>>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
+    where
+        JsonPlaintext: 's,
+    {
+        Layout::<Value>::encryption::<K>(JsonTree::default().index())
+            .project(JsonPlaintext::value)
+            .accepting::<Self::ContextInput>()
+            .map_with_context(|document, column: Self::ContextInput| (column, document))
+            .try_map(|(column, document)| {
+                JsonTreeDocument::envelope(column.into_inner().into_inner(), &document)
+            })
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        JsonTree::default().specs()
+    }
+}
+
+/// Decrypts to the plaintext document, under the stored column. Pass the
+/// column you expect, `column.into()`, and the stored column must equal
+/// it. Pass `().into()`, or decrypt with `decrypt_from`, and the document
+/// opens under the stored column without that check. Either way the check
+/// runs before any key is requested.
+impl DecryptSource<JsonPlaintext> for JsonTreeDocument {
+    type ContextInput = ExpectedContext<Identifier>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        self.open(context).map(JsonPlaintext::from)
+    }
+}
+
+/// The structural form of [`DecryptSource<JsonPlaintext>`], which a record
+/// field opens through, as it is for every other EQL type.
+impl DecryptInto<JsonPlaintext> for JsonTreeDocument {
+    type Context = ExpectedContext<Identifier>;
+    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<JsonPlaintext, K> {
+        self.open(context).map(JsonPlaintext::from)
     }
 }
 
@@ -544,7 +607,7 @@ where
     Ctx: Into<<Self as DecryptInto<P>>::Context>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(self.decryption(context.into()))
+        Some(<Self as DecryptInto<P>>::decryption(self, context.into()))
     }
 }
 

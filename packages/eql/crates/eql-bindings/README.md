@@ -398,6 +398,50 @@ the domain check on insert. A plain `=` between a v3 column and a v4 query
 term still returns zero rows with no error, so keep each column to one
 version.
 
+### EQL types as record fields
+
+An EQL type can be a field of a Stack Encrypt record. The record derive gives
+each field the record's scope and the field's name, and the EQL type stores
+that pair as its column in `i`:
+
+```rust,ignore
+use eql_bindings::v4::{integer::IntegerOrd, json_tree::JsonTreeDocument, text::TextEq};
+use stack_encrypt::json::JsonPlaintext;
+use stack_encrypt::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
+
+#[derive(zeroize::Zeroize)]
+struct Member {
+    id: u64,
+    email: String,
+    age: i32,
+    profile: JsonPlaintext,
+}
+
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Member, scope = "members")]
+struct EncryptedMember {
+    #[stash(passthrough)]
+    id: u64,
+    email: TextEq,              // i = {"t": "members", "c": "email"}
+    age: IntegerOrd,            // i = {"t": "members", "c": "age"}
+    profile: JsonTreeDocument,  // i = {"t": "members", "c": "profile"}
+}
+
+let stored: EncryptedMember = member.encrypt_into(&keyset).await?;
+let query = EncryptedMember::EMAIL.eq("alice@example.com").encrypt(&keyset).await?;
+let opened = Member::decrypt_from(stored, &keyset).await?;
+```
+
+Each field writes what its type writes on its own under
+`Identifier::for_column("members", <field>)`, and what a data plan that
+names the type writes. On decrypt, each field's stored `i` must be its own
+column, checked before any key is requested.
+
+An EQL value stores a table and a column, and nothing more. So a record that
+lists a caller scope (`scope(tenant: u64)`) or a binding (`bind(row: u128)`)
+cannot have an EQL field. Every call to it is refused with
+`PlanError::ContextNotStorable`, before any key is requested.
+
 ### EQL types as plan field targets
 
 A binding has no Rust type to name: its plan arrives as data, and a field of

@@ -113,7 +113,8 @@ use stack_encrypt::sem::{
 };
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{
-    self, AeadContext, CallerContext, DecryptSource, EncryptTarget, IndexSpec, RequiredContext,
+    self, AeadContext, CallerContext, DecryptSource, EncryptTarget, FromFieldContext, IndexSpec,
+    RequiredContext,
 };
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
@@ -197,6 +198,34 @@ impl<'a> IntoContext<'a> for Identifier {
 impl<'a> IntoContext<'a> for &'a Identifier {
     fn into_context(self) -> ContextPiece<'a> {
         self.to_context()
+    }
+}
+
+/// An EQL type can be a field of a derived `struct = ..` record. The record
+/// gives the field its scope and the field's name, `("members", "email")`,
+/// and the EQL type stores that pair as its column: table `members`, column
+/// `email`. It is the context the record gave, so the field writes what the
+/// type writes on its own under `Identifier::for_column("members", "email")`.
+///
+/// An EQL payload stores a table and a column, and nothing more. So a
+/// record that lists a caller scope or a binding cannot have an EQL field:
+/// the field refuses the context, before any key is requested.
+impl FromFieldContext for Identifier {
+    fn from_field_context(context: &CallerContext) -> Option<NonEmpty<Self>> {
+        if context.has_bindings() {
+            return None;
+        }
+        let query = context.query();
+        let ContextPiece::List(parts) = &query else {
+            return None;
+        };
+        let [ContextPiece::Text(table), ContextPiece::Text(column)] = parts.as_slice() else {
+            return None;
+        };
+        let identifier = Self::for_column(table.as_ref(), column.as_ref()).ok()?;
+        // Only the context the record gave: a pair that reads as a column
+        // but encodes differently would seal under another context.
+        (identifier.get().to_context() == query).then_some(identifier)
     }
 }
 
