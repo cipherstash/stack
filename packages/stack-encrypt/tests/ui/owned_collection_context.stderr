@@ -17,7 +17,7 @@ help: the following other types implement trait `AllowsNoContext`
 ...
    | impl AllowsNoContext for DeclaredScopes {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
-note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into`
+note: required by a bound in `encrypt_into`
   --> src/target/conversion.rs
    |
    |     fn encrypt_into<'a, T, K: 'static>(self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
@@ -45,7 +45,7 @@ help: the following other types implement trait `AllowsNoContext`
 ...
    | impl AllowsNoContext for DeclaredScopes {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
-note: required by a bound in `stack_encrypt::DecryptFrom::decrypt_from`
+note: required by a bound in `decrypt_from`
   --> src/target/conversion.rs
    |
    |     fn decrypt_from<'a, S, K: 'static>(
@@ -85,7 +85,7 @@ help: the following other types implement trait `AcceptsContext`
 ...
    | impl<C> AcceptsContext for OptionalContext<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
-note: required by a bound in `stack_encrypt::DecryptFrom::decrypt_from_with_context`
+note: required by a bound in `decrypt_from_with_context`
   --> src/target/conversion.rs
    |
    |     fn decrypt_from_with_context<'a, S, K: 'static>(
