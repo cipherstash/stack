@@ -1,6 +1,6 @@
 name: Integration — protect-ffi (native + WASM)
 
-# The `languages/typescript/packages/protect-ffi/integration-tests/` suite: 19 files of live
+# The `languages/typescript/packages/protect-ffi/integration-tests/` suite: 21 files of live
 # encrypt / decrypt / lock-context / keyset / JSON-SteVec / Postgres /
 # WASM-round-trip coverage against real ZeroKMS and a real Postgres.
 #
@@ -97,6 +97,48 @@ on:
       - 'packages/eql/crates/eql-bindings/src/v3/**'
       - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
+      # EQL v4 and the codec the migration suites (`tests/migrate-v*-to-v4.test.ts`)
+      # re-encrypt through. `eql:v4:install` builds the v4 bundle from the SQL
+      # source with `tasks/build.sh` (which runs eql-codegen), and `eql:v4:codec`
+      # builds `tests/encryption/examples/v4_codec.rs` over eql-bindings' v4
+      # targets, stack-encrypt, stack-kms and the in-tree crates they depend on
+      # (stack-encrypt-derive, stack-profile, stack-auth). No published package
+      # carries any of it, so these paths are the only inputs that change what
+      # those suites run. eql-v4-suite-triggers.test.mjs walks the codec's path
+      # dependencies, so a new in-tree crate fails there until it is listed here.
+      # The crate entries are the eql-bindings modules the codec compiles and the
+      # native binding does not (`v4`, `encryption`, `encoding`), and the
+      # eql-codegen / eql-domains sources `tasks/build.sh` renders the v4 bundle
+      # from. test-eql.yml runs the Rust and SQL suites on those files but not
+      # this one, so without them a v4 change skips the migration suites.
+      # Derived in scripts/__tests__/lib/eql-v4-suite-inputs.mjs and held here by
+      # eql-v4-suite-triggers.test.mjs; wasm-build-inputs-paths-filter.test.mjs
+      # allows exactly these beyond the native binding's files, and only here.
+      - 'packages/eql/crates/eql-bindings/src/encoding.rs'
+      - 'packages/eql/crates/eql-bindings/src/encryption.rs'
+      - 'packages/eql/crates/eql-bindings/src/encryption/**'
+      - 'packages/eql/crates/eql-bindings/src/v4/**'
+      - 'packages/eql/crates/eql-codegen/Cargo.toml'
+      - 'packages/eql/crates/eql-codegen/src/**'
+      - 'packages/eql/crates/eql-codegen/templates/**'
+      - 'packages/eql/crates/eql-domains/Cargo.toml'
+      - 'packages/eql/crates/eql-domains/src/**'
+      - 'packages/eql/Cargo.lock'
+      # The root manifest: stack-kms and the other root-workspace crates the codec
+      # compiles take dependency specs from its [workspace.dependencies], so an
+      # edit there changes the codec with no file under those crates touched.
+      - 'Cargo.toml'
+      - 'packages/eql/src/**'
+      - 'packages/eql/tasks/**'
+      - 'packages/eql/tests/encryption/Cargo.toml'
+      - 'packages/eql/tests/encryption/examples/**'
+      - 'packages/stack-encrypt/Cargo.toml'
+      - 'packages/stack-encrypt/src/**'
+      - 'packages/stack-encrypt-derive/**'
+      - 'packages/stack-kms/Cargo.toml'
+      - 'packages/stack-kms/src/**'
+      - 'packages/stack-profile/Cargo.toml'
+      - 'packages/stack-profile/src/**'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
       - '.github/actions/build-auth-binding/**'
@@ -146,6 +188,28 @@ on:
       - 'packages/eql/crates/eql-bindings/src/v3/**'
       - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
+      - 'packages/eql/crates/eql-bindings/src/encoding.rs'
+      - 'packages/eql/crates/eql-bindings/src/encryption.rs'
+      - 'packages/eql/crates/eql-bindings/src/encryption/**'
+      - 'packages/eql/crates/eql-bindings/src/v4/**'
+      - 'packages/eql/crates/eql-codegen/Cargo.toml'
+      - 'packages/eql/crates/eql-codegen/src/**'
+      - 'packages/eql/crates/eql-codegen/templates/**'
+      - 'packages/eql/crates/eql-domains/Cargo.toml'
+      - 'packages/eql/crates/eql-domains/src/**'
+      - 'packages/eql/Cargo.lock'
+      - 'Cargo.toml'
+      - 'packages/eql/src/**'
+      - 'packages/eql/tasks/**'
+      - 'packages/eql/tests/encryption/Cargo.toml'
+      - 'packages/eql/tests/encryption/examples/**'
+      - 'packages/stack-encrypt/Cargo.toml'
+      - 'packages/stack-encrypt/src/**'
+      - 'packages/stack-encrypt-derive/**'
+      - 'packages/stack-kms/Cargo.toml'
+      - 'packages/stack-kms/src/**'
+      - 'packages/stack-profile/Cargo.toml'
+      - 'packages/stack-profile/src/**'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
       - '.github/actions/build-auth-binding/**'
@@ -361,11 +425,31 @@ jobs:
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2404
 
-      # One task, four things the suite cannot run without (see
+      # The EQL workspace's Rust, which `mise run setup` compiles for the
+      # migration suites: eql-codegen (the v4 bundle) and the v4 codec. Without
+      # a cache that is a cold build of stack-encrypt and its HTTP stack on every
+      # run. Keyed apart from the `sqlx-tests` cache test-eql.yml saves, which
+      # carries the SQLx graph this job never builds.
+      #
+      # Saved from `main` only. The cache is about 565 MB, and a save per PR ref
+      # crowds the repository's 10 GB cache limit. A PR still restores the
+      # `main` entry: a run can read caches saved on the default branch, whatever
+      # the PR's base (`push` runs this job on `main` only, so no other branch
+      # saves one).
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: eql-v4-codec
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # One task, six things the suite cannot run without (see
       # integration-tests/tasks.toml): `pnpm install --frozen-lockfile` (a
       # no-op here — the step above already ran it), `docker compose up` for
-      # Postgres, the EQL **v2** bundle from a GitHub release, and EQL **v3**
-      # built from the in-tree `@cipherstash/eql`.
+      # Postgres, the EQL **v2** bundle from a GitHub release, EQL **v3**
+      # built from the in-tree `@cipherstash/eql`, EQL **v4** built from the
+      # in-tree EQL source, and the Rust v4 codec. The last two serve
+      # `tests/migrate-v*-to-v4.test.ts`: Stack Encrypt is the only v4
+      # producer, and no TypeScript SDK reaches it yet.
       #
       # BOTH EQL versions are required and nothing else in this repo installs
       # v2: `tests/postgres.test.ts` creates `eql_v2_encrypted` columns and
@@ -381,7 +465,7 @@ jobs:
       # `integration-db`'s per-job project names deliberately do not produce.
       # The fixed host port (5436) that comes with it cannot collide with the
       # shared stacks, which publish on ephemeral ports.
-      - name: Provision the suite (Postgres, EQL v2 + v3)
+      - name: Provision the suite (Postgres, EQL v2 + v3 + v4, v4 codec)
         working-directory: languages/typescript/packages/protect-ffi
         run: mise run setup
 

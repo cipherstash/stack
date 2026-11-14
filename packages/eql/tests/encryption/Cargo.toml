@@ -17,6 +17,13 @@ name = "query_example"
 path = "../../crates/eql-bindings/src/encryption/query_example.rs"
 harness = false
 
+# Without `test = true`, `cargo test` builds this example but never runs the
+# unit tests in it.
+[[example]]
+name = "v4_codec"
+path = "examples/v4_codec.rs"
+test = true
+
 # Keep crypto/Postgres test dependencies out of eql-bindings' default test build.
 [dev-dependencies]
 # `chrono` and `rust_decimal`: the date, timestamp and decimal plaintexts
@@ -27,8 +34,11 @@ eql-bindings = { path = "../../crates/eql-bindings", features = ["targets", "chr
 eql-domains = { path = "../../crates/eql-domains" }
 # `dynamic`: `ValueFrame`, the runtime plaintext the target dispatch takes,
 # as eql-bindings names it.
+# `http`: `StackCipher::new()` over live ZeroKMS, for `examples/v4_codec.rs`,
+# the codec the protect-ffi migration suites re-encrypt through. The tests
+# here still build their ciphers over explicit fake key sources.
 # `testing`: `assert_context!`, which pins the contexts of the EQL types.
-stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic", "testing"] }
+stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic", "http", "testing"] }
 # `plaintext::Sink`, for a plaintext type with its own `Encrypt` impl; and
 # chrono's and rust_decimal's own sources, which seal the leaf a date,
 # timestamp or decimal from any other producer seals.

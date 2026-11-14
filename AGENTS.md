@@ -223,12 +223,12 @@ stays optional for everyone else.
 
 ### The `integration-tests/` suite
 
-`languages/typescript/packages/protect-ffi/integration-tests/` is 19 files of **live** coverage —
+`languages/typescript/packages/protect-ffi/integration-tests/` is 21 files of **live** coverage —
 encrypt/decrypt, lock context, keysets, JS auth strategies, JSON SteVec,
-Postgres (EQL v2 *and* v3), and a WASM round trip — and it is the only place
-several of those paths are exercised at all. It needs three things a normal
-`pnpm test` does not have: **Docker**, **CipherStash credentials**, and **both
-EQL versions installed** in the database.
+Postgres (EQL v2 *and* v3), EQL v3 -> v4 migration, and a WASM round trip — and
+it is the only place several of those paths are exercised at all. It needs
+three things a normal `pnpm test` does not have: **Docker**, **CipherStash
+credentials**, and **EQL v2, v3 and v4 installed** in the database.
 
 - **It is a pnpm workspace member, and `pnpm test` must never reach it.** Named
   literally in `pnpm-workspace.yaml` (the `languages/typescript/packages/*` glob is one level deep and
@@ -261,14 +261,20 @@ EQL versions installed** in the database.
 - **Run it locally** from `languages/typescript/packages/protect-ffi`:
 
   ```bash
-  mise run setup                 # pnpm install, docker compose up, EQL v2 + v3
+  mise run setup                 # pnpm install, docker compose up, EQL v2, v3, v4 and the v4 codec
   mise run test:integration:all  # includes tests/lock-context.test.ts
   ```
 
   `mise run test:integration` is the same suite **minus** lock context — prefer
   `:all`, which is what CI runs. Both tasks live in
   `integration-tests/tasks.toml`, included from `mise.toml`'s `[task_config]`,
-  and both build the binding themselves (debug) before invoking vitest. Postgres
+  and both build the binding themselves (debug) and rerun `eql:v4:install` and
+  `eql:v4:codec` before invoking vitest, so a local run uses the current codec
+  and rebuilds the `eql_v4` schema. The `public.eql_v4_*` column domains survive
+  a reinstall on purpose, so after changing a domain, recreate the container
+  with `docker compose down -v` and run `mise run setup`; CI starts from a new
+  database, so it is not affected. The two v4 steps refuse a stale
+  `packages/eql/Cargo.lock`; the comment in `tasks.toml` says why. Postgres
   is on **5436** (`docker-compose.yml` publishes `5436:5432`); `mise.toml`'s
   `[env]` carries the matching `PG*` values, and mise's `[env]` overrides an
   inherited one, so a stale `PGPORT` in your shell cannot misroute the tests.
@@ -290,6 +296,28 @@ EQL versions installed** in the database.
   `eql_v2.add_encrypted_constraint`) while `tests/postgres-v3.test.ts` needs the
   `eql_v3_*` domains. Skip either and half the suite fails on missing SQL
   functions.
+- **The migration suites need EQL v4 and a Rust codec.**
+  `tests/migrate-v*-to-v4.test.ts` decrypt legacy rows with protect-ffi and
+  re-encrypt them as v4, and Stack Encrypt is the only v4 producer, so they call
+  `packages/eql/tests/encryption/examples/v4_codec.rs` through
+  `tests/v4-codec.ts`. `eql:v4:install` builds the v4 bundle from the in-tree
+  EQL source (`bash tasks/build.sh`, called directly so it needs cargo and not
+  `packages/eql`'s mise config) and `eql:v4:codec` builds the codec; both are
+  part of `mise run setup` and rerun from `mise run test:integration` and its
+  `:all`. The CI filter lists the entries derived in
+  `scripts/__tests__/lib/eql-v4-suite-inputs.mjs` and held by
+  `eql-v4-suite-triggers.test.mjs`. The wide `packages/eql/crates/**` glob stays
+  forbidden by `wasm-build-inputs-paths-filter.test.mjs`, and `test-eql.yml`
+  does not run this suite.
+  **The v3 suite covers scalar types only**: TextEq, IntegerOrdOre,
+  IntegerOrdOpe, TextMatch and Boolean, queried with `=`, `>`, `ORDER BY` and
+  `@@`. It has no TextOrd, BigInt, date, float or decimal column and no `<`,
+  `<=`, `>=` or `BETWEEN`, and no JSON: the codec cannot convert a v3 SteVec
+  document to v4's JSON tree. Read a green run as covering those five types,
+  not as "v3 data migrates".
+  `tests/v4-codec-path.test.ts` needs neither credentials nor a database; it
+  pins where the suite looks for the codec (`EQL_V4_CODEC`, else
+  `CARGO_TARGET_DIR` resolved from `packages/eql`, else `packages/eql/target`).
 - **`eql:v3:install` builds `@cipherstash/eql` first, and has to.** The task
   reads the bundle through `@cipherstash/eql/sql`, which the package's `exports`
   map resolves to `dist/sql.js` — a tsup output. That was free while `npm ci`

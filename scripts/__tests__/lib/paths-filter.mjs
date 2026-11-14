@@ -1,7 +1,32 @@
-const globPrefix = (pattern) => {
+/**
+ * Everything before a glob's first wildcard SEGMENT — the deepest path both a
+ * cache pattern and a `paths:` entry can be compared on.
+ *
+ * `languages/typescript/packages/protect-ffi/crates/**` -> `languages/typescript/packages/protect-ffi/crates`
+ * `languages/typescript/packages/protect-ffi/src/errors.ts` -> itself (no wildcard)
+ */
+export const globPrefix = (pattern) => {
   const segments = pattern.split('/')
   const at = segments.findIndex((segment) => /[*?[]/.test(segment))
   return (at === -1 ? segments : segments.slice(0, at)).join('/')
+}
+
+/**
+ * Does one `paths:` entry cover everything an input pattern can match?
+ *
+ * Deliberately conservative: only a literal entry or a `**`-tailed one counts.
+ * An entry with a wildcard in any earlier segment (a mid-path `*`, or a tail
+ * like `*.ts`) is treated as covering nothing, so it fails loudly and gets a
+ * matcher that understands it — the opposite
+ * bias would be a false green, which here means an input nothing triggers on,
+ * which is the defect these guards exist for.
+ */
+export function entryCovers(entry, input) {
+  const prefix = globPrefix(entry)
+  const tail = entry.slice(prefix.length).replace(/^\//, '')
+  if (tail !== '' && tail !== '**') return false
+  const target = globPrefix(input)
+  return target === prefix || target.startsWith(`${prefix}/`)
 }
 
 // Fails closed: a shared directory prefix in either direction counts as
