@@ -1,6 +1,9 @@
 package encrypt
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+)
 
 // ClientOption configures [NewClient]. Each one sets one thing; a later
 // option setting the same thing wins. NewClient with none is a working
@@ -22,6 +25,17 @@ type clientOptions struct {
 	transport           http.RoundTripper
 	guest               []byte
 	requireLockedMemory bool
+	// keyVendor is WithKeyVendor's backend; supersededVendors every earlier
+	// one a later WithKeyVendor replaced, whose StaticKey NewClient still
+	// wipes.
+	keyVendor         KeyVendor
+	supersededVendors []KeyVendor
+	keysetRecords     []string
+	// defaultKeyset is WithDefaultKeyset's keyset; rootKeyTTL is
+	// WithRootKeyTTL's, nil when not set.
+	defaultKeyset    KeysetSelector
+	defaultKeysetSet bool
+	rootKeyTTL       *time.Duration
 }
 
 // WithCredentials supplies the client id, the client key and the auth
@@ -59,6 +73,11 @@ func WithKeysetCacheSize(n int) ClientOption {
 // [NewCredentials] the token exchange runs in the store the caller opened,
 // not through this RoundTripper: pass auth.WithRoundTripper to that
 // store instead. Nil means http.DefaultTransport, the default.
+//
+// With a key vendor backend ([WithKeyVendor]) the RoundTripper also sends
+// the vendor requests, and it sees the keys that they and their responses
+// carry in plaintext. Give it only a RoundTripper you trust with key
+// material.
 func WithTransport(rt http.RoundTripper) ClientOption {
 	return func(o *clientOptions) { o.transport = rt }
 }
