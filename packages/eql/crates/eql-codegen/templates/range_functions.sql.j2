@@ -58,5 +58,5 @@ AS $$ SELECT {{ a.body }} $$;
 CREATE FUNCTION {{ schema }}.between(a {{ b.column }}, r {{ schema }}.{{ b.range }})
 RETURNS boolean
 LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{ schema }}.{{ b.extractor }}(a) >= {{ internal_schema }}.lo(r) AND {{ schema }}.{{ b.extractor }}(a) <= {{ internal_schema }}.hi(r) $$;
+AS $$ SELECT {{ schema }}.{{ b.extractor }}(a) OPERATOR({{ b.op_schema }}.>=) {{ internal_schema }}.lo(r) AND {{ schema }}.{{ b.extractor }}(a) OPERATOR({{ b.op_schema }}.<=) {{ internal_schema }}.hi(r) $$;
 {% endfor -%}

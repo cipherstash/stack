@@ -1426,7 +1426,7 @@ mod tests {
         let mut bodies = 0;
         for family in CATALOG {
             for (path, src) in super::render_type(family, std::path::Path::new("out")) {
-                for version in [EqlVersion::V3] {
+                for version in EqlVersion::ALL {
                     if !belongs_to(&src, version).expect("a well-formed directive") {
                         continue;
                     }

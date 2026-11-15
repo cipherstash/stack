@@ -220,6 +220,11 @@ struct Between {
     column: String,
     range: String,
     extractor: &'static str,
+    /// The schema of the comparison operators over the term, which the body
+    /// names them in: see [`Term::operator_schema`]. `between` is unpinned
+    /// `LANGUAGE sql` so that it inlines, so a bare operator would resolve
+    /// against the caller's `search_path`.
+    op_schema: &'static str,
     /// An ORE range, whose index needs the opclass a non-superuser
     /// install skips: the generated docs say so.
     ore: bool,
@@ -304,6 +309,7 @@ pub fn render_range_functions_file(spec: &DomainFamily) -> Option<String> {
                 column: domain_name(&full),
                 range: range.clone(),
                 extractor: term.extractor(),
+                op_schema: term.operator_schema(),
                 ore: term == Term::Ore,
                 ope_columns: if term == Term::Ore {
                     ope_columns.clone()
@@ -433,11 +439,14 @@ mod tests {
             EqlVersion::V4,
         )
         .unwrap();
+        // The operators are schema-qualified: `between` inlines, so a bare one
+        // would resolve against the caller's search_path, and with `public`
+        // off it the ORE term (a composite type) would compare as a record.
         assert!(v4.contains(
             "CREATE FUNCTION eql_v4.between(a public.eql_v4_integer_ord_ore, r eql_v4.query_integer_range_ore)\n\
              RETURNS boolean\n\
              LANGUAGE sql IMMUTABLE PARALLEL SAFE\n\
-             AS $$ SELECT eql_v4.ord_term_ore(a) >= eql_v4_internal.lo(r) AND eql_v4.ord_term_ore(a) <= eql_v4_internal.hi(r) $$;"
+             AS $$ SELECT eql_v4.ord_term_ore(a) OPERATOR(public.>=) eql_v4_internal.lo(r) AND eql_v4.ord_term_ore(a) OPERATOR(public.<=) eql_v4_internal.hi(r) $$;"
         ), "{v4}");
         // OPE serves both OPE-backed column domains.
         for column in ["public.eql_v4_integer_ord", "public.eql_v4_integer_ord_ope"] {
@@ -445,7 +454,7 @@ mod tests {
                 "CREATE FUNCTION eql_v4.between(a {column}, r eql_v4.query_integer_range_ope)\n\
                  RETURNS boolean\n\
                  LANGUAGE sql IMMUTABLE PARALLEL SAFE\n\
-                 AS $$ SELECT eql_v4.ord_term(a) >= eql_v4_internal.lo(r) AND eql_v4.ord_term(a) <= eql_v4_internal.hi(r) $$;"
+                 AS $$ SELECT eql_v4.ord_term(a) OPERATOR(pg_catalog.>=) eql_v4_internal.lo(r) AND eql_v4.ord_term(a) OPERATOR(pg_catalog.<=) eql_v4_internal.hi(r) $$;"
             )), "{column}");
         }
         assert_eq!(v4.matches("CREATE FUNCTION eql_v4.between(").count(), 3);
