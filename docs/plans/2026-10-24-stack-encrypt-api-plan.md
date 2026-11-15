@@ -1490,11 +1490,13 @@ Base64.
   the same context as that pair, so the stored bytes do not change.
 - **What `i` stores.** The declared names only: the table and the column.
   A record can also list a scope or a binding, supplied by the caller or
-  stored in the row. The ciphertext and the terms of an EQL field derive
-  under the column, then the scope, then the binding, as they do for a
-  field of any other type. `i` does not store them, so the reader supplies
-  them again, and a query supplies the scope. An EQL field of a record
-  nested in another stores its own column in the same way.
+  stored in the row. The terms of an EQL field derive under the query
+  context: the column, then the scope. The ciphertext is sealed under the
+  stored context: the column, then the scope, then the binding. A field
+  of any other type works the same way. `i` does not store the scope or
+  the binding, so the reader supplies them again, and a query supplies
+  the scope. An EQL field of a record nested in another stores its own
+  column in the same way.
 - **Why.** This gives the [EQL field example](#store-a-field-as-an-eql-type)
   and the [JSON example](#encrypt-a-json-document).
 - **Done already.** In #1658:

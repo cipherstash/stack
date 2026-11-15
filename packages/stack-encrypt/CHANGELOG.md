@@ -63,9 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ContextFromField::from_field` builds the stored context from the
     field's own context, or returns `None` when the type cannot store it.
   - The scopes and the bindings that the record lists, and the names of a
-    record that holds this one, come after the own context. The field
-    runs under all of it, as a field of any other type does, and does not
-    store them. The reader supplies them again.
+    record that holds this one, come after the own context, as they do
+    for a field of any other type. The search terms derive under the own
+    context and the scopes. The data key and the AAD derive under the
+    bindings too. The field does not store them, so the reader supplies
+    them again.
   - On decrypt, the stored context must equal the field's own, as a
     standalone decrypt with an expected context checks it.
   - An own context that the type cannot store is refused before any key

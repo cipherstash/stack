@@ -16,8 +16,9 @@
 //!   the other's value;
 //! - a scope or a binding that the record lists, supplied by the caller or
 //!   stored in the row, comes after the column in the field's context. The
-//!   ciphertext and the terms derive under it, and `i` does not store it.
-//!   The reader supplies it again, and a query supplies the scope;
+//!   terms derive under the column and the scope. The ciphertext is sealed
+//!   under the binding too. `i` stores neither. The reader supplies both
+//!   again, and a query supplies the scope;
 //! - an EQL field of a record nested in another stores its own column too;
 //! - a field that stores another column is refused before any key is
 //!   requested;

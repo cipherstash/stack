@@ -19,10 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Identifier` implements `stack_encrypt::target::ContextFromField`.
   - A record can list a scope or a binding, such as `scope(tenant: u64)`
     or `bind(row: u128)`, supplied by the caller or stored in the row. The
-    ciphertext and the terms of an EQL field then derive under the column,
-    the scope and the binding, as they do for a field of any other type.
-    `i` stores the column alone, and nothing a caller supplies. The reader
-    supplies the scope and the binding again.
+    terms of an EQL field then derive under the column and the scope. The
+    ciphertext is sealed under the column, the scope and the binding. A
+    field of any other type works the same way. `i` stores the column
+    alone, and nothing a caller supplies. The reader supplies the scope
+    and the binding again.
   - An EQL field of a record nested in another stores its own column too.
     The outer record's names come after it in the field's context.
   - A query from the field's marker, such as `EncryptedMember::EMAIL.eq(..)`,

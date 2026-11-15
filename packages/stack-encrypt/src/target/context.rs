@@ -1138,10 +1138,17 @@ impl<T> StoredContext<T> {
 ///
 /// Only the own context is stored. A record can also list scopes and
 /// bindings, such as a tenant or a row ID. They come after the own
-/// context, and the data key, the AAD and the search terms derive under
-/// all of it. They are not stored in the field, so whoever reads the field
-/// supplies them again. The same is true of the names of a record that
-/// holds this record as a field.
+/// context, as they do for a field of any other type:
+///
+/// - the search terms derive under the query context: the own context,
+///   then the scopes. A binding is not in it, so a binding does not
+///   separate search terms;
+/// - the data key and the AAD derive under the stored context: the query
+///   context, then the bindings.
+///
+/// The scopes and the bindings are not stored in the field, so whoever
+/// reads the field supplies them again. The names of a record that holds
+/// this record as a field come after the own context as scopes do.
 ///
 /// The context that `from_field` returns must encode as `own` does
 /// ([`IntoContext`]). The field then writes the terms that its type writes

@@ -208,10 +208,12 @@ impl<'a> IntoContext<'a> for &'a Identifier {
 ///
 /// `i` holds those two declared names, and nothing a caller supplies. A
 /// record can also list a scope or a binding, such as a tenant or a row ID.
-/// The field's ciphertext and terms derive under them, after the column,
-/// as a field of any other type does. They are not stored in `i`, so the
-/// reader supplies them again. The names of a record that holds this one
-/// as a field come after the column in the same way.
+/// They come after the column, as they do for a field of any other type.
+/// The field's terms derive under the column and the scope. Its
+/// ciphertext is sealed under the column, the scope and the binding. None
+/// of that is stored in `i`, so the reader supplies the scope and the
+/// binding again. The names of a record that holds this one as a field
+/// come after the column as a scope does.
 ///
 /// With no scope and no binding, the field writes the terms that the type
 /// writes on its own under `Identifier::for_column("members", "email")`.

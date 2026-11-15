@@ -445,7 +445,9 @@ A record can also list a scope or a binding, such as a tenant or a row ID:
 struct EncryptedMember {
     #[stash(passthrough)]
     id: u64,
-    email: TextEq, // i = {"t": "members", "c": "email"}
+    email: TextEq,              // i = {"t": "members", "c": "email"}
+    age: IntegerOrd,            // i = {"t": "members", "c": "age"}
+    profile: JsonTreeDocument,  // i = {"t": "members", "c": "profile"}
 }
 
 let parts = || Scope::new(tenant).bind(row);
@@ -458,14 +460,15 @@ let query = EncryptedMember::EMAIL
 let opened = Member::decrypt_from_with_context(stored, &keyset, parts()).await?;
 ```
 
-`i` stores the table and the column, and nothing a caller supplies. The
-ciphertext and the terms of the field derive under the column, then the
-scope, then the binding, as they do for a field of any other type. So:
+`i` stores the table and the column, and nothing a caller supplies. A field
+of any other type uses the scope and the binding in the same way:
 
-- the reader supplies the scope and the binding again, and a value does not
-  open without them;
-- a query supplies the scope, and finds only the values stored under it;
-- a binding is in no query, so it does not change the terms.
+- the terms of the field derive under the column, then the scope. So a
+  query supplies the scope, and finds only the values stored under it;
+- a binding is in no query, so it does not change the terms;
+- the ciphertext is sealed under the column, then the scope, then the
+  binding. So the reader supplies the scope and the binding again, and a
+  value does not open without them.
 
 An EQL field of a record nested in another stores its own column in the same
 way. The outer record's names come after the column in the field's context.
