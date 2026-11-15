@@ -14,9 +14,11 @@
 //! - the derive and a data plan write the same terms for a field of each
 //!   kind (equality, storage only, order, JSON document), and each opens
 //!   the other's value;
-//! - a record that lists a caller scope or a binding cannot store an EQL
-//!   field, nor can a record nested in another, and each is refused before
-//!   any key is requested;
+//! - a scope or a binding that the record lists, supplied by the caller or
+//!   stored in the row, comes after the column in the field's context. The
+//!   ciphertext and the terms derive under it, and `i` does not store it.
+//!   The reader supplies it again, and a query supplies the scope;
+//! - an EQL field of a record nested in another stores its own column too;
 //! - a field that stores another column is refused before any key is
 //!   requested;
 //! - a JSON document, `JsonTreeDocument`, encrypts from a `JsonPlaintext`
@@ -25,7 +27,7 @@
 
 mod common;
 
-use eql_bindings::encryption::EqlTargets;
+use eql_bindings::encryption::{EqlTargets, NativeCiphertextVisitor as NativeLeaf};
 use eql_bindings::v4::integer::IntegerOrd;
 use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument};
 use eql_bindings::v4::text::{Text, TextEq};
@@ -34,10 +36,12 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{self, record, ValueFrame};
 use stack_encrypt::json::JsonPlaintext;
-use stack_encrypt::target::{Bind, Layout, Scope};
+use stack_encrypt::target::transcode::Reader as _;
+use stack_encrypt::target::{AeadContext, Bind, Layout, Parts, Scope};
+use stack_encrypt::testing::{bind, scope, Expect};
 use stack_encrypt::{
-    AsProtectedRef as _, CipherText, Controlled as _, DecryptFrom, DecryptSource, EncryptInto,
-    EncryptTarget, Error, NonEmpty, PlanError, StackCipherText,
+    assert_context, nonempty, AsProtectedRef as _, CipherText, Controlled as _, DecryptFrom,
+    DecryptSource, EncryptInto, EncryptTarget, Error, NonEmpty, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -353,77 +357,235 @@ async fn the_derive_and_a_data_plan_write_the_same_row() {
     );
 }
 
-#[derive(Clone, Zeroize)]
+#[derive(Clone, Debug, PartialEq, Zeroize)]
 struct Tenanted {
     email: String,
 }
 
-/// A record whose caller supplies a tenant scope. An EQL payload has
-/// nowhere to store the tenant.
+fn tenanted() -> Tenanted {
+    Tenanted {
+        email: "ada@example.com".into(),
+    }
+}
+
+/// A record whose caller supplies a tenant scope and a row binding. An EQL
+/// field stores its column in `i`, and neither the tenant nor the row.
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Tenanted, scope = "members", scope(tenant: u64))]
+#[stash(struct = Tenanted, scope = "members", scope(tenant: u64), bind(row: u128))]
 struct EncryptedTenanted {
     email: TextEq,
 }
 
-/// A record whose caller supplies a row binding.
-#[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Tenanted, scope = "members", bind(row: u128))]
-struct EncryptedBound {
-    email: TextEq,
+/// The tenant and the row the tests seal under.
+fn tenant_and_row() -> Parts<Scope<u64>, Bind<u128>> {
+    Scope::new(42u64).bind(9u128)
 }
 
-/// The refusal names the field by the record's scope and its name.
-fn assert_not_storable<T>(result: Result<T, Error>) {
-    match result {
-        Err(Error::Plan(PlanError::ContextNotStorable { field })) => {
-            assert_eq!(field, "members/email");
-        }
-        Err(other) => panic!("expected ContextNotStorable, got {other:?}"),
-        Ok(_) => panic!("expected ContextNotStorable, got a value"),
-    }
+/// The record shows the contexts of an EQL field's ciphertext and term
+/// before any key is requested: the column, the tenant, then the row.
+#[test]
+fn a_record_shows_the_scope_and_the_binding_of_an_eql_field() {
+    assert_context!(
+        EncryptedTenanted::contexts(),
+        "email.c" = {
+            query = [["members", "email"], scope::<u64>("tenant")],
+            stored = [
+                [
+                    Expect::from(["members", "email"]),
+                    Expect::from(scope::<u64>("tenant")),
+                ],
+                bind::<u128>("row"),
+            ],
+        },
+        "email.hm" = {
+            query = [["members", "email"], scope::<u64>("tenant")],
+            stored = [
+                [
+                    Expect::from(["members", "email"]),
+                    Expect::from(scope::<u64>("tenant")),
+                ],
+                bind::<u128>("row"),
+            ],
+        },
+    );
 }
 
 #[tokio::test]
-async fn a_record_with_a_caller_scope_or_binding_cannot_store_an_eql_field() {
-    let (cipher, calls) = common::cipher().await;
+async fn an_eql_field_stores_its_column_and_not_the_scope_or_the_binding() {
+    let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let tenanted = || Tenanted {
-        email: "ada@example.com".into(),
-    };
-
-    let scoped: Result<EncryptedTenanted, _> = tenanted()
-        .encrypt_into_with_context(&keyset, Scope::new(42u64))
-        .await;
-    assert_not_storable(scoped);
-    let bound: Result<EncryptedBound, _> = tenanted()
-        .encrypt_into_with_context(&keyset, Bind::new(9u128))
-        .await;
-    assert_not_storable(bound);
-    assert!(
-        calls.lock().unwrap().generate.is_empty(),
-        "refused before any key is requested"
+    let stored: EncryptedTenanted = tenanted()
+        .encrypt_into_with_context(&keyset, tenant_and_row())
+        .await
+        .unwrap();
+    assert_eq!(
+        stored.email.i,
+        *column("email").get(),
+        "`i` holds the declared names alone"
     );
 
-    // A value written on its own under the column does not open in such a
-    // record either.
+    // The ciphertext is sealed under the column, then the tenant, then the
+    // row: it opens as a Stack Encrypt leaf under exactly that context.
+    let leaf = stored.email.c.clone().read(NativeLeaf).unwrap();
+    let context = AeadContext::from(tenant_and_row()).extend(nonempty!("members").with("email"));
+    let opened: String = cipher.decrypt_as(leaf, context).await.unwrap();
+    assert_eq!(opened, "ada@example.com");
+
+    // The term is derived under the column, then the tenant. A query from
+    // the field's marker under the same tenant gives the stored term, and
+    // names the column alone.
+    let query = EncryptedTenanted::EMAIL
+        .eq("ada@example.com")
+        .scope(Scope::new(42u64))
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(query.i, stored.email.i);
+    assert_eq!(query.hm, stored.email.hm);
+    let other_tenant = EncryptedTenanted::EMAIL
+        .eq("ada@example.com")
+        .scope(Scope::new(43u64))
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_ne!(other_tenant.hm, stored.email.hm);
+
+    // So it is not the term of the column alone.
+    let alone: TextEq = "ada@example.com"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column("email"))
+        .await
+        .unwrap();
+    assert_ne!(alone.hm, stored.email.hm);
+
+    // A binding is in no query context: another row has the same term.
+    let other_row: EncryptedTenanted = tenanted()
+        .encrypt_into_with_context(&keyset, Scope::new(42u64).bind(10u128))
+        .await
+        .unwrap();
+    assert_eq!(other_row.email.hm, stored.email.hm);
+
+    // The reader supplies the tenant and the row again.
+    let opened = Tenanted::decrypt_from_with_context(stored, &keyset, tenant_and_row())
+        .await
+        .unwrap();
+    assert_eq!(opened, tenanted());
+}
+
+#[tokio::test]
+async fn an_eql_field_opens_only_under_the_scope_and_the_binding_it_was_sealed_under() {
+    let (cipher, calls) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: EncryptedTenanted = tenanted()
+        .encrypt_into_with_context(&keyset, tenant_and_row())
+        .await
+        .unwrap();
+    let again = || EncryptedTenanted {
+        email: stored.email.clone(),
+    };
+
+    let other_tenant =
+        Tenanted::decrypt_from_with_context(again(), &keyset, Scope::new(43u64).bind(9u128));
+    assert!(other_tenant.await.is_err(), "another tenant");
+    let other_row =
+        Tenanted::decrypt_from_with_context(again(), &keyset, Scope::new(42u64).bind(10u128));
+    assert!(other_row.await.is_err(), "another row");
+
+    // On its own, the field's value stores the same column. It was sealed
+    // under the tenant and the row too, so the column alone does not open
+    // it.
+    let alone =
+        String::decrypt_from_with_context(stored.email.clone(), &keyset, column("email")).await;
+    assert!(alone.is_err(), "the column alone");
+
+    // And a value sealed under the column alone does not open as the
+    // record's field.
     let email: TextEq = "ada@example.com"
         .to_owned()
         .encrypt_into_with_context(&keyset, column("email"))
         .await
         .unwrap();
-    let record = EncryptedTenanted {
-        email: email.clone(),
+    let record = EncryptedTenanted { email };
+    let opened = Tenanted::decrypt_from_with_context(record, &keyset, tenant_and_row()).await;
+    assert!(opened.is_err(), "sealed without the tenant and the row");
+
+    // The stored column is checked first, before any key is requested.
+    let email: TextEq = "ada@example.com"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column("other"))
+        .await
+        .unwrap();
+    let record = EncryptedTenanted { email };
+    let before = calls.lock().unwrap().retrieve.len();
+    match Tenanted::decrypt_from_with_context(record, &keyset, tenant_and_row()).await {
+        Err(Error::ContextMismatch { .. }) => {}
+        Err(other) => panic!("expected ContextMismatch, got {other:?}"),
+        Ok(_) => panic!("expected ContextMismatch, got a value"),
+    }
+    assert_eq!(calls.lock().unwrap().retrieve.len(), before);
+}
+
+#[derive(Clone, Zeroize)]
+struct Note {
+    id: u128,
+    tenant: u64,
+    title: String,
+    body: JsonPlaintext,
+}
+
+/// A record that stores its scope and its binding in the row, in fields of
+/// its own. Its EQL fields still store their columns alone.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Note, scope = "notes", scope(field = "tenant"), bind(field = "id"))]
+struct EncryptedNote {
+    #[stash(passthrough)]
+    id: u128,
+    #[stash(passthrough)]
+    tenant: u64,
+    title: TextEq,
+    body: JsonTreeDocument,
+}
+
+#[tokio::test]
+async fn an_eql_field_of_a_record_that_stores_its_scope_and_binding() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let note = Note {
+        id: 9,
+        tenant: 42,
+        title: "Renewal".into(),
+        body: profile().into(),
     };
-    let opened = Tenanted::decrypt_from_with_context(record, &keyset, Scope::new(42u64)).await;
-    assert_not_storable(opened);
-    let record = EncryptedBound { email };
-    let opened = Tenanted::decrypt_from_with_context(record, &keyset, Bind::new(9u128)).await;
-    assert_not_storable(opened);
-    assert!(
-        calls.lock().unwrap().retrieve.is_empty(),
-        "refused before any key is requested"
-    );
+    let stored: EncryptedNote = note.encrypt_into(&keyset).await.unwrap();
+    let notes = |name: &str| Identifier::for_column("notes", name).unwrap().into_inner();
+    assert_eq!(stored.title.i, notes("title"));
+    assert_eq!(stored.body.i, notes("body"));
+
+    // A query supplies the tenant, since it cannot read a row.
+    let query = EncryptedNote::TITLE
+        .eq("Renewal")
+        .scope(Scope::new(42u64))
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(query.i, stored.title.i);
+    assert_eq!(query.hm, stored.title.hm);
+
+    // The fields of this row do not open in another row.
+    let moved = EncryptedNote {
+        id: 10,
+        tenant: stored.tenant,
+        title: stored.title.clone(),
+        body: stored.body.clone(),
+    };
+    assert!(Note::decrypt_from(moved, &keyset).await.is_err());
+
+    // The row supplies its tenant and its ID, so the reader passes none.
+    let opened = Note::decrypt_from(stored, &keyset).await.unwrap();
+    assert_eq!(opened.id, 9);
+    assert_eq!(opened.tenant, 42);
+    assert_eq!(opened.title, "Renewal");
+    assert_eq!(opened.body.value(), &profile());
 }
 
 /// A record with an EQL field and nothing the caller supplies.
@@ -433,13 +595,13 @@ struct EncryptedPlain {
     email: TextEq,
 }
 
-#[derive(Clone, Zeroize)]
+#[derive(Clone, Debug, PartialEq, Zeroize)]
 struct Holder {
     member: Tenanted,
 }
 
 /// That record as a field of another. Its EQL field's context is then its
-/// own pair, extended by the outer record's.
+/// own pair, followed by the outer field's pair.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = Holder, scope = "holders")]
 struct EncryptedHolder {
@@ -447,20 +609,33 @@ struct EncryptedHolder {
 }
 
 #[tokio::test]
-async fn an_eql_field_of_a_nested_record_is_refused() {
-    let (cipher, calls) = common::cipher().await;
+async fn an_eql_field_of_a_nested_record_stores_its_own_column() {
+    let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let holder = Holder {
-        member: Tenanted {
-            email: "ada@example.com".into(),
-        },
-    };
-    let nested: Result<EncryptedHolder, _> = holder.encrypt_into(&keyset).await;
-    assert_not_storable(nested);
-    assert!(
-        calls.lock().unwrap().generate.is_empty(),
-        "refused before any key is requested"
-    );
+    let holder = Holder { member: tenanted() };
+    let stored: EncryptedHolder = holder.clone().encrypt_into(&keyset).await.unwrap();
+
+    // The inner record's scope and the field's name. The outer record's
+    // names come after them in the context, and are not stored.
+    assert_eq!(stored.member.email.i, *column("email").get());
+
+    // A query from the nested field's marker gives the stored term.
+    let query = EncryptedHolder::MEMBER
+        .field(EncryptedPlain::EMAIL)
+        .eq("ada@example.com")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(query.i, stored.member.email.i);
+    assert_eq!(query.hm, stored.member.email.hm);
+
+    // The inner record on its own writes another term: its field has no
+    // outer names in its context.
+    let plain: EncryptedPlain = tenanted().encrypt_into(&keyset).await.unwrap();
+    assert_eq!(plain.email.i, stored.member.email.i);
+    assert_ne!(plain.email.hm, stored.member.email.hm);
+
+    assert_eq!(Holder::decrypt_from(stored, &keyset).await.unwrap(), holder);
 }
 
 #[tokio::test]

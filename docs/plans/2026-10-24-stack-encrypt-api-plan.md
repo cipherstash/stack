@@ -1482,33 +1482,45 @@ Base64.
 
 - **What to build.** EQL types such as `TextEq` and `JsonTreeDocument` as
   field types of the Rust record derive.
-- **How it works.** The record derive gives each field a `CallerContext`.
-  A field type that stores its context implements
-  `target::FromFieldContext`, and takes that context as the one it
-  stores. `Identifier` takes a context of two parts, the table first and
-  the column second, and gives the same context as that pair, so the
-  stored bytes do not change. It refuses a caller scope or a binding,
-  which an EQL payload cannot store, with
-  `PlanError::ContextNotStorable`, before any key is requested.
+- **How it works.** The record derive gives each field a context of its
+  own: the record's scope, then the field's name. A field type that stores
+  its context stores that own context, as the type it stores. The stored
+  type implements `target::ContextFromField`. `Identifier` takes an own
+  context of two parts, the table first and the column second, and gives
+  the same context as that pair, so the stored bytes do not change.
+- **What `i` stores.** The declared names only: the table and the column.
+  A record can also list a scope or a binding, supplied by the caller or
+  stored in the row. The ciphertext and the terms of an EQL field derive
+  under the column, then the scope, then the binding, as they do for a
+  field of any other type. `i` does not store them, so the reader supplies
+  them again, and a query supplies the scope. An EQL field of a record
+  nested in another stores its own column in the same way.
 - **Why.** This gives the [EQL field example](#store-a-field-as-an-eql-type)
   and the [JSON example](#encrypt-a-json-document).
 - **Done already.** In #1658:
   - A Rust record with EQL fields encrypts and decrypts through the new
-    API.
+    API, with or without a scope and a binding, and when it is nested in
+    another record.
   - For a field of each kind (equality, storage only, order, and a JSON
-    document), it writes the terms that a data plan writes for the same
-    declaration. A data plan is the path Go takes. Each path opens the
-    other's values (`packages/eql/tests/encryption/tests/record_fields.rs`).
+    document), a record with no scope writes the terms that a data plan
+    writes for the same declaration. A data plan is the path Go takes.
+    Each path opens the other's values
+    (`packages/eql/tests/encryption/tests/record_fields.rs`).
   - `JsonTreeDocument` implements `EncryptTarget<JsonPlaintext>` and
     `DecryptSource<JsonPlaintext>`.
   - A query from a field's marker works for the equality and match
-    types. The order types do not implement `Answers` yet, so a marker
-    cannot query them.
-- **Tracked in.** Issue #1658. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `FromFieldContext` must come before the `eql-bindings` release that uses it.
+    types, with the record's scope. A plan's query for an EQL type takes
+    `.extend(..)`. The order types do not implement `Answers` yet, so a
+    marker cannot query them.
+- **Not done.** A data plan still refuses a scope or a binding on a field
+  that names an EQL type (`TargetError::Extended`). So a Go record cannot
+  yet write an EQL field under a scope.
+- **Tracked in.** Issue #1658. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
     the new API, including order queries;
-  - it writes the same terms as a Go record with the same declaration.
+  - it writes the same terms as a Go record with the same declaration,
+    with and without a scope.
 
 #### A ready-made EQL resolver
 

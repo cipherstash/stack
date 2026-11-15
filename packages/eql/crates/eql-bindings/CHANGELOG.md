@@ -16,13 +16,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{"t": "members", "c": "email"}` in `i`. The field writes the terms the
   type writes on its own under `Identifier::for_column("members",
   "email")`, and the terms a data plan that names the type writes.
-  - `Identifier` implements `stack_encrypt::target::FromFieldContext`.
-  - A record that lists a caller scope or a binding cannot have an EQL
-    field: an EQL payload stores a table and a column, and nothing more.
-    Every call is refused with `PlanError::ContextNotStorable`, which
-    names the field (`members/email`), before any key is requested.
+  - `Identifier` implements `stack_encrypt::target::ContextFromField`.
+  - A record can list a scope or a binding, such as `scope(tenant: u64)`
+    or `bind(row: u128)`, supplied by the caller or stored in the row. The
+    ciphertext and the terms of an EQL field then derive under the column,
+    the scope and the binding, as they do for a field of any other type.
+    `i` stores the column alone, and nothing a caller supplies. The reader
+    supplies the scope and the binding again.
+  - An EQL field of a record nested in another stores its own column too.
+    The outer record's names come after it in the field's context.
   - A query from the field's marker, such as `EncryptedMember::EMAIL.eq(..)`,
-    gives the term stored in the row, for the types that answer it.
+    gives the term stored in the row, for the types that answer it. For a
+    record with a scope, pass the scope: `.scope(Scope::new(tenant))`.
+  - A plan's query for an EQL type can carry a scope too, with
+    `.extend(..)`. It gives the term of the values stored under that
+    scope. `QueryLabelError` has no `Extended` variant.
+  - The encrypt input of an EQL type is the hidden
+    `stack_encrypt::target::StoredContext<Identifier>`. A caller passes a
+    `NonEmpty<Identifier>`. Generic code names the input as
+    `ContextInput: AcceptsContext<Value = NonEmpty<Identifier>>`.
 
 - **`JsonTreeDocument` implements `EncryptTarget<JsonPlaintext>` and
   `DecryptSource<JsonPlaintext>`** (#1658). It encrypts from a
@@ -161,9 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not answer, or another index named with `.via(..)`, does not
   compile. Each answering type is an
   `op::LabelledTarget`. The label must name the column, table then column,
-  and the query must not be extended, or the awaited query is refused
-  before any keyset is resolved, with a `QueryLabelError` in
-  `Error::Other`. `eql_bindings::encryption::query` holds `TwinIndex`
+  or the awaited query is refused before any keyset is resolved, with a
+  `QueryLabelError` in `Error::Other`. `eql_bindings::encryption::query` holds `TwinIndex`
   (Stack Encrypt's index, its query sent as the twin, for the twin's own
   plaintext only), `MatchTwin`, `QueryTwin` and `QueryLabelError`.
   `Hmac256` and `BloomFilter` now declare their indexes (`EncryptFrom::indexes`),

@@ -251,20 +251,23 @@ pub enum PlanError {
         help("Give the scope or binding a value. An empty part would put every row under one context.")
     )]
     EmptyPart,
-    /// A record field's type stores its context in the row, and the record
-    /// gives the field a context it cannot store. An EQL type stores a
-    /// table and a column, so it takes the record's scope and the field's
-    /// name, and nothing more: no caller scope and no binding. Refused
-    /// before any key is requested.
-    #[error("field {field:?}: its type cannot store the context the record gives it")]
+    /// A field's type stores the field's own context in the row, and
+    /// cannot store this one. The own context is the declared part: the
+    /// record's scope and the field's name. An EQL type stores it as a
+    /// table and a column, so the own context must be two text parts.
+    ///
+    /// The scopes and bindings of the record are not stored, so they never
+    /// cause this error. Refused before any key is requested.
+    #[error("field {field:?}: its type cannot store the field's own context")]
     #[diagnostic(
         code(stack_encrypt::plan_context_not_storable),
-        help("A field whose type stores its context, such as an EQL type, takes the record's scope and the field's name alone. Remove the record's caller scope and binding, or give the field a type that does not store its context.")
+        help("A field type that stores its context, such as an EQL type, stores the field's own context: the record's scope and the field's name. Declare the field in a `struct = ..` record with a `scope = \"..\"`, which gives it an own context of two text parts, or give the field a type that does not store its context.")
     )]
     ContextNotStorable {
-        /// The field, as its own context renders: the record's scope and
-        /// the field's name, `members/email`. Empty when the context was
-        /// not built for a record field.
+        /// The field's own context, as it renders: the record's scope and
+        /// the field's name, `members/email`. A context that no record
+        /// built for a field has no own part. This is then the whole query
+        /// context that the type was given.
         field: String,
     },
     /// A field was declared both as a typed target (`encrypt_into`) and with

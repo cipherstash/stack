@@ -27,8 +27,8 @@ use stack_encrypt::json::{
     JsonSelector, JsonSubtree, JsonSubtreeKey,
 };
 use stack_encrypt::target::{
-    AeadContext, CallerContext, DecryptSource, EncryptTarget, ExpectedContext, IndexSpec, Json,
-    Layout, RequiredContext,
+    AeadContext, DecryptSource, EncryptTarget, ExpectedContext, IndexSpec, Json, Layout,
+    StoredContext,
 };
 use stack_encrypt::{
     DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption, Error, NonEmpty,
@@ -486,21 +486,17 @@ impl JsonTree {
 }
 
 impl JsonTree {
-    /// Seal a document under these options, under the column that the
-    /// caller's context `C` holds. `column` takes the column out of it.
-    fn sealing<'s, K: 'static, C>(
+    /// Seal a document under these options, and write its column to `i`.
+    ///
+    /// On its own, the document stores the column the caller passes, and
+    /// seals under it. As a field of a record, it stores the field's own
+    /// column, and seals under the scopes and bindings of the record too.
+    fn sealing<'s, K: 'static>(
         &self,
-        column: fn(C) -> Identifier,
-    ) -> Encryption<'s, Value, JsonTreeDocument, K, C>
-    where
-        C: Into<CallerContext> + Clone + Send + 'static,
-    {
+    ) -> Encryption<'s, Value, JsonTreeDocument, K, StoredContext<Identifier>> {
         Layout::<Value>::encryption::<K>(&self.index)
-            .accepting::<C>()
-            .map_with_context(|document, context: C| (context, document))
-            .try_map(move |(context, document)| {
-                JsonTreeDocument::envelope(column(context), &document)
-            })
+            .storing(|document, column: Identifier| (column, document))
+            .try_map(|(column, document)| JsonTreeDocument::envelope(column, &document))
     }
 }
 
@@ -514,7 +510,7 @@ impl Layout<Value> for JsonTree {
     fn encryption<'s, K: 'static>(
         &self,
     ) -> Encryption<'s, Value, JsonTreeDocument, K, NonEmpty<Identifier>> {
-        self.sealing(NonEmpty::into_inner)
+        self.sealing().accepting()
     }
     fn index(&self) -> &Json {
         &self.index
@@ -548,15 +544,19 @@ impl DecryptInto<Value> for JsonTreeDocument {
 }
 
 impl JsonTreeDocument {
-    /// Open the document under the stored column, once it has passed the
-    /// caller's check. The check runs before any key is requested.
+    /// Open the document, once its stored column has passed the caller's
+    /// check. The check runs before any key is requested.
+    ///
+    /// On its own, the document opens under the stored column. As a field
+    /// of a record, it opens under the scopes and bindings of the record
+    /// too.
     fn open<K: 'static>(self, context: ExpectedContext<Identifier>) -> Decryption<Value, K> {
-        let column = match context.validate(self.i.clone()) {
-            Ok(column) => column,
+        let context = match context.opening(self.i.clone()) {
+            Ok(context) => context,
             Err(error) => return Decryption::failed(error),
         };
         match self.document() {
-            Ok(document) => document.decryption(AeadContext::from(column)),
+            Ok(document) => document.decryption(AeadContext::from(context)),
             Err(error) => Decryption::failed(error),
         }
     }
@@ -566,23 +566,45 @@ impl JsonTreeDocument {
 /// under the default options ([`JsonTree::default`]), with the column as
 /// its context:
 ///
-/// ```ignore
+/// ```no_run
+/// use eql_bindings::{v4::json_tree::JsonTreeDocument, Identifier};
+/// use stack_encrypt::json::JsonPlaintext;
+/// use stack_encrypt::kms::{DataKeySource, IndexKeySource};
+/// use stack_encrypt::{DecryptFrom, EncryptInto, KeysetCipher};
+///
+/// # async fn example<K>(keyset: &KeysetCipher<'_, K>) -> Result<(), Box<dyn std::error::Error>>
+/// # where
+/// #     K: DataKeySource + IndexKeySource + Sync + 'static,
+/// # {
+/// let column = Identifier::for_column("customers", "profile")?;
+/// let profile = JsonPlaintext::from(serde_json::json!({"name": "Ada", "age": 36}));
 /// let document: JsonTreeDocument = profile
-///     .encrypt_into_with_context(&keyset, Identifier::for_column("customers", "profile")?)
+///     .encrypt_into_with_context(keyset, column.clone())
 ///     .await?;
+/// assert_eq!(document.i, *column.get());
+///
+/// // The column is checked against the one the document stores.
+/// let opened = JsonPlaintext::decrypt_from_with_context(document, keyset, column).await?;
+/// assert_eq!(opened.value()["name"], "Ada");
+/// # Ok(())
+/// # }
 /// ```
 ///
+/// The example is compiled, and not run: this crate's doctests have no key
+/// source. `record_fields.rs` in the encryption test crate runs the same
+/// calls.
+///
 /// It can be a field of a derived `struct = ..` record. The field's column
-/// is then the record's scope and the field's name.
+/// is then the record's scope and the field's name. A scope or a binding
+/// that the record lists is not stored in the document: the reader supplies
+/// it again.
 impl EncryptTarget<JsonPlaintext> for JsonTreeDocument {
-    type ContextInput = RequiredContext<NonEmpty<Identifier>>;
+    type ContextInput = StoredContext<Identifier>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
     where
         JsonPlaintext: 's,
     {
-        JsonTree::default()
-            .sealing(|column: Self::ContextInput| column.into_inner().into_inner())
-            .project(JsonPlaintext::value)
+        JsonTree::default().sealing().project(JsonPlaintext::value)
     }
     fn indexes() -> Vec<IndexSpec> {
         JsonTree::default().specs()

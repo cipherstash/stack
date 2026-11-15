@@ -23,7 +23,10 @@ use eql_bindings::Identifier;
 use serde::Serialize;
 use stack_encrypt::dynamic::{self, record, FieldPlan, Op, Operand, TargetDescriptor, ValueFrame};
 use stack_encrypt::op::{self, Probabilistic, Stats};
+use stack_encrypt::target::Scope;
 use stack_encrypt::{ContextPiece, Encrypt, Error, NonEmpty, Plan, StackCipher};
+use stack_encrypt::{DecryptSource, EncryptInto, EncryptTarget};
+use zeroize::Zeroize;
 
 type Cipher = StackCipher<common::Observed>;
 
@@ -441,59 +444,105 @@ async fn a_typed_query_refuses_what_the_data_path_refuses() {
     assert_eq!(calls.lock().unwrap().loads, 0, "refused before any keyset");
 }
 
-/// A query extended with `.extend(..)` derives its terms under the column
-/// and the extension, while the twin stores the column alone, so it could
-/// match nothing: it is refused, before the named keyset is loaded, for an
+#[derive(Clone, Zeroize)]
+struct Person {
+    email: String,
+    name: String,
+}
+
+/// A record whose caller supplies a tenant scope, with an exact field and a
+/// match field. Each field stores its column, and not the tenant.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Person, scope = "users", scope(tenant: i64))]
+struct EncryptedPerson {
+    email: TextEq,
+    name: TextMatch,
+}
+
+/// A query extended with `.extend(..)` derives its term under the column
+/// and the extension. A record stores its fields the same way under a
+/// scope. So the extended query is the term of the row stored under that
+/// scope, and the twin stores the column alone, as the row does. For an
 /// exact type and for `TextMatch`.
 #[tokio::test]
-async fn an_extended_typed_query_is_refused_before_any_keyset() {
-    let (cipher, calls) = common::cipher().await;
+async fn an_extended_typed_query_finds_a_value_stored_under_the_same_scope() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: EncryptedPerson = Person {
+        email: "bob@example.com".into(),
+        name: "Bob Jones".into(),
+    }
+    .encrypt_into_with_context(&keyset, Scope::new(7i64))
+    .await
+    .unwrap();
+
     let email = Plan::value::<String>()
         .context("users/email")
         .encrypt_into::<TextEq>()
         .build()
         .unwrap();
+    let query = cipher
+        .query(op::Eq, "bob@example.com")
+        .extend(7i64)
+        .on(&email)
+        .await
+        .unwrap();
+    assert_eq!(query.i, stored.email.i, "the twin stores the column alone");
+    assert_eq!(query.hm, stored.email.hm, "the term of the stored row");
+
+    // Another scope, or none, gives another term.
+    let other = cipher
+        .query(op::Eq, "bob@example.com")
+        .extend(8i64)
+        .on(&email)
+        .await
+        .unwrap();
+    assert_ne!(other.hm, stored.email.hm);
+    let unscoped = cipher
+        .query(op::Eq, "bob@example.com")
+        .on(&email)
+        .await
+        .unwrap();
+    assert_eq!(unscoped.i, stored.email.i);
+    assert_ne!(unscoped.hm, stored.email.hm);
+
     let name = Plan::value::<String>()
         .context("users/name")
         .encrypt_into::<TextMatch>()
         .build()
         .unwrap();
-    let refusals = [
-        cipher
-            .query(op::Eq, "bob")
-            .extend(7i64)
-            .keyset("tenant")
-            .on(&email)
-            .await
-            .map(drop),
-        cipher
-            .query(op::Matches, "alice")
-            .extend(7i64)
-            .keyset("tenant")
-            .on(&name)
-            .await
-            .map(drop),
-    ];
-    for refused in refusals {
-        let Err(Error::Other(reason)) = &refused else {
-            panic!("{refused:?}");
-        };
-        assert_eq!(
-            reason.downcast_ref::<QueryLabelError>(),
-            Some(&QueryLabelError::Extended),
-            "{reason}"
-        );
-    }
-    assert_eq!(calls.lock().unwrap().loads, 0, "refused before any keyset");
-
-    // Unextended, the same query loads the keyset and runs.
-    cipher
-        .query(op::Eq, "bob")
-        .keyset("tenant")
-        .on(&email)
+    let query = cipher
+        .query(op::Matches, "jones")
+        .extend(7i64)
+        .on(&name)
         .await
         .unwrap();
-    assert_eq!(calls.lock().unwrap().loads, 1);
+    assert_eq!(query.twin().i, stored.name.i);
+    // Every position the query sets is set in the stored filter.
+    assert!(
+        query
+            .twin()
+            .bf
+            .0
+            .iter()
+            .all(|position| stored.name.bf.0.contains(position)),
+        "the stored filter contains the query's"
+    );
+    let other = cipher
+        .query(op::Matches, "jones")
+        .extend(8i64)
+        .on(&name)
+        .await
+        .unwrap();
+    assert!(
+        !other
+            .twin()
+            .bf
+            .0
+            .iter()
+            .all(|position| stored.name.bf.0.contains(position)),
+        "under another scope the filter differs"
+    );
 }
 
 /// A record field naming a storage-only EQL type may store a null as the

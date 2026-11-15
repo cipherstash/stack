@@ -754,9 +754,10 @@ pub trait SuppliedContext: sealed::Sealed {
 mod sealed {
     use crate::target::{
         AeadContext, CallerContext, DeclaredContext, DeclaredScopes, NoCallerContext,
-        OptionalContext, RequiredContext,
+        OptionalContext, RequiredContext, StoredContext,
     };
     pub trait Sealed {}
+    impl<T> Sealed for StoredContext<T> {}
     impl Sealed for NoCallerContext {}
     impl Sealed for DeclaredScopes {}
     impl Sealed for DeclaredContext {}
@@ -784,6 +785,12 @@ impl SuppliedContext for DeclaredContext {
 impl<C: PartsShape> SuppliedContext for RequiredContext<C> {
     fn supplies() -> CallerShape {
         C::parts_shape()
+    }
+}
+/// A record that stores its context takes it as a `NonEmpty<T>`.
+impl<T> SuppliedContext for crate::target::StoredContext<T> {
+    fn supplies() -> CallerShape {
+        NonEmpty::<T>::parts_shape()
     }
 }
 impl<C: PartsShape> SuppliedContext for OptionalContext<C> {

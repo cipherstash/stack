@@ -14,9 +14,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::{
-    AcceptsContext, AeadContext, DecryptField, DecryptSource, Decryptable, Decryption,
+    AcceptsContext, AeadContext, Bind, DecryptField, DecryptSource, Decryptable, Decryption,
     EncryptTarget, Encryption, NoCallerContext, OptionalContext, Owned, RequiredContext,
-    ScalarContext,
+    ScalarContext, Scope,
 };
 use stack_encrypt::{
     nonempty, Ciphertext, Controlled, DecryptFrom, EncryptInto, Encrypted, Error, NonEmpty,
@@ -437,6 +437,53 @@ async fn a_sealed_field_is_not_leaked_when_the_scope_is_refused() {
             secret: probe(leaked),
         }
         .encrypt_into::<LongScopeProbeRow, _>(keyset)
+    })
+    .await;
+}
+
+/// A record whose caller supplies a scope. An empty scope is refused where
+/// the field is given its context, before the field's own target runs.
+#[allow(dead_code)] // These tests only encrypt.
+#[derive(EncryptTarget)]
+#[stash(struct = ProbeRow, scope = "rows", scope(tenant: String))]
+struct TenantProbeRow {
+    secret: StackCipherText,
+}
+
+#[tokio::test]
+async fn a_sealed_field_is_not_leaked_when_a_caller_part_is_empty() {
+    assert_refused_without_a_leak(|leaked, keyset| {
+        ProbeRow {
+            secret: probe(leaked),
+        }
+        .encrypt_into_with_context::<TenantProbeRow, _>(keyset, Scope::new(String::new()))
+    })
+    .await;
+}
+
+#[derive(Zeroize)]
+struct ProbePair {
+    first: Probe,
+    second: Probe,
+}
+/// Two sealed fields: the record divides the plaintext between them, and
+/// each is refused in turn.
+#[allow(dead_code)] // These tests only encrypt.
+#[derive(EncryptTarget)]
+#[stash(struct = ProbePair, scope = "pairs", bind(row: String))]
+struct BoundProbePair {
+    first: StackCipherText,
+    second: StackCipherText,
+}
+
+#[tokio::test]
+async fn no_sealed_field_is_leaked_when_a_caller_part_is_empty() {
+    assert_refused_without_a_leak(|leaked, keyset| {
+        ProbePair {
+            first: probe(leaked),
+            second: probe(leaked),
+        }
+        .encrypt_into_with_context::<BoundProbePair, _>(keyset, Bind::new(String::new()))
     })
     .await;
 }

@@ -36,9 +36,14 @@
 //! instance, though `Identifier::for_column` takes such a name. A column
 //! whose table or column name is not a plain segment can be written but
 //! not named on a plan, so it cannot be queried this way. A label of any other length
-//! names no column, and a query extended with `.extend(..)` is derived under
-//! more than the column the twin stores, so the awaited query refuses both,
-//! before any keyset is resolved or term derived.
+//! names no column, so the awaited query refuses it, before any keyset is
+//! resolved or term derived.
+//!
+//! A query can carry a scope: `.extend(..)` on a plan's query, or
+//! `.scope(..)` on a query from a record field's marker. Its term is then
+//! derived under the column and the scope, and matches the values a record
+//! stored under the same scope. The twin stores the column alone, as the
+//! stored value does: a scope is never stored in `i`.
 //!
 //! The plan is for queries. Stack Encrypt runs a plan's encryption under
 //! the label, and an EQL type is sealed under its column instead, so write
@@ -182,10 +187,10 @@ pub trait QueryTwin<T>: Sized {
 /// The index an EQL v4 type answers an operator through: Stack Encrypt's
 /// index `I`, whose query term is sent as the type's query twin `Q`.
 ///
-/// It derives exactly what `I` derives, under the plan's label, and checks
-/// and refuses what `I` refuses, as well as a label that names no column
-/// and any extension; it then writes the term into the twin, with the
-/// column the label names. It answers for the twin's own plaintext
+/// It derives exactly what `I` derives, under the plan's label and any
+/// scope the query carries, and checks and refuses what `I` refuses, as
+/// well as a label that names no column; it then writes the term into the
+/// twin, with the column the label names. It answers for the twin's own plaintext
 /// ([`QueryTwin::Plaintext`]) only. `TextEq` answers [`op::Eq`](struct@op::Eq) through
 /// `TwinIndex<Equality, TextEqQuery>`, and `TextMatch` answers
 /// [`op::Matches`](struct@op::Matches) through
@@ -239,19 +244,18 @@ impl<S, I: Index<S>, Q> Index<S> for TwinIndex<I, Q> {
     }
 }
 
-/// Refuse a query context no EQL query value can record: a label that
-/// names no column (it must be two segments, table then column), or any
-/// extension (`.extend(..)`), since the terms would be derived under the
-/// column and the extension while the twin stores the column alone, and
-/// would match nothing. Before any keyset is resolved or term derived.
-fn check_column(label: &Label, extended: bool) -> Result<(), Error> {
+/// Refuse a label no EQL query value can record: one that names no column
+/// (it must be two segments, table then column). Before any keyset is
+/// resolved or term derived.
+///
+/// A scope the query carries is not refused. The twin stores the column
+/// alone, and so does a value a record stored under that scope: the scope
+/// is in the term, and in neither `i`.
+fn check_column(label: &Label) -> Result<(), Error> {
     if Identifier::column_of(label).is_none() {
         return Err(Error::Other(Box::new(QueryLabelError::NotAColumn {
             label: label.to_string(),
         })));
-    }
-    if extended {
-        return Err(Error::Other(Box::new(QueryLabelError::Extended)));
     }
     Ok(())
 }
@@ -269,10 +273,6 @@ pub enum QueryLabelError {
         /// The label, rendered.
         label: String,
     },
-    /// The query was extended with `.extend(..)`, so its terms would be
-    /// derived under more than the column the twin stores, and would match
-    /// nothing.
-    Extended,
 }
 
 impl fmt::Display for QueryLabelError {
@@ -281,10 +281,6 @@ impl fmt::Display for QueryLabelError {
             Self::NotAColumn { label } => write!(
                 f,
                 "{label:?} is not an EQL column identifier: expected two segments, table and column"
-            ),
-            Self::Extended => f.write_str(
-                "an EQL query value stores the column it queries and nothing else, so its query \
-                 cannot be extended",
             ),
         }
     }
@@ -317,8 +313,8 @@ where
     fn prepare(&self, value: &Q::Plaintext) -> Result<(), Error> {
         Supports::<op::Eq, Q::Plaintext>::prepare(&self.index, value)
     }
-    fn check_label(&self, label: &Label, extended: bool) -> Result<(), Error> {
-        check_column(label, extended)
+    fn check_label(&self, label: &Label, _extended: bool) -> Result<(), Error> {
+        check_column(label)
     }
     fn query((): (), term: EqualityTerm, token: QueryToken) -> Q {
         Q::assemble(column(&token), hmac256(&term))
@@ -341,8 +337,8 @@ where
     fn prepare(&self, value: &Q::Plaintext) -> Result<QueryTokens, Error> {
         Supports::<op::Matches, Q::Plaintext>::prepare(&self.index, value)
     }
-    fn check_label(&self, label: &Label, extended: bool) -> Result<(), Error> {
-        check_column(label, extended)
+    fn check_label(&self, label: &Label, _extended: bool) -> Result<(), Error> {
+        check_column(label)
     }
     fn query(tokens: QueryTokens, terms: MatchTerms<EqlMatch>, token: QueryToken) -> MatchTwin<Q> {
         let column = column(&token);

@@ -437,12 +437,38 @@ Each field writes the terms its type writes on its own under
 names the type writes. On decrypt, each field's stored `i` must be its own
 column, checked before any key is requested.
 
-An EQL value stores a table and a column, and nothing more. So a record that
-lists a caller scope (`scope(tenant: u64)`) or a binding (`bind(row: u128)`)
-cannot have an EQL field. Every call to it is refused with
-`PlanError::ContextNotStorable`, which names the field, before any key is
-requested. The same goes for an EQL field of a record nested in another: its
-context has more parts than a table and a column.
+A record can also list a scope or a binding, such as a tenant or a row ID:
+
+```rust,ignore
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Member, scope = "members", scope(tenant: u64), bind(row: u128))]
+struct EncryptedMember {
+    #[stash(passthrough)]
+    id: u64,
+    email: TextEq, // i = {"t": "members", "c": "email"}
+}
+
+let parts = || Scope::new(tenant).bind(row);
+let stored: EncryptedMember = member.encrypt_into_with_context(&keyset, parts()).await?;
+let query = EncryptedMember::EMAIL
+    .eq("alice@example.com")
+    .scope(Scope::new(tenant))
+    .encrypt(&keyset)
+    .await?;
+let opened = Member::decrypt_from_with_context(stored, &keyset, parts()).await?;
+```
+
+`i` stores the table and the column, and nothing a caller supplies. The
+ciphertext and the terms of the field derive under the column, then the
+scope, then the binding, as they do for a field of any other type. So:
+
+- the reader supplies the scope and the binding again, and a value does not
+  open without them;
+- a query supplies the scope, and finds only the values stored under it;
+- a binding is in no query, so it does not change the terms.
+
+An EQL field of a record nested in another stores its own column in the same
+way. The outer record's names come after the column in the field's context.
 
 ### EQL types as plan field targets
 

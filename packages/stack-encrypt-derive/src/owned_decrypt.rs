@@ -227,8 +227,10 @@ fn struct_body(
 }
 
 /// A `plaintext = T` record. Its one recoverable field opens under the
-/// required context. A `context_field` record first builds that context from
-/// the context it stores, and checks it against the caller's expectation.
+/// required context. A `context_field` record first checks the context it
+/// stores against the caller's expectation, and builds that context from it.
+/// A record that is a field of a `struct = ..` record also opens under the
+/// scopes and bindings of that record (`ExpectedContext::opening`).
 fn value_body(
     record: &Record,
     plaintext: &Type,
@@ -242,7 +244,7 @@ fn value_body(
     let stored = record.context_field().map(|field| {
         let member = &field.member;
         quote! {
-            let __context = match __context.validate(self.#member) {
+            let __context = match __context.opening(self.#member) {
                 ::core::result::Result::Ok(context) => <#threaded as #krate::target::AcceptsContext>::supplied(::core::convert::Into::into(context)),
                 ::core::result::Result::Err(error) => return #krate::target::Decryption::failed(error),
             };

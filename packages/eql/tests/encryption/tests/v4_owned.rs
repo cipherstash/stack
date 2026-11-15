@@ -653,9 +653,15 @@ async fn a_value_is_refused_under_another_column_before_any_key_is_requested() {
 #[test]
 fn the_traits_the_compile_fail_examples_refuse_exist_for_the_right_shapes() {
     use eql_bindings::Identifier;
-    use stack_encrypt::target::{DecryptSource, EncryptTarget, RequiredContext};
+    use stack_encrypt::target::{AcceptsContext, DecryptSource, EncryptTarget};
     fn decrypts<T: DecryptSource<String>>() {}
-    fn encrypts<T: EncryptTarget<String, ContextInput = RequiredContext<NonEmpty<Identifier>>>>() {}
+    // The context a caller passes is the column identifier.
+    fn encrypts<T>()
+    where
+        T: EncryptTarget<String>,
+        T::ContextInput: AcceptsContext<Value = NonEmpty<Identifier>>,
+    {
+    }
     decrypts::<text::TextEq>();
     encrypts::<text::TextEq>();
     encrypts::<text::TextEqQuery>();

@@ -113,7 +113,7 @@ use stack_encrypt::sem::{
 };
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{
-    self, AeadContext, CallerContext, DecryptSource, EncryptTarget, FromFieldContext, IndexSpec,
+    self, AeadContext, CallerContext, ContextFromField, DecryptSource, EncryptTarget, IndexSpec,
     RequiredContext,
 };
 use stack_encrypt::{
@@ -202,32 +202,28 @@ impl<'a> IntoContext<'a> for &'a Identifier {
 }
 
 /// An EQL type can be a field of a derived `struct = ..` record. The record
-/// gives the field its scope and the field's name, `("members", "email")`,
-/// and the EQL type stores that pair as its column: table `members`, column
-/// `email`. It is the context the record gave, so the field writes what the
-/// type writes on its own under `Identifier::for_column("members", "email")`.
+/// gives the field a context of its own: the record's scope, then the
+/// field's name, such as `("members", "email")`. The EQL type stores that
+/// pair in `i` as its column: table `members`, column `email`.
 ///
-/// An EQL payload stores a table and a column, and nothing more. So a
-/// record that lists a caller scope or a binding cannot have an EQL field:
-/// the field refuses the context, before any key is requested.
-impl FromFieldContext for Identifier {
-    fn from_field_context(context: &CallerContext) -> Option<NonEmpty<Self>> {
-        if context.has_bindings() {
-            return None;
-        }
-        // A caller scope nests the field's pair inside a longer list, so a
-        // context with one is not two text parts and is refused below.
-        let query = context.query();
-        let ContextPiece::List(parts) = &query else {
+/// `i` holds those two declared names, and nothing a caller supplies. A
+/// record can also list a scope or a binding, such as a tenant or a row ID.
+/// The field's ciphertext and terms derive under them, after the column,
+/// as a field of any other type does. They are not stored in `i`, so the
+/// reader supplies them again. The names of a record that holds this one
+/// as a field come after the column in the same way.
+///
+/// With no scope and no binding, the field writes the terms that the type
+/// writes on its own under `Identifier::for_column("members", "email")`.
+impl ContextFromField for Identifier {
+    fn from_field(own: &ContextPiece<'_>) -> Option<NonEmpty<Self>> {
+        let ContextPiece::List(parts) = own else {
             return None;
         };
         let [ContextPiece::Text(table), ContextPiece::Text(column)] = parts.as_slice() else {
             return None;
         };
-        let identifier = Self::for_column(table.as_ref(), column.as_ref()).ok()?;
-        // Only the context the record gave: a pair that reads as a column
-        // but encodes differently would seal under another context.
-        (identifier.get().to_context() == query).then_some(identifier)
+        Self::for_column(table.as_ref(), column.as_ref()).ok()
     }
 }
 

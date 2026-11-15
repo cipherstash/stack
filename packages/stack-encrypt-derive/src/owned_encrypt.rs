@@ -102,9 +102,10 @@ fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
 }
 
 /// The caller's input on the encrypt side. A record whose fields have their
-/// own contexts takes an extension. A record that stores its context requires
-/// the `NonEmpty<T>` it stores. Any other record requires the caller context,
-/// or the type `context_type` names.
+/// own contexts takes an extension. A record that stores its context takes a
+/// `StoredContext<T>`: the caller passes the `NonEmpty<T>` it stores. Any
+/// other record requires the caller context, or the type `context_type`
+/// names.
 pub(crate) fn encrypt_input(record: &Record) -> Type {
     let krate = &record.krate;
     if record.parts.caller_any() {
@@ -113,7 +114,7 @@ pub(crate) fn encrypt_input(record: &Record) -> Type {
     }
     if let Some(field) = record.context_field() {
         let ty = &field.ty;
-        parse_quote!(#krate::target::RequiredContext<#krate::NonEmpty<#ty>>)
+        parse_quote!(#krate::target::StoredContext<#ty>)
     } else if record.by_field {
         parse_quote!(#krate::target::DeclaredScopes)
     } else {
@@ -335,8 +336,8 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
                     quote_spanned! {ty.span()=>
                         #check
                         let #local = <#ty as #krate::target::EncryptTarget<_>>::encryption::<__K>()
+                            .under_field(#own)
                             .project(|__source: &#source| &__source.#from)
-                            .under(#own)
                             .named(#name);
                     }
                 }
@@ -369,9 +370,11 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
                 } => {
                     let own = own_expr(krate, context);
                     let name = field_name(field);
+                    // `under_field` wipes the field's plaintext when the
+                    // context is refused before the field's target runs.
                     quote_spanned! {ty.span()=>
                         let #local = <#ty as #krate::target::EncryptTarget<_>>::owned_encryption::<__K>()
-                            .under(#own)
+                            .under_field(#own)
                             .named(#name);
                     }
                 }
@@ -511,8 +514,9 @@ fn own_expr(krate: &syn::Path, context: &OwnContext) -> TokenStream {
 
 /// `#[stash(plaintext = T)]`, or no record attribute. Every field's target
 /// runs over the whole value, under the one required context, and the results
-/// are zipped. A record with a `context_field` requires the `NonEmpty<T>` it
-/// stores, and returns it beside the outputs.
+/// are zipped. A record with a `context_field` stores its context
+/// (`Encryption::storing`): the `NonEmpty<T>` the caller passes, or the
+/// field's own context when the record is a field of a `struct = ..` record.
 fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> TokenStream {
     let krate = &record.krate;
     let input_type = encrypt_input(record);
@@ -570,17 +574,10 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
                 let value = literal(record, None);
                 quote!(#zipped.map(move |#zip_pattern| #value).accepting::<Self::ContextInput>())
             }
-            Some(_) => {
-                let value = literal(
-                    record,
-                    Some(
-                        quote!(#krate::target::RequiredContext::into_inner(__stored).into_inner()),
-                    ),
-                );
+            Some(stored) => {
+                let value = literal(record, Some(quote!(__stored)));
                 quote! {
-                    #zipped
-                        .accepting::<Self::ContextInput>()
-                        .map_with_context(move |#zip_pattern, __stored: Self::ContextInput| #value)
+                    #zipped.storing(move |#zip_pattern, __stored: #stored| #value)
                 }
             }
         };

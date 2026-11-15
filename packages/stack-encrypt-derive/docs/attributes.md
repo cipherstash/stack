@@ -108,7 +108,7 @@ pass one, or must not pass one. This table shows which:
 |---|---|---|---|
 | `struct = User, scope = "users"` | `DeclaredScopes`, which takes no context from the caller | The same as for encryption | `user.encrypt_into(&keyset)` |
 | `plaintext = T` | `RequiredContext<CallerContext>`, or `RequiredContext<AeadContext>` with `context_type = AeadContext` | The same as for encryption | `value.encrypt_into_with_context(&keyset, nonempty!("users/email"))` |
-| With a `context_field` of type `C` | `RequiredContext<NonEmpty<C>>` | Nothing, or the `NonEmpty<C>` the caller expects | `T::decrypt_from_with_context(record, &cipher, nonempty!(..))`, which checks the stored context before it decrypts |
+| With a `context_field` of type `C` | The `NonEmpty<C>` that the record stores, which the caller must pass | Nothing, or the `NonEmpty<C>` the caller expects | `T::decrypt_from_with_context(record, &cipher, nonempty!(..))`, which checks the stored context before it decrypts |
 
 #### Check where a record with a `context_field` came from
 
@@ -163,6 +163,10 @@ context from the record. These targets accept one:
   `RequiredContext<CallerContext>`.
 - `StackCipherText`, whose input is `RequiredContext<AeadContext>`.
 - A `plaintext` record.
+- A record with a `context_field`, when the stored type implements
+  `ContextFromField`. An EQL type is one. It stores the field's own
+  context, `("users", "<field>")`, and not the record's scopes or
+  bindings. The reader supplies those again.
 - Another `struct` record. The outer field's context then extends the
   inner record's own contexts.
 
