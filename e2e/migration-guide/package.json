@@ -1,0 +1,16 @@
+{
+  "name": "protect-to-stack-guide-example",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "postgres": "node --experimental-strip-types --env-file-if-exists=.env run.ts",
+    "dynamodb": "node --experimental-strip-types --env-file-if-exists=.env dynamodb-run.ts"
+  },
+  "dependencies": {
+    "@cipherstash/protect": "10.2.1",
+    "@cipherstash/protect-dynamodb": "6.0.1",
+    "@cipherstash/stack": "1.2.1",
+    "postgres": "3.4.9"
+  }
+}

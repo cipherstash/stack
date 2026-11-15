@@ -89,3 +89,283 @@ CREATE OPERATOR @@ (
   LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search_ore,
   RESTRICT = contsel, JOIN = contjoinsel
 );
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_eq, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_eq, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_eq
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_text_match, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_match
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
+);

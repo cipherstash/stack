@@ -77,3 +77,143 @@ CREATE OPERATOR >= (
   LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord_ope,
   COMMUTATOR = <=, NEGATOR = <, RESTRICT = scalargesel, JOIN = scalargejoinsel
 );
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_numeric_eq, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_numeric_eq, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord_ore
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord_ore
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord_ore
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord_ore
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord_ope
+);
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_numeric_ord_ope, RIGHTARG = public.{{prefix}}_numeric_ord
+);

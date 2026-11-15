@@ -29,3 +29,63 @@ CREATE OPERATOR <> (
   LEFTARG = {{prefix}}.query_integer_eq, RIGHTARG = public.{{prefix}}_integer_eq,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_integer_ord_ore, RIGHTARG = {{prefix}}.query_integer_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_integer_eq, RIGHTARG = public.{{prefix}}_integer_ord_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_integer_ord_ore, RIGHTARG = {{prefix}}.query_integer_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_integer_eq, RIGHTARG = public.{{prefix}}_integer_ord_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_integer_ord, RIGHTARG = {{prefix}}.query_integer_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_integer_eq, RIGHTARG = public.{{prefix}}_integer_ord
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_integer_ord, RIGHTARG = {{prefix}}.query_integer_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_integer_eq, RIGHTARG = public.{{prefix}}_integer_ord
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_integer_ord_ope, RIGHTARG = {{prefix}}.query_integer_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_integer_eq, RIGHTARG = public.{{prefix}}_integer_ord_ope
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_integer_ord_ope, RIGHTARG = {{prefix}}.query_integer_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_integer_eq, RIGHTARG = public.{{prefix}}_integer_ord_ope
+);

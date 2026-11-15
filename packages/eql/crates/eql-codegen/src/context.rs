@@ -348,7 +348,7 @@ pub enum FnEntry {
         required: Option<RequiredTerm>,
     },
     Wrapper {
-        op: String,            // SQL operator used in the body, e.g. =
+        op: String,            // schema-qualified body operator, e.g. OPERATOR(pg_catalog.=)
         function_name: String, // e.g. eq
         args: [SqlParam; 2],
         call_a: String, // e.g. eql_v3.eq_term(a)   (embeds extract_arg cast logic)
@@ -363,6 +363,12 @@ pub enum FnEntry {
         function_name: String, // e.g. lt / "->" / "#>"
         args: [SqlParam; 2],
         returns: String, // boolean / text / jsonb / domain (selection STAYS in Rust)
+        // `Some("<a> and <b>")` (sql_str-escaped) for a blocker that rejects a
+        // storage domain paired with ANOTHER domain's query twin: the template
+        // then emits compact docs (there is one per ordered pair of domains in a
+        // family) and a message naming both operands. `None` for every other
+        // blocker.
+        mismatch: Option<String>,
     },
 }
 
@@ -404,17 +410,13 @@ fn extractor_entry_requiring(term: Term, required: Option<RequiredTerm>) -> FnEn
 
 /// Build an inlinable comparison-wrapper entry for a supported operator.
 /// `dom` is the schema-qualified domain name; `op` is the already-resolved
-/// operator (the caller iterates `OPERATORS`, so no symbol re-lookup is needed).
-pub fn wrapper_entry(
-    dom: &str,
-    op: &Operator,
-    arg_a: &str,
-    arg_b: &str,
-    extractor: &str,
-) -> FnEntry {
+/// operator (the caller iterates `OPERATORS`, so no symbol re-lookup is needed);
+/// `term` is the term serving `op`, which supplies both the extractor and the
+/// schema the body's operator is named in.
+pub fn wrapper_entry(dom: &str, op: &Operator, arg_a: &str, arg_b: &str, term: Term) -> FnEntry {
+    let extractor = term.extractor();
     FnEntry::Wrapper {
-        // Body operator: `symbol` for all but `@@`, whose body uses bloom `@>`.
-        op: op.body_operator().to_string(),
+        op: qualified_body_operator(op, term),
         // Supported path → the public wrapper name. Differs from `function_name`
         // (the blocker name) only for `@@`, whose wrapper is `eql_v3.matches`.
         function_name: op.wrapper_function_name().to_string(),
@@ -434,6 +436,23 @@ pub fn wrapper_entry(
     }
 }
 
+/// The wrapper body's operator, schema-qualified as `OPERATOR(<schema>.<sym>)`.
+///
+/// `sym` is `op.body_operator()` (the symbol itself for all but `@@`, whose
+/// body uses bloom `@>`); `<schema>` is `term.operator_schema()`. A wrapper is
+/// unpinned `LANGUAGE sql` so it can inline, which means its body is parsed
+/// under the caller's `search_path` — a bare operator would resolve to whatever
+/// that path finds. See [`Term::operator_schema`] for the ORE failure this
+/// closes. Qualifying keeps the wrapper inlinable: the inlined
+/// expression carries the same operator OID either way.
+pub fn qualified_body_operator(op: &Operator, term: Term) -> String {
+    format!(
+        "OPERATOR({}.{})",
+        term.operator_schema(),
+        op.body_operator()
+    )
+}
+
 /// Build an unsupported-operator entry. Every such entry shares one uniform
 /// `RAISE EXCEPTION` body; only signature facts vary. `op` is the
 /// already-resolved operator (no symbol re-lookup needed).
@@ -444,6 +463,30 @@ pub fn unsupported_entry(op: &Operator, args: [SqlParam; 2], returns: &str) -> F
         function_name: op.function_name.to_string(),
         args,
         returns: returns.to_string(),
+        mismatch: None,
+    }
+}
+
+/// Build a blocker for a storage domain paired with another domain's query twin
+/// (see [`FnEntry::Unsupported::mismatch`]). Same marker text as every other
+/// blocker, so the lints that recognise blockers by message keep seeing it.
+pub fn mismatch_blocker_entry(op: &Operator, args: [SqlParam; 2], returns: &str) -> FnEntry {
+    let operands = sql_str(&format!("{} and {}", args[0].ty, args[1].ty));
+    match unsupported_entry(op, args, returns) {
+        FnEntry::Unsupported {
+            operator_lit,
+            function_name,
+            args,
+            returns,
+            ..
+        } => FnEntry::Unsupported {
+            operator_lit,
+            function_name,
+            args,
+            returns,
+            mismatch: Some(operands),
+        },
+        other => other,
     }
 }
 
@@ -483,7 +526,7 @@ pub fn operator_entry(op: &Operator, leftarg: &str, rightarg: &str, supported: b
     };
     // A supported operator is backed by a public comparison wrapper (SCHEMA); a
     // blocked one by an internal blocker (INTERNAL_SCHEMA). `supported` tracks
-    // wrapper emission exactly: `is_supported(op) ⟹ extractor_for_operator is
+    // wrapper emission exactly: `is_supported(op) ⟹ term_for_operator is
     // Some`, so `render_functions_file` always emits a wrapper for a supported
     // operator and a blocker otherwise.
     let function_schema = if supported { SCHEMA } else { INTERNAL_SCHEMA };

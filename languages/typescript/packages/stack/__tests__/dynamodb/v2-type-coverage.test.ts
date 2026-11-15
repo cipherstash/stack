@@ -641,6 +641,87 @@ describe('a stored v2 JSON document', () => {
   })
 })
 
+/**
+ * What protect-dynamodb ACTUALLY wrote for a JSON attribute — and why Stack 1.x
+ * cannot read it.
+ *
+ * The `{ h, sv }` item above is the shape a SteVec document takes on DynamoDB,
+ * but `@cipherstash/schema@2.0.2` (the schema package protect-dynamodb 6.x was
+ * authored against) never enabled `searchableJson`: a `dataType('json')` column
+ * carried no `ste_vec` index, so protect-ffi stored the document as an ordinary
+ * scalar record and the adapter wrote its `c` — a Base85 STRING — to
+ * `<attr>__source`, exactly like a text column.
+ *
+ * EQL v3 has no index-less JSON domain: `types.Json` always carries `ste_vec`,
+ * so the reader takes the SteVec branch and reads `h` / `sv` off a string. Both
+ * are `undefined`, the stored ciphertext is never forwarded, and the read fails.
+ *
+ * This pins that GAP, not a contract. A legacy scalar JSON attribute has to be
+ * read some other way (e.g. `client.decrypt()` on a rebuilt `{ v: 2, k: 'ct' }`
+ * envelope). When a reader for it lands, this case should flip to asserting the
+ * document comes back.
+ */
+describe('a legacy scalar JSON attribute, as protect-dynamodb wrote it', () => {
+  const docs = encryptedTable('docs', { meta: types.Json('meta') })
+
+  it('drops the stored ciphertext and fails the read', async () => {
+    const { dynamo, received } = ffiStub({
+      // A trap: were the stored ciphertext forwarded, this fixture would make
+      // the decrypt succeed and fail the test. Today the rebuilt envelope
+      // carries none, so the stub's missing-fixture guard raises the failure.
+      wire: { 'scalar-json-ct': { user: 'ada@example.com' } },
+      tables: [docs],
+    })
+
+    const result = await dynamo.decryptModel(
+      { pk: 'doc#1', meta__source: 'scalar-json-ct' },
+      docs,
+      { storedEqlVersion: 2 },
+    )
+
+    // The envelope handed down carries neither the stored `c` nor a usable
+    // `h` / `sv`: the ciphertext is lost before it reaches the FFI.
+    expect(received[0]).toEqual({
+      pk: 'doc#1',
+      meta: { i: { c: 'meta', t: 'docs' }, v: 2, k: 'sv' },
+    })
+    expect(JSON.stringify(received[0])).not.toContain('scalar-json-ct')
+    expect(result.failure).toBeDefined()
+  })
+})
+
+/**
+ * The one way a legacy read returns gibberish instead of failing: a stored
+ * `<attr>__source` whose stem no longer matches a property key in the v3
+ * `encryptedTable` (a rename) is not an envelope, so it is passed through as its
+ * raw ciphertext string inside a SUCCESSFUL `{ data }`. `helpers-v3.test.ts`
+ * pins the debug log at the helper level; this pins what the caller sees.
+ */
+describe('a renamed property key on a legacy read', () => {
+  const users = encryptedTable('users', {
+    givenName: types.TextEq('first_name'),
+  })
+
+  it('returns the raw ciphertext under the old attribute name, with no failure', async () => {
+    const { dynamo, received } = ffiStub({ wire: {}, tables: [users] })
+    const stored = {
+      pk: 'user#1',
+      firstName__source: 'raw-base85-ct',
+      firstName__hmac: 'stored-hmac',
+    }
+
+    const decrypted = unwrapResult(
+      await dynamo.decryptModel(stored, users, { storedEqlVersion: 2 }),
+    )
+
+    // Nothing was recognised as encrypted, so nothing reached the FFI as one,
+    // and the item comes back exactly as stored.
+    expect(received[0]).toEqual(stored)
+    expect(decrypted).toEqual(stored)
+    expect(decrypted).not.toHaveProperty('givenName')
+  })
+})
+
 // ---------------------------------------------------------------------------
 // bigint
 // ---------------------------------------------------------------------------

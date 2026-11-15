@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -786,4 +787,49 @@ func (e droppingEngine) Check(ctx context.Context, d stashgen.Declaration) (map[
 		answered[field] = kept
 	}
 	return answered, err
+}
+
+// closingEngine is a fake engine that records Close, as the embedded one
+// holds a runtime that must be released. With refuse set, it refuses every
+// declaration, as the embedded one does for a type it cannot produce.
+type closingEngine struct {
+	enginetest.Static
+	refuse bool
+	closed int
+}
+
+func (e *closingEngine) Close() error { e.closed++; return nil }
+
+func (e *closingEngine) Check(ctx context.Context, d stashgen.Declaration) (map[string][]stashgen.Operator, error) {
+	if e.refuse {
+		return nil, errors.New("engine refused the declaration")
+	}
+	return e.Static.Check(ctx, d)
+}
+
+// run closes the engine it was given on every path out of it: a written
+// file, a type the package lacks, and a declaration the engine refuses.
+func TestRunClosesTheEngine(t *testing.T) {
+	dir := writeModule(t, map[string]string{"model.go": userSource})
+	cases := []struct {
+		name   string
+		args   []string
+		refuse bool
+		code   int
+	}{
+		{"success", []string{"-type", "User"}, false, 0},
+		{"missing", []string{"-type", "Nobody"}, false, 1},
+		{"refused", []string{"-type", "User"}, true, 1},
+	}
+	for _, c := range cases {
+		engine := &closingEngine{refuse: c.refuse}
+		var stdout, stderr bytes.Buffer
+		code := run(c.args, dir, &stdout, &stderr, func(context.Context) (stashgen.Engine, error) { return engine, nil })
+		if code != c.code {
+			t.Errorf("%s: exit %d, want %d\n%s", c.name, code, c.code, stderr.String())
+		}
+		if engine.closed != 1 {
+			t.Errorf("%s: engine closed %d times, want 1\n%s", c.name, engine.closed, stderr.String())
+		}
+	}
 }

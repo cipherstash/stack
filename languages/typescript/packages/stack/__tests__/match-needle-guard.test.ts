@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { MatchIndexOpts } from '@/schema/internal'
-import { matchNeedleError, matchNeedleMinLength } from '@/schema/match-defaults'
+import {
+  likeWildcardError,
+  matchNeedleError,
+  matchNeedleMinLength,
+} from '@/schema/match-defaults'
 
 // The floor a free-text needle must clear before it yields any ngram. A needle
 // below it tokenizes to nothing, so its bloom filter is EMPTY — and
@@ -28,9 +32,21 @@ describe('matchNeedleError', () => {
     expect(matchNeedleError('lovelace', ngram)).toBeUndefined()
   })
 
-  it('rejects a needle below the floor, naming the floor and the term', () => {
+  it('rejects a needle below the floor, naming the floor and the length', () => {
     expect(matchNeedleError('ad', ngram)).toMatch(/at least 3 characters/)
-    expect(matchNeedleError('ad', ngram)).toMatch(/"ad"/)
+    expect(matchNeedleError('ad', ngram)).toMatch(/has 2\b/)
+  })
+
+  // The search term is plaintext: a caller searching an encrypted column is
+  // searching for something sensitive. Adapters throw this reason to the caller
+  // and some log it, so it must never carry the term itself — only its length.
+  it('never echoes the search term in the message', () => {
+    for (const needle of ['Qz', 'Q', '\u{1F512}X', '"z']) {
+      const reason = matchNeedleError(needle, ngram)
+      expect(reason, needle).toBeTypeOf('string')
+      expect(reason, needle).not.toContain(needle)
+      expect(reason, needle).not.toContain(JSON.stringify(needle))
+    }
   })
 
   // The tokenizer counts Unicode CODEPOINTS. `'👍👍'` is 2 codepoints but 4
@@ -89,5 +105,18 @@ describe('matchNeedleError', () => {
   it('ignores non-string operands, leaving them to the encryption layer', () => {
     expect(matchNeedleError(42, ngram)).toBeUndefined()
     expect(matchNeedleError(null, ngram)).toBeUndefined()
+  })
+})
+
+// Shared by the Supabase and Prisma like/ilike shims so neither can quote the
+// pattern (CIP-5161): it is the caller's plaintext search term.
+describe('likeWildcardError', () => {
+  it('names the wildcard problem and the pattern length in codepoints, never the pattern', () => {
+    for (const pattern of ['Qzx%wvy', 'Qzx_wvy', '\u{1F512}%Qz']) {
+      const reason = likeWildcardError(pattern)
+      expect(reason, pattern).toMatch(/cannot honor/)
+      expect(reason, pattern).toContain(`${[...pattern].length}-character`)
+      expect(reason, pattern).not.toContain('Qz')
+    }
   })
 })

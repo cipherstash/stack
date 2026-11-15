@@ -5,16 +5,16 @@ services:
     # max_locks_per_transaction is NOT a per-transaction cap — it sizes the
     # CLUSTER-WIDE shared lock table as max_locks_per_transaction *
     # max_connections. The shipped uninstaller drops both eql_v3 schemas with
-    # DROP ... CASCADE, which takes a lock on every one of the ~5,700 objects it
+    # DROP ... CASCADE, which takes a lock on every one of the ~8,550 objects it
     # removes and holds them all until commit (sqlx sends the script as a single
     # implicit transaction). At the stock 64 * 100 = 6,400 slots, ONE uninstall
-    # already consumes ~89% of the table, so two concurrent ones exhaust it and
+    # already exceeds the whole table, so two concurrent ones exhaust it and
     # every backend — including unrelated tests merely installing EQL — fails
     # with `53200 out of shared memory`. nextest runs one test per core (16 in
-    # CI), so size for the worst case: 16 * 5,700 ~= 91k slots. 1024 * 100 =
-    # 102,400 covers it, and costs ~42MB of shared memory (well inside the 2GB
+    # CI), so size for the worst case: 16 * 8,600 ~= 138k slots. 1536 * 100 =
+    # 153,600 covers it, and costs ~63MB of shared memory (well inside the 2GB
     # limit below). Keep tests/sqlx/tests/lock_capacity_tests.rs in sync.
-    command: postgres -c track_functions=all -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_locks_per_transaction=1024
+    command: postgres -c track_functions=all -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_locks_per_transaction=1536
     ports:
       - 7432:7432
     environment:

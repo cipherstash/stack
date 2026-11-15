@@ -9,7 +9,7 @@ use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::Token;
-use crate::{AuthError, AuthStrategy, ServiceToken};
+use crate::{AuthError, AuthStrategy, SecretToken, ServiceToken};
 
 /// An [`AuthStrategy`] that automatically detects available credentials
 /// and delegates to the appropriate inner strategy.
@@ -24,6 +24,8 @@ use crate::{AuthError, AuthStrategy, ServiceToken};
 ///    to verify every issued token.
 /// 2. If a token store file exists at the default location
 ///    (`~/.cipherstash/auth.json`), a [`DeviceSessionStrategy`] is created from it.
+///    If a workspace CRN is supplied, the session of that workspace is used
+///    (not the CLI's current one) and every token is verified against it.
 /// 3. Otherwise, [`AuthError::NotAuthenticated`] is returned.
 ///
 /// # Examples
@@ -93,7 +95,8 @@ impl AutoStrategy {
     ///
     /// Resolution order:
     /// 1. `CS_CLIENT_ACCESS_KEY` env var → [`AccessKeyStrategy`]
-    /// 2. `~/.cipherstash/auth.json` → [`DeviceSessionStrategy`]
+    /// 2. `~/.cipherstash/auth.json` → [`DeviceSessionStrategy`] (the workspace
+    ///    named by `CS_WORKSPACE_CRN` if set, otherwise the current one)
     /// 3. [`AuthError::NotAuthenticated`]
     pub fn detect() -> Result<Self, AuthError> {
         Self::builder().detect()
@@ -106,7 +109,7 @@ impl AutoStrategy {
     /// unreachable (no filesystem) — callers must supply an access key.
     #[cfg(not(target_arch = "wasm32"))]
     fn detect_inner(
-        access_key: Option<String>,
+        access_key: Option<&str>,
         crn: Option<Crn>,
         store: Option<ProfileStore>,
         transport: Option<SharedTransport>,
@@ -123,16 +126,22 @@ impl AutoStrategy {
             return Ok(Self::AccessKey(strategy));
         }
 
-        // 2. OAuth token from disk (in the current workspace directory)
+        // 2. OAuth token from disk. A supplied CRN pins the workspace, so the
+        //    CLI's current workspace is irrelevant; without one, use it.
         if let Some(store) = store {
-            let has_token = store
-                .current_workspace_store()
+            let ws_store = match &crn {
+                Some(crn) => store.workspace_store(crn.workspace_id.as_str()),
+                None => store.current_workspace_store(),
+            };
+            let has_token = ws_store
                 .map(|ws| ws.exists_profile::<Token>())
                 .unwrap_or(false);
             if has_token {
-                let strategy = DeviceSessionStrategy::with_profile(store)
-                    .maybe_transport(transport)
-                    .build()?;
+                let mut builder = DeviceSessionStrategy::with_profile(store);
+                if let Some(crn) = &crn {
+                    builder = builder.workspace_crn(crn);
+                }
+                let strategy = builder.maybe_transport(transport).build()?;
                 return Ok(Self::DeviceSession(strategy));
             }
         }
@@ -143,7 +152,7 @@ impl AutoStrategy {
 
     #[cfg(target_arch = "wasm32")]
     fn detect_inner(
-        access_key: Option<String>,
+        access_key: Option<&str>,
         crn: Option<Crn>,
         transport: Option<SharedTransport>,
     ) -> Result<Self, AuthError> {
@@ -180,7 +189,8 @@ impl AutoStrategy {
 /// # }
 /// ```
 pub struct AutoStrategyBuilder {
-    access_key: Option<String>,
+    /// A [`SecretToken`] so the key is wiped on drop and masked in `Debug`.
+    access_key: Option<SecretToken>,
     crn: Option<Crn>,
     transport: Option<SharedTransport>,
 }
@@ -195,7 +205,7 @@ impl AutoStrategyBuilder {
 
     /// Provide an explicit access key. Takes precedence over env vars.
     pub fn with_access_key(mut self, access_key: impl Into<String>) -> Self {
-        self.access_key = Some(access_key.into());
+        self.access_key = Some(SecretToken::new(access_key));
         self
     }
 
@@ -214,9 +224,11 @@ impl AutoStrategyBuilder {
     /// 4. [`AuthError::NotAuthenticated`]
     pub fn detect(self) -> Result<AutoStrategy, AuthError> {
         // Merge explicit values with env vars (explicit wins)
+        // Wrapped as soon as it is read, so this copy is wiped on drop. The
+        // process environment keeps its own copy, which is beyond our reach.
         let access_key = self
             .access_key
-            .or_else(|| std::env::var("CS_CLIENT_ACCESS_KEY").ok());
+            .or_else(|| access_key_from_env(std::env::var("CS_CLIENT_ACCESS_KEY")));
 
         let crn = match self.crn {
             Some(crn) => Some(crn),
@@ -238,11 +250,20 @@ impl AutoStrategyBuilder {
                     None
                 }
             };
-            AutoStrategy::detect_inner(access_key, crn, store, self.transport)
+            AutoStrategy::detect_inner(
+                access_key.as_ref().map(SecretToken::as_str),
+                crn,
+                store,
+                self.transport,
+            )
         }
         #[cfg(target_arch = "wasm32")]
         {
-            AutoStrategy::detect_inner(access_key, crn, self.transport)
+            AutoStrategy::detect_inner(
+                access_key.as_ref().map(SecretToken::as_str),
+                crn,
+                self.transport,
+            )
         }
     }
 }
@@ -253,6 +274,25 @@ impl AuthStrategy for &AutoStrategy {
             AutoStrategy::AccessKey(inner) => inner.get_token().await,
             AutoStrategy::DeviceSession(inner) => inner.get_token().await,
         }
+    }
+}
+
+/// Wrap an access key read from the environment, wiping it if it is unusable.
+///
+/// A value that is not valid UTF-8 comes back as [`VarError::NotUnicode`],
+/// which owns the whole key. It cannot be a valid access key, so it is
+/// treated as unset, as before; but it is wiped first rather than dropped,
+/// since it is still a credential.
+///
+/// [`VarError::NotUnicode`]: std::env::VarError::NotUnicode
+fn access_key_from_env(value: Result<String, std::env::VarError>) -> Option<SecretToken> {
+    match value {
+        Ok(key) => Some(SecretToken::new(key)),
+        Err(std::env::VarError::NotUnicode(key)) => {
+            drop(zeroize::Zeroizing::new(key.into_encoded_bytes()));
+            None
+        }
+        Err(std::env::VarError::NotPresent) => None,
     }
 }
 
@@ -319,7 +359,7 @@ mod tests {
         #[cfg(feature = "http")] // builds a strategy with no transport of its own
         fn access_key_with_valid_crn() {
             let result = AutoStrategy::detect_inner(
-                Some("CSAKtestKeyId.testKeySecret".into()),
+                Some("CSAKtestKeyId.testKeySecret"),
                 Some(valid_crn()),
                 None,
                 None,
@@ -331,24 +371,16 @@ mod tests {
 
         #[test]
         fn access_key_without_crn_returns_missing_workspace_crn() {
-            let result = AutoStrategy::detect_inner(
-                Some("CSAKtestKeyId.testKeySecret".into()),
-                None,
-                None,
-                None,
-            );
+            let result =
+                AutoStrategy::detect_inner(Some("CSAKtestKeyId.testKeySecret"), None, None, None);
 
             assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn(_))));
         }
 
         #[test]
         fn invalid_access_key_format_returns_invalid_access_key() {
-            let result = AutoStrategy::detect_inner(
-                Some("not-a-valid-key".into()),
-                Some(valid_crn()),
-                None,
-                None,
-            );
+            let result =
+                AutoStrategy::detect_inner(Some("not-a-valid-key"), Some(valid_crn()), None, None);
 
             assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
         }
@@ -363,6 +395,43 @@ mod tests {
 
             assert!(result.is_ok());
             assert!(matches!(result.unwrap(), AutoStrategy::DeviceSession(_)));
+        }
+
+        #[test]
+        #[cfg(feature = "http")] // builds a strategy with no transport of its own
+        fn crn_selects_that_workspaces_session_over_the_current_one() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = write_token_store(dir.path());
+            // The CLI user switches to another workspace with no session.
+            store.init_workspace("AAAAAAAAAAAAAAAA").unwrap();
+
+            let result = AutoStrategy::detect_inner(None, Some(valid_crn()), Some(store), None);
+
+            assert!(matches!(result, Ok(AutoStrategy::DeviceSession(_))));
+        }
+
+        #[test]
+        #[cfg(feature = "http")] // builds a strategy with no transport of its own
+        fn crn_matching_the_current_workspace_builds_a_device_session() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = write_token_store(dir.path());
+
+            let result = AutoStrategy::detect_inner(None, Some(valid_crn()), Some(store), None);
+
+            assert!(matches!(result, Ok(AutoStrategy::DeviceSession(_))));
+        }
+
+        #[test]
+        #[cfg(feature = "http")] // saves a token, so the fallback would build a strategy
+        fn crn_without_a_session_for_that_workspace_is_not_authenticated() {
+            let dir = tempfile::tempdir().unwrap();
+            // The current workspace has a token; the CRN names another.
+            let store = write_token_store(dir.path());
+            let crn: Crn = "crn:ap-southeast-2.aws:AAAAAAAAAAAAAAAA".parse().unwrap();
+
+            let result = AutoStrategy::detect_inner(None, Some(crn), Some(store), None);
+
+            assert!(matches!(result, Err(AuthError::NotAuthenticated(_))));
         }
 
         #[test]
@@ -389,7 +458,7 @@ mod tests {
             let store = write_token_store(dir.path());
 
             let result = AutoStrategy::detect_inner(
-                Some("CSAKtestKeyId.testKeySecret".into()),
+                Some("CSAKtestKeyId.testKeySecret"),
                 Some(valid_crn()),
                 Some(store),
                 None,
@@ -448,6 +517,28 @@ mod tests {
                 .detect();
 
             assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
+        }
+    }
+
+    mod access_key_from_env {
+        use super::super::access_key_from_env;
+        use std::env::VarError;
+
+        #[test]
+        fn wraps_a_set_value() {
+            let key = access_key_from_env(Ok("CSAKid.secret".to_string())).unwrap();
+            assert_eq!(key.as_str(), "CSAKid.secret");
+        }
+
+        #[test]
+        fn treats_an_unset_value_as_absent() {
+            assert!(access_key_from_env(Err(VarError::NotPresent)).is_none());
+        }
+
+        #[test]
+        fn treats_a_non_utf8_value_as_absent() {
+            let value = std::ffi::OsString::from("CSAKid.secret");
+            assert!(access_key_from_env(Err(VarError::NotUnicode(value))).is_none());
         }
     }
 }
