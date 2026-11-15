@@ -497,7 +497,7 @@ LANGUAGE plpgsql;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.matches(a public.{{prefix}}_text_match, b public.{{prefix}}_text_match)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b) AND (cardinality({{prefix}}.match_term(b)) > 0 OR cardinality({{prefix}}.match_term(a)) = 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a) OPERATOR(pg_catalog.@>) {{prefix}}.match_term(b) AND (pg_catalog.cardinality({{prefix}}.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality({{prefix}}.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_match.
 --! @param a public.{{prefix}}_text_match
@@ -505,7 +505,7 @@ AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b) AND (cardinali
 --! @return boolean
 CREATE FUNCTION {{prefix}}.matches(a public.{{prefix}}_text_match, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b::public.{{prefix}}_text_match) AND (cardinality({{prefix}}.match_term(b::public.{{prefix}}_text_match)) > 0 OR cardinality({{prefix}}.match_term(a)) = 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a) OPERATOR(pg_catalog.@>) {{prefix}}.match_term(b::public.{{prefix}}_text_match) AND (pg_catalog.cardinality({{prefix}}.match_term(b::public.{{prefix}}_text_match)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality({{prefix}}.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_match.
 --! @param a jsonb
@@ -513,7 +513,7 @@ AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b::public.{{prefi
 --! @return boolean
 CREATE FUNCTION {{prefix}}.matches(a jsonb, b public.{{prefix}}_text_match)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{prefix}}.match_term(a::public.{{prefix}}_text_match) @> {{prefix}}.match_term(b) AND (cardinality({{prefix}}.match_term(b)) > 0 OR cardinality({{prefix}}.match_term(a::public.{{prefix}}_text_match)) = 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a::public.{{prefix}}_text_match) OPERATOR(pg_catalog.@>) {{prefix}}.match_term(b) AND (pg_catalog.cardinality({{prefix}}.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality({{prefix}}.match_term(a::public.{{prefix}}_text_match)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Unsupported operator blocker for public.{{prefix}}_text_match.
 --!

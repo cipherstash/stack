@@ -1,31 +1,24 @@
-import { decodeJwt } from 'jose'
 import { cookies } from 'next/headers'
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { logger } from '../../utils/logger'
-import { fetchCtsToken, setCtsToken } from './cts'
+import { fetchCtsToken } from './cts'
+import {
+  CS_COOKIE_NAME,
+  type CtsToken,
+  clearCtsSession,
+  ctsTokenOf,
+  ownerOfJwt,
+  readCtsSession,
+  sessionBelongsTo,
+} from './session'
+import { syncCtsSession } from './sync'
 
-function getSubjectFromToken(jwt: string): string | undefined {
-  const payload = decodeJwt(jwt)
-
-  // The CTS JWT payload has a sub field that starts with "CS|"
-  if (typeof payload?.sub === 'string' && payload?.sub.startsWith('CS|')) {
-    return payload.sub.slice(3)
-  }
-
-  return payload?.sub
-}
-
-export const CS_COOKIE_NAME = '__cipherstash_cts_session'
-
-export type CtsToken = {
-  accessToken: string
-  expiry: number
-}
+export { CS_COOKIE_NAME, type CtsToken }
 
 export type GetCtsTokenResponse = Promise<
   | {
-      success: boolean
+      success: false
       error: string
       /**
        * The refusal code CTS attached, when it refused for a reason the caller
@@ -42,26 +35,66 @@ export type GetCtsTokenResponse = Promise<
       ctsToken?: never
     }
   | {
-      success: boolean
+      success: true
       error?: never
       authCode?: never
       ctsToken: CtsToken
     }
 >
 
-export const getCtsToken = async (oidcToken?: string): GetCtsTokenResponse => {
-  const cookieStore = await cookies()
-  const cookieData = cookieStore.get(CS_COOKIE_NAME)?.value
+type GetCtsToken = {
+  /**
+   * The CipherStash session cookie for the current request, returned as-is.
+   *
+   * @deprecated Pass the user's OIDC token. With no token there is no identity
+   * to check the cookie against, so a session left behind by a sign-out on a
+   * route the middleware does not cover is returned to whoever calls this
+   * next. Call `resetCtsToken` when a user signs out on such a route.
+   */
+  (): GetCtsTokenResponse
+  /**
+   * The CipherStash session for the current request.
+   *
+   * With `oidcToken`, the session cookie is only returned when it was minted
+   * for that token's issuer and subject; otherwise (no cookie, a malformed
+   * cookie, or a cookie belonging to someone else) a fresh session is fetched
+   * for `oidcToken`. Without it, the cookie is returned as-is, so pass the
+   * user's token whenever you have one.
+   *
+   * `oidcToken` must be a token your application has already authenticated:
+   * this function reads its `iss` and `sub` without verifying its signature,
+   * to decide which session it may reuse. CTS verifies it when a session is
+   * minted.
+   */
+  (oidcToken: string | undefined): GetCtsTokenResponse
+}
 
-  if (oidcToken && !cookieData) {
+export const getCtsToken: GetCtsToken = async (
+  oidcToken?: string,
+): GetCtsTokenResponse => {
+  const cookieStore = await cookies()
+  const rawSession = cookieStore.get(CS_COOKIE_NAME)?.value
+  const session = readCtsSession(rawSession)
+
+  if (rawSession && !session) {
     logger.debug(
-      'The CipherStash session cookie was not found in the request, but a JWT token was provided. The JWT token will be used to fetch a new CipherStash session.',
+      'The CipherStash session cookie is malformed or expired and was ignored.',
+    )
+  }
+
+  if (oidcToken) {
+    if (session && sessionBelongsTo(session, ownerOfJwt(oidcToken))) {
+      return { success: true, ctsToken: ctsTokenOf(session) }
+    }
+
+    logger.debug(
+      'No CipherStash session for the supplied JWT was found in the request. The JWT will be used to fetch a new CipherStash session.',
     )
 
     return await fetchCtsToken(oidcToken)
   }
 
-  if (!cookieData) {
+  if (!session) {
     logger.debug('No CipherStash session cookie found in the request.')
     return {
       success: false,
@@ -69,70 +102,39 @@ export const getCtsToken = async (oidcToken?: string): GetCtsTokenResponse => {
     }
   }
 
-  const cts_token = JSON.parse(cookieData) as CtsToken
-  return {
-    success: true,
-    ctsToken: cts_token,
-  }
+  return { success: true, ctsToken: ctsTokenOf(session) }
 }
 
-export const resetCtsToken = (res?: NextResponse) => {
-  if (res) {
-    res.cookies.delete(CS_COOKIE_NAME)
-    return res
-  }
+/**
+ * Delete the CipherStash session cookie, on `res` or on a new pass-through
+ * response. Use it when a user signs out on a route the middleware does not
+ * cover.
+ */
+export const resetCtsToken = (res?: NextResponse) =>
+  clearCtsSession(res ?? NextResponse.next())
 
-  const response = NextResponse.next()
-  response.cookies.delete(CS_COOKIE_NAME)
-  return response
-}
-
+/**
+ * Keep the CipherStash session cookie in step with the user `oidcToken`
+ * identifies. A session is only reused for the issuer and subject it was
+ * minted for; otherwise one is minted from `oidcToken`. An empty `oidcToken`
+ * means nobody is signed in, and the cookie is cleared.
+ *
+ * `oidcToken` must be a token your application has already authenticated. Its
+ * `iss` and `sub` are read without verifying its signature: this keeps the
+ * session in step with an identity you trust, it does not establish one.
+ */
 export const protectMiddleware = async (
   oidcToken: string,
   req: NextRequest,
   res?: NextResponse,
-) => {
-  const ctsSession = req.cookies.get(CS_COOKIE_NAME)?.value
-
-  if (oidcToken && ctsSession) {
-    const ctsToken = JSON.parse(ctsSession) as CtsToken
-    const ctsTokenSubject = getSubjectFromToken(ctsToken.accessToken)
-    const oidcTokenSubject = getSubjectFromToken(oidcToken)
-
-    if (ctsTokenSubject === oidcTokenSubject) {
-      logger.debug(
-        'The JWT token and the CipherStash session are both valid for the same user.',
-      )
-
-      return res ?? NextResponse.next()
-    }
-
-    return await setCtsToken(oidcToken, res)
-  }
-
-  if (oidcToken && !ctsSession) {
-    logger.debug(
-      'The JWT token was defined, so the CipherStash session will be set.',
-    )
-
-    return await setCtsToken(oidcToken, res)
-  }
-
-  if (!oidcToken && ctsSession) {
-    logger.debug(
-      'The JWT token was undefined, so the CipherStash session was reset.',
-    )
-
-    return resetCtsToken(res)
-  }
-
-  logger.debug(
-    'The JWT token was undefined, so the CipherStash session was not set.',
+) =>
+  await syncCtsSession(
+    req,
+    oidcToken
+      ? {
+          owner: ownerOfJwt(oidcToken),
+          getOidcToken: async () => oidcToken,
+        }
+      : undefined,
+    res,
   )
-
-  if (res) {
-    return res
-  }
-
-  return NextResponse.next()
-}

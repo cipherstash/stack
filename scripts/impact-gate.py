@@ -157,16 +157,15 @@ def report(args: argparse.Namespace, policy: str) -> None:
         publish(mark_misread_spans(result, args.base, spans))
 
 
-# lizard's TypeScript reader sometimes misses a function's closing brace (an
-# arrow callback followed by a ternary returning an object literal is one
-# trigger) and runs the span on into the next top-level declaration. Edits to
+# lizard's TypeScript reader sometimes misses a function's closing brace (in
+# lizard 1.24.3, a `{` in a regex literal is one trigger) and runs the span on
+# into the next top-level declaration. Edits to
 # that neighbour are then charged to a function the PR never touched. In
 # formatted code nothing inside a function body starts at column 0, so a
 # top-level declaration strictly inside a span is the tell. Pygments decides
 # what is code: a column-0 `const` inside a template literal is string text.
-# Limit: when the misread makes lizard drop functions instead (the same
-# trigger inside a class method reports only an `(anonymous)` function), the
-# edits land on a row that has no span to check, and nothing is marked.
+# Limit: when the misread makes lizard drop functions instead, the edits land
+# on a row that has no span to check, and nothing is marked.
 SPAN_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx')
 DECLARATION = re.compile(r'@|(export|import|declare|abstract|async|function|const|let|var'
                          r'|class|interface|type|enum)\b')

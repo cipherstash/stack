@@ -39,7 +39,7 @@ AS $$ SELECT {{prefix}}_internal.bloom_filter(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) OPERATOR(pg_catalog.=) {{prefix}}.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -47,7 +47,7 @@ AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_text_search, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b::public.{{prefix}}_text_search) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) OPERATOR(pg_catalog.=) {{prefix}}.eq_term(b::public.{{prefix}}_text_search) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a jsonb
@@ -55,7 +55,7 @@ AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b::public.{{prefix}}_tex
 --! @return boolean
 CREATE FUNCTION {{prefix}}.eq(a jsonb, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_text_search) = {{prefix}}.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_text_search) OPERATOR(pg_catalog.=) {{prefix}}.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -63,7 +63,7 @@ AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_text_search) = {{prefix}}.e
 --! @return boolean
 CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) OPERATOR(pg_catalog.<>) {{prefix}}.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -71,7 +71,7 @@ AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_text_search, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b::public.{{prefix}}_text_search) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) OPERATOR(pg_catalog.<>) {{prefix}}.eq_term(b::public.{{prefix}}_text_search) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a jsonb
@@ -79,7 +79,7 @@ AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b::public.{{prefix}}_te
 --! @return boolean
 CREATE FUNCTION {{prefix}}.neq(a jsonb, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_text_search) <> {{prefix}}.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_text_search) OPERATOR(pg_catalog.<>) {{prefix}}.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -87,7 +87,7 @@ AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_text_search) <> {{prefix}}.
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -95,7 +95,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_text_search, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b::public.{{prefix}}_text_search) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b::public.{{prefix}}_text_search) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a jsonb
@@ -103,7 +103,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b::public.{{prefix}}_t
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a jsonb, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) < {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -111,7 +111,7 @@ AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) < {{prefix}}.
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -119,7 +119,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_text_search, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b::public.{{prefix}}_text_search) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b::public.{{prefix}}_text_search) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a jsonb
@@ -127,7 +127,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b::public.{{prefix}}_
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a jsonb, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) <= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -135,7 +135,7 @@ AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) <= {{prefix}}
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -143,7 +143,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_text_search, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b::public.{{prefix}}_text_search) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b::public.{{prefix}}_text_search) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a jsonb
@@ -151,7 +151,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b::public.{{prefix}}_t
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a jsonb, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) > {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -159,7 +159,7 @@ AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) > {{prefix}}.
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -167,7 +167,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_text_search, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b::public.{{prefix}}_text_search) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b::public.{{prefix}}_text_search) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a jsonb
@@ -175,7 +175,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b::public.{{prefix}}_
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a jsonb, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) >= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_text_search) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Unsupported operator blocker for public.{{prefix}}_text_search.
 --!
@@ -407,7 +407,7 @@ LANGUAGE plpgsql;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.matches(a public.{{prefix}}_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b) AND (cardinality({{prefix}}.match_term(b)) > 0 OR cardinality({{prefix}}.match_term(a)) = 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a) OPERATOR(pg_catalog.@>) {{prefix}}.match_term(b) AND (pg_catalog.cardinality({{prefix}}.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality({{prefix}}.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a public.{{prefix}}_text_search
@@ -415,7 +415,7 @@ AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b) AND (cardinali
 --! @return boolean
 CREATE FUNCTION {{prefix}}.matches(a public.{{prefix}}_text_search, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b::public.{{prefix}}_text_search) AND (cardinality({{prefix}}.match_term(b::public.{{prefix}}_text_search)) > 0 OR cardinality({{prefix}}.match_term(a)) = 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a) OPERATOR(pg_catalog.@>) {{prefix}}.match_term(b::public.{{prefix}}_text_search) AND (pg_catalog.cardinality({{prefix}}.match_term(b::public.{{prefix}}_text_search)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality({{prefix}}.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_text_search.
 --! @param a jsonb
@@ -423,7 +423,7 @@ AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b::public.{{prefi
 --! @return boolean
 CREATE FUNCTION {{prefix}}.matches(a jsonb, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{prefix}}.match_term(a::public.{{prefix}}_text_search) @> {{prefix}}.match_term(b) AND (cardinality({{prefix}}.match_term(b)) > 0 OR cardinality({{prefix}}.match_term(a::public.{{prefix}}_text_search)) = 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a::public.{{prefix}}_text_search) OPERATOR(pg_catalog.@>) {{prefix}}.match_term(b) AND (pg_catalog.cardinality({{prefix}}.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality({{prefix}}.match_term(a::public.{{prefix}}_text_search)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Unsupported operator blocker for public.{{prefix}}_text_search.
 --!

@@ -92,7 +92,8 @@ $$;
 --!         data key; entry `c` values are raw AEAD output whose nonces are
 --!         derived from the entries' selectors) — it is opaque to SQL and
 --!         only ever carried/grafted, never parsed. Unknown envelope keys are
---!         rejected; `k` and `a` remain optional compatibility fields.
+--!         rejected; `k` and `a` remain optional, and `a`, when present, must be a
+--!         JSON boolean (matching the sv entry validator).
 CREATE OR REPLACE FUNCTION public.{{prefix}}_is_valid_ste_vec_document_payload(val jsonb)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
@@ -105,6 +106,7 @@ AS $$
      AND jsonb_typeof(val -> 'h') = 'string'
      AND jsonb_typeof(val -> 'sv') = 'array'
      AND val - ARRAY['v', 'k', 'i', 'h', 'sv', 'a']::text[] = '{}'::jsonb
+     AND (NOT (val ? 'a') OR jsonb_typeof(val -> 'a') = 'boolean')
      AND NOT EXISTS (
        SELECT 1
        FROM jsonb_array_elements(
@@ -250,6 +252,13 @@ $$;
 --! GIN index expression:
 --!   `GIN ({{prefix}}.to_ste_vec_query(col)::jsonb jsonb_path_ops)`.
 --!
+--! @note There is deliberately no `CREATE CAST` from `public.{{prefix}}_json_search`
+--!   to `{{prefix}}.query_json`. PostgreSQL ignores a cast whose source type is a
+--!   domain (it warns "cast will be ignored because the source data type is a
+--!   domain"), so `doc::{{prefix}}.query_json` would never call
+--!   `to_ste_vec_query`; it is a plain binary coercion that then fails the
+--!   `query_json` CHECK. Call `{{prefix}}.to_ste_vec_query(col)` explicitly.
+--!
 --! @param e public.{{prefix}}_json_search Source encrypted payload
 --! @return {{prefix}}.query_json Query-shaped needle, sv elements normalised.
 --! @see {{prefix}}.query_json
@@ -292,7 +301,3 @@ AS $$
     )
   )::{{prefix}}.query_json
 $$;
-
-CREATE CAST (public.{{prefix}}_json_search AS {{prefix}}.query_json)
-  WITH FUNCTION {{prefix}}.to_ste_vec_query(public.{{prefix}}_json_search)
-  AS ASSIGNMENT;

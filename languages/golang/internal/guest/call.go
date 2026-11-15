@@ -50,20 +50,34 @@ type Exports struct {
 	LastError api.Function
 }
 
-// AllocWrite stages data into a fresh guest buffer.
-func (e Exports) AllocWrite(ctx context.Context, m api.Module, data []byte) (Buf, error) {
+// alloc asks the guest's se_alloc for n bytes. It is the one allocation
+// sequence behind AllocWrite and Place, so the two cannot drift on the
+// bound, the result's shape or the null-pointer check.
+func alloc(ctx context.Context, fn api.Function, n uint64) (Buf, error) {
 	// se_alloc takes an i32: a longer length would reach the guest
 	// truncated to its low 32 bits.
-	if uint64(len(data)) > math.MaxUint32 {
+	if n > math.MaxUint32 {
 		return Buf{}, errors.New("cipherstash: buffer exceeds the guest's 4 GiB address space")
 	}
-	res, err := e.Alloc.Call(ctx, uint64(len(data)))
+	res, err := fn.Call(ctx, n)
 	if err != nil {
 		return Buf{}, fmt.Errorf("%w: guest alloc: %w", ErrTrap, err)
 	}
-	b := Buf{Ptr: api.DecodeU32(res[0]), Len: uint32(len(data))} //nolint:gosec // bounded above
+	if len(res) == 0 {
+		return Buf{}, errors.New("cipherstash: guest allocation returned no pointer")
+	}
+	b := Buf{Ptr: api.DecodeU32(res[0]), Len: uint32(n)} //nolint:gosec // bounded above
 	if b.Ptr == 0 {
 		return Buf{}, errors.New("cipherstash: guest allocation failed")
+	}
+	return b, nil
+}
+
+// AllocWrite stages data into a fresh guest buffer.
+func (e Exports) AllocWrite(ctx context.Context, m api.Module, data []byte) (Buf, error) {
+	b, err := alloc(ctx, e.Alloc, uint64(len(data)))
+	if err != nil {
+		return Buf{}, err
 	}
 	if len(data) > 0 && !m.Memory().Write(b.Ptr, data) {
 		e.Free(ctx, b)
@@ -80,6 +94,43 @@ func (e Exports) Free(ctx context.Context, b Buf) {
 	if b.Ptr != 0 {
 		_, _ = e.Dealloc.Call(context.WithoutCancel(ctx), uint64(b.Ptr), uint64(b.Len))
 	}
+}
+
+// Place hands data to the guest from inside a host import: it allocates a
+// guest buffer through the module's own se_alloc, writes data into it and
+// stores the buffer's (ptr, len) into the guest's out-slots, which is how
+// the guest comes to own and reclaim it. se_alloc is the one export the ABI
+// lets a host import re-enter.
+//
+// It reports whether the guest took the data. Both out-slots are checked
+// against guest memory before anything is allocated: a buffer the guest is
+// never told about can be neither read nor released, and it would hold the
+// data (a bearer token, a ZeroKMS response) until shutdown. Guest memory
+// only grows, so a slot that was in range stays writable after se_alloc.
+func Place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte) bool {
+	fn := m.ExportedFunction("se_alloc")
+	if fn == nil {
+		return false
+	}
+	mem := m.Memory()
+	// Probe each slot by reading it rather than comparing against
+	// mem.Size(): Size reports zero for a full 4 GiB memory (65536 pages),
+	// which would refuse every placement.
+	if _, ok := mem.ReadUint32Le(ptrOut); !ok {
+		return false
+	}
+	if _, ok := mem.ReadUint32Le(lenOut); !ok {
+		return false
+	}
+	b, err := alloc(ctx, fn, uint64(len(data)))
+	if err != nil {
+		return false
+	}
+	// A write that fails lands nothing: wazero's Write is all-or-nothing.
+	if len(data) > 0 && !mem.Write(b.Ptr, data) {
+		return false
+	}
+	return mem.WriteUint32Le(ptrOut, b.Ptr) && mem.WriteUint32Le(lenOut, b.Len)
 }
 
 // Call stages every buffer argument, calls fn with the arguments in

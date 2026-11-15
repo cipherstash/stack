@@ -21,7 +21,7 @@ AS $$ SELECT {{prefix}}_internal.hmac_256(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_smallint_eq, b public.{{prefix}}_smallint_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) OPERATOR(pg_catalog.=) {{prefix}}.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_smallint_eq.
 --! @param a public.{{prefix}}_smallint_eq
@@ -29,7 +29,7 @@ AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_smallint_eq, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b::public.{{prefix}}_smallint_eq) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) OPERATOR(pg_catalog.=) {{prefix}}.eq_term(b::public.{{prefix}}_smallint_eq) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_smallint_eq.
 --! @param a jsonb
@@ -37,7 +37,7 @@ AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b::public.{{prefix}}_sma
 --! @return boolean
 CREATE FUNCTION {{prefix}}.eq(a jsonb, b public.{{prefix}}_smallint_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_smallint_eq) = {{prefix}}.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_smallint_eq) OPERATOR(pg_catalog.=) {{prefix}}.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_smallint_eq.
 --! @param a public.{{prefix}}_smallint_eq
@@ -45,7 +45,7 @@ AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_smallint_eq) = {{prefix}}.e
 --! @return boolean
 CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_smallint_eq, b public.{{prefix}}_smallint_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) OPERATOR(pg_catalog.<>) {{prefix}}.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_smallint_eq.
 --! @param a public.{{prefix}}_smallint_eq
@@ -53,7 +53,7 @@ AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_smallint_eq, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b::public.{{prefix}}_smallint_eq) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) OPERATOR(pg_catalog.<>) {{prefix}}.eq_term(b::public.{{prefix}}_smallint_eq) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_smallint_eq.
 --! @param a jsonb
@@ -61,7 +61,7 @@ AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b::public.{{prefix}}_sm
 --! @return boolean
 CREATE FUNCTION {{prefix}}.neq(a jsonb, b public.{{prefix}}_smallint_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_smallint_eq) <> {{prefix}}.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a::public.{{prefix}}_smallint_eq) OPERATOR(pg_catalog.<>) {{prefix}}.eq_term(b) $$;
 
 --! @brief Unsupported operator blocker for public.{{prefix}}_smallint_eq.
 --!

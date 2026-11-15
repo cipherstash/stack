@@ -114,7 +114,7 @@ AS $$ SELECT {{prefix}}_internal.ope_cllw(jsonb_build_object('op', r::jsonb -> '
 CREATE FUNCTION {{prefix}}.between(a public.{{prefix}}_real_ord_ore, r {{prefix}}.query_real_range_ore)
 RETURNS boolean
 LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term_ore(a) >= {{prefix}}_internal.lo(r) AND {{prefix}}.ord_term_ore(a) <= {{prefix}}_internal.hi(r) $$;
+AS $$ SELECT {{prefix}}.ord_term_ore(a) OPERATOR(public.>=) {{prefix}}_internal.lo(r) AND {{prefix}}.ord_term_ore(a) OPERATOR(public.<=) {{prefix}}_internal.hi(r) $$;
 
 --! @brief Whether a public.{{prefix}}_real_ord value lies in a range, both bounds included.
 --!
@@ -144,7 +144,7 @@ AS $$ SELECT {{prefix}}.ord_term_ore(a) >= {{prefix}}_internal.lo(r) AND {{prefi
 CREATE FUNCTION {{prefix}}.between(a public.{{prefix}}_real_ord, r {{prefix}}.query_real_range_ope)
 RETURNS boolean
 LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}_internal.lo(r) AND {{prefix}}.ord_term(a) <= {{prefix}}_internal.hi(r) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}_internal.lo(r) AND {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}_internal.hi(r) $$;
 
 --! @brief Whether a public.{{prefix}}_real_ord_ope value lies in a range, both bounds included.
 --!
@@ -174,4 +174,4 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}_internal.lo(r) AND {{prefix}}.
 CREATE FUNCTION {{prefix}}.between(a public.{{prefix}}_real_ord_ope, r {{prefix}}.query_real_range_ope)
 RETURNS boolean
 LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}_internal.lo(r) AND {{prefix}}.ord_term(a) <= {{prefix}}_internal.hi(r) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}_internal.lo(r) AND {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}_internal.hi(r) $$;

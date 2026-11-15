@@ -17,3 +17,23 @@ CREATE OPERATOR @@ (
   LEFTARG = {{prefix}}.query_text_match, RIGHTARG = public.{{prefix}}_text_match,
   RESTRICT = contsel, JOIN = contjoinsel
 );
+
+CREATE OPERATOR @@ (
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_text_search_ore, RIGHTARG = {{prefix}}.query_text_match
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = {{prefix}}.query_text_match, RIGHTARG = public.{{prefix}}_text_search_ore
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_match
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = {{prefix}}.query_text_match, RIGHTARG = public.{{prefix}}_text_search
+);

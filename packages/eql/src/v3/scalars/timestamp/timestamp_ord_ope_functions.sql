@@ -21,7 +21,7 @@ AS $$ SELECT {{prefix}}_internal.ope_cllw(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_timestamp_ord_ope, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) = {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -29,7 +29,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) = {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_timestamp_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) = {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.=) {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a jsonb
@@ -37,7 +37,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) = {{prefix}}.ord_term(b::public.{{prefix}}_t
 --! @return boolean
 CREATE FUNCTION {{prefix}}.eq(a jsonb, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) = {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) OPERATOR(pg_catalog.=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -45,7 +45,7 @@ AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) = {{pre
 --! @return boolean
 CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_timestamp_ord_ope, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <> {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -53,7 +53,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <> {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_timestamp_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <> {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<>) {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a jsonb
@@ -61,7 +61,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <> {{prefix}}.ord_term(b::public.{{prefix}}_
 --! @return boolean
 CREATE FUNCTION {{prefix}}.neq(a jsonb, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) <> {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) OPERATOR(pg_catalog.<>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -69,7 +69,7 @@ AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) <> {{pr
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_timestamp_ord_ope, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -77,7 +77,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_timestamp_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a jsonb
@@ -85,7 +85,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b::public.{{prefix}}_t
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a jsonb, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) < {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -93,7 +93,7 @@ AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) < {{pre
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_timestamp_ord_ope, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -101,7 +101,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_timestamp_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a jsonb
@@ -109,7 +109,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b::public.{{prefix}}_
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a jsonb, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) <= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -117,7 +117,7 @@ AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) <= {{pr
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_timestamp_ord_ope, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -125,7 +125,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_timestamp_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a jsonb
@@ -133,7 +133,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b::public.{{prefix}}_t
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a jsonb, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) > {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -141,7 +141,7 @@ AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) > {{pre
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_timestamp_ord_ope, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a public.{{prefix}}_timestamp_ord_ope
@@ -149,7 +149,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_timestamp_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b::public.{{prefix}}_timestamp_ord_ope) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_timestamp_ord_ope.
 --! @param a jsonb
@@ -157,7 +157,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b::public.{{prefix}}_
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a jsonb, b public.{{prefix}}_timestamp_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) >= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a::public.{{prefix}}_timestamp_ord_ope) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Unsupported operator blocker for public.{{prefix}}_timestamp_ord_ope.
 --!

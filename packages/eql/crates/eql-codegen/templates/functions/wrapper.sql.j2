@@ -4,4 +4,4 @@
 --! @return boolean
 CREATE FUNCTION {{ schema }}.{{ e.function_name }}({{ e.args[0].name }} {{ e.args[0].ty }}, {{ e.args[1].name }} {{ e.args[1].ty }})
 RETURNS boolean LANGUAGE sql IMMUTABLE{% if not e.empty_bloom_guard %} STRICT{% endif %} PARALLEL SAFE
-AS $$ SELECT {{ e.call_a }} {{ e.op }} {{ e.call_b }}{% if e.empty_bloom_guard %} AND (cardinality({{ e.call_b }}) > 0 OR cardinality({{ e.call_a }}) = 0){% endif %} $$;
+AS $$ SELECT {{ e.call_a }} {{ e.op }} {{ e.call_b }}{% if e.empty_bloom_guard %} AND (pg_catalog.cardinality({{ e.call_b }}) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality({{ e.call_a }}) OPERATOR(pg_catalog.=) 0){% endif %} $$;

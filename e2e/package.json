@@ -6,15 +6,23 @@
   "type": "module",
   "scripts": {
     "test:e2e": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "test:protect-compat": "vitest run --config vitest.protect-compat.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:protect-crossover": "vitest run --config vitest.protect-crossover.config.ts"
   },
   "dependencies": {
-    "stash": "workspace:*",
     "@cipherstash/stack": "workspace:*",
-    "@cipherstash/wizard": "workspace:*"
+    "@cipherstash/wizard": "workspace:*",
+    "stash": "workspace:*"
   },
   "devDependencies": {
+    "@cipherstash/protect": "10.2.1",
+    "@cipherstash/protect-dynamodb": "6.0.1",
+    "@cipherstash/stack-0.19": "npm:@cipherstash/stack@0.19.0",
+    "@cipherstash/test-kit": "workspace:*",
     "@types/semver": "7.8.0",
+    "dotenv": "17.4.2",
+    "postgres": "^3.4.8",
     "semver": "^7.8.0",
     "typescript": "catalog:repo",
     "vitest": "catalog:repo",

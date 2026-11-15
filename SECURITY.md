@@ -51,6 +51,12 @@ a fake key source, executes the Rustdoc text encryption example, and provides
 optional disposable PostgreSQL coverage. It adds no published package or
 production service.
 
+`e2e/migration-guide` is an unpublished npm example package, outside the
+workspace release pipeline. It uses live encryption credentials and a disposable
+Postgres database; its DynamoDB example persists items only in memory. It is
+not a production migration service. Reports of unsafe migration guidance are
+in scope as documentation/code-example issues.
+
 > **Note on publishing.** Every package in the table above, including all
 > seven `@cipherstash/protect-ffi*` packages, all seven `@cipherstash/auth*`
 > packages and `@cipherstash/eql`, is published from this repository by

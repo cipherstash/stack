@@ -72,7 +72,7 @@ LANGUAGE plpgsql;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_json_entry, b {{prefix}}.query_smallint_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a {{prefix}}.query_smallint_ord
@@ -80,7 +80,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a {{prefix}}.query_smallint_ord, b public.{{prefix}}_json_entry)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a public.{{prefix}}_json_entry
@@ -88,7 +88,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_json_entry, b {{prefix}}.query_smallint_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a {{prefix}}.query_smallint_ord
@@ -96,7 +96,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a {{prefix}}.query_smallint_ord, b public.{{prefix}}_json_entry)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a public.{{prefix}}_json_entry
@@ -104,7 +104,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_json_entry, b {{prefix}}.query_smallint_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a {{prefix}}.query_smallint_ord
@@ -112,7 +112,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a {{prefix}}.query_smallint_ord, b public.{{prefix}}_json_entry)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a public.{{prefix}}_json_entry
@@ -120,7 +120,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_json_entry, b {{prefix}}.query_smallint_ord)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a {{prefix}}.query_smallint_ord
@@ -128,7 +128,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a {{prefix}}.query_smallint_ord, b public.{{prefix}}_json_entry)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Unsupported operator blocker for public.{{prefix}}_json_entry.
 --!
@@ -192,7 +192,7 @@ LANGUAGE plpgsql;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_json_entry, b {{prefix}}.query_smallint_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a {{prefix}}.query_smallint_ord_ope
@@ -200,7 +200,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lt(a {{prefix}}.query_smallint_ord_ope, b public.{{prefix}}_json_entry)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a public.{{prefix}}_json_entry
@@ -208,7 +208,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_json_entry, b {{prefix}}.query_smallint_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a {{prefix}}.query_smallint_ord_ope
@@ -216,7 +216,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.lte(a {{prefix}}.query_smallint_ord_ope, b public.{{prefix}}_json_entry)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.<=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a public.{{prefix}}_json_entry
@@ -224,7 +224,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_json_entry, b {{prefix}}.query_smallint_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a {{prefix}}.query_smallint_ord_ope
@@ -232,7 +232,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gt(a {{prefix}}.query_smallint_ord_ope, b public.{{prefix}}_json_entry)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a public.{{prefix}}_json_entry
@@ -240,7 +240,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_json_entry, b {{prefix}}.query_smallint_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.{{prefix}}_json_entry.
 --! @param a {{prefix}}.query_smallint_ord_ope
@@ -248,4 +248,4 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION {{prefix}}.gte(a {{prefix}}.query_smallint_ord_ope, b public.{{prefix}}_json_entry)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) OPERATOR(pg_catalog.>=) {{prefix}}.ord_term(b) $$;

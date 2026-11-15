@@ -29,3 +29,63 @@ CREATE OPERATOR <> (
   LEFTARG = {{prefix}}.query_smallint_eq, RIGHTARG = public.{{prefix}}_smallint_eq,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_smallint_ord_ore, RIGHTARG = {{prefix}}.query_smallint_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_smallint_eq, RIGHTARG = public.{{prefix}}_smallint_ord_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_smallint_ord_ore, RIGHTARG = {{prefix}}.query_smallint_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_smallint_eq, RIGHTARG = public.{{prefix}}_smallint_ord_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_smallint_ord, RIGHTARG = {{prefix}}.query_smallint_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_smallint_eq, RIGHTARG = public.{{prefix}}_smallint_ord
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_smallint_ord, RIGHTARG = {{prefix}}.query_smallint_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_smallint_eq, RIGHTARG = public.{{prefix}}_smallint_ord
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_smallint_ord_ope, RIGHTARG = {{prefix}}.query_smallint_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_smallint_eq, RIGHTARG = public.{{prefix}}_smallint_ord_ope
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_smallint_ord_ope, RIGHTARG = {{prefix}}.query_smallint_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_smallint_eq, RIGHTARG = public.{{prefix}}_smallint_ord_ope
+);
