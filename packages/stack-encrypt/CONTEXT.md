@@ -21,7 +21,7 @@ _Avoid_: raw path, low-level path
 Encryption driven by the output type: the type being produced (a ciphertext, a
 term, a record) declares what it is derived from, which operations produce it,
 and which context it demands; execution belongs to the cipher. Rust-only: a
-hand-written `EncryptFrom` type, the combinators, and the derive. With
+hand-written `EncryptTarget` type, the combinators, and the derive. With
 cipher-directed, the preferred entry point for a native Rust caller. A
 binding reaches indexes and field-by-field encryption only through a plan
 lowered from data, which runs the same engine.
@@ -68,7 +68,7 @@ mapping, config, target (a plan may name a target type for a field)
 
 **Target**:
 A type that decides a field's layout, and so the queries it answers, through
-its own `EncryptFrom`: an EQL type, `Encrypted<Terms>`, or a type of the
+its own `EncryptTarget`: an EQL type, `Encrypted<Terms>`, or a type of the
 consumer's. A plan field is either plain verbs (encrypt, index, passthrough)
 or one target, never both. Rust-only, since it names a Rust type; a binding's
 counterpart is generated code (in Go, the generator's output), which

@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Needs stack-auth 0.44.0 and stack-kms 0.2.0.
 
 - **Three more records derive** (#1661). The owned derives did not accept
+
+- **Two more records derive** (#1661). The owned derives did not accept
   these shapes, and the removed derives did:
   - A `plaintext = T` record can have a `struct = ..` record as a field.
     The caller's context extends each of the inner record's fields.
@@ -174,10 +176,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     refused, or dropped. `assert_context!` takes a marker, and
     `Marker::contexts()` is the record's contexts narrowed to the field.
     A tuple field has no marker.
-- **Tuples of terms answer the query chain too** (#1596). A query of
-  `op::Eq` or `op::Matches` on a plan of
-  `Encrypted<(EqualityTerm, MatchTerms)>` needs no `.via(index)`. The
-  query uses the one term that answers the operator. `OreBlockTerm` implements `LabelledTarget`, so a block ORE field
+- **Tuples of terms answer a query too** (#1596). The marker of a field
+  typed `Encrypted<(EqualityTerm, MatchTerms)>` answers `eq` and
+  `matches`. The query uses the one term that answers the operator. `OreBlockTerm` implements `LabelledTarget`, so a block ORE field
   is queried under its label.
 - **`dynamic::Planned`, a value under a plan that is data** (#1486). A
   record under a `Plan`, or a query value under a `QueryPlan`, each a
@@ -278,6 +279,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and `plan::all`. The `plan` module keeps `PlanError` and `IntoLabel`.
   - `target::Layout`, `target::JoinContext`, and tuples of targets such as
     `(StackCipherText, EqualityTerm)`.
+  - `op::DefaultIndex`. Only the chain read it. A field's target type
+    names the index that answers an operator (`op::Answers`), and a plan
+    that is data reads `dynamic::Op::answered_by`.
   - The JSON targets no longer open to a `serde_json::Value`. They open to
     a `json::JsonPlaintext`, which is wiped when it is dropped.
 
@@ -369,12 +373,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - To upgrade, do not name the type. For a record whose context field
     has type `C` and whose plaintext has type `P`, pass the
     `NonEmpty<C>` you expect, or `()` for no check, and let `Into`
-    convert it: `cipher.decrypt_as(record, expected.into())`, or
-    `P::decrypt_from_with_context(record, &cipher, expected)`. For no
-    check, `P::decrypt_from(record, &cipher)` also works.
-  - `ValuePlan::decryption_with_context` takes an `Option<NonEmpty<C>>`
-    in place of an `ExpectedContext<C>`. `None` checks only that the
-    stored context is not empty.
+    convert it: `P::decrypt_from_with_context(record, &cipher, expected)`.
+    For no check, `P::decrypt_from(record, &cipher)` also works.
 
 - **`CipherRef` replaces `target::CipherScope` and `dynamic::Scope`**
   (#1488). A `CipherRef` is one borrowed value: a connection, and the
@@ -383,8 +383,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Every entry point that took `impl CipherScope` takes
     `impl Into<CipherRef>`. A call that passes `&cipher` or `&keyset`
     compiles unchanged. These are `DecryptFrom::decrypt_from` and
-    `decrypt_from_with_context`, the legacy `decrypt_into`, `decrypt_from`
-    and `decrypt_from_with_context`, and `Pending::ready`, `failed`,
+    `decrypt_from_with_context`, and `Pending::ready`, `failed`,
     `request` and `all`.
   - A function of your own that took `impl CipherScope<'a, K>` takes
     `impl Into<CipherRef<'a, K>>` instead.
@@ -418,7 +417,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the three. `Operator::OP` and `Leaf::AT` are new, with `None` defaults,
     so an operator outside this crate needs nothing more.
   - What a query is refused for is written once, in the `sem` module, for
-    the typed chain and the dynamic path alike. So the typed chain now
+    a typed query and the dynamic path alike. So a typed query now
     refuses an equality or order query of text with no normal form, and
     block ORE text over its limit, before the keyset is resolved
     (#1321); the dynamic path already did. `Supports<Eq, S> for Equality`
@@ -435,11 +434,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `PlanError::IndexOverlap` on the typed path and `overlapping_outputs`
   on the dynamic one, before any key is requested; two match indexes were
   already one index twice (`DuplicateIndex`). `(Equality, Ore)` answer
-  different operators and are allowed. The rule is a declaration's. A
-  record derived with `EncryptFrom` builds a plan, so a field of
-  `(OreTerm, OpeTerm)` on it is refused the same way. `indexed(..)` and a
-  hand-written `EncryptFrom` with two order indexes still run, since no
-  plan holds them and no query reads the second term. Each index declares the operators it answers once (`Equality::OPERATORS`,
+  different operators and are allowed. The rule is a declaration's.
+  `Encrypted<(OreTerm, OpeTerm)>` as a target, and a derived
+  `plaintext = T` record with those two fields, are refused the same way
+  (see "A set of terms holds one index for each operator", above). The
+  combinator `indexed(..)` composed by hand with two order indexes still
+  runs, since no query reads the second term. Each index declares the operators it answers once (`Equality::OPERATORS`,
   `Ore::OPERATORS`, …; `IndexSpec::operators` and `IndexSpec::answers`
   read them), and `Op::answered_by` has no priority between order indexes.
   A field that stored both order terms wrote the OPE one for nothing, and
@@ -495,22 +495,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound. The change lets `OpaqueBlob<T>` implement `OpaqueDecode`: a blob
   opens as a bytes leaf and is decoded afterwards, so it cannot implement
   `Decrypt`.
-- **The record attribute `context = ".."` is now `scope = ".."`**, on the
-  `EncryptFrom` and `DecryptInto` derives as on the owned ones. The value is
+- **The record attribute `context = ".."` is now `scope = ".."`**. The
+  value is
   the record's name, the first scope of each field's context, and the
   stored data does not change. Write `#[stash(struct = User, scope =
   "users")]`. The old spelling is a compile error that names the new one.
-  The plan builder's `Plan::context(..)` and the Go `context=` tag are not
-  renamed yet.
-- **The structural `Vec<T>: DecryptInto<Vec<P>>` and `DecryptField<Vec<P>, _>`
-  impls require `P: Zeroize`** (#1483). These impls used to decrypt through
-  `Decryption::all`. When an element failed late, the elements recovered
-  before it were dropped without being wiped. The impls now decrypt through
-  the same wiping path as the owned `Vec<T>: DecryptSource<Vec<P>>`, so
-  those elements are wiped before the error is returned.
-  - If a structural record decrypts a column into a struct plaintext, derive
-    `Zeroize` on that struct.
-  - Every scalar the engine decrypts into already implements `Zeroize`.
+  The Go `context=` tag is not renamed yet.
 - Repeated plan-chain `.extend(..)` calls now append parts in order, matching
   Go's `Cipher.Extend`, instead of replacing earlier extensions.
   `.extend(())` adds nothing, and grouped `NonEmpty` parts retain their grouping.
@@ -598,8 +588,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     data.
 
   A database NULL is not a sealed null. A sealed null is a stored value that
-  means "null". An EQL type encrypted from an `Option<String>` writes one. The
-  structural `EncryptFrom` and `DecryptInto` already supported `Option<T>`.
+  means "null". An EQL type encrypted from an `Option<String>` writes one.
 - **Owned records: `#[derive(EncryptTarget, DecryptSource)]`** (#1483). A
   struct now encrypts field by field into a record type that declares its
   own layout. The crate docs' "Records" section and the derive crate's
@@ -644,10 +633,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `User`, which the caller must wipe.
   - If a later field is refused during decryption, the fields already
     decrypted are wiped.
-  - Both derives also implement the structural `EncryptFrom`,
-    `DecryptInto`, and `DecryptField`. So an owned record can be a field of a
-    `#[derive(EncryptFrom)]` record, or a typed plan field, with no second
-    derive. Derive one pair on a record, not both.
+  - `#[derive(DecryptSource)]` also implements `DecryptField`, so a
+    record can be a field of another record.
 - **A `Ciphertext` decrypts into a `Protected`.** `OpaqueDecode` now covers
   every `Decrypt + Zeroize` type, not only the `FromScalar` ones. So
   `keyset.decrypt::<Protected<String>>(ct)` and
@@ -701,9 +688,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     contexts, `DeclaredContext` and `CallerContext`. So do the
     `RequiredContext` wrappers of the core contexts. This is how a record
     field is given its context.
-- **`FieldsBuilder::target::<T, _>()`** adds a plan field laid out by an
-  owned target that has no structural declaration, such as a `Ciphertext`.
-  It lowers to `<T as EncryptTarget<F>>::encryption().accepting::<CallerContext>()`.
 - **Owned collections: `EncryptInto` encrypts a `Vec<S>` into a `Vec<T>`,
   and `DecryptFrom` decrypts it back** (#1482). `Vec<T>` implements
   `EncryptTarget<Vec<S>>` and `DecryptSource<Vec<P>>` for any owned element
@@ -863,18 +847,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule itself. It no longer names design records or plans, since those are
   not published with the crates.
 
-### Deprecated
-
-- **The structural derives `#[derive(EncryptFrom, DecryptInto)]` and the
-  `target::legacy` conversion traits.** New records derive `EncryptTarget`
-  and `DecryptSource`. These derives also implement the structural traits. The
-  structural API stays for now, because the plans and the dynamic engine
-  run it. It is where a migration starts, not where it ends.
-  - The structural API will be removed once every consumer has an owned
-    equivalent. That removal is tracked in #1488.
-  - No `#[deprecated]` attribute is applied yet, because the crate's own
-    plan and dynamic modules still implement these traits.
-
 ### Fixed
 
 - **A derived record wipes an owned plaintext when a caller's part is
@@ -890,8 +862,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#1504). `target::ciphertext()` cloned a borrowed plaintext before it
   checked the context. When the context was too long for a ZeroKMS
   descriptor, the clone was dropped without being wiped. This affected
-  `encrypt_as`, plans, and every owned target with a `StackCipherText` or
-  `Encrypted<Terms>` field.
+  every target with a `StackCipherText` or `Encrypted<Terms>` field.
   - `ciphertext()` now checks the context before it takes the plaintext.
     So a refused context makes no copy.
   - In `Owned` mode, a refused context still drops the value as it is,

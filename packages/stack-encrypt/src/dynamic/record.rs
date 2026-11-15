@@ -30,8 +30,8 @@
 //! has at least two segments. A field's label may be extended by the
 //! caller's parts, nested to the left as a binding extends one part at a
 //! time (`[["users", "age"], 7]`, then `[[["users", "age"], 7], "eu"]`), and
-//! every field must carry the same extension: it becomes the call's
-//! `.extend(..)`. A context that is not a label (one text part `"users/age"`,
+//! every field must carry the same extension: it extends the context of
+//! each field. A context that is not a label (one text part `"users/age"`,
 //! an integer, bytes) is refused as a plan a fields plan cannot express.
 //!
 //! # A plan whose context is a field of the record
@@ -2054,8 +2054,7 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 /// names another context fails the pending with
 /// [`Error::ContextMismatch`](crate::Error::ContextMismatch). `None`
 /// opens each record under whatever context it stores. For a plan with a
-/// context of its own there is nothing to expect: `Some` is refused as the
-/// chain refuses it, with
+/// context of its own there is nothing to expect: `Some` is refused with
 /// [`PlanError::TwoContextSources`](crate::PlanError::TwoContextSources).
 ///
 /// # Errors
@@ -3348,8 +3347,8 @@ mod tests {
 
         /// A field's context is its label, optionally extended, and nothing
         /// else: what a fields plan can give a field. The shapes refused here
-        /// are contexts (`dynamic::context` reads them) that no `.fields()`
-        /// chain could spell.
+        /// are contexts (`dynamic::context` reads them) that no field of a
+        /// record can have.
         #[test]
         fn refuses_a_field_context_that_is_not_a_label() {
             // The text, one-segment, malformed-segment and nested-extension
@@ -5324,7 +5323,7 @@ mod tests {
 
         /// An expected context is for a plan that takes its context from a
         /// field. For one with a context of its own it is a second source,
-        /// refused as the chain refuses it.
+        /// and it is refused.
         #[tokio::test]
         async fn an_expected_context_on_a_plan_with_its_own_is_two_sources() {
             let cipher = cipher().await;
@@ -5345,7 +5344,7 @@ mod tests {
             ));
         }
 
-        /// `.extend(..)` extends the context the field supplies, as it
+        /// An extension extends the context the field supplies, as it
         /// extends a plan's own: the term is the probe under
         /// `<tenant>/age` then the part.
         #[tokio::test]

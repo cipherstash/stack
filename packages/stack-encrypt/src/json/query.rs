@@ -17,8 +17,8 @@ use super::path::JsonPath;
 use super::plain::PlainJson;
 use super::{base64, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{
-    Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
-    LabelledTarget, Lt, Lte, One, Op, Pair, Pathed, QueryTerm, QueryToken, Supports,
+    Answers, AtPath, Between, ContainedBy, Contains, Eq, Gt, Gte, Input, LabelledTarget, Lt, Lte,
+    One, Op, Pair, Pathed, QueryTerm, QueryToken, Supports,
 };
 use crate::sem::{RangeQuery, TermError};
 use crate::target::{DeclaredContext, Index, Json, Owned, Pending};
@@ -739,9 +739,6 @@ macro_rules! containment {
         impl Answers<$op, Value> for JsonDocument {
             type Via = Json;
         }
-        impl DefaultIndex<Value> for $op {
-            type Via = Json;
-        }
     )+};
 }
 containment!(Contains, ContainedBy);
@@ -769,13 +766,6 @@ where
     }
 }
 impl<P, V> Answers<AtPath<Eq>, (P, V)> for JsonDocument
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + Clone + 'static,
-{
-    type Via = Json;
-}
-impl<P, V> DefaultIndex<(P, V)> for AtPath<Eq>
 where
     P: AsRef<str> + 'static,
     V: Into<Value> + Clone + 'static,
@@ -851,13 +841,6 @@ macro_rules! orderings {
         {
             type Via = Json;
         }
-        impl<P, V> DefaultIndex<(P, V)> for AtPath<$op>
-        where
-            P: AsRef<str> + 'static,
-            V: Into<Value> + Clone + 'static,
-        {
-            type Via = Json;
-        }
     )+};
 }
 orderings!(Lt, Lte, Gt, Gte);
@@ -885,13 +868,6 @@ where
     }
 }
 impl<P, V> Answers<AtPath<Between>, (P, (V, V))> for JsonDocument
-where
-    P: AsRef<str> + 'static,
-    V: Into<Value> + Clone + 'static,
-{
-    type Via = Json;
-}
-impl<P, V> DefaultIndex<(P, (V, V))> for AtPath<Between>
 where
     P: AsRef<str> + 'static,
     V: Into<Value> + Clone + 'static,

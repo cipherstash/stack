@@ -48,9 +48,11 @@
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
-//! On the query side a field's indexes answer one at a time, with no
-//! ciphertext: [`Indexes::select`] picks the index by type and
-//! [`Index::operation`] is its term alone.
+//! One term can be derived alone, with no ciphertext: [`Indexes::select`]
+//! picks an index out of a set by type, and [`Index::operation`] is its
+//! term alone. A field marker's query does not use `select`: the field's
+//! target type names the index that answers each operator
+//! ([`Answers`](crate::op::Answers)).
 //!
 //! For the FFI and for saved plans an index lowers to data,
 //! [`IndexSpec`], through [`Index::spec`]. Parameters live on the index
@@ -192,10 +194,14 @@ pub(crate) fn overlapping(indexes: &[IndexSpec]) -> Option<(&IndexSpec, &IndexSp
 /// the orderings, so a query for one would have to choose between them.
 /// The dynamic path refuses the same declarations when it parses a plan.
 ///
-/// A typed declaration calls this when it is described, so the refusal
-/// comes before any key is requested: [`Encrypted<Terms>`] checks the
+/// A target calls this when it is described, so the refusal comes before
+/// any key is requested: [`Encrypted<Terms>`] used as a target checks the
 /// indexes its terms name, and a derived `plaintext = T` record checks the
 /// indexes of its fields.
+///
+/// The combinator [`indexed`] does not call it. A description built by
+/// hand from `indexed((Ore, Ope))` and run with
+/// [`KeysetCipher::run`](crate::KeysetCipher::run) derives both terms.
 ///
 /// # Errors
 ///
@@ -845,6 +851,11 @@ mod term_tuples {
 ///
 /// The type parameters are in the order [`ciphertext`]'s are, with the
 /// indexes last: `indexed::<u32, _, Borrowed, _>((Equality, Ore))`.
+///
+/// This does not check the set of indexes. A set that names one index
+/// twice, or two indexes that answer one operator, derives every term it
+/// names. The target [`Encrypted<Terms>`] refuses such a set before any
+/// key is requested.
 pub fn indexed<'s, S, K, M, X>(
     indexes: X,
 ) -> Encryption<'s, S, Encrypted<X::Terms>, K, CallerContext, M>

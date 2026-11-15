@@ -79,9 +79,6 @@
 //! - [`Answers<Op, In>`] is on a target type, a domain type such as an EQL
 //!   type, and names the index that answers `Op` for it. It is written by
 //!   hand per type, because the choice decides what the query term reveals.
-//! - [`DefaultIndex<In>`] is on an operator, and names the index a field
-//!   that declares its indexes as data, rather than a target type, answers
-//!   it with.
 //!
 //! What a query takes is the operator's [`Arity`]: [`One`] plaintext, a
 //! [`Pair`] of them as a tuple, or for an accessor a path and its leaf
@@ -460,7 +457,7 @@ impl fmt::Display for Op {
 
 /// How many plaintexts a query for an operator takes: [`One`] or a
 /// [`Pair`], or for an accessor a path and its leaf's input ([`Pathed`]).
-/// Sealed: the chain derives a term per plaintext and joins them as the
+/// Sealed: a query derives a term per plaintext and joins them as the
 /// arity says, so there are exactly these.
 pub trait Arity: sealed::Sealed + 'static {}
 
@@ -513,7 +510,7 @@ pub trait Input<A: Arity>: Sized + 'static {
     type Terms<T: 'static>: 'static;
 
     /// Derive the index's term for each plaintext of the input under
-    /// `label`, as one pending. Only a query chain calls this.
+    /// `label`, as one pending. Only a field marker's query calls this.
     #[doc(hidden)]
     fn derive<'a, 'p, I, K>(
         self,
@@ -780,8 +777,8 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     /// before the input is consumed; an index that refuses nothing and
     /// keeps nothing returns `Ok(())`.
     ///
-    /// A query chain calls this once, when the query is awaited, before any
-    /// keyset is resolved, and keeps the verifier until the term is
+    /// A field marker's query calls this once, when it is encrypted, before
+    /// any key is requested, and keeps the verifier until the term is
     /// derived. So a verifier exists only for an input the index accepted,
     /// and a refused query costs no key request. The refusals are the
     /// `sem` module's, one function per index, which the dynamic path
@@ -801,14 +798,14 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
         Ok(())
     }
     /// The query term, from the verifier and the terms the index derived
-    /// for the input's plaintexts. Only a query chain calls this:
+    /// for the input's plaintexts. Only a field marker's query calls this:
     /// `QueryToken` cannot be made outside this crate, so no caller can
     /// pair one query's tokens with another value's filter, or pass a
     /// stored term off as a query.
     ///
     /// The token carries the context the terms were derived under
     /// ([`QueryToken::label`], [`QueryToken::is_extended`]), for a query
-    /// term that records it beside its terms. The chain calls this only
+    /// term that records it beside its terms. The query calls this only
     /// after [`check_label`](Self::check_label) accepted that context, so a
     /// term built from it need not refuse it again.
     fn query(
@@ -818,7 +815,7 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     ) -> Self::Query;
 }
 
-/// Proof that [`Supports::query`] is called by a query chain, and the
+/// Proof that [`Supports::query`] is called by a field marker's query, and the
 /// context the query's terms were derived under. Only this crate can make
 /// one, so an index in another crate can implement [`Supports`] but no
 /// caller can turn a term into a query term by hand, or name a context its
@@ -948,21 +945,6 @@ macro_rules! orders {
     )+};
 }
 orders!(Ore => OreTerm, block: false, Ope => OpeTerm, block: false, OreBlock => OreBlockTerm, block: true);
-
-/// The ordering operators default to the ORE index. A field answers
-/// through an OPE or block ORE index when it declares that index.
-macro_rules! default_ore {
-    ($($op:ident),+ $(,)?) => {$(
-        impl<S: Ordered> DefaultIndex<S> for $op {
-            type Via = Ore;
-        }
-    )+};
-}
-default_ore!(Lt, Lte, Gt, Gte);
-
-impl<S: Ordered> DefaultIndex<(S, S)> for Between {
-    type Via = Ore;
-}
 
 /// A target type that answers the operator `Op` for the input `In`, and
 /// the index it answers it with.
@@ -1222,38 +1204,14 @@ mod term_tuples {
     }
 }
 
-/// The index an operator is answered with where a field declares its
-/// indexes as data, and no target type's [`Answers`] says otherwise: the
-/// table a plan that is data reads (`dynamic::Op::answered_by`).
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` has no default index given `{In}`",
-    label = "no default index answers this operator here",
-    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; `op::Contains`, `op::ContainedBy` and `op::AtPath` default to `Json` over a `serde_json::Value`"
-)]
-pub trait DefaultIndex<In: Input<Self::Arity>>: Operator {
-    /// The index. An index is a unit type, so its `Default` is the index.
-    type Via: Supports<Self, In> + Default;
-}
-
-impl<S> DefaultIndex<S> for Eq
-where
-    S: crate::Encrypt + Clone + 'static,
-{
-    type Via = Equality;
-}
-
-impl<S: AsRef<str> + 'static> DefaultIndex<S> for Matches {
-    type Via = Match;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sem::DefaultMatch;
 
     /// A match index's verifier is the query's tokens: a query built from
-    /// it verifies a row that holds them and no other. A query chain takes
-    /// them through `prepare`, once.
+    /// it verifies a row that holds them and no other. A field marker's
+    /// query takes them through `prepare`, once.
     #[test]
     fn a_match_verifier_is_the_query_tokens() {
         let index = Match::<DefaultMatch>::default();

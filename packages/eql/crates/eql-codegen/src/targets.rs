@@ -14,7 +14,7 @@
 //! not. The dispatch has an arm for exactly the producible types, which are
 //! exactly the domains carrying the `stack-encrypt` derives
 //! ([`bindings::ENCRYPTION_DOMAINS`](crate::bindings::ENCRYPTION_DOMAINS)):
-//! an arm runs `<T as EncryptFrom<S>>::encryption()`, which only exists with
+//! an arm runs `<T as EncryptTarget<S>>::encryption()`, which only exists with
 //! the derive, and [`target_gap`] is tested to agree with
 //! [`encryption_gap`](crate::bindings::encryption_gap) on every domain.
 //!

@@ -560,6 +560,63 @@ async fn a_searchable_ciphertext_is_not_leaked_when_the_context_is_refused() {
     .await;
 }
 
+/// A record of one plaintext whose two fields name the equality index.
+#[allow(dead_code)] // never built: its declaration is refused
+#[derive(EncryptTarget)]
+#[stash(plaintext = Probe)]
+struct TwiceIndexedProbe {
+    first: EqualityTerm,
+    second: EqualityTerm,
+}
+
+/// A set of terms that names one index twice is refused before any key is
+/// requested. The refusal is handed the plaintext, so it must wipe it: the
+/// target alone, and a record of one plaintext.
+#[tokio::test]
+async fn a_plaintext_is_not_leaked_when_its_indexes_are_refused() {
+    let (cipher, generates, _) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let context = || nonempty!("users").with("email");
+    let leaked = Arc::new(AtomicBool::new(false));
+
+    let alone = probe(&leaked)
+        .encrypt_into_with_context::<Encrypted<(EqualityTerm, EqualityTerm)>, _>(&keyset, context())
+        .await;
+    assert!(
+        matches!(
+            alone.map(drop),
+            Err(Error::Plan(stack_encrypt::PlanError::DuplicateIndex {
+                index: "eq",
+                ..
+            }))
+        ),
+        "the target names the equality index twice"
+    );
+    assert!(
+        !leaked.load(Ordering::SeqCst),
+        "the refused target dropped the plaintext unwiped"
+    );
+
+    let in_a_record = probe(&leaked)
+        .encrypt_into_with_context::<TwiceIndexedProbe, _>(&keyset, context())
+        .await;
+    assert!(
+        matches!(
+            in_a_record.map(drop),
+            Err(Error::Plan(stack_encrypt::PlanError::DuplicateIndex {
+                index: "eq",
+                ..
+            }))
+        ),
+        "the record names the equality index twice"
+    );
+    assert!(
+        !leaked.load(Ordering::SeqCst),
+        "the refused record dropped the plaintext unwiped"
+    );
+    assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
+}
+
 #[derive(Zeroize)]
 struct Pair {
     first: Secret,

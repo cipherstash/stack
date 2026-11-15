@@ -147,10 +147,10 @@ pub enum PlanError {
     /// ciphers. A batch settles through one client and resolves every keyset
     /// it names there, so an operation from another cipher would run under a
     /// keyset its own cipher never chose.
-    #[error("the chains in one batch were started on different ciphers")]
+    #[error("the operations in one batch were started on different ciphers")]
     #[diagnostic(
         code(stack_encrypt::plan_mixed_ciphers),
-        help("Start every chain in one batch on the same cipher.")
+        help("Start every operation in one batch on the same cipher.")
     )]
     MixedCiphers,
     /// A query asked a field for an index the field never declared, so it

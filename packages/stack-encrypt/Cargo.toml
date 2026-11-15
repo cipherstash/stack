@@ -21,7 +21,7 @@ stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy. Only needed with `http`.
 stack-auth = { workspace = true, optional = true }
-# `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
+# `#[derive(EncryptTarget)]` / `#[derive(DecryptSource)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.3.0" }
 
 # The workspace vitaminc: one canonical context encoding shared by

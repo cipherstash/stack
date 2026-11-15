@@ -8,9 +8,8 @@
 //! here rather than once per language binding:
 //!
 //! - [`Op`] names an operator, as [`IndexSpec`] names an index, and
-//!   [`Op::answered_by`] is the table the typed path's `DefaultIndex`
-//!   impls state: which declared index answers the operator for a field of
-//!   a kind, if any does.
+//!   [`Op::answered_by`] is the table of which declared index answers the
+//!   operator for a field of a kind, if any does.
 //! - [`query_term`] derives the query term for a plan field, an operator and
 //!   its input: the field's own index term for the input, or, for a field
 //!   that names an EQL type, that type's query value. It refuses an operator
@@ -1979,7 +1978,7 @@ mod tests {
     }
 
     /// Match options on a field plan built by hand are not checked when the
-    /// plan is, so the query chain refuses them before it cuts a token: an
+    /// plan is, so the query refuses them before it cuts a token: an
     /// n-gram length of zero would otherwise panic in the tokenizer.
     #[test]
     fn invalid_match_options_are_refused_before_tokenising() {

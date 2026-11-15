@@ -727,7 +727,8 @@ fn every_target_declares_the_indexes_its_terms_answer() {
     );
 }
 
-/// One term of each kind over text, and a second match term.
+/// Five terms over text: equality, two match terms under different options,
+/// ORE and OPE.
 type FiveTerms = (EqualityTerm, M, OreTerm<String>, OpeTerm<String>, W);
 
 /// A record whose one field names the equality index twice.
@@ -740,9 +741,8 @@ struct TwiceCounter {
 
 /// A target holds one term for each kind of index, so a target that names
 /// an index twice is refused when it runs, before any key is requested:
-/// alone, or as a field of a derived record. Five indexes over text always
-/// repeat one. There are four kinds of index, so the fifth is a second
-/// match index under other options.
+/// alone, or as a field of a derived record. Two match indexes under
+/// different options are still the match index twice.
 #[tokio::test]
 async fn a_target_that_names_an_index_twice_is_refused_before_any_key_request() {
     let (cipher, generates, _) = counting_cipher().await;
