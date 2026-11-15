@@ -466,6 +466,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
+ "rand_core 0.6.4",
  "typenum",
 ]
 
@@ -978,6 +979,15 @@ name = "hex-literal"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ebdb29d2ea9ed0083cd8cece49bbd968021bd99b0849edb4a9a7ee0fdf6a4e0"
+
+[[package]]
+name = "hkdf"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aaa26c720c68b866f2c96ef5c1264b3e6f473fe5d4ce61cd44bbe913e553018"
+dependencies = [
+ "hmac",
+]
 
 [[package]]
 name = "hmac"
@@ -2172,6 +2182,11 @@ dependencies = [
  "stack-encrypt",
  "stack-guest-abi",
  "stack-kms",
+ "stack-kms-aws",
+ "stack-kms-azure",
+ "stack-kms-gcp",
+ "stack-kms-vault",
+ "stack-kms-vendor",
  "uuid",
  "zeroize",
  "zerokms-protocol",
@@ -2183,6 +2198,7 @@ version = "0.0.0"
 dependencies = [
  "miette",
  "serde_json",
+ "stack-kms-vendor",
  "thiserror 1.0.69",
  "vitaminc-aead 0.9.0",
  "vitaminc-aead-frame",
@@ -2216,6 +2232,91 @@ dependencies = [
  "vitaminc-protected 0.9.1",
  "zeroize",
  "zerokms-protocol",
+]
+
+[[package]]
+name = "stack-kms-aws"
+version = "0.1.0"
+dependencies = [
+ "base64ct",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "stack-kms",
+ "stack-kms-vendor",
+ "thiserror 1.0.69",
+ "url",
+ "vitaminc 0.9.0",
+ "web-time",
+ "zeroize",
+]
+
+[[package]]
+name = "stack-kms-azure"
+version = "0.1.0"
+dependencies = [
+ "base64ct",
+ "serde",
+ "serde_json",
+ "stack-kms",
+ "stack-kms-vendor",
+ "thiserror 1.0.69",
+ "url",
+ "vitaminc 0.9.0",
+ "web-time",
+ "zeroize",
+]
+
+[[package]]
+name = "stack-kms-gcp"
+version = "0.1.0"
+dependencies = [
+ "base64ct",
+ "serde",
+ "serde_json",
+ "stack-kms",
+ "stack-kms-vendor",
+ "thiserror 1.0.69",
+ "url",
+ "vitaminc 0.9.0",
+ "web-time",
+ "zeroize",
+]
+
+[[package]]
+name = "stack-kms-vault"
+version = "0.1.0"
+dependencies = [
+ "base64ct",
+ "serde",
+ "serde_json",
+ "stack-kms",
+ "stack-kms-vendor",
+ "thiserror 1.0.69",
+ "url",
+ "vitaminc 0.9.0",
+ "zeroize",
+]
+
+[[package]]
+name = "stack-kms-vendor"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64ct",
+ "futures",
+ "hkdf",
+ "miette",
+ "serde_json",
+ "sha2 0.11.0",
+ "stack-kms",
+ "subtle",
+ "thiserror 1.0.69",
+ "uuid",
+ "vitaminc 0.9.0",
+ "web-time",
+ "zeroize",
 ]
 
 [[package]]

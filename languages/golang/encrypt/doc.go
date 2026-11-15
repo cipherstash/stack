@@ -314,10 +314,17 @@
 //
 // The guest imports exactly one host function, a bearer-token fetch, served
 // by the credentials' auth strategy. It never performs a request itself: an
-// operation that needs ZeroKMS pauses and hands the request to the client,
-// which sends it with any [net/http.RoundTripper] and resumes the operation
-// with the response. What crosses per ZeroKMS call is what would
-// cross TLS anyway; derived key material never leaves the guest. Under
+// operation that needs ZeroKMS or the key vendor backend pauses and hands
+// the request to the client, which sends it with any
+// [net/http.RoundTripper] and resumes the operation with the response. A
+// key vendor backend's credential, from the source given with
+// [WithKeyVendor], and a retry's backoff are handed to the client the same
+// way. What crosses per ZeroKMS call is what would cross TLS anyway, and
+// keys derived from a ZeroKMS response never leave the guest: a response
+// alone is not usable. A key vendor backend is different: the host does the
+// TLS, so the host and the RoundTripper see each vendor request and
+// response in plaintext, and those carry unwrapped keys (see [KeyVendor]).
+// Under
 // [AutoCredentials] and [OIDCFederation] the same RoundTripper also carries
 // the authentication requests to CTS, so one scoped to the ZeroKMS host alone
 // is not enough. Under [NewCredentials] those requests go through the store
@@ -339,6 +346,88 @@
 // a raw one cannot be refreshed when it expires. Credentials that cannot be
 // resolved fail NewClient with [ErrNoCredentials]; credentials that resolve
 // but do not work fail it too, at the one ZeroKMS round trip it makes.
+//
+// # Key vendor backends
+//
+// A key vendor backend is an alternative to ZeroKMS: [AWSKMS],
+// [GoogleCloudKMS], [AzureManagedHSM], [VaultTransit] or [StaticKey]. Give it
+// with [WithKeyVendor], and its keyset records (the "stack-keyset:…" texts)
+// with [WithKeysetRecords]:
+//
+//	client, err := encrypt.NewClient(ctx,
+//		encrypt.WithKeyVendor(encrypt.AWSKMS{Region: "us-east-1", Credentials: creds}),
+//		encrypt.WithKeysetRecords(os.Getenv("USERS_KEYSET_RECORD")))
+//
+// With no [WithCredentials] the client has no ZeroKMS and needs no
+// CipherStash credentials. Its default keyset is its only keyset record, or
+// the one [WithDefaultKeyset] names, and a call that needs ZeroKMS fails
+// with [ErrNoZeroKMS]. With WithCredentials too, the client holds both: a
+// keyset in a record goes to the vendor, and every other keyset, the default
+// included, goes to ZeroKMS. Select a vendor keyset by its record's name or
+// id with [Client.Keyset]. A value sealed under one backend never opens
+// under the other.
+//
+// The guest builds and signs every vendor request. The host supplies the
+// credentials, per request: AWS credentials, a Google OAuth access token, an
+// Azure access token for the scope the guest names, or a Vault token. Fill
+// them from the vendor's own Go credential chain through
+// [AWSCredentialsFunc], [AccessTokenFunc] or [OAuth2AccessTokens], which
+// give short-lived credentials. [AWSCredentialsFromEnv] and a fixed Vault
+// token can give long-lived ones, and those cross to the guest on each
+// request too. This package imports no vendor SDK.
+//
+// The host sends the vendor requests and does their TLS. So the host, and
+// the RoundTripper given with [WithTransport], see in plaintext the root key
+// that a wrap request sends and that an unwrap response returns. Unlike a
+// ZeroKMS response, such a key is usable alone. The client wipes the request
+// and response bodies it holds, but not the buffers of net/http, TLS or the
+// RoundTripper. Give WithTransport only a RoundTripper you trust with key
+// material.
+//
+// A keyset record holds the keyset's root key, wrapped by the vendor key.
+// The guest derives each data key and the index key from the root key
+// (HKDF-SHA256), with no vendor call. The database holds no usable key
+// material.
+//
+//	key lifetime        root key: cached in the guest for 5 minutes
+//	                    (WithRootKeyTTL); index key: kept until the
+//	                    keyset leaves the client's keyset cache; data
+//	                    keys: derived per call
+//	vendor calls per    0, or 1 per keyset when the root key is not
+//	  call, per keyset  cached
+//	the vendor can      the root key unwrap: a refusal takes effect when
+//	  refuse            the cached root key expires
+//
+// After the vendor refuses a keyset, the client can no longer encrypt or
+// decrypt its values once the cached root key expires. It can still derive
+// search terms for that keyset while the keyset's index key stays in the
+// client's keyset cache, as it can for a ZeroKMS keyset. The first use of a
+// Vault Transit key, or of an Azure key whose identifier names no version,
+// costs one more call, a key read.
+//
+// The associated data (the keyset id, the vendor and the key mode) is bound
+// to every wrapped root key. AWS KMS binds it as the encryption context,
+// which CloudTrail logs and key policies can test. Google Cloud KMS binds it
+// as additional authenticated data. Vault Transit and Azure Managed HSM wrap
+// a key with a digest of it, which the guest checks after the unwrap; a
+// derived Transit key also gets it as its derivation context. Azure does not
+// see the binding. Nothing outside the process can refuse or audit a use of
+// [StaticKey].
+//
+// A rewrap of a keyset record (stash keyset rewrap) wraps the root key under
+// another vendor key. It does not re-key stored values, and every value
+// still opens. The stack-kms-vendor crate documentation has the full
+// capability matrix: credentials, rotation and known limits of each backend.
+//
+// A vendor keyset refuses ZeroKMS-only features (a lock context, a
+// decryption policy) with an error; it never ignores one. A vendor failure
+// reads as the ZeroKMS one of the same kind: [ErrForbidden] for a refused
+// request or bad credentials, [ErrNotFound] for a missing key, [ErrTransport]
+// for an unreachable vendor, a throttle that outlasted the retries or a
+// failed credential source (whose own error errors.Is also matches), and
+// [ErrAuthentication] for a wrapped root key that does not open. The
+// [*Diagnostic]'s code is "stack_kms::backend", and its "vendor" field names
+// the backend.
 //
 // # Errors
 //

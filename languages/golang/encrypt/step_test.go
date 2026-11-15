@@ -337,3 +337,65 @@ func marshalStep(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+// A key vendor credential request and a wait decode as their own kinds; a
+// malformed one is refused. A wait past maxWait is cut to it.
+func TestCredentialAndWaitRequestsDecode(t *testing.T) {
+	cred := vcvalue.Object{{Key: "credential", Value: vcvalue.Object{
+		{Key: "vendor", Value: uint32(3)},
+		{Key: "scope", Value: "https://managedhsm.azure.net/.default"},
+	}}}
+	r, ok := decodeRequest(cred)
+	if !ok || r.credential == nil || *r.credential != (credentialRequest{vendor: 3, scope: "https://managedhsm.azure.net/.default"}) {
+		t.Fatalf("credential request decoded as %+v, %v", r, ok)
+	}
+	for _, tc := range []struct {
+		ms   uint64
+		want time.Duration
+	}{{250, 250 * time.Millisecond}, {0, 0}, {1 << 62, maxWait}} {
+		r, ok := decodeRequest(vcvalue.Object{{Key: "wait_ms", Value: tc.ms}})
+		if !ok || r.wait == nil || *r.wait != tc.want {
+			t.Errorf("wait of %dms decoded as %+v, %v, want %v", tc.ms, r, ok, tc.want)
+		}
+	}
+	for name, bad := range map[string]vcvalue.Object{
+		"no scope":      {{Key: "credential", Value: vcvalue.Object{{Key: "vendor", Value: uint32(1)}}}},
+		"string vendor": {{Key: "credential", Value: vcvalue.Object{{Key: "vendor", Value: "aws"}, {Key: "scope", Value: ""}}}},
+		"extra key":     {{Key: "credential", Value: vcvalue.Object{{Key: "vendor", Value: uint32(1)}, {Key: "scope", Value: ""}, {Key: "x", Value: ""}}}},
+		"long scope":    {{Key: "credential", Value: vcvalue.Object{{Key: "vendor", Value: uint32(1)}, {Key: "scope", Value: string(make([]byte, maxScopeBytes+1))}}}},
+		"string wait":   {{Key: "wait_ms", Value: "250"}},
+	} {
+		if _, ok := decodeRequest(bad); ok {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// A wait ends early when its caller gives up, so a backoff never holds a
+// caller past its context.
+func TestAWaitEndsWithItsContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var tr transport
+	start := time.Now()
+	if status := tr.sit(ctx, time.Hour); status != transportFailed {
+		t.Errorf("status %d, want transportFailed", status)
+	}
+	if time.Since(start) > time.Second {
+		t.Error("the wait outlived its context")
+	}
+	if status := tr.sit(context.Background(), time.Millisecond); status != 0 {
+		t.Errorf("status %d, want 0", status)
+	}
+}
+
+// A credential request on a client with no key vendor backend fails, and
+// the operation keeps why.
+func TestACredentialRequestWithNoKeyVendorFails(t *testing.T) {
+	var tr transport
+	var op operation
+	status, body := tr.credential(context.Background(), credentialRequest{vendor: 1}, &op)
+	if status != transportFailed || op.credErr == nil || len(body) == 0 {
+		t.Errorf("status %d, body %q, credErr %v", status, body, op.credErr)
+	}
+}

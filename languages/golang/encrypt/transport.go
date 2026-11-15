@@ -33,8 +33,10 @@ type tokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
 
-// transport performs the guest's ZeroKMS requests over a RoundTripper and
-// implements its token_get import over a tokenSource. One per Client.
+// transport performs the guest's ZeroKMS and key vendor requests over a
+// RoundTripper, answers its key vendor credential requests from that
+// backend's credential source, and implements its token_get import over a
+// tokenSource. One per Client.
 type transport struct {
 	rt    http.RoundTripper
 	token tokenSource
@@ -51,6 +53,9 @@ type transport struct {
 	held     string
 	fetchErr error
 	tokenErr error
+	// vendor is the client's key vendor backend, nil when it has none. Its
+	// credential source answers the guest's credential requests (step.go).
+	vendor *vendorSpec
 }
 
 // transportFailed is the status of a request that could not be performed
@@ -203,6 +208,12 @@ func (b *requestBody) Close() error {
 // tokenGet is token_get: hand the guest the token fetched for this step.
 // It never waits: the fetch happened before the step (fetchToken).
 func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tokenLenOut uint32) int32 {
+	if t.token == nil {
+		// A client with a key vendor backend and no ZeroKMS has no token
+		// source; its guest builds no ZeroKMS client, so it never asks.
+		t.tokenErr = ErrNoZeroKMS
+		return hostFailed
+	}
 	token := t.held
 	if token == "" {
 		t.tokenErr = t.fetchErr

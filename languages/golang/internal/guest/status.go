@@ -39,7 +39,8 @@ const (
 	StatusContextMismatch = 28
 	// Not a failure: the operation is paused, waiting on HTTP requests the
 	// host performs for it. See ErrNeedsIO.
-	StatusNeedsIO = 29
+	StatusNeedsIO   = 29
+	StatusNoZeroKMS = 30
 )
 
 // StatusError is the sentinel a guest status decodes to. A status this host
@@ -105,6 +106,8 @@ func StatusError(status uint32) error {
 		return ErrContextMismatch
 	case StatusNeedsIO:
 		return ErrNeedsIO
+	case StatusNoZeroKMS:
+		return ErrNoZeroKMS
 	default:
 		return unrecognizedStatus(status)
 	}

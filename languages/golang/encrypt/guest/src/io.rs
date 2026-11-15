@@ -12,6 +12,15 @@
 //!                   "headers": <bytes>, "body": <bytes> }, ... ] }
 //! ```
 //!
+//! A request is one of three objects. Besides the HTTP request above, a key
+//! vendor backend's credential (`vendor` is its `KeyVendor` byte, `scope`
+//! the OAuth scope or empty) and a backoff wait:
+//!
+//! ```text
+//! { "credential": { "vendor": <u32>, "scope": <string> } }
+//! { "wait_ms": <u64> }
+//! ```
+//!
 //! The host performs every request and calls `se_resume` with the handle and
 //! their responses, in the same order:
 //!
@@ -22,7 +31,10 @@
 //! `headers` is the `name: value` line format of
 //! [`stack_guest_abi::headers`] both ways. A `status` is the HTTP status, or
 //! negative for a request the host could not perform, with its error text as
-//! the body: the contract `transport_send` had, field for field. A step
+//! the body: the contract `transport_send` had, field for field. A
+//! credential's response has status `0` and the credential, as a frame, in
+//! its body ([`crate::vendor`] has its keys), or a negative status and the
+//! error text; a wait's has status `0` and an empty body. A step
 //! carries the bearer token and a request body that can hold key-material
 //! contexts, and a response can carry wrapped keys, so the guest wipes its
 //! copies, and the host wipes the buffers with `se_dealloc`.
@@ -46,23 +58,56 @@ pub fn encode_step(handle: u64, requests: &[Request]) -> Result<Vec<u8>, u32> {
         requests: Vec<RequestWire<'a>>,
     }
     #[derive(Serialize)]
-    struct RequestWire<'a> {
-        method: &'a str,
-        url: &'a str,
-        headers: Bytes<'a>,
-        body: Bytes<'a>,
+    #[serde(untagged)]
+    enum RequestWire<'a> {
+        Http {
+            method: &'a str,
+            url: &'a str,
+            headers: Bytes<'a>,
+            body: Bytes<'a>,
+        },
+        Credential {
+            credential: CredentialWire<'a>,
+        },
+        Wait {
+            wait_ms: u64,
+        },
+    }
+    #[derive(Serialize)]
+    struct CredentialWire<'a> {
+        vendor: u32,
+        scope: &'a str,
     }
     let wire = Wire {
         handle,
         requests: requests
             .iter()
-            .map(|request| RequestWire {
-                method: request.method,
-                url: &request.url,
-                headers: Bytes(&request.headers),
-                body: Bytes(&request.body),
+            .map(|request| match request {
+                Request::Http(request) => Ok(RequestWire::Http {
+                    method: request.method,
+                    url: &request.url,
+                    headers: Bytes(&request.headers),
+                    body: Bytes(&request.body),
+                }),
+                Request::Credential { vendor, scope } => Ok(RequestWire::Credential {
+                    credential: CredentialWire {
+                        vendor: u32::from(*vendor),
+                        scope,
+                    },
+                }),
+                Request::Wait(duration) => Ok(RequestWire::Wait {
+                    // A wait longer than u64 milliseconds is not one a
+                    // vendor client asks for; it is capped, not refused.
+                    wait_ms: u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
+                }),
+                // `Request` is non-exhaustive: a kind this guest cannot
+                // encode is a bug here, refused rather than dropped.
+                #[allow(unreachable_patterns)]
+                _ => Err(stack_guest_abi::last_error::internal(
+                    "a step request this guest cannot encode",
+                )),
             })
-            .collect(),
+            .collect::<Result<_, u32>>()?,
     };
     // A `Buffer`, which wipes on drop and as it grows.
     let frame = to_vec(&wire).map_err(|_| STATUS_ENCODING)?;
@@ -147,6 +192,37 @@ mod tests {
         ]));
         assert_eq!(bytes, expected);
         assert_eq!(bytes.capacity(), bytes.len());
+    }
+
+    /// A credential and a wait cross as objects of their own, beside the
+    /// HTTP request's.
+    #[test]
+    fn a_credential_and_a_wait_are_step_requests() {
+        let requests = [
+            Request::credential(3, "https://managedhsm.azure.net/.default"),
+            Request::wait(std::time::Duration::from_millis(250)),
+        ];
+        let bytes = encode_step(9, &requests).unwrap();
+        let expected = frame(&obj(vec![
+            ("handle", V::U64(9)),
+            (
+                "requests",
+                V::Arr(vec![
+                    obj(vec![(
+                        "credential",
+                        obj(vec![
+                            ("vendor", V::U32(3)),
+                            (
+                                "scope",
+                                V::Str("https://managedhsm.azure.net/.default".into()),
+                            ),
+                        ]),
+                    )]),
+                    obj(vec![("wait_ms", V::U64(250))]),
+                ]),
+            ),
+        ]));
+        assert_eq!(bytes, expected);
     }
 
     #[test]

@@ -41,6 +41,12 @@ on:
       - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
+      # The encrypt guest links every key vendor backend (CIP-5311).
+      - packages/stack-kms-vendor/**
+      - packages/stack-kms-aws/**
+      - packages/stack-kms-vault/**
+      - packages/stack-kms-gcp/**
+      - packages/stack-kms-azure/**
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**
       - packages/eql/crates/eql-domains/**
@@ -84,6 +90,12 @@ on:
       - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
+      # The encrypt guest links every key vendor backend (CIP-5311).
+      - packages/stack-kms-vendor/**
+      - packages/stack-kms-aws/**
+      - packages/stack-kms-vault/**
+      - packages/stack-kms-gcp/**
+      - packages/stack-kms-azure/**
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**
       - packages/eql/crates/eql-domains/**

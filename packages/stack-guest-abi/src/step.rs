@@ -15,6 +15,12 @@
 //! cancellation never interrupts it: an aborted operation is a future
 //! dropped between two polls, and everything it held is wiped on drop.
 //!
+//! A request is one of three things the host does for the guest
+//! ([`Request`]): an HTTP request, a key vendor backend's short-lived
+//! credential, or a wait (a retry's backoff). The guest blocks on none of
+//! them, so the host can fetch a credential over the network, or sit out a
+//! backoff, with the instance free for other calls.
+//!
 //! # Handles
 //!
 //! - A handle names one paused operation. It is issued when an operation
@@ -50,6 +56,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroizing;
@@ -64,6 +71,87 @@ pub type Operation = Pin<Box<dyn Future<Output = Result<Vec<u8>, u32>>>>;
 /// The most operations that may be paused at once.
 pub const MAX_OPEN: usize = 64;
 
+/// One thing an operation needs the host to do before it can go on: an
+/// HTTP request to perform, a key vendor backend's credential to fetch, or
+/// a wait to sit out. The host answers each with a [`Response`].
+///
+/// All three pause the operation the same way, so the guest never blocks
+/// on the host: the host fetches a credential and waits out a backoff
+/// between steps, as it performs a request, with the instance free for
+/// other calls.
+#[non_exhaustive]
+pub enum Request {
+    /// An HTTP request. Answered with its HTTP response.
+    Http(HttpRequest),
+    /// A short-lived credential of the key vendor backend `vendor` (its
+    /// `KeyVendor` byte), for the OAuth `scope` (empty when the vendor has
+    /// none). Answered with status `0` and the credential, as a frame, in
+    /// the body; or a negative status and the error text, when the host has
+    /// none.
+    Credential {
+        /// The `KeyVendor` byte of the backend.
+        vendor: u8,
+        /// The OAuth scope, or empty.
+        scope: String,
+    },
+    /// A wait of `duration`: the backoff before a retry. Answered with
+    /// status `0` and an empty body once it has passed.
+    Wait(Duration),
+}
+
+impl Request {
+    /// An HTTP request.
+    pub fn new(
+        method: &'static str,
+        url: String,
+        headers: Zeroizing<Vec<u8>>,
+        body: Zeroizing<Vec<u8>>,
+    ) -> Self {
+        Self::Http(HttpRequest {
+            method,
+            url,
+            headers,
+            body,
+        })
+    }
+
+    /// A request for a key vendor backend's credential.
+    pub fn credential(vendor: u8, scope: impl Into<String>) -> Self {
+        Self::Credential {
+            vendor,
+            scope: scope.into(),
+        }
+    }
+
+    /// A request to wait `duration`.
+    pub fn wait(duration: Duration) -> Self {
+        Self::Wait(duration)
+    }
+
+    /// The HTTP request, when this is one.
+    pub fn http(&self) -> Option<&HttpRequest> {
+        match self {
+            Self::Http(request) => Some(request),
+            _ => None,
+        }
+    }
+}
+
+/// `Debug` never shows an HTTP request's headers or body.
+impl std::fmt::Debug for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Http(request) => request.fmt(f),
+            Self::Credential { vendor, scope } => f
+                .debug_struct("Credential")
+                .field("vendor", vendor)
+                .field("scope", scope)
+                .finish(),
+            Self::Wait(duration) => f.debug_tuple("Wait").field(duration).finish(),
+        }
+    }
+}
+
 /// One HTTP request an operation needs the host to perform.
 ///
 /// The headers (in the [`crate::headers`] line format, a bearer token
@@ -71,7 +159,7 @@ pub const MAX_OPEN: usize = 64;
 /// wiped on drop.
 #[derive(OpaqueDebug)]
 #[non_exhaustive]
-pub struct Request {
+pub struct HttpRequest {
     /// The HTTP method.
     #[non_sensitive]
     pub method: &'static str,
@@ -82,23 +170,6 @@ pub struct Request {
     pub headers: Zeroizing<Vec<u8>>,
     /// The request body.
     pub body: Zeroizing<Vec<u8>>,
-}
-
-impl Request {
-    /// A request.
-    pub fn new(
-        method: &'static str,
-        url: String,
-        headers: Zeroizing<Vec<u8>>,
-        body: Zeroizing<Vec<u8>>,
-    ) -> Self {
-        Self {
-            method,
-            url,
-            headers,
-            body,
-        }
-    }
 }
 
 /// The host's answer to one [`Request`].
@@ -498,10 +569,10 @@ mod tests {
         let _reset = reset();
         let (handle, requests) = needs_io(start(sequential(2)));
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].url, "https://kms/0");
+        assert_eq!(requests[0].http().unwrap().url, "https://kms/0");
         let (again, requests) = needs_io(resume(handle, vec![ok(b"a")]));
         assert_eq!(again, handle, "a paused operation keeps its handle");
-        assert_eq!(requests[0].url, "https://kms/1");
+        assert_eq!(requests[0].http().unwrap().url, "https://kms/1");
         let done = resume(handle, vec![ok(b"b")]).unwrap();
         assert!(matches!(done, Step::Done(out) if out == b"ab"));
         assert_eq!(open_count(), 0);
@@ -549,7 +620,10 @@ mod tests {
             Ok(out)
         });
         let (handle, requests) = needs_io(start(work));
-        let urls: Vec<_> = requests.iter().map(|r| r.url.as_str()).collect();
+        let urls: Vec<_> = requests
+            .iter()
+            .map(|r| r.http().unwrap().url.as_str())
+            .collect();
         assert_eq!(urls, ["https://kms/a", "https://kms/b"]);
         let done = resume(handle, vec![ok(b"1"), ok(b"2")]).unwrap();
         assert!(matches!(done, Step::Done(out) if out == b"12"));

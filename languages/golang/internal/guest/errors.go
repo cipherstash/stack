@@ -91,6 +91,9 @@ var (
 	// A guest package's call loop takes the step, performs it and resumes;
 	// it never reaches a caller.
 	ErrNeedsIO = errors.New("cipherstash: the guest is waiting on the host for I/O")
+	// ErrNoZeroKMS is a ZeroKMS keyset asked of a client that has a key
+	// vendor backend and no ZeroKMS, refused before any request.
+	ErrNoZeroKMS = errors.New("cipherstash: this client has no ZeroKMS, only a key vendor backend")
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). A constructor returns it when
 	// asked for locked memory and refused, and so does any later call under

@@ -66,7 +66,7 @@ use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
 pub use stack_guest_abi::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_INTERNAL,
     STATUS_KMS_CONFLICT, STATUS_KMS_FORBIDDEN, STATUS_KMS_NOT_FOUND, STATUS_KMS_OTHER,
-    STATUS_KMS_TRANSPORT, STATUS_KMS_UNAUTHORIZED, STATUS_STATE, STATUS_TERM,
+    STATUS_KMS_TRANSPORT, STATUS_KMS_UNAUTHORIZED, STATUS_NO_ZEROKMS, STATUS_STATE, STATUS_TERM,
 };
 
 /// Record a sealing/opening error as the last error
@@ -109,7 +109,41 @@ pub fn describe(cause: &(dyn std::error::Error + 'static)) -> Option<String> {
     {
         return Some(cause.to_string());
     }
+    if describes_itself(cause) {
+        return Some(cause.to_string());
+    }
     last_error::describe_std(cause)
+}
+
+/// The key vendor backend errors whose text the guest vouches for: each
+/// vendor crate builds its messages from the operation, the HTTP status, the
+/// vendor's error code and message, and fixed text, and never puts a key,
+/// a secret, a token or a value in one (CIP-5307 to CIP-5309). A host
+/// credential failure is described by the guest itself ([`crate::vendor`]).
+fn describes_itself(cause: &(dyn std::error::Error + 'static)) -> bool {
+    cause.is::<crate::zerokms::NoZeroKms>()
+        || cause.is::<stack_kms_vendor::TransportError>()
+        || cause.is::<stack_kms_vendor::RecordError>()
+        || cause.is::<stack_kms_aws::AwsKmsError>()
+        || cause.is::<stack_kms_aws::CredentialsError>()
+        || cause.is::<stack_kms_vault::VaultError>()
+        || cause.is::<stack_kms_vault::AuthError>()
+        || cause.is::<stack_kms_gcp::GcpKmsError>()
+        || cause.is::<stack_kms_gcp::AuthError>()
+        || cause.is::<stack_kms_azure::AzureManagedHsmError>()
+        || cause.is::<stack_kms_azure::AuthError>()
+}
+
+/// A keyset record or the key vendor backend refused at `se_cipher_init`:
+/// record the error and return its status. A record that does not parse,
+/// names another vendor or an unknown mode, or repeats an id or a name is the host's input (`STATUS_ENCODING`); a key failure
+/// keeps its own status.
+pub fn fail_record(error: &stack_kms_vendor::RecordError) -> u32 {
+    let status = match error {
+        stack_kms_vendor::RecordError::Kms(kms) => status_for_kms(kms),
+        _ => STATUS_ENCODING,
+    };
+    record(error, status)
 }
 
 /// Map a sealing/opening error onto the ABI status word.
@@ -240,6 +274,29 @@ fn status_for_kms(error: &stack_kms::Error) -> u32 {
             STATUS_KMS_TRANSPORT
         }
         stack_kms::Error::Unexpected(_) => STATUS_KMS_OTHER,
+        // A vendor-only client asked for a ZeroKMS keyset (CIP-5311).
+        e if crate::zerokms::is_no_zerokms(e) => STATUS_NO_ZEROKMS,
+        stack_kms::Error::Backend { kind, .. } => status_for_backend(*kind),
+        // A request for a lock context, a decryption policy or an
+        // unverified context against a key vendor backend: the caller's
+        // input, refused before any key call.
+        stack_kms::Error::ZeroKmsOnly { .. } => STATUS_ENCODING,
+    }
+}
+
+/// A key vendor backend's failure as a status. `BackendErrorKind` is
+/// `#[non_exhaustive]`, so a kind added upstream falls to
+/// [`STATUS_KMS_OTHER`] until it is classified here.
+fn status_for_backend(kind: stack_kms::BackendErrorKind) -> u32 {
+    use stack_kms::BackendErrorKind as Kind;
+    match kind {
+        Kind::NotFound => STATUS_KMS_NOT_FOUND,
+        Kind::AccessDenied => STATUS_KMS_FORBIDDEN,
+        Kind::Throttled | Kind::Unavailable => STATUS_KMS_TRANSPORT,
+        // The vendor could not unwrap the key: damaged, or wrapped by
+        // another key. Like an AEAD failure, the stored bytes do not open.
+        Kind::InvalidCiphertext => STATUS_AUTH,
+        _ => STATUS_KMS_OTHER,
     }
 }
 
@@ -313,6 +370,30 @@ mod tests {
             ))),
         };
         assert_eq!(status_for_error(&load), STATUS_KMS_UNAUTHORIZED);
+    }
+
+    #[test]
+    fn a_key_vendor_backend_failure_maps_by_its_kind() {
+        use stack_kms::BackendErrorKind as Kind;
+        let status = |kind| {
+            status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Backend {
+                backend: stack_kms::KeyVendor::Aws.into(),
+                kind,
+                source: Box::new(std::io::Error::other("detail")),
+            }))
+        };
+        assert_eq!(status(Kind::NotFound), STATUS_KMS_NOT_FOUND);
+        assert_eq!(status(Kind::AccessDenied), STATUS_KMS_FORBIDDEN);
+        assert_eq!(status(Kind::Throttled), STATUS_KMS_TRANSPORT);
+        assert_eq!(status(Kind::Unavailable), STATUS_KMS_TRANSPORT);
+        assert_eq!(status(Kind::InvalidCiphertext), STATUS_AUTH);
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::ZeroKmsOnly {
+                vendor: stack_kms::KeyVendor::Aws,
+                feature: stack_kms::ZeroKmsFeature::DecryptionPolicy,
+            })),
+            STATUS_ENCODING
+        );
     }
 
     #[test]

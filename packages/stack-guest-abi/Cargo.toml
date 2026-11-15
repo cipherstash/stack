@@ -13,7 +13,15 @@ license-file = "LICENSE"
 # own; also keeps release-plz from picking it up.
 publish = false
 
+[features]
+# `vendor_transport`: the guest's `VendorTransport` for key vendor backends
+# (ADR-0015), over the same `transport_send` import. Off by default, so the
+# credential guest does not carry the vendor seam.
+vendor = ["dep:stack-kms-vendor"]
+
 [dependencies]
+# Only `vendor_transport`. No default features: the guest has no native HTTP.
+stack-kms-vendor = { path = "../stack-kms-vendor", default-features = false, optional = true }
 zeroize = { workspace = true }
 # `last_error`: an error is any miette diagnostic plus its structured fields
 # (a serde_json map, as `ErrorPayload::payload` gives them), encoded as a
