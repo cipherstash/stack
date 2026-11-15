@@ -24,6 +24,8 @@
 //! - an EQL field of a record nested in another stores its own column too;
 //! - a field that stores another column is refused before any key is
 //!   requested;
+//! - a renamed field keeps its column with `identity`, and reads the rows
+//!   written under its old name. With no `identity` they are refused;
 //! - a JSON document, `JsonTreeDocument`, encrypts from a `JsonPlaintext`
 //!   through the new API, writes the search terms the old path writes, and
 //!   is a record field too.
@@ -829,6 +831,80 @@ async fn a_field_that_stores_another_column_is_refused() {
     }
     assert!(
         calls.lock().unwrap().retrieve.is_empty(),
+        "refused before any key is requested"
+    );
+}
+
+/// `Member`, after its `email` field was renamed to `email_address`.
+#[derive(Clone, Debug, PartialEq, Zeroize)]
+struct RenamedMember {
+    id: u64,
+    email_address: String,
+    age: i32,
+}
+
+/// The renamed field keeps its old name as its column, with `identity`.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = RenamedMember, scope = "members")]
+struct EncryptedRenamedMember {
+    #[stash(passthrough)]
+    id: u64,
+    #[stash(identity = "email")]
+    email_address: TextEq,
+    age: IntegerOrd,
+}
+
+/// The renamed field with no `identity`: its column is its new name.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = RenamedMember, scope = "members")]
+struct EncryptedUnpinnedMember {
+    #[stash(passthrough)]
+    id: u64,
+    email_address: TextEq,
+    age: IntegerOrd,
+}
+
+/// A field's name is part of its context, so a renamed field does not open
+/// the rows written under its old name. `identity` keeps the old name: the
+/// field then stores, and expects, the column the rows already hold.
+#[tokio::test]
+async fn a_renamed_eql_field_keeps_its_column_with_identity() {
+    let (cipher, calls) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    // A row written before the rename.
+    let before: EncryptedMember = ada().encrypt_into(&keyset).await.unwrap();
+    assert_eq!(before.email.i, *column("email").get());
+
+    // The renamed record reads it, with the old name kept.
+    let row = EncryptedRenamedMember {
+        id: before.id,
+        email_address: before.email.clone(),
+        age: before.age.clone(),
+    };
+    let opened = RenamedMember::decrypt_from(row, &keyset).await.unwrap();
+    assert_eq!(opened.email_address, "ada@example.com");
+
+    // It writes the column and the terms the record wrote before.
+    let after: EncryptedRenamedMember = opened.encrypt_into(&keyset).await.unwrap();
+    assert_eq!(after.email_address.i, *column("email").get());
+    assert_eq!(terms_of(&after.email_address), terms_of(&before.email));
+
+    // With no `identity`, the field's column is `email_address`. The row
+    // stores `email`, so it is refused before any key is requested.
+    let retrieved = calls.lock().unwrap().retrieve.len();
+    let row = EncryptedUnpinnedMember {
+        id: before.id,
+        email_address: before.email,
+        age: before.age,
+    };
+    match RenamedMember::decrypt_from(row, &keyset).await {
+        Err(Error::ContextMismatch { .. }) => {}
+        Err(other) => panic!("expected ContextMismatch, got {other:?}"),
+        Ok(_) => panic!("expected ContextMismatch, got a value"),
+    }
+    assert_eq!(
+        calls.lock().unwrap().retrieve.len(),
+        retrieved,
         "refused before any key is requested"
     );
 }

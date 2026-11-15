@@ -551,7 +551,7 @@ impl JsonTreeDocument {
     /// of a record, it opens under the scopes and bindings of the record
     /// too.
     fn open<K: 'static>(self, context: ExpectedContext<Identifier>) -> Decryption<Value, K> {
-        let context = match context.opening(self.i.clone()) {
+        let context = match context.decryption_context(self.i.clone()) {
             Ok(context) => context,
             Err(error) => return Decryption::failed(error),
         };

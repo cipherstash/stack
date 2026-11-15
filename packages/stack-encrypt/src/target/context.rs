@@ -1013,9 +1013,10 @@ where
 }
 impl<'c, T: MaybeEmpty + PartialEq + IntoContext<'c>> ExpectedContext<T> {
     /// Check the stored context against this expectation and prove it
-    /// nonempty. It returns the stored context alone. A record opens under
-    /// the context [`opening`](Self::opening) returns: a record field also
-    /// opens under the scopes and bindings of its record.
+    /// nonempty. It returns the stored context alone. A record decrypts
+    /// under the context [`decryption_context`](Self::decryption_context)
+    /// returns: a record field also decrypts under the scopes and bindings
+    /// of its record.
     ///
     /// # Errors
     ///
@@ -1042,17 +1043,129 @@ impl<'c, T: MaybeEmpty + PartialEq + IntoContext<'c>> ExpectedContext<T> {
         nonempty(stored)
     }
 
-    /// Check the stored context as [`validate`](Self::validate) does, and
-    /// return the context the record opens under.
+    /// Check the context that a row stores, and return the context the
+    /// record decrypts under.
     ///
-    /// On its own, a record opens under the context it stores. As a field
-    /// of another record, it opens under that context, then the scopes and
-    /// bindings of the record, which the field does not store.
+    /// The two contexts are the same for a record on its own. They differ
+    /// for a record that is a field of another record.
+    ///
+    /// For example, take a `TextEq` value in the column `email` of the
+    /// table `members`. Its row stores `i = {"t": "members", "c": "email"}`.
+    ///
+    /// - **On its own**, the value decrypts under what the row stores:
+    ///   `members/email`.
+    ///   - If the reader passes the column it expects, a row that stores
+    ///     another column is refused.
+    ///   - If the reader passes no column, any stored column is accepted.
+    ///     So a row written before the column was renamed still decrypts.
+    /// - **As the field `email` of a record** with
+    ///   `scope = "members", scope(tenant: u64), bind(row: u128)`, the row
+    ///   stores the same `i`. The tenant and the row ID are not in it.
+    ///   - The reader passes them again, such as tenant 7 and row 9. The
+    ///     value decrypts under `members/email`, then tenant 7, then row 9.
+    ///   - The row must store the field's own column. A row that stores
+    ///     `members/name` is refused: it was written for another field.
+    ///   - So a renamed field does not decrypt the rows written under its
+    ///     old name. That is true of a field of any type, because the name
+    ///     is part of the field's context. Keep the old name with
+    ///     `#[stash(identity = "old_name")]`.
+    ///
+    /// [`validate`](Self::validate) makes the same check, and returns the
+    /// stored context in place of the context to decrypt under.
+    ///
+    /// # Example
+    ///
+    /// `Column` stores a table and a column, as an EQL type does. It is the
+    /// type in the example on [`ContextFromField`].
+    ///
+    /// ```
+    /// use stack_encrypt::target::{ContextFromField, DeclaredContext, ExpectedContext, Scope};
+    /// use stack_encrypt::{
+    ///     nonempty, CallerContext, ContextPiece, Descriptor, Error, IntoContext, MaybeEmpty,
+    ///     NonEmpty,
+    /// };
+    ///
+    /// #[derive(Clone, Debug, PartialEq)]
+    /// struct Column {
+    ///     table: String,
+    ///     column: String,
+    /// }
+    /// # impl MaybeEmpty for Column {
+    /// #     fn is_empty(&self) -> bool {
+    /// #         self.table.is_empty() || self.column.is_empty()
+    /// #     }
+    /// # }
+    /// # impl<'a> IntoContext<'a> for Column {
+    /// #     fn into_context(self) -> ContextPiece<'a> {
+    /// #         ContextPiece::List(vec![
+    /// #             ContextPiece::Text(self.table.into()),
+    /// #             ContextPiece::Text(self.column.into()),
+    /// #         ])
+    /// #     }
+    /// # }
+    /// # impl ContextFromField for Column {
+    /// #     fn from_field(own: &ContextPiece<'_>) -> Option<NonEmpty<Self>> {
+    /// #         let ContextPiece::List(parts) = own else {
+    /// #             return None;
+    /// #         };
+    /// #         let [ContextPiece::Text(table), ContextPiece::Text(column)] = parts.as_slice() else {
+    /// #             return None;
+    /// #         };
+    /// #         NonEmpty::new(Self {
+    /// #             table: table.to_string(),
+    /// #             column: column.to_string(),
+    /// #         })
+    /// #         .ok()
+    /// #     }
+    /// # }
+    /// // What a row of `members` stores in a column of this type.
+    /// fn stored_in(column: &str) -> Column {
+    ///     Column {
+    ///         table: "members".into(),
+    ///         column: column.into(),
+    ///     }
+    /// }
+    /// // A context, as the descriptor that names it.
+    /// fn named(context: &ContextPiece<'_>) -> String {
+    ///     Descriptor::from_piece(context).as_str().to_owned()
+    /// }
+    ///
+    /// // On its own: the reader expects `members/email`. The row stores
+    /// // it, and the value decrypts under it.
+    /// let expected = ExpectedContext::from(NonEmpty::new(stored_in("email"))?);
+    /// let context = expected.decryption_context(stored_in("email"))?;
+    /// assert_eq!(named(&context.stored()), "members/email");
+    ///
+    /// // On its own, with no expected column: a row written before the
+    /// // column was renamed decrypts under the name it stores.
+    /// let context = ExpectedContext::default().decryption_context(stored_in("old_email"))?;
+    /// assert_eq!(named(&context.stored()), "members/old_email");
+    ///
+    /// // As the field `email` of a record with the scope `members`, a
+    /// // tenant scope and a row binding. The reader passes tenant 7 and
+    /// // row 9 again.
+    /// let field = DeclaredContext::default()
+    ///     .with(CallerContext::from(Scope::new(7u64).bind(9u128)))
+    ///     .under(nonempty!("members").with("email"));
+    /// let expected = ExpectedContext::<Column>::from(field);
+    ///
+    /// // The row stores `members/email` alone. The value decrypts under
+    /// // more. Its search terms derive under the column, then the tenant.
+    /// // Its ciphertext is sealed under the row too.
+    /// let context = expected.clone().decryption_context(stored_in("email"))?;
+    /// assert_eq!(named(&context.query()), "(members/email)/7u64");
+    /// assert_eq!(named(&context.stored()), "((members/email)/7u64)/9u128");
+    ///
+    /// // A row that stores another column was written for another field.
+    /// let refused = expected.decryption_context(stored_in("name"));
+    /// assert!(matches!(refused, Err(Error::ContextMismatch { .. })));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///
     /// As [`validate`](Self::validate), before any key is requested.
-    pub fn opening(self, stored: T) -> Result<CallerContext, Error> {
+    pub fn decryption_context(self, stored: T) -> Result<CallerContext, Error> {
         let context = match &self.0 {
             Expected::Field { context, .. } => Some(context.clone()),
             Expected::Any | Expected::Exactly(_) => None,
@@ -1357,12 +1470,12 @@ mod tests {
 
         // On decrypt the stored context must be the field's own, and the
         // field opens under the same whole context.
-        let opening = ExpectedContext::<Pair>::from(field.clone())
-            .opening(stored)
+        let decrypts_under = ExpectedContext::<Pair>::from(field.clone())
+            .decryption_context(stored)
             .unwrap();
-        assert_eq!(opening.stored(), field.stored());
+        assert_eq!(decrypts_under.stored(), field.stored());
         let elsewhere = ExpectedContext::<Pair>::from(field)
-            .opening(Pair("users".into(), "name".into()))
+            .decryption_context(Pair("users".into(), "name".into()))
             .unwrap_err();
         assert!(matches!(elsewhere, Error::ContextMismatch { .. }));
     }
@@ -1376,10 +1489,10 @@ mod tests {
         assert_eq!(stored, *passed.get());
         assert_eq!(context.stored(), passed.clone().into_context());
 
-        let opening = ExpectedContext::from(passed.clone())
-            .opening(stored)
+        let decrypts_under = ExpectedContext::from(passed.clone())
+            .decryption_context(stored)
             .unwrap();
-        assert_eq!(opening.stored(), passed.into_context());
+        assert_eq!(decrypts_under.stored(), passed.into_context());
     }
 
     /// A type that cannot store the field's own context is refused, and the
@@ -1395,7 +1508,7 @@ mod tests {
         assert_eq!(not_storable(refused), "(users/email)/x");
         let stored = Pair("users".into(), "email".into());
         let refused = ExpectedContext::<Pair>::from(three)
-            .opening(stored.clone())
+            .decryption_context(stored.clone())
             .unwrap_err();
         assert_eq!(not_storable(refused), "(users/email)/x");
 
@@ -1405,7 +1518,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(not_storable(refused), "users/email");
         let refused = ExpectedContext::<Swapped>::from(field)
-            .opening(Swapped(stored))
+            .decryption_context(Swapped(stored))
             .unwrap_err();
         assert_eq!(not_storable(refused), "users/email");
     }
