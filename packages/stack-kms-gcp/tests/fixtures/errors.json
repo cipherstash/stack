@@ -1,0 +1,267 @@
+[
+  {
+    "name": "permission denied on the key",
+    "kind": "AccessDenied",
+    "response": {
+      "status": 403,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 403,
+          "message": "Permission 'cloudkms.cryptoKeyVersions.useToDecrypt' denied on resource 'projects/test-only-project/locations/global/keyRings/cipherstash-fixture/cryptoKeys/fixture-key' (or it may not exist).",
+          "status": "PERMISSION_DENIED",
+          "details": [
+            {
+              "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+              "reason": "IAM_PERMISSION_DENIED",
+              "domain": "cloudkms.googleapis.com",
+              "metadata": {
+                "permission": "cloudkms.cryptoKeyVersions.useToDecrypt",
+                "resource": "projects/test-only-project/locations/global/keyRings/cipherstash-fixture/cryptoKeys/fixture-key"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "an expired access token",
+    "kind": "AccessDenied",
+    "response": {
+      "status": 401,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 401,
+          "message": "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.",
+          "status": "UNAUTHENTICATED"
+        }
+      }
+    }
+  },
+  {
+    "name": "a key that does not exist",
+    "kind": "NotFound",
+    "response": {
+      "status": 404,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 404,
+          "message": "projects/test-only-project/locations/global/keyRings/cipherstash-fixture/cryptoKeys/fixture-key not found.",
+          "status": "NOT_FOUND"
+        }
+      }
+    }
+  },
+  {
+    "name": "a quota",
+    "kind": "Throttled",
+    "response": {
+      "status": 429,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 429,
+          "message": "Quota exceeded for quota metric 'Cryptographic requests' and limit 'Cryptographic requests per minute' of service 'cloudkms.googleapis.com'.",
+          "status": "RESOURCE_EXHAUSTED"
+        }
+      }
+    }
+  },
+  {
+    "name": "the service is unavailable",
+    "kind": "Unavailable",
+    "response": {
+      "status": 503,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 503,
+          "message": "The service is currently unavailable.",
+          "status": "UNAVAILABLE"
+        }
+      }
+    }
+  },
+  {
+    "name": "a deadline",
+    "kind": "Unavailable",
+    "response": {
+      "status": 504,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 504,
+          "message": "Deadline expired before operation could complete.",
+          "status": "DEADLINE_EXCEEDED"
+        }
+      }
+    }
+  },
+  {
+    "name": "an internal error",
+    "kind": "Unavailable",
+    "response": {
+      "status": 500,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 500,
+          "message": "Internal error encountered.",
+          "status": "INTERNAL"
+        }
+      }
+    }
+  },
+  {
+    "name": "a disabled key version",
+    "kind": "Unavailable",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 400,
+          "message": "projects/test-only-project/locations/global/keyRings/cipherstash-fixture/cryptoKeys/fixture-key/cryptoKeyVersions/3 is not enabled, current state is: DISABLED.",
+          "status": "FAILED_PRECONDITION"
+        }
+      }
+    }
+  },
+  {
+    "name": "a damaged ciphertext or other associated data",
+    "kind": "InvalidCiphertext",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 400,
+          "message": "Decryption failed: the ciphertext is invalid.",
+          "status": "INVALID_ARGUMENT"
+        }
+      }
+    }
+  },
+  {
+    "name": "a ciphertext of another key",
+    "kind": "InvalidCiphertext",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 400,
+          "message": "Decryption failed: verify that 'name' refers to the correct CryptoKey.",
+          "status": "INVALID_ARGUMENT"
+        }
+      }
+    }
+  },
+  {
+    "name": "a CRC32C that does not match",
+    "kind": "Unavailable",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 400,
+          "message": "The checksum in field ciphertext_crc32c did not match the data in field ciphertext.",
+          "status": "INVALID_ARGUMENT"
+        }
+      }
+    }
+  },
+  {
+    "name": "another invalid argument",
+    "kind": "AccessDenied",
+    "response": {
+      "status": 400,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "error": {
+          "code": 400,
+          "message": "Ciphertext must be at most 65536 bytes.",
+          "status": "INVALID_ARGUMENT"
+        }
+      }
+    }
+  },
+  {
+    "name": "a gateway error with no JSON",
+    "kind": "Unavailable",
+    "response": {
+      "status": 502,
+      "headers": [
+        [
+          "content-type",
+          "text/html; charset=UTF-8"
+        ]
+      ],
+      "body": "<!DOCTYPE html><title>Error 502 (Server Error)!!1</title>"
+    }
+  }
+]
