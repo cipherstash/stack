@@ -93,7 +93,8 @@ jobs:
           filters: |
             js:
               - '**'
-              # Plans and ADRs; plan-docs-unread-by-tests.test.mjs holds the
+              # Plans, ADRs and guides (`direct` selects the guides the jobs
+              # read); plan-docs-unread-by-tests.test.mjs holds the
               # plans half for the `paths:` filter above.
               - '!docs/**'
               # The Go module, and the Rust crates no binding these jobs build
@@ -132,6 +133,10 @@ jobs:
           filters: |
             js:
               - '.github/workflows/tests.yml'
+              # The Protect upgrade guide, which `e2e-tests` reads:
+              # e2e/tests/protect-upgrade-guide.e2e.test.ts holds the guide's
+              # claims to the suites it describes.
+              - 'docs/migration/**'
               # The eql-bindings files cargo compiles into the protect-ffi
               # binding, as `.github/actions/build-ffi-binding` hashes them,
               # and the EQL workspace manifest cargo reads for them.
