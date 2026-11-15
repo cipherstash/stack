@@ -1867,7 +1867,7 @@ parameter named `aad`.
   `'static`, so `&str` does not meet it. A borrowed value needs its own
   bound, and the request borrows the value for as long as it runs.
 - **Done already.** Owned single values (#1404).
-- **Tracked in.** No issue. Issue #1468, open, a Vitamin C buffer type, is adjacent.
+- **Tracked in.** #1569. Issue #1468, open, a Vitamin C buffer type, is adjacent.
 - **Finished when** `keyset.encrypt("secret")` compiles, and a test shows
   that Stack Encrypt wipes its own copies of a borrowed value.
 
