@@ -1,10 +1,14 @@
 //! The refusals of the dynamic interface: [`Error`] and its [`Reason`].
 //!
 //! They are compiled without the `dynamic` feature too, because the typed
-//! JSON queries of a field marker check their inputs with the same code as
+//! JSON queries of a field reference check their inputs with the same code as
 //! the dynamic interface, and refuse them with the same reasons. With the
 //! feature they are `stack_encrypt::dynamic::Error` and
 //! `stack_encrypt::dynamic::Reason`.
+// Without the `dynamic` feature the JSON queries raise only some of the
+// reasons, and nothing names the types from outside the crate.
+#![cfg_attr(not(feature = "dynamic"), allow(dead_code, unreachable_pub))]
+
 use std::fmt;
 
 use crate::target::IndexSpec;

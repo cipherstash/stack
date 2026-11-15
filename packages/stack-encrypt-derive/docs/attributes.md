@@ -42,6 +42,7 @@ field from the whole `User`. To encrypt a struct field by field, use
 | `default` or `default = expr` | The field is not derived. It is filled with `Default::default()` or `expr`. It is not encrypted and not authenticated. |
 | `decrypt` | Decryption opens this field. Use it only when the field types do not decide it. See [Which field decryption opens](#which-field-decryption-opens). |
 | `passthrough` | Owned derives, with `struct` only. The plaintext field is moved into the record as it is, and moved back on decryption. It is **not encrypted and not authenticated**. See [Passthrough fields](#passthrough-fields). Not with `identity`, `default` or `decrypt`. |
+| `json(ordered = ["$.path", ..], sealed_root = false)` | Owned derives, with `struct` only, on a field whose type stores a JSON document (`JsonDocument`, or EQL's `JsonTreeDocument`). The field is sealed under the JSON index options it names: `ordered` lists the paths whose numbers and strings carry an ordering term, and `sealed_root = false` turns off the sealed root, which is on by default. The field's reference queries under the same options, so `PROFILE.at("$.age").gt(30)` compares at a path the field orders. A path is JSONPath text, checked when the field is sealed or queried, before any key is requested. Without it, the field takes the default options, which order no path. |
 
 A field cannot have a `context = ".."` of its own, on any derive. Every
 field of a `plaintext` record shares the caller's context. Every field of a

@@ -8,7 +8,7 @@ use syn::{
     PathArguments, Result, Type,
 };
 
-use crate::attrs::{ContainerAttrs, FieldAttrs};
+use crate::attrs::{ContainerAttrs, FieldAttrs, JsonAttr};
 
 /// A generated lifetime must not shadow one the record declares. Append
 /// underscores until the name is free, preserving the user's parameters.
@@ -76,6 +76,9 @@ pub(crate) struct ByField {
     /// `#[stash(query = T)]`: the type a query of the field takes, for its
     /// field reference.
     pub(crate) query: Option<Type>,
+    /// `#[stash(json(..))]`: the JSON index's options the field is sealed
+    /// and queried under.
+    pub(crate) json: Option<JsonAttr>,
 }
 
 impl Field {
@@ -473,6 +476,23 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     ));
                 }
             }
+            // JSON options are a sealed document field's, and only a field
+            // of a `struct = ..` record has a field reference to query it with.
+            if let Some(json) = &attrs.json {
+                if prefix.is_none()
+                    || attrs.context_field
+                    || attrs.passthrough
+                    || attrs.default.is_some()
+                {
+                    return Err(syn::Error::new(
+                        json.span,
+                        "`json(..)` names the JSON index's options a sealed document field is \
+                         sealed and queried under; only a sealed field of a `struct = ..` record \
+                         has them, so it does not apply to a `plaintext` record's field, or to a \
+                         `context_field`, `passthrough` or `default` field",
+                    ));
+                }
+            }
             // An identity is one label segment: non-empty, and plain so the
             // descriptor names the field.
             if let Some(identity) = &attrs.identity {
@@ -588,6 +608,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                     from,
                                     context,
                                     query: attrs.query,
+                                    json: attrs.json,
                                 }),
                             }
                         }

@@ -1,0 +1,10 @@
+error[E0599]: no method named `encrypt` found for struct `Elements<W, T, C, P>` in the current scope
+  --> tests/ui/field_reference_elements_needs_a_condition.rs:26:10
+   |
+24 |       let _ = EncryptedCustomer::PROFILE
+   |  _____________-
+25 | |         .elements("$.visits[*]")
+26 | |         .encrypt(&keyset);
+   | |         -^^^^^^^ method not found in `Elements<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny>`
+   | |_________|
+   |

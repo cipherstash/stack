@@ -421,29 +421,31 @@ the strict checks on JSON input. A program can also encrypt a borrowed
 any [borrowed value](#encrypt-borrowed-values).
 
 With the default options, no path has an ordering term. So a query cannot
-compare the order of the values at a path. To order some paths, declare a
-named type with typed Rust options:
+compare the order of the values at a path. To order some paths, a record
+field names them with `#[stash(json(..))]`, as Go's struct tag does
+(`encrypt_into=JsonSearch(ordered=$.age)`). Decided by Dan on 16 November
+2026, in place of a named type with options in a `target(..)` attribute:
 
 ```rust
-use stack_encrypt::json::JsonOptions;
-
-fn profile_options() -> Result<JsonOptions, TermError> {
-    JsonOptions::new().ordering(["$.age", "$.visits[*].at"])
+#[derive(Zeroize)]
+struct Customer {
+    profile: JsonPlaintext,
 }
 
-// Not on `next` yet: a JSON target with typed options.
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(
-    plaintext = JsonPlaintext,
-    transparent,
-    target(column = ("customers", "profile"), options = profile_options)
-)]
-struct EncryptedProfile(JsonTreeDocument);
+#[stash(struct = Customer, scope = "customers")]
+struct EncryptedCustomer {
+    #[stash(json(ordered = ["$.age", "$.visits[*].at", "$.visits[*].place"]))]
+    profile: JsonTreeDocument,
+}
 
-let profile = JsonPlaintext::parse(r#"{"name":"Ada","age":35}"#)?;
-let encrypted: EncryptedProfile = profile.encrypt_into(&keyset).await?;
-let opened = JsonPlaintext::decrypt_from(encrypted, &keyset).await?;
+let customer = Customer { profile: JsonPlaintext::parse(r#"{"name":"Ada","age":35}"#)? };
+let encrypted: EncryptedCustomer = customer.encrypt_into(&keyset).await?;
+let opened = Customer::decrypt_from(encrypted, &keyset).await?;
 ```
+
+The field is sealed under the options, and its field queries under them.
+`sealed_root = false` in the same list turns off the sealed root.
 
 #### Query a JSON document
 
@@ -461,28 +463,27 @@ declaration:
 
 The field reference carries both, so the query names only its kind and its
 values. The output type is the EQL query type, fixed by the field reference.
-Decided on 7 November 2026.
+Decided on 7 November 2026. Built in #1459; this example runs as
+`packages/eql/tests/encryption/tests/json_tree_field_references.rs`.
 
 ```rust
 use eql_bindings::v4::json_tree::{JsonTreeElementsQuery, JsonTreeLeafQuery, JsonTreeQuery};
 
-// Not on `next` yet: field references and their query methods. The method
-// names are proposals.
-let ada: JsonTreeQuery = EncryptedProfile::DOCUMENT
+let ada: JsonTreeQuery = EncryptedCustomer::PROFILE
     .contains(json!({ "name": "Ada" }))
     .encrypt(&keyset)
     .await?;
-let older: JsonTreeLeafQuery = EncryptedProfile::DOCUMENT
+let older: JsonTreeLeafQuery = EncryptedCustomer::PROFILE
     .at("$.age")
     .gt(30)
     .encrypt(&keyset)
     .await?;
-let adults: JsonTreeLeafQuery = EncryptedProfile::DOCUMENT
+let (low, high): (JsonTreeLeafQuery, JsonTreeLeafQuery) = EncryptedCustomer::PROFILE
     .at("$.age")
     .between(18, 65)
     .encrypt(&keyset)
     .await?;
-let home: JsonTreeElementsQuery = EncryptedProfile::DOCUMENT
+let home: JsonTreeElementsQuery = EncryptedCustomer::PROFILE
     .elements("$.visits[*]")
     .eq("place", "home")
     .gt("at", 15)
@@ -508,10 +509,11 @@ The kinds of JSON query, the field reference method for each, and what each find
 | Query | Field reference method | What it finds | EQL query type |
 | --- | --- | --- | --- |
 | Containment | `contains(doc)`, `contained_by(doc)`, and `at(path).eq(v)` | Rows whose document contains the given document, or is contained by it. Equality of a scalar at a path is containment of a one-entry document, so `at(path).eq(v)` lowers to it | `JsonTreeQuery` |
-| Comparison at a path | `at(path).gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery` |
+| Comparison at a path | `at(path).gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery`; two for `between`, low then high |
+| A path's selector | `at(path).selector()` | The selector `->` and `ORDER BY eql_v4.ord_term(col -> $1)` take | `JsonTreeSelector` |
 | Element match | `elements(path).eq(member, v).gt(member, v)` | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
-| Jsonpath predicate | `predicate(text)` | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
-| Children and child count | `children(path)` | The entries directly below one node, or how many there are | A node token |
+| Jsonpath predicate | `predicate(text)`, with `.vars(object)` | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
+| Children and child count | `children(path)` | The entries directly below one node, or how many there are | `JsonTreeToken` |
 
 A path is text. So an order query on a path the options do not order is
 refused at run time, before any key is fetched.
@@ -525,11 +527,10 @@ page](../../packages/eql/docs/reference/json-tree.md) gives the SQL for
 each query. A scope chains on a JSON
 query as on a scalar one: `.contains(doc).scope(tenant)`.
 
-The engine already has one private input type for each JSON operator,
-in `stack_encrypt::dynamic`. `DocumentInput` is for containment, `AtInput`
-for a comparison at a path, and `ElementsInput` for element match. The field reference
-methods build those same inputs, so the typed form and the dynamic form
-share one set of input rules. The operand types `Contains`, `AtPath`,
+The field reference methods build the same inputs the dynamic interface reads a
+binding's frames into (`json::inputs`, compiled without the `dynamic`
+feature), so the typed form and the dynamic form share one set of input
+rules and derive the same operands. The operand types `Contains`, `AtPath`,
 `ElementMatch`, `Predicate`, and `Children` that the plan proposed earlier
 are retired, replaced by these methods, on 7 November 2026.
 
@@ -1567,13 +1568,18 @@ Base64.
 - **Why.** On `next`, a Rust program needs a plan for any JSON query, and
   needs the dynamic interface for element match, predicates, and children.
   Go already has typed methods for these.
-- **Done already.** The input types and their parsing rules, as private
-  types in `stack_encrypt::dynamic::json_query`. The EQL query types
-  exist in `eql-bindings`. Typed containment and comparison at a path
-  went through the chain (`op::Contains`, `op::AtPath`), which #1666
-  removes, so until this item is built every JSON query from Rust goes
-  through a query plan.
-- **Tracked in.** Issue #1459 is open. It is exactly this item. Issue #1677 is open for opening one child. Issue #1486 is closed.
+- **Done** in the pull request for #1459. Each method builds the input
+  the dynamic parser reads into (`json::inputs`, out of the `dynamic`
+  feature), and returns the field type's query type (`JsonQueries`):
+  the EQL types for `JsonTreeDocument`. A field's options are its
+  `#[stash(json(ordered = [..]))]`, decided on 16 November 2026. A test
+  holds every query to the data plan's operand, and the [JSON query
+  example](#query-a-json-document) runs.
+- **Not done.** Typed paths checked at compile time, which #1459 asks
+  for: a path is text, checked before any key is fetched. Values are
+  typed (a number or a string for an ordering), and an element predicate
+  needs a condition to compile.
+- **Tracked in.** Issue #1459 is open until its pull request merges. Issue #1677 is open for opening one child. Issue #1486 is closed.
 - **Finished when** these are both true:
   - the [JSON query example](#query-a-json-document) compiles;
   - an order query on a path the options do not order is refused before
@@ -1605,8 +1611,7 @@ review.
   indexes, a nullable field and a record field their operator methods,
   and a field its query type (`#[stash(query = ..)]`). The chain query
   `cipher.query(op, value).on(&plan)` is removed (#1662). It was the only
-  typed JSON query, so until the JSON field reference methods exist (#1459) a JSON
-  query goes through a query plan.
+  typed JSON query; a document field's reference methods replace it (#1459).
 - **No hand-built plan.** The review of 7 November 2026 gave a
   hand-built plan the same field references, through `Plan::<Member>::scope(..)`
   with `pick!`. That is withdrawn. No Rust program builds a plan by hand.

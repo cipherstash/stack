@@ -140,6 +140,7 @@ mod plaintext;
 pub(crate) mod predicate;
 mod query;
 mod shuffle;
+mod target;
 mod text;
 
 pub use derive::JsonTerms;
@@ -147,9 +148,12 @@ pub use path::{JsonPath, JsonPathError, Segment};
 pub use plaintext::JsonPlaintext;
 pub(crate) use query::JsonElementsMember;
 pub use query::{
-    AtPathTerms, JsonElementsQuery, JsonLeafQuery, JsonPredicateQuery, JsonQuery, JsonSelector,
-    JsonSelectorSet, JsonSubtreeKey,
+    JsonElementsQuery, JsonLeafQuery, JsonPredicateQuery, JsonQuery, JsonSelector, JsonSelectorSet,
+    JsonSubtreeKey,
 };
+#[doc(hidden)]
+pub use target::{default_options, seal_field, seal_field_owned, FieldOptions};
+pub use target::{JsonQueries, JsonTarget};
 pub use text::{parse_text, to_text, JsonTextError};
 
 /// Wipe a JSON value's plaintext in place: every string (object keys too)

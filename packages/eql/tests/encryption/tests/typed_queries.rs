@@ -213,8 +213,9 @@ async fn typed_and_input(keyset: &Keyset<'_>, name: &str, operator: &str) -> Typ
 #[test]
 fn a_field_reference_answers_what_the_data_path_answers() {
     let mut gap = Vec::new();
-    // A document has no field query: it is queried through a data plan,
-    // which tests/json_tree_data_plan.rs covers.
+    // A document's field reference answers through its JSON queries
+    // (`JsonQueries`), not `Answers`: tests/json_tree_field_references.rs holds them
+    // to the data path.
     for target in eql_targets::targets()
         .iter()
         .filter(|t| t.plaintext != Some("json"))

@@ -12,7 +12,13 @@
 //! [`EncryptTarget`] / [`DecryptSource`] impls that let a Rust program name
 //! [`JsonTreeDocument`] as a target:
 //! `document.encrypt_into_with_context(&keyset, column)` under an
-//! [`Identifier`]. A query derives through a data plan that names the type
+//! [`Identifier`]. As a field of a derived record, its field reference has the
+//! JSON queries (`contains`, `at`, `elements`, `predicate`, `children`),
+//! which return the query types here
+//! ([`JsonQueries`](stack_encrypt::json::JsonQueries)), under the options
+//! the field's `#[stash(json(..))]` names
+//! ([`JsonTarget`](stack_encrypt::json::JsonTarget)). A document with
+//! no record is queried through a data plan that names the type
 //! (`JsonSearch`) under the same column, and its operand converts into the
 //! operand types here (see [`crate::encryption`]). The
 //! design is `docs/plans/2026-10-17-json-tree-index.md` at
@@ -22,8 +28,9 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
-    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonQuery,
-    JsonSelector, JsonSubtree, JsonSubtreeKey,
+    JsonDocument, JsonElementsQuery, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonPlaintext,
+    JsonPredicateQuery, JsonQueries, JsonQuery, JsonSelector, JsonSubtree, JsonSubtreeKey,
+    JsonTarget,
 };
 use stack_encrypt::target::{
     json_document, AeadContext, Borrowed, DecryptSource, EncryptTarget, ExpectedContext, Index,
@@ -556,6 +563,59 @@ impl EncryptTarget<JsonPlaintext> for JsonTreeDocument {
     }
     fn indexes() -> Vec<IndexSpec> {
         JsonTree::default().specs()
+    }
+}
+
+/// A document field sealed under the options its record's
+/// `#[stash(json(..))]` names, which order the paths its queries compare.
+impl JsonTarget<JsonPlaintext> for JsonTreeDocument {
+    fn json_encryption<'s, K: 'static>(
+        options: JsonOptions,
+    ) -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
+    where
+        JsonPlaintext: 's,
+    {
+        JsonTree::new(options)
+            .sealing()
+            .project(JsonPlaintext::value)
+    }
+}
+
+/// A document field's reference queries return the EQL query types a
+/// parameter binds as: `JsonTreeQuery` for `@>` and `<@`
+/// (`eql_v4.query_json`), `JsonTreeLeafQuery` for an ordering at a path
+/// (`eql_v4.query_json_leaf`), `JsonTreeElementsQuery` for
+/// `eql_v4.json_tree_element_match`, `JsonTreePredicateQuery` for `@@`, the
+/// selector `->` takes, and the token the child functions take.
+impl JsonQueries for JsonTreeDocument {
+    type Query = JsonTreeQuery;
+    type LeafQuery = JsonTreeLeafQuery;
+    type ElementsQuery = JsonTreeElementsQuery;
+    type PredicateQuery = JsonTreePredicateQuery;
+    type Selector = JsonTreeSelector;
+    type Token = JsonTreeToken;
+    fn query(query: JsonQuery) -> Result<JsonTreeQuery, Error> {
+        JsonTreeQuery::try_from(query)
+    }
+    fn leaf_query(query: JsonLeafQuery) -> Result<JsonTreeLeafQuery, Error> {
+        JsonTreeLeafQuery::try_from(&query)
+    }
+    fn elements_query(query: JsonElementsQuery) -> Result<JsonTreeElementsQuery, Error> {
+        transcode(&query)
+    }
+    fn predicate_query(query: JsonPredicateQuery) -> Result<JsonTreePredicateQuery, Error> {
+        transcode(&query)
+    }
+    fn selector(selector: JsonSelector) -> Result<JsonTreeSelector, Error> {
+        transcode(&selector)
+    }
+    fn token(key: JsonSubtreeKey) -> Result<JsonTreeToken, Error> {
+        match key.tokens().as_slice() {
+            [token] => transcode(token),
+            _ => Err(Error::Other(
+                "a path with no wildcard names one node".into(),
+            )),
+        }
     }
 }
 

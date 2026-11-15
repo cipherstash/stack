@@ -1,6 +1,6 @@
 //! The inputs of the JSON operators, the checks on them, and the
 //! derivation of their operands: one definition, which the dynamic
-//! interface reads into from a binding's frames and a field marker's typed
+//! interface reads into from a binding's frames and a field reference's typed
 //! JSON queries build directly. Compiled without the `dynamic` feature.
 //!
 //! An [`Input`] is checked when it is built, against the field's options:
@@ -8,7 +8,7 @@
 //! there, so a refused query requests no key. [`derive`] then derives the
 //! operand under the field's query context ([`Under`]) and gives it typed
 //! ([`Derived`]). The dynamic interface writes that as the operand a binding
-//! binds; a marker hands it to the field's own query type.
+//! binds; a field reference hands it to the field's own query type.
 //!
 //! The rules each operator applies are documented with the dynamic
 //! interface's JSON operators (`stack_encrypt::dynamic`, with the `dynamic`
@@ -99,7 +99,9 @@ pub(crate) enum Input {
     Selector(JsonPath),
     /// `children`, `child_count`: a path that names one node.
     Node(JsonPath),
-    /// `subtree`: a path and the bound its wildcards expand to.
+    /// `subtree`: a path and the bound its wildcards expand to. Read by
+    /// the dynamic interface alone.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     Read(JsonPath, u32),
     /// `element_match`: the bound and one or more predicates.
     Elements(u32, Vec<Predicate>),
@@ -420,6 +422,7 @@ impl<'p> Under<'p> {
 
     /// The stored context, the query context and then the bindings, which
     /// an entry opens under.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     pub(crate) fn stored(&self) -> AeadContext {
         AeadContext::from(self.context())
     }
@@ -441,7 +444,7 @@ fn terms<'a, K: 'static>(
 }
 
 /// An operand, as [`derive`] gives it: what the dynamic interface writes as
-/// the operand a binding binds, and what a field marker hands to the field's
+/// the operand a binding binds, and what a field reference hands to the field's
 /// own query type.
 pub(crate) enum Derived {
     /// `contains`, `contained_by`, `eq_at`: a containment needle.
@@ -455,7 +458,8 @@ pub(crate) enum Derived {
     /// `children`, `child_count`: the key of a path that names one node,
     /// which holds that node's one token.
     Node(JsonSubtreeKey),
-    /// `subtree`: the read's key.
+    /// `subtree`: the read's key. Read by the dynamic interface alone.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     Read(JsonSubtreeKey),
     /// `element_match`.
     Elements(JsonElementsQuery),

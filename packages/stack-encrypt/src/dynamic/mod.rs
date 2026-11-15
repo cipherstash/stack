@@ -37,7 +37,7 @@
 //!   same combinators the derive composes, so a record written from any
 //!   language is the same bytes. The one step that stays dynamic is
 //!   dispatching a value whose type is known only at run time to the typed
-//!   term operation, which [`IndexSpec`]'s `Index` impls do.
+//!   term operation, which [`IndexSpec`](crate::target::IndexSpec)'s `Index` impls do.
 //! * [`read_json`] and [`json_frame`] — a `json` field's document, from
 //!   the JSON text a binding hands over and back to it.
 //! * [`TargetResolver`] — the EQL types a build holds, installed by the host
@@ -84,7 +84,7 @@
 //! ([`Error::UntypedIndex`], naming the field).
 //!
 //! For the same reason the enums that spell them — [`Output`],
-//! [`IndexSpec`] and [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's
+//! [`IndexSpec`](crate::target::IndexSpec) and [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's
 //! usual rule for public enums: a new output is a wire-format addition every
 //! binding has to be taught, and an exhaustive match is how the compiler
 //! tells a binding author that.

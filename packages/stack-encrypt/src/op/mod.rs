@@ -1313,17 +1313,24 @@ mod tests {
         declared::<_, Gt, u32>(&OreBlock, OreBlock::OPERATORS);
         declared::<_, Gte, u32>(&OreBlock, OreBlock::OPERATORS);
         declared::<_, Between, (u32, u32)>(&OreBlock, OreBlock::OPERATORS);
+        // The JSON index answers through the shared JSON inputs, which a
+        // field reference's JSON queries and the dynamic path both build, not
+        // through `Supports`: each typed JSON operator's wire name is in
+        // its declaration, with the six reads the dynamic path alone names.
         use crate::target::Json;
-        use serde_json::Value;
-        declared::<_, Contains, Value>(&Json, Json::OPERATORS);
-        declared::<_, ContainedBy, Value>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Eq>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Lt>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Lte>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Gt>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Gte>, (String, Value)>(&Json, Json::OPERATORS);
-        declared::<_, AtPath<Between>, (String, (Value, Value))>(&Json, Json::OPERATORS);
-        // The six reads, named by the dynamic path alone.
+        for op in [
+            Contains::OP,
+            ContainedBy::OP,
+            AtPath::<Eq>::OP,
+            AtPath::<Lt>::OP,
+            AtPath::<Lte>::OP,
+            AtPath::<Gt>::OP,
+            AtPath::<Gte>::OP,
+            AtPath::<Between>::OP,
+        ] {
+            let op = op.expect("a typed JSON operator with a wire name");
+            assert!(Json::OPERATORS.contains(&op), "{op} is not declared");
+        }
         assert_eq!(Json::OPERATORS.len(), 8 + 6);
     }
 

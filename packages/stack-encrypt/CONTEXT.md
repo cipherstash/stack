@@ -294,7 +294,7 @@ operator through the one index that answers it. A nullable field answers
 what a present value answers. A record field's reference reaches the inner
 record's field references with `.field(..)`, under the outer field's context.
 `#[stash(query = T)]` gives a field reference the type its queries take.
-_Avoid_: marker (its old name), field handle (that is the dynamic form),
+_Avoid_: field reference (its old name), field handle (that is the dynamic form),
 column, accessor
 
 **Planned**:

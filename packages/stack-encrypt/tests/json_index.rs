@@ -351,9 +351,10 @@ fn scalar_in_array(stored: &Value, needle: &Value) -> bool {
 // Queries through a data plan
 // =============================================================================
 
-/// Queries on the suite's column. There is no typed JSON query: a caller
-/// derives one through a data plan, which names the column's field, the
-/// operator and its input, and gets the operand to bind. Each helper here
+/// Queries on the suite's column, through a data plan, which names the
+/// column's field, the operator and its input, and gets the operand to
+/// bind: what a binding sends. A record field's reference derives the same
+/// operands (`tests/json_field_references.rs`). Each helper here
 /// derives one operator's operand and reads it back into the type that
 /// serializes to it, [`JsonQuery`] or [`JsonLeafQuery`], so a test checks
 /// the query a binding sends.

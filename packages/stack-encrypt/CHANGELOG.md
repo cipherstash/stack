@@ -57,6 +57,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Three more records derive** (#1661). The owned derives did not accept
 
+- **Typed JSON queries from a field reference** (#1459). A field whose type
+  stores a JSON document (`JsonDocument`, or EQL's `JsonTreeDocument`) has
+  one field reference method for each kind of JSON query, in place of the operator
+  methods:
+
+  | Field reference method | Returns, for `JsonDocument` |
+  | --- | --- |
+  | `contains(doc)`, `contained_by(doc)`, `at(path).eq(v)` | `JsonQuery` |
+  | `at(path).lt(v)`, `.lte`, `.gt`, `.gte` | `JsonLeafQuery` |
+  | `at(path).between(lo, hi)` | `(JsonLeafQuery, JsonLeafQuery)`, low then high |
+  | `at(path).selector()` | `JsonSelector` |
+  | `elements(path).eq(member, v).gt(member, v)` | `JsonElementsQuery` |
+  | `predicate(text).vars(object)` | `JsonPredicateQuery` |
+  | `children(path)` | `JsonSubtreeKey`, which holds the node's one token |
+
+  `EncryptedCustomer::PROFILE.at("$.age").gt(30).encrypt(&keyset)` derives
+  under the field's column and options, as a scalar field's query does,
+  and takes a scope with `.scope(..)`. Each query derives the operand the
+  dynamic interface derives for the same declaration: the field reference and the
+  data plan read one definition of each input, which no longer needs the
+  `dynamic` feature.
+  - **Field options.** `#[stash(json(ordered = ["$.age", "$.visits[*].at"],
+    sealed_root = false))]` on the field names the JSON index's options.
+    The derive seals the field under them, and the field queries under
+    them. Without it the field takes the default options, which order no
+    path, so every ordering at a path is refused.
+  - **Typed values.** An ordering takes a number or a string
+    (`json::JsonOrdered`), equality at a path a scalar (`JsonScalar`), and
+    containment a document. A boolean ordering, or equality with an
+    object, does not compile. `elements` with no condition has no
+    `encrypt`.
+  - **Refusals.** A path is JSONPath text, checked when the query is
+    encrypted, before any key is requested, by the dynamic interface's
+    rules: an ordering at a path the field does not order is
+    `TermError::JsonPathNotOrdered`. A refusal of the input's own shape (an
+    `elements` path with no wildcard, a predicate the grammar does not
+    read) is `Error::Other` holding the dynamic interface's error and its
+    reason.
+  - **New public items.** `json::JsonTarget`, which seals a document under
+    options; `json::JsonQueries`, which converts each operand into the
+    field type's query type; `json::JsonElementsQuery` and
+    `json::JsonPredicateQuery`, the typed element and predicate operands;
+    and `field_reference::json`, the query types.
+
 - **Two more records derive** (#1661). The owned derives did not accept
   these shapes, and the removed derives did:
   - A `plaintext = T` record can have a `struct = ..` record as a field.
@@ -303,12 +347,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `plan::all((a, b))` | `a.zip(b)` on two `Pending` values, or `Pending::all`. Both wipe the plaintext a decrypt recovered if a later item fails. |
   | A hand-written `impl EncryptFrom<S> for T` | `impl EncryptTarget<S> for T` with `type ContextInput = RequiredContext<CallerContext>`, and `DecryptSource` in place of `DecryptInto` |
 
+  A typed JSON query, `cipher.query(op::Contains, ..).on(&plan)` and
+  `op::AtPath(..)`, is the document field's reference query: see "Typed JSON
+  queries from a field reference", above.
+
   What has no replacement yet:
-  - **A typed JSON query.** `cipher.query(op::Contains, ..)` and
-    `op::AtPath(..)` on a plan were the only typed way to query a JSON
-    document. Until the document's field reference has methods for them, a
-    JSON query goes through a plan that is data (`dynamic::query_term`, or
-    `Planned` with a query plan).
   - **Naming another index for a query** (`.via(index)`). A field reference
     answers through the index its field's type declares.
   - **A keyset chosen by name on a call** (`.keyset("tenant")`). Load the
@@ -331,6 +374,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target that calls `open` for its own plaintext type is unaffected. A
   caller that opens a type that is not `Zeroize` wraps it in one that is,
   or implements `Zeroize` for it.
+- **The JSON index answers no typed operator through `Supports`** (#1459).
+  `Json`'s `Supports` impls for `op::Contains`, `op::ContainedBy` and
+  `op::AtPath`, `JsonDocument`'s `Answers` and `LabelledTarget` impls, the
+  `Input` impls of a path and a value, and `json::AtPathTerms` are
+  removed. Only the removed query chain reached them; a field reference's
+  JSON queries replace them. The operator types stay: the dynamic `Op`
+  enum is generated from them.
 
 - **A set of terms holds one index for each operator.**
   `Encrypted<Terms>` and a derived `plaintext = T` record now refuse a set

@@ -90,6 +90,17 @@
 //! `.scope(..)` (`tests/ui/field_query_needs_its_scope.rs`); and
 //! `.bind(..)` on the query (`tests/ui/field_query_has_no_bind.rs`).
 //!
+//! # A field that stores a JSON document
+//!
+//! A field whose type stores a JSON document, such as
+//! [`JsonDocument`](crate::json::JsonDocument), has the JSON queries in
+//! place of the operator methods: [`contains`](FieldReference::contains),
+//! [`contained_by`](FieldReference::contained_by), [`at`](FieldReference::at) with a
+//! comparison, [`elements`](FieldReference::elements), [`predicate`](FieldReference::predicate)
+//! and [`children`](FieldReference::children). The field's `#[stash(json(..))]`
+//! names the paths its documents order, and the field queries under the
+//! same options. See [`json`].
+//!
 //! # A field that is a record
 //!
 //! The type of a field can be another record, for example
@@ -175,7 +186,10 @@ use std::marker::PhantomData;
 use stack_kms::MaybeSend;
 use zeroize::Zeroize;
 
+pub mod json;
+
 use crate::contexts::Contexts;
+use crate::json::FieldOptions;
 use crate::op::{
     Answers, Between, Eq, Gt, Gte, Input, LabelledTarget, Lt, Lte, Matches, Operator, QueryToken,
     Supports,
@@ -213,6 +227,10 @@ pub struct FieldReference<W, T, C = NoScope, P = TakesAny> {
     scope: &'static str,
     identity: &'static str,
     contexts: fn() -> Contexts,
+    /// The JSON index's options of a field that stores a document, which
+    /// its JSON queries derive under: the defaults unless the field's
+    /// `#[stash(json(..))]` names others.
+    json: FieldOptions,
     place: W,
     target: FieldTags<T, C, P>,
 }
@@ -258,9 +276,18 @@ impl<R, T, C, P> FieldReference<Root<R>, T, C, P> {
             scope,
             identity,
             contexts,
+            json: crate::json::default_options,
             place: Root(PhantomData),
             target: PhantomData,
         }
+    }
+
+    /// This field reference with the JSON options its field is sealed under, which
+    /// the field's `#[stash(json(..))]` names. For generated code.
+    #[doc(hidden)]
+    pub const fn with_json_options(mut self, options: FieldOptions) -> Self {
+        self.json = options;
+        self
     }
 }
 
@@ -322,6 +349,7 @@ impl<W: Place, T, C, P> FieldReference<W, T, C, P> {
             scope: inner.scope,
             identity: inner.identity,
             contexts: self.contexts,
+            json: inner.json,
             place: Nested {
                 name: self.name,
                 scope: self.scope,
@@ -337,6 +365,15 @@ impl<W: Place, T, C, P> FieldReference<W, T, C, P> {
     where
         Op: Operator,
         In: Input<Op::Arity>,
+        C: ScopeInput,
+    {
+        self.held_query(value, wipe)
+    }
+
+    /// A query from this field reference holding `value`, which `wipe` wipes when
+    /// the query is derived, refused or dropped.
+    fn held_query<Op, In>(self, value: In, wipe: fn(In)) -> FieldQuery<T, Op, In, C::Start>
+    where
         C: ScopeInput,
     {
         let holders = holders(&self.place);

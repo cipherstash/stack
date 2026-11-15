@@ -143,6 +143,14 @@
 //! inner record lists a scope, the query needs each record's scope,
 //! outermost first.
 //!
+//! `#[stash(json(ordered = ["$.age"]))]` on a field whose type stores a
+//! JSON document names the JSON index's options: the paths whose numbers
+//! and strings carry an ordering term, and `sealed_root = false` to turn
+//! the sealed root off. The field is sealed under them, and its field reference's
+//! JSON queries (`contains`, `at`, `elements`, `predicate`, `children`)
+//! derive under them. Without it the field takes the default options,
+//! which order no path.
+//!
 //! `#[stash(query = String)]` on a field states the type its queries take,
 //! so each of its field reference's methods takes that type alone. The derive checks
 //! it against the plaintext struct's field, which is that type or an

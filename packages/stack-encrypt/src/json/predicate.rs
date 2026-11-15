@@ -16,7 +16,7 @@
 //!                                                 one element satisfies both
 //! ```
 //!
-//! The dynamic interface's `match` operator and a field marker's
+//! The dynamic interface's `match` operator and a field reference's
 //! `predicate` both compile through it. The grammar and the compilation are
 //! documented with the operator, in the dynamic interface's JSON operators
 //! (`stack_encrypt::dynamic`, with the `dynamic` feature). This module holds the

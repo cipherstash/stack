@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `JsonTreeDocument` field is queried from its field reference** (#1459). As a
+  field of a derived record, a `JsonTreeDocument` (and an
+  `Option<JsonTreeDocument>`) has Stack Encrypt's JSON field queries,
+  which return the EQL query types a parameter binds as:
+  `EncryptedCustomer::PROFILE.contains(doc)` gives a `JsonTreeQuery`,
+  `at(path).gt(v)` a `JsonTreeLeafQuery`, `elements(path)..` a
+  `JsonTreeElementsQuery`, `predicate(text)` a `JsonTreePredicateQuery`,
+  `at(path).selector()` a `JsonTreeSelector` and `children(path)` a
+  `JsonTreeToken`. A field marked `#[stash(json(ordered = ["$.age"]))]` is
+  sealed under those options, so its orderings compare. Each operand is
+  the one a data plan naming `JsonSearch` derives for the same column and
+  options. `JsonTreeDocument` implements `JsonTarget` and `JsonQueries`.
+
 - **The parts of a `JsonSearch` document decrypt through the owned API**
   (#1660). `JsonTreeExtracted`, the entry `->` returns, implements
   `DecryptSource<JsonPlaintext>`. `JsonTreeSubtree`, the rows of a subtree
@@ -335,8 +348,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     gone.
   - A JSON document is a `JsonPlaintext`, not a `serde_json::Value`.
     `JsonTreeDocument`, `JsonTreeExtracted` and `JsonTreeSubtree` open to
-    it. A typed JSON query has no replacement yet: derive the operand
-    through a data plan that names `JsonSearch` (`EqlTargets`).
+    it. A typed JSON query is a document field's reference query (above).
   - `JsonTree` no longer implements `stack_encrypt::target::Layout`, which
     is removed. `JsonTree::encryption()`, `index()` and `specs()` are its
     own methods, and `index()` returns the index by value.

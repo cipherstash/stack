@@ -1,0 +1,84 @@
+error[E0277]: the trait bound `bool: JsonOrdered` is not satisfied
+  --> tests/ui/field_reference_json_value_types.rs:22:55
+   |
+22 |     let _ = EncryptedCustomer::PROFILE.at("$.age").gt(true);
+   |                                                    -- ^^^^ the trait `JsonOrdered` is not implemented for `bool`
+   |                                                    |
+   |                                                    required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `JsonOrdered`:
+             &std::string::String
+             &str
+             f32
+             f64
+             i16
+             i32
+             i64
+             i8
+           and $N others
+note: required by a bound in `ValueAt::<W, T, C, P>::gt`
+  --> src/field_reference/json.rs
+   |
+   |     pub fn gt(self, value: impl JsonOrdered) -> JsonFieldQuery<T, AtPath<Gt>, C::Start> {
+   |                                 ^^^^^^^^^^^ required by this bound in `ValueAt::<W, T, C, P>::gt`
+
+error[E0277]: the trait bound `serde_json::Value: JsonScalar` is not satisfied
+  --> tests/ui/field_reference_json_value_types.rs:23:55
+   |
+23 |     let _ = EncryptedCustomer::PROFILE.at("$.age").eq(serde_json::json!({"a": 1}));
+   |                                                    -- ^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `JsonScalar` is not implemented for `serde_json::Value`
+   |                                                    |
+   |                                                    required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `JsonScalar`:
+             &std::string::String
+             &str
+             bool
+             f32
+             f64
+             i16
+             i32
+             i64
+           and $N others
+note: required by a bound in `ValueAt::<W, T, C, P>::eq`
+  --> src/field_reference/json.rs
+   |
+   |     pub fn eq(self, value: impl JsonScalar) -> JsonFieldQuery<T, AtPath<Eq>, C::Start> {
+   |                                 ^^^^^^^^^^ required by this bound in `ValueAt::<W, T, C, P>::eq`
+
+error[E0277]: the trait bound `bool: JsonOrdered` is not satisfied
+  --> tests/ui/field_reference_json_value_types.rs:24:73
+   |
+24 |     let _ = EncryptedCustomer::PROFILE.elements("$.visits[*]").gt("at", false);
+   |                                                                --       ^^^^^ the trait `JsonOrdered` is not implemented for `bool`
+   |                                                                |
+   |                                                                required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `JsonOrdered`:
+             &std::string::String
+             &str
+             f32
+             f64
+             i16
+             i32
+             i64
+             i8
+           and $N others
+note: required by a bound in `Elements::<W, T, C, P>::gt`
+  --> src/field_reference/json.rs
+   |
+   |                       value: impl JsonOrdered,
+   |                                   ^^^^^^^^^^^ required by this bound in `Elements::<W, T, C, P>::gt`
+...
+   | / element_conditions! {
+   | |     /// The member equals `value`, as the ordering terms compare: text
+   | |     /// case- and accent-folded, numbers as 64-bit floats. Exact equality
+   | |     /// of any element is [`at(path).eq`](ValueAt::eq).
+...  |
+   | |     gt => Gt;
+   | |     -- required by a bound in this associated function
+   | |     /// The member is at or above `value`.
+   | |     gte => Gte;
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `element_conditions` (in Nightly builds, run with -Z macro-backtrace for more info)

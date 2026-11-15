@@ -1,6 +1,7 @@
 //! Parsing of the `#[stash(...)]` container and field attributes.
 
-use syn::{Attribute, Expr, Ident, LitStr, Member, Path, Result, Type};
+use syn::punctuated::Punctuated;
+use syn::{Attribute, Expr, Ident, LitBool, LitStr, Member, Path, Result, Token, Type};
 
 /// Container-level options, from `#[stash(...)]` on the struct itself.
 pub(crate) struct ContainerAttrs {
@@ -342,6 +343,62 @@ pub(crate) struct FieldAttrs {
     /// an `Option` of it. On a field whose field reference has no operator method
     /// (a record field, a ciphertext alone), only the check applies.
     pub(crate) query: Option<Type>,
+    /// `#[stash(json(ordered = ["$.age"], sealed_root = false))]`: with
+    /// `struct = ..`, the JSON index's options of a field that stores a
+    /// document. The field is sealed under them and its field reference's JSON
+    /// queries derive under them.
+    pub(crate) json: Option<JsonAttr>,
+}
+
+/// The JSON index's options a field's `json(..)` names.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct JsonAttr {
+    /// Where `json` is written, for errors.
+    pub(crate) span: proc_macro2::Span,
+    /// `ordered = ["$.age", ..]`: the paths whose leaves carry an ordering
+    /// term. JSONPath text, parsed by the engine when the field is sealed.
+    pub(crate) ordered: Vec<LitStr>,
+    /// `sealed_root = false`: turn off the sealed root, which is on by
+    /// default.
+    pub(crate) sealed_root: Option<LitBool>,
+}
+
+impl JsonAttr {
+    fn parse(meta: &syn::meta::ParseNestedMeta<'_>) -> Result<Self> {
+        let mut json = Self {
+            span: syn::spanned::Spanned::span(&meta.path),
+            ordered: Vec::new(),
+            sealed_root: None,
+        };
+        let mut ordered = false;
+        meta.parse_nested_meta(|inner| {
+            if inner.path.is_ident("ordered") {
+                if ordered {
+                    return Err(inner.error("`ordered` is given twice"));
+                }
+                ordered = true;
+                let value = inner.value()?;
+                let content;
+                syn::bracketed!(content in value);
+                json.ordered = Punctuated::<LitStr, Token![,]>::parse_terminated(&content)?
+                    .into_iter()
+                    .collect();
+                return Ok(());
+            }
+            if inner.path.is_ident("sealed_root") {
+                if json.sealed_root.is_some() {
+                    return Err(inner.error("`sealed_root` is given twice"));
+                }
+                json.sealed_root = Some(inner.value()?.parse()?);
+                return Ok(());
+            }
+            Err(inner.error(
+                "unsupported `json(..)` option; expected `ordered = [\"$.path\", ..]` or \
+                 `sealed_root = false`",
+            ))
+        })?;
+        Ok(json)
+    }
 }
 
 impl FieldAttrs {
@@ -421,6 +478,15 @@ impl FieldAttrs {
                     parsed.passthrough = true;
                     return Ok(());
                 }
+                if meta.path.is_ident("json") {
+                    if parsed.json.is_some() {
+                        return Err(meta.error(
+                            "`json(..)` is given twice; a field's JSON options are one list",
+                        ));
+                    }
+                    parsed.json = Some(JsonAttr::parse(&meta)?);
+                    return Ok(());
+                }
                 if meta.path.is_ident("query") {
                     if parsed.query.is_some() {
                         return Err(
@@ -445,7 +511,7 @@ impl FieldAttrs {
                 Err(meta.error(
                     "unsupported field attribute; expected `context_field`, \
                      `identity = \"...\"`, `from = field`, `default`, `default = expr`, \
-                     `decrypt`, `passthrough` or `query = Type`",
+                     `decrypt`, `passthrough`, `query = Type` or `json(..)`",
                 ))
             })?;
         }

@@ -397,7 +397,7 @@ fn read_frame<T: for<'de> Deserialize<'de>>(input: &ValueFrame) -> Result<T, Err
 
 /// Read and check an operator's input against the field's options: the
 /// frame read into the input the operator takes ([`Input`]), checked with
-/// the rules a field marker's typed JSON queries apply, and in the order a
+/// the rules a field reference's typed JSON queries apply, and in the order a
 /// binding has always met them.
 fn read_input(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
     match op {
