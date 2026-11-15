@@ -3647,6 +3647,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "stack-kms-azure"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "base64ct",
+ "serde",
+ "serde_json",
+ "stack-encrypt",
+ "stack-kms",
+ "stack-kms-vendor",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "uuid",
+ "vitaminc 0.9.0",
+ "web-time",
+ "zeroize",
+]
+
+[[package]]
 name = "stack-kms-gcp"
 version = "0.1.0"
 dependencies = [
