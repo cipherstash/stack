@@ -37,12 +37,12 @@ use zeroize::Zeroizing;
 
 use super::json_query::{
     derive_input, eql, json_reason, leaf, member_of, ordered_path_of, Bounds, Compare, Input,
-    Parsed, Predicate,
+    Parsed, Predicate, Under,
 };
 use super::query::{Op, Operand};
 use super::{Error, Reason};
 use crate::json::{parse_text, string_end, string_text, JsonOptions, JsonPath, Segment, MAX_DEPTH};
-use crate::{KeysetCipher, Label, Pending};
+use crate::{KeysetCipher, Pending};
 
 /// How deeply a predicate may nest parentheses, `!` and `exists`. The
 /// parser descends once per level, so the bound keeps a hostile predicate
@@ -1234,7 +1234,7 @@ fn operand_value(operand: Operand) -> Result<Value, crate::Error> {
 /// tree.
 pub(super) fn derive<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
-    label: &Label,
+    under: &Under<'_>,
     options: &JsonOptions,
     node: Node,
 ) -> Result<Pending<'a, Operand, K>, Error> {
@@ -1243,7 +1243,7 @@ pub(super) fn derive<'a, K: 'static>(
     let operands = leaves
         .into_iter()
         .map(|(op, input)| {
-            derive_input(keyset, label, options, op, input).map(|p| p.try_map(operand_value))
+            derive_input(keyset, under, options, op, input).map(|p| p.try_map(operand_value))
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Pending::all(keyset, operands)

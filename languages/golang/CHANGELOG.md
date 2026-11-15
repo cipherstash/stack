@@ -261,6 +261,15 @@ sends queries:
   and query it through a cipher with the same scope. `Plan.Validate` takes
   a plan with `Extension` or `Bind` and a target field. Values stored
   through a cipher with no scope and no binding do not change.
+  - A `JsonSearch` document is found and read in the same way. A query,
+    and a read prepared with `Select` or `Subtree`, derive under the
+    column and the scope.
+  - `Cipher.JSONOpen` opens a read's rows through a cipher with a binding,
+    where it refused one. Every row of one call opens under that binding.
+  - `Select` and `Subtree` open with the cipher that prepared the read,
+    and preparing a read takes no binding. So they read a document sealed
+    with a scope, and do not open one sealed with a binding. Open that
+    document whole, through the cipher with the binding.
 
 ## [0.1.0-rc.4] - 2026-11-13
 

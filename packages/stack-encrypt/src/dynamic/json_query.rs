@@ -209,8 +209,8 @@ use crate::json::{
     JsonQuery, JsonSubtree, JsonSubtreeKey,
 };
 use crate::sem::TermError;
-use crate::target::{AeadContext, DeclaredContext, Index, Json, Owned};
-use crate::{KeysetCipher, Label, NonEmpty, Pending};
+use crate::target::{AeadContext, CallerContext, DeclaredContext, Index, Json, Owned};
+use crate::{ContextPiece, KeysetCipher, Label, NonEmpty, Pending};
 
 /// The SQL type a JSON operand binds as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -722,19 +722,65 @@ pub(super) fn check(op: Op, options: &JsonOptions, input: &ValueFrame) -> Result
     read_input(op, options, input).map(drop)
 }
 
-/// The JSON index's terms of `value` under the column, as the stored
-/// document's were derived.
+/// Where a document field's queries and reads run: under the field's
+/// label, then the scopes and the bindings of its plan, as the document
+/// was sealed.
+///
+/// For example, take the field `profile` of the table `users`, in a plan
+/// whose caller added the tenant 7 as a scope and the row 9 as a binding.
+/// A selector, a read key and every other term derive under
+/// `users/profile`, then 7: the query context. An entry that a read
+/// returns opens under `users/profile`, then 7, then 9: the stored
+/// context.
+#[derive(Clone)]
+pub(super) struct Under<'p> {
+    label: &'p Label,
+    /// The plan's scopes, then its bindings.
+    parts: DeclaredContext,
+}
+
+impl<'p> Under<'p> {
+    /// The field with the label `label`, in a plan whose scopes and
+    /// bindings are `parts`.
+    pub(super) fn new(label: &'p Label, parts: DeclaredContext) -> Self {
+        Self { label, parts }
+    }
+
+    fn column(&self) -> NonEmpty<Label> {
+        NonEmpty::from(self.label.clone())
+    }
+
+    /// The field's context: its label, then the plan's scopes and
+    /// bindings.
+    fn context(&self) -> CallerContext {
+        self.parts.clone().under(self.column())
+    }
+
+    /// The query context, the label and then the scopes, which a selector
+    /// and a read key derive under. A binding is not in it.
+    fn query(&self) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
+        Ok(CallerContext::query_nonempty(self.context().validated()?))
+    }
+
+    /// The stored context, the query context and then the bindings, which
+    /// an entry opens under.
+    fn stored(&self) -> AeadContext {
+        AeadContext::from(self.context())
+    }
+}
+
+/// The JSON index's terms of `value` under the field's query context, as
+/// the stored document's were derived.
 fn terms<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     options: &JsonOptions,
-    label: &Label,
+    under: &Under<'_>,
     value: Value,
 ) -> Pending<'a, crate::json::JsonTerms, K> {
     keyset.run(
-        Index::<Value>::operation::<K, Owned>(&Json::new(options.clone()))
-            .under(NonEmpty::from(label.clone())),
+        Index::<Value>::operation::<K, Owned>(&Json::new(options.clone())).under(under.column()),
         value,
-        DeclaredContext::default(),
+        under.parts.clone(),
     )
 }
 
@@ -743,15 +789,16 @@ pub(super) fn eql<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, crate::Erro
 }
 
 /// Derive a JSON operator's operand for one input, under the field's
-/// column and options. Derived locally: the pending carries no request.
+/// query context and options. Derived locally: the pending carries no
+/// request.
 pub(super) fn derive<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
-    label: &Label,
+    under: &Under<'_>,
     options: &JsonOptions,
     op: Op,
     input: &ValueFrame,
 ) -> Result<Pending<'a, Operand, K>, Error> {
-    derive_input(keyset, label, options, op, read_input(op, options, input)?)
+    derive_input(keyset, under, options, op, read_input(op, options, input)?)
 }
 
 /// Derive an operand for an input already read and checked: what
@@ -759,24 +806,23 @@ pub(super) fn derive<'a, K: 'static>(
 /// leaves.
 pub(super) fn derive_input<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
-    label: &Label,
+    under: &Under<'_>,
     options: &JsonOptions,
     op: Op,
     input: Input,
 ) -> Result<Pending<'a, Operand, K>, Error> {
-    let column = || NonEmpty::from(label.clone());
     Ok(match input {
-        Input::Document(document) => terms(keyset, options, label, document.0.clone())
+        Input::Document(document) => terms(keyset, options, under, document.0.clone())
             .try_map(|terms| eql(&JsonQuery::of_terms(terms)).map(Operand::One)),
         Input::At(path, value) if op == Op::EqAt => {
-            terms(keyset, options, label, path.holding(value.0.clone()))
+            terms(keyset, options, under, path.holding(value.0.clone()))
                 .try_map(|terms| eql(&JsonQuery::at_path(terms)).map(Operand::One))
         }
-        Input::At(path, value) => terms(keyset, options, label, path.holding(value.0.clone()))
+        Input::At(path, value) => terms(keyset, options, under, path.holding(value.0.clone()))
             .try_map(|terms| eql(&JsonLeafQuery::of_leaf(&terms)).map(Operand::One)),
         Input::Between(path, low, high) => {
-            terms(keyset, options, label, path.holding(low.0.clone()))
-                .zip(terms(keyset, options, label, path.holding(high.0.clone())))
+            terms(keyset, options, under, path.holding(low.0.clone()))
+                .zip(terms(keyset, options, under, path.holding(high.0.clone())))
                 .try_map(|(lo, hi)| {
                     Ok(Operand::Range {
                         lo: eql(&JsonLeafQuery::of_leaf(&lo))?,
@@ -785,7 +831,7 @@ pub(super) fn derive_input<'a, K: 'static>(
                 })
         }
         Input::Path(path) if op == Op::Selector => {
-            let selector = keyset.json_selector_now(&path, column())?;
+            let selector = keyset.json_selector_now(&path, under.query()?)?;
             Pending::ready(keyset, Ok(Operand::Text(selector.to_string())))
         }
         Input::Path(path) => {
@@ -795,17 +841,17 @@ pub(super) fn derive_input<'a, K: 'static>(
                 &path,
                 options,
                 JsonSubtreeKey::DEFAULT_BOUND,
-                column(),
+                under.query()?,
             )?;
             let [token]: [String; 1] = key.tokens().try_into().map_err(|_| Error::Internal)?;
             Pending::ready(keyset, Ok(Operand::Text(token)))
         }
         Input::Read(path, bound) => {
-            let key = keyset.json_subtree_key_now(&path, options, bound, column())?;
+            let key = keyset.json_subtree_key_now(&path, options, bound, under.query()?)?;
             Pending::ready(keyset, Ok(Operand::TextList(key.tokens())))
         }
-        Input::Elements(bound, predicates) => elements(keyset, label, options, bound, &predicates)?,
-        Input::Predicate(node) => super::json_predicate::derive(keyset, label, options, *node)?,
+        Input::Elements(bound, predicates) => elements(keyset, under, options, bound, &predicates)?,
+        Input::Predicate(node) => super::json_predicate::derive(keyset, under, options, *node)?,
     })
 }
 
@@ -871,7 +917,7 @@ impl MemberOperand {
 /// at the bound: the probe.
 fn elements<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
-    label: &Label,
+    under: &Under<'_>,
     options: &JsonOptions,
     bound: u32,
     predicates: &[Predicate],
@@ -879,18 +925,13 @@ fn elements<'a, K: 'static>(
     let mut members = Vec::with_capacity(predicates.len());
     for predicate in predicates {
         let tokens = keyset
-            .json_subtree_key_now(
-                &predicate.path,
-                options,
-                bound,
-                NonEmpty::from(label.clone()),
-            )?
+            .json_subtree_key_now(&predicate.path, options, bound, under.query()?)?
             .tokens();
         let leaf = |value: &Parsed| {
             terms(
                 keyset,
                 options,
-                label,
+                under,
                 predicate.path.holding(value.0.clone()),
             )
             .map(|terms| JsonLeafQuery::of_leaf(&terms))
@@ -984,9 +1025,12 @@ enum Opener {
 }
 
 /// Open the rows a read returned against the request that prepared it,
-/// under the field's column and options and through `keyset`, the keyset
+/// under the field's contexts and options and through `keyset`, the keyset
 /// whose index key derived the read, and that keyset alone: a document
-/// sealed under another is refused before any key is retrieved. Each
+/// sealed under another is refused before any key is retrieved. The
+/// selector or the read key derives under the field's query context, and
+/// every entry opens under its stored context, so under the plan's
+/// bindings too. Each
 /// group of rows is one database row's: for `selector`, the entry `->`
 /// returned or none (SQL `NULL`); for `subtree`, the rows
 /// `json_tree_subtree` returned. Every group opens to a list of JSON
@@ -1008,20 +1052,19 @@ enum Opener {
 /// an altered entry, is [`crate::Error::JsonNotALeaf`].
 pub(super) fn open<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
-    label: &Label,
+    under: &Under<'_>,
     options: &JsonOptions,
     request: &ValueFrame,
     rows: &ValueFrame,
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
     let (read, groups) = read_open(request, rows)?;
-    let column = || NonEmpty::from(label.clone());
     let opener = match read {
-        Read::Selector(path) => Opener::Selector(keyset.json_selector_now(&path, column())?),
+        Read::Selector(path) => Opener::Selector(keyset.json_selector_now(&path, under.query()?)?),
         Read::Subtree(path, bound) => {
-            Opener::Subtree(keyset.json_subtree_key_now(&path, options, bound, column())?)
+            Opener::Subtree(keyset.json_subtree_key_now(&path, options, bound, under.query()?)?)
         }
     };
-    let context = || AeadContext::from(NonEmpty::from(label.clone()));
+    let context = || under.stored();
     // Opened through the client, confined to the deriving keyset, as a
     // record's leaves are through a keyset reference: the read's key is that
     // keyset's, so a document sealed under another cannot answer it.

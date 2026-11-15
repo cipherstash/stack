@@ -185,6 +185,26 @@ func (cph *Cipher) queryPlan(plan *record.Plan, field string) (*record.Plan, err
 	if len(p.Bind) != 0 {
 		return nil, fmt.Errorf("%w: field %q: a query takes no binding; a binding is in the stored context only, so a query by the scopes alone finds the row", ErrEncoding, field)
 	}
+	return cph.underNamedContext(p, field)
+}
+
+// readPlan is the plan a read of field's document opens under: as
+// [Cipher.queryPlan], and with this cipher's bindings. The engine derives
+// the read's selector or key under the scopes, as it derives a query's
+// term. It opens each entry under the bindings too, because the document
+// was sealed under them.
+func (cph *Cipher) readPlan(plan *record.Plan, field string) (*record.Plan, error) {
+	p, err := cph.plan(plan)
+	if err != nil {
+		return nil, err
+	}
+	return cph.underNamedContext(p, field)
+}
+
+// underNamedContext is p for a query or a read on field: p itself, or for
+// a plan that takes its context from a field, p under the context named
+// with [Cipher.Context].
+func (cph *Cipher) underNamedContext(p *record.Plan, field string) (*record.Plan, error) {
 	if p.ContextField == "" {
 		return p, nil
 	}

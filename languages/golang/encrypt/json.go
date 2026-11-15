@@ -36,11 +36,19 @@ import (
 // text of each value the read reached, in document order: plaintext, which
 // the caller owns. One ZeroKMS request for every group. For generated code.
 //
+// The rows open under the contexts their document was sealed under. So a
+// document sealed through a cipher with a scope opens through a cipher with
+// the same scope. A document sealed through a cipher with a binding too
+// opens through a cipher with the same scope and binding, and every group
+// of one call opens under that one binding. The selector or the key derives
+// under the scope alone, as a query's term does: prepare the read through
+// a cipher with no binding.
+//
 // Opening does not prove the database returned every row the read asked
 // for, or rows of the database row the caller meant: see the EQL json_tree
 // leakage reference.
 func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string, request vcvalue.Object, rows [][][]byte) ([][][]byte, error) {
-	p, err := cph.queryPlan(plan, field)
+	p, err := cph.readPlan(plan, field)
 	if err != nil {
 		return nil, err
 	}

@@ -117,11 +117,33 @@ fn plan() -> record::Plan {
 }
 
 fn plan_of(target: Value) -> record::Plan {
-    let wire = json!({
+    parsed(&json!({
         "profile": {"context": ["users", "profile"], "type": "json", "null": "sql", "target": target}
+    }))
+}
+
+/// [`plan_of`], as a binding sends it for a caller that added a scope,
+/// such as a tenant, and for a seal or a read, a binding, such as a row
+/// ID. The scope extends the field's context, and `"bind"` carries the
+/// binding. A query takes no binding.
+fn scoped_plan_of(target: Value, scope: u64, binding: Option<u64>) -> record::Plan {
+    let mut wire = json!({
+        "profile": {
+            "context": [["users", "profile"], scope],
+            "type": "json",
+            "null": "sql",
+            "target": target
+        }
     });
+    if let Some(binding) = binding {
+        wire["bind"] = json!([binding]);
+    }
+    parsed(&wire)
+}
+
+fn parsed(wire: &Value) -> record::Plan {
     record::plan_with(
-        dynamic::frame::serde::to_vec(&wire)
+        dynamic::frame::serde::to_vec(wire)
             .unwrap()
             .as_protected_ref(),
         &Documents,
@@ -1646,7 +1668,11 @@ mod compiled_match {
     /// `profile`, ordering `$.age`, `$.name` and every contact's `calls`
     /// and `relationship`.
     fn people() -> record::Plan {
-        plan_of(json!({
+        plan_of(people_target())
+    }
+
+    fn people_target() -> Value {
+        json!({
             "name": "JsonSearch",
             "options": {"ordered": [
                 "$.age",
@@ -1654,7 +1680,7 @@ mod compiled_match {
                 "$.contacts[*].calls",
                 "$.contacts[*].relationship",
             ]}
-        }))
+        })
     }
 
     /// The bound every test reads its element leaves to.
@@ -1756,6 +1782,180 @@ mod compiled_match {
                     .expect("every array within the bound"),
             ),
             other => panic!("not a node: {other}"),
+        }
+    }
+
+    /// A plan whose caller added a scope and a binding: a tenant and a row
+    /// ID. The document is sealed under its column, then the tenant, then
+    /// the row. So a query derives under the column and the tenant, and
+    /// takes no binding. A read derives its selector or its key as a query
+    /// does, and opens the entries it is given under the row too.
+    mod given_a_scope_and_a_binding {
+        use super::*;
+
+        const TENANT: u64 = 7;
+        const ROW: u64 = 9;
+
+        /// The plan a document is sealed and read under.
+        fn stored_under(tenant: u64, row: u64) -> record::Plan {
+            scoped_plan_of(people_target(), tenant, Some(row))
+        }
+
+        /// The plan a query derives under.
+        fn queried_under(tenant: u64) -> record::Plan {
+            scoped_plan_of(people_target(), tenant, None)
+        }
+
+        fn ann() -> Value {
+            json!({"name": "ann", "age": 36, "contacts": [
+                {"relationship": "sibling", "calls": 7},
+                {"relationship": "friend", "calls": 2}
+            ]})
+        }
+
+        /// A predicate with a leaf of every kind: an existence test, an
+        /// ordering, an equality and an element match.
+        const PREDICATE: &str = "$.age >= $min && $.name == \"ann\" \
+             && exists($.contacts[*] ? (@.relationship == $r && @.calls > 5))";
+
+        fn vars() -> Value {
+            json!({"min": 18, "r": "sibling"})
+        }
+
+        fn named_ann() -> Value {
+            json!({"json": json!({"name": "ann"}).to_string()})
+        }
+
+        #[tokio::test]
+        async fn a_query_under_the_scope_finds_the_document() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let doc = seal(&keyset, &stored_under(TENANT, ROW), &ann()).await;
+            let plan = queried_under(TENANT);
+
+            let contains = one(&keyset, &plan, "contains", named_ann()).await;
+            assert!(needle(&contains).matches(doc.selector_set()), "contains");
+            let predicate = operand(&keyset, &plan, PREDICATE, vars()).await;
+            assert_eq!(evaluate(&doc, &predicate), Some(true), "{predicate}");
+
+            // A binding is in no query: the same query finds the document
+            // of another row.
+            let other_row = seal(&keyset, &stored_under(TENANT, ROW + 1), &ann()).await;
+            assert!(needle(&contains).matches(other_row.selector_set()));
+            assert_eq!(evaluate(&other_row, &predicate), Some(true));
+        }
+
+        #[tokio::test]
+        async fn a_query_under_another_scope_does_not_find_the_document() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let doc = seal(&keyset, &stored_under(TENANT, ROW), &ann()).await;
+
+            for (other, whose) in [
+                (queried_under(TENANT + 1), "another tenant"),
+                (people(), "no tenant"),
+            ] {
+                let contains = one(&keyset, &other, "contains", named_ann()).await;
+                assert!(!needle(&contains).matches(doc.selector_set()), "{whose}");
+                let predicate = operand(&keyset, &other, PREDICATE, vars()).await;
+                assert_eq!(evaluate(&doc, &predicate), Some(false), "{whose}");
+            }
+            // The query with no tenant does find a document sealed with
+            // none.
+            let plain = seal(&keyset, &people(), &ann()).await;
+            let predicate = operand(&keyset, &people(), PREDICATE, vars()).await;
+            assert_eq!(evaluate(&plain, &predicate), Some(true));
+        }
+
+        /// A query takes no binding, as before: a binding is in no query
+        /// context.
+        #[test]
+        fn a_query_takes_no_binding() {
+            let error = dynamic::check_query(
+                &stored_under(TENANT, ROW),
+                "profile",
+                Op::Contains,
+                json_frame(&named_ann()),
+                &Documents,
+            )
+            .unwrap_err();
+            assert_eq!(error.reason(), Some(Reason::BindInQuery));
+        }
+
+        #[tokio::test]
+        async fn a_read_opens_under_the_scope_and_the_binding() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = stored_under(TENANT, ROW);
+            let doc = seal(&keyset, &plan, &ann()).await;
+            let name = || json!({"operation": "selector", "path": "$.name"});
+            let selector_of = |plan: record::Plan| {
+                let keyset = &keyset;
+                async move {
+                    let selector = one(keyset, &plan, "selector", json!({"path": "$.name"})).await;
+                    selector.as_str().unwrap().to_owned()
+                }
+            };
+
+            // `->` by selector: the entry is found under the tenant, and
+            // it opens under the tenant and the row.
+            let entry = extracted(&doc, &selector_of(queried_under(TENANT)).await);
+            assert_eq!(entry.len(), 1, "the document has an entry at the selector");
+            dynamic::check_json_open(
+                &plan,
+                "profile",
+                json_frame(&name()),
+                frame(vec![entry.clone()]),
+                &Documents,
+            )
+            .expect("a read takes a plan with a binding");
+            let names = open(&keyset, &plan, name(), vec![entry.clone()])
+                .await
+                .unwrap();
+            assert_eq!(names, [vec![json!("ann")]]);
+
+            // A wildcard read of every contact's calls.
+            let calls = json!({"path": "$.contacts[*].calls"});
+            let tokens = term(&keyset, &queried_under(TENANT), "subtree", calls).await;
+            let Operand::TextList(tokens) = tokens.operand() else {
+                panic!("a subtree read sends a list of tokens")
+            };
+            let opened = open(
+                &keyset,
+                &plan,
+                json!({"operation": "subtree", "path": "$.contacts[*].calls"}),
+                vec![subtree(&doc, tokens)],
+            )
+            .await
+            .unwrap();
+            assert_eq!(opened, [vec![json!(7), json!(2)]]);
+
+            // The entry does not open under another row, or under no row.
+            for (other, whose) in [
+                (stored_under(TENANT, ROW + 1), "another row"),
+                (queried_under(TENANT), "no row"),
+            ] {
+                let refused = open(&keyset, &other, name(), vec![entry.clone()]).await;
+                assert!(refused.is_err(), "{whose}");
+            }
+
+            // Under another tenant, or none, the selector names no entry,
+            // and the entry does not open.
+            for (query, read, whose) in [
+                (
+                    queried_under(TENANT + 1),
+                    stored_under(TENANT + 1, ROW),
+                    "another tenant",
+                ),
+                (people(), people(), "no tenant"),
+            ] {
+                assert!(
+                    extracted(&doc, &selector_of(query).await).is_empty(),
+                    "{whose}"
+                );
+                let refused = open(&keyset, &read, name(), vec![entry.clone()]).await;
+                assert!(refused.is_err(), "{whose}");
+            }
         }
     }
 

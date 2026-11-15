@@ -255,6 +255,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     supplies the scopes and the bindings again.
   - `Plan::contexts()` and `Planned::contexts()` show a target field
     under the same parts as a field with outputs.
+  - A document field's JSON operators and reads run under the same
+    parts. `dynamic::query_term` derives a JSON operand under the label,
+    then the plan's scopes, so a query finds the documents sealed under
+    the same scopes. `dynamic::json_open` derives its selector or read
+    key under them too, and opens each entry under the plan's bindings
+    as well.
+  - `dynamic::json_open` and `check_json_open` take a plan with a
+    binding, where they refused one (`Reason::BindInQuery`): the entries
+    were sealed under it. A query still refuses a binding.
 
 - **`target::legacy` is removed** (#1488). It held two traits,
   implemented for every type, that gave the structural API a second

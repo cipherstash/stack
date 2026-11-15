@@ -1166,7 +1166,7 @@ impl Plan {
 
     /// The context every field's label is run under: the scopes, then the
     /// bindings.
-    fn declared_context(&self) -> DeclaredContext {
+    pub(super) fn declared_context(&self) -> DeclaredContext {
         self.bindings
             .iter()
             .cloned()

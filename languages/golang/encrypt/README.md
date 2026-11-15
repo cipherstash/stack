@@ -634,7 +634,12 @@ The scope and the binding come after the column in the field's context.
 The EQL value stores the table and the column alone, in `i`, so:
 
 - open the value through a cipher with the same scope and binding;
-- query it through a cipher with the same scope. A binding is in no query.
+- query it through a cipher with the same scope. A binding is in no query;
+- read part of a `JsonSearch` document (`Select`, `Subtree`) through a
+  cipher with the same scope. These readers open with the cipher that
+  prepared the read, and preparing a read takes no binding. So they do not
+  open a document sealed with a binding: open that document whole, through
+  the cipher with the binding.
 
 ### Encrypted JSON documents
 
