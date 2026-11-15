@@ -1512,8 +1512,8 @@ Base64.
     `DecryptSource<JsonPlaintext>`.
   - A query from a field's marker works for the equality and match
     types, with the record's scope. A plan's query for an EQL type takes
-    `.extend(..)`. The order types do not implement `Answers` yet, so a
-    marker cannot query them.
+    a scope too, through the plan chain that #1488 removes. The order
+    types do not implement `Answers` yet, so a marker cannot query them.
 - **Not done.** A data plan still refuses a scope or a binding on a field
   that names an EQL type (`TargetError::Extended`). So a Go record cannot
   yet write an EQL field under a scope.

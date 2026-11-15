@@ -29,9 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A query from the field's marker, such as `EncryptedMember::EMAIL.eq(..)`,
     gives the term stored in the row, for the types that answer it. For a
     record with a scope, pass the scope: `.scope(Scope::new(tenant))`.
-  - A plan's query for an EQL type can carry a scope too, with
-    `.extend(..)`. It gives the term of the values stored under that
-    scope. `QueryLabelError` has no `Extended` variant.
+  - A plan's query for an EQL type can carry a scope too. It gives the
+    term of the values stored under that scope, so `QueryLabelError` has
+    no `Extended` variant.
   - The encrypt input of an EQL type is the hidden
     `stack_encrypt::target::StoredContext<Identifier>`. A caller passes a
     `NonEmpty<Identifier>`. Generic code names the input as

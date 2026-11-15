@@ -39,11 +39,11 @@
 //! names no column, so the awaited query refuses it, before any keyset is
 //! resolved or term derived.
 //!
-//! A query can carry a scope: `.extend(..)` on a plan's query, or
-//! `.scope(..)` on a query from a record field's marker. Its term is then
-//! derived under the column and the scope, and matches the values a record
-//! stored under the same scope. The twin stores the column alone, as the
-//! stored value does: a scope is never stored in `i`.
+//! A query can carry a scope: `.scope(..)` on a query from a record
+//! field's marker, or the chain's `.extend(..)` on a plan's query. Its term
+//! is then derived under the column and the scope, and matches the values
+//! a record stored under the same scope. The twin stores the column alone,
+//! as the stored value does: a scope is never stored in `i`.
 //!
 //! The plan is for queries. Stack Encrypt runs a plan's encryption under
 //! the label, and an EQL type is sealed under its column instead, so write
