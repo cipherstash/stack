@@ -1,0 +1,595 @@
+//! The refusals of the dynamic interface: [`Error`] and its [`Reason`].
+//!
+//! They are compiled without the `dynamic` feature too, because the typed
+//! JSON queries of a field marker check their inputs with the same code as
+//! the dynamic interface, and refuse them with the same reasons. With the
+//! feature they are `stack_encrypt::dynamic::Error` and
+//! `stack_encrypt::dynamic::Reason`.
+use std::fmt;
+
+use crate::target::IndexSpec;
+
+/// What went wrong in a dynamic operation.
+///
+/// The split that matters to a caller is malformed input versus something
+/// else: every variant but [`Cipher`](Error::Cipher) and
+/// [`Internal`](Error::Internal) is a statement about the value or the
+/// request, decided before any key is minted or retrieved. `Cipher` is the
+/// operation failing; `Internal` is this module's own bug. A binding maps
+/// them to its own status codes on those lines, and must not report
+/// `Internal` as the caller's fault. The record path's operations hand back
+/// the engine's [`Pending`](crate::Pending), whose failure is the crate's
+/// [`Error`](crate::Error); a [`Plan`](crate::Error::Plan) failure there is
+/// again a statement about the caller's data.
+///
+/// Each input error names the field it is about, where there is one, and
+/// says what was wrong with a [`Reason`]: both are in the message and in the
+/// [`ErrorPayload`](crate::ErrorPayload) (`field`, `reason`), so a binding's
+/// caller can tell a bad plan field from a bad record field without parsing
+/// text. A field is `None` where the error is about the whole plan, value or
+/// record, or where the function that raised it never sees a field
+/// ([`context`](crate::dynamic::context()), [`read`](crate::dynamic::read)); [`in_field`](Self::in_field) names
+/// it from the caller's side.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[non_exhaustive]
+pub enum Error {
+    /// A value used as an encryption context is not one — a boolean, float,
+    /// null, object or passthrough, or a string that is not UTF-8 — or it is
+    /// a context that renders empty. Leaves take a
+    /// [`NonEmpty`](vitaminc_protected::NonEmpty) and nothing else, so an
+    /// empty context is refused where it is read rather than sealed under.
+    #[error(
+        "value cannot be read as a non-empty encryption context: {reason}{}",
+        in_field_text(field)
+    )]
+    #[diagnostic(
+        code(stack_encrypt::dynamic_context),
+        help("A context is a string, an integer, bytes, or a list of them, and renders to at least one byte.")
+    )]
+    Context {
+        /// The plan field whose context it is, if it is one.
+        field: Option<String>,
+        /// What was wrong with it.
+        reason: Reason,
+    },
+
+    /// A term was asked for a value the scheme defines no such term for: a
+    /// container, null or passthrough (which have no term semantics at all),
+    /// or a scalar outside the kind's domain — equality over a boolean,
+    /// match over anything but text, an order term over a boolean. See
+    /// [`IndexSpec::defines`].
+    #[error("no {kind} term is defined for this value{}", in_field_text(field))]
+    #[diagnostic(code(stack_encrypt::dynamic_term))]
+    Term {
+        /// The plan field the value is for, if it is one.
+        field: Option<String>,
+        /// The index that was asked for.
+        kind: IndexSpec,
+    },
+
+    /// A record plan is malformed: not an object of field specs, empty,
+    /// missing or duplicating an output, carrying a key that is not
+    /// `"context"`, `"outputs"`, `"target"` or `"type"`, naming a type that
+    /// is not one, asking for an index its declared type is not defined
+    /// for, giving a field a context that is not a label a plan can
+    /// seal it under, or declaring what no plan allows (two fields
+    /// under one identity, fields under different contexts).
+    #[error("record plan is malformed: {reason}{}", in_field_text(field))]
+    #[diagnostic(code(stack_encrypt::dynamic_plan))]
+    Plan {
+        /// The plan field at fault, if the fault is one field's.
+        field: Option<String>,
+        /// What was wrong with the plan.
+        reason: Reason,
+    },
+
+    /// A record plan field has a term output (`"eq"`, `"match"`, `"ore"`,
+    /// `"ope"`) and declares no `"type"`. The field's terms derive from the
+    /// one declared kind, never from whatever tag each value arrived with,
+    /// so the plan is refused when it is built, before any value arrives.
+    /// Its own variant rather than a [`Plan`](Error::Plan) reason because
+    /// it is the refusal a plan written before types were required meets
+    /// first, and the one a caller fixes field by field.
+    #[error("record plan field {field:?} has a term output and no declared type")]
+    #[diagnostic(
+        code(stack_encrypt::dynamic_untyped_index),
+        help("Declare the field's \"type\" (\"string\", \"int64\", ...): its index terms derive from that type.")
+    )]
+    UntypedIndex {
+        /// The field's name — its key in the plan.
+        field: String,
+    },
+
+    /// A record source does not fit its plan: not an object (or an array of
+    /// them), a field the plan does not name, a plan field the source does
+    /// not carry or carries twice, or a passthrough or a repeated map key
+    /// under a field the plan seals, or a value of another type than its
+    /// field declares. Also a query its field does not answer: an operator
+    /// the field's type does not answer, an input that cannot be read as the
+    /// field's type ([`read`](crate::dynamic::read)) or is not the pair a range takes, a page of
+    /// values to verify that holds a value of another type, or statistics
+    /// or a term that are not what [`target_limit`](crate::dynamic::target_limit) reads — the same shape of
+    /// refusal as a mistyped field, naming the field.
+    #[error(
+        "record source does not fit the plan: {reason}{}",
+        in_field_text(field)
+    )]
+    #[diagnostic(code(stack_encrypt::dynamic_source))]
+    Source {
+        /// The source field at fault, if the fault is one field's.
+        field: Option<String>,
+        /// What was wrong with the source.
+        reason: Reason,
+    },
+
+    /// A stored record does not fit its plan: not a map (or a sequence of
+    /// them), a ciphertext-bearing field that is absent or given twice, or
+    /// has no `"c"` node or two of them, a repeated map key under `"c"`, a
+    /// passthrough under `"c"` — which would hand back unauthenticated
+    /// bytes as if they had been opened — or a passthrough field that is
+    /// absent, carries no `"passthrough"` node, or carries a value of
+    /// another type than it declares. A sealed field that opens to a value
+    /// of another type than it declares fails the pending instead
+    /// ([`PlanError::FieldType`](crate::PlanError::FieldType)): the type tag
+    /// is inside the AEAD envelope.
+    #[error(
+        "stored record does not fit the plan: {reason}{}",
+        in_field_text(field)
+    )]
+    #[diagnostic(code(stack_encrypt::dynamic_record))]
+    Record {
+        /// The stored field at fault, if the fault is one field's.
+        field: Option<String>,
+        /// What was wrong with the stored record.
+        reason: Reason,
+    },
+
+    /// A `match` predicate is refused at a place in its text: text the
+    /// grammar does not read, a construct of SQL/JSON path the JSON index
+    /// cannot answer, a variable its `vars` do not hold, or a value of a
+    /// type its comparison cannot take. The error names the construct in
+    /// the grammar's own words and the byte offset in the caller's
+    /// predicate text, and nothing of the text itself: a key name or a
+    /// value in it can be customer data.
+    #[error(
+        "the predicate is refused at byte {at}: {reason} ({construct}){}",
+        in_field_text(field)
+    )]
+    #[diagnostic(
+        code(stack_encrypt::dynamic_predicate),
+        help("A predicate compares a path (`$.a.b`, `$.a[*].b`, `$.\"a b\"`) with a variable (`$v`) or a literal by `==`, `!=`, `<`, `<=`, `>` or `>=`, tests `exists($.path)` or `exists($.array[*] ? (@.x == $v && @.y > $w))`, and combines them with `&&`, `||`, `!` and parentheses.")
+    )]
+    Predicate {
+        /// The plan field the predicate is for, if one is named yet.
+        field: Option<String>,
+        /// What was wrong.
+        reason: Reason,
+        /// The construct refused, in the grammar's words: never text from
+        /// the predicate.
+        construct: &'static str,
+        /// The byte offset in the predicate text the construct starts at.
+        at: usize,
+    },
+
+    /// An invariant this module maintains did not hold — a slot count that
+    /// did not line up, a re-proof that should not have been able to fail.
+    /// Always a bug here, never a statement about the caller's data.
+    #[error("internal invariant violated")]
+    #[diagnostic(code(stack_encrypt::dynamic_internal))]
+    Internal,
+
+    /// A plan field names an EQL type as its target and the name, the
+    /// field's label or type, or the value does not fit: the build holds no
+    /// EQL types, no type has the name, the engine cannot produce it yet,
+    /// the label is not a column, or the value is of another kind. Decided when
+    /// the plan is built or the value is read, before any key is touched
+    /// — save [`TargetError::Other`](crate::dynamic::TargetError::Other), which is the resolver's own failure.
+    #[cfg(feature = "dynamic")]
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Target(#[from] crate::dynamic::TargetError),
+
+    /// Sealing, opening or deriving failed.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Cipher(#[from] crate::Error),
+}
+
+/// ` (field "age")`, or nothing: the tail of an input error's message.
+fn in_field_text(field: &Option<String>) -> String {
+    field
+        .as_deref()
+        .map(|field| format!(" (field {field:?})"))
+        .unwrap_or_default()
+}
+
+impl Error {
+    /// A context error with no field named yet.
+    pub(crate) fn bad_context(reason: Reason) -> Self {
+        Self::Context {
+            field: None,
+            reason,
+        }
+    }
+
+    /// A plan error with no field named yet.
+    pub(crate) fn bad_plan(reason: Reason) -> Self {
+        Self::Plan {
+            field: None,
+            reason,
+        }
+    }
+
+    /// A source error with no field named yet.
+    pub(crate) fn bad_source(reason: Reason) -> Self {
+        Self::Source {
+            field: None,
+            reason,
+        }
+    }
+
+    /// A stored-record error with no field named yet.
+    pub(crate) fn bad_record(reason: Reason) -> Self {
+        Self::Record {
+            field: None,
+            reason,
+        }
+    }
+
+    /// Name the field an input error is about, where it names none yet.
+    ///
+    /// For a binding that calls something that never sees a field —
+    /// [`read`](crate::dynamic::read) for a query value, [`context`](crate::dynamic::context()) for a field's
+    /// context — and knows which field it was for. An error that already
+    /// names a field, or is not an input error, comes back unchanged.
+    pub fn in_field(mut self, name: &str) -> Self {
+        match &mut self {
+            Self::Context { field, .. }
+            | Self::Term { field, .. }
+            | Self::Plan { field, .. }
+            | Self::Source { field, .. }
+            | Self::Record { field, .. }
+            | Self::Predicate { field, .. }
+                if field.is_none() =>
+            {
+                *field = Some(name.to_owned());
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// The field an input error is about, if it names one.
+    pub fn field(&self) -> Option<&str> {
+        match self {
+            Self::Context { field, .. }
+            | Self::Term { field, .. }
+            | Self::Plan { field, .. }
+            | Self::Source { field, .. }
+            | Self::Record { field, .. }
+            | Self::Predicate { field, .. } => field.as_deref(),
+            Self::UntypedIndex { field } => Some(field),
+            #[cfg(feature = "dynamic")]
+            Self::Target(_) => None,
+            Self::Internal | Self::Cipher(_) => None,
+        }
+    }
+
+    /// What was wrong, for a context, plan, source, record or predicate
+    /// error.
+    pub fn reason(&self) -> Option<Reason> {
+        match self {
+            Self::Context { reason, .. }
+            | Self::Plan { reason, .. }
+            | Self::Source { reason, .. }
+            | Self::Record { reason, .. }
+            | Self::Predicate { reason, .. } => Some(*reason),
+            #[cfg(feature = "dynamic")]
+            Self::Target(_) => None,
+            Self::Term { .. } | Self::UntypedIndex { .. } | Self::Internal | Self::Cipher(_) => {
+                None
+            }
+        }
+    }
+}
+
+impl crate::ErrorPayload for Error {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        let mut fields = match self {
+            #[cfg(feature = "dynamic")]
+            Self::Target(error) => return error.payload(),
+            Self::Cipher(error) => return error.payload(),
+            Self::Term { kind, .. } => crate::diagnostic::payload([("index", kind.key().into())]),
+            Self::Predicate { construct, at, .. } => crate::diagnostic::payload([
+                ("construct", (*construct).into()),
+                ("at", (*at as u64).into()),
+            ]),
+            _ => serde_json::Map::new(),
+        };
+        if let Some(field) = self.field() {
+            let _ = fields.insert("field".to_owned(), field.into());
+        }
+        if let Some(reason) = self.reason() {
+            let _ = fields.insert("reason".to_owned(), reason.as_str().into());
+        }
+        fields
+    }
+}
+
+/// Declares [`Reason`] from one list: each variant with its `snake_case`
+/// name and the phrase its `Display` writes. One list, so a reason cannot be
+/// added without both, and [`Reason::ALL`] cannot miss one.
+macro_rules! reasons {
+    (
+        $(#[$meta:meta])*
+        pub enum $name:ident {
+            $(
+                $(#[$variant_meta:meta])*
+                $variant:ident => $snake:literal, $phrase:literal;
+            )*
+        }
+    ) => {
+        $(#[$meta])*
+        pub enum $name {
+            $(
+                $(#[$variant_meta])*
+                $variant,
+            )*
+        }
+
+        impl $name {
+            /// Every reason, in declaration order: what a binding's test
+            /// iterates.
+            pub const ALL: &'static [$name] = &[$(Self::$variant,)*];
+
+            /// Each reason's `snake_case` name and phrase, at its
+            /// discriminant: the variants and these entries come from one
+            /// list, in one order.
+            const WORDS: &'static [(&'static str, &'static str)] = &[$(($snake, $phrase),)*];
+        }
+    };
+}
+
+reasons! {
+    /// What was wrong with a context, plan, source, stored record or query: the
+    /// reason a dynamic input error carries beside the field it names.
+    ///
+    /// One vocabulary for all five, since several reasons apply to more than
+    /// one (a field given twice is a misfit in a source and in a stored
+    /// record). [`as_str`](Self::as_str) is the `snake_case` name a binding
+    /// reports in its payload's `reason` field; `Display` is the phrase the
+    /// message uses. `#[non_exhaustive]`: a reason added later is not a break,
+    /// and a binding that switches on one keeps a fallback.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[non_exhaustive]
+    pub enum Reason {
+        /// A plan, field spec, source or stored record is not an object (a
+        /// map), or a list of them, where one is expected.
+        NotAnObject => "not_an_object", "not an object where one is expected";
+        /// A context value is of a kind a context cannot hold: a boolean,
+        /// float, null, object or passthrough.
+        ContextKind => "context_kind", "a boolean, float, null, object or passthrough cannot be a context";
+        /// A context string is not UTF-8. No longer produced: a frame's
+        /// text is UTF-8 by construction. Kept so a binding that switches on
+        /// it still compiles.
+        ContextNotUtf8 => "context_not_utf8", "a context string is not UTF-8";
+        /// A context renders empty.
+        EmptyContext => "empty_context", "the context renders empty";
+        /// A part of the plan's `"bind"` list is empty. A binding ties a row
+        /// to a context of its own, and an empty one would bind every row
+        /// to one context.
+        EmptyBinding => "empty_binding", "a binding is empty";
+        /// A field's context is not a label of at least two plain segments,
+        /// optionally extended by scalar parts.
+        ContextNotLabel => "context_not_label", "the context is not a label of at least two plain segments, optionally extended";
+        /// The plan's fields sit under different contexts, or carry different
+        /// extensions.
+        MixedContexts => "mixed_contexts", "the fields sit under different contexts or extensions";
+        /// The plan has no fields.
+        NoFields => "no_fields", "the plan has no fields";
+        /// A field is named twice in the plan.
+        DuplicateField => "duplicate_field", "a field is named twice";
+        /// A field spec has a key other than `"context"`, `"outputs"`,
+        /// `"target"`, `"type"` and `"null"`.
+        UnknownKey => "unknown_key", r#"a key other than "context", "outputs", "target", "type" and "null""#;
+        /// A key is given twice: in a field spec, or in a map inside a source
+        /// value or a stored record.
+        RepeatedKey => "repeated_key", "a key is given twice";
+        /// A field spec has no `"context"`.
+        MissingContext => "missing_context", r#"no "context""#;
+        /// A field spec has neither `"outputs"` nor `"target"`.
+        MissingOutputs => "missing_outputs", r#"neither "outputs" nor "target""#;
+        /// A field spec has both `"outputs"` and `"target"`, or a field is
+        /// declared both as a target and with data verbs.
+        OutputsWithTarget => "outputs_with_target", r#"both "outputs" and "target""#;
+        /// `"outputs"` is not a list.
+        OutputsNotList => "outputs_not_list", r#""outputs" is not a list"#;
+        /// An output is not `"c"`, `"passthrough"` or an index in its wire
+        /// form, or a match index's options are not valid.
+        UnknownOutput => "unknown_output", r#"an output is not "c", "passthrough" or a valid index"#;
+        /// A field's output list, or its index set, is empty.
+        NoOutputs => "no_outputs", "no outputs";
+        /// A field names one output, or one index, twice.
+        DuplicateOutput => "duplicate_output", "an output is named twice";
+        /// Two outputs answer one operator: `ore` beside `ope`, or two match
+        /// indexes. A field declares at most one index per operator, as the
+        /// typed plan does (`PlanError::IndexOverlap`).
+        OverlappingOutputs => "overlapping_outputs", "two outputs answer one operator: a field declares at most one index per operator";
+        /// A field names `"passthrough"` beside another output.
+        PassthroughWithOutputs => "passthrough_with_outputs", r#""passthrough" beside another output"#;
+        /// `"target"` is not a non-empty string, nor an object of a
+        /// non-empty `"name"` and the target's `"options"`; or the options
+        /// do not parse as the target's (an unknown option, a path that is
+        /// not one, an ordered path naming a position).
+        InvalidTarget => "invalid_target", r#""target" is not a non-empty string or a {"name", "options"} object the target reads"#;
+        /// `"type"` is not a string naming a value type.
+        UnknownType => "unknown_type", r#""type" does not name a value type"#;
+        /// The field's declared type has no such index: match on an integer,
+        /// equality or an order index on a boolean, any index on a composite.
+        IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
+        /// The field declares the JSON index as an output. A data plan
+        /// reaches the JSON index through a target that stores a document
+        /// (`JsonSearch`, with the `json` type), whose options are the
+        /// index's; the index is not an output of its own.
+        JsonIndexPending => "json_index_pending", "the JSON index is reached through a target that stores a document, not as an output";
+        /// The field declares the `json` type and names no target: a JSON
+        /// document is stored through a target that stores one
+        /// (`JsonSearch`).
+        JsonNeedsTarget => "json_needs_target", r#"a "json" field names a target that stores a document"#;
+        /// The field gives its target options the target does not take: a
+        /// target takes the options of the index it carries, and this one
+        /// carries none that has any.
+        TargetOptions => "target_options", "the target takes no options";
+        /// Two fields are keyed under one identity.
+        SharedIdentity => "shared_identity", "two fields are keyed under one identity";
+        /// The plan has no field of the name asked for.
+        NoSuchField => "no_such_field", "the plan has no such field";
+        /// The field asked for does not name an EQL type.
+        NotATarget => "not_a_target", "the field does not name an EQL type";
+        /// The field a plan takes its context from (`"context_field"`) is not a
+        /// string passthrough, or the plan-level `"context_field"` key is not a
+        /// string.
+        ContextField => "context_field", r#"the context field is not a string passthrough, or "context_field" is not a string"#;
+        /// `"bind"` is reserved at the top level of a plan for the caller's
+        /// bindings, a list of scalar context parts: it is not a field name,
+        /// and its value is nothing else, so a grouped part is refused.
+        Bind => "bind", r#""bind" is reserved for the caller's bindings: not a field name, and its value is a list of scalar context parts"#;
+        /// The plan was refused for a reason none of the above names.
+        Refused => "refused", "the plan was refused";
+        /// A field the plan names is not there.
+        FieldMissing => "field_missing", "a field the plan names is missing";
+        /// A field is there twice.
+        FieldRepeated => "field_repeated", "a field is given twice";
+        /// A field is there that the plan does not name.
+        UnknownField => "unknown_field", "a field the plan does not name";
+        /// A value is not of the type its field declares.
+        FieldType => "field_type", "a value is not of the type its field declares";
+        /// A passthrough sits where a sealed value, or a ciphertext, must be.
+        Passthrough => "passthrough", "a passthrough where a sealed value must be";
+        /// A passthrough value cannot be stored as a frame: it nests deeper,
+        /// or holds text, bytes or a key longer, than a frame carries.
+        Unframeable => "unframeable", "a passthrough value nests deeper, or holds a longer value, than a frame carries";
+        /// A stored field is not a map of outputs.
+        OutputsNotMap => "outputs_not_map", "a stored field is not a map of outputs";
+        /// A stored sealed field has no `"c"` node.
+        NoCiphertextNode => "no_ciphertext_node", r#"no "c" node"#;
+        /// A stored passthrough field has no `"passthrough"` node.
+        NoPassthroughNode => "no_passthrough_node", r#"no "passthrough" node"#;
+        /// A stored target field has no `"eql"` node.
+        NoEqlNode => "no_eql_node", r#"no "eql" node"#;
+        /// A stored `"passthrough"` or `"eql"` node is not a passthrough
+        /// carrying a value of the kind it holds.
+        NotPassthrough => "not_passthrough", "a node does not carry a value of the kind it holds";
+        /// A plan takes its context from a field of each record, so a query on
+        /// it has no context: the caller names the context, and sends the plan
+        /// under it.
+        QueryContextField => "query_context_field", "the plan takes its context from a field of each record, so a query has none";
+        /// The plan carries a binding, which is not in the query context, so
+        /// a query cannot take it.
+        BindInQuery => "bind_in_query", "a query takes no binding: a binding is in the stored context only";
+        /// An operator name is not one the engine knows ([`Op::parse`](crate::dynamic::Op::parse)).
+        UnknownOperator => "unknown_operator", "the operator is not one the engine knows";
+        /// The field's type does not answer the operator: no index it declares
+        /// answers it, or the EQL type it names does not ([`Op::answered_by`](crate::dynamic::Op::answered_by)).
+        OperatorNotAnswered => "operator_not_answered", "the field's type does not answer the operator";
+        /// A range's input is not a list of two values.
+        NotARange => "not_a_range", "a range is not a list of two values";
+        /// The operator's answer is exact, so there is nothing to verify and no
+        /// fetch to size.
+        ExactOperator => "exact_operator", "the operator's answer is exact, so there is nothing to verify or size";
+        /// The term is not one the field's index derives for the operator.
+        NotAQueryTerm => "not_a_query_term", "the term is not one the field's index derives for the operator";
+        /// Statistics are not a row count with an optional histogram and
+        /// confidence ([`Stats::from_frame`](crate::op::Stats::from_frame)).
+        NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
+        /// A JSON operator's input or a read's request or rows are not the
+        /// object the operator takes ([`json_open`](crate::dynamic::json_open), the JSON operators of
+        /// [`Op`](crate::dynamic::Op)): a missing or unknown key, a value of another kind,
+        /// a row that is not an entry, or more than one entry for a
+        /// selector.
+        JsonInput => "json_input", "the input is not the object the JSON operator takes";
+        /// A JSON value in an input is not JSON text the engine reads.
+        JsonSyntax => "json_syntax", "a JSON value is not JSON text";
+        /// A JSON value in an input names an object member twice.
+        JsonDuplicateKey => "json_duplicate_key", "a JSON object names a member twice";
+        /// A JSON value in an input has an integer literal outside the 64-bit
+        /// range.
+        JsonIntegerRange => "json_integer_range", "a JSON integer literal is outside the 64-bit range";
+        /// A path names an array position where the operand is a selector,
+        /// which reads every position as the wildcard: read a position with
+        /// a subtree read.
+        JsonPathPosition => "json_path_position", "a selector reads a position as the wildcard; read a position with subtree";
+        /// A path has a wildcard where the operator names one node.
+        JsonPathWildcard => "json_path_wildcard", "the operator names one node, and a wildcard names many";
+        /// `"null"` is not `"sealed"` or `"sql"`.
+        UnknownNull => "unknown_null", r#""null" is not "sealed" or "sql""#;
+        /// A passthrough field says how to store a null: it carries one as
+        /// it is.
+        NullPassthrough => "null_passthrough", r#"a passthrough carries a null as it is, and takes no "null""#;
+        /// A field with `"null": "sealed"` derives a term other than
+        /// equality's, or names an EQL type that carries one: a null has an
+        /// equality term and no other, so its absence would show in
+        /// that term's column.
+        SealedNullIndex => "sealed_null_index", r#"a null has an equality term and no other, so a field with another index takes "null": "sql""#;
+        /// A field with `"null": "sealed"` declares no type, or one of no
+        /// fixed width (text, bytes, a container), whose absence the length
+        /// of its ciphertext would show.
+        SealedNullType => "sealed_null_type", "a sealed null needs a declared type of fixed width: a bool, a number, a date, a timestamp or a decimal";
+        /// A query's input is a null, and the field does not seal its nulls
+        /// beside an equality term: only `eq` on a `"null": "sealed"` field
+        /// finds a null by its term. A `"null": "sql"` field's nulls are SQL
+        /// `NULL`, which `IS NULL` finds.
+        NullQuery => "null_query", r#"a null is found by its term only with eq on a field with "null": "sealed"; a "null": "sql" field's nulls are SQL NULL"#;
+        /// An element predicate's path has no wildcard: the predicate is
+        /// over the elements of an array, which `[*]` names.
+        JsonPathNoWildcard => "json_path_no_wildcard", "an element predicate is over an array's elements, and the path names no wildcard";
+        /// An element predicate has no predicates: it would be true of
+        /// every row with an element.
+        JsonNoPredicates => "json_no_predicates", "an element predicate needs at least one predicate";
+        /// An element predicate's `wildcard_bound` is `0`: its reads would
+        /// send the probe alone, so the predicate could never be true.
+        JsonWildcardBoundZero => "json_wildcard_bound_zero", "an element predicate reads at least one element, and a wildcard_bound of 0 reads none";
+        /// A predicate of an element predicate has an `op` that is not
+        /// `eq`, `lt`, `lte`, `gt`, `gte` or `between`.
+        JsonUnknownPredicateOp => "json_unknown_predicate_op", r#"a predicate's "op" is not eq, lt, lte, gt, gte or between"#;
+        /// A `match` predicate is not text the SQL/JSON path predicate
+        /// grammar reads: an unexpected character, an unterminated string,
+        /// a literal that is not JSON, or text after the predicate.
+        JsonPredicateSyntax => "json_predicate_syntax", "the predicate is not SQL/JSON path predicate text";
+        /// A `match` predicate uses a construct of SQL/JSON path the JSON
+        /// index cannot answer: arithmetic, `like_regex`, `starts with`,
+        /// `is unknown`, a method, a `strict` or `lax` mode, `.*`, `.**`,
+        /// a slice, `last`, a comparison of two paths or of two values, a
+        /// filter outside `exists`, or `||`, `!` or `!=` inside a filter.
+        JsonPredicateUnsupported => "json_predicate_unsupported", "the predicate uses a construct the JSON index cannot answer";
+        /// A `match` predicate names a variable (`$v`) its `vars` do not
+        /// hold.
+        JsonPredicateUnknownVariable => "json_predicate_unknown_variable", "the predicate names a variable its vars do not hold";
+        /// A value in a `match` predicate, a literal or a variable, is of a
+        /// JSON type its comparison cannot take: an object or array
+        /// anywhere, and anything but a number or a string beside `<`,
+        /// `<=`, `>`, `>=` or in an element-scoped filter of more than one
+        /// equality.
+        JsonPredicateValueType => "json_predicate_value_type", "a value in the predicate is of a type its comparison cannot take";
+        /// `!=` at a path with a wildcard: jsonpath answers it true when
+        /// some element differs, which no term of the index can say.
+        JsonPredicateNotEqualAtWildcard => "json_predicate_not_equal_at_wildcard", "!= at a path with a wildcard asks whether some element differs, which the index cannot answer";
+        /// A `match` predicate nests parentheses, `!` and `exists` deeper
+        /// than the engine reads, or names a path with more steps than a
+        /// document has levels.
+        JsonPredicateTooDeep => "json_predicate_too_deep", "the predicate nests too deep";
+    }
+}
+
+impl Reason {
+    /// The reason's `snake_case` name, as a binding reports it.
+    pub fn as_str(self) -> &'static str {
+        Self::WORDS[self as usize].0
+    }
+}
+
+impl fmt::Display for Reason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(Self::WORDS[*self as usize].1)
+    }
+}

@@ -380,6 +380,68 @@ impl<'de> Deserialize<'de> for JsonLeafQuery {
     }
 }
 
+/// One member of an [`JsonElementsQuery`]: the tokens of a read of one
+/// field's path through the array's wildcard, one per element below the
+/// bound in element order and then the probe, and the field's bounds, each
+/// a leaf operand. `gt` or `gte` is the lower bound, `lt` or `lte` the
+/// upper; equality is `gte` and `lte` at one value.
+#[derive(Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct JsonElementsMember {
+    pub(crate) t: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) gt: Option<JsonLeafQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) gte: Option<JsonLeafQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) lt: Option<JsonLeafQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) lte: Option<JsonLeafQuery>,
+}
+
+/// An element-scoped predicate: true of a row where some one element of an
+/// array satisfies every member together, which two orderings at the same
+/// wildcard path cannot say (each can be answered by a different
+/// element). One member per condition, each holding the tokens of a read of
+/// the condition's path and its bounds.
+///
+/// Serializes to the `eql_v4.query_json_elements` operand, `{"m": [member,
+/// …]}`, which `eql_v4.json_tree_element_match` takes. The tokens are
+/// capabilities over the column's documents, so it prints as its shape.
+#[derive(Clone, OpaqueDebug, PartialEq, Eq, Serialize)]
+pub struct JsonElementsQuery {
+    m: Vec<JsonElementsMember>,
+}
+
+impl JsonElementsQuery {
+    pub(crate) fn of(m: Vec<JsonElementsMember>) -> Self {
+        Self { m }
+    }
+
+    /// How many conditions the predicate holds.
+    pub fn len(&self) -> usize {
+        self.m.len()
+    }
+
+    /// Whether the predicate holds no condition. Never, for one the engine
+    /// derived: an element predicate holds at least one.
+    pub fn is_empty(&self) -> bool {
+        self.m.is_empty()
+    }
+}
+
+/// A SQL/JSON path predicate, compiled: a boolean tree of `and`, `or` and
+/// `not` over the other JSON operands, each leaf derived as that operator
+/// derives it. True of exactly the rows `jsonb_path_match` is true of over
+/// the plaintext, within the limits the dynamic interface's `match`
+/// operator documents.
+///
+/// Serializes to the `eql_v4.query_json_predicate` operand, which
+/// `eql_v4.json_tree_match` and `col @@ $1` evaluate. It prints as its
+/// shape.
+#[derive(Clone, OpaqueDebug, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct JsonPredicateQuery(pub(crate) Value);
+
 /// A path selector: what `->` and the path functions take. Prints and
 /// serializes as the base64 the stored entry carries in `s`.
 ///

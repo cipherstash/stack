@@ -133,9 +133,11 @@ use crate::target::{DecryptField, DecryptSource, Decryptable, Decryption};
 
 mod cascade;
 mod derive;
+pub(crate) mod inputs;
 mod path;
 mod plain;
 mod plaintext;
+pub(crate) mod predicate;
 mod query;
 mod shuffle;
 mod text;
@@ -143,8 +145,10 @@ mod text;
 pub use derive::JsonTerms;
 pub use path::{JsonPath, JsonPathError, Segment};
 pub use plaintext::JsonPlaintext;
+pub(crate) use query::JsonElementsMember;
 pub use query::{
-    AtPathTerms, JsonLeafQuery, JsonQuery, JsonSelector, JsonSelectorSet, JsonSubtreeKey,
+    AtPathTerms, JsonElementsQuery, JsonLeafQuery, JsonPredicateQuery, JsonQuery, JsonSelector,
+    JsonSelectorSet, JsonSubtreeKey,
 };
 pub use text::{parse_text, to_text, JsonTextError};
 
@@ -161,7 +165,6 @@ pub fn wipe_value(value: &mut serde_json::Value) {
 
 /// The deepest a document nests: the data plan refuses a path with more
 /// steps, which names no node.
-#[cfg(feature = "dynamic")]
 pub(crate) use derive::MAX_DEPTH;
 pub(crate) use derive::{seal_pending, terms_pending};
 pub(crate) use plain::PlainJson;

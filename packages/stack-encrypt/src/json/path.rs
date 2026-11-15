@@ -268,7 +268,6 @@ impl JsonPath {
     }
 
     /// The path of these steps, from the root down.
-    #[cfg(feature = "dynamic")]
     pub(crate) fn of(segments: Vec<Segment>) -> Self {
         Self { segments }
     }
@@ -276,7 +275,6 @@ impl JsonPath {
     /// Add one step to the end of this path. A parser reads its steps
     /// into a path with this, so the keys it has read are wiped if it
     /// refuses the text part way.
-    #[cfg(feature = "dynamic")]
     pub(crate) fn push(&mut self, segment: Segment) {
         self.segments.push(segment);
     }
