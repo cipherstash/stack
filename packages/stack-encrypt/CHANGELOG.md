@@ -54,6 +54,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     feature.
   - Needs stack-auth 0.44.0 and stack-kms 0.2.0.
 
+- **The JSON targets implement the owned traits** (#1660). The plaintext
+  is `json::JsonPlaintext`, which holds a `serde_json::Value` and wipes it
+  when it is dropped.
+  - `JsonDocument` implements `EncryptTarget<JsonPlaintext>` and
+    `DecryptSource<JsonPlaintext>`. So
+    `profile.encrypt_into_with_context(&keyset, column)` seals a document
+    under the default options, and
+    `JsonPlaintext::decrypt_from_with_context(document, &cipher, column)`
+    opens it.
+  - `JsonExtracted`, the entry `->` returns, implements
+    `DecryptSource<JsonPlaintext>`.
+  - `JsonSubtree`, the rows of a read, implements `DecryptSource` for
+    `JsonPlaintext`, `Option<JsonPlaintext>` and `Vec<JsonPlaintext>`.
+  - The context is required in each case. The answers and the refusals
+    are those of the structural traits (`EncryptFrom<Value>` and
+    `DecryptInto<Value>`), which stay for now. The stored bytes do not
+    change: each API opens what the other sealed.
+  - These three types now have a `decryption` method from two traits. Code
+    that imports both `DecryptInto` and `DecryptSource` and calls
+    `.decryption(..)` on one of them must name the trait:
+    `DecryptInto::decryption(document, context)`.
+
 - **A field type that stores its context can be a record field** (#1658).
   A derived `struct = ..` record gives each field a context of its own:
   the record's scope, then the field's name. A type that stores its

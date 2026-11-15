@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The parts of a `JsonSearch` document decrypt through the owned API**
+  (#1660). `JsonTreeExtracted`, the entry `->` returns, implements
+  `DecryptSource<JsonPlaintext>`. `JsonTreeSubtree`, the rows of a subtree
+  read, implements `DecryptSource` for `JsonPlaintext`,
+  `Option<JsonPlaintext>` and `Vec<JsonPlaintext>`. So
+  `JsonPlaintext::decrypt_from_with_context(extracted, &keyset, column)`
+  opens one entry, and the value is wiped when it is dropped.
+  - The context is required. Pass the document's column. For a document
+    that is a field of a record with scopes or bindings, pass the column,
+    then those scopes and bindings. The structural `DecryptInto` takes the
+    column alone, so it cannot open such a document's parts.
+  - The answers and the refusals are those of the structural
+    `DecryptInto`, which stays for now.
+
 - **EQL types as record fields** (#1658). An EQL v4 type can be a field
   of a Stack Encrypt `#[derive(EncryptTarget, DecryptSource)]` record
   with `struct = ..`. The field's column is the record's scope and the

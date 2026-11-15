@@ -28,12 +28,13 @@ use stack_encrypt::json::{
 };
 use stack_encrypt::target::{
     AeadContext, DecryptSource, EncryptTarget, ExpectedContext, IndexSpec, Json, Layout,
-    StoredContext,
+    RequiredContext, StoredContext,
 };
 use stack_encrypt::{
     DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption, Error, NonEmpty,
 };
 use ts_rs::TS;
+use zeroize::Zeroize;
 
 use crate::encoding::{Base64Text, Base85Text};
 use crate::v4::{DomainType, SchemaVersion};
@@ -556,7 +557,7 @@ impl JsonTreeDocument {
             Err(error) => return Decryption::failed(error),
         };
         match self.document() {
-            Ok(document) => document.decryption(AeadContext::from(context)),
+            Ok(document) => DecryptInto::decryption(document, AeadContext::from(context)),
             Err(error) => Decryption::failed(error),
         }
     }
@@ -634,10 +635,33 @@ impl DecryptInto<Value> for JsonTreeExtracted {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
         match self.entry.node() {
-            Ok(node) => self
-                .selector
-                .open(node)
-                .decryption(AeadContext::from(context)),
+            Ok(node) => {
+                DecryptInto::decryption(self.selector.open(node), AeadContext::from(context))
+            }
+            Err(error) => Decryption::failed(error),
+        }
+    }
+}
+
+/// An extracted entry opens to a [`JsonPlaintext`], which is wiped when it
+/// is dropped: the scalar the entry holds, or the whole document for a
+/// sealed root asked for at `$`.
+///
+/// The context is required. It is the context the document was sealed
+/// under:
+///
+/// - For a document stored on its own, pass its column:
+///   `JsonPlaintext::decrypt_from_with_context(extracted, &keyset, column)`.
+/// - For a document that is a field of a record with scopes or bindings,
+///   pass the field's column, then those scopes and bindings.
+///
+/// An entry that does not carry the selector asked for is refused before
+/// any key is requested.
+impl DecryptSource<JsonPlaintext> for JsonTreeExtracted {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        match self.entry.node() {
+            Ok(node) => DecryptSource::decryption(self.selector.open(node), context),
             Err(error) => Decryption::failed(error),
         }
     }
@@ -649,7 +673,7 @@ impl DecryptInto<Value> for JsonTreeSubtree {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
         match self.subtree() {
-            Ok(subtree) => subtree.decryption(AeadContext::from(context)),
+            Ok(subtree) => DecryptInto::decryption(subtree, AeadContext::from(context)),
             Err(error) => Decryption::failed(error),
         }
     }
@@ -661,7 +685,7 @@ impl DecryptInto<Option<Value>> for JsonTreeSubtree {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<Value>, K> {
         match self.subtree() {
-            Ok(subtree) => subtree.decryption(AeadContext::from(context)),
+            Ok(subtree) => DecryptInto::decryption(subtree, AeadContext::from(context)),
             Err(error) => Decryption::failed(error),
         }
     }
@@ -673,13 +697,65 @@ impl DecryptInto<Vec<Value>> for JsonTreeSubtree {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {
         match self.subtree() {
-            Ok(subtree) => subtree.decryption(AeadContext::from(context)),
+            Ok(subtree) => DecryptInto::decryption(subtree, AeadContext::from(context)),
             Err(error) => Decryption::failed(error),
         }
     }
 }
 
+/// The rows of a read open to the value at its path, as a
+/// [`JsonPlaintext`], which is wiped when it is dropped. No node at the
+/// path is an error: open as an `Option<JsonPlaintext>` to read that as
+/// `None`.
+///
+/// The context is required. It is the context the document was sealed
+/// under, as for [`JsonTreeExtracted`].
+impl DecryptSource<JsonPlaintext> for JsonTreeSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        self.read(context)
+    }
+}
+
+/// The rows of a read open to the value at its path, or to `None` where
+/// the row has no node there.
+impl DecryptSource<Option<JsonPlaintext>> for JsonTreeSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<Option<JsonPlaintext>, K> {
+        self.read(context)
+    }
+}
+
+/// The rows of a read open to a list: one value per concrete path the key
+/// named that the row has, in document order.
+impl DecryptSource<Vec<JsonPlaintext>> for JsonTreeSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<Vec<JsonPlaintext>, K> {
+        self.read(context)
+    }
+}
+
 impl JsonTreeSubtree {
+    /// Open the rows as the engine's subtree opens them, once every row is
+    /// shown to carry the header and the slot an extractor adds.
+    fn read<P, K>(self, context: RequiredContext<AeadContext>) -> Decryption<P, K>
+    where
+        P: Zeroize + 'static,
+        K: 'static,
+        JsonSubtree: DecryptSource<P, ContextInput = RequiredContext<AeadContext>>,
+    {
+        match self.subtree() {
+            Ok(subtree) => DecryptSource::decryption(subtree, context),
+            Err(error) => Decryption::failed(error),
+        }
+    }
+
     fn subtree(&self) -> Result<JsonSubtree, Error> {
         Ok(self.key.open(
             self.rows

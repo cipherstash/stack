@@ -28,14 +28,15 @@ use super::plain::{
     insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
     PlainJson,
 };
+use super::plaintext::JsonPlaintext;
 use super::query::{group_of, JsonSelector, JsonSelectorSet, JsonSubtreeKey, Read};
 use super::shuffle;
 use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
 use crate::keyset::KeysetState;
 use crate::sem::TermError;
-use crate::target::{AeadContext, Decryption, Pending, Request};
+use crate::target::{AeadContext, Decryption, Pending, Request, RequiredContext};
 use crate::ContextPiece;
-use crate::{DecryptInto, Descriptor, Error, KeysetCipher, NonEmpty, StackCipher};
+use crate::{DecryptInto, DecryptSource, Descriptor, Error, KeysetCipher, NonEmpty, StackCipher};
 
 /// PAE domain of the path selector `s`.
 const SELECTOR_DOMAIN: &[u8] = b"stack-encrypt/json/selector/v1";
@@ -1371,6 +1372,19 @@ impl DecryptInto<Value> for JsonDocument {
     }
 }
 
+/// The whole document, as a [`JsonPlaintext`], which is wiped when it is
+/// dropped. The context is required: it is the context the document was
+/// sealed under.
+impl DecryptSource<JsonPlaintext> for JsonDocument {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        let context = context.into_inner();
+        Decryption::from_open(move |cipher| {
+            open_document(self, cipher, context).map(JsonPlaintext::from)
+        })
+    }
+}
+
 /// The refusal of a row that is not the one a read asked for.
 fn wrong(expected: &'static str) -> Error {
     Error::JsonWrongEntry { expected }
@@ -1406,38 +1420,59 @@ fn wrong(expected: &'static str) -> Error {
 impl DecryptInto<Value> for JsonExtracted {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
-        let (node, selector) = self.into_parts();
-        if node.entry.s != selector {
-            return Decryption::failed(wrong("the entry at the path asked for"));
-        }
-        Decryption::from_open(move |cipher| {
-            let (request, aad) = match key_retrieval(&node.header, context.into_context()) {
-                Ok(parts) => parts,
-                Err(error) => return Pending::failed(cipher, error),
-            };
-            Pending::request(cipher, vec![request], move |responses| {
-                let key = responses.next_retrieved_key()?;
-                let aes = leaf_cipher(&key)?;
-                let opened = open_entry(
-                    &aes,
-                    &node.header,
-                    &aad,
-                    &node.entry,
-                    node.slot,
-                    &cascade::no_children(),
-                )
-                .map_err(|error| match error {
-                    Error::Aead => Error::JsonNotALeaf,
-                    other => other,
-                })?;
-                opened
-                    .whole
-                    .or(opened.scalar)
-                    .map(hand_over)
-                    .ok_or_else(|| shape("a JSON scalar, or a sealed root"))
-            })
-        })
+        open_extracted(self, context)
     }
+}
+
+/// The scalar the entry holds, or the whole document for a sealed root
+/// asked for at `$`, as a [`JsonPlaintext`], which is wiped when it is
+/// dropped. The refusals are those of [`DecryptInto<Value>`], above. The
+/// context is required: it is the context the document was sealed under.
+impl DecryptSource<JsonPlaintext> for JsonExtracted {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        open_extracted(self, context.into_inner()).map(JsonPlaintext::from)
+    }
+}
+
+/// Open the entry `->` returned, once it is shown to carry the selector
+/// asked for. Shared by the two openings above, so they agree on every
+/// refusal.
+fn open_extracted<K: 'static>(
+    extracted: JsonExtracted,
+    context: AeadContext,
+) -> Decryption<Value, K> {
+    let (node, selector) = extracted.into_parts();
+    if node.entry.s != selector {
+        return Decryption::failed(wrong("the entry at the path asked for"));
+    }
+    Decryption::from_open(move |cipher| {
+        let (request, aad) = match key_retrieval(&node.header, context.into_context()) {
+            Ok(parts) => parts,
+            Err(error) => return Pending::failed(cipher, error),
+        };
+        Pending::request(cipher, vec![request], move |responses| {
+            let key = responses.next_retrieved_key()?;
+            let aes = leaf_cipher(&key)?;
+            let opened = open_entry(
+                &aes,
+                &node.header,
+                &aad,
+                &node.entry,
+                node.slot,
+                &cascade::no_children(),
+            )
+            .map_err(|error| match error {
+                Error::Aead => Error::JsonNotALeaf,
+                other => other,
+            })?;
+            opened
+                .whole
+                .or(opened.scalar)
+                .map(hand_over)
+                .ok_or_else(|| shape("a JSON scalar, or a sealed root"))
+        })
+    })
 }
 
 /// Open the rows of a read into the values of the nodes its tokens named,
@@ -1481,10 +1516,7 @@ fn one_reached(
 impl DecryptInto<Vec<Value>> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {
-        Decryption::from_open(move |cipher| {
-            open_reads(self, cipher, context)
-                .map(|values| values.into_iter().map(hand_over).collect())
-        })
+        open_every(self, context)
     }
 }
 
@@ -1498,10 +1530,7 @@ impl DecryptInto<Vec<Value>> for JsonSubtree {
 impl DecryptInto<Option<Value>> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<Value>, K> {
-        Decryption::from_open(move |cipher| {
-            open_reads(self, cipher, context)
-                .try_map(|values| Ok(one_reached(values)?.map(hand_over)))
-        })
+        open_at_most_one(self, context)
     }
 }
 
@@ -1514,14 +1543,78 @@ impl DecryptInto<Option<Value>> for JsonSubtree {
 impl DecryptInto<Value> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
-        Decryption::from_open(move |cipher| {
-            open_reads(self, cipher, context).try_map(|values| {
-                one_reached(values)?
-                    .map(hand_over)
-                    .ok_or_else(|| shape("a node at the walked path"))
-            })
-        })
+        open_one(self, context)
     }
+}
+
+/// The rows of a read as a list of [`JsonPlaintext`]s, each wiped when it
+/// is dropped: one value per concrete path the key named that the row has,
+/// in document order. The answers and the refusals are those of
+/// [`DecryptInto<Vec<Value>>`], above. The context is required: it is the
+/// context the document was sealed under.
+impl DecryptSource<Vec<JsonPlaintext>> for JsonSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<Vec<JsonPlaintext>, K> {
+        open_every(self, context.into_inner())
+            .map(|values| values.into_iter().map(JsonPlaintext::from).collect())
+    }
+}
+
+/// The value at the path as a [`JsonPlaintext`], or `None` where the row
+/// has no node there. The answers and the refusals are those of
+/// [`DecryptInto<Option<Value>>`], above.
+impl DecryptSource<Option<JsonPlaintext>> for JsonSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> Decryption<Option<JsonPlaintext>, K> {
+        open_at_most_one(self, context.into_inner()).map(|value| value.map(JsonPlaintext::from))
+    }
+}
+
+/// The value at the path as a [`JsonPlaintext`], which is wiped when it is
+/// dropped. No node at the path is [`Error::OpenedType`]: open as an
+/// `Option<JsonPlaintext>` to read that as `None`. The answers and the
+/// refusals are those of [`DecryptInto<Value>`], above.
+impl DecryptSource<JsonPlaintext> for JsonSubtree {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        open_one(self, context.into_inner()).map(JsonPlaintext::from)
+    }
+}
+
+/// Every value the read reached, in the key's order.
+fn open_every<K: 'static>(subtree: JsonSubtree, context: AeadContext) -> Decryption<Vec<Value>, K> {
+    Decryption::from_open(move |cipher| {
+        open_reads(subtree, cipher, context)
+            .map(|values| values.into_iter().map(hand_over).collect())
+    })
+}
+
+/// The one value the read reached, or none.
+fn open_at_most_one<K: 'static>(
+    subtree: JsonSubtree,
+    context: AeadContext,
+) -> Decryption<Option<Value>, K> {
+    Decryption::from_open(move |cipher| {
+        open_reads(subtree, cipher, context)
+            .try_map(|values| Ok(one_reached(values)?.map(hand_over)))
+    })
+}
+
+/// The one value the read reached. None is a refusal.
+fn open_one<K: 'static>(subtree: JsonSubtree, context: AeadContext) -> Decryption<Value, K> {
+    Decryption::from_open(move |cipher| {
+        open_reads(subtree, cipher, context).try_map(|values| {
+            one_reached(values)?
+                .map(hand_over)
+                .ok_or_else(|| shape("a node at the walked path"))
+        })
+    })
 }
 
 /// One row of a read as the server returned it, not yet opened: the entry,

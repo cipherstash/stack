@@ -24,7 +24,7 @@ use super::input::{AcceptsContext, NoCallerContext, RequiredContext};
 use super::source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 use super::{CipherRef, Pending};
 use crate::contexts::{self, Contexts, Placeholder, Shape, Shapes, SuppliedContext};
-use crate::json::{JsonDocument, JsonOptions, JsonTerms};
+use crate::json::{JsonDocument, JsonOptions, JsonPlaintext, JsonTerms};
 use crate::{Error, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
 use std::fmt;
@@ -1319,6 +1319,52 @@ impl EncryptFrom<serde_json::Value> for JsonDocument {
         serde_json::Value: 's,
     {
         json_document(JsonOptions::default())
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Json(JsonOptions::default())]
+    }
+}
+
+/// A [`JsonPlaintext`] seals into a document as the JSON index lays it out
+/// under the default options, and declares that index.
+///
+/// The context is required. It is the column the document is stored in,
+/// and every selector is derived under it:
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use serde_json::json;
+/// use stack_encrypt::json::{JsonDocument, JsonPlaintext};
+/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, StackCipher};
+///
+/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// let column = nonempty!("users").with("profile");
+///
+/// let profile = JsonPlaintext::from(json!({"name": "Ada", "age": 35}));
+/// let document: JsonDocument = profile
+///     .encrypt_into_with_context(&cipher.default_keyset(), column.clone())
+///     .await?;
+///
+/// let opened = JsonPlaintext::decrypt_from_with_context(document, &cipher, column).await?;
+/// assert_eq!(opened.value()["name"], "Ada");
+/// # Ok(())
+/// # }
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+/// ```
+///
+/// The plaintext is wiped when the document has been sealed, and when the
+/// context is refused. Sealing reads the document through one copy, which
+/// is wiped too.
+impl EncryptTarget<JsonPlaintext> for JsonDocument {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
+    where
+        JsonPlaintext: 's,
+    {
+        json_document(JsonOptions::default())
+            .project(JsonPlaintext::value)
+            .accepting()
     }
     fn indexes() -> Vec<super::IndexSpec> {
         vec![super::IndexSpec::Json(JsonOptions::default())]

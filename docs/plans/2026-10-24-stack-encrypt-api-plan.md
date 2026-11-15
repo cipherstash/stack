@@ -1906,7 +1906,9 @@ parameter named `aad`.
 - **Done already.** `stack_encrypt::dynamic::json::JsonPlaintext` wraps a
   `serde_json::Value`, and wipes it when it is dropped. It is part of the
   dynamic interface. It has only `value()`. The strict parser exists as
-  `stack_encrypt::json::parse_text`.
+  `stack_encrypt::json::parse_text`. Every JSON target encrypts from a
+  `JsonPlaintext` or decrypts to one through the new traits: the
+  document, one entry of it, and the rows of a read (#1658, #1660).
 - **Tracked in.** No issue. Pull request #1504 names `serde_json::Value` not being `Zeroize` as what blocks configured nested targets. This item unblocks them.
 - **Finished when** the JSON examples in this plan compile, and a test
   shows that a dropped `JsonPlaintext` leaves no plaintext behind.
@@ -2029,10 +2031,17 @@ table.
   traits and `Label` are still to be removed. The helpers in
   `target::legacy` are removed, in the fourth pull request for #1488.
   Their callers use `encrypt_as` and `decrypt_as` until those go too.
+  Every JSON target has the new traits over `JsonPlaintext` (#1658 for
+  `JsonTreeDocument`, #1660 for the other five), so no target needs the
+  old traits any more.
 - **Tracked in.** Issue #1488 is open. Its first pull request is the
   lowering. Its second replaces `CipherScope` and `dynamic::Scope` with
   `CipherRef`. Its third hides `ExpectedContext`. Its fourth removes
-  `target::legacy`. The other removals follow.
+  `target::legacy`. The other removals are its sub-issues, in this
+  order: #1660 gives the remaining JSON targets the new traits, #1662
+  removes the chain and the builder, #1661 removes `EncryptFrom`,
+  `DecryptInto`, `encrypt_as` and `decrypt_as`, and #1663 removes `Label`
+  and `IntoLabel`.
 - **Finished when** the old API is gone, and every consumer uses the new
   API.
 
