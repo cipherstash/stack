@@ -564,35 +564,13 @@ impl JsonTreeDocument {
 
 /// A [`JsonPlaintext`] seals into a document as a `serde_json::Value` does,
 /// under the default options ([`JsonTree::default`]), with the column as
-/// its context:
+/// its context.
 ///
-/// ```no_run
-/// use eql_bindings::{v4::json_tree::JsonTreeDocument, Identifier};
-/// use stack_encrypt::json::JsonPlaintext;
-/// use stack_encrypt::kms::{DataKeySource, IndexKeySource};
-/// use stack_encrypt::{DecryptFrom, EncryptInto, KeysetCipher};
-///
-/// # async fn example<K>(keyset: &KeysetCipher<'_, K>) -> Result<(), Box<dyn std::error::Error>>
-/// # where
-/// #     K: DataKeySource + IndexKeySource + Sync + 'static,
-/// # {
-/// let column = Identifier::for_column("customers", "profile")?;
-/// let profile = JsonPlaintext::from(serde_json::json!({"name": "Ada", "age": 36}));
-/// let document: JsonTreeDocument = profile
-///     .encrypt_into_with_context(keyset, column.clone())
-///     .await?;
-/// assert_eq!(document.i, *column.get());
-///
-/// // The column is checked against the one the document stores.
-/// let opened = JsonPlaintext::decrypt_from_with_context(document, keyset, column).await?;
-/// assert_eq!(opened.value()["name"], "Ada");
-/// # Ok(())
-/// # }
-/// ```
-///
-/// The example is compiled, and not run: this crate's doctests have no key
-/// source. `record_fields.rs` in the encryption test crate runs the same
-/// calls.
+/// The code below is executed by `cargo test -p eql-encryption-tests --test
+/// json_example`. It is not one of this crate's doctests, for the reason
+/// the [encryption example](crate::encryption#example) gives: the test key
+/// source and the runtime it needs stay in the encryption test crate.
+#[doc = concat!("```rust,ignore\n", include_str!("../encryption/json_example.rs"), "\n```")]
 ///
 /// It can be a field of a derived `struct = ..` record. The field's column
 /// is then the record's scope and the field's name. A scope or a binding
