@@ -76,11 +76,15 @@
 //! a target field whose label has any other number of segments
 //! ([`TargetError::Column`]) — [`FieldPlan::with_target`] itself takes any
 //! label, as every field constructor does; the segment rules are the
-//! plan's — and an extended plan (a tenant part on every
-//! label) has no column for it and is refused with
-//! [`TargetError::Extended`] rather than silently dropping the extension,
-//! as is a plan with a context field, whose labels are identities alone
-//! under whatever table each record names ([`TargetError::ContextField`]).
+//! plan's. A plan with a context field is refused too: its labels are
+//! identities alone, under whatever table each record names
+//! ([`TargetError::ContextField`]).
+//!
+//! The scopes and the bindings of the plan and of the call come after the
+//! label, as they do for a field with outputs: a tenant part on every
+//! label, a row ID. The resolver runs the type under the label, then
+//! those parts. The EQL value stores the column alone, so whoever reads
+//! the value supplies the parts again.
 //! The field's `"type"`, when declared, must be the kind the EQL type is
 //! produced from ([`TargetError::Kind`]); undeclared, it is that kind, so
 //! every value is checked against it as any typed field's is.
@@ -743,7 +747,8 @@ impl Plan {
     /// rule, so a parsed and a hand-built plan are refused alike.
     /// [`Error::Target`] if a target field names a type the
     /// resolver does not know or cannot produce, declares a `"type"` other
-    /// than the kind that type is produced from, or sits in an extended plan.
+    /// than the kind that type is produced from, or has a label that is not
+    /// a column.
     pub fn new_with(
         mut fields: Vec<FieldPlan>,
         resolver: &(impl TargetResolver + ?Sized),
@@ -752,7 +757,6 @@ impl Plan {
             return Err(Error::bad_plan(Reason::NoFields));
         };
         let context = first.prefix()?;
-        let extension = first.extension.clone();
         for field in &fields {
             // `prefix` refuses a one-segment label, which has nothing to
             // sit under; a longer one must sit under the first field's.
@@ -766,13 +770,6 @@ impl Plan {
         for field in fields.iter_mut().filter(|field| field.is_target()) {
             let name = field.target.clone().unwrap_or_default();
             let descriptor = resolver.resolve(&name)?;
-            if !extension.is_empty() {
-                return Err(TargetError::Extended {
-                    name: field.name.clone(),
-                    label: field.label.to_string(),
-                }
-                .into());
-            }
             // An EQL value is stored under a table and a column, so the
             // label is exactly two segments. Decided here, where the plan is
             // built and se_plan_check reports it, not at the first value: a
@@ -893,7 +890,7 @@ impl Plan {
         // A target field's label must be a column, `<table>/<column>`,
         // which a context field's one-segment identity is not: the table
         // is each record's own, and an EQL value stores one fixed by the
-        // declaration. The same refusal as an extended plan's.
+        // declaration.
         if let Some(target) = fields.iter().find(|field| field.is_target()) {
             return Err(TargetError::ContextField {
                 name: target.name.clone(),
@@ -1020,27 +1017,24 @@ impl Plan {
     /// Unreachable for a plan from [`plan`], [`Plan::new`] or
     /// [`Plan::with_context_field`]: a parsed plan always composes.
     pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
-        let lowered = crate::contexts::under_declared(
-            compose::<()>(self, &Absent::new())?.shapes(),
-            &self.declared_context(),
-        );
+        let shapes = self.placed(compose::<()>(self, &Absent::new())?.shapes());
         Ok(crate::contexts::resolve(
-            self.placed(lowered),
+            crate::contexts::under_declared(shapes, &self.declared_context()),
             crate::contexts::CallerShape::none(),
         ))
     }
 
     /// The shape of every field's context, in plan order: the `lowered`
-    /// fields' shapes, and each target field under its label alone. An EQL
-    /// value is sealed under its table and column by the resolver, and
-    /// takes no part from the caller: the plan refuses an extension for it
-    /// before it runs.
+    /// fields' shapes, and each target field under its label, then the
+    /// context it is handed. The resolver runs an EQL type under its label
+    /// and the plan's parts, as the lowering runs a field with outputs, so
+    /// the two kinds of field show the same parts.
     fn placed(&self, lowered: crate::contexts::Shapes) -> crate::contexts::Shapes {
         let mut lowered = lowered.into_iter().peekable();
         let mut shapes = crate::contexts::Shapes::with_capacity(self.fields.len());
         for field in &self.fields {
             if field.is_target() {
-                shapes.push(crate::contexts::known_leaf(
+                shapes.push(crate::contexts::leaf_under(
                     &field.name,
                     field.label.clone().into_context(),
                 ));
@@ -1070,22 +1064,10 @@ impl Plan {
     ///
     /// [`Error::Plan`] with [`Reason::EmptyBinding`] for an empty part: a
     /// row ID not yet assigned would bind every row to one context, and
-    /// the typed path refuses the same. [`Error::Target`] if a field names
-    /// an EQL type: an EQL value is stored under its table and column
-    /// alone, so a binding cannot extend it, as an extension cannot
-    /// ([`TargetError::Extended`]).
+    /// the typed path refuses the same.
     pub fn with_bindings(mut self, parts: Vec<ContextPiece<'static>>) -> Result<Self, Error> {
         if parts.iter().any(crate::MaybeEmpty::is_empty) {
             return Err(Error::bad_plan(Reason::EmptyBinding));
-        }
-        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
-            if !parts.is_empty() {
-                return Err(TargetError::Extended {
-                    name: target.name.clone(),
-                    label: target.label.to_string(),
-                }
-                .into());
-            }
         }
         self.bindings = parts;
         Ok(self)
@@ -1103,8 +1085,8 @@ impl Plan {
     /// plan's own extension, then the scopes. A call with no scope borrows
     /// the plan instead, and copies nothing.
     ///
-    /// A plan with a field that names an EQL type takes no scope. An EQL
-    /// value is stored under its table and column alone.
+    /// A field that names an EQL type is scoped as any other field is. Its
+    /// EQL value stores its table and column, and not the scope.
     ///
     /// The scope shows in the context of the call. Here a record under a
     /// one-field plan is encrypted under the scope `42u64`:
@@ -1142,9 +1124,7 @@ impl Plan {
     ///
     /// # Errors
     ///
-    /// [`Error::Plan`] with [`Reason::EmptyContext`] for an empty part, and
-    /// [`Error::Target`] if a field names an EQL type
-    /// ([`TargetError::Extended`]), as [`with_bindings`](Self::with_bindings).
+    /// [`Error::Plan`] with [`Reason::EmptyContext`] for an empty part.
     pub(super) fn with_scopes(
         mut self,
         parts: impl IntoIterator<Item = ContextPiece<'static>>,
@@ -1152,15 +1132,6 @@ impl Plan {
         let parts: Vec<_> = parts.into_iter().collect();
         if parts.iter().any(crate::MaybeEmpty::is_empty) {
             return Err(Error::bad_plan(Reason::EmptyContext));
-        }
-        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
-            if !parts.is_empty() {
-                return Err(TargetError::Extended {
-                    name: target.name.clone(),
-                    label: target.label.to_string(),
-                }
-                .into());
-            }
         }
         for field in &mut self.fields {
             for part in &parts {
@@ -1175,25 +1146,33 @@ impl Plan {
     /// then the context the caller hands a [`Planned`](super::Planned)
     /// record.
     pub(super) fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
-        Ok(self.placed(crate::contexts::under_declared_then_caller(
-            compose::<()>(self, &Absent::new())?.shapes(),
+        Ok(crate::contexts::under_declared_then_caller(
+            self.placed(compose::<()>(self, &Absent::new())?.shapes()),
             &self.declared_context(),
-        )))
+        ))
     }
 
-    /// The context every field's label is run under: the extension, as the
-    /// chain's `.extend(..)` would carry it, then the bindings.
-    fn declared_context(&self) -> DeclaredContext {
-        let scopes = self
-            .extension
+    /// The scopes every field's label is run under: the extension, as the
+    /// chain's `.extend(..)` would carry it. A query runs under these
+    /// alone.
+    fn scopes(&self) -> DeclaredContext {
+        self.extension
             .iter()
             .cloned()
             .fold(DeclaredContext::default(), |context, part| {
                 context.with(CallerContext::from_piece(part))
-            });
-        self.bindings.iter().cloned().fold(scopes, |context, part| {
-            context.with(CallerContext::bind_piece(part))
-        })
+            })
+    }
+
+    /// The context every field's label is run under: the scopes, then the
+    /// bindings.
+    fn declared_context(&self) -> DeclaredContext {
+        self.bindings
+            .iter()
+            .cloned()
+            .fold(self.scopes(), |context, part| {
+                context.with(CallerContext::bind_piece(part))
+            })
     }
 
     fn shape(&self) -> Vec<FieldShape> {
@@ -1844,7 +1823,14 @@ pub fn encrypt_with<'a, K: 'static>(
             let name = field.target().unwrap_or_default();
             pendings.push(
                 resolver
-                    .encrypt(name, field.target_options(), cipher, field.label(), value)
+                    .encrypt(
+                        name,
+                        field.target_options(),
+                        cipher,
+                        field.label(),
+                        &extend,
+                        value,
+                    )
                     .map_err(|error| Error::Target(name_target(error, &field.name)))?,
             );
             count += 1;
@@ -1951,7 +1937,8 @@ fn in_row_order<T>(
 
 /// Derive the EQL query value of one target field for one plaintext: the
 /// operand that matches stored values of the field, as JSON bytes, through
-/// the type's own query plan. A query derives no data key, so the pending
+/// the type's own query plan. It runs under the field's label, then the
+/// plan's scopes, and under no binding. A query derives no data key, so the pending
 /// settles without I/O; it is a [`Pending`] all the same, for one shape at
 /// the call site.
 ///
@@ -2004,7 +1991,7 @@ pub fn query<'a, K: 'static>(
         check_field(&value, field)?;
     }
     resolver
-        .query(name, index, cipher, field.label(), value)
+        .query(name, index, cipher, field.label(), &plan.scopes(), value)
         .map_err(|error| Error::Target(name_target(error, &field.name)))
 }
 
@@ -2137,7 +2124,7 @@ pub fn decrypt_with<'a, K: 'static>(
             // before any key is retrieved.
             pendings.push(confine(
                 resolver
-                    .decrypt(name, cipher, field.label(), &stored)
+                    .decrypt(name, cipher, field.label(), &extend, &stored)
                     .map_err(|error| Error::Target(name_target(error, &field.name)))?,
                 keyset,
             ));
@@ -6508,9 +6495,10 @@ mod tests {
     }
 
     /// A resolver shaped like the EQL one, over this engine: it seals a
-    /// string as one leaf under the field's label and writes it into a JSON
-    /// envelope with the label as its `i`, opens it back checking that `i`,
-    /// and derives an equality term for a query. What it proves is the
+    /// string as one leaf under the field's label, then the plan's parts,
+    /// and writes it into a JSON envelope with the label alone as its `i`,
+    /// opens it back checking that `i`, and derives an equality term for a
+    /// query under the label and the scopes. What it proves is the
     /// lowering's half — the target field rides in the record's request,
     /// is stored under `"eql"`, opens through the resolver, and every
     /// refusal is decided before a key is touched — not EQL's envelope,
@@ -6631,14 +6619,16 @@ mod tests {
                 _: Option<&crate::dynamic::TargetOptions>,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
+                parts: &crate::target::DeclaredContext,
                 plaintext: ValueFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 let _ = self.resolve(name)?;
                 let text = text_of_value(name, plaintext)?;
                 let column = column(name, label)?;
                 let stored_label = label.to_string();
+                let context = AeadContext::from(parts.clone().under(column));
                 Ok(keyset
-                    .encrypt_as::<String, StackCipherText>(&text, AeadContext::from(column))
+                    .encrypt_as::<String, StackCipherText>(&text, context)
                     .try_map(move |sealed| {
                         let CipherText::Single(leaf) = sealed else {
                             return Err(crate::Error::UnsupportedShape);
@@ -6657,6 +6647,7 @@ mod tests {
                 name: &str,
                 cipher: &'a StackCipher<K>,
                 label: &Label,
+                parts: &crate::target::DeclaredContext,
                 stored: &[u8],
             ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
                 let _ = self.resolve(name)?;
@@ -6682,8 +6673,9 @@ mod tests {
                         crate::Error::Other("stored under another column".into()),
                     ));
                 }
+                let context = AeadContext::from(parts.clone().under(column));
                 let opening: Decryption<String, K> =
-                    crate::target::open(CipherText::Single(leaf), AeadContext::from(column));
+                    crate::target::open(CipherText::Single(leaf), context);
                 Ok(cipher.run_decryption(opening).try_map(|text| {
                     ValueFrame::of(text.as_str()).map_err(|e| crate::Error::Other(Box::new(e)))
                 }))
@@ -6695,6 +6687,7 @@ mod tests {
                 _: &IndexSpec,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
+                scopes: &crate::target::DeclaredContext,
                 plaintext: ValueFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 let _ = self.resolve(name)?;
@@ -6702,7 +6695,7 @@ mod tests {
                 let column = column(name, label)?;
                 let stored_label = label.to_string();
                 Ok(keyset
-                    .encrypt_as::<String, EqualityTerm>(&text, CallerContext::from(column))
+                    .encrypt_as::<String, EqualityTerm>(&text, scopes.clone().under(column))
                     .try_map(move |term| {
                         serde_json::to_vec(&serde_json::json!({
                             "v": 3,
@@ -6734,23 +6727,55 @@ mod tests {
             obj(vec![("age", Tree::UInt32(age)), ("email", s(email))])
         }
 
-        /// An EQL value is stored under its table and column alone, so a
-        /// plan with a target field takes no binding, as it takes no
-        /// extension; no binding at all leaves it as it is.
-        #[test]
-        fn a_target_field_refuses_a_binding() {
-            let refused = mixed_plan()
-                .with_bindings(vec![ContextPiece::U64(9)])
-                .unwrap_err();
-            assert!(
-                matches!(
-                    &refused,
-                    Error::Target(TargetError::Extended { name, label })
-                        if name == "email" && label == "users/email"
-                ),
-                "{refused:?}"
+        /// A binding binds a target field as it binds any other: the
+        /// resolver seals the value under the label, then the binding. The
+        /// EQL value stores the label alone, so it opens only under the
+        /// same binding.
+        #[tokio::test]
+        async fn a_target_field_takes_a_binding() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let bound = |row: u64| {
+                mixed_plan()
+                    .with_bindings(vec![ContextPiece::U64(row)])
+                    .expect("a plan with a target field takes a binding")
+            };
+            // `StackCipherText` is not `Clone`, so each check seals a row.
+            let seal = || async {
+                encrypt_with(
+                    &keyset,
+                    mixed_row(34, "ada@example.com"),
+                    &bound(9),
+                    &FakeEql,
+                )
+                .unwrap()
+                .await
+                .unwrap()
+            };
+            let mut record = map(seal().await);
+            assert_eq!(
+                eql_json(&mut record, "email")["i"],
+                "users/email",
+                "the value stores its column, and not the binding"
             );
-            assert!(mixed_plan().with_bindings(vec![]).is_ok());
+
+            let opened = decrypt_with(&cipher, seal().await, &bound(9), None, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(
+                Tree::from_frame(opened.risky_ref()).unwrap(),
+                mixed_row(34, "ada@example.com")
+            );
+            // Another row, and no binding at all, do not open it.
+            for plan in [bound(10), mixed_plan()] {
+                let refused = decrypt_with(&cipher, seal().await, &plan, None, &FakeEql)
+                    .unwrap()
+                    .await;
+                assert!(refused.is_err());
+            }
+
+            // The plan's own `"bind"` key is the same binding.
             let wired = plan_with(
                 obj(vec![
                     ("age", typed(label("age"), &["c", "eq"], "uint32")),
@@ -6758,18 +6783,46 @@ mod tests {
                     ("bind", Tree::Array(vec![Tree::UInt64(9)])),
                 ]),
                 &FakeEql,
-            );
-            assert!(
-                matches!(wired, Err(Error::Target(TargetError::Extended { .. }))),
-                "{wired:?}"
+            )
+            .expect("a bound plan with a target field parses");
+            let opened = decrypt_with(&cipher, seal().await, &wired, None, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(
+                Tree::from_frame(opened.risky_ref()).unwrap(),
+                mixed_row(34, "ada@example.com")
             );
         }
 
-        /// The context view shows a target field under its label alone, in
-        /// plan order among the lowered fields: an EQL value takes no part
-        /// from the caller, so there is nothing to fill in.
+        /// The context view shows a target field in plan order among the
+        /// lowered fields, under its label and the same parts as they are:
+        /// the plan's extension, then its bindings.
         #[test]
         fn the_contexts_show_a_target_field_in_plan_order() {
+            let extended = |field: &str| Tree::Array(vec![label(field), Tree::UInt32(7)]);
+            let plan = plan_with(
+                obj(vec![
+                    ("age", typed(extended("age"), &["c", "eq"], "uint32")),
+                    ("email", target_spec(extended("email"), TEXT_EQ)),
+                ]),
+                &FakeEql,
+            )
+            .expect("an extended plan with a target parses")
+            .with_bindings(vec![ContextPiece::U64(9)])
+            .unwrap();
+            let contexts = plan.contexts().unwrap();
+            let (age, email) = (contexts.get("age").unwrap(), contexts.get("email").unwrap());
+            assert_eq!(
+                email.to_string().replace("email", "age"),
+                age.to_string().replace("email", "age"),
+                "a target field shows the parts a field with outputs shows"
+            );
+            assert_eq!(
+                contexts.to_string(),
+                "age\n  query context:  (users / age) / 7u32\n  stored context: ((users / age) / 7u32) / 9u64\nemail\n  query context:  (users / email) / 7u32\n  stored context: ((users / email) / 7u32) / 9u64\n"
+            );
+
             let plan = plan_with(
                 obj(vec![
                     ("age", typed(label("age"), &["c", "eq"], "uint32")),
@@ -7525,27 +7578,90 @@ mod tests {
             assert_eq!(generates(&cipher), 0);
         }
 
-        #[test]
-        fn an_extended_plan_refuses_a_target_field_rather_than_dropping_the_extension() {
-            let extended = |field: &str| Tree::Array(vec![label(field), Tree::UInt32(7)]);
-            let value = obj(vec![
-                ("age", spec(extended("age"), &["c"])),
-                ("email", target_spec(extended("email"), TEXT_EQ)),
-            ]);
-            let error = target_error(plan_with(value, &FakeEql).unwrap_err());
-            assert!(
-                matches!(&error, TargetError::Extended { name, label } if name == "email" && label == "users/email"),
-                "{error}"
-            );
-            // The same plan without the target field extends as before.
-            let value = obj(vec![("age", spec(extended("age"), &["c"]))]);
-            assert!(plan_with(value, &FakeEql).is_ok());
+        /// An extended plan runs a target field under its label, then the
+        /// extension, as it runs a field with outputs. The EQL value stores
+        /// the label alone. A query under the same extension derives the
+        /// term of the label and the extension.
+        #[tokio::test]
+        async fn an_extended_plan_runs_a_target_field_under_the_extension() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let extended =
+                |field: &str, part: u32| Tree::Array(vec![label(field), Tree::UInt32(part)]);
+            let plan = |part: u32| {
+                plan_with(
+                    obj(vec![
+                        ("age", spec(extended("age", part), &["c"])),
+                        ("email", target_spec(extended("email", part), TEXT_EQ)),
+                    ]),
+                    &FakeEql,
+                )
+                .expect("an extended plan with a target field parses")
+            };
+            let row = || {
+                obj(vec![
+                    ("age", Tree::UInt32(34)),
+                    ("email", s("ada@example.com")),
+                ])
+            };
+            // `StackCipherText` is not `Clone`, so each check seals a row.
+            let seal = || async {
+                encrypt_with(&keyset, row(), &plan(7), &FakeEql)
+                    .unwrap()
+                    .await
+                    .unwrap()
+            };
+            let mut record = map(seal().await);
+            assert_eq!(eql_json(&mut record, "email")["i"], "users/email");
+
+            let opened = decrypt_with(&cipher, seal().await, &plan(7), None, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(Tree::from_frame(opened.risky_ref()).unwrap(), row());
+            // Under another extension the value does not open.
+            let refused = decrypt_with(&cipher, seal().await, &plan(8), None, &FakeEql)
+                .unwrap()
+                .await;
+            assert!(refused.is_err());
+
+            // The query term is the equality term under the label, then the
+            // extension, and names the label alone.
+            let term = |part: u32| {
+                let (keyset, plan) = (&keyset, plan(part));
+                async move {
+                    let json = query(
+                        keyset,
+                        &plan,
+                        "email",
+                        &IndexSpec::Equality,
+                        "ada@example.com",
+                        &FakeEql,
+                    )
+                    .unwrap()
+                    .await
+                    .unwrap();
+                    serde_json::from_slice::<serde_json::Value>(&json).unwrap()
+                }
+            };
+            let under = |part: u32| {
+                CallerContext::from(crate::target::Scope::new(part))
+                    .extend(NonEmpty::from(Label::parse("users/email").unwrap()))
+            };
+            let direct = keyset
+                .encrypt_as::<String, EqualityTerm>(&"ada@example.com".to_owned(), under(7))
+                .await
+                .unwrap();
+            let seven = term(7).await;
+            assert_eq!(seven["i"], "users/email");
+            assert_eq!(seven["hm"], hex(direct.as_bytes()));
+            assert_ne!(seven["hm"], term(8).await["hm"]);
         }
 
         /// A plan with a context field has no table of its own: each
         /// record names one. An EQL value stores a table the declaration
-        /// fixes, so a target field is refused there as it is in an extended
-        /// plan, and before the resolver is asked.
+        /// fixes, so a target field is refused there, before the resolver is
+        /// asked.
         #[test]
         fn a_context_field_plan_refuses_a_target_field() {
             let identity = |field: &str| strings(&[field]);

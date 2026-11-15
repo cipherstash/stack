@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A plan's query for an EQL type can carry a scope too. It gives the
     term of the values stored under that scope, so `QueryLabelError` has
     no `Extended` variant.
+  - A data plan that names an EQL type takes a scope and a binding too
+    (`targets` feature). `EqlTargets` runs the type under the field's
+    label, then the plan's scopes and bindings, and the value stores the
+    column alone. Under the same scope and binding, a data plan and a
+    derived record write the same terms, and each opens the other's
+    values. This is the path the Go module takes.
   - The encrypt input of an EQL type is the hidden
     `stack_encrypt::target::StoredContext<Identifier>`. A caller passes a
     `NonEmpty<Identifier>`. Generic code names the input as

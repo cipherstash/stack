@@ -626,10 +626,15 @@ the column's `eql_v4.query_text_eq` operand takes; `TextEq` answers `eq`
 alone, and a `TextMatch` field's `Matches` returns an
 `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand with `Verify` and
 `TargetLimit`. `mise run
-wasm:guest:build:eql` builds that guest beside the other. A cipher extended
-with a tenant part refuses a struct with an `encrypt_into` field: an EQL
-value is stored under a table and a column, and the extended label has no
-column.
+wasm:guest:build:eql` builds that guest beside the other.
+
+A cipher with a scope or a binding (`cipher.Scope(tenant).Bind(rowID)`)
+seals a struct with an `encrypt_into` field as it seals any other struct.
+The scope and the binding come after the column in the field's context.
+The EQL value stores the table and the column alone, in `i`, so:
+
+- open the value through a cipher with the same scope and binding;
+- query it through a cipher with the same scope. A binding is in no query.
 
 ### Encrypted JSON documents
 

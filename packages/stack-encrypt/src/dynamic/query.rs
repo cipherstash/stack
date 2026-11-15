@@ -784,7 +784,7 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// use stack_encrypt::dynamic::{check_query, frame, record, Op, Reason, ValueFrame};
 /// use stack_encrypt::AsProtectedRef;
 /// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
-/// # use stack_encrypt::target::IndexSpec;
+/// # use stack_encrypt::target::{DeclaredContext, IndexSpec};
 /// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 /// # /// A host whose `JsonSearch` names the compiled predicate's domain.
 /// # struct Documents;
@@ -798,12 +798,13 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// #         .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
 /// #     }
 /// #     fn encrypt<'a, K: 'static>(&self, _: &str, _: Option<&TargetOptions>,
-/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: ValueFrame,
+/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: &DeclaredContext, _: ValueFrame,
 /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
-/// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label, _: &[u8],
+/// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label,
+/// #         _: &DeclaredContext, _: &[u8],
 /// #     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> { unreachable!() }
 /// #     fn query<'a, K: 'static>(&self, _: &str, _: &IndexSpec, _: &'a KeysetCipher<'_, K>,
-/// #         _: &Label, _: ValueFrame,
+/// #         _: &Label, _: &DeclaredContext, _: ValueFrame,
 /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
 /// # }
 /// // A document field that orders `$.age`.
@@ -2634,6 +2635,7 @@ mod tests {
             _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
@@ -2643,6 +2645,7 @@ mod tests {
             _: &str,
             _: &'a crate::StackCipher<K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: &[u8],
         ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
@@ -2653,6 +2656,7 @@ mod tests {
             _: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"bf":[1,5,2047]}"#.to_vec())))
@@ -2792,6 +2796,7 @@ mod tests {
             _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
@@ -2801,6 +2806,7 @@ mod tests {
             _: &str,
             _: &'a crate::StackCipher<K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: &[u8],
         ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
@@ -2811,6 +2817,7 @@ mod tests {
             _: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"hm":"00"}"#.to_vec())))

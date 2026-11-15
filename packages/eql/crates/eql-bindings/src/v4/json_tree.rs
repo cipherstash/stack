@@ -491,7 +491,7 @@ impl JsonTree {
     /// On its own, the document stores the column the caller passes, and
     /// seals under it. As a field of a record, it stores the field's own
     /// column, and seals under the scopes and bindings of the record too.
-    fn sealing<'s, K: 'static>(
+    pub(crate) fn sealing<'s, K: 'static>(
         &self,
     ) -> Encryption<'s, Value, JsonTreeDocument, K, StoredContext<Identifier>> {
         Layout::<Value>::encryption::<K>(&self.index)

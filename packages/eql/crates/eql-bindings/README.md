@@ -485,7 +485,7 @@ indexes it carries (`eq` / `match` / `ore` / `ope` / `json`), its query twin,
 and whether the engine can produce it today, with the reason when not. A guest
 serializes it for its `se_targets` export; the module docs are the wire format.
 `encrypt`, `decrypt` and `query` dispatch on the name and run the type's own
-Rust plan — the same `EncryptFrom` the typed `encrypt_as::<TextEq>` runs, so
+Rust declaration — the same one the typed `encrypt_into::<TextEq>` runs, so
 the two paths produce the same identifier and equality term and open each
 other's values. An unproducible name is refused with the table's reason; an
 unknown one with "no such EQL type". Every type in the table is producible
@@ -513,7 +513,10 @@ the Go package `languages/golang/encrypt/eql` from the same rows
 engine's `TargetResolver` (stack-encrypt's `dynamic` module) is implemented
 over this module by `encryption::EqlTargets`. A program that runs data plans
 with EQL types passes `&EqlTargets` wherever the dynamic interface takes a
-resolver, as the Go guest's `eql` build does. A type is producible exactly
+resolver, as the Go guest's `eql` build does. A data plan's scopes and
+bindings reach the type through `EqlTargets`: the type runs under the
+field's label, then those parts, and the EQL value stores the column alone,
+as it does for a [record field](#eql-types-as-record-fields). A type is producible exactly
 when its generated struct carries the `stack-encrypt` derives
 (`ENCRYPTION_DOMAINS` in `eql-codegen`), because the dispatch runs the derived
 plan; `targets::targets()` lists them, each with `producible` and, when it is

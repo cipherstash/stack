@@ -463,7 +463,7 @@ fn render_targets_from(rows: &[Row]) -> String {
         .map(|r| {
             let (name, ty, source) = arm(r, &r.name);
             let source = stored_source(r, source);
-            quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), }
+            quote! { #name => run_target::<#ty, #source, K>(#name, keyset, context, plaintext), }
         })
         .collect();
     let decrypt_arms: TokenStream = producible
@@ -471,7 +471,7 @@ fn render_targets_from(rows: &[Row]) -> String {
         .map(|r| {
             let (name, ty, source) = arm(r, &r.name);
             let source = stored_source(r, source);
-            quote! { #name => open_target::<#ty, #source, K>(#name, opener, column, stored), }
+            quote! { #name => open_target::<#ty, #source, K>(#name, opener, context, stored), }
         })
         .collect();
     // A producible type with no query twin (a storage-only domain) gets no
@@ -489,7 +489,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             let source = stored_source(r, source);
             if r.projections.is_empty() {
                 return Some(
-                    quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), },
+                    quote! { #name => run_target::<#ty, #source, K>(#name, keyset, context, plaintext), },
                 );
             }
             let by_index: TokenStream = r
@@ -498,7 +498,7 @@ fn render_targets_from(rows: &[Row]) -> String {
                 .map(|(key, projection)| {
                     let (_, projection, _) = arm(r, projection);
                     quote! {
-                        #key => run_projected::<#projection, #ty, #source, K>(#name, keyset, column, plaintext),
+                        #key => run_projected::<#projection, #ty, #source, K>(#name, keyset, context, plaintext),
                     }
                 })
                 .collect();
@@ -550,12 +550,11 @@ fn render_targets_from(rows: &[Row]) -> String {
         #![doc = #mod_doc]
 
         use stack_encrypt::dynamic::ValueFrame;
-        use stack_encrypt::target::IndexSpec;
+        use stack_encrypt::target::{CallerContext, IndexSpec};
 
         #imports
         use crate::encryption::targets::{#helpers refuse, refuse_query, Opener, Target, TargetError};
-        use crate::Identifier;
-        use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
+        use stack_encrypt::{KeysetCipher, Pending};
 
         /// Every EQL type a plan may name as a target, in
         /// `eql-domains::CATALOG` order: one per stored scalar domain, then
@@ -574,11 +573,12 @@ fn render_targets_from(rows: &[Row]) -> String {
 
         /// Run the named type's own encryption plan for one field, or refuse
         /// the name: the type is not producible (`TargetError::Unproducible`)
-        /// or does not exist (`TargetError::Unknown`).
+        /// or does not exist (`TargetError::Unknown`). `context` is the
+        /// field's context: its column, then the scopes and the bindings.
         pub(crate) fn encrypt_named<'a, K: 'static>(
             name: &str,
             keyset: &'a KeysetCipher<'_, K>,
-            column: NonEmpty<Identifier>,
+            context: CallerContext,
             plaintext: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             match name {
@@ -592,7 +592,7 @@ fn render_targets_from(rows: &[Row]) -> String {
         pub(crate) fn decrypt_named<'a, K: 'static>(
             name: &str,
             opener: Opener<'a, K>,
-            column: NonEmpty<Identifier>,
+            context: CallerContext,
             stored: &[u8],
         ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             match name {
@@ -610,7 +610,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             name: &str,
             #index_param: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
-            column: NonEmpty<Identifier>,
+            context: CallerContext,
             plaintext: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             match name {

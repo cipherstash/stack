@@ -81,9 +81,16 @@
 //! label has two segments ([`Identifier::from_label`]): `users/email` is
 //! `{"t": "users", "c": "email"}`, sealed under the same AAD, bound to the
 //! same ZeroKMS descriptor and deriving the same equality term as the typed
-//! `encrypt_as::<TextEq>` call with `Identifier::for_column("users",
+//! `encrypt_into::<TextEq>` call with `Identifier::for_column("users",
 //! "email")`. A label of any other length is refused: there is no column to
 //! store it in.
+//!
+//! A data plan can also carry scopes and bindings, such as a tenant or a
+//! row ID. Stack Encrypt hands them to [`EqlTargets`](super::EqlTargets)
+//! beside the label, and the type runs under the label, then those parts,
+//! as a field of a derived record does. The EQL value stores the column
+//! alone, so whoever reads it supplies the parts again. The functions here
+//! take the label alone: they run a type with no scope and no binding.
 
 use std::fmt;
 
@@ -91,10 +98,11 @@ use serde::{de::DeserializeOwned, Serialize};
 use stack_encrypt::dynamic::{TargetOptions, ValueFrame, ValueKind};
 use stack_encrypt::json::JsonOptions;
 use stack_encrypt::kms::MaybeSend;
-use stack_encrypt::target::{ExpectedContext, IndexSpec};
+use stack_encrypt::target::{
+    CallerContext, DeclaredContext, EncryptTarget, ExpectedContext, IndexSpec, StoredContext,
+};
 use stack_encrypt::{
-    Decrypt, DecryptInto, Encrypt, EncryptFrom, Error, KeysetCipher, Label, NonEmpty, Pending,
-    StackCipher,
+    Decrypt, DecryptInto, Encrypt, Error, KeysetCipher, Label, NonEmpty, Pending, StackCipher,
 };
 
 use crate::v4::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
@@ -398,8 +406,45 @@ pub fn encrypt_with<'a, K: 'static>(
     context: &Label,
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+    encrypt_under(
+        name,
+        options,
+        keyset,
+        context,
+        &DeclaredContext::default(),
+        plaintext,
+    )
+}
+
+/// The context of a plan field that names an EQL type: the field's label,
+/// which must name a column, then `parts`, the scopes and the bindings of
+/// the plan and of the call.
+///
+/// The EQL value stores the column alone. The terms derive under the
+/// column and the scopes, and the value is sealed under the bindings too,
+/// as a field of a derived record is.
+///
+/// # Errors
+///
+/// [`TargetError::Context`] for a label that is not a column.
+fn field_context(label: &Label, parts: &DeclaredContext) -> Result<CallerContext, TargetError> {
+    let _ = Identifier::from_label(label)?;
+    Ok(parts.clone().under(NonEmpty::from(label.clone())))
+}
+
+/// [`encrypt_with`], with the scopes and the bindings that come after the
+/// field's label: what [`EqlTargets`](super::EqlTargets) runs for Stack
+/// Encrypt's data plan.
+pub(crate) fn encrypt_under<'a, K: 'static>(
+    name: &str,
+    options: Option<&TargetOptions>,
+    keyset: &'a KeysetCipher<'_, K>,
+    label: &Label,
+    parts: &DeclaredContext,
+    plaintext: ValueFrame,
+) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
-    let column = Identifier::from_label(context)?;
+    let context = field_context(label, parts)?;
     if let Some(document) = document(name) {
         let options = match options {
             None => JsonOptions::default(),
@@ -407,12 +452,12 @@ pub fn encrypt_with<'a, K: 'static>(
                 name: document.name,
             })?,
         };
-        return encrypt_document(document.name, &options, keyset, column, &plaintext);
+        return encrypt_document(document.name, &options, keyset, context, &plaintext);
     }
     if let Some(target) = options.and(target(name)) {
         return Err(TargetError::Options { name: target.name });
     }
-    encrypt_named(name, keyset, column, plaintext)
+    encrypt_named(name, keyset, context, plaintext)
 }
 
 /// Open a stored value of the named type back to its plaintext, checking
@@ -431,12 +476,25 @@ pub fn decrypt<'a, K: 'static>(
     context: &Label,
     stored: &[u8],
 ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+    decrypt_under(name, opener, context, &DeclaredContext::default(), stored)
+}
+
+/// [`decrypt`], with the scopes and the bindings that come after the
+/// field's label. The stored column must be the label's, and the value
+/// opens under the label, then `parts`.
+pub(crate) fn decrypt_under<'a, K: 'static>(
+    name: &str,
+    opener: impl Into<Opener<'a, K>>,
+    label: &Label,
+    parts: &DeclaredContext,
+    stored: &[u8],
+) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     producible(name)?;
-    let column = Identifier::from_label(context)?;
+    let context = field_context(label, parts)?;
     if let Some(document) = document(name) {
-        return decrypt_document(document.name, opener.into(), column, stored);
+        return decrypt_document(document.name, opener.into(), context, stored);
     }
-    decrypt_named(name, opener.into(), column, stored)
+    decrypt_named(name, opener.into(), context, stored)
 }
 
 /// The stored domain of a document family (`eql-domains`'
@@ -448,13 +506,14 @@ fn document(name: &str) -> Option<&'static Target> {
 
 /// Seal one `JsonSearch` value: the document the field's text holds,
 /// parsed by the engine's rules, laid out by the JSON index under
-/// `options`, under the column. The parsed document is wiped when this
-/// returns; the pending has taken what it seals.
+/// `options`, under the field's context. The document stores the column
+/// alone. The parsed document is wiped when this returns; the pending has
+/// taken what it seals.
 fn encrypt_document<'a, K: 'static>(
     name: &'static str,
     options: &JsonOptions,
     keyset: &'a KeysetCipher<'_, K>,
-    column: NonEmpty<Identifier>,
+    context: CallerContext,
     plaintext: &ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     let document =
@@ -464,21 +523,19 @@ fn encrypt_document<'a, K: 'static>(
         })?;
     Ok(keyset
         .run(
-            stack_encrypt::target::Layout::<serde_json::Value>::encryption::<K>(
-                &crate::v4::json_tree::JsonTree::new(options.clone()),
-            ),
+            crate::v4::json_tree::JsonTree::new(options.clone()).sealing(),
             document.value(),
-            column,
+            StoredContext::from(context),
         )
         .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
 }
 
 /// Open one stored `JsonSearch` value to the document's text, checking
-/// it was stored under the column.
+/// it was stored under the field's column.
 fn decrypt_document<'a, K: 'static>(
     name: &'static str,
     opener: Opener<'a, K>,
-    column: NonEmpty<Identifier>,
+    context: CallerContext,
     stored: &[u8],
 ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     use crate::v4::json_tree::JsonTreeDocument;
@@ -487,7 +544,7 @@ fn decrypt_document<'a, K: 'static>(
             target: name,
             source,
         })?;
-    let expected: ExpectedContext<Identifier> = column.into();
+    let expected: ExpectedContext<Identifier> = context.into();
     Ok(match opener {
         Opener::Client(cipher) => {
             cipher.decrypt_as::<serde_json::Value, JsonTreeDocument>(value, expected)
@@ -525,6 +582,27 @@ pub fn query<'a, K: 'static>(
     context: &Label,
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+    query_under(
+        name,
+        index,
+        keyset,
+        context,
+        &DeclaredContext::default(),
+        plaintext,
+    )
+}
+
+/// [`query`], with the scopes that come after the field's label. The term
+/// is derived under the label, then `scopes`, and the query value stores
+/// the column alone.
+pub(crate) fn query_under<'a, K: 'static>(
+    name: &str,
+    index: &IndexSpec,
+    keyset: &'a KeysetCipher<'_, K>,
+    label: &Label,
+    scopes: &DeclaredContext,
+    plaintext: ValueFrame,
+) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     let Some(target) = target(name) else {
         return Err(refuse(name));
@@ -536,8 +614,8 @@ pub fn query<'a, K: 'static>(
     if document(name).is_some() {
         return Err(TargetError::DocumentQuery { name: target.name });
     }
-    let column = Identifier::from_label(context)?;
-    query_named(name, index, keyset, column, plaintext)
+    let context = field_context(label, scopes)?;
+    query_named(name, index, keyset, context, plaintext)
 }
 
 /// Refuse a query through an index the type does not carry.
@@ -792,25 +870,29 @@ impl<S: Plaintext> Plaintext for Option<S> {
 
 /// Run a target's own plan over one runtime value and resolve to the EQL
 /// value's JSON bytes. The generated dispatch calls this with the type and
-/// its plaintext; it is the one place the typed `encrypt_as` is reached from
-/// a name.
+/// its plaintext; it is the one place the type's own declaration is reached
+/// from a name.
+///
+/// `context` is the field's context: its column, then the scopes and the
+/// bindings. The type stores the column, as it does as a field of a derived
+/// record ([`StoredContext`]).
 pub(crate) fn run_target<'a, T, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
-    column: NonEmpty<Identifier>,
+    context: CallerContext,
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
 where
-    T: EncryptFrom<S, Context = NonEmpty<Identifier>> + Serialize,
-    S: Plaintext,
+    T: EncryptTarget<S, ContextInput = StoredContext<Identifier>> + Serialize,
+    S: Plaintext + zeroize::Zeroize,
     K: 'static,
 {
-    // The copy lives only until `encrypt_as` has cloned what it seals, and
-    // is wiped when this returns: the frame kept its bytes in `Protected`,
+    // The copy lives only until the run has cloned what it seals, and is
+    // wiped when this returns: the frame kept its bytes in `Protected`,
     // and the copy is held to the same rule.
     let plaintext = zeroize::Zeroizing::new(S::from_frame(name, &plaintext)?);
     Ok(keyset
-        .encrypt_as::<S, T>(&plaintext, column)
+        .run(T::encryption(), &*plaintext, StoredContext::from(context))
         .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
 }
 
@@ -821,19 +903,19 @@ where
 pub(crate) fn run_projected<'a, P, Q, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
-    column: NonEmpty<Identifier>,
+    context: CallerContext,
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
 where
-    P: EncryptFrom<S, Context = NonEmpty<Identifier>> + Into<Q>,
+    P: EncryptTarget<S, ContextInput = StoredContext<Identifier>> + Into<Q>,
     Q: Serialize,
-    S: Plaintext,
+    S: Plaintext + zeroize::Zeroize,
     K: 'static,
 {
     // Wiped when this returns, as in `run_target`.
     let plaintext = zeroize::Zeroizing::new(S::from_frame(name, &plaintext)?);
     Ok(keyset
-        .encrypt_as::<S, P>(&plaintext, column)
+        .run(P::encryption(), &*plaintext, StoredContext::from(context))
         .try_map(|value| {
             let query: Q = value.into();
             serde_json::to_vec(&query).map_err(|error| Error::Other(Box::new(error)))
@@ -841,11 +923,13 @@ where
 }
 
 /// Parse a stored EQL value as the target and describe opening it through
-/// the target's own `DecryptInto`, under the column the caller expects.
+/// the target's own `DecryptInto`. The stored column must be the field's,
+/// and the value opens under the field's context: its column, then the
+/// scopes and the bindings.
 pub(crate) fn open_target<'a, T, S, K>(
     name: &'static str,
     opener: Opener<'a, K>,
-    column: NonEmpty<Identifier>,
+    context: CallerContext,
     stored: &[u8],
 ) -> Result<Pending<'a, ValueFrame, K>, TargetError>
 where
@@ -857,10 +941,7 @@ where
         target: name,
         source,
     })?;
-    // `decrypt_as`, not `run_decryption`: this crate compiles against the
-    // crates.io stack-encrypt its manifest names (0.2.0), which has the
-    // typed call and not the by-value runner. Same plan, same pending.
-    let expected: ExpectedContext<Identifier> = column.into();
+    let expected: ExpectedContext<Identifier> = context.into();
     Ok(match opener {
         Opener::Client(cipher) => cipher.decrypt_as::<S, T>(value, expected),
         Opener::Keyset(keyset) => keyset.decrypt_as::<S, T>(value, expected),

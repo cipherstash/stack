@@ -249,6 +249,19 @@ sends queries:
   the decoding of JSON paths and predicates, and the opening of a sealed
   JSON document. Stored values and query terms do not change.
 
+### Changed
+
+- **An `encrypt_into` field takes a scope and a binding.** A cipher with a
+  scope or a binding refused a struct with a field that names an EQL type,
+  as `ErrEncoding`. It now seals the field as it seals any other. The scope
+  and the binding come after the column in the field's context: the search
+  terms derive under the column and the scope, and the value is sealed
+  under the binding too. The EQL value stores the table and the column
+  alone, in `i`. Open it through a cipher with the same scope and binding,
+  and query it through a cipher with the same scope. `Plan.Validate` takes
+  a plan with `Extension` or `Bind` and a target field. Values stored
+  through a cipher with no scope and no binding do not change.
+
 ## [0.1.0-rc.4] - 2026-11-13
 
 ### Upgrading from rc.3

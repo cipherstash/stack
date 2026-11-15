@@ -23,7 +23,7 @@ use stack_encrypt::dynamic::{
     TargetResolver, ValueFrame, ValueKind,
 };
 use stack_encrypt::json::{JsonDocument, Tag};
-use stack_encrypt::target::{Borrowed, CallerContext, IndexSpec};
+use stack_encrypt::target::{Borrowed, IndexSpec};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
 use stack_kms::{DataKeySource, IndexKeySource};
 
@@ -63,6 +63,7 @@ impl TargetResolver for Documents {
         options: Option<&TargetOptions>,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
+        parts: &stack_encrypt::target::DeclaredContext,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         let options = options
@@ -75,7 +76,7 @@ impl TargetResolver for Documents {
             .run(
                 stack_encrypt::target::json_document::<_, Borrowed>(options),
                 document.value(),
-                CallerContext::from(NonEmpty::from(label.clone())),
+                parts.clone().under(NonEmpty::from(label.clone())),
             )
             .try_map(|doc| {
                 serde_json::to_vec(&doc).map_err(|e| stack_encrypt::Error::Other(Box::new(e)))
@@ -87,6 +88,7 @@ impl TargetResolver for Documents {
         _: &str,
         _: &'a StackCipher<K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         unreachable!("these tests open documents through reads")
@@ -98,6 +100,7 @@ impl TargetResolver for Documents {
         _: &IndexSpec,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("the JSON operators are the engine's")
@@ -1511,18 +1514,20 @@ mod element_match {
                 options: Option<&TargetOptions>,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
+                parts: &stack_encrypt::target::DeclaredContext,
                 plaintext: ValueFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-                Documents.encrypt(name, options, keyset, label, plaintext)
+                Documents.encrypt(name, options, keyset, label, parts, plaintext)
             }
             fn decrypt<'a, K: 'static>(
                 &self,
                 name: &str,
                 cipher: &'a StackCipher<K>,
                 label: &Label,
+                parts: &stack_encrypt::target::DeclaredContext,
                 bytes: &[u8],
             ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
-                Documents.decrypt(name, cipher, label, bytes)
+                Documents.decrypt(name, cipher, label, parts, bytes)
             }
             fn query<'a, K: 'static>(
                 &self,
@@ -1530,9 +1535,10 @@ mod element_match {
                 index: &IndexSpec,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
+                scopes: &stack_encrypt::target::DeclaredContext,
                 plaintext: ValueFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-                Documents.query(name, index, keyset, label, plaintext)
+                Documents.query(name, index, keyset, label, scopes, plaintext)
             }
         }
 
@@ -2330,18 +2336,20 @@ mod compiled_match {
                 options: Option<&TargetOptions>,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
+                parts: &stack_encrypt::target::DeclaredContext,
                 plaintext: ValueFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-                Documents.encrypt(name, options, keyset, label, plaintext)
+                Documents.encrypt(name, options, keyset, label, parts, plaintext)
             }
             fn decrypt<'a, K: 'static>(
                 &self,
                 name: &str,
                 cipher: &'a StackCipher<K>,
                 label: &Label,
+                parts: &stack_encrypt::target::DeclaredContext,
                 bytes: &[u8],
             ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
-                Documents.decrypt(name, cipher, label, bytes)
+                Documents.decrypt(name, cipher, label, parts, bytes)
             }
             fn query<'a, K: 'static>(
                 &self,
@@ -2349,9 +2357,10 @@ mod compiled_match {
                 index: &IndexSpec,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
+                scopes: &stack_encrypt::target::DeclaredContext,
                 plaintext: ValueFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-                Documents.query(name, index, keyset, label, plaintext)
+                Documents.query(name, index, keyset, label, scopes, plaintext)
             }
         }
 

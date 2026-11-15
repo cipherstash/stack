@@ -192,9 +192,10 @@ pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
         | Error::Predicate { .. } => STATUS_ENCODING,
         Error::Cipher(e) => status_for_error(e),
         // A target refusal is a statement about the plan, the label or the
-        // value (an unknown or unproducible type, an extended plan, a value
-        // of another kind, stored bytes that are not the type) — malformed
-        // input, like the rest — save the resolver's own failure.
+        // value (an unknown or unproducible type, a label that is not a
+        // column, a value of another kind, stored bytes that are not the
+        // type) — malformed input, like the rest — save the resolver's own
+        // failure.
         Error::Target(stack_encrypt::dynamic::TargetError::Other(_)) => STATUS_INTERNAL,
         Error::Target(_) => STATUS_ENCODING,
         Error::Internal => STATUS_INTERNAL,
@@ -470,10 +471,6 @@ mod tests {
             TargetError::Unproducible {
                 name: "DateOrdOre".into(),
                 reason: "no kind for this family".into(),
-            },
-            TargetError::Extended {
-                name: "email".into(),
-                label: "users/email".into(),
             },
             TargetError::ContextField {
                 name: "email".into(),

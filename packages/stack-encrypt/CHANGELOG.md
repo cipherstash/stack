@@ -242,6 +242,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     jiff has no leap seconds, so the error now says only what is wrong:
     `Timestamp::new` was given nanoseconds of one second or more.
 
+- **A data plan field that names an EQL type takes a scope and a
+  binding** (#1658). `dynamic::TargetResolver` now receives them:
+  `encrypt` and `decrypt` take `parts: &DeclaredContext` after the label,
+  and `query` takes `scopes: &DeclaredContext`. A resolver runs the type
+  under the label, then those parts (`parts.clone().under(label)`), as
+  the lowering runs a field with outputs.
+  - Such a plan was refused with `TargetError::Extended`, at build time
+    for an extended plan and at `with_bindings` and a scoped call. That
+    variant and its code `stack_encrypt::target_extended` are removed.
+  - The EQL value stores the label's column alone. Whoever reads it
+    supplies the scopes and the bindings again.
+  - `Plan::contexts()` and `Planned::contexts()` show a target field
+    under the same parts as a field with outputs.
+
 - **`target::legacy` is removed** (#1488). It held two traits,
   implemented for every type, that gave the structural API a second
   call syntax: `value.encrypt_into(&keyset)`,

@@ -32,7 +32,7 @@ use super::{Op, ValueFrame, ValueKind};
 
 use crate::json::JsonOptions;
 use crate::sem::MatchOptions;
-use crate::target::IndexSpec;
+use crate::target::{DeclaredContext, IndexSpec};
 use crate::{KeysetCipher, Label, Pending, StackCipher};
 
 /// One EQL type a plan may name as a target, as the host describes it.
@@ -333,21 +333,6 @@ pub enum TargetError {
         /// The type's name.
         name: String,
     },
-    /// The plan extends every field's label by the caller's parts (a tenant,
-    /// a region), and an EQL value stores a table and a column only: there
-    /// is no column for the extended label. A plan with a target field is
-    /// not extended.
-    #[error(
-        "{name}: an EQL value is stored under a table and a column, so the label {label} \
-         cannot be extended by the caller's parts"
-    )]
-    #[diagnostic(code(stack_encrypt::target_extended))]
-    Extended {
-        /// The target field's name.
-        name: String,
-        /// The field's label, before the extension.
-        label: String,
-    },
     /// The plan takes its context from a field of each record (the
     /// plan-level `"context_field"`), so a field's label is its identity
     /// alone and the table is whatever each record names; an EQL value
@@ -465,7 +450,6 @@ impl crate::ErrorPayload for TargetError {
             | Self::NoQuery { .. }
             | Self::Other(_) => serde_json::Map::new(),
             Self::Unproducible { reason, .. } => payload([("reason", reason.as_str().into())]),
-            Self::Extended { label, .. } => payload([("label", label.as_str().into())]),
             Self::ContextField { context_field, .. } => {
                 payload([("context_field", context_field.as_str().into())])
             }
@@ -511,8 +495,7 @@ impl crate::ErrorPayload for TargetError {
             | Self::Unproducible { name, .. } => {
                 let _ = fields.insert("target".to_owned(), name.as_str().into());
             }
-            Self::Extended { name, .. }
-            | Self::ContextField { name, .. }
+            Self::ContextField { name, .. }
             | Self::Kind { name, .. }
             | Self::Column { name, .. }
             | Self::Plaintext { name, .. }
@@ -537,11 +520,18 @@ impl crate::ErrorPayload for TargetError {
 /// calls it once per target field, with the field's label and value, and
 /// zips the returned [`Pending`] into the record's.
 ///
-/// The three operations take the field's **label** — the plan's context and
-/// the field's identity, `users/email` — and never an extension: an EQL
-/// value is stored under a table and a column, and
-/// [`record::Plan`](super::record::Plan) refuses a plan that both extends and
-/// names a target ([`TargetError::Extended`]).
+/// The three operations take the field's **label**, and the **parts** that
+/// come after it.
+///
+/// - The label is the plan's context and the field's identity,
+///   `users/email`. It is the column an EQL value stores.
+/// - The parts are the scopes and the bindings of the plan and of the call,
+///   such as a tenant or a row ID. An EQL value does not store them. A
+///   resolver runs the type under the label, then the parts
+///   (`parts.clone().under(label)`), as a field with outputs runs. So the
+///   terms derive under the label and the scopes, the value is sealed under
+///   the bindings too, and whoever reads the value supplies the parts
+///   again.
 pub trait TargetResolver {
     /// Every EQL type this build knows of, producible or not, in a fixed
     /// order: what `se_targets` lists.
@@ -580,7 +570,8 @@ pub trait TargetResolver {
     }
 
     /// Run the named type's own encryption plan over one value under
-    /// `label`, resolving to the EQL value's JSON bytes. `options` are the
+    /// `label`, then `parts`, resolving to the EQL value's JSON bytes. The
+    /// value stores `label`'s column, and not the parts. `options` are the
     /// ones the plan resolved for the field ([`TargetOptions`]): the JSON
     /// index's for a type that carries it, `None` for every other type.
     ///
@@ -596,13 +587,14 @@ pub trait TargetResolver {
         options: Option<&TargetOptions>,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
+        parts: &DeclaredContext,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 
     /// Open a stored value of the named type back to its plaintext, checking
-    /// it was stored under `label`'s column. Opens through the client; the
-    /// lowering confines the pending to a keyset when the caller's scope is
-    /// one.
+    /// it was stored under `label`'s column. The value opens under `label`,
+    /// then `parts`. Opens through the client; the lowering confines the
+    /// pending to a keyset when the caller's scope is one.
     ///
     /// # Errors
     ///
@@ -614,11 +606,13 @@ pub trait TargetResolver {
         name: &str,
         cipher: &'a StackCipher<K>,
         label: &Label,
+        parts: &DeclaredContext,
         stored: &[u8],
     ) -> Result<Pending<'a, ValueFrame, K>, TargetError>;
 
     /// Run the named type's query twin over one value: the operand that
-    /// matches stored values under `label`'s column, as JSON bytes.
+    /// matches stored values under `label`'s column and `scopes`, as JSON
+    /// bytes. `scopes` holds no binding: a binding is in no query context.
     ///
     /// `index` is the type's index that answers the query's operator, one of
     /// the descriptor's [`indexes`](TargetDescriptor::indexes):
@@ -639,6 +633,7 @@ pub trait TargetResolver {
         index: &IndexSpec,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
+        scopes: &DeclaredContext,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 }
@@ -669,6 +664,7 @@ impl TargetResolver for NoTargets {
         _: Option<&TargetOptions>,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
+        _: &DeclaredContext,
         _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
@@ -679,6 +675,7 @@ impl TargetResolver for NoTargets {
         name: &str,
         _: &'a StackCipher<K>,
         _: &Label,
+        _: &DeclaredContext,
         _: &[u8],
     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         Self::refuse(name)
@@ -690,6 +687,7 @@ impl TargetResolver for NoTargets {
         _: &IndexSpec,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
+        _: &DeclaredContext,
         _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
@@ -760,6 +758,7 @@ mod tests {
             _: Option<&TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
@@ -769,6 +768,7 @@ mod tests {
             _: &str,
             _: &'a StackCipher<K>,
             _: &Label,
+            _: &DeclaredContext,
             _: &[u8],
         ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("not run here")
@@ -779,6 +779,7 @@ mod tests {
             _: &IndexSpec,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
@@ -895,10 +896,5 @@ mod tests {
             error.to_string(),
             "email: TextEq is produced from a string plaintext, not a value with no kind"
         );
-        let error = TargetError::Extended {
-            name: "email".into(),
-            label: "users/email".into(),
-        };
-        assert!(error.to_string().contains("cannot be extended"), "{error}");
     }
 }

@@ -19,6 +19,8 @@
 //!   terms derive under the column and the scope. The ciphertext is sealed
 //!   under the binding too. `i` stores neither. The reader supplies both
 //!   again, and a query supplies the scope;
+//! - under a scope and a binding, the derive and a data plan still write
+//!   the same terms, and each opens the other's values;
 //! - an EQL field of a record nested in another stores its own column too;
 //! - a field that stores another column is refused before any key is
 //!   requested;
@@ -31,11 +33,11 @@ mod common;
 use eql_bindings::encryption::{EqlTargets, NativeCiphertextVisitor as NativeLeaf};
 use eql_bindings::v4::integer::IntegerOrd;
 use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument};
-use eql_bindings::v4::text::{Text, TextEq};
+use eql_bindings::v4::text::{Text, TextEq, TextEqQuery};
 use eql_bindings::Identifier;
 use serde::Serialize;
 use serde_json::{json, Value};
-use stack_encrypt::dynamic::{self, record, ValueFrame};
+use stack_encrypt::dynamic::{self, record, Op, Operand, Planned, QueryTerm, ValueFrame};
 use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::target::transcode::Reader as _;
 use stack_encrypt::target::{AeadContext, Bind, Layout, Parts, Scope};
@@ -524,6 +526,176 @@ async fn an_eql_field_opens_only_under_the_scope_and_the_binding_it_was_sealed_u
         Ok(_) => panic!("expected ContextMismatch, got a value"),
     }
     assert_eq!(calls.lock().unwrap().retrieve.len(), before);
+}
+
+#[derive(Clone, Zeroize)]
+struct Lead {
+    email: String,
+    profile: JsonPlaintext,
+}
+
+/// A record with a scalar field and a document field, under a tenant scope
+/// and a row binding that the caller supplies.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Lead, scope = "leads", scope(tenant: u64), bind(row: u128))]
+struct EncryptedLead {
+    email: TextEq,
+    profile: JsonTreeDocument,
+}
+
+/// The data plan that declares the same two fields with EQL targets. It
+/// lists no scope and no binding: the call supplies them, as it does for
+/// the record.
+fn lead_plan() -> record::Plan {
+    let wire = serde_json::json!({
+        "email": {"context": ["leads", "email"], "target": "TextEq"},
+        "profile": {"context": ["leads", "profile"], "target": "JsonSearch"},
+    });
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &EqlTargets,
+    )
+    .unwrap()
+}
+
+/// A lead as a binding sends it to a data plan.
+fn lead_row() -> ValueFrame {
+    #[derive(Serialize)]
+    struct Row {
+        email: String,
+        profile: String,
+    }
+    let row = Row {
+        email: "ada@example.com".into(),
+        profile: profile().to_string(),
+    };
+    ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(&row)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
+}
+
+/// A scope and a binding reach an EQL type through a data plan as they
+/// reach it through the derive. So the two paths write the same terms
+/// under the same tenant and row, each stores the column alone, and each
+/// opens what the other sealed. A data plan is the path Go takes.
+#[tokio::test]
+async fn the_derive_and_a_data_plan_write_the_same_row_under_a_scope_and_a_binding() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = lead_plan();
+    let derived: EncryptedLead = Lead {
+        email: "ada@example.com".into(),
+        profile: profile().into(),
+    }
+    .encrypt_into_with_context(&keyset, tenant_and_row())
+    .await
+    .unwrap();
+    let seal = || async {
+        let row: StackCipherText = Planned::with_resolver(&plan, lead_row(), EqlTargets)
+            .encrypt_into_with_context(&keyset, tenant_and_row())
+            .await
+            .unwrap();
+        row
+    };
+
+    let mut row = seal().await;
+    let planned_email: TextEq = read_eql(&mut row, "email");
+    let planned_profile: JsonTreeDocument = read_eql(&mut row, "profile");
+    let leads = |name: &str| Identifier::for_column("leads", name).unwrap().into_inner();
+    assert_eq!(planned_email.i, leads("email"), "the column alone");
+    assert_eq!(planned_profile.i, leads("profile"), "the column alone");
+    assert_eq!(terms_of(&planned_email), terms_of(&derived.email));
+    assert_eq!(
+        document_terms(&planned_profile),
+        document_terms(&derived.profile)
+    );
+    // The terms are the tenant's, and not the column's alone.
+    let alone: TextEq = "ada@example.com"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, Identifier::for_column("leads", "email").unwrap())
+        .await
+        .unwrap();
+    assert_ne!(alone.hm, planned_email.hm);
+
+    // The data plan's values open as the record's fields.
+    let record = EncryptedLead {
+        email: planned_email,
+        profile: planned_profile,
+    };
+    let opened = Lead::decrypt_from_with_context(record, &keyset, tenant_and_row())
+        .await
+        .unwrap();
+    assert_eq!(opened.email, "ada@example.com");
+    assert_eq!(opened.profile.value(), &profile());
+
+    // The record's values, in the data plan's row, open through the plan.
+    write_eql(&mut row, "email", &derived.email);
+    write_eql(&mut row, "profile", &derived.profile);
+    let opened = ValueFrame::decrypt_from_with_context(
+        Planned::with_resolver(&plan, row, EqlTargets),
+        &keyset,
+        tenant_and_row(),
+    )
+    .await
+    .unwrap();
+    #[derive(serde::Deserialize)]
+    struct Opened {
+        email: String,
+        profile: Bytes,
+    }
+    let opened: Opened = dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    assert_eq!(opened.email, "ada@example.com");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&opened.profile.0).unwrap(),
+        profile()
+    );
+
+    // The plan opens its row only under the same tenant and row.
+    for parts in [
+        Scope::new(43u64).bind(9u128),
+        Scope::new(42u64).bind(10u128),
+    ] {
+        let refused = ValueFrame::decrypt_from_with_context(
+            Planned::with_resolver(&plan, seal().await, EqlTargets),
+            &keyset,
+            parts,
+        )
+        .await;
+        assert!(refused.is_err());
+    }
+    let refused = ValueFrame::decrypt_from(
+        Planned::with_resolver(&plan, seal().await, EqlTargets),
+        &keyset,
+    )
+    .await;
+    assert!(refused.is_err(), "with no tenant and no row");
+
+    // A query through the plan, under the tenant, is the stored term. It
+    // names the column alone.
+    let by_email = plan.query_with("email", Op::Eq, &EqlTargets).unwrap();
+    let term = |tenant: u64| {
+        let (by_email, keyset) = (&by_email, &keyset);
+        async move {
+            let value = ValueFrame::of("ada@example.com").unwrap();
+            let term: QueryTerm = Planned::with_resolver(by_email, value, EqlTargets)
+                .encrypt_into_with_context(keyset, Scope::new(tenant))
+                .await
+                .unwrap();
+            let Operand::One(json) = term.operand() else {
+                panic!("an equality query has one operand");
+            };
+            serde_json::from_slice::<TextEqQuery>(json).unwrap()
+        }
+    };
+    let query = term(42).await;
+    assert_eq!(query.i, derived.email.i);
+    assert_eq!(query.hm, derived.email.hm);
+    assert_ne!(term(43).await.hm, derived.email.hm);
 }
 
 #[derive(Clone, Zeroize)]

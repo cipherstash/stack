@@ -1514,9 +1514,12 @@ Base64.
     types, with the record's scope. A plan's query for an EQL type takes
     a scope too, through the plan chain that #1488 removes. The order
     types do not implement `Answers` yet, so a marker cannot query them.
-- **Not done.** A data plan still refuses a scope or a binding on a field
-  that names an EQL type (`TargetError::Extended`). So a Go record cannot
-  yet write an EQL field under a scope.
+  - A data plan that names an EQL type takes a scope and a binding too.
+    `TargetResolver` receives them after the field's label, and
+    `TargetError::Extended` is removed. Under the same scope and binding,
+    a data plan and a derived record write the same terms, and each
+    opens the other's values. A Go struct with an `encrypt_into` field
+    seals through `cipher.Scope(..).Bind(..)`.
 - **Tracked in.** Issue #1658. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
