@@ -1,10 +1,10 @@
 //! What a query is refused for before any term exists, written once.
 //!
-//! Both paths call these: the typed query chain through each index's
+//! Both paths call these: the typed query through each index's
 //! [`Supports::prepare`](crate::op::Supports::prepare), and the dynamic
 //! path at its boundary (`dynamic::check_query`) and before it derives a
 //! term (`dynamic::query_term`, `dynamic::verify`). So what a binding
-//! refuses is what the typed chain refuses, with the same error, and
+//! refuses is what a typed query refuses, with the same error, and
 //! neither has a copy of the rule. Every refusal here needs no key, so a
 //! refused query costs no request.
 //!

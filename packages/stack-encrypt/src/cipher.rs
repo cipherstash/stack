@@ -277,8 +277,8 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Term(#[from] crate::sem::TermError),
-    /// A third-party [`EncryptFrom`](crate::target::EncryptFrom) /
-    /// [`DecryptInto`](crate::target::DecryptInto) implementation failed
+    /// A third-party [`EncryptTarget`](crate::target::EncryptTarget) /
+    /// [`DecryptSource`](crate::target::DecryptSource) implementation failed
     /// for a reason of its own.
     ///
     /// Its message is the implementation's, shown as given: an
@@ -318,7 +318,7 @@ pub enum Error {
     /// A [`Pending`](crate::target::Pending) fulfilment's requests and
     /// responses did not line up: it drew more responses — or a different
     /// kind — than its requests asked for, or left some of them unconsumed.
-    /// Always a composition bug in an `EncryptFrom`/`DecryptInto`
+    /// Always a composition bug in an `EncryptTarget`/`DecryptSource`
     /// implementation, never a data error.
     #[error("a pending fulfilment's responses did not match its requests")]
     #[diagnostic(code(stack_encrypt::response_shape))]
@@ -376,7 +376,7 @@ pub enum Error {
     /// A data key was requested through a [`StackCipher`] rather than a
     /// [`KeysetCipher`]: a [`Request::generate_data_key`] needs a keyset
     /// to mint under, and only a keyset-scoped pending has one. Always a
-    /// composition bug in a hand-written `EncryptFrom`, caught before any
+    /// composition bug in a hand-written `EncryptTarget`, caught before any
     /// I/O.
     ///
     /// [`Request::generate_data_key`]: crate::target::Request::generate_data_key
@@ -394,10 +394,8 @@ pub enum Error {
     #[diagnostic(code(stack_encrypt::not_opened))]
     NotOpened,
     /// A [plan](crate::plan) was refused: it did not validate when it was
-    /// built, or the value, record or query it was run with does not match
-    /// it. A refusal at build or when a plan runs is raised before any key
-    /// is requested; [`FieldValues::take`](crate::plan::FieldValues::take)
-    /// also returns one for a record already in hand.
+    /// parsed, or the value, record or query it was run with does not match
+    /// it. A refusal is raised before any key is requested.
     #[error(transparent)]
     #[diagnostic(transparent)]
     Plan(#[from] crate::plan::PlanError),
@@ -1808,7 +1806,7 @@ impl PendingStackCipherText {
     /// `Aes256Cipher`, where AAD-less sealing is a legitimate AEAD use,
     /// opened symmetrically by [`StackCipher::decrypt`]. But a tree that
     /// will be opened through the target layer's
-    /// [`decrypt_into`](crate::target::DecryptInto) — a per-field record
+    /// [`DecryptSource`](crate::target::DecryptSource) — a per-field record
     /// assembly in an FFI front-end, say — is bound by that layer's rule: it
     /// opens only under a [`NonEmpty`](crate::NonEmpty) context, so seal
     /// under one here (a `NonEmpty<T>` is an [`IntoContext`] like any other, and

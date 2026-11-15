@@ -10,28 +10,39 @@ mod common;
 
 use common::recording_cipher;
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::Encrypted;
+use stack_encrypt::target::{DecryptSource, EncryptTarget, Encrypted, Scope};
 use stack_encrypt::{
-    nonempty, DecryptInto, Describe, Descriptor, EncryptFrom, Error, Label, NonEmpty,
+    nonempty, DecryptFrom, Describe, Descriptor, EncryptInto, Error, Label, NonEmpty,
     StackCipherText,
 };
+use zeroize::Zeroize;
 
-#[derive(EncryptFrom, DecryptInto)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = u32)]
 struct EncryptedAge {
     c: StackCipherText,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Zeroize)]
 struct User {
     email: String,
     name: String,
     age: u32,
 }
 
-#[derive(EncryptFrom, DecryptInto)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = User, scope = "users")]
 struct EncryptedUser {
+    email: Encrypted<EqualityTerm>,
+    #[stash(identity = "nickname")]
+    name: StackCipherText,
+    age: EncryptedAge,
+}
+
+/// The same record, with a scope that its caller supplies: a tenant.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = User, scope = "users", scope(tenant: u64))]
+struct TenantUser {
     email: Encrypted<EqualityTerm>,
     #[stash(identity = "nickname")]
     name: StackCipherText,
@@ -51,12 +62,12 @@ async fn a_leaf_sends_its_context_as_the_descriptor_both_ways() -> Result<(), Er
     let (cipher, sent) = recording_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let ct: StackCipherText = keyset
-        .encrypt_as(&"alice", nonempty!("users").with("email").into())
+    let ct: StackCipherText = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("email"))
         .await?;
-    let _: String = cipher
-        .decrypt_as(ct, nonempty!("users").with("email").into())
-        .await?;
+    let _: String =
+        String::decrypt_from_with_context(ct, &cipher, nonempty!("users").with("email")).await?;
 
     let sent = sent.lock().expect("lock").clone();
     assert_eq!(sent.generated(), ["users/email"]);
@@ -73,19 +84,22 @@ async fn a_label_is_sealed_under_the_descriptor_it_spells() -> Result<(), Error>
     // what ZeroKMS binds and logs, and the pair-form context opens it.
     let email = Label::parse("users/email").expect("a plain label");
     assert_eq!(email.descriptor().as_str(), "users/email");
-    let ct: StackCipherText = keyset
-        .encrypt_as(&"alice", NonEmpty::from(email.clone()).into())
+    let ct: StackCipherText = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, NonEmpty::from(email.clone()))
         .await?;
-    let _: String = cipher
-        .decrypt_as(ct, nonempty!("users").with("email").into())
-        .await?;
+    let _: String =
+        String::decrypt_from_with_context(ct, &cipher, nonempty!("users").with("email")).await?;
 
     // Extended by a row id like any context head.
     let row = NonEmpty::from(email).with(7u64);
-    let ct: StackCipherText = keyset.encrypt_as(&"alice", row.into()).await?;
-    let _: String = cipher
-        .decrypt_as(ct, nonempty!("users").with("email").with(7u64).into())
+    let ct: StackCipherText = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, row)
         .await?;
+    let _: String =
+        String::decrypt_from_with_context(ct, &cipher, nonempty!("users").with("email").with(7u64))
+            .await?;
 
     let sent = sent.lock().expect("lock").clone();
     assert_eq!(sent.generated(), ["users/email", "(users/email)/7u64"]);
@@ -98,10 +112,8 @@ async fn a_struct_sends_one_descriptor_per_field_context() -> Result<(), Error> 
     let (cipher, sent) = recording_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let row: EncryptedUser = keyset.encrypt_as(&user(), Default::default()).await?;
-    let back = cipher
-        .decrypt_as::<User, _>(row, Default::default())
-        .await?;
+    let row: EncryptedUser = user().encrypt_into(&keyset).await?;
+    let back = User::decrypt_from(row, &cipher).await?;
     assert_eq!(back, user());
 
     // The inferred pair `users/email`, the pair `users/nickname` the
@@ -126,8 +138,12 @@ async fn a_callers_context_extends_every_fields_descriptor() -> Result<(), Error
     let (cipher, sent) = recording_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let row: EncryptedUser = keyset.encrypt_as(&user(), 7u64.into()).await?;
-    let back = cipher.decrypt_as::<User, _>(row, 7u64.into()).await?;
+    // The record lists a scope that its caller supplies. The caller's scope
+    // extends the context of every field.
+    let row: TenantUser = user()
+        .encrypt_into_with_context(&keyset, Scope::new(7u64))
+        .await?;
+    let back = User::decrypt_from_with_context(row, &cipher, Scope::new(7u64)).await?;
     assert_eq!(back, user());
 
     // The extended contexts are composites, rendered part by part — the
@@ -160,12 +176,12 @@ async fn every_leaf_of_a_tree_shares_the_root_descriptor() -> Result<(), Error> 
     let (cipher, sent) = recording_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let column: Vec<StackCipherText> = keyset
-        .encrypt_as(&vec![1u32, 2, 3], nonempty!("users").with("age").into())
+    let column: Vec<StackCipherText> = vec![1u32, 2, 3]
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
         .await?;
-    let _: Vec<u32> = cipher
-        .decrypt_as(column, nonempty!("users").with("age").into())
-        .await?;
+    let _: Vec<u32> =
+        Vec::<u32>::decrypt_from_with_context(column, &cipher, nonempty!("users").with("age"))
+            .await?;
 
     // Per-element AAD derivation is vitaminc's and stays inside the AEAD;
     // ZeroKMS sees the field, not the element.
@@ -223,8 +239,9 @@ async fn a_column_renders_an_over_long_context_once() -> Result<(), Error> {
     let context = stack_encrypt::NonEmpty::new(Counted(renders.clone())).unwrap();
 
     let values: Vec<u32> = (0..10_000).collect();
-    let result: Result<Vec<StackCipherText>, Error> =
-        keyset.encrypt_as(&values, context.clone().into()).await;
+    let result: Result<Vec<StackCipherText>, Error> = values
+        .encrypt_into_with_context(&keyset, context.clone())
+        .await;
     assert!(
         matches!(result, Err(Error::DescriptorTooLong { .. })),
         "{result:?}"
@@ -235,10 +252,11 @@ async fn a_column_renders_an_over_long_context_once() -> Result<(), Error> {
         "one rendering on encrypt"
     );
 
-    let column: Vec<StackCipherText> = keyset
-        .encrypt_as(&vec![1u32, 2, 3], nonempty!("users").with("age").into())
+    let column: Vec<StackCipherText> = vec![1u32, 2, 3]
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
         .await?;
-    let opened: Result<Vec<u32>, Error> = cipher.decrypt_as(column, context.into()).await;
+    let opened: Result<Vec<u32>, Error> =
+        Vec::<u32>::decrypt_from_with_context(column, &cipher, context).await;
     assert!(
         matches!(opened, Err(Error::DescriptorTooLong { .. })),
         "{opened:?}"
@@ -269,13 +287,17 @@ async fn a_column_with_nothing_to_bind_takes_any_context() -> Result<(), Error> 
     let long = stack_encrypt::NonEmpty::new("a".repeat(Descriptor::MAX_LEN + 1)).unwrap();
 
     let names = vec!["alice".to_string(), "bob".to_string()];
-    let terms: Vec<EqualityTerm> = keyset.encrypt_as(&names, long.clone().into()).await?;
+    let terms: Vec<EqualityTerm> = names
+        .encrypt_into_with_context(&keyset, long.clone())
+        .await?;
     assert_eq!(terms.len(), 2);
 
     let none: Vec<u32> = Vec::new();
-    let sealed: Vec<StackCipherText> = keyset.encrypt_as(&none, long.clone().into()).await?;
+    let sealed: Vec<StackCipherText> = none
+        .encrypt_into_with_context(&keyset, long.clone())
+        .await?;
     assert!(sealed.is_empty());
-    let opened: Vec<u32> = cipher.decrypt_as(sealed, long.into()).await?;
+    let opened: Vec<u32> = Vec::<u32>::decrypt_from_with_context(sealed, &cipher, long).await?;
     assert!(opened.is_empty());
 
     let sent = sent.lock().expect("lock").clone();
@@ -293,17 +315,18 @@ async fn an_over_long_context_is_refused_before_any_request_on_either_path() -> 
     let long = stack_encrypt::NonEmpty::new("a".repeat(Descriptor::MAX_LEN + 1)).unwrap();
 
     let values: Vec<u32> = (0..10_000).collect();
-    let result: Result<Vec<StackCipherText>, Error> =
-        keyset.encrypt_as(&values, long.clone().into()).await;
+    let result: Result<Vec<StackCipherText>, Error> = values
+        .encrypt_into_with_context(&keyset, long.clone())
+        .await;
     assert!(
         matches!(result, Err(Error::DescriptorTooLong { len }) if len == Descriptor::MAX_LEN + 1),
         "{result:?}"
     );
 
-    let sealed: StackCipherText = keyset
-        .encrypt_as(&7u32, nonempty!("users").with("age").into())
+    let sealed: StackCipherText = 7u32
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
         .await?;
-    let opened: Result<u32, Error> = cipher.decrypt_as(sealed, long.into()).await;
+    let opened: Result<u32, Error> = u32::decrypt_from_with_context(sealed, &cipher, long).await;
     assert!(
         matches!(opened, Err(Error::DescriptorTooLong { .. })),
         "{opened:?}"

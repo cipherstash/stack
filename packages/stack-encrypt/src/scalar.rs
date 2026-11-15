@@ -196,7 +196,7 @@ impl Ciphertext {
         }
     }
 }
-/// The one sealed leaf, as the structural API holds it. The bytes are the
+/// The one sealed leaf, as a tree of leaves holds it. The bytes are the
 /// same: this is how a caller holding a `CipherText::Single` from
 /// [`KeysetCipher::encrypt_tree`] opens it through the owned API.
 impl From<SealedValue> for Ciphertext {

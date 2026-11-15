@@ -19,13 +19,13 @@
 //! [`encryption_gap`](crate::bindings::encryption_gap) on every domain.
 //!
 //! The same rows give the operators each producible type answers in Stack
-//! Encrypt's typed query chain ([`answers_for_indexes`]), rendered to
+//! Encrypt's typed query ([`answers_for_indexes`]), rendered to
 //! `v4/answers.rs` ([`render_answers_rs`]) under the `stack-encrypt` feature
 //! alone: it implements `op::Answers` for each, with the type's query twin as
 //! the query term, and lists them in `ANSWERS` so the encryption tests can
 //! hold them to the operators the engine's data path answers for the same
 //! type. A producible type whose twin carries an order index, or more than
-//! one index, answers nothing there yet ([`typed_gap`]): the chain sends one
+//! one index, answers nothing there yet ([`typed_gap`]): a typed query sends one
 //! index's term as the twin, and those twins need an order term, or several
 //! terms at once.
 //!
@@ -69,8 +69,8 @@ pub fn index_key(term: Term) -> &'static str {
     }
 }
 
-/// An operator a producible EQL type answers in Stack Encrypt's typed query
-/// chain: what the generated file implements `op::Answers` for.
+/// An operator a producible EQL type answers in a Stack Encrypt typed
+/// query: what the generated file implements `op::Answers` for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Answer {
     /// `op::Eq`, through the equality index.
@@ -98,7 +98,7 @@ impl Answer {
     }
 }
 
-/// Why the typed query chain has no answer yet for a type carrying these
+/// Why a typed query has no answer yet for a type carrying these
 /// indexes, by [`index_key`] name, or `None` when it answers: a query twin
 /// is assembled from the one term its type's index derived, so a twin that
 /// needs an order term (`"ore"`, `"ore_block"` or `"ope"`), or more than one term, is not
@@ -109,9 +109,9 @@ pub(crate) fn typed_gap(indexes: &[&str]) -> Option<&'static str> {
         .iter()
         .any(|key| matches!(*key, "ore" | "ore_block" | "ope"))
     {
-        Some("its twin carries an order term, which the typed query chain does not derive yet")
+        Some("its twin carries an order term, which a typed query does not derive yet")
     } else if indexes.len() > 1 {
-        Some("its twin carries more than one term, which the typed query chain does not assemble yet")
+        Some("its twin carries more than one term, which a typed query does not assemble yet")
     } else {
         None
     }
@@ -121,14 +121,14 @@ pub(crate) fn typed_gap(indexes: &[&str]) -> Option<&'static str> {
 /// indexes it carries by [`index_key`] name, the same input the engine's
 /// table reads: `Eq` for the `"eq"` index and `Matches` for the `"match"`
 /// index, as `Op::answered_by` answers a field that names the type
-/// (`TargetDescriptor::operators`). Empty for a type the chain has no
+/// (`TargetDescriptor::operators`). Empty for a type a typed query has no
 /// answer for yet ([`typed_gap`]). The encryption tests compare the two,
 /// type by type, and hold the gap to exactly those types.
 ///
 /// # Panics
 ///
 /// On an index key the generator does not know: a new catalog term must say
-/// what the typed query chain does with it.
+/// what a typed query does with it.
 pub(crate) fn answers_for_indexes(name: &str, indexes: &[&str]) -> Vec<Answer> {
     if typed_gap(indexes).is_some() {
         return Vec::new();
@@ -139,7 +139,7 @@ pub(crate) fn answers_for_indexes(name: &str, indexes: &[&str]) -> Vec<Answer> {
             "eq" => Answer::Eq,
             "match" => Answer::Matches,
             other => panic!(
-                "{name}: the typed query chain has no rule for the {other} index; extend \
+                "{name}: a typed query has no rule for the {other} index; extend \
                  eql-codegen's answers_for_indexes and typed_gap"
             ),
         })
@@ -179,7 +179,7 @@ pub(crate) struct Row {
     /// Empty for every other twin, whose plan derives all its terms.
     pub(crate) projections: Vec<(&'static str, String)>,
     pub(crate) reason: Option<&'static str>,
-    /// The operators the type answers in the typed query chain: none
+    /// The operators the type answers in a typed query: none
     /// unless it is producible and has a query twin ([`answers_for_indexes`]).
     pub(crate) answers: Vec<Answer>,
     /// A document family's stored type (`eql_domains::DOCUMENT_FAMILIES`):
@@ -300,7 +300,7 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
     }
 }
 
-/// The typed query chain's impls for one type that answers an operator:
+/// A typed query's impls for one type that answers an operator:
 /// its query twin's assembly from the one term it carries, `QueryTerm` on
 /// the twin when an exact operator returns it as is, and one `op::Answers`
 /// per operator, through Stack Encrypt's index for it, sent as the twin.
@@ -324,8 +324,8 @@ fn answer_impls(r: &Row) -> TokenStream {
         term.json_key()
     );
     let labelled_doc = format!(
-        " `{}` is sealed under the column a two-segment label names, so its plan is \
-         queried under the plan's label.",
+        " `{}` is sealed under the column a two-segment label names, so a field of this \
+         type is queried under its marker's label.",
         r.name
     );
     let mut out = quote! {
@@ -628,13 +628,13 @@ pub fn render_answers_rs() -> String {
     render_answers_from(&rows())
 }
 
-/// Render the typed query chain's impls from the given rows. A file of its
+/// Render a typed query's impls from the given rows. A file of its
 /// own, beside `targets.rs` rather than in it: it needs only the
 /// `stack-encrypt` feature, so a Rust program queries a v4 type without
 /// Stack Encrypt's `dynamic` layer, which `targets.rs` (the `targets`
 /// feature) is built on.
 fn render_answers_from(rows: &[Row]) -> String {
-    // The typed query chain: per type that answers an operator, its twin's
+    // A typed query: per type that answers an operator, its twin's
     // assembly from the one term it carries, and one `op::Answers` impl per
     // operator, through Stack Encrypt's index for it, sent as the twin.
     let answering: Vec<&Row> = rows.iter().filter(|r| !r.answers.is_empty()).collect();
@@ -681,7 +681,8 @@ fn render_answers_from(rows: &[Row]) -> String {
         });
     }
 
-    let mod_doc = " How Stack Encrypt's typed query chain queries a producible EQL v4 \
+    let mod_doc =
+        " How a Stack Encrypt typed query, from a field's marker, queries a producible EQL v4 \
                    type: per type that answers an operator, its `op::Answers` impls, \
                    its `op::LabelledTarget` impl and its query twin's assembly \
                    (`crate::encryption::query`). Generated from the catalog, by the \
@@ -693,7 +694,7 @@ fn render_answers_from(rows: &[Row]) -> String {
         #answer_imports
 
         /// The operators each EQL type answers in Stack Encrypt's typed
-        /// query chain (`op::Answers`), by the wire names
+        /// query (`op::Answers`), by the wire names
         /// `stack_encrypt::dynamic::Op` gives them, in catalog order:
         /// one row per type that answers any. Generated from the rule the
         /// impls below are, so the encryption tests can hold the impls to
@@ -942,7 +943,7 @@ mod tests {
         );
     }
 
-    /// A type answers operators in the typed query chain exactly when the
+    /// A type answers operators in a typed query exactly when the
     /// engine produces it and it has a query twin, and then by the engine's
     /// rule over its indexes: `Eq` for the equality index, `Matches` for
     /// the match index. Spelled out per type, so the table reads without
@@ -951,8 +952,8 @@ mod tests {
     fn a_producible_type_with_a_twin_answers_what_its_indexes_answer() {
         for row in rows() {
             let answers: Vec<&str> = row.answers.iter().map(|a| a.name()).collect();
-            // A document's operators are the JSON index's, answered in
-            // the typed chain by the engine's own document target.
+            // A document's operators are the JSON index's, answered
+            // through a data plan.
             if row.reason.is_some() || row.query.is_none() || row.document {
                 assert!(answers.is_empty(), "{}: answers nothing", row.name);
                 continue;
@@ -1010,7 +1011,7 @@ mod tests {
 
     /// A producible type whose twin carries an order index, or more than
     /// one index, has no typed answer yet: the generator leaves it out of
-    /// the typed query chain and says why.
+    /// a typed query and says why.
     #[test]
     fn an_order_index_or_several_indexes_answer_nothing_yet() {
         for (name, indexes) in [

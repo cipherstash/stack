@@ -3,10 +3,10 @@
 //! types, the integer and float equality types, and `TextMatch`.
 //!
 //! Each type must round-trip through both entry points (the typed
-//! `encrypt_as` and the by-name dispatch a Go plan reaches), seal exactly the
-//! leaf the same value's frame seals as (what the Go SDK writes for a plain
-//! field of that kind) and open the leaf a frame sealed, and refuse a value
-//! of another kind.
+//! `encrypt_into_with_context` and the by-name dispatch a Go plan reaches),
+//! seal exactly the leaf the same value's frame seals as (what the Go SDK
+//! writes for a plain field of that kind) and open the leaf a frame sealed,
+//! and refuse a value of another kind.
 
 mod common;
 
@@ -135,11 +135,13 @@ async fn integers_round_trip_and_seal_the_leaf_their_frame_seals() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for value in [0, 42, -7, i32::MIN, i32::MAX] {
-        let stored: integer::Integer = keyset.encrypt_as(&value, column()).await.unwrap();
+        let stored: integer::Integer = value
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
         assert_v4_envelope(&stored, &["v", "i", "c"]);
 
-        let opened: i32 = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let opened = i32::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(opened, value);
@@ -163,10 +165,12 @@ async fn integers_round_trip_and_seal_the_leaf_their_frame_seals() {
     }
 
     for value in [0i16, -1, i16::MIN, i16::MAX] {
-        let stored: smallint::Smallint = keyset.encrypt_as(&value, column()).await.unwrap();
+        let stored: smallint::Smallint = value
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
         assert_v4_envelope(&stored, &["v", "i", "c"]);
-        let opened: i16 = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let opened = i16::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(opened, value);
@@ -188,10 +192,12 @@ async fn integers_round_trip_and_seal_the_leaf_their_frame_seals() {
     }
 
     for value in [0i64, -1, i64::MIN, i64::MAX] {
-        let stored: bigint::Bigint = keyset.encrypt_as(&value, column()).await.unwrap();
+        let stored: bigint::Bigint = value
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
         assert_v4_envelope(&stored, &["v", "i", "c"]);
-        let opened: i64 = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let opened = i64::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(opened, value);
@@ -297,33 +303,58 @@ async fn number_equality_types_round_trip_through_the_typed_entry_point() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
 
-    let stored: integer::IntegerEq = keyset.encrypt_as(&-7i32, column()).await.unwrap();
+    let stored: integer::IntegerEq = (-7i32)
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
     let named: serde_json::Value = by_name(&keyset, "IntegerEq", frame::<i32>(-7)).await;
     assert_eq!(serde_json::to_value(&stored).unwrap()["hm"], named["hm"]);
-    let opened: i32 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    let opened = i32::decrypt_from_with_context(stored, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, -7);
 
-    let stored: smallint::SmallintEq = keyset.encrypt_as(&i16::MIN, column()).await.unwrap();
+    let stored: smallint::SmallintEq = i16::MIN
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
     let named: serde_json::Value = by_name(&keyset, "SmallintEq", frame::<i16>(i16::MIN)).await;
     assert_eq!(serde_json::to_value(&stored).unwrap()["hm"], named["hm"]);
-    let opened: i16 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    let opened = i16::decrypt_from_with_context(stored, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, i16::MIN);
 
-    let stored: bigint::BigintEq = keyset.encrypt_as(&i64::MIN, column()).await.unwrap();
+    let stored: bigint::BigintEq = i64::MIN
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
-    let opened: i64 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    let opened = i64::decrypt_from_with_context(stored, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, i64::MIN);
 
-    let stored: real::RealEq = keyset.encrypt_as(&-0.0f32, column()).await.unwrap();
+    let stored: real::RealEq = (-0.0f32)
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
-    let opened: f32 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    let opened = f32::decrypt_from_with_context(stored, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened.to_bits(), (-0.0f32).to_bits());
 
-    let stored: double::DoubleEq = keyset.encrypt_as(&f64::NAN, column()).await.unwrap();
+    let stored: double::DoubleEq = f64::NAN
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
-    let opened: f64 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    let opened = f64::decrypt_from_with_context(stored, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened.to_bits(), f64::NAN.to_bits());
 }
 
@@ -332,10 +363,12 @@ async fn booleans_and_floats_round_trip_as_storage_only_types() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for value in [true, false] {
-        let stored: boolean::Boolean = keyset.encrypt_as(&value, column()).await.unwrap();
+        let stored: boolean::Boolean = value
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
         assert_v4_envelope(&stored, &["v", "i", "c"]);
-        let opened: bool = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let opened = bool::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(opened, value);
@@ -343,18 +376,22 @@ async fn booleans_and_floats_round_trip_as_storage_only_types() {
     }
     // Floats seal their bit pattern: -0.0 and a NaN's payload survive.
     for value in [1.5f32, -0.0, f32::NAN, f32::INFINITY] {
-        let stored: real::Real = keyset.encrypt_as(&value, column()).await.unwrap();
-        let opened: f32 = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let stored: real::Real = value
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
+        let opened = f32::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(opened.to_bits(), value.to_bits());
         assert!(same(&as_frame(&cipher, stored.c).await, &frame(value)));
     }
     for value in [2.25f64, -0.0, f64::NAN] {
-        let stored: double::Double = keyset.encrypt_as(&value, column()).await.unwrap();
-        let opened: f64 = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let stored: double::Double = value
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
+        let opened = f64::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(opened.to_bits(), value.to_bits());
@@ -408,13 +445,12 @@ async fn a_json_document_round_trips_as_a_storage_only_type() {
         serde_json::json!([]),
         serde_json::json!({}),
     ] {
-        let stored: json::Json = keyset
-            .encrypt_as(&JsonPlaintext::from(document.clone()), column())
+        let stored: json::Json = JsonPlaintext::from(document.clone())
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
         assert_v4_envelope(&stored, &["v", "i", "c"]);
-        let opened: JsonPlaintext = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let opened = JsonPlaintext::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(opened.value(), &document);
@@ -514,8 +550,7 @@ async fn a_json_document_dispatches_by_name() {
             &frame(profile_text().as_str())
         ));
         // The typed call opens what the dispatch sealed.
-        let opened: JsonPlaintext = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let opened = JsonPlaintext::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(opened.value(), &profile());
@@ -536,8 +571,8 @@ async fn a_json_document_dispatches_by_name() {
         }
     }
     // The dispatch opens what the typed call sealed.
-    let typed: json::Json = keyset
-        .encrypt_as(&JsonPlaintext::from(profile()), column())
+    let typed: json::Json = JsonPlaintext::from(profile())
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
     let opened = targets::decrypt(
@@ -622,10 +657,10 @@ async fn a_stored_value_that_is_not_a_json_document_is_refused() {
     // JSON text a plain text field sealed is a document: `c` is the same
     // leaf either way.
     let c = sealed_from_frame(&keyset, frame(profile_text().as_str())).await;
-    let opened: JsonPlaintext = cipher
-        .decrypt_as(stored_as::<json::Json>(c), column().into())
-        .await
-        .unwrap();
+    let opened =
+        JsonPlaintext::decrypt_from_with_context(stored_as::<json::Json>(c), &cipher, column())
+            .await
+            .unwrap();
     assert_eq!(opened.value(), &profile());
     // Text that is not JSON, the bytes of JSON text, and a number are not.
     for value in [
@@ -636,10 +671,10 @@ async fn a_stored_value_that_is_not_a_json_document_is_refused() {
         frame(None::<String>),
     ] {
         let c = sealed_from_frame(&keyset, value).await;
-        let error = cipher
-            .decrypt_as::<JsonPlaintext, _>(stored_as::<json::Json>(c), column().into())
-            .await
-            .unwrap_err();
+        let error =
+            JsonPlaintext::decrypt_from_with_context(stored_as::<json::Json>(c), &cipher, column())
+                .await
+                .unwrap_err();
         assert!(
             matches!(
                 error,
@@ -669,36 +704,33 @@ async fn a_leaf_sealed_from_a_frame_opens_as_the_typed_plaintext() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let c = sealed_from_frame(&keyset, frame::<i32>(-7)).await;
-    let opened: i32 = cipher
-        .decrypt_as(stored_as::<integer::Integer>(c), column().into())
-        .await
-        .unwrap();
+    let opened =
+        i32::decrypt_from_with_context(stored_as::<integer::Integer>(c), &cipher, column())
+            .await
+            .unwrap();
     assert_eq!(opened, -7);
 
     let c = sealed_from_frame(&keyset, frame::<i64>(i64::MAX)).await;
-    let opened: i64 = cipher
-        .decrypt_as(stored_as::<bigint::Bigint>(c), column().into())
+    let opened = i64::decrypt_from_with_context(stored_as::<bigint::Bigint>(c), &cipher, column())
         .await
         .unwrap();
     assert_eq!(opened, i64::MAX);
 
     let c = sealed_from_frame(&keyset, frame::<bool>(true)).await;
-    let opened: bool = cipher
-        .decrypt_as(stored_as::<boolean::Boolean>(c), column().into())
-        .await
-        .unwrap();
+    let opened =
+        bool::decrypt_from_with_context(stored_as::<boolean::Boolean>(c), &cipher, column())
+            .await
+            .unwrap();
     assert!(opened);
 
     let c = sealed_from_frame(&keyset, frame::<f32>(-0.0)).await;
-    let opened: f32 = cipher
-        .decrypt_as(stored_as::<real::Real>(c), column().into())
+    let opened = f32::decrypt_from_with_context(stored_as::<real::Real>(c), &cipher, column())
         .await
         .unwrap();
     assert_eq!(opened.to_bits(), (-0.0f32).to_bits());
 
     let c = sealed_from_frame(&keyset, frame::<f64>(f64::NAN)).await;
-    let opened: f64 = cipher
-        .decrypt_as(stored_as::<double::Double>(c), column().into())
+    let opened = f64::decrypt_from_with_context(stored_as::<double::Double>(c), &cipher, column())
         .await
         .unwrap();
     assert_eq!(opened.to_bits(), f64::NAN.to_bits());
@@ -816,16 +848,21 @@ async fn every_producible_type_dispatches_by_name() {
 async fn storage_only_text_round_trips_through_both_entry_points() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let stored: text::Text = keyset
-        .encrypt_as(&"a private note".to_owned(), column())
+    let stored: text::Text = "a private note"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
     assert_v4_envelope(&stored, &["v", "i", "c"]);
-    let opened: String = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    let opened = String::decrypt_from_with_context(stored, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, "a private note");
 
     let named: text::Text = by_name(&keyset, "Text", frame("note")).await;
-    let opened: String = cipher.decrypt_as(named, column().into()).await.unwrap();
+    let opened = String::decrypt_from_with_context(named, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, "note");
     // A storage-only type answers no query.
     let error = refused(targets::query(
@@ -850,8 +887,9 @@ fn positions(filter: &eql_bindings::v3::terms::BloomFilter) -> std::collections:
 async fn text_match_filters_contain_their_substrings() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let stored: text::TextMatch = keyset
-        .encrypt_as(&"Alice@Example.com".to_owned(), column())
+    let stored: text::TextMatch = "Alice@Example.com"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
     assert_v4_envelope(&stored, &["v", "i", "c", "bf"]);
@@ -859,8 +897,7 @@ async fn text_match_filters_contain_their_substrings() {
         stored.bf.0.iter().all(|&p| (0..2048).contains(&p)),
         "a 2048-bit filter"
     );
-    let opened: String = cipher
-        .decrypt_as(stored.clone(), column().into())
+    let opened = String::decrypt_from_with_context(stored.clone(), &cipher, column())
         .await
         .unwrap();
     assert_eq!(opened, "Alice@Example.com");
@@ -877,8 +914,9 @@ async fn text_match_filters_contain_their_substrings() {
         ("ice@ex", true),
         ("bob", false),
     ] {
-        let query: text::TextMatchQuery = keyset
-            .encrypt_as(&needle.to_owned(), column())
+        let query: text::TextMatchQuery = needle
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
         assert_eq!(
@@ -897,11 +935,15 @@ async fn text_match_filters_contain_their_substrings() {
     // filter type builds both, and an empty filter as a query would match
     // every row. A two-letter word is a token of its own, so it stores.
     for short in ["a", "", " "] {
-        let stored: Result<text::TextMatch, _> =
-            keyset.encrypt_as(&short.to_owned(), column()).await;
+        let stored: Result<text::TextMatch, _> = short
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
+            .await;
         assert!(stored.is_err(), "{short:?} cuts no token");
-        let query: Result<text::TextMatchQuery, _> =
-            keyset.encrypt_as(&short.to_owned(), column()).await;
+        let query: Result<text::TextMatchQuery, _> = short
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
+            .await;
         assert!(
             query.is_err(),
             "{short:?}: a query with no token would match every row"
@@ -918,29 +960,31 @@ async fn two_letter_surnames_store_and_are_found() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for &surname in SURNAMES {
-        let bare: text::TextMatch = keyset
-            .encrypt_as(&surname.to_owned(), column())
+        let bare: text::TextMatch = surname
+            .to_owned()
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap_or_else(|error| panic!("{surname:?} stores: {error}"));
         assert!(!bare.bf.0.is_empty(), "{surname:?} stores a token");
-        let query: text::TextMatchQuery = keyset
-            .encrypt_as(&surname.to_lowercase(), column())
+        let query: text::TextMatchQuery = surname
+            .to_lowercase()
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap_or_else(|error| panic!("{surname:?} is a query: {error}"));
         assert_eq!(
             query.bf, bare.bf,
             "{surname:?}: the query's filter is the stored one's"
         );
-        let full: text::TextMatch = keyset
-            .encrypt_as(&format!("Mike {surname}"), column())
+        let full: text::TextMatch = format!("Mike {surname}")
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
         assert!(
             positions(&query.bf).is_subset(&positions(&full.bf)),
             "{surname:?} is found in \"Mike {surname}\""
         );
-        let longer: text::TextMatch = keyset
-            .encrypt_as(&format!("Mike {surname}ward"), column())
+        let longer: text::TextMatch = format!("Mike {surname}ward")
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
         assert!(
@@ -968,8 +1012,9 @@ const SURNAMES: &[&str] = &[
 async fn text_match_filter_positions_are_pinned() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let query: text::TextMatchQuery = keyset
-        .encrypt_as(&"alice".to_owned(), column())
+    let query: text::TextMatchQuery = "alice"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
     // 3 tokens ("ali", "lic", "ice") at 6 positions each, de-duplicated.
@@ -1004,22 +1049,30 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     // plaintext as vitaminc reads it: an integer of another width that fits
     // opens unchanged, one that does not fit is refused, and a value of
     // another kind is refused.
-    let narrow: integer::Integer = keyset.encrypt_as(&42i32, column()).await.unwrap();
+    let narrow: integer::Integer = 42i32
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     let moved = bigint::Bigint {
         v: narrow.v,
         i: narrow.i.clone(),
         c: narrow.c.clone(),
     };
-    let opened: i64 = cipher.decrypt_as(moved, column().into()).await.unwrap();
+    let opened = i64::decrypt_from_with_context(moved, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, 42);
 
-    let wide: bigint::Bigint = keyset.encrypt_as(&i64::MAX, column()).await.unwrap();
+    let wide: bigint::Bigint = i64::MAX
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     let moved = integer::Integer {
         v: narrow.v,
         i: wide.i,
         c: wide.c,
     };
-    let opened: Result<i32, _> = cipher.decrypt_as(moved, column().into()).await;
+    let opened = i32::decrypt_from_with_context(moved, &cipher, column()).await;
     assert!(opened.is_err(), "i64::MAX does not fit an i32");
 
     let moved = smallint::Smallint {
@@ -1027,24 +1080,32 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
         i: narrow.i.clone(),
         c: narrow.c.clone(),
     };
-    let opened: i16 = cipher.decrypt_as(moved, column().into()).await.unwrap();
+    let opened = i16::decrypt_from_with_context(moved, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, 42, "an i32 that fits opens as an i16");
-    let big: integer::Integer = keyset.encrypt_as(&70_000i32, column()).await.unwrap();
+    let big: integer::Integer = 70_000i32
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     let moved = smallint::Smallint {
         v: narrow.v,
         i: big.i,
         c: big.c,
     };
-    let opened: Result<i16, _> = cipher.decrypt_as(moved, column().into()).await;
+    let opened = i16::decrypt_from_with_context(moved, &cipher, column()).await;
     assert!(opened.is_err(), "70000 does not fit an i16");
 
-    let flag: boolean::Boolean = keyset.encrypt_as(&true, column()).await.unwrap();
+    let flag: boolean::Boolean = true
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     let moved = integer::Integer {
         v: narrow.v,
         i: flag.i,
         c: flag.c,
     };
-    let opened: Result<i32, _> = cipher.decrypt_as(moved, column().into()).await;
+    let opened = i32::decrypt_from_with_context(moved, &cipher, column()).await;
     assert!(opened.is_err(), "a bool is not an integer");
 }
 
@@ -1084,10 +1145,16 @@ fn postgres_finds_two_letter_surnames() {
     ];
     for (id, name) in names {
         let (matched, search) = runtime.block_on(async {
-            let matched: text::TextMatch =
-                keyset.encrypt_as(&name.to_owned(), column()).await.unwrap();
-            let search: text::TextSearch =
-                keyset.encrypt_as(&name.to_owned(), column()).await.unwrap();
+            let matched: text::TextMatch = name
+                .to_owned()
+                .encrypt_into_with_context(&keyset, column())
+                .await
+                .unwrap();
+            let search: text::TextSearch = name
+                .to_owned()
+                .encrypt_into_with_context(&keyset, column())
+                .await
+                .unwrap();
             (matched, search)
         });
         db.execute(
@@ -1104,12 +1171,14 @@ fn postgres_finds_two_letter_surnames() {
     }
     let mut found = |needle: &str| -> (Vec<i32>, Vec<i32>) {
         let (matched, search) = runtime.block_on(async {
-            let matched: text::TextMatchQuery = keyset
-                .encrypt_as(&needle.to_owned(), column())
+            let matched: text::TextMatchQuery = needle
+                .to_owned()
+                .encrypt_into_with_context(&keyset, column())
                 .await
                 .unwrap();
-            let search: text::TextSearchMatchQuery = keyset
-                .encrypt_as(&needle.to_owned(), column())
+            let search: text::TextSearchMatchQuery = needle
+                .to_owned()
+                .encrypt_into_with_context(&keyset, column())
                 .await
                 .unwrap();
             (matched, text::TextSearchQuery::from(search))
@@ -1179,36 +1248,36 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
     for (id, age, balance) in [(1, 42, 10i64), (2, 7, 20), (3, 42, 30)] {
         let row = runtime.block_on(async {
             (
-                keyset
-                    .encrypt_as::<_, integer::Integer>(&age, column())
+                age.encrypt_into_with_context::<integer::Integer, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, bigint::Bigint>(&balance, column())
+                balance
+                    .encrypt_into_with_context::<bigint::Bigint, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, boolean::Boolean>(&(id % 2 == 0), column())
+                (id % 2 == 0)
+                    .encrypt_into_with_context::<boolean::Boolean, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, real::Real>(&0.5f32, column())
+                0.5f32
+                    .encrypt_into_with_context::<real::Real, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, double::Double>(&0.25f64, column())
+                0.25f64
+                    .encrypt_into_with_context::<double::Double, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, text::Text>(&"note".to_owned(), column())
+                "note"
+                    .to_owned()
+                    .encrypt_into_with_context::<text::Text, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, text::TextMatch>(&format!("user{id}@example.com"), column())
+                format!("user{id}@example.com")
+                    .encrypt_into_with_context::<text::TextMatch, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, json::Json>(&JsonPlaintext::from(profile()), column())
+                JsonPlaintext::from(profile())
+                    .encrypt_into_with_context::<json::Json, _>(&keyset, column())
                     .await
                     .unwrap(),
             )
@@ -1240,7 +1309,12 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
 
     let mut matching = |needle: &str| -> Vec<i32> {
         let probe: text::TextMatchQuery = runtime
-            .block_on(async { keyset.encrypt_as(&needle.to_owned(), column()).await })
+            .block_on(async {
+                needle
+                    .to_owned()
+                    .encrypt_into_with_context(&keyset, column())
+                    .await
+            })
             .unwrap();
         db.query(
             "SELECT id FROM v4_types WHERE name @@ $1::text::jsonb::eql_v4.query_text_match ORDER BY id",
@@ -1260,7 +1334,12 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
     // stored value's, so that operand order finds nothing. Only
     // `stored @@ query` works until then; the README says so.
     let probe: text::TextMatchQuery = runtime
-        .block_on(async { keyset.encrypt_as(&"user2".to_owned(), column()).await })
+        .block_on(async {
+            "user2"
+                .to_owned()
+                .encrypt_into_with_context(&keyset, column())
+                .await
+        })
         .unwrap();
     let reversed: Vec<i32> = db
         .query(
@@ -1288,61 +1367,61 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
         .unwrap();
     let open = |i: usize| -> String { row.get(i) };
     runtime.block_on(async {
-        let opened: i32 = cipher
-            .decrypt_as(
-                serde_json::from_str::<integer::Integer>(&open(0)).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let opened = i32::decrypt_from_with_context(
+            serde_json::from_str::<integer::Integer>(&open(0)).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert_eq!(opened, 7);
-        let opened: i64 = cipher
-            .decrypt_as(
-                serde_json::from_str::<bigint::Bigint>(&open(1)).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let opened = i64::decrypt_from_with_context(
+            serde_json::from_str::<bigint::Bigint>(&open(1)).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert_eq!(opened, 20);
-        let opened: bool = cipher
-            .decrypt_as(
-                serde_json::from_str::<boolean::Boolean>(&open(2)).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let opened = bool::decrypt_from_with_context(
+            serde_json::from_str::<boolean::Boolean>(&open(2)).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert!(opened);
-        let opened: f32 = cipher
-            .decrypt_as(
-                serde_json::from_str::<real::Real>(&open(3)).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let opened = f32::decrypt_from_with_context(
+            serde_json::from_str::<real::Real>(&open(3)).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert_eq!(opened, 0.5);
-        let opened: f64 = cipher
-            .decrypt_as(
-                serde_json::from_str::<double::Double>(&open(4)).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let opened = f64::decrypt_from_with_context(
+            serde_json::from_str::<double::Double>(&open(4)).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert_eq!(opened, 0.25);
-        let opened: String = cipher
-            .decrypt_as(
-                serde_json::from_str::<text::Text>(&open(5)).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let opened = String::decrypt_from_with_context(
+            serde_json::from_str::<text::Text>(&open(5)).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert_eq!(opened, "note");
-        let opened: JsonPlaintext = cipher
-            .decrypt_as(
-                serde_json::from_str::<json::Json>(&open(6)).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let opened = JsonPlaintext::decrypt_from_with_context(
+            serde_json::from_str::<json::Json>(&open(6)).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert_eq!(opened.value(), &profile());
     });
 
@@ -1424,20 +1503,19 @@ fn postgres_finds_number_equality_rows() {
     for (id, age, balance, ratio, score) in rows {
         let stored = runtime.block_on(async {
             (
-                keyset
-                    .encrypt_as::<_, integer::IntegerEq>(&age, column())
+                age.encrypt_into_with_context::<integer::IntegerEq, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, bigint::BigintEq>(&balance, column())
+                balance
+                    .encrypt_into_with_context::<bigint::BigintEq, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, real::RealEq>(&ratio, column())
+                ratio
+                    .encrypt_into_with_context::<real::RealEq, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, double::DoubleEq>(&score, column())
+                score
+                    .encrypt_into_with_context::<double::DoubleEq, _>(&keyset, column())
                     .await
                     .unwrap(),
             )
@@ -1474,32 +1552,28 @@ fn postgres_finds_number_equality_rows() {
     let q = |stored: Result<String, stack_encrypt::Error>| stored.unwrap();
     let age = |v: i32| {
         q(runtime.block_on(async {
-            keyset
-                .encrypt_as::<_, integer::IntegerEqQuery>(&v, column())
+            v.encrypt_into_with_context::<integer::IntegerEqQuery, _>(&keyset, column())
                 .await
                 .map(|q| json(&q))
         }))
     };
     let balance = |v: i64| {
         q(runtime.block_on(async {
-            keyset
-                .encrypt_as::<_, bigint::BigintEqQuery>(&v, column())
+            v.encrypt_into_with_context::<bigint::BigintEqQuery, _>(&keyset, column())
                 .await
                 .map(|q| json(&q))
         }))
     };
     let ratio = |v: f32| {
         q(runtime.block_on(async {
-            keyset
-                .encrypt_as::<_, real::RealEqQuery>(&v, column())
+            v.encrypt_into_with_context::<real::RealEqQuery, _>(&keyset, column())
                 .await
                 .map(|q| json(&q))
         }))
     };
     let score = |v: f64| {
         q(runtime.block_on(async {
-            keyset
-                .encrypt_as::<_, double::DoubleEqQuery>(&v, column())
+            v.encrypt_into_with_context::<double::DoubleEqQuery, _>(&keyset, column())
                 .await
                 .map(|q| json(&q))
         }))
@@ -1563,12 +1637,12 @@ fn postgres_stores_and_finds_smallint_rows() {
     for (id, value) in [(1, i16::MIN), (2, 7i16), (3, i16::MAX), (4, 7)] {
         let (plain, searchable) = runtime.block_on(async {
             (
-                keyset
-                    .encrypt_as::<_, smallint::Smallint>(&value, column())
+                value
+                    .encrypt_into_with_context::<smallint::Smallint, _>(&keyset, column())
                     .await
                     .unwrap(),
-                keyset
-                    .encrypt_as::<_, smallint::SmallintEq>(&value, column())
+                value
+                    .encrypt_into_with_context::<smallint::SmallintEq, _>(&keyset, column())
                     .await
                     .unwrap(),
             )
@@ -1583,7 +1657,7 @@ fn postgres_stores_and_finds_smallint_rows() {
     }
     let mut ids = |value: i16| -> Vec<i32> {
         let query: smallint::SmallintEqQuery = runtime
-            .block_on(async { keyset.encrypt_as(&value, column()).await })
+            .block_on(async { value.encrypt_into_with_context(&keyset, column()).await })
             .unwrap();
         db.query(
             "SELECT id FROM v4_smallint WHERE searchable = $1::text::jsonb::eql_v4.query_smallint_eq ORDER BY id",
@@ -1603,14 +1677,14 @@ fn postgres_stores_and_finds_smallint_rows() {
         .query_one("SELECT plain::text FROM v4_smallint WHERE id = 1", &[])
         .unwrap()
         .get(0);
-    let opened: i16 = runtime
+    let opened = runtime
         .block_on(async {
-            cipher
-                .decrypt_as(
-                    serde_json::from_str::<smallint::Smallint>(&back).unwrap(),
-                    column().into(),
-                )
-                .await
+            i16::decrypt_from_with_context(
+                serde_json::from_str::<smallint::Smallint>(&back).unwrap(),
+                &cipher,
+                column(),
+            )
+            .await
         })
         .unwrap();
     assert_eq!(opened, i16::MIN);
@@ -1679,29 +1753,29 @@ mod go_tally {
     ) {
         let column = |name: &str| Identifier::for_column("profiles", name).unwrap();
         let parsed = |name: &str| row.stored[name].clone();
-        let small: i16 = cipher
-            .decrypt_as(
-                serde_json::from_value::<smallint::Smallint>(parsed("small")).unwrap(),
-                column("small").into(),
-            )
-            .await
-            .unwrap();
+        let small = i16::decrypt_from_with_context(
+            serde_json::from_value::<smallint::Smallint>(parsed("small")).unwrap(),
+            cipher,
+            column("small"),
+        )
+        .await
+        .unwrap();
         assert_eq!(small, row.plaintext.small, "row {} small", row.id);
-        let tally: i16 = cipher
-            .decrypt_as(
-                serde_json::from_value::<smallint::SmallintEq>(parsed("tally")).unwrap(),
-                column("tally").into(),
-            )
-            .await
-            .unwrap();
+        let tally = i16::decrypt_from_with_context(
+            serde_json::from_value::<smallint::SmallintEq>(parsed("tally")).unwrap(),
+            cipher,
+            column("tally"),
+        )
+        .await
+        .unwrap();
         assert_eq!(tally, row.plaintext.tally, "row {} tally", row.id);
-        let wide: i16 = cipher
-            .decrypt_as(
-                serde_json::from_value::<smallint::SmallintEq>(parsed("wide")).unwrap(),
-                column("wide").into(),
-            )
-            .await
-            .unwrap();
+        let wide = i16::decrypt_from_with_context(
+            serde_json::from_value::<smallint::SmallintEq>(parsed("wide")).unwrap(),
+            cipher,
+            column("wide"),
+        )
+        .await
+        .unwrap();
         assert_eq!(i32::from(wide), row.plaintext.wide, "row {} wide", row.id);
     }
 }
@@ -1788,7 +1862,9 @@ mod go_settings {
             let stored: json::Json = serde_json::from_value(stored.clone())
                 .unwrap_or_else(|error| panic!("row {} {name}: {error}", row.id));
             let column = Identifier::for_column("settings", name.as_str()).unwrap();
-            let opened: JsonPlaintext = cipher.decrypt_as(stored, column.into()).await.unwrap();
+            let opened = JsonPlaintext::decrypt_from_with_context(stored, cipher, column)
+                .await
+                .unwrap();
             assert_eq!(
                 opened.value(),
                 &row.plaintext[name],
@@ -2079,8 +2155,8 @@ mod go_rows {
         let mut stored = BTreeMap::new();
         macro_rules! seal {
             ($name:literal, $ty:ty, $value:expr) => {{
-                let sealed: $ty = keyset
-                    .encrypt_as(&$value, column($name))
+                let sealed: $ty = $value
+                    .encrypt_into_with_context(&keyset, column($name))
                     .await
                     .unwrap_or_else(|e| panic!("row {id} {}: {e}", $name));
                 stored.insert($name.to_owned(), serde_json::to_value(&sealed).unwrap());
@@ -2116,8 +2192,8 @@ mod go_rows {
         let p = &row.plaintext;
         macro_rules! eq {
             ($name:literal, $query:ty, $value:expr) => {{
-                let query: $query = keyset
-                    .encrypt_as(&$value, column($name))
+                let query: $query = $value
+                    .encrypt_into_with_context(&keyset, column($name))
                     .await
                     .unwrap_or_else(|e| panic!("row {} {}: {e}", row.id, $name));
                 assert_eq!(
@@ -2173,92 +2249,101 @@ mod go_rows {
         row: &Row,
     ) {
         let p = &row.plaintext;
-        let visits: i32 = cipher
-            .decrypt_as(
-                parsed::<integer::Integer>(row, "visits"),
-                column("visits").into(),
-            )
-            .await
-            .unwrap();
+        let visits = i32::decrypt_from_with_context(
+            parsed::<integer::Integer>(row, "visits"),
+            cipher,
+            column("visits"),
+        )
+        .await
+        .unwrap();
         assert_eq!(visits, p.visits);
-        let balance: i64 = cipher
-            .decrypt_as(
-                parsed::<bigint::Bigint>(row, "balance"),
-                column("balance").into(),
-            )
-            .await
-            .unwrap();
+        let balance = i64::decrypt_from_with_context(
+            parsed::<bigint::Bigint>(row, "balance"),
+            cipher,
+            column("balance"),
+        )
+        .await
+        .unwrap();
         assert_eq!(balance, p.balance);
-        let active: bool = cipher
-            .decrypt_as(
-                parsed::<boolean::Boolean>(row, "active"),
-                column("active").into(),
-            )
-            .await
-            .unwrap();
+        let active = bool::decrypt_from_with_context(
+            parsed::<boolean::Boolean>(row, "active"),
+            cipher,
+            column("active"),
+        )
+        .await
+        .unwrap();
         assert_eq!(active, p.active);
-        let ratio: f32 = cipher
-            .decrypt_as(parsed::<real::Real>(row, "ratio"), column("ratio").into())
-            .await
-            .unwrap();
+        let ratio = f32::decrypt_from_with_context(
+            parsed::<real::Real>(row, "ratio"),
+            cipher,
+            column("ratio"),
+        )
+        .await
+        .unwrap();
         assert_eq!(ratio.to_bits(), p.ratio.to_bits());
-        let score: f64 = cipher
-            .decrypt_as(
-                parsed::<double::Double>(row, "score"),
-                column("score").into(),
-            )
-            .await
-            .unwrap();
+        let score = f64::decrypt_from_with_context(
+            parsed::<double::Double>(row, "score"),
+            cipher,
+            column("score"),
+        )
+        .await
+        .unwrap();
         assert_eq!(score.to_bits(), p.score.to_bits());
-        let note: String = cipher
-            .decrypt_as(parsed::<text::Text>(row, "note"), column("note").into())
-            .await
-            .unwrap();
+        let note = String::decrypt_from_with_context(
+            parsed::<text::Text>(row, "note"),
+            cipher,
+            column("note"),
+        )
+        .await
+        .unwrap();
         assert_eq!(note, p.note);
-        let name: String = cipher
-            .decrypt_as(
-                parsed::<text::TextMatch>(row, "name"),
-                column("name").into(),
-            )
-            .await
-            .unwrap();
+        let name = String::decrypt_from_with_context(
+            parsed::<text::TextMatch>(row, "name"),
+            cipher,
+            column("name"),
+        )
+        .await
+        .unwrap();
         assert_eq!(name, p.name);
-        let age: i32 = cipher
-            .decrypt_as(
-                parsed::<integer::IntegerEq>(row, "age"),
-                column("age").into(),
-            )
-            .await
-            .unwrap();
+        let age = i32::decrypt_from_with_context(
+            parsed::<integer::IntegerEq>(row, "age"),
+            cipher,
+            column("age"),
+        )
+        .await
+        .unwrap();
         assert_eq!(age, p.age);
-        let rank: i64 = cipher
-            .decrypt_as(
-                parsed::<bigint::BigintEq>(row, "rank"),
-                column("rank").into(),
-            )
-            .await
-            .unwrap();
+        let rank = i64::decrypt_from_with_context(
+            parsed::<bigint::BigintEq>(row, "rank"),
+            cipher,
+            column("rank"),
+        )
+        .await
+        .unwrap();
         assert_eq!(rank, p.rank);
-        let weight: f32 = cipher
-            .decrypt_as(
-                parsed::<real::RealEq>(row, "weight"),
-                column("weight").into(),
-            )
-            .await
-            .unwrap();
+        let weight = f32::decrypt_from_with_context(
+            parsed::<real::RealEq>(row, "weight"),
+            cipher,
+            column("weight"),
+        )
+        .await
+        .unwrap();
         assert_eq!(weight.to_bits(), p.weight.to_bits());
-        let price: f64 = cipher
-            .decrypt_as(
-                parsed::<double::DoubleEq>(row, "price"),
-                column("price").into(),
-            )
-            .await
-            .unwrap();
+        let price = f64::decrypt_from_with_context(
+            parsed::<double::DoubleEq>(row, "price"),
+            cipher,
+            column("price"),
+        )
+        .await
+        .unwrap();
         assert_eq!(price.to_bits(), p.price.to_bits());
-        let email: String = cipher
-            .decrypt_as(parsed::<text::TextEq>(row, "email"), column("email").into())
-            .await
-            .unwrap();
+        let email = String::decrypt_from_with_context(
+            parsed::<text::TextEq>(row, "email"),
+            cipher,
+            column("email"),
+        )
+        .await
+        .unwrap();
         assert_eq!(email, p.email);
     }
 }

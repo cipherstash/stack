@@ -6,7 +6,7 @@ error[E0277]: `EqualityTerm` does not answer `stack_encrypt::op::Gt` given `_`
    |                                  |
    |                                  required by a bound introduced by this call
    |
-   = note: a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers; on a plan's query chain, `.via(index)` names an index the target declares
+   = note: a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers
 help: the trait `Answers<stack_encrypt::op::Gt, _>` is not implemented for `EqualityTerm`
       but trait `Answers<stack_encrypt::op::Eq, _>` is implemented for it
   --> src/op/mod.rs
@@ -45,7 +45,7 @@ error[E0277]: `OreTerm<u32>` does not answer `stack_encrypt::op::Matches` given 
    |                                required by a bound introduced by this call
    |
    = help: the trait `Answers<stack_encrypt::op::Matches, _>` is not implemented for `OreTerm<u32>`
-   = note: a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers; on a plan's query chain, `.via(index)` names an index the target declares
+   = note: a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers
    = help: the following other types implement trait `Answers<Op, In>`:
              `OreTerm<S>` implements `Answers<stack_encrypt::op::Between, (S, S)>`
              `OreTerm<S>` implements `Answers<stack_encrypt::op::Gt, S>`

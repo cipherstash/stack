@@ -396,7 +396,7 @@ impl JsonSelector {
     }
 
     /// The entry `col -> selector` returned, ready to open: the only way to
-    /// open one. Opening it ([`DecryptInto<Value>`](crate::DecryptInto))
+    /// open one. Opening it ([`DecryptSource<JsonPlaintext>`](crate::DecryptSource))
     /// first checks that the entry carries this selector, and refuses any
     /// other with [`Error::JsonWrongEntry`] before a key is retrieved: an
     /// entry's ciphertext is bound to the selector it carries, so a

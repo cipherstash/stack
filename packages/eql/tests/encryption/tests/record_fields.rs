@@ -7,7 +7,8 @@
 //! for a field that names the type. A data plan is the path the Go module
 //! takes. Here:
 //!
-//! - a record with EQL fields encrypts and decrypts through the new API;
+//! - a record with EQL fields encrypts with `encrypt_into` and decrypts
+//!   with `decrypt_from`;
 //! - each field writes the terms the type writes on its own, and each value
 //!   opens through the other path;
 //! - a query from the field's marker gives the stored term;
@@ -27,8 +28,9 @@
 //! - a renamed field keeps its column with `identity`, and reads the rows
 //!   written under its old name. With no `identity` they are refused;
 //! - a JSON document, `JsonTreeDocument`, encrypts from a `JsonPlaintext`
-//!   through the new API, writes the search terms the old path writes, and
-//!   is a record field too.
+//!   through `encrypt_into_with_context`, writes the search terms that
+//!   `JsonTree`'s layout writes when it is run directly, and is a record
+//!   field too.
 
 mod common;
 
@@ -42,7 +44,7 @@ use serde_json::{json, Value};
 use stack_encrypt::dynamic::{self, record, Op, Operand, Planned, QueryTerm, ValueFrame};
 use stack_encrypt::json::JsonPlaintext;
 use stack_encrypt::target::transcode::Reader as _;
-use stack_encrypt::target::{AeadContext, Bind, Layout, Parts, Scope};
+use stack_encrypt::target::{AeadContext, Bind, Parts, Scope};
 use stack_encrypt::testing::{bind, scope, Expect};
 use stack_encrypt::{
     assert_context, nonempty, AsProtectedRef as _, CipherText, Controlled as _, DecryptFrom,
@@ -433,7 +435,9 @@ async fn an_eql_field_stores_its_column_and_not_the_scope_or_the_binding() {
     // row: it opens as a Stack Encrypt leaf under exactly that context.
     let leaf = stored.email.c.clone().read(NativeLeaf).unwrap();
     let context = AeadContext::from(tenant_and_row()).extend(nonempty!("members").with("email"));
-    let opened: String = cipher.decrypt_as(leaf, context).await.unwrap();
+    let opened = String::decrypt_from_with_context(leaf, &cipher, context)
+        .await
+        .unwrap();
     assert_eq!(opened, "ada@example.com");
 
     // The term is derived under the column, then the tenant. A query from
@@ -961,26 +965,26 @@ async fn a_json_document_encrypts_from_a_json_plaintext() {
         .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
-    let old: JsonTreeDocument = keyset
+    let direct: JsonTreeDocument = keyset
         .run(JsonTree::default().encryption(), &profile(), column())
         .await
         .unwrap();
     assert_eq!(
         document_terms(&stored),
-        document_terms(&old),
+        document_terms(&direct),
         "the same envelope and search terms"
     );
 
-    // Each path opens what the other sealed.
-    let opened = JsonPlaintext::decrypt_from_with_context(old, &keyset, column())
+    // Each document opens under its column, through the keyset or the
+    // cipher.
+    let opened = JsonPlaintext::decrypt_from_with_context(direct, &keyset, column())
         .await
         .unwrap();
     assert_eq!(opened.value(), &profile());
-    let opened: Value = cipher
-        .decrypt_as(stored.clone(), column().into())
+    let opened = JsonPlaintext::decrypt_from_with_context(stored.clone(), &cipher, column())
         .await
         .unwrap();
-    assert_eq!(opened, profile());
+    assert_eq!(opened.value(), &profile());
 
     // Without a column, the document opens under the one it stores.
     let opened = JsonPlaintext::decrypt_from(stored.clone(), &keyset)
@@ -1030,7 +1034,7 @@ async fn a_json_document_is_a_record_field() {
         },
         "the field's column is the record's scope and the field's name"
     );
-    let old: JsonTreeDocument = keyset
+    let direct: JsonTreeDocument = keyset
         .run(
             JsonTree::default().encryption(),
             &profile(),
@@ -1038,7 +1042,7 @@ async fn a_json_document_is_a_record_field() {
         )
         .await
         .unwrap();
-    assert_eq!(document_terms(&stored.profile), document_terms(&old));
+    assert_eq!(document_terms(&stored.profile), document_terms(&direct));
 
     let opened = Customer::decrypt_from(stored, &keyset).await.unwrap();
     assert_eq!(opened.id, 3);

@@ -1,5 +1,5 @@
 //! [`Pending`]: the request carrier [`StackCipher`] hands back from
-//! [`EncryptFrom`](super::EncryptFrom) / [`DecryptInto`](super::DecryptInto),
+//! [`EncryptTarget`](super::EncryptTarget) / [`DecryptSource`](super::DecryptSource),
 //! and the single place the target layer talks to ZeroKMS.
 //!
 //! A `Pending` is built synchronously and settled once. Combining pendings
@@ -233,7 +233,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// type `T` is ever produced), and any assembly it is merged into fails
     /// without I/O — see the `failed` field.
     ///
-    /// Public because a hand-written `EncryptFrom` / `DecryptInto` that
+    /// Public because a hand-written `EncryptTarget` / `DecryptSource` that
     /// works with a cipher scope directly reaches for it when a contract is
     /// broken — e.g. [`Error::NotOpened`] for a field whose type declared
     /// [`DECRYPTABLE`](super::Decryptable::DECRYPTABLE) but was passed over.
@@ -437,14 +437,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset: Some(keyset),
             ..self
         }
-    }
-
-    /// Whether this pending opens leaves from any keyset: it was built
-    /// through the [`StackCipher`] (no scope) and has not failed. Such a
-    /// pending cannot be merged with a scoped one without being confined to
-    /// that scope, so a batch settles it on its own.
-    pub(crate) fn opens_any_keyset(&self) -> bool {
-        self.keyset.is_none() && self.failed.is_none()
     }
 
     /// Merge two pendings into one resolving to the pair. Their requests

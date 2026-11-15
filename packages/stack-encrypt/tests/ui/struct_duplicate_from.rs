@@ -2,13 +2,15 @@
 //! ciphertext, a second field `from` the same plaintext field, is refused,
 //! naming the replacement: one field of type `Encrypted<Terms>`.
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::{DecryptInto, EncryptFrom, StackCipherText};
+use stack_encrypt::target::{DecryptSource, EncryptTarget};
+use stack_encrypt::StackCipherText;
 
+#[derive(zeroize::Zeroize)]
 struct User {
     email: String,
 }
 
-#[derive(EncryptFrom)]
+#[derive(EncryptTarget)]
 #[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     email: StackCipherText,
@@ -16,7 +18,7 @@ struct EncryptedUser {
     email_hm: EqualityTerm,
 }
 
-#[derive(DecryptInto)]
+#[derive(DecryptSource)]
 #[stash(struct = User, scope = "users")]
 struct Opened {
     email: StackCipherText,

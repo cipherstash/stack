@@ -170,7 +170,7 @@ fn parse_term(value: Frame<'_>, kind: u32) -> Result<IndexSpec, u32> {
 /// result is a codec-encoded ciphertext tree — per record a map of
 /// `field → { output-key → node }`.
 ///
-/// The plan is lowered into the engine's plan builder and run there
+/// The plan is lowered into the engine's combinators and run there
 /// (ADR-0007): [`dynamic::record::encrypt`] hands back the plan's `Pending`
 /// with every key request queued and nothing sent, and awaiting it here is
 /// the one batched `generate_keys` for all rows and fields. That batch

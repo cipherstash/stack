@@ -52,11 +52,11 @@
 //!
 #![cfg_attr(
     feature = "targets",
-    doc = "A binding that holds no Rust type to name reaches the same plans by the type's *name* through [`targets`] (`targets` feature): the catalog-generated table of EQL types a data plan may name as a field target, and `encrypt` / `decrypt` / `query` dispatching on that name."
+    doc = "A binding that holds no Rust type to name runs the same encryption by the type's *name* through [`targets`] (`targets` feature): the catalog-generated table of EQL types a data plan may name as a field target, and `encrypt` / `decrypt` / `query` dispatching on that name."
 )]
 #![cfg_attr(
     not(feature = "targets"),
-    doc = "A binding that holds no Rust type to name reaches the same plans by the type's *name* through `targets`, with the `targets` feature: the catalog-generated table of EQL types a data plan may name as a field target, and `encrypt` / `decrypt` / `query` dispatching on that name."
+    doc = "A binding that holds no Rust type to name runs the same encryption by the type's *name* through `targets`, with the `targets` feature: the catalog-generated table of EQL types a data plan may name as a field target, and `encrypt` / `decrypt` / `query` dispatching on that name."
 )]
 //!
 //! Use the same table and column identifier for writes and queries.
@@ -117,9 +117,9 @@ use stack_encrypt::target::{
     RequiredContext,
 };
 use stack_encrypt::{
-    CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
-    Describe, Description, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
-    NonEmpty, SealedValue, StackCipherText,
+    CipherText, ContextPiece, Decrypt, DecryptField, Decryptable, Decryption, Describe,
+    Description, Encrypt, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, SealedValue,
+    StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -153,7 +153,7 @@ impl Identifier {
     /// The column a two-segment label names, table then column, or `None`
     /// for a label of any other length. One reading of a label for the
     /// by-name dispatch (`targets::Identifier::from_label`) and the typed
-    /// query chain ([`query`]).
+    /// query of a field marker ([`query`]).
     pub(crate) fn column_of(label: &stack_encrypt::Label) -> Option<NonEmpty<Self>> {
         let mut segments = label.segments();
         let (Some(table), Some(column), None) = (segments.next(), segments.next(), segments.next())
@@ -257,18 +257,9 @@ impl Reader for Ciphertext {
     }
 }
 
-impl<S: Encrypt + Clone> EncryptFrom<S> for Ciphertext {
-    type Context = AeadContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        target::ciphertext().transcode()
-    }
-}
-// The owned declaration of the same leaf: the canonical ciphertext, read into
-// EQL's `c`. The declaration requires the AEAD (authenticated encryption)
-// half of the context, as Stack Encrypt's own `StackCipherText` does.
+// The canonical ciphertext, read into EQL's `c`. The declaration requires the
+// AEAD (authenticated encryption) half of the context, as Stack Encrypt's own
+// `StackCipherText` does.
 impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Ciphertext {
     type ContextInput = RequiredContext<AeadContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
@@ -290,31 +281,25 @@ impl Visitor for NativeCiphertextVisitor {
         Ok(CipherText::Single(leaf))
     }
 }
-impl<P: Decrypt + Send + 'static> DecryptInto<P> for Ciphertext {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
-        match self.read(NativeCiphertextVisitor) {
-            Ok(native) => target::open(native, context),
-            Err(error) => Decryption::failed(error),
-        }
-    }
-}
 impl<P: Decrypt + Zeroize + Send + 'static> DecryptSource<P> for Ciphertext {
     type ContextInput = RequiredContext<AeadContext>;
     fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<P, K> {
-        DecryptInto::decryption(self, context.into_inner())
+        match self.read(NativeCiphertextVisitor) {
+            Ok(native) => target::open(native, context.into_inner()),
+            Err(error) => Decryption::failed(error),
+        }
     }
 }
 impl Decryptable for Ciphertext {
     const DECRYPTABLE: bool = true;
 }
-impl<P, Ctx> DecryptField<P, Ctx> for Ciphertext
+impl<P: Zeroize, Ctx> DecryptField<P, Ctx> for Ciphertext
 where
-    Self: DecryptInto<P>,
-    Ctx: Into<<Self as DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(DecryptInto::decryption(self, context.into()))
+        Some(DecryptSource::decryption(self, context.into()))
     }
 }
 
@@ -339,20 +324,6 @@ impl Transcode for Hmac256 {
         EqualityVisitor
     }
 }
-impl<S: Encrypt + Clone> EncryptFrom<S> for Hmac256 {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        target::equality().transcode()
-    }
-    /// The equality index: a plan for a type holding an `hm` answers
-    /// `op::Eq` through it.
-    fn indexes() -> Vec<IndexSpec> {
-        vec![IndexSpec::Equality]
-    }
-}
 impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Hmac256 {
     type ContextInput = RequiredContext<CallerContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
@@ -361,8 +332,10 @@ impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Hmac256 {
     {
         target::equality().accepting().transcode()
     }
+    /// The equality index: a type holding an `hm` answers `op::Eq`
+    /// through it.
     fn indexes() -> Vec<IndexSpec> {
-        <Self as EncryptFrom<S>>::indexes()
+        vec![IndexSpec::Equality]
     }
 }
 impl Decryptable for Hmac256 {
@@ -467,35 +440,21 @@ impl Transcode for BloomFilter {
         MatchVisitor
     }
 }
-impl<S: AsRef<str>> EncryptFrom<S> for BloomFilter {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        // The type annotation names the match configuration. Inference fills
-        // in the other type parameters of `matching`.
-        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> = target::matching();
-        terms.transcode()
-    }
-    /// The match index under [`EqlMatch`]: a plan for a type holding a
-    /// `bf` answers `op::Matches` through it.
-    fn indexes() -> Vec<IndexSpec> {
-        vec![IndexSpec::Match(EqlMatch::options())]
-    }
-}
 impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for BloomFilter {
     type ContextInput = RequiredContext<CallerContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
         S: 's,
     {
-        // The annotation names the match configuration, as for `BloomFilter`.
+        // The type annotation names the match configuration. Inference fills
+        // in the other type parameters of `matching`.
         let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> = target::matching();
         terms.accepting().transcode()
     }
+    /// The match index under [`EqlMatch`]: a type holding a `bf` answers
+    /// `op::Matches` through it.
     fn indexes() -> Vec<IndexSpec> {
-        <Self as EncryptFrom<S>>::indexes()
+        vec![IndexSpec::Match(EqlMatch::options())]
     }
 }
 impl Decryptable for BloomFilter {
@@ -525,17 +484,6 @@ impl Transcode for SearchBloomFilter {
     type Visitor = SearchMatchVisitor;
     fn visitor() -> Self::Visitor {
         SearchMatchVisitor
-    }
-}
-impl<S: AsRef<str>> EncryptFrom<S> for SearchBloomFilter {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        // The annotation names the match configuration, as for `BloomFilter`.
-        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> = target::matching();
-        terms.transcode()
     }
 }
 impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for SearchBloomFilter {

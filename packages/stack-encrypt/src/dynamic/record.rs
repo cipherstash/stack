@@ -36,8 +36,8 @@
 //!
 //! # A plan whose context is a field of the record
 //!
-//! The typed plan builder's third context source, `context_field`, has a
-//! data form too: a plan-level key, `"context_field": "<field name>"`, beside
+//! A plan can take its context from a field of each record: a plan-level
+//! key, `"context_field": "<field name>"`, beside
 //! the field specs. The named field's value in each record is then the
 //! context every other field is sealed under — a tenant label such as
 //! `"tenants/acme"`, which must parse as a plain [`Label`] — and the field
@@ -110,7 +110,7 @@
 //! kind, once checked — by the typed path's derivation, so they are the
 //! bytes a Rust `u32` or `String` field derives under the same label.
 //!
-//! The ciphertext is where a data plan and a Rust chain meet too. Every
+//! The ciphertext is where a data plan and typed Rust code meet too. Every
 //! leaf is tagged with its type, a typed Rust value's as much as
 //! a [`ValueFrame`]'s, so a Rust `u32` field and a `uint32` data field seal
 //! the same leaf under the same context, and each opens the other's. A reader
@@ -707,9 +707,8 @@ pub struct Plan {
     fields: Vec<FieldPlan>,
 }
 
-/// Where a data plan takes its context from: the builder's first and third
-/// sources. The second, the call, has no data form: a binding names the
-/// context in the declaration it sends.
+/// Where a data plan takes its context from: the plan, or a field of each
+/// record. A binding names the context in the declaration it sends.
 #[derive(Clone, Debug)]
 pub(super) enum Context {
     /// The plan's own label, which every field's label extends.
@@ -839,8 +838,7 @@ impl Plan {
     }
 
     /// A plan over `fields` that takes its context from the field named
-    /// `context_field`: the plan builder's
-    /// [`context_field`](crate::plan::FieldsBuilder::context_field), as data. That
+    /// `context_field`. That
     /// field's value in each record is the context every other field is
     /// sealed under, and the field is carried as a passthrough of type
     /// string. Each field's label is its identity alone, a one-segment
@@ -981,8 +979,7 @@ impl Plan {
 
     /// The plan's one context: the label every field's label extends.
     /// `None` for a plan that takes its context from a field
-    /// ([`context_field`](Self::context_field)), as the builder's
-    /// [`Plan::label`](crate::Plan::label) is.
+    /// ([`context_field`](Self::context_field)).
     pub fn label(&self) -> Option<&Label> {
         match &self.context {
             Context::Label(label) => Some(label),
@@ -990,8 +987,7 @@ impl Plan {
         }
     }
 
-    /// The field the plan takes its context from, if it has one: the
-    /// builder's [`Plan::context_field`](crate::Plan::context_field).
+    /// The field the plan takes its context from, if it has one.
     pub fn context_field(&self) -> Option<&str> {
         match &self.context {
             Context::Field(name) => Some(name),
@@ -1008,9 +1004,8 @@ impl Plan {
     /// The contexts this plan's fields are sealed and indexed under, with
     /// the plan's extension applied and a placeholder for a context read
     /// from a field of each record. No key is requested. The same view as
-    /// [`Plan::contexts`](crate::Plan::contexts) for a typed plan, so a
-    /// binding can show a record's contexts, and a test in that language
-    /// can pin them.
+    /// a derived record's `contexts()`, so a binding can show a record's
+    /// contexts, and a test in that language can pin them.
     ///
     /// # Errors
     ///
@@ -1152,9 +1147,8 @@ impl Plan {
         ))
     }
 
-    /// The scopes every field's label is run under: the extension, as the
-    /// chain's `.extend(..)` would carry it. A query runs under these
-    /// alone.
+    /// The scopes every field's label is run under: the extension. A
+    /// query runs under these alone.
     fn scopes(&self) -> DeclaredContext {
         self.extension
             .iter()
@@ -2055,8 +2049,7 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 /// against `expected` or leaves the sealed fields unable to open.
 ///
 /// `expected` is the context the caller expects, for a plan with a
-/// [context field](Plan::with_context_field): the chain's
-/// `open(record).context(expected)`. Each record's stored context field is
+/// [context field](Plan::with_context_field). Each record's stored context field is
 /// checked against it before any key is requested, and a record that
 /// names another context fails the pending with
 /// [`Error::ContextMismatch`](crate::Error::ContextMismatch). `None`
@@ -2908,10 +2901,10 @@ mod tests {
     use vitaminc_protected::Controlled;
 
     use crate::dynamic::term;
-    use crate::plan::pick;
+    use crate::plan::join;
     use crate::sem::EqualityTerm;
-    use crate::target::{AeadContext, DecryptInto, EncryptFrom};
-    use crate::{nonempty, Equality, PlanError, StackCipher};
+    use crate::target::{ciphertext, indexed, AeadContext, Borrowed, DecryptSource, EncryptTarget};
+    use crate::{nonempty, DecryptFrom, EncryptInto, Equality, Indexes, PlanError, StackCipher};
 
     /// `FakeDataKeySource` with call counters, so the batching contract —
     /// one key request per invocation, none for a refused call — is
@@ -3431,7 +3424,7 @@ mod tests {
         }
 
         /// Two sealed fields keyed under one identity would have one context
-        /// and interchangeable terms: the builder refuses it, so the plan does.
+        /// and interchangeable terms, so the plan refuses it.
         #[test]
         fn refuses_two_fields_keyed_under_one_identity() {
             let parsed = plan(obj(vec![
@@ -4187,41 +4180,46 @@ mod tests {
             assert_eq!(text_of(&email[1].1), "b@x");
         }
 
-        /// The lowering is the plan builder: the record a data plan seals is
-        /// the record the chain seals under the same declaration over the
-        /// same plaintext type, a [`ValueFrame`] per field — the same terms,
-        /// and ciphertexts each side opens.
+        /// The lowering is the combinators: each field of the record a data
+        /// plan seals is what the combinator for its outputs seals over the
+        /// same plaintext type, a [`ValueFrame`], under the field's label.
+        /// The terms are the same, and each side opens the other's
+        /// ciphertext.
         #[tokio::test]
-        async fn seals_what_the_chain_seals_under_the_same_declaration() {
-            struct User {
-                age: ValueFrame,
-                email: ValueFrame,
-                nick: ValueFrame,
-                id: u64,
-            }
+        async fn seals_what_the_combinators_seal_under_the_same_declaration() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let frame = |value: Tree| ValueFrame::of(&value).expect("a value");
-            let user = User {
-                age: frame(Tree::UInt32(34)),
-                email: frame(s("a@x")),
-                nick: frame(s("al smith")),
-                id: 7,
-            };
             let default_match = IndexSpec::Match(crate::sem::MatchOptions::default());
-            let mut chain = cipher
-                .encrypt(&user)
-                .context("users")
-                .fields()
-                .encrypt_index(
-                    pick("age", |u: &User| &u.age),
-                    (IndexSpec::Equality, IndexSpec::Ore),
+            // `c`, `eq` and `ore`: a ciphertext with its terms beside it.
+            let age: Encrypted<(TermBytes, TermBytes)> = keyset
+                .run(
+                    indexed::<_, _, Borrowed, _>((IndexSpec::Equality, IndexSpec::Ore))
+                        .under(nonempty!("users").with("age")),
+                    &frame(Tree::UInt32(34)),
+                    DeclaredContext::default(),
                 )
-                .encrypt(pick("email", |u: &User| &u.email))
-                .index(pick("nick", |u: &User| &u.nick), default_match)
-                .passthrough(pick("id", |u: &User| &u.id))
                 .await
-                .expect("the chain");
+                .expect("age");
+            // `c` alone: a ciphertext.
+            let email: StackCipherText = keyset
+                .run(
+                    ciphertext::<_, _, Borrowed>().under(nonempty!("users").with("email")),
+                    &frame(s("a@x")),
+                    DeclaredContext::default(),
+                )
+                .await
+                .expect("email");
+            // `match` alone: the terms, with no ciphertext.
+            let nick: TermBytes = keyset
+                .run(
+                    Indexes::<ValueFrame>::operations::<_, Borrowed>(&default_match)
+                        .under(nonempty!("users").with("nick")),
+                    &frame(s("al smith")),
+                    DeclaredContext::default(),
+                )
+                .await
+                .expect("nick");
             let plan = plan(obj(vec![
                 (
                     "age",
@@ -4234,7 +4232,6 @@ mod tests {
             .expect("plan");
             let mut fields = map(seal(&keyset, row(34), &plan).await);
 
-            let age: Encrypted<(TermBytes, TermBytes)> = chain.take("age").expect("age");
             let mut lowered_age = map(node(&mut fields, "age"));
             assert_eq!(
                 term_bytes(&node(&mut lowered_age, "eq")),
@@ -4246,7 +4243,6 @@ mod tests {
                 age.terms.1.as_bytes(),
                 "the same ore term"
             );
-            let nick: TermBytes = chain.take("nick").expect("nick");
             let mut lowered_nick = map(node(&mut fields, "nick"));
             assert_eq!(
                 term_bytes(&node(&mut lowered_nick, "match")),
@@ -4255,15 +4251,14 @@ mod tests {
             );
 
             // Each side's ciphertext opens through the other.
-            let chain_opened: Tree = cipher
+            let typed_opened: Tree = cipher
                 .decrypt(
                     node(&mut lowered_age, "c"),
                     Label::parse("users/age").expect("label"),
                 )
                 .await
-                .expect("the chain's reader opens the lowering's leaf");
-            assert_eq!(u32_of(&chain_opened), 34);
-            let email: StackCipherText = chain.take("email").expect("email");
+                .expect("the cipher's reader opens the lowering's leaf");
+            assert_eq!(u32_of(&typed_opened), 34);
             let stored = CipherText::Map(vec![
                 (
                     "age".to_string(),
@@ -4283,7 +4278,7 @@ mod tests {
             assert_eq!(
                 u32_of(&opened[0].1),
                 34,
-                "the lowering opens the chain's leaf"
+                "the lowering opens the combinator's leaf"
             );
             assert_eq!(text_of(&opened[1].1), "a@x", "and its string");
             assert_eq!(u64_of(&opened[2].1), 7);
@@ -4311,15 +4306,11 @@ mod tests {
             }
         }
 
-        /// A field's extension lowers to the chain's `.extend(..)`: the
-        /// record is the typed chain's under the same extension, and the
-        /// stored terms are the probes under the extended context, not the
-        /// flat one.
+        /// A field's extension extends the field's context: the stored term
+        /// is the term the combinator derives under the same extension, and
+        /// the probe under the extended context, not the flat one.
         #[tokio::test]
-        async fn a_one_part_extension_is_the_chains_extend() {
-            struct Age {
-                age: u32,
-            }
+        async fn a_one_part_extension_extends_the_fields_context() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let parts = [Tree::UInt64(7)];
@@ -4332,20 +4323,19 @@ mod tests {
             let mut fields = map(seal(&keyset, obj(vec![("age", Tree::UInt32(34))]), &plan).await);
             let mut age = map(node(&mut fields, "age"));
 
-            let mut typed_record = cipher
-                .encrypt(&Age { age: 34 })
-                .context("users")
-                .fields()
-                .encrypt_index(pick("age", |a: &Age| &a.age), Equality)
-                .extend(7u64)
+            let typed_age: Encrypted<EqualityTerm> = keyset
+                .run(
+                    indexed::<_, _, Borrowed, _>(Equality).under(nonempty!("users").with("age")),
+                    &34u32,
+                    DeclaredContext::from(CallerContext::from(7u64)),
+                )
                 .await
-                .expect("typed chain");
-            let typed_age: Encrypted<EqualityTerm> = typed_record.take("age").expect("age");
+                .expect("the combinator");
             let stored = term_bytes(&node(&mut age, "eq"));
             assert_eq!(
                 stored,
                 typed_age.terms.to_bytes(),
-                "the same term as the chain extended by the same part"
+                "the same term as the combinator extended by the same part"
             );
             let native = nonempty!("users").with("age").with(7u64);
             let probe = keyset.equality_term(34u32, native).await.expect("probe");
@@ -4384,19 +4374,15 @@ mod tests {
             let mut age = map(node(&mut fields, "age"));
             let stored = term_bytes(&node(&mut age, "eq"));
 
-            struct Age {
-                age: u32,
-            }
-            let mut typed = cipher
-                .encrypt(&Age { age: 34 })
-                .context("users")
-                .fields()
-                .encrypt_index(pick("age", |a: &Age| &a.age), Equality)
-                .extend(7u64)
-                .extend(nonempty!("eu"))
+            let typed_age: Encrypted<EqualityTerm> = keyset
+                .run(
+                    indexed::<_, _, Borrowed, _>(Equality).under(nonempty!("users").with("age")),
+                    &34u32,
+                    DeclaredContext::from(CallerContext::from(7u64))
+                        .with(CallerContext::from(nonempty!("eu"))),
+                )
                 .await
-                .expect("typed chain");
-            let typed_age: Encrypted<EqualityTerm> = typed.take("age").expect("age");
+                .expect("the combinator");
             assert_eq!(stored, typed_age.terms.to_bytes());
 
             let nested = nonempty!("users").with("age").with(7u64).with("eu");
@@ -4885,32 +4871,30 @@ mod tests {
             plan.fields().iter().map(FieldPlan::name).collect()
         }
 
-        struct Age {
-            age: u32,
-        }
-
-        /// The equality term the typed chain stores for `age` under
+        /// The equality term the combinator stores for `age` under
         /// `<context>/age`, extended by `parts`: what the lowering must
         /// derive when the context comes from the record.
-        async fn chain_term(
+        async fn typed_term(
             cipher: &StackCipher<Counting>,
             context: &str,
             age: u32,
             parts: &[u64],
         ) -> Vec<u8> {
-            let value = Age { age };
-            let chain = cipher
-                .encrypt(&value)
-                .context(context)
-                .fields()
-                .encrypt_index(pick("age", |a: &Age| &a.age), Equality);
-            let mut record = match parts {
-                [] => chain.await,
-                [part] => chain.extend(*part).await,
+            let label = join(&Label::parse(context).expect("a label"), "age").expect("a label");
+            let extension = match parts {
+                [] => DeclaredContext::default(),
+                [part] => DeclaredContext::from(CallerContext::from(*part)),
                 _ => panic!("one part at most"),
-            }
-            .expect("typed chain");
-            let typed: Encrypted<EqualityTerm> = record.take("age").expect("age");
+            };
+            let typed: Encrypted<EqualityTerm> = cipher
+                .default_keyset()
+                .run(
+                    indexed::<_, _, Borrowed, _>(Equality).under(NonEmpty::from(label)),
+                    &age,
+                    extension,
+                )
+                .await
+                .expect("the combinator");
             typed.terms.to_bytes()
         }
 
@@ -5144,13 +5128,13 @@ mod tests {
             let globex_term = term_bytes(&node(&mut map(node(&mut globex, "age")), "eq"));
             assert_eq!(
                 acme_term,
-                chain_term(&cipher, "tenants/acme", 34, &[]).await,
-                "the chain's term under tenants/acme"
+                typed_term(&cipher, "tenants/acme", 34, &[]).await,
+                "the typed term under tenants/acme"
             );
             assert_eq!(
                 globex_term,
-                chain_term(&cipher, "tenants/globex", 34, &[]).await,
-                "the chain's term under tenants/globex"
+                typed_term(&cipher, "tenants/globex", 34, &[]).await,
+                "the typed term under tenants/globex"
             );
             assert_ne!(
                 acme_term, globex_term,
@@ -5189,8 +5173,7 @@ mod tests {
         }
 
         /// The caller's expected context is checked against each record's
-        /// stored one before any key is requested: the chain's
-        /// `open(record).context(expected)`.
+        /// stored one before any key is requested.
         #[tokio::test]
         async fn an_expected_context_refuses_a_record_stored_under_another() {
             let cipher = cipher().await;
@@ -5390,8 +5373,8 @@ mod tests {
             let stored = term_bytes(&node(&mut map(node(&mut fields, "age")), "eq"));
             assert_eq!(
                 stored,
-                chain_term(&cipher, "tenants/acme", 34, &[7]).await,
-                "the chain's term under tenants/acme, extended by 7"
+                typed_term(&cipher, "tenants/acme", 34, &[7]).await,
+                "the typed term under tenants/acme, extended by 7"
             );
             let sealed = seal(&keyset, source(), &plan).await;
             let opened = object(open(&cipher, sealed, &plan).await);
@@ -5404,7 +5387,7 @@ mod tests {
 
         /// The context field may be declared after the fields it keys: the
         /// lowering reads it by name wherever the plan puts it, the terms
-        /// are the chain's, and the record comes back in plan order.
+        /// are the typed terms, and the record comes back in plan order.
         #[tokio::test]
         async fn the_context_field_may_be_declared_last() {
             let cipher = cipher().await;
@@ -5434,8 +5417,8 @@ mod tests {
             let stored = term_bytes(&node(&mut map(node(&mut fields, "age")), "eq"));
             assert_eq!(
                 stored,
-                chain_term(&cipher, "tenants/acme", 34, &[]).await,
-                "the chain's term under tenants/acme"
+                typed_term(&cipher, "tenants/acme", 34, &[]).await,
+                "the typed term under tenants/acme"
             );
 
             let sealed = seal(&keyset, source(), &plan).await;
@@ -6627,8 +6610,8 @@ mod tests {
                 let column = column(name, label)?;
                 let stored_label = label.to_string();
                 let context = AeadContext::from(parts.clone().under(column));
-                Ok(keyset
-                    .encrypt_as::<String, StackCipherText>(&text, context)
+                Ok(text
+                    .encrypt_into_with_context::<StackCipherText, K>(keyset, context)
                     .try_map(move |sealed| {
                         let CipherText::Single(leaf) = sealed else {
                             return Err(crate::Error::UnsupportedShape);
@@ -6694,8 +6677,11 @@ mod tests {
                 let text = text_of_value(name, plaintext)?;
                 let column = column(name, label)?;
                 let stored_label = label.to_string();
-                Ok(keyset
-                    .encrypt_as::<String, EqualityTerm>(&text, scopes.clone().under(column))
+                Ok(text
+                    .encrypt_into_with_context::<EqualityTerm, K>(
+                        keyset,
+                        scopes.clone().under(column),
+                    )
                     .try_map(move |term| {
                         serde_json::to_vec(&serde_json::json!({
                             "v": 3,
@@ -7648,8 +7634,9 @@ mod tests {
                 CallerContext::from(crate::target::Scope::new(part))
                     .extend(NonEmpty::from(Label::parse("users/email").unwrap()))
             };
-            let direct = keyset
-                .encrypt_as::<String, EqualityTerm>(&"ada@example.com".to_owned(), under(7))
+            let direct: EqualityTerm = "ada@example.com"
+                .to_owned()
+                .encrypt_into_with_context(&keyset, under(7))
                 .await
                 .unwrap();
             let seven = term(7).await;
@@ -7953,7 +7940,7 @@ mod tests {
     mod given_the_leaf_encoding {
         use super::*;
 
-        #[derive(EncryptFrom, DecryptInto)]
+        #[derive(EncryptTarget, DecryptSource)]
         #[stash(plaintext = u32, crate = "crate")]
         struct Age {
             c: StackCipherText,
@@ -8070,8 +8057,11 @@ mod tests {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let label_ = Label::parse("users/age").expect("label");
-            let derived: Age = keyset
-                .encrypt_as(&34u32, CallerContext::from(NonEmpty::from(label_.clone())))
+            let derived: Age = 34u32
+                .encrypt_into_with_context(
+                    &keyset,
+                    CallerContext::from(NonEmpty::from(label_.clone())),
+                )
                 .await
                 .expect("derive");
 
@@ -8088,13 +8078,13 @@ mod tests {
                 "the same equality term"
             );
 
-            let as_u32: u32 = keyset
-                .decrypt_as(
-                    node(&mut age, "c"),
-                    AeadContext::from(NonEmpty::from(label_.clone())),
-                )
-                .await
-                .expect("the derive opens the lowering's leaf");
+            let as_u32 = u32::decrypt_from_with_context(
+                node(&mut age, "c"),
+                &keyset,
+                AeadContext::from(NonEmpty::from(label_.clone())),
+            )
+            .await
+            .expect("the derive opens the lowering's leaf");
             assert_eq!(as_u32, 34);
             let stored = CipherText::Map(vec![(
                 "age".to_string(),
@@ -8465,7 +8455,7 @@ mod tests {
             }
         }
 
-        /// Each refusal from the plan builder maps to the field it names and
+        /// Each plan refusal maps to the field it names and
         /// the reason a binding reports: the lowering checks most of these
         /// first, so not every one is reachable through [`plan`].
         #[test]

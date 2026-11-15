@@ -6,8 +6,7 @@
 //! [`crate::v3`], with `eql_v4_*` domain names and a `v` of `4`.
 //!
 //! **Only these structs derive Stack Encrypt's traits**: `EncryptTarget` and
-//! `DecryptSource`. The same derives implement the older `EncryptFrom` and
-//! `DecryptInto`. Only Stack Encrypt produces a v4 value, so this module
+//! `DecryptSource`. Only Stack Encrypt produces a v4 value, so this module
 //! exists only with the `stack-encrypt` feature. Stack Encrypt's output
 //! is not byte-for-byte compatible with cipherstash-client's, so no `eql_v3`
 //! struct claims it. Which v4 types derive them is
@@ -44,8 +43,8 @@
 //! domain. What separates the two on the wire is the envelope's
 //! [`SchemaVersion`], which refuses the other generation's `v`.
 
-/// Generated: the `op::Answers` impls through which Stack Encrypt's typed
-/// query chain queries a producible type, each type's
+/// Generated: the `op::Answers` impls through which a field marker of a
+/// derived record queries a producible type, each type's
 /// `op::LabelledTarget` impl and its query twin's assembly
 /// ([`crate::encryption::query`]). Needs only the `stack-encrypt` feature.
 pub mod answers;

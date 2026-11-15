@@ -1,6 +1,11 @@
 //! The JSON tree family end to end: a document sealed by Stack Encrypt's
 //! JSON index into `public.eql_v4_json_search`, queried with the v4 SQL, and
-//! opened again. The unit tests need no database; the PostgreSQL test
+//! opened again. A document seals and opens through the EQL types
+//! (`JsonTreeDocument`, `JsonTreeExtracted`, `JsonTreeSubtree`), as a
+//! `JsonPlaintext`. A query's operand derives through a data plan that
+//! names the type `JsonSearch` under the same column and options
+//! ([`contains`], [`contained_by`], [`gte_at`]), since an EQL type has no
+//! typed JSON query. The unit tests need no database; the PostgreSQL test
 //! installs nothing itself (`mise run test:encryption:postgres` installs the
 //! v4 bundle built from the tree) and is the oracle the design asks for:
 //! `@>` and `<@` over the encrypted column against PostgreSQL's own
@@ -12,18 +17,20 @@
 
 mod common;
 
+use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::json_tree::{
     JsonTree, JsonTreeDocument, JsonTreeEntry, JsonTreeExtracted, JsonTreeLeafQuery, JsonTreeQuery,
     JsonTreeSubtree,
 };
 use eql_bindings::Identifier;
 use serde_json::{json, Map, Value};
+use stack_encrypt::dynamic::{self, record, Op, Operand, ValueFrame};
 use stack_encrypt::json::{
-    JsonDocument, JsonOptions, JsonPath, JsonSelector, JsonSubtreeKey, Segment,
+    JsonDocument, JsonLeafQuery, JsonOptions, JsonPath, JsonPlaintext, JsonQuery, JsonSelector,
+    JsonSubtreeKey, Segment,
 };
-use stack_encrypt::plan::{Laid, ValuePlan};
-use stack_encrypt::target::{Json, Layout};
-use stack_encrypt::{op, NonEmpty, Plan};
+use stack_encrypt::target::{json_document, Borrowed, CallerContext};
+use stack_encrypt::{AsProtectedRef as _, DecryptFrom, Label, NonEmpty};
 
 fn column() -> NonEmpty<Identifier> {
     Identifier::for_column("users", "profile").unwrap()
@@ -45,27 +52,148 @@ async fn seal(cipher: &Cipher, value: &Value) -> JsonTreeDocument {
         .unwrap()
 }
 
-/// The plan a query derives through: the engine's own document target
-/// under the label `users/profile`, which is the same context as the
-/// identifier the EQL target stores (the same two parts, rendered
-/// `users/profile`), so its selectors are the stored document's, laid
-/// out by the JSON index with `$.hello` and `$.number` ordered, the paths
-/// the ordering queries below ask at. An EQL type takes its context as
-/// an identifier and runs through `encrypt_as`, not through the chain.
-fn plan() -> ValuePlan<Value, Laid<Json, JsonDocument>> {
-    Plan::value::<Value>()
-        .context("users/profile")
-        .encrypt_with_layout(Json::new(options()))
-        .build()
-        .unwrap()
+/// The paths that carry ordering terms: `$.hello` and `$.number`, the
+/// paths the ordering queries below ask at. [`options`] seals under them,
+/// and [`plan`] names them, so a query derives under the options its
+/// document was sealed under.
+const ORDERED: [&str; 2] = ["$.hello", "$.number"];
+
+/// The plan a query derives through: a data plan with one `json` field,
+/// `profile`, that names the EQL type `JsonSearch` under `users/profile`.
+/// That context is the identifier [`seal`] stores (the same two parts), so
+/// a query's selectors are the stored document's. An EQL type has no typed
+/// JSON query: a Rust program derives one through a data plan, as a
+/// language SDK does.
+fn plan() -> record::Plan {
+    let wire = json!({
+        "profile": {
+            "context": ["users", "profile"],
+            "type": "json",
+            "target": {"name": "JsonSearch", "options": {"ordered": ORDERED}}
+        }
+    });
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &EqlTargets,
+    )
+    .unwrap()
 }
 
-/// The index options the corpus is sealed under: `$.hello` and
-/// `$.number` carry ordering terms.
+/// The index options the corpus is sealed under: the [`ORDERED`] paths
+/// carry ordering terms.
 fn options() -> JsonOptions {
-    JsonOptions::default()
-        .ordering(["$.hello", "$.number"])
-        .unwrap()
+    JsonOptions::default().ordering(ORDERED).unwrap()
+}
+
+/// The operand of one JSON operator on [`plan`]'s field, with the named
+/// inputs a binding sends: the bytes the SQL binds.
+async fn operand(cipher: &Cipher, operator: Op, inputs: Value) -> Vec<u8> {
+    let inputs = ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(&inputs)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap();
+    let term = dynamic::query_term(
+        &cipher.default_keyset(),
+        &plan(),
+        "profile",
+        operator,
+        inputs,
+        &EqlTargets,
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    let Operand::One(bytes) = term.operand() else {
+        panic!("{}: one operand", term.operator());
+    };
+    bytes.clone()
+}
+
+/// The needle of `col @> needle`: the `eql_v4.query_json` operand.
+async fn contains(cipher: &Cipher, needle: &Value) -> JsonTreeQuery {
+    let bytes = operand(cipher, Op::Contains, json!({"json": needle.to_string()})).await;
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+/// The needle of `col <@ needle`: the `eql_v4.query_json` operand.
+async fn contained_by(cipher: &Cipher, needle: &Value) -> JsonTreeQuery {
+    let bytes = operand(cipher, Op::ContainedBy, json!({"json": needle.to_string()})).await;
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+/// The bound of `(col -> selector) >= bound` at `path`: the
+/// `eql_v4.query_json_leaf` operand.
+async fn gte_at(cipher: &Cipher, path: &str, value: Value) -> JsonTreeLeafQuery {
+    let bytes = operand(
+        cipher,
+        Op::GteAt,
+        json!({"path": path, "json": value.to_string()}),
+    )
+    .await;
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+/// The scalar an extracted entry opens to under the column, through the
+/// selector that asked for it.
+async fn extract(
+    cipher: &Cipher,
+    asked: &JsonSelector,
+    entry: JsonTreeEntry,
+) -> Result<Value, stack_encrypt::Error> {
+    JsonPlaintext::decrypt_from_with_context(
+        JsonTreeExtracted::from_selector(asked, entry),
+        cipher,
+        column(),
+    )
+    .await
+    .map(|opened| opened.value().clone())
+}
+
+/// The value the rows of a read open to under the column, through the key
+/// that keyed the read. No node at the path is an error.
+async fn read_one(
+    cipher: &Cipher,
+    key: &JsonSubtreeKey,
+    rows: Vec<JsonTreeEntry>,
+) -> Result<Value, stack_encrypt::Error> {
+    JsonPlaintext::decrypt_from_with_context(JsonTreeSubtree::from_key(key, rows), cipher, column())
+        .await
+        .map(|opened| opened.value().clone())
+}
+
+/// [`read_one`], with `None` where the row has no node at the path.
+async fn read_optional(
+    cipher: &Cipher,
+    key: &JsonSubtreeKey,
+    rows: Vec<JsonTreeEntry>,
+) -> Result<Option<Value>, stack_encrypt::Error> {
+    Option::<JsonPlaintext>::decrypt_from_with_context(
+        JsonTreeSubtree::from_key(key, rows),
+        cipher,
+        column(),
+    )
+    .await
+    .map(|opened| opened.map(|value| value.value().clone()))
+}
+
+/// The rows of a read as a list: one value per concrete path the key named
+/// that the row has.
+async fn read_list(
+    cipher: &Cipher,
+    key: &JsonSubtreeKey,
+    rows: Vec<JsonTreeEntry>,
+) -> Result<Vec<Value>, stack_encrypt::Error> {
+    Vec::<JsonPlaintext>::decrypt_from_with_context(
+        JsonTreeSubtree::from_key(key, rows),
+        cipher,
+        column(),
+    )
+    .await
+    .map(|opened| opened.iter().map(|value| value.value().clone()).collect())
 }
 
 /// Padded standard base64, as the wire spells a selector.
@@ -109,21 +237,17 @@ async fn a_document_round_trips_through_the_typed_target() {
         .collect();
     assert_eq!(keys, ["h", "i", "q", "sv", "v"]);
 
-    let opened: Value = cipher
-        .decrypt_as(stored.clone(), Default::default())
+    let opened = JsonPlaintext::decrypt_from(stored.clone(), &cipher)
         .await
         .unwrap();
-    assert_eq!(opened, fixture());
-    let opened: Value = cipher
-        .decrypt_as(stored.clone(), column().into())
+    assert_eq!(opened.value(), &fixture());
+    let opened = JsonPlaintext::decrypt_from_with_context(stored.clone(), &cipher, column())
         .await
         .unwrap();
-    assert_eq!(opened, fixture());
+    assert_eq!(opened.value(), &fixture());
 
     let wrong = Identifier::for_column("users", "bio").unwrap();
-    let refused = cipher
-        .decrypt_as::<Value, _>(stored.clone(), wrong.into())
-        .await;
+    let refused = JsonPlaintext::decrypt_from_with_context(stored.clone(), &cipher, wrong).await;
     assert!(
         matches!(refused, Err(stack_encrypt::Error::ContextMismatch { .. })),
         "{refused:?}"
@@ -156,21 +280,13 @@ async fn a_document_round_trips_through_the_typed_target() {
     entry.j = Some(at as u64);
     entry.i = Some(stored.i.clone());
     entry.v = Some(stored.v);
-    let scalar: Value = cipher
-        .decrypt_as(
-            JsonTreeExtracted::from_selector(&hello, entry.clone()),
-            column(),
-        )
-        .await
-        .unwrap();
+    let scalar = extract(&cipher, &hello, entry.clone()).await.unwrap();
     assert_eq!(scalar, json!("world-1"));
     let asked = JsonTreeExtracted::from_selector(&hello, entry.clone());
     assert_eq!(asked.entry(), &entry);
     assert_eq!(asked.selector(), &hello);
     let number = selector("$.number").await;
-    let refused = cipher
-        .decrypt_as::<Value, _>(JsonTreeExtracted::from_selector(&number, entry), column())
-        .await;
+    let refused = extract(&cipher, &number, entry).await;
     assert!(
         matches!(
             refused,
@@ -181,45 +297,56 @@ async fn a_document_round_trips_through_the_typed_target() {
         "another path's selector refuses the entry: {refused:?}"
     );
     let bare = stored.sv[at].clone();
-    assert!(cipher
-        .decrypt_as::<Value, _>(JsonTreeExtracted::from_selector(&hello, bare), column())
-        .await
-        .is_err());
+    assert!(extract(&cipher, &hello, bare).await.is_err());
 }
 
 #[tokio::test]
 async fn the_query_operands_are_the_engines_terms_in_the_sql_contract() {
     let (cipher, _) = common::cipher().await;
-    let plan = plan();
-    let query = cipher
-        .query(op::Contains, &json!({"nested": {"list": [{"x": 2}]}}))
-        .on(&plan)
-        .await
-        .unwrap();
-    let operand = JsonTreeQuery::try_from(&query).unwrap();
-    assert_eq!(
-        serde_json::to_value(&operand).unwrap(),
-        serde_json::to_value(&query).unwrap()
-    );
-    assert_eq!(operand.el.len(), 1);
+    let keyset = cipher.default_keyset();
 
-    let bound = cipher
-        .query(op::AtPath(op::Gte), &("$.number", 1))
-        .on(&plan)
-        .await
-        .unwrap();
+    // A containment operand is the engine's query term, and reads as the
+    // SQL contract's type without changing.
+    let bytes = operand(
+        &cipher,
+        Op::Contains,
+        json!({"json": json!({"nested": {"list": [{"x": 2}]}}).to_string()}),
+    )
+    .await;
+    let query: JsonQuery = serde_json::from_slice(&bytes).unwrap();
+    let operand_json: Value = serde_json::from_slice(&bytes).unwrap();
+    let needle = JsonTreeQuery::try_from(&query).unwrap();
+    assert_eq!(
+        needle,
+        serde_json::from_slice::<JsonTreeQuery>(&bytes).unwrap()
+    );
+    assert_eq!(serde_json::to_value(&needle).unwrap(), operand_json);
+    assert_eq!(needle.el.len(), 1);
+
+    // An ordering operand is the engine's leaf query, the same way.
+    let bytes = operand(&cipher, Op::GteAt, json!({"path": "$.number", "json": "1"})).await;
+    let bound: JsonLeafQuery = serde_json::from_slice(&bytes).unwrap();
     let leaf = JsonTreeLeafQuery::try_from(&bound).unwrap();
     assert_eq!(
         serde_json::to_value(&leaf).unwrap(),
-        serde_json::to_value(&bound).unwrap()
+        serde_json::from_slice::<Value>(&bytes).unwrap()
     );
+    assert_eq!(leaf, gte_at(&cipher, "$.number", json!(1)).await);
     assert_eq!(leaf.s.0.as_str(), bound.selector().to_string());
 
     // The engine's document under the label and the EQL document under the
     // identifier carry the same selectors: one context, two spellings. Each
     // is stored in its own random order, so they compare as multisets, and
     // the projections as the sets `jsonb @>` reads.
-    let engine = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
+    let label: Label = "users/profile".parse().unwrap();
+    let engine: JsonDocument = keyset
+        .run(
+            json_document::<_, Borrowed>(options()),
+            &fixture(),
+            CallerContext::from(NonEmpty::from(label.clone())),
+        )
+        .await
+        .unwrap();
     let typed = seal(&cipher, &fixture()).await;
     assert_eq!(engine.entries().len(), typed.sv.len());
     let mut a: Vec<String> = engine
@@ -236,16 +363,20 @@ async fn the_query_operands_are_the_engines_terms_in_the_sql_contract() {
         as_set(&serde_json::to_value(&typed.q).unwrap()),
         "and the same projection"
     );
-    let opened: Value = cipher.open(engine).using(&plan).await.unwrap();
-    assert_eq!(opened, fixture());
+    // The query finds the document: the needle's set is inside the projection.
+    assert!(query.matches(engine.selector_set()));
+    let opened = JsonPlaintext::decrypt_from_with_context(engine, &cipher, NonEmpty::from(label))
+        .await
+        .unwrap();
+    assert_eq!(opened.value(), &fixture());
 }
 
 // =============================================================================
 // PostgreSQL
 // =============================================================================
 
-/// Settle a chain or a pending on the test's runtime: both are
-/// `IntoFuture`, not `Future`.
+/// Settle a pending or one of the async helpers above on the test's
+/// runtime: a pending is `IntoFuture`, not `Future`.
 fn wait<F: std::future::IntoFuture>(runtime: &tokio::runtime::Runtime, f: F) -> F::Output {
     runtime.block_on(f.into_future())
 }
@@ -385,7 +516,6 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
         .build()
         .unwrap();
     let (cipher, _) = wait(&runtime, common::cipher());
-    let plan = plan();
     let mut db = connect();
     db.batch_execute(
         "CREATE TEMP TABLE json_tree_docs (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_search NOT NULL);
@@ -413,8 +543,7 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
     };
     let mut checked = 0;
     for needle in needles() {
-        let query = wait(&runtime, cipher.query(op::Contains, &needle).on(&plan)).unwrap();
-        let operand = serde_json::to_string(&JsonTreeQuery::try_from(&query).unwrap()).unwrap();
+        let operand = serde_json::to_string(&wait(&runtime, contains(&cipher, &needle))).unwrap();
         let plain = needle.to_string();
         let expected = ids(
             &mut db,
@@ -436,8 +565,8 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
 
         // `<@`: a stored root scalar inside a needle root array is the one
         // case the SQL cannot answer (a stored document carries no `alt`).
-        let reverse = wait(&runtime, cipher.query(op::ContainedBy, &needle).on(&plan)).unwrap();
-        let reverse = serde_json::to_string(&JsonTreeQuery::try_from(&reverse).unwrap()).unwrap();
+        let reverse =
+            serde_json::to_string(&wait(&runtime, contained_by(&cipher, &needle))).unwrap();
         let mut expected = ids(
             &mut db,
             "SELECT id FROM json_tree_docs WHERE plain <@ $1::text::jsonb ORDER BY id",
@@ -465,14 +594,8 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
     // The GIN index serves `@>`: with sequential scans discouraged, the
     // plan is a bitmap scan over the index.
     db.batch_execute("SET enable_seqscan = off").unwrap();
-    let needle = wait(
-        &runtime,
-        cipher
-            .query(op::Contains, &json!({"a": [{"x": 1}]}))
-            .on(&plan),
-    )
-    .unwrap();
-    let operand = serde_json::to_string(&JsonTreeQuery::try_from(&needle).unwrap()).unwrap();
+    let needle = wait(&runtime, contains(&cipher, &json!({"a": [{"x": 1}]})));
+    let operand = serde_json::to_string(&needle).unwrap();
     let explain: Vec<String> = db
         .query(
             "EXPLAIN SELECT id FROM json_tree_docs WHERE doc @> $1::text::jsonb::eql_v4.query_json",
@@ -538,7 +661,6 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .unwrap();
     let (cipher, _) = wait(&runtime, common::cipher());
     let keyset = cipher.default_keyset();
-    let plan = plan();
     let mut db = connect();
     db.batch_execute(
         "CREATE TEMP TABLE json_tree_rows (id int PRIMARY KEY, doc public.eql_v4_json_search NOT NULL)",
@@ -584,11 +706,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
         serde_json::from_str(&row.get::<_, String>(0)).unwrap()
     };
     let open = |asked: &JsonSelector, e: JsonTreeEntry| -> Value {
-        wait(
-            &runtime,
-            cipher.decrypt_as(JsonTreeExtracted::from_selector(asked, e), column()),
-        )
-        .unwrap()
+        wait(&runtime, extract(&cipher, asked, e)).unwrap()
     };
 
     // `->` by selector opens to the leaf; a missing path is NULL.
@@ -684,11 +802,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
         assert!(walked
             .iter()
             .all(|e| e.d.is_some() && e.j.is_some() && e.h.is_some() && e.v.is_some()));
-        let value: Option<Value> = wait(
-            &runtime,
-            cipher.decrypt_as(JsonTreeSubtree::from_key(&nested, walked), column()),
-        )
-        .unwrap();
+        let value: Option<Value> = wait(&runtime, read_optional(&cipher, &nested, walked)).unwrap();
         assert_eq!(value, expected, "row {id}");
     }
     // The default budget, as a caller who names none gets it.
@@ -726,11 +840,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
     let root = read(&mut db, &nested, 1, 6);
     assert_eq!(root.len(), 1, "past the budget, the root alone");
     assert_eq!((root[0].j, root[0].d), (Some(0), Some(0)));
-    let value: Value = wait(
-        &runtime,
-        cipher.decrypt_as(JsonTreeSubtree::from_key(&nested, root), column()),
-    )
-    .unwrap();
+    let value: Value = wait(&runtime, read_one(&cipher, &nested, root)).unwrap();
     assert_eq!(value, fixture()["nested"]);
     let garbage: i64 = db
         .query_one(
@@ -764,11 +874,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
     assert_eq!(xs.tokens().len(), 65, "64 positions and the probe");
     for budget in [0, 1, 64] {
         let rows = read(&mut db, &xs, 1, budget);
-        let values: Vec<Value> = wait(
-            &runtime,
-            cipher.decrypt_as(JsonTreeSubtree::from_key(&xs, rows), column()),
-        )
-        .unwrap();
+        let values: Vec<Value> = wait(&runtime, read_list(&cipher, &xs, rows)).unwrap();
         assert_eq!(values, vec![json!(1), json!(2)], "budget {budget}");
     }
 
@@ -776,10 +882,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
     let second = subtree_key("$.nested.list[1]");
     let value: Value = wait(
         &runtime,
-        cipher.decrypt_as(
-            JsonTreeSubtree::from_key(&second, read(&mut db, &second, 1, 0)),
-            column(),
-        ),
+        read_one(&cipher, &second, read(&mut db, &second, 1, 0)),
     )
     .unwrap();
     assert_eq!(value, json!({"x": 2}));
@@ -848,15 +951,8 @@ fn postgres_extracts_walks_and_orders_by_path() {
 
     // Orderings at a path: the rows whose `$.number` is in range, and
     // sorted by the leaf's term.
-    let at_least_one = wait(
-        &runtime,
-        cipher
-            .query(op::AtPath(op::Gte), &("$.number", 1))
-            .on(&plan),
-    )
-    .unwrap();
-    let at_least_one =
-        serde_json::to_string(&JsonTreeLeafQuery::try_from(&at_least_one).unwrap()).unwrap();
+    let at_least_one = wait(&runtime, gte_at(&cipher, "$.number", json!(1)));
+    let at_least_one = serde_json::to_string(&at_least_one).unwrap();
     let number = selector("$.number");
     let ids: Vec<i32> = db
         .query(
@@ -998,7 +1094,6 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
         .build()
         .unwrap();
     let (cipher, _) = wait(&runtime, common::cipher());
-    let plan = plan();
     let mut db = connect();
 
     let version: i32 = db
@@ -1010,27 +1105,15 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
 
     // The operands: a containment needle per shape, and one range bound at
     // `$.number`, whose selector the functional index is built on.
-    let bound = wait(
-        &runtime,
-        cipher
-            .query(op::AtPath(op::Gte), &("$.number", 1))
-            .on(&plan),
-    )
-    .unwrap();
-    let number = bound.selector().to_string();
+    let bound = wait(&runtime, gte_at(&cipher, "$.number", json!(1)));
+    let number = bound.s.0.as_str().to_owned();
     let leaf = |value: i64| {
-        let query = wait(
-            &runtime,
-            cipher
-                .query(op::AtPath(op::Gte), &("$.number", value))
-                .on(&plan),
-        )
-        .unwrap();
-        serde_json::to_string(&JsonTreeLeafQuery::try_from(&query).unwrap()).unwrap()
+        let query = wait(&runtime, gte_at(&cipher, "$.number", json!(value)));
+        serde_json::to_string(&query).unwrap()
     };
     let needle = |value: Value| {
-        let query = wait(&runtime, cipher.query(op::Contains, &value).on(&plan)).unwrap();
-        serde_json::to_string(&JsonTreeQuery::try_from(&query).unwrap()).unwrap()
+        let query = wait(&runtime, contains(&cipher, &value));
+        serde_json::to_string(&query).unwrap()
     };
 
     let explain =
@@ -1619,26 +1702,18 @@ fn postgres_every_subtree_read_answers_as_jsonb_does() {
                             "{at}: read in full"
                         );
                     }
-                    let opened: Option<Value> = wait(
-                        &runtime,
-                        cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows.clone()), column()),
-                    )
-                    .unwrap_or_else(|error| panic!("{at}, budget {budget}: {error}"));
+                    let opened: Option<Value> =
+                        wait(&runtime, read_optional(&cipher, &key, rows.clone()))
+                            .unwrap_or_else(|error| panic!("{at}, budget {budget}: {error}"));
                     assert_eq!(opened, expected, "{at}, budget {budget}, as Option<Value>");
-                    let list: Vec<Value> = wait(
-                        &runtime,
-                        cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows.clone()), column()),
-                    )
-                    .unwrap();
+                    let list: Vec<Value> =
+                        wait(&runtime, read_list(&cipher, &key, rows.clone())).unwrap();
                     assert_eq!(
                         list,
                         expected.clone().into_iter().collect::<Vec<_>>(),
                         "{at}, as Vec<Value>"
                     );
-                    let one: Result<Value, _> = wait(
-                        &runtime,
-                        cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows), column()),
-                    );
+                    let one: Result<Value, _> = wait(&runtime, read_one(&cipher, &key, rows));
                     match (&expected, one) {
                         (Some(expected), Ok(one)) => assert_eq!(&one, expected, "{at}, as Value"),
                         (None, Err(stack_encrypt::Error::OpenedType { expected })) => {
@@ -1699,14 +1774,7 @@ fn postgres_every_subtree_read_answers_as_jsonb_does() {
                         .unwrap()
                         .get(0);
                     let entry: JsonTreeEntry = serde_json::from_str(&arrow.unwrap()).unwrap();
-                    let value: Value = wait(
-                        &runtime,
-                        cipher.decrypt_as(
-                            JsonTreeExtracted::from_selector(&selector, entry),
-                            column(),
-                        ),
-                    )
-                    .unwrap();
+                    let value: Value = wait(&runtime, extract(&cipher, &selector, entry)).unwrap();
                     assert_eq!(Some(value), expected, "{at}: `->` and the read agree");
                 }
             }
@@ -1816,17 +1884,10 @@ fn postgres_wildcard_reads_answer_as_jsonb_path_query() {
                     for budget in [0, 1, 64] {
                         let at = format!("{table} {pattern}, row {id}, budget {budget}");
                         let rows = subtree_rows(&mut db, &table, id, &key, budget);
-                        let list: Result<Vec<Value>, stack_encrypt::Error> = wait(
-                            &runtime,
-                            cipher.decrypt_as(
-                                JsonTreeSubtree::from_key(&key, rows.clone()),
-                                column(),
-                            ),
-                        );
-                        let one: Result<Option<Value>, stack_encrypt::Error> = wait(
-                            &runtime,
-                            cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows), column()),
-                        );
+                        let list: Result<Vec<Value>, stack_encrypt::Error> =
+                            wait(&runtime, read_list(&cipher, &key, rows.clone()));
+                        let one: Result<Option<Value>, stack_encrypt::Error> =
+                            wait(&runtime, read_optional(&cipher, &key, rows));
                         if too_long {
                             for result in [list.map(|_| ()), one.map(|_| ())] {
                                 match result {
@@ -1904,11 +1965,8 @@ fn postgres_a_position_reaches_array_elements_only() {
             if expected.is_none() {
                 assert!(walked.is_empty(), "{path}, row {id}: jsonb has no node");
             }
-            let value: Option<Value> = wait(
-                &runtime,
-                cipher.decrypt_as(JsonTreeSubtree::from_key(&key, walked), column()),
-            )
-            .unwrap();
+            let value: Option<Value> =
+                wait(&runtime, read_optional(&cipher, &key, walked)).unwrap();
             assert_eq!(value, expected, "{path}, row {id}");
         }
         let counts: Vec<(i32, Option<i32>)> = db
@@ -1997,16 +2055,10 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
         subtree_rows(db, "json_tree_hostile", id, key, 0)
     };
     let extracted = |asked: &JsonSelector, entry: JsonTreeEntry| -> Result<Value, Error> {
-        wait(
-            &runtime,
-            cipher.decrypt_as(JsonTreeExtracted::from_selector(asked, entry), column()),
-        )
+        wait(&runtime, extract(&cipher, asked, entry))
     };
     let opened = |key: &JsonSubtreeKey, rows: Vec<JsonTreeEntry>| -> Result<Value, Error> {
-        wait(
-            &runtime,
-            cipher.decrypt_as(JsonTreeSubtree::from_key(key, rows), column()),
-        )
+        wait(&runtime, read_one(&cipher, key, rows))
     };
     let wrong = |result: Result<Value, Error>, what: &str| {
         assert!(
@@ -2384,10 +2436,8 @@ fn postgres_reads_never_answer_wrongly_under_tampering() {
                 if truncate_rows && rows.len() > 1 {
                     let _ = rows.pop();
                 }
-                let opened: Result<Option<Value>, stack_encrypt::Error> = wait(
-                    &runtime,
-                    cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows), column()),
-                );
+                let opened: Result<Option<Value>, stack_encrypt::Error> =
+                    wait(&runtime, read_optional(&cipher, &key, rows));
                 let outcome = match opened {
                     Err(_) => "refused",
                     Ok(found) if found == expected => "the right answer",

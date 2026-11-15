@@ -1,6 +1,4 @@
-//! Emit an owned `EncryptTarget` declaration. Also emit the structural
-//! `EncryptFrom`. Then the record can be a field of a plan or of a structural
-//! record, as well as an owned target.
+//! Emit an owned `EncryptTarget` declaration.
 //!
 //! The derive composes the declarations of the fields:
 //!
@@ -13,16 +11,19 @@
 //! The field target's `ContextInput` decides which context the field can be
 //! given. So a target that cannot take the record's context is a compile error
 //! at that field.
-use crate::shape::{fresh_lifetime, trait_impl, ByField, Field, Flavor, Kind, OwnContext, Record};
+use crate::shape::{
+    decryptable_impl, fresh_lifetime, struct_literal_path, trait_impl, ByField, Field, Kind,
+    OwnContext, Record,
+};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{parse_quote, DeriveInput, Ident, Result, Type, WherePredicate};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
-    let record = Record::parse_as(&input, Flavor::Owned)?;
+    let record = Record::parse(&input)?;
     let derived = record.derived();
-    let decryptable = crate::encrypt::decryptable_impl(&input, &record, &derived);
+    let decryptable = decryptable_impl(&input, &record, &derived);
     let emitted = if record.by_field {
         struct_derive(&input, &record)
     } else {
@@ -401,7 +402,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
     let nested = nested_tuple(&locals);
     // A pattern writes generic arguments with a turbofish, as a struct
     // literal does: `Pt::<u64> { .. }`, not `Pt<u64> { .. }`.
-    let literal_path = match crate::decrypt::struct_literal_path(source) {
+    let literal_path = match struct_literal_path(source) {
         Ok(path) => path,
         Err(error) => return error.to_compile_error(),
     };
@@ -443,7 +444,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         .make_where_clause()
         .predicates
         .push(parse_quote!(Self: 'static));
-    let encrypt_target = trait_impl(
+    trait_impl(
         input,
         &generics,
         quote!(#krate::target::EncryptTarget<#source>),
@@ -456,9 +457,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
                 #owned_body
             }
         },
-    );
-    let bridge = bridge(input, record, source, record.context_type(false), false);
-    quote!(#encrypt_target #bridge)
+    )
 }
 
 /// The `wipe` function that a `split` is given for the parts still waiting.
@@ -588,6 +587,15 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
             quote! {
                 type ContextInput = #input_type;
                 fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::ContextInput> where #source: #lifetime {
+                    // The derive sees the fields' types, not the indexes
+                    // they declare. Two fields that declare one index, or
+                    // two indexes that answer one operator, are refused
+                    // here, before any key is requested.
+                    if let ::core::result::Result::Err(__error) = #krate::target::check_indexes(
+                        &<Self as #krate::target::EncryptTarget<#source>>::indexes(),
+                    ) {
+                        return #krate::target::Encryption::failed(__error);
+                    }
                     #(#descriptions)*
                     #body
                 }
@@ -598,48 +606,6 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
                 }
             },
         ));
-        let legacy = record.context_type(false);
-        impls.push(bridge(input, record, &source, legacy, generic));
     }
     quote!(#(#impls)*)
-}
-
-/// The structural `EncryptFrom`. The record's structural context is converted
-/// into its owned input at the root. This impl is emitted beside every owned
-/// declaration. So an owned record can be a field of a plan or of a structural
-/// record, with no second derive.
-fn bridge(
-    input: &DeriveInput,
-    record: &Record,
-    source: &Type,
-    legacy: Type,
-    generic: bool,
-) -> TokenStream {
-    let krate = &record.krate;
-    let lifetime = fresh_lifetime(&input.generics, "__source");
-    let mut generics = input.generics.clone();
-    if generic {
-        generics
-            .params
-            .push(parse_quote!(__S: #krate::target::Zeroize));
-    }
-    let predicates = &mut generics.make_where_clause().predicates;
-    predicates.push(parse_quote!(Self: #krate::target::EncryptTarget<#source>));
-    predicates.push(parse_quote!(
-        #legacy: ::core::convert::Into<<Self as #krate::target::EncryptTarget<#source>>::ContextInput>
-    ));
-    trait_impl(
-        input,
-        &generics,
-        quote!(#krate::target::EncryptFrom<#source>),
-        quote! {
-            type Context = #legacy;
-            fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
-                <Self as #krate::target::EncryptTarget<#source>>::encryption::<__K>().accepting::<Self::Context>()
-            }
-            fn indexes() -> ::std::vec::Vec<#krate::target::IndexSpec> {
-                <Self as #krate::target::EncryptTarget<#source>>::indexes()
-            }
-        },
-    )
 }

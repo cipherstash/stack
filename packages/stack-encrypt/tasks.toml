@@ -51,17 +51,6 @@ description = "Fuzz stack-encrypt's stored-record preflight against a model of i
 dir = "{{config_root}}/packages/stack-encrypt"
 run = "mise x --env test -- cargo +nightly fuzz run check_record --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
-# Fuzz fields-plan building (`FieldsBuilder::build`) over untrusted names
-# with structure-aware inputs: the context, field names, pinned identities
-# and verbs a binding takes from its caller. Building and rendering must
-# never panic, a sealed or indexed field that builds has a well-formed
-# `<context>/<identity>` label, and passthrough names, which are under no
-# label, are never refused for their text.
-["fuzz:plan-build"]
-description = "Fuzz stack-encrypt's fields-plan build over untrusted names (structure-aware, libFuzzer, nightly, 60s default)"
-dir = "{{config_root}}/packages/stack-encrypt"
-run = "mise x --env test -- cargo +nightly fuzz run plan_build --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
-
 # Fuzz the JSON index's wire decoders: a stored `json_tree` document and the
 # entries `->` and the walks return come back through them before anything is
 # authenticated. The base64 tags, the base85 ciphertexts (SIMD-decoded on

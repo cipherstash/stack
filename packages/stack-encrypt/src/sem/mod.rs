@@ -3,7 +3,7 @@
 //! Index terms are stored alongside a
 //! [`StackCipherText`](crate::StackCipherText) so encrypted values can be
 //! queried without decryption. Each term type implements
-//! [`EncryptFrom`](crate::EncryptFrom), so the usual entry point is
+//! [`EncryptTarget`](crate::EncryptTarget), so the usual entry point is
 //! target-directed:
 //!
 //! ```text
@@ -53,7 +53,7 @@
 //! [`HmacSha256Prf`] — keyed by the
 //! deterministic per-keyset [`IndexKey`](crate::kms::IndexKey) from
 //! [`kms::IndexKeySource`](crate::kms::IndexKeySource), loaded when the keyset is selected — so
-//! every derivation completes with no I/O and an [`EncryptFrom`](crate::EncryptFrom) term
+//! every derivation completes with no I/O and an [`EncryptTarget`](crate::EncryptTarget) term
 //! carries **no requests** in its [`Pending`]. That is the backend's
 //! property, not the API's: the term is a `Pending` either way. The next
 //! ZeroKMS release adds 2-party PRF generation; under
@@ -2158,8 +2158,8 @@ impl<K> KeysetCipher<'_, K> {
     /// or separator-only text, or text shorter than the n-gram length; see
     /// [`Tokenizer::Ngram`]) is the empty filter, which no query matches,
     /// so a short value can be stored. A query is the other type,
-    /// [`MatchQuery`], and comes from the query chain
-    /// (`cipher.query(op::Matches, ..)`), which refuses a query of such
+    /// [`MatchQuery`], and comes from a query
+    /// (a marker's `matches(..)`), which refuses a query of such
     /// text ([`TermError::EmptyTermText`]) because its filter would match
     /// every row; this method does not know which it is deriving and
     /// refuses nothing.

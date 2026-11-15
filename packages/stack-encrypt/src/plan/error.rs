@@ -3,14 +3,15 @@ use crate::op::Op;
 use crate::target::IndexSpec;
 use crate::LabelError;
 
-/// Why a plan was refused: when it was built, or when it was run against a
+/// Why a plan was refused: when it was parsed, or when it was run against a
 /// value, a stored record or a query that does not match it.
 ///
-/// Every refusal of a plan, at build or when it runs, is raised before any
-/// key is requested: a plan that does not hold up never reaches ZeroKMS.
-/// [`FieldValues::take`](super::FieldValues::take) reuses two of these
-/// ([`NotInValue`](Self::NotInValue), [`FieldType`](Self::FieldType)) for a
-/// record already in hand. Carried in [`Error::Plan`].
+/// Every refusal of a plan is raised before any key is requested: a plan
+/// that does not hold up never reaches ZeroKMS. Carried in [`Error::Plan`].
+///
+/// Some variants were raised only by the Rust plan builder, which is
+/// removed, so nothing raises them now. They stay because each has an error
+/// code that a binding's status table lists.
 ///
 /// [`Error::Plan`]: crate::Error::Plan
 ///
@@ -88,11 +89,11 @@ pub enum PlanError {
         /// The field.
         field: String,
     },
-    /// A field, or a one-value plan, names the same index twice.
+    /// A field, or a record of one value, names the same index twice.
     #[error("{at:?} names the {index} index twice")]
     #[diagnostic(code(stack_encrypt::plan_duplicate_index))]
     DuplicateIndex {
-        /// The field, or `the value` for a one-value plan.
+        /// The field, or `the value` for a typed declaration.
         at: String,
         /// The index named twice, as its key (`"eq"`, `"match"`, ...).
         index: &'static str,
@@ -142,10 +143,10 @@ pub enum PlanError {
         /// The field asked for.
         field: String,
     },
-    /// The chains given to one [`all`](crate::all) were started on
-    /// different ciphers. A batch settles through one client and resolves
-    /// every keyset it names there, so a chain from another cipher would
-    /// run under a keyset its own cipher never chose.
+    /// The operations given to one batch were started on different
+    /// ciphers. A batch settles through one client and resolves every keyset
+    /// it names there, so an operation from another cipher would run under a
+    /// keyset its own cipher never chose.
     #[error("the chains in one batch were started on different ciphers")]
     #[diagnostic(
         code(stack_encrypt::plan_mixed_ciphers),

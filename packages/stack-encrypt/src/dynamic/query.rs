@@ -1,7 +1,8 @@
 //! Queries named by operator, for a binding.
 //!
-//! A Rust caller names an operator as a type, `cipher.query(op::Matches,
-//! "ali").on(&plan)`, and the compiler finds the index that answers it. A
+//! A Rust caller queries a field through its marker,
+//! `EncryptedUser::NAME.matches("ali")`, and the compiler finds the index
+//! that answers the operator. A
 //! binding has no type to name: its plan arrives as data and its operator
 //! as a string. This module is the runtime form of that query, written once
 //! here rather than once per language binding:
@@ -37,8 +38,8 @@
 //! `between`) through an ORE index over an integer of 16 bits or wider, a
 //! float, text, a date, a timestamp or a decimal, else a block ORE index,
 //! else an OPE index. The typed
-//! path's default for an ordering is ORE, and block ORE and OPE are the
-//! typed path's `.via(OreBlock)` and `.via(Ope)`; here a field that
+//! path's field names its order term by type (`OreTerm`, `OreBlockTerm` or
+//! `OpeTerm`); here a field that
 //! declares only one of them is answered through it. Every order term is
 //! derived over the value's order key: a float's ties `-0.0` with
 //! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
@@ -699,8 +700,8 @@ fn not_a_range(field: &str) -> Error {
 }
 
 /// What a query of `input` through `index` is refused for before any term
-/// exists, and what it keeps: the `sem` module's rules, which the typed
-/// chain's [`Supports::prepare`](crate::op::Supports::prepare) applies to
+/// exists, and what it keeps: the `sem` module's rules, which a typed
+/// query's [`Supports::prepare`](crate::op::Supports::prepare) applies to
 /// the same effect. A binding asks at its boundary ([`check_query`]), and
 /// [`query_term`] and [`verify`] ask before they derive anything, so the
 /// three refuse exactly the same inputs. A match query keeps its tokens.
@@ -773,7 +774,7 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
-                // The query chain's rule, from the same function.
+                // The typed query's rule, from the same function.
                 (None, Physical::Text(text)) => Ok(crate::sem::query::match_tokens(text, options)
                     .map_err(|error| Error::Cipher(error.into()))),
                 _ => Err(None),
@@ -1034,7 +1035,22 @@ where
 ///
 /// ```
 /// use stack_encrypt::dynamic::{query_term, record, NoTargets, Op, Operand};
-/// use stack_encrypt::{op, AsProtectedRef, Ore, Plan, StackCipher};
+/// use stack_encrypt::sem::OreTerm;
+/// use stack_encrypt::target::EncryptTarget;
+/// use stack_encrypt::{AsProtectedRef, Encrypted, StackCipher};
+/// use zeroize::Zeroize;
+///
+/// #[derive(Zeroize)]
+/// struct User {
+///     age: u32,
+/// }
+///
+/// // The typed record that declares the same field.
+/// #[derive(EncryptTarget)]
+/// #[stash(struct = User, scope = "users")]
+/// struct EncryptedUser {
+///     age: Encrypted<OreTerm<u32>>,
+/// }
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
@@ -1051,9 +1067,8 @@ where
 ///
 /// let term = query_term(&keyset, &plan, "age", Op::Lt, 40u32, &NoTargets)?.await?;
 ///
-/// // The typed path's term for the same query.
-/// let typed_plan = Plan::context("users/age").with::<u32, _>(Ore).build()?;
-/// let typed = cipher.query(op::Lt, &40u32).on(&typed_plan).await?;
+/// // The typed query of the same field, from its marker, is the same term.
+/// let typed = EncryptedUser::AGE.lt(40u32).encrypt(&keyset).await?;
 /// assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
@@ -1386,10 +1401,21 @@ mod tests {
         )
     }
     use crate::dynamic::{record, NoTargets, TargetError};
-    use crate::op::{self, Probabilistic as _};
-    use crate::sem::MatchTerms;
-    use crate::{Equality, Label, Match, Ope, Ore, StackCipher};
+    use crate::marker::{Marker, Root};
+    use crate::op::Probabilistic as _;
+    use crate::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
+    use crate::{Label, StackCipher};
     use stack_kms::FakeDataKeySource;
+
+    /// The marker of the field `name` of a record with `scope = "users"`,
+    /// whose target is `T`, as the derive emits it. A typed query starts
+    /// from it, and derives under the label `users/<name>`, which is the
+    /// label the data plan of [`users`] gives the field.
+    fn marker<T>(name: &'static str) -> Marker<Root<()>, T> {
+        Marker::new(name, "users", name, || {
+            unreachable!("these tests do not read a marker's contexts")
+        })
+    }
 
     async fn cipher() -> StackCipher<FakeDataKeySource> {
         StackCipher::builder()
@@ -1619,13 +1645,9 @@ mod tests {
         let term = query(&keyset, "email", Op::Eq, text("bob@example.com"))
             .await
             .unwrap();
-        let plan = crate::Plan::context("users/email")
-            .with::<String, _>(Equality)
-            .build()
-            .unwrap();
-        let typed = cipher
-            .query(op::Eq, "bob@example.com")
-            .on(&plan)
+        let typed = marker::<EqualityTerm>("email")
+            .eq("bob@example.com")
+            .encrypt(&keyset)
             .await
             .unwrap();
         assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
@@ -1639,11 +1661,11 @@ mod tests {
     async fn an_ordering_derives_the_typed_paths_ore_term_and_reads_the_input_as_the_fields_kind() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = crate::Plan::context("users/age")
-            .with::<u32, _>(Ore)
-            .build()
+        let typed = marker::<OreTerm<u32>>("age")
+            .lt(40u32)
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Lt, &40u32).on(&plan).await.unwrap();
         for input in [Tree::UInt32(40), Tree::Float64(40.0), Tree::Int64(40)] {
             let term = query(&keyset, "age", Op::Lt, input).await.unwrap();
             assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
@@ -1655,13 +1677,9 @@ mod tests {
     async fn between_derives_both_bounds_under_one_context_as_the_typed_range() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = crate::Plan::context("users/age")
-            .with::<u32, _>(Ore)
-            .build()
-            .unwrap();
-        let typed = cipher
-            .query(op::Between, &(18u32, 65))
-            .on(&plan)
+        let typed = marker::<OreTerm<u32>>("age")
+            .between(18u32, 65)
+            .encrypt(&keyset)
             .await
             .unwrap();
         let term = query(
@@ -1688,14 +1706,9 @@ mod tests {
         .await;
         assert!(one.is_ok(), "(v, v) is one value: {one:?}");
 
-        let plan = crate::Plan::context("users/score")
-            .with::<i64, _>(Ope)
-            .build()
-            .unwrap();
-        let typed = cipher
-            .query(op::Between, &(-5i64, 5))
-            .via(Ope)
-            .on(&plan)
+        let typed = marker::<OpeTerm<i64>>("score")
+            .between(-5i64, 5)
+            .encrypt(&keyset)
             .await
             .unwrap();
         let term = query(
@@ -1724,11 +1737,11 @@ mod tests {
     async fn matches_derives_the_typed_paths_filter() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = crate::Plan::context("users/name")
-            .with::<String, _>(Match::default())
-            .build()
+        let typed = marker::<MatchTerms>("name")
+            .matches("alice")
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Matches, "alice").on(&plan).await.unwrap();
         let term = query(&keyset, "name", Op::Matches, text("alice"))
             .await
             .unwrap();
@@ -1858,11 +1871,12 @@ mod tests {
     #[tokio::test]
     async fn verify_answers_as_the_typed_match_query() {
         let cipher = cipher().await;
-        let plan = crate::Plan::context("users/name")
-            .with::<String, _>(Match::default())
-            .build()
+        let keyset = cipher.default_keyset();
+        let typed = marker::<MatchTerms>("name")
+            .matches("alice")
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Matches, "alice").on(&plan).await.unwrap();
         let page = ["Alice Smith", "alicia", "Bob", "MALICE", "", "ali ce"];
         let values: Vec<Tree> = page.iter().map(|v| text(v)).collect();
         let verified = verify(
@@ -2013,11 +2027,11 @@ mod tests {
     async fn target_limit_answers_as_the_typed_match_query() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = crate::Plan::context("users/name")
-            .with::<String, _>(Match::default())
-            .build()
+        let typed = marker::<MatchTerms>("name")
+            .matches("ali")
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Matches, "ali").on(&plan).await.unwrap();
         let term = query(&keyset, "name", Op::Matches, text("ali"))
             .await
             .unwrap();
@@ -2221,11 +2235,11 @@ mod tests {
             }
         };
 
-        let tiny = crate::Plan::context("users/tiny")
-            .with::<i16, _>(Ore)
-            .build()
+        let typed = marker::<OreTerm<i16>>("tiny")
+            .lt(-8i16)
+            .encrypt(&keyset)
+            .await
             .unwrap();
-        let typed = cipher.query(op::Lt, &-8i16).on(&tiny).await.unwrap();
         for input in [
             int(Int::I8(-8)),
             vf(&Tree::Int64(-8)),
@@ -2240,14 +2254,9 @@ mod tests {
             "70000 is no int16: {refused:?}"
         );
 
-        let huge = crate::Plan::context("users/huge")
-            .with::<i128, _>(Ope)
-            .build()
-            .unwrap();
-        let typed = cipher
-            .query(op::Between, &(i128::MIN, i128::MAX))
-            .via(Ope)
-            .on(&huge)
+        let typed = marker::<OpeTerm<i128>>("huge")
+            .between(i128::MIN, i128::MAX)
+            .encrypt(&keyset)
             .await
             .unwrap();
         let bounds = ValueFrame::of(vec![

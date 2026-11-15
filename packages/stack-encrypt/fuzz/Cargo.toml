@@ -21,8 +21,8 @@ vitaminc-protected = "0.10.0"
 # The sinks the record harness writes its plans and passthroughs through.
 vitaminc-aead = "0.10.0"
 libfuzzer-sys = "0.4"
-# Structure-aware inputs for `check_record` and `plan_build`: the mirror
-# types derive `Arbitrary`, so the fuzzer mutates trees and plans, not bytes.
+# Structure-aware inputs for `check_record`: the mirror types derive
+# `Arbitrary`, so the fuzzer mutates trees and plans, not bytes.
 arbitrary = { version = "1", features = ["derive"] }
 # The fixed leaf the record harness fills its sealed nodes with.
 uuid = "1.8"
@@ -58,12 +58,6 @@ test = false
 doc = false
 bench = false
 
-[[bin]]
-name = "plan_build"
-path = "fuzz_targets/plan_build.rs"
-test = false
-doc = false
-bench = false
 
 [[bin]]
 name = "json_wire_decode"

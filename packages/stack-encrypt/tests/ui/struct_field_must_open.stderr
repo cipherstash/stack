@@ -1,13 +1,35 @@
-error[E0277]: the trait bound `Name: FromScalar` is not satisfied
-  --> tests/ui/struct_field_must_open.rs:45:11
+error[E0277]: the trait bound `Opaque: DecryptField<_, CallerContext>` is not satisfied
+  --> tests/ui/struct_field_must_open.rs:54:10
    |
-45 |     name: StackCipherText,
+54 |     bio: Opaque,
+   |          ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `DecryptField<_, CallerContext>` is not implemented for `Opaque`
+  --> tests/ui/struct_field_must_open.rs:39:1
+   |
+39 | struct Opaque(#[allow(dead_code)] StackCipherText);
+   | ^^^^^^^^^^^^^
+   = help: the following other types implement trait `DecryptField<P, Ctx>`:
+             `CipherText<SealedValue, PassthroughFrame>` implements `DecryptField<P, Ctx>`
+             `Encrypted<Terms>` implements `DecryptField<P, Ctx>`
+             `EncryptedProfile` implements `DecryptField<__P, __Ctx>`
+             `EqualityTerm` implements `DecryptField<P, Ctx>`
+             `JsonDocument` implements `DecryptField<P, Ctx>`
+             `JsonExtracted` implements `DecryptField<P, Ctx>`
+             `JsonSubtree` implements `DecryptField<P, Ctx>`
+             `MatchTerms<O>` implements `DecryptField<P, Ctx>`
+           and $N others
+
+error[E0277]: the trait bound `Name: FromScalar` is not satisfied
+  --> tests/ui/struct_field_must_open.rs:53:11
+   |
+53 |     name: StackCipherText,
    |           ^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `FromScalar` is not implemented for `Name`
-  --> tests/ui/struct_field_must_open.rs:13:1
+  --> tests/ui/struct_field_must_open.rs:15:1
    |
-13 | struct Name(&'static str);
+15 | struct Name(&'static str);
    | ^^^^^^^^^^^
    = help: the following other types implement trait `FromScalar`:
              JsonPlaintext
@@ -20,43 +42,5 @@ help: the trait `FromScalar` is not implemented for `Name`
              i16
            and $N others
    = note: required for `Name` to implement `Decrypt`
-   = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `DecryptInto<Name>`
+   = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `DecryptSource<Name>`
    = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `DecryptField<Name, CallerContext>`
-note: required by a bound in `FieldsBuilder::<S, K>::encrypt_into`
-  --> src/plan/build.rs
-   |
-   |     pub fn encrypt_into<T, F>(self, field: impl FieldRef<S, F>) -> Self
-   |            ------------ required by a bound in this associated function
-...
-   |         T: EncryptFrom<F> + Decryptable + DecryptField<F, CallerContext> + Send,
-   |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `FieldsBuilder::<S, K>::encrypt_into`
-
-error[E0277]: the trait bound `Opaque: DecryptField<std::string::String, CallerContext>` is not satisfied
-  --> tests/ui/struct_field_must_open.rs:46:10
-   |
-46 |     bio: Opaque,
-   |          ^^^^^^ unsatisfied trait bound
-   |
-help: the trait `DecryptField<std::string::String, CallerContext>` is not implemented for `Opaque`
-  --> tests/ui/struct_field_must_open.rs:31:1
-   |
-31 | struct Opaque(#[allow(dead_code)] StackCipherText);
-   | ^^^^^^^^^^^^^
-   = help: the following other types implement trait `DecryptField<P, Ctx>`:
-             `(A, B)` implements `DecryptField<P, Ctx>`
-             `(A, B, C)` implements `DecryptField<P, Ctx>`
-             `(A, B, C, D)` implements `DecryptField<P, Ctx>`
-             `(A, B, C, D, E)` implements `DecryptField<P, Ctx>`
-             `CipherText<SealedValue, PassthroughFrame>` implements `DecryptField<P, Ctx>`
-             `Encrypted<Terms>` implements `DecryptField<P, Ctx>`
-             `EqualityTerm` implements `DecryptField<P, Ctx>`
-             `JsonDocument` implements `DecryptField<P, Ctx>`
-           and $N others
-note: required by a bound in `FieldsBuilder::<S, K>::encrypt_into`
-  --> src/plan/build.rs
-   |
-   |     pub fn encrypt_into<T, F>(self, field: impl FieldRef<S, F>) -> Self
-   |            ------------ required by a bound in this associated function
-...
-   |         T: EncryptFrom<F> + Decryptable + DecryptField<F, CallerContext> + Send,
-   |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `FieldsBuilder::<S, K>::encrypt_into`

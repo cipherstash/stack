@@ -431,7 +431,7 @@ pub unsafe extern "C" fn se_term(
 }
 
 /// Encrypt a record (or a batch) per a plan under the keyset `opts` selects
-/// — the runtime form of `#[derive(EncryptFrom)]`; see
+/// — the runtime form of `#[derive(EncryptTarget)]`; see
 /// [`ops::encrypt_record`] for the source, plan, and result encodings. All
 /// rows and fields seal from **one** batched key request regardless of row
 /// count — dispatched as one `generate-data-key` call per 500 keyed leaves,

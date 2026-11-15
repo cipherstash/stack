@@ -4,10 +4,11 @@
 //!
 //! The JSON index's tests ([`json_index`]) cover sealing under either root
 //! option, opening a document whole, a subtree read, an extraction and the
-//! containment and equality needles. One thing they leave out: the path a
-//! caller hands `AtPath` as an owned `String` is cloned by the query
-//! builder and dropped by the plan chain unwiped, since the chain only knows
-//! `P: AsRef<str>`; the test passes a `&'static str`.
+//! containment and equality needles. A needle is derived as a binding
+//! derives it, through a data plan: the needle's text and the path of an
+//! equality are the input's, and both carry the marker. The engine parses
+//! them into a document and a path of its own and wipes each, so the path
+//! is held to the rule as the needle is.
 //!
 //! This binary installs its own global allocator: a spy that, while a test
 //! watches its own thread, scans every block freed on that thread for a
@@ -563,28 +564,57 @@ fn a_query_term_leaves_no_plaintext_on_the_heap() {
     }
 }
 
-/// The typed chain prepares an equality query before any key is requested
-/// by normalizing a copy of the value (`Supports<Eq, S>` is `S: Clone`).
-/// The copy is wiped as it is read, so nothing of the query reaches freed
-/// memory. A typed `Matches` query is not watched here: `matching` views
-/// its owned text and drops it unwiped, which #1593 tracks.
+/// A record with one field that answers equality, for the marker query
+/// below: `EncryptedAccount::EMAIL`, under `users/email`.
+#[derive(Clone, zeroize::Zeroize)]
+struct Account {
+    email: String,
+}
+
+#[derive(stack_encrypt::target::EncryptTarget)]
+#[stash(struct = Account, scope = "users")]
+struct EncryptedAccount {
+    email: stack_encrypt::Encrypted<stack_encrypt::sem::EqualityTerm>,
+}
+
+/// A query from a field's marker copies the value it is handed by
+/// reference and owns the copy. The equality index prepares the query
+/// before any key is requested, by normalizing a copy of its own, and then
+/// derives the term from the marker's. Each copy is wiped, so nothing of
+/// the query reaches freed memory. A `matches` query from a marker is not
+/// watched here: `matching` views the copy the marker hands it and drops
+/// it unwiped, which is a known gap in the engine.
 #[test]
 fn a_typed_query_leaves_no_plaintext_on_the_heap() {
-    use stack_encrypt::{op, Equality, Plan};
+    use stack_encrypt::EncryptInto;
     let rt = runtime();
     let cipher = rt.block_on(common::stack_cipher());
-    let plan = Plan::context("users/email")
-        .with::<String, _>(Equality)
-        .build()
+    let keyset = cipher.default_keyset();
+    // A stored record, sealed before the watch, to hold the query to.
+    let account = Account {
+        email: marked("query"),
+    };
+    let stored: EncryptedAccount = rt
+        .block_on(async { account.encrypt_into(&keyset).await })
         .unwrap();
-    // The caller's own value stays alive across the watch: the chain works
+    // The caller's own value stays alive across the watch: the marker works
     // on its copy, and what the test owns is the test's residue, not the
     // engine's.
     let query = marked("query");
-    watched("typed query (Eq)", || {
-        rt.block_on(async { cipher.query(op::Eq, &query).on(&plan).await.unwrap() });
+    let term = watched("marker query (Eq)", || {
+        rt.block_on(async {
+            EncryptedAccount::EMAIL
+                .eq(&query)
+                .encrypt(&keyset)
+                .await
+                .unwrap()
+        })
     });
     drop(query);
+    assert_eq!(
+        term, stored.email.terms,
+        "the watched query derived the term the field stores"
+    );
 }
 
 /// An order term takes its plaintext by value, so the engine owns the
@@ -1649,10 +1679,10 @@ mod json_index {
 
     use serde_json::{json, Value};
     use stack_encrypt::json::{
-        JsonDocument, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree,
+        JsonDocument, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonQuery,
     };
     use stack_encrypt::target::{json_document, AeadContext, Borrowed, CallerContext};
-    use stack_encrypt::{op, Plan, StackCipher};
+    use stack_encrypt::{DecryptFrom, StackCipher};
     use stack_kms::{
         DataKey, DataKeySource, DataKeyWithTag, DeterministicSource, GenerateKeyPayload,
         IdentifiedBy, IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
@@ -1784,10 +1814,14 @@ mod json_index {
         let value = document();
         for sealed_root in [true, false] {
             let doc = sealed(&rt, &cipher, &value, sealed_root);
-            let opened: Value = watched(&format!("open (sealed_root: {sealed_root})"), || {
-                rt.block_on(async { cipher.decrypt_as(doc.clone(), aead()).await.unwrap() })
+            let opened = watched(&format!("open (sealed_root: {sealed_root})"), || {
+                rt.block_on(async {
+                    JsonPlaintext::decrypt_from_with_context(doc.clone(), &cipher, aead())
+                        .await
+                        .unwrap()
+                })
             });
-            assert_eq!(opened, value);
+            assert_eq!(opened.value(), &value);
         }
         *KEY.lock().unwrap() = None;
     }
@@ -1823,18 +1857,17 @@ mod json_index {
                 })
                 .collect();
             let read = key.open(rows);
-            let opened: Value = watched(
+            let opened = watched(
                 &format!("subtree read (sealed_root: {sealed_root})"),
                 || {
                     rt.block_on(async {
-                        cipher
-                            .decrypt_as::<Value, JsonSubtree>(read, aead())
+                        JsonPlaintext::decrypt_from_with_context(read, &cipher, aead())
                             .await
                             .unwrap()
                     })
                 },
             );
-            assert_eq!(opened, json!(marked("short")));
+            assert_eq!(opened.value(), &json!(marked("short")));
             let selector = rt
                 .block_on(async {
                     keyset
@@ -1844,15 +1877,14 @@ mod json_index {
                 .unwrap();
             let (j, _) = doc.find(&key.token_bytes()[0]).unwrap();
             let node = selector.open(doc.node(j).unwrap());
-            let opened: Value = watched(&format!("-> (sealed_root: {sealed_root})"), || {
+            let opened = watched(&format!("-> (sealed_root: {sealed_root})"), || {
                 rt.block_on(async {
-                    cipher
-                        .decrypt_as::<Value, stack_encrypt::json::JsonExtracted>(node, aead())
+                    JsonPlaintext::decrypt_from_with_context(node, &cipher, aead())
                         .await
                         .unwrap()
                 })
             });
-            assert_eq!(opened, json!(marked("short")));
+            assert_eq!(opened.value(), &json!(marked("short")));
         }
         *KEY.lock().unwrap() = None;
     }
@@ -1861,32 +1893,53 @@ mod json_index {
     fn a_containment_needle_leaves_no_plaintext_on_the_heap() {
         let rt = runtime();
         let cipher = rt.block_on(cipher());
-        let plan = Plan::value::<Value>()
-            .context("users/profile")
-            .encrypt_into::<JsonDocument>()
-            .build()
-            .unwrap();
-        let needle = document();
-        let query: JsonQuery = watched("Contains needle", || {
-            rt.block_on(async { cipher.query(op::Contains, &needle).on(&plan).await.unwrap() })
+        let keyset = cipher.default_keyset();
+        // The field as a binding's plan names it, under the index's default
+        // options.
+        let wire = json!({
+            "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                        "target": "JsonSearch"}
         });
-        drop(query);
-        // The path is a `&'static str`: an owned path `String` is cloned by
-        // the query builder and dropped by the plan chain, and the chain's
-        // `P: AsRef<str>` cannot wipe it (see the module's JSON notes).
-        let path: &'static str =
-            Box::leak(format!("$[\"{}\"].inner", marked("key")).into_boxed_str());
-        let at = (path, marked("short"));
-        let query: JsonQuery = watched("AtPath(Eq) needle", || {
-            rt.block_on(async {
-                cipher
-                    .query(op::AtPath(op::Eq), &at)
-                    .on(&plan)
-                    .await
-                    .unwrap()
-            })
-        });
-        drop(query);
+        let plan = record::plan_with(
+            stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+                .unwrap()
+                .as_protected_ref(),
+            &Documents,
+        )
+        .unwrap();
+        // The needle's text, the path and the value at it are the test's
+        // input, built and framed before the watch and alive across it. The
+        // path names the marked key, in quotes, and is an owned string.
+        let needle = document().to_string();
+        let path = format!("$[\"{}\"].inner", marked("key"));
+        let short = json!(marked("short")).to_string();
+        let inputs = [
+            (Op::Contains, object(vec![("json", frame(needle.as_str()))])),
+            (
+                Op::EqAt,
+                object(vec![
+                    ("path", frame(path.as_str())),
+                    ("json", frame(short.as_str())),
+                ]),
+            ),
+        ];
+        for (operator, input) in &inputs {
+            let term = watched(&format!("{operator:?} needle"), || {
+                rt.block_on(async {
+                    query_term(&keyset, &plan, "profile", *operator, input, &Documents)
+                        .expect("a document operator")
+                        .await
+                        .expect("its needle")
+                })
+            });
+            // The operand is the needle the database is sent.
+            let stack_encrypt::dynamic::Operand::One(operand) = term.operand() else {
+                panic!("{operator:?}: one operand")
+            };
+            let query: JsonQuery = serde_json::from_slice(operand).expect("a needle");
+            drop(query);
+        }
+        drop((needle, path, short));
     }
 
     /// A document field's operators through the data plan

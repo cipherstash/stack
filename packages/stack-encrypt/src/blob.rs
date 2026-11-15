@@ -56,8 +56,8 @@
 //! A blob is opaque. You cannot query anything inside it, and you decrypt
 //! all of it or none of it. Use something else for these needs:
 //!
-//! - To encrypt each field of a struct as its own ciphertext, use the
-//!   structural API ([`KeysetCipher::encrypt_tree`] and the derives).
+//! - To encrypt each field of a struct as its own ciphertext, use a
+//!   derived record, or [`KeysetCipher::encrypt_tree`].
 //! - To encrypt many values in one request, use a batch
 //!   ([`Pending::all`](crate::Pending::all)) or a collection (see
 //!   [Collections](#collections)).

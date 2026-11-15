@@ -32,10 +32,10 @@
 //!   only at run time, and the value model it holds.
 //! * [`term`](term()) — one index term for a value, derived at the one
 //!   scalar it is walked to.
-//! * [`record`] — a fields plan spelled as data, *lowered* into the plan
-//!   builder ([`Plan`](crate::Plan)) and run by the engine: the same code a
-//!   Rust chain and the derive run, so a record written from any language
-//!   is the same bytes. The one step that stays dynamic is
+//! * [`record`] — a record's declaration as data, *lowered* into the
+//!   combinators in [`target`](crate::target) and run by the engine: the
+//!   same combinators the derive composes, so a record written from any
+//!   language is the same bytes. The one step that stays dynamic is
 //!   dispatching a value whose type is known only at run time to the typed
 //!   term operation, which [`IndexSpec`]'s `Index` impls do.
 //! * [`read_json`] and [`json_frame`] — a `json` field's document, from
@@ -61,7 +61,8 @@
 //! implements `Encrypt` already, so `keyset.encrypt_tree(value, aad)` is the whole
 //! of it and needs nothing from this module. Nor is a second executor: nothing here calls
 //! the term functions or the seal path to produce a record. A capability a
-//! data plan needs and the builder lacks is added to the builder, once.
+//! data plan needs and the combinators lack is added to the combinators,
+//! once.
 //!
 //! # Stability
 //!
@@ -211,8 +212,8 @@ pub enum Error {
     /// missing or duplicating an output, carrying a key that is not
     /// `"context"`, `"outputs"`, `"target"` or `"type"`, naming a type that
     /// is not one, asking for an index its declared type is not defined
-    /// for, giving a field a context that is not a label a fields plan can
-    /// seal it under, or declaring what the plan builder refuses (two fields
+    /// for, giving a field a context that is not a label a plan can
+    /// seal it under, or declaring what no plan allows (two fields
     /// under one identity, fields under different contexts).
     #[error("record plan is malformed: {reason}{}", in_field_text(field))]
     #[diagnostic(code(stack_encrypt::dynamic_plan))]

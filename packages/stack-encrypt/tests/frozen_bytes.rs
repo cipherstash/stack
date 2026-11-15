@@ -26,7 +26,7 @@ use stack_encrypt::sem::{
     DefaultMatch, EqualityTerm, MatchTerms, OpeTerm, OreTerm, TermBytesError,
 };
 
-use stack_encrypt::{CipherText, Error, LeafBytesError, SealedValue, StackCipher};
+use stack_encrypt::{CipherText, EncryptInto, Error, LeafBytesError, SealedValue, StackCipher};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
     IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
@@ -459,8 +459,8 @@ fn match_term_from_bytes_rejects_positions_outside_the_filter() {
 async fn ore_term_encoding_is_the_raw_cllw_bytes() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let term: OreTerm<u32> = keyset
-        .encrypt_as(&42u32, nonempty!("users/age").into())
+    let term: OreTerm<u32> = 42u32
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .expect("ore term");
 
@@ -489,8 +489,8 @@ async fn ore_term_encoding_is_the_raw_cllw_bytes() {
 async fn ope_term_encoding_is_the_raw_cllw_bytes() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let term: OpeTerm<u32> = keyset
-        .encrypt_as(&42u32, nonempty!("users/age").into())
+    let term: OpeTerm<u32> = 42u32
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .expect("ope term");
 
@@ -535,8 +535,9 @@ async fn variable_length_ore_and_ope_terms_decode() {
     // byte. The decode path is the length-validating TryFrom in clww-ore.
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let ore: OreTerm<String> = keyset
-        .encrypt_as(&"alice".to_string(), nonempty!("users/name").into())
+    let ore: OreTerm<String> = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .expect("ore term");
     assert_eq!(ore.as_bytes().len(), 6 * 8);
@@ -549,8 +550,9 @@ async fn variable_length_ore_and_ope_terms_decode() {
         Err(TermBytesError::MalformedCllwCiphertext(6 * 8 - 1))
     );
 
-    let ope: OpeTerm<String> = keyset
-        .encrypt_as(&"alice".to_string(), nonempty!("users/name").into())
+    let ope: OpeTerm<String> = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .expect("ope term");
     assert_eq!(ope.as_bytes().len(), 6 * 8 + 1);

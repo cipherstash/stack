@@ -3,14 +3,18 @@
 mod common;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::transcode::{MapReader, Reader, SequenceReader, Transcode, Visitor};
-use stack_encrypt::target::{self, CallerContext};
+use stack_encrypt::target::{
+    self, AcceptsContext, AeadContext, Borrowed, DecryptSource, EncryptTarget, NoCallerContext,
+    RequiredContext,
+};
 use stack_encrypt::{
-    nonempty, CipherText, ContextPiece, DecryptField, DecryptInto, Decryptable, Decryption,
-    Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, PassthroughFrame,
+    nonempty, CipherText, ContextPiece, DecryptField, DecryptFrom, Decryptable, Decryption,
+    Encrypt, EncryptInto, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, PassthroughFrame,
     SealedValue, StackCipherText,
 };
 use std::sync::atomic::Ordering;
 use vitaminc_aead::plaintext::Sink;
+use zeroize::Zeroize;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Identifier {
@@ -51,38 +55,42 @@ impl Transcode for StoredLeaf {
         LeafVisitor
     }
 }
-impl<S: Encrypt + Clone> EncryptFrom<S> for StoredLeaf {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+// A ciphertext alone: it seals, and derives no term, so it requires the AEAD
+// context, as the canonical `StackCipherText` does.
+impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for StoredLeaf {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
         S: 's,
     {
-        target::ciphertext().accepting().transcode()
+        target::ciphertext().transcode().accepting()
     }
 }
-impl<P: stack_encrypt::Decrypt + Send + 'static> DecryptInto<P> for StoredLeaf {
-    type Context = CallerContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
+impl<P: stack_encrypt::Decrypt + Zeroize + Send + 'static> DecryptSource<P> for StoredLeaf {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<P, K> {
         match SealedValue::from_bytes(&self.0) {
-            Ok(leaf) => target::open(CipherText::Single(leaf), context),
+            Ok(leaf) => target::open(CipherText::Single(leaf), context.into_inner()),
             Err(error) => Decryption::failed(Error::Other(Box::new(error))),
         }
     }
 }
+// What makes the leaf a field of a derived record: it says that it holds
+// ciphertext, and it opens under the context the record hands its fields.
 impl Decryptable for StoredLeaf {
     const DECRYPTABLE: bool = true;
 }
-impl<P, Ctx> DecryptField<P, Ctx> for StoredLeaf
+impl<P: Zeroize + 'static, Ctx> DecryptField<P, Ctx> for StoredLeaf
 where
-    Self: DecryptInto<P>,
-    Ctx: Into<<Self as DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, ctx: Ctx) -> Option<Decryption<P, K>> {
         Some(self.decryption(ctx.into()))
     }
 }
 
-#[derive(EncryptFrom, DecryptInto)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String)]
 struct TextEq {
     #[stash(context_field)]
@@ -106,8 +114,9 @@ async fn stored_identifier_supplies_every_operations_context() {
     let (cipher, generates, _) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
-    let record: TextEq = keyset
-        .encrypt_as(&email, Identifier::email())
+    let record: TextEq = email
+        .clone()
+        .encrypt_into_with_context(&keyset, Identifier::email())
         .await
         .unwrap();
     assert_eq!(
@@ -162,7 +171,7 @@ async fn canonical_ciphertext_opens_through_the_record() {
         hm: probe,
         v: 3,
     };
-    let opened: String = cipher.decrypt_as(record, ().into()).await.unwrap();
+    let opened: String = String::decrypt_from(record, &cipher).await.unwrap();
     assert_eq!(
         opened, email,
         "a record assembled from canonical output opens under its stored identifier"
@@ -174,14 +183,13 @@ async fn expected_identifier_is_checked_before_any_key_is_retrieved() {
     let (cipher, _, retrieves) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
-    let record: TextEq = keyset
-        .encrypt_as(&email, Identifier::email())
+    let record: TextEq = email
+        .clone()
+        .encrypt_into_with_context(&keyset, Identifier::email())
         .await
         .unwrap();
     let before = retrieves.load(Ordering::SeqCst);
-    let result = cipher
-        .decrypt_as::<String, _>(record, other_column().into())
-        .await;
+    let result = String::decrypt_from_with_context(record, &cipher, other_column()).await;
     assert!(
         matches!(result, Err(Error::ContextMismatch { .. })),
         "a stored identifier that differs from the expected one is a mismatch, got {result:?}"
@@ -198,15 +206,14 @@ async fn empty_stored_identifier_is_refused_before_any_key_is_retrieved() {
     let (cipher, _, retrieves) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
-    let mut record: TextEq = keyset
-        .encrypt_as(&email, Identifier::email())
+    let mut record: TextEq = email
+        .clone()
+        .encrypt_into_with_context(&keyset, Identifier::email())
         .await
         .unwrap();
     record.i.column.clear();
     let before = retrieves.load(Ordering::SeqCst);
-    let result = cipher
-        .decrypt_as::<String, _>(record, Default::default())
-        .await;
+    let result = String::decrypt_from(record, &cipher).await;
     assert!(
         result.is_err(),
         "a stored identifier is data, not a proof: an empty one fails validation"
@@ -220,6 +227,11 @@ async fn empty_stored_identifier_is_refused_before_any_key_is_retrieved() {
 
 #[derive(Clone)]
 struct WithoutSerde(String);
+impl Zeroize for WithoutSerde {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
 impl Encrypt for WithoutSerde {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.0.visit(sink)
@@ -234,8 +246,8 @@ impl Encrypt for &WithoutSerde {
 async fn ciphertext_uses_plaintexts_native_contract_without_serde() {
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();
-    let result: StoredLeaf = keyset
-        .encrypt_as(&WithoutSerde("native".into()), nonempty!("value").into())
+    let result: StoredLeaf = WithoutSerde("native".into())
+        .encrypt_into_with_context(&keyset, nonempty!("value"))
         .await
         .unwrap();
     let opened: String = cipher
@@ -250,8 +262,14 @@ async fn ciphertext_uses_plaintexts_native_contract_without_serde() {
         "a plaintext without Serde seals through its own Plaintext impl and opens canonically"
     );
     let text = String::from("borrowed");
+    // A `&str` is not `Zeroize`, so it is not the source of a target. The
+    // operation the target is built on still seals one, run directly.
     let result: StoredLeaf = keyset
-        .encrypt_as(&text.as_str(), nonempty!("value").into())
+        .run(
+            target::ciphertext::<&str, _, Borrowed>().transcode(),
+            &text.as_str(),
+            AeadContext::from(nonempty!("value")),
+        )
         .await
         .unwrap();
     let opened: String = cipher
@@ -269,8 +287,8 @@ async fn scalar_destination_refuses_a_sequence() {
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();
     // A scalar destination must refuse a sequence rather than flatten or serialize it.
-    let result = keyset
-        .encrypt_as::<_, StoredLeaf>(&vec![1u32, 2], nonempty!("value").into())
+    let result = vec![1u32, 2]
+        .encrypt_into_with_context::<StoredLeaf, _>(&keyset, nonempty!("value"))
         .await;
     assert!(
         matches!(result, Err(Error::UnsupportedShape)),
@@ -280,16 +298,16 @@ async fn scalar_destination_refuses_a_sequence() {
 }
 
 // A target whose declaration carries every context it needs asks its caller
-// for none: `Context = ()`.
+// for none: `ContextInput = NoCallerContext`.
 struct FixedLeaf(StoredLeaf);
-impl<S: Encrypt + Clone> EncryptFrom<S> for FixedLeaf {
-    type Context = ();
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for FixedLeaf {
+    type ContextInput = NoCallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
         S: 's,
     {
-        // The declaration names its own context with `under`; `()` then
-        // satisfies the `DeclaredContext` that leaves.
+        // The declaration names its own context with `under`; no caller
+        // context then satisfies the `DeclaredContext` that leaves.
         target::ciphertext()
             .transcode()
             .map(Self)
@@ -297,19 +315,20 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for FixedLeaf {
             .accepting()
     }
 }
-impl<P: stack_encrypt::Decrypt + Send + 'static> DecryptInto<P> for FixedLeaf {
-    type Context = ();
-    fn decryption<K: 'static>(self, (): ()) -> Decryption<P, K> {
-        self.0.decryption(nonempty!("fixed/leaf").into())
+impl<P: stack_encrypt::Decrypt + Zeroize + Send + 'static> DecryptSource<P> for FixedLeaf {
+    type ContextInput = NoCallerContext;
+    fn decryption<K: 'static>(self, _: NoCallerContext) -> Decryption<P, K> {
+        self.0
+            .decryption(RequiredContext::supplied(nonempty!("fixed/leaf").into()))
     }
 }
 
 #[tokio::test]
-async fn unit_context_target_supplies_its_own_context() {
+async fn a_target_that_takes_no_caller_context_supplies_its_own() {
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();
     let text = String::from("fixed");
-    let stored: FixedLeaf = keyset.encrypt_as(&text, ()).await.unwrap();
+    let stored: FixedLeaf = text.clone().encrypt_into(&keyset).await.unwrap();
     let opened: String = cipher
         .decrypt(
             CipherText::Single(SealedValue::from_bytes(&stored.0 .0).unwrap()),
@@ -321,8 +340,8 @@ async fn unit_context_target_supplies_its_own_context() {
         opened, text,
         "the leaf was sealed under the context the declaration named, not one the caller gave"
     );
-    let stored: FixedLeaf = keyset.encrypt_as(&text, ()).await.unwrap();
-    let opened: String = cipher.decrypt_as(stored, ()).await.unwrap();
+    let stored: FixedLeaf = text.clone().encrypt_into(&keyset).await.unwrap();
+    let opened: String = String::decrypt_from(stored, &cipher).await.unwrap();
     assert_eq!(
         opened, text,
         "and it opens back through the declaration alone"

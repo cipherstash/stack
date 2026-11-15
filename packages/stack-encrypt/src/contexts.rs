@@ -19,7 +19,7 @@
 //!   It lists the contexts of each field of a declaration. A part the caller
 //!   supplies when the declaration runs appears as a typed
 //!   [`Placeholder`]. The derives emit `contexts()` on every record, and a
-//!   [`Plan`](crate::Plan) has it too.
+//!   plan that is data (`dynamic::record::Plan`) has it too.
 //! - [`CallContexts`], from [`Pending::context`](crate::Pending::context).
 //!   It lists the exact contexts a prepared call will use, with the caller's
 //!   values filled in. No key has been requested yet.
@@ -743,8 +743,8 @@ impl CallerShape {
 /// What the caller supplies to a declaration whose context input is this
 /// type: the placeholders that stand for its parts in [`Contexts`].
 ///
-/// Implemented for the context inputs of the crate. The derives and the
-/// plan builder use it to render the root of a declaration. Sealed: a
+/// Implemented for the context inputs of the crate. The derives use it to
+/// render the root of a declaration. Sealed: a
 /// context input is one of this crate's types.
 pub trait SuppliedContext: sealed::Sealed {
     /// The placeholders for the caller's parts.
@@ -953,8 +953,9 @@ pub(crate) enum Shape {
     /// `own`, extended by `by`: what `DeclaredContext::under` and
     /// `Extends::extend` build.
     Under { own: Box<Shape>, by: Box<Shape> },
-    /// A list of parts, some of them not known yet: a label the call names
-    /// joined to a field's identity.
+    /// A list of parts, some of them not known yet: a label a field of the
+    /// record holds, joined to a field's identity.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     List(Vec<Shape>),
     /// Known caller parts, applied one after another: what a data plan
     /// carries as its extension and its bindings.
@@ -1039,6 +1040,7 @@ impl Shape {
     /// The shape of a subtree run under a label that is not known yet,
     /// joined to `identity` when the field has one, and extended by the
     /// context the subtree is handed.
+    #[cfg(any(test, feature = "dynamic"))]
     pub(crate) fn under_label(placeholder: Placeholder, identity: Option<&str>) -> Shape {
         let own = match identity {
             None => Shape::Placeholder(placeholder),

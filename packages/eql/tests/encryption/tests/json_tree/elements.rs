@@ -22,7 +22,6 @@
 //!   included.
 
 use super::*;
-use stack_encrypt::AsProtectedRef as _;
 
 use eql_bindings::encryption::EqlTargets;
 use stack_encrypt::dynamic::{self, record, Op, Operand, ValueFrame};

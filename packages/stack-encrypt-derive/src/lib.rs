@@ -8,12 +8,6 @@
 //! - `Protected::<P>::decrypt_from(record, &cipher)` decrypts the record into
 //!   a `Protected`, which wipes the plaintext when it is dropped.
 //!
-//! `EncryptFrom<P>` and `DecryptInto<P>` are an older pair of derives over a
-//! borrowed plaintext. They take the same attributes. Plans and the dynamic
-//! engine still use them. The older pair will be removed once plans and the
-//! dynamic engine use the new pair (#1488). See
-//! [Owned records](#owned-records).
-//!
 //! The generated code describes the encryption. Stack Encrypt runs it. The
 //! generated code is never given a cipher.
 //!
@@ -167,52 +161,42 @@
 //!
 //! Ciphertext and term operations compose before awaiting, preserving batched
 //! key requests. Terms alone need only their respective PRF or ordering trait.
-//! Query-only targets derive `EncryptFrom` alone.
+//! A record of terms alone, such as a query value, derives `EncryptTarget`
+//! alone.
 //!
-//! # The record's plan
+//! # What the derives emit
 //!
-//! `#[derive(EncryptFrom)]` emits the record's plan, `Record::plan()`, and
-//! its `EncryptFrom::encryption()` runs that plan and maps the outputs into
-//! the struct. On the encrypt side the derive names plan verbs and nothing
-//! beneath them, so a derived record and the same plan written by hand
-//! cannot drift apart (see `stack_encrypt::plan`, "The derive emits a plan",
-//! for a worked example):
+//! `#[derive(EncryptTarget)]` composes the declarations of the record's
+//! fields, from the combinators in `stack_encrypt::target`:
 //!
-//! - a `struct = User, scope = "users"` record emits
-//!   `Plan::context("users").fields()` with
-//!   `.encrypt_into::<FieldType, _>(pick("field", |u: &User| &u.field))` per
-//!   derived field, and `.identity("..")` where one is pinned;
-//! - a `plaintext = T` record emits
-//!   `Plan::value::<T>().encrypt_into::<(A, B, ..)>()` over the derived
-//!   fields' types, with no context of its own (every output shares the
-//!   caller's), plus `.context_field::<C>()` when a field stores the context.
-//!   Its `EncryptFrom::indexes()` is the outputs' indexes, so a derived
-//!   record used as a plan field answers the queries its terms support.
+//! - A `struct = User, scope = "users"` record runs each field's own target
+//!   over the plaintext field it is derived from, under the field's
+//!   context: `("users", "<field>")`, or `("users", "<identity>")` where
+//!   `identity = ".."` names another segment.
+//! - A `plaintext = T` record runs every field's target over the whole
+//!   value, under the one context the caller supplies. With a
+//!   `#[stash(context_field)]`, the record stores that context. Its
+//!   `EncryptTarget::indexes()` is the fields' indexes.
 //!
-//! A plan seals and opens each field, so every field type of a `struct`
-//! record implements `DecryptField<F, CallerContext>` for the plaintext
-//! field `F` it is derived from, even when the record derives `EncryptFrom`
-//! alone: every target in `stack_encrypt` and every record deriving
-//! `DecryptInto` does. That is refused at compile time, at the field: a
-//! plaintext field that is borrowed (`&'static str`) cannot be opened into,
-//! so derive from an owned field (`String`), or encrypt the borrowed value
-//! through a `plaintext` record.
+//! `#[derive(DecryptSource)]` opens a `plaintext = T` record through its one
+//! decryptable field, or the one `#[stash(decrypt)]` names, under the
+//! record's context. It opens each field of a `struct` record through the
+//! field type's `DecryptField`, under `<scope>/<identity>`, extended by the
+//! record's scopes and bindings. So every field type of a `struct` record
+//! that derives `DecryptSource` implements `DecryptField<F, CallerContext>`
+//! for the plaintext field `F` it is derived from. Every target in
+//! `stack_encrypt` does, and so does every record that derives
+//! `DecryptSource`. A field whose type does not is refused at compile time,
+//! at the field.
 //!
-//! Every other input whose plan would not build is refused at compile time
-//! too, except one the derive cannot see: an index declared twice. The
-//! derive sees field types by name, not the indexes they declare, so a
-//! `plaintext` record with two outputs of one index (`EqualityTerm` twice)
-//! and a `struct` record whose field type declares one index twice
-//! (`Encrypted<(EqualityTerm, EqualityTerm)>`) compile, and `Record::plan()`
-//! returns `Error::Plan(PlanError::DuplicateIndex { .. })`; encrypting
-//! through the record fails with that error, before any key is requested.
-//!
-//! On the decrypt side, `DecryptInto` opens a `plaintext = T` record through
-//! its one decryptable output (or the one `#[stash(decrypt)]` names) under
-//! the record's context, and a `struct` record opens each field through its
-//! own `DecryptField` under `<scope>/<identity>`, extended by the caller's
-//! context. Neither goes through the plan: each is written out by the
-//! derive, and the crate's tests open what one writes through the other.
+//! The derive sees field types by name, not the indexes they declare. So
+//! one mistake is refused when the record runs, before any key is
+//! requested, and not at compile time: two indexes that answer one
+//! operator. A `plaintext` record with two fields of one index
+//! (`EqualityTerm` twice), and a field whose type declares one index twice
+//! (`Encrypted<(EqualityTerm, EqualityTerm)>`), fail with
+//! `Error::Plan(PlanError::DuplicateIndex { .. })`. An ORE term beside an
+//! OPE term fails with `PlanError::IndexOverlap`.
 //!
 //! # A field in your own storage format
 //!
@@ -304,9 +288,7 @@
 //! To decrypt the plaintext through the record, the field type also
 //! implements `DecryptSource` and `DecryptField`, and the record derives
 //! `DecryptSource`. The crate's `transcode` integration test shows the full
-//! set. A field of a `struct = ..` record needs `DecryptField` even
-//! when the record derives `EncryptFrom` alone, because the record's plan
-//! opens each field (see "The record's plan").
+//! set.
 //!
 #![doc = include_str!("../docs/attributes.md")]
 #![doc(html_favicon_url = "https://cipherstash.com/favicon.ico")]
@@ -330,44 +312,13 @@ use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
 mod attrs;
-mod decrypt;
-mod encrypt;
 mod owned_decrypt;
 mod owned_encrypt;
 mod shape;
 
-/// Derive `EncryptFrom` for a record struct. See the [crate
-/// documentation](crate) for what the derive emits; the attributes it accepts
-/// are reproduced below.
-#[doc = include_str!("../docs/attributes.md")]
-#[proc_macro_derive(EncryptFrom, attributes(stash))]
-pub fn derive_encrypt_from(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    encrypt::derive(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
-}
-
-/// Derive `DecryptInto<Plaintext>` for a record struct, one impl per
-/// `plaintext` type. See the [crate documentation](crate); the attributes it
-/// accepts are reproduced below.
-#[doc = include_str!("../docs/attributes.md")]
-#[proc_macro_derive(DecryptInto, attributes(stash))]
-pub fn derive_decrypt_into(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    decrypt::derive(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
-}
-
-/// Derive the owned `EncryptTarget` declaration for a record struct. The
-/// derive also implements the structural `EncryptFrom`, so the record works
-/// where a structural record is expected.
-///
-/// The derive takes the same attributes as `EncryptFrom`. It also takes
-/// `#[stash(passthrough)]` on a field of a `struct = ..` record. A
-/// passthrough field is not encrypted and not authenticated. See
-/// [Owned records](crate#owned-records).
+/// Derive the owned `EncryptTarget` declaration for a record struct. See
+/// the [crate documentation](crate) for what the derive emits. The attributes
+/// it accepts are reproduced below.
 #[doc = include_str!("../docs/attributes.md")]
 #[proc_macro_derive(EncryptTarget, attributes(stash))]
 pub fn derive_encrypt_target(input: TokenStream) -> TokenStream {
@@ -379,8 +330,8 @@ pub fn derive_encrypt_target(input: TokenStream) -> TokenStream {
 
 /// Derive the owned `DecryptSource<Plaintext>` declaration for a record
 /// struct, with one impl for each `plaintext` type. The derive also
-/// implements the structural `DecryptInto` and `DecryptField`, so the record
-/// works where a structural record is expected.
+/// implements `DecryptField`, so the record can be a field of another
+/// record.
 ///
 /// The derive also implements `DecryptSource<Protected<Plaintext>>` for each
 /// listed plaintext, so `Protected::<User>::decrypt_from(record, &cipher)`

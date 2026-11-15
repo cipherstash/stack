@@ -3,16 +3,36 @@
 //! A query names an *operator* ([`Eq`](struct@Eq), [`Lt`], [`Lte`],
 //! [`Gt`], [`Gte`], [`Between`], [`Matches`](struct@Matches), and the
 //! JSON operators [`Contains`], [`ContainedBy`] and [`AtPath`]), and the
-//! plan it runs on finds the index that answers it. The operator is a unit
-//! type passed by value, as an index is (`.via(Ore)`), and it decides what
-//! the query takes: one value for most, a pair of bounds for `Between`, a
-//! path and the leaf operator's input for `AtPath`. The JSON operators are
-//! answered by the [`Json`](struct@crate::target::Json) index, over a
-//! `serde_json::Value`.
+//! field it runs on names the index that answers it. The operator decides
+//! what the query takes: one value for most, a pair of bounds for
+//! `Between`, a path and the leaf operator's input for `AtPath`. The JSON
+//! operators are answered by the [`Json`](struct@crate::target::Json)
+//! index, over a `serde_json::Value`.
+//!
+//! A typed query is a method of a field's [`Marker`](crate::Marker), one
+//! method for each operator the field's indexes answer. A query whose
+//! declaration is data names the operator by its wire name ([`Op`]), with
+//! the `dynamic` feature.
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
-//! use stack_encrypt::{op, Equality, Match, Ore, Plan, StackCipher};
+//! use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
+//! use stack_encrypt::target::EncryptTarget;
+//! use stack_encrypt::{Encrypted, StackCipher};
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User {
+//!     email: String,
+//!     age: u32,
+//! }
+//!
+//! #[derive(EncryptTarget)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     email: Encrypted<(EqualityTerm, MatchTerms)>,
+//!     age: Encrypted<OreTerm<u32>>,
+//! }
 //!
 //! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
 //! // the environment, or from the profile that `npx stash auth login` writes.
@@ -20,15 +40,12 @@
 //! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
 //!     .init()
 //!     .await?;
-//! let email_plan = Plan::context("users/email")
-//!     .with::<String, _>((Equality, Match))
-//!     .build()?;
-//! let age_plan = Plan::context("users/age").with::<u32, _>(Ore).build()?;
+//! let keyset = cipher.default_keyset();
 //!
-//! let exact = cipher.query(op::Eq, "bob@example.com").on(&email_plan).await?;
-//! let search = cipher.query(op::Matches, "bob").on(&email_plan).await?;
-//! let under = cipher.query(op::Lt, &40u32).on(&age_plan).await?;
-//! let range = cipher.query(op::Between, &(18u32, 65)).on(&age_plan).await?;
+//! let exact = EncryptedUser::EMAIL.eq("bob@example.com").encrypt(&keyset).await?;
+//! let search = EncryptedUser::EMAIL.matches("bob").encrypt(&keyset).await?;
+//! let under = EncryptedUser::AGE.lt(40u32).encrypt(&keyset).await?;
+//! let range = EncryptedUser::AGE.between(18u32, 65).encrypt(&keyset).await?;
 //! # let _ = (exact, search, under, range);
 //! # Ok(())
 //! # }
@@ -38,11 +55,15 @@
 //! Every operator is declared once, with its type, its arity and its wire
 //! name ([`Op`], the dynamic vocabulary): `op::Eq`, `Op::Eq` and `"eq"`
 //! are three faces of one operator. Every index declares the operators it
-//! answers once as well (`Equality::OPERATORS`, `Ore::OPERATORS`, …), and
-//! a plan reads that declaration: a field declares at most one index per
-//! operator, so `(Equality, Ore)` is allowed and `(Ore, Ope)` is refused
-//! when the plan is built ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap);
-//! two match indexes are one index twice, [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex)).
+//! answers once as well (`Equality::OPERATORS`, `Ore::OPERATORS`, …). A
+//! field declares at most one index per operator, so `(Equality, Ore)` is
+//! allowed and `(Ore, Ope)` is not. A typed field that declares two is
+//! refused when it is encrypted, before any key is requested
+//! ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap); two match
+//! indexes are one index twice,
+//! [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex)). Its
+//! marker has no method for the operator. A plan that is data refuses such
+//! a field when it is parsed.
 //!
 //! Three traits connect an operator to an index:
 //!
@@ -58,24 +79,24 @@
 //! - [`Answers<Op, In>`] is on a target type, a domain type such as an EQL
 //!   type, and names the index that answers `Op` for it. It is written by
 //!   hand per type, because the choice decides what the query term reveals.
-//! - [`DefaultIndex<In>`] is on an operator, and names the index a plan that
-//!   declares its indexes, rather than a target type, answers it with.
+//! - [`DefaultIndex<In>`] is on an operator, and names the index a field
+//!   that declares its indexes as data, rather than a target type, answers
+//!   it with.
 //!
 //! What a query takes is the operator's [`Arity`]: [`One`] plaintext, a
 //! [`Pair`] of them as a tuple, or for an accessor a path and its leaf
 //! operator's input ([`Pathed<A>`](Pathed), where `A` is the leaf's arity).
 //! [`Input<A>`] says, for the value a query is given, which plaintext the
-//! index is declared over (`S` for `(S, S)`), so the plan's type is checked
+//! index is declared over (`S` for `(S, S)`), so the field's type is checked
 //! against it. An input of a `Pathed` arity is a path and the leaf's input,
 //! `("$.address.city", "Sydney")`, over the JSON index's document.
 //!
 //! What the types can see is checked at compile time: a match query on an
-//! integer, an ordering on bytes, an operator a target type does not answer,
-//! and, on a one-value plan, an index the plan does not hold. A field of a
-//! fields plan is data, so there an index the field does not declare, or
-//! declares with other options, is refused when the query is awaited,
+//! integer, an ordering on bytes, and an operator a target type does not
+//! answer. A field of a plan that is data is data, so there an operator no
+//! index of the field answers is refused when the query plan is made,
 //! before any key is requested. So are the values a query refuses, which
-//! the `sem` module states once for the typed chain and the dynamic path:
+//! the `sem` module states once for the typed query and the dynamic path:
 //! match text that cuts no token under the index's tokenizer, whose filter
 //! would match every row ([`TermError::EmptyTermText`]), and text an
 //! equality or order index cannot normalize. The stored side has no
@@ -151,7 +172,7 @@ pub struct Gt;
 pub struct Gte;
 
 /// A range: rows whose value is between the query's two bounds, inclusive
-/// at both ends. It takes a [`Pair`], `cipher.query(op::Between, &(lo, hi))`,
+/// at both ends. It takes a [`Pair`], as a marker's `between(lo, hi)` does,
 /// derives both bounds under one context, and sends them as one term
 /// ([`RangeQuery`]), so no statement can pair the
 /// low bound of one query with the high bound of another. One value is
@@ -472,13 +493,13 @@ impl LeafArity for Pair {}
 
 /// What a query of arity `A` is given, and the plaintext its index is
 /// declared over: an `S` is an input of [`One`] over `S`, and an `(S, S)`
-/// an input of [`Pair`] over `S`. The chain's value type is the input, and
-/// the plan is checked against the plaintext.
+/// an input of [`Pair`] over `S`. A query's value type is the input, and
+/// the field's index is checked against the plaintext.
 ///
 /// A `(P, V)` is an input of [`Pathed<One>`] over a `serde_json::Value`,
 /// and a `(P, (V, V))` of [`Pathed<Pair>`]: the path and the value become
 /// the document that holds the value at the path, and the JSON index's
-/// terms of it. The arity decides how the chain derives terms from the
+/// terms of it. The arity decides how a query derives terms from the
 /// input, which is what [`derive`](Self::derive) does.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not what a query of arity `{A}` takes",
@@ -928,8 +949,8 @@ macro_rules! orders {
 }
 orders!(Ore => OreTerm, block: false, Ope => OpeTerm, block: false, OreBlock => OreBlockTerm, block: true);
 
-/// The ordering operators default to the ORE index; an OPE or block ORE
-/// index is named with `.via(Ope)` or `.via(OreBlock)`.
+/// The ordering operators default to the ORE index. A field answers
+/// through an OPE or block ORE index when it declares that index.
 macro_rules! default_ore {
     ($($op:ident),+ $(,)?) => {$(
         impl<S: Ordered> DefaultIndex<S> for $op {
@@ -954,13 +975,13 @@ impl<S: Ordered> DefaultIndex<(S, S)> for Between {
 /// the one term that answers the operator ([`OperatorAnswer`]), and an
 /// `Option` answers what a present value answers.
 ///
-/// To be queried on a typed plan (`Plan::value::<S>().encrypt_into::<T>()`),
-/// the type must also implement [`LabelledTarget`], whatever context it is
-/// sealed under: an `Answers` impl alone answers no query.
+/// To be queried from a field's marker, the type must also implement
+/// [`LabelledTarget`], whatever context it is sealed under: an `Answers`
+/// impl alone answers no query.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not answer `{Op}` given `{In}`",
     label = "this target type does not answer the operator",
-    note = "a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers; on a plan's query chain, `.via(index)` names an index the target declares"
+    note = "a target answers the operators its type implements `Answers` for, and a tuple of terms answers each operator exactly one of its terms answers"
 )]
 pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
     /// The index that answers `Op` for this type. An index is a unit type,
@@ -969,9 +990,8 @@ pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
 }
 
 /// A target type whose stored terms were derived under the context a
-/// query's label names, so a plan for it
-/// (`Plan::value::<S>().encrypt_into::<T>()`) answers the operators its
-/// [`Answers`] impls name, with each query derived under the plan's label.
+/// query's label names, so a field of that type answers the operators its
+/// [`Answers`] impls name, with each query derived under the field's label.
 ///
 /// Implementing it is a claim about the stored values: a query term derived
 /// under the label equals the stored term only if the stored term was
@@ -983,17 +1003,17 @@ pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
 /// v4 type is sealed under the column it stores, which a two-segment label
 /// names, and its index refuses any other label
 /// ([`Supports::check_label`]). A type sealed under a context no label
-/// names, such as an integer tenant id, must not implement it: a query on
-/// its plan would match nothing, with no error.
+/// names, such as an integer tenant id, must not implement it: a query of
+/// a field of that type would match nothing, with no error.
 ///
-/// A query on such a plan derives through the index alone and never runs
-/// the target's own encryption, so the target need not accept the label as
-/// its context: an EQL type, sealed under a column identifier, cannot be
-/// encrypted through its plan and is queried through it all the same.
+/// A query derives through the index alone and never runs the target's own
+/// encryption, so the target need not accept the label as its context: an
+/// EQL type, sealed under a column identifier, is queried under the label
+/// of the same two names.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not queried under a plan's label",
-    label = "a typed plan for this target type answers no query",
-    note = "a target type answers queries on its plan when it implements `op::LabelledTarget`: its stored terms were derived under the context the plan's label names"
+    message = "`{Self}` is not queried under a field's label",
+    label = "a field of this target type answers no query",
+    note = "a target type answers queries when it implements `op::LabelledTarget`: its stored terms were derived under the context the field's label names"
 )]
 pub trait LabelledTarget {}
 
@@ -1068,8 +1088,9 @@ impl<T: LabelledTarget> LabelledTarget for Option<T> {}
 ///
 /// When no term of a tuple answers `Op`, the tuple does not answer it.
 /// When two do, it does not either: which one a query used would decide
-/// what the query reveals. A plan refuses such a field
-/// ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap)).
+/// what the query reveals. Such a field is refused when it is encrypted
+/// ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap)), and a
+/// plan that is data refuses it when it is parsed.
 ///
 /// Implemented for this crate's terms and the operators [`Eq`](struct@Eq),
 /// [`Lt`], [`Lte`], [`Gt`], [`Gte`], [`Between`] and
@@ -1201,19 +1222,13 @@ mod term_tuples {
     }
 }
 
-/// The index a plan that declares its indexes answers an operator with:
-/// a field of a fields plan, or a one-value plan built `with` indexes.
-///
-/// A plan that declares a different index for the operator, such as a
-/// match index with its own configuration, names it with `.via(index)`.
-/// So does a typed field of a fields plan (`encrypt_into::<T, _>(name)`):
-/// the field's type is not known where the query is written, so its
-/// [`Answers`] impl is not consulted, and a field whose type answers
-/// through another index needs `via`.
+/// The index an operator is answered with where a field declares its
+/// indexes as data, and no target type's [`Answers`] says otherwise: the
+/// table a plan that is data reads (`dynamic::Op::answered_by`).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no default index given `{In}`",
     label = "no default index answers this operator here",
-    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`; `op::Contains`, `op::ContainedBy` and `op::AtPath` default to `Json` over a `serde_json::Value`"
+    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; `op::Contains`, `op::ContainedBy` and `op::AtPath` default to `Json` over a `serde_json::Value`"
 )]
 pub trait DefaultIndex<In: Input<Self::Arity>>: Operator {
     /// The index. An index is a unit type, so its `Default` is the index.

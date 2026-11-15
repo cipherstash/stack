@@ -30,10 +30,10 @@ use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{json, Map, Value};
 use stack_encrypt::json::{
-    JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonSubtree, Segment,
+    JsonDocument, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonSubtree, Segment,
 };
 use stack_encrypt::target::{AeadContext, CallerContext};
-use stack_encrypt::{nonempty, Error, StackCipher};
+use stack_encrypt::{nonempty, DecryptFrom, Error, StackCipher};
 use stack_kms::FakeDataKeySource;
 
 type Cipher = StackCipher<FakeDataKeySource>;
@@ -100,7 +100,28 @@ fn with_depth(doc: &JsonDocument, j: usize, d: u32) -> JsonNode {
     serde_json::from_value(wire).unwrap()
 }
 
-/// The read of `path` in `doc`, as `Option<Value>`.
+/// The document a plaintext holds. An opened plaintext is wiped when it is
+/// dropped and is not compared directly, so the helpers below hand a
+/// property the document itself.
+fn held(opened: JsonPlaintext) -> Value {
+    opened.value().clone()
+}
+
+/// The rows of a read opened as one node or none.
+async fn open_option(cipher: &Cipher, rows: JsonSubtree) -> Result<Option<Value>, Error> {
+    Option::<JsonPlaintext>::decrypt_from_with_context(rows, cipher, aead())
+        .await
+        .map(|opened| opened.map(held))
+}
+
+/// The rows of a read opened as a list, one value per node the path names.
+async fn open_list(cipher: &Cipher, rows: JsonSubtree) -> Result<Vec<Value>, Error> {
+    Vec::<JsonPlaintext>::decrypt_from_with_context(rows, cipher, aead())
+        .await
+        .map(|opened| opened.into_iter().map(held).collect())
+}
+
+/// The read of `path` in `doc`, as one node or none.
 async fn read(
     cipher: &Cipher,
     doc: &JsonDocument,
@@ -108,8 +129,7 @@ async fn read(
     options: &JsonOptions,
 ) -> Option<Value> {
     let key = key(cipher, path, options, 4).await;
-    cipher
-        .decrypt_as::<Option<Value>, JsonSubtree>(key.open(rows(doc, &key)), aead())
+    open_option(cipher, key.open(rows(doc, &key)))
         .await
         .unwrap_or_else(|error| panic!("{path}: {error}"))
 }
@@ -333,9 +353,10 @@ proptest! {
                     .await
                     .unwrap();
                 let j = doc.entries().iter().position(|e| e.selector() == selector.as_bytes()).unwrap();
-                let arrow = cipher
-                    .decrypt_as::<Value, JsonExtracted>(selector.open(doc.node(j).unwrap()), aead())
+                let entry = selector.open(doc.node(j).unwrap());
+                let arrow = JsonPlaintext::decrypt_from_with_context(entry, &cipher, aead())
                     .await
+                    .map(held)
                     .unwrap();
                 prop_assert_eq!(Some(arrow), read(&cipher, &doc, &path, &options).await, "{}", path);
             }
@@ -435,8 +456,7 @@ proptest! {
             let path = &paths[pick.index(paths.len())];
             let k = key(&cipher, path, &options, 4).await;
             let shuffled = permuted(rows(&doc, &k), seed);
-            let opened = cipher
-                .decrypt_as::<Option<Value>, JsonSubtree>(k.open(shuffled), aead())
+            let opened = open_option(&cipher, k.open(shuffled))
                 .await
                 .unwrap_or_else(|error| panic!("{path}: {error}"));
             prop_assert_eq!(opened, path.select(&value).first().cloned().cloned(), "{}", path);
@@ -504,9 +524,7 @@ proptest! {
                     "a row at the depth the chain gives it"
                 }
             };
-            let opened = cipher
-                .decrypt_as::<Option<Value>, JsonSubtree>(k.open(rows), aead())
-                .await;
+            let opened = open_option(&cipher, k.open(rows)).await;
             match (expected, opened) {
                 ("aead", Err(Error::Aead)) | ("none", Ok(None)) => {}
                 (expected, Err(Error::JsonWrongEntry { expected: got })) if got == expected => {}
@@ -647,9 +665,7 @@ async fn a_wildcard_read_fails_past_its_bound_and_only_there() {
             let doc = seal(&cipher, &value, &options(true)).await;
             let root = with_depth(&doc, 0, 0);
             for rows in [rows(&doc, &k), vec![root]] {
-                let opened = cipher
-                    .decrypt_as::<Vec<Value>, JsonSubtree>(k.open(rows), aead())
-                    .await;
+                let opened = open_list(&cipher, k.open(rows)).await;
                 if len > bound as usize {
                     assert!(
                         matches!(opened, Err(Error::JsonWildcardTruncated { bound: b }) if b == bound),

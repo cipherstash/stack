@@ -1,18 +1,20 @@
 # Record fixture: `record_lowering.json`
 
-One declaration, two authors, one engine. A Rust chain
-(`cipher.encrypt(&user).context("users").fields()…`, over fields of type
+One declaration, two authors, one engine. Typed Rust code (the engine's
+combinators, `indexed(..).under(label)` and the rest, run over fields of type
 `stack_encrypt::dynamic::ValueFrame`, the frame a binding's values arrive as)
 and the data-plan lowering (`stack_encrypt::dynamic::record`, what a
 language binding calls) each sealed the same plaintext under the same
-declaration. The fixture holds both records, with their term bytes, sealed
+declaration. The fixture's key for the first author is `typed_chain`: it was
+first written by the plan chain, which is removed, and the combinators the
+chain lowered to open and reproduce the same record. The fixture holds both records, with their term bytes, sealed
 under a deterministic key source so they open in any process built from the
 same seed. `tests/record_lowering.rs` opens each record with the other
 author and checks that both derive the terms it holds. That cross-opening
-is the proof that `dynamic::record` is a lowering into the plan builder and
+is the proof that `dynamic::record` is a lowering into the combinators and
 not a second executor (ADR-0007, amended 2026-10-06). A Go test reads the
-same file later, once the Go SDK's generated code is the third author.  A
-chain over bare `u32` or `String` fields seals the same leaves too: every
+same file later, once the Go SDK's generated code is the third author.
+Typed code over bare `u32` or `String` fields seals the same leaves too: every
 leaf is tagged with its type (vitaminc ADR 0001), whoever wrote it.
 
 Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p
@@ -46,9 +48,8 @@ by hand.
 ```
 
 - **`context_field`.** A second case under the same key source and keyset:
-  a plan that takes its context from a field of the record (the Rust
-  chain's `FieldsBuilder::context_field`, the data grammar's plan-level
-  `"context_field"` key). Its `plan` names the context field, each field's
+  a plan that takes its context from a field of the record (the data
+  grammar's plan-level `"context_field"` key). Its `plan` names the context field, each field's
   `context` is its identity alone, and the context field's node in each
   record is `"passthrough"` carrying the label the record was sealed under
   (`"tenants/acme"`); the sealed field's term is derived under
@@ -70,9 +71,9 @@ by hand.
 - **`plan`.** The declaration in the data grammar `dynamic::record::plan`
   parses: per field its label (a list of plain segments), its outputs (`"c"`,
   `"passthrough"`, or an index key `"eq"`, `"match"`, `"ore"`, `"ope"`) and its
-  `"type"` (a vitaminc `ValueKind` name). The Rust chain writes the same
-  declaration as `Plan::context("users").fields()` with one verb per field,
-  its indexes named as `IndexSpec`s over `Value` fields.
+  `"type"` (a vitaminc `ValueKind` name). The typed author writes the same
+  declaration as one combinator per field under the label `users/<field>`,
+  its indexes named as `IndexSpec`s over `ValueFrame` fields.
 - **`plaintext`.** The value both authors sealed, each field as JSON at the
   kind `plan` declares for it.
 - **`records`.** Each record in the stored shape, field by field, output by
@@ -91,8 +92,8 @@ for a plain label segment, read by the Rust, derive and Go tests.
 
 Queries named by operator through the data path
 (`stack_encrypt::dynamic::query_term`, what a language binding calls), each
-term equal to the one the typed query chain (`cipher.query(op::Lt,
-&40u32).on(&plan)`) derives for the same query, with a page `verify`
+term equal to the one a typed query from a field marker
+(`EncryptedUser::AGE.lt(40u32)`) derives for the same query, with a page `verify`
 answered and fetch limits `target_limit` sized (ADR-0009; ADR-0007, amended
 2026-10-16). `tests/query_operators.rs` derives every entry and checks it
 against the typed path; the Go SDK's `encrypt` tests derive, verify and size

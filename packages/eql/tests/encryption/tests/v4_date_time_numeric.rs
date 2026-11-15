@@ -28,7 +28,7 @@ use jiff::civil::Date as CivilDate;
 use serde::de::DeserializeOwned;
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::target::transcode::Reader;
-use stack_encrypt::{Encrypt, Label, NonEmpty};
+use stack_encrypt::{DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
     ValueFrame::of(value).unwrap()
@@ -108,9 +108,12 @@ async fn dates_round_trip_and_seal_the_leaf_a_jiff_date_seals() {
     for text in ["2024-02-29", "1969-12-31", "0001-01-01", "1970-01-01"] {
         let theirs = day(text);
         let value = Date::from(theirs);
-        let stored: date::Date = keyset.encrypt_as(&value, column()).await.unwrap();
-        let opened: Date = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let stored: date::Date = value
+            .clone()
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
+        let opened = Date::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(CivilDate::from(&opened), theirs, "{text}");
@@ -119,7 +122,11 @@ async fn dates_round_trip_and_seal_the_leaf_a_jiff_date_seals() {
             "{text}: the leaf a jiff civil::Date seals"
         );
 
-        let searchable: date::DateEq = keyset.encrypt_as(&value, column()).await.unwrap();
+        let searchable: date::DateEq = value
+            .clone()
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
         let named: date::DateEq = by_name(&keyset, "DateEq", frame(theirs)).await;
         assert_eq!(searchable.hm, named.hm, "{text}: one term on both paths");
         let opened = targets::decrypt(
@@ -134,11 +141,13 @@ async fn dates_round_trip_and_seal_the_leaf_a_jiff_date_seals() {
         assert!(same(&opened, &frame(theirs)), "{text}: by name");
     }
     for edge in [CivilDate::MIN, CivilDate::MAX] {
-        let stored: date::DateEq = keyset
-            .encrypt_as(&Date::from(edge), column())
+        let stored: date::DateEq = Date::from(edge)
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
-        let opened: Date = cipher.decrypt_as(stored, column().into()).await.unwrap();
+        let opened = Date::decrypt_from_with_context(stored, &cipher, column())
+            .await
+            .unwrap();
         assert_eq!(CivilDate::from(&opened), edge);
     }
 }
@@ -154,9 +163,12 @@ async fn timestamps_round_trip_to_the_nanosecond_and_seal_the_leaf_a_jiff_timest
     ] {
         let theirs = instant(text);
         let value = Timestamp::try_from(theirs).unwrap();
-        let stored: timestamp::Timestamp = keyset.encrypt_as(&value, column()).await.unwrap();
-        let opened: Timestamp = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let stored: timestamp::Timestamp = value
+            .clone()
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
+        let opened = Timestamp::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(jiff::Timestamp::from(&opened), theirs, "{text}");
@@ -165,11 +177,14 @@ async fn timestamps_round_trip_to_the_nanosecond_and_seal_the_leaf_a_jiff_timest
             "{text}: the leaf a jiff Timestamp seals"
         );
 
-        let searchable: timestamp::TimestampEq = keyset.encrypt_as(&value, column()).await.unwrap();
+        let searchable: timestamp::TimestampEq = value
+            .clone()
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
         let named: timestamp::TimestampEq = by_name(&keyset, "TimestampEq", frame(theirs)).await;
         assert_eq!(searchable.hm, named.hm, "{text}: one term on both paths");
-        let opened: Timestamp = cipher
-            .decrypt_as(searchable, column().into())
+        let opened = Timestamp::decrypt_from_with_context(searchable, &cipher, column())
             .await
             .unwrap();
         assert_eq!(
@@ -179,11 +194,14 @@ async fn timestamps_round_trip_to_the_nanosecond_and_seal_the_leaf_a_jiff_timest
         );
     }
     for edge in [jiff::Timestamp::MIN, jiff::Timestamp::MAX] {
-        let stored: timestamp::TimestampEq = keyset
-            .encrypt_as(&Timestamp::try_from(edge).unwrap(), column())
+        let stored: timestamp::TimestampEq = Timestamp::try_from(edge)
+            .unwrap()
+            .encrypt_into_with_context(&keyset, column())
             .await
             .unwrap();
-        let opened: Timestamp = cipher.decrypt_as(stored, column().into()).await.unwrap();
+        let opened = Timestamp::decrypt_from_with_context(stored, &cipher, column())
+            .await
+            .unwrap();
         assert_eq!(jiff::Timestamp::from(&opened), edge);
     }
 }
@@ -201,9 +219,12 @@ async fn decimals_round_trip_with_their_scale_and_seal_the_leaf_rust_decimal_sea
     ] {
         let theirs = number(text);
         let value = Decimal::from(theirs);
-        let stored: numeric::Numeric = keyset.encrypt_as(&value, column()).await.unwrap();
-        let opened: Decimal = cipher
-            .decrypt_as(stored.clone(), column().into())
+        let stored: numeric::Numeric = value
+            .clone()
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
+        let opened = Decimal::decrypt_from_with_context(stored.clone(), &cipher, column())
             .await
             .unwrap();
         assert_eq!(
@@ -216,7 +237,11 @@ async fn decimals_round_trip_with_their_scale_and_seal_the_leaf_rust_decimal_sea
             "{text}: the leaf a rust_decimal Decimal seals"
         );
 
-        let searchable: numeric::NumericEq = keyset.encrypt_as(&value, column()).await.unwrap();
+        let searchable: numeric::NumericEq = value
+            .clone()
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
         let named: numeric::NumericEq = by_name(&keyset, "NumericEq", frame(theirs)).await;
         assert_eq!(searchable.hm, named.hm, "{text}: one term on both paths");
         let opened = targets::decrypt(
@@ -334,8 +359,8 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     }
 
     // A stored date moved into a timestamp is not read as one.
-    let stored: date::Date = keyset
-        .encrypt_as(&Date::from(day("2024-02-29")), column())
+    let stored: date::Date = Date::from(day("2024-02-29"))
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
     let moved = timestamp::Timestamp {
@@ -343,7 +368,7 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
         i: stored.i,
         c: stored.c,
     };
-    let opened: Result<Timestamp, _> = cipher.decrypt_as(moved, column().into()).await;
+    let opened = Timestamp::decrypt_from_with_context(moved, &cipher, column()).await;
     assert!(opened.is_err(), "a date is not a timestamp");
 }
 
@@ -453,38 +478,38 @@ fn postgres_stores_and_finds_date_timestamp_and_numeric_rows() {
             let n = Decimal::from(number(n));
             (
                 json(
-                    &keyset
-                        .encrypt_as::<_, date::Date>(&d, column())
+                    &d.clone()
+                        .encrypt_into_with_context::<date::Date, _>(&keyset, column())
                         .await
                         .unwrap(),
                 ),
                 json(
-                    &keyset
-                        .encrypt_as::<_, date::DateEq>(&d, column())
+                    &d.clone()
+                        .encrypt_into_with_context::<date::DateEq, _>(&keyset, column())
                         .await
                         .unwrap(),
                 ),
                 json(
-                    &keyset
-                        .encrypt_as::<_, timestamp::Timestamp>(&t, column())
+                    &t.clone()
+                        .encrypt_into_with_context::<timestamp::Timestamp, _>(&keyset, column())
                         .await
                         .unwrap(),
                 ),
                 json(
-                    &keyset
-                        .encrypt_as::<_, timestamp::TimestampEq>(&t, column())
+                    &t.clone()
+                        .encrypt_into_with_context::<timestamp::TimestampEq, _>(&keyset, column())
                         .await
                         .unwrap(),
                 ),
                 json(
-                    &keyset
-                        .encrypt_as::<_, numeric::Numeric>(&n, column())
+                    &n.clone()
+                        .encrypt_into_with_context::<numeric::Numeric, _>(&keyset, column())
                         .await
                         .unwrap(),
                 ),
                 json(
-                    &keyset
-                        .encrypt_as::<_, numeric::NumericEq>(&n, column())
+                    &n.clone()
+                        .encrypt_into_with_context::<numeric::NumericEq, _>(&keyset, column())
                         .await
                         .unwrap(),
                 ),
@@ -518,8 +543,9 @@ fn postgres_stores_and_finds_date_timestamp_and_numeric_rows() {
         let value = Date::from(day(text));
         runtime.block_on(async {
             json(
-                &keyset
-                    .encrypt_as::<_, date::DateEqQuery>(&value, column())
+                &value
+                    .clone()
+                    .encrypt_into_with_context::<date::DateEqQuery, _>(&keyset, column())
                     .await
                     .unwrap(),
             )
@@ -529,8 +555,9 @@ fn postgres_stores_and_finds_date_timestamp_and_numeric_rows() {
         let value = Timestamp::try_from(instant(text)).unwrap();
         runtime.block_on(async {
             json(
-                &keyset
-                    .encrypt_as::<_, timestamp::TimestampEqQuery>(&value, column())
+                &value
+                    .clone()
+                    .encrypt_into_with_context::<timestamp::TimestampEqQuery, _>(&keyset, column())
                     .await
                     .unwrap(),
             )
@@ -540,8 +567,9 @@ fn postgres_stores_and_finds_date_timestamp_and_numeric_rows() {
         let value = Decimal::from(number(text));
         runtime.block_on(async {
             json(
-                &keyset
-                    .encrypt_as::<_, numeric::NumericEqQuery>(&value, column())
+                &value
+                    .clone()
+                    .encrypt_into_with_context::<numeric::NumericEqQuery, _>(&keyset, column())
                     .await
                     .unwrap(),
             )
@@ -596,29 +624,29 @@ fn postgres_stores_and_finds_date_timestamp_and_numeric_rows() {
         .unwrap();
     let (opened, created, total): (String, String, String) = (row.get(0), row.get(1), row.get(2));
     runtime.block_on(async {
-        let opened: Date = cipher
-            .decrypt_as(
-                serde_json::from_str::<date::Date>(&opened).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let opened = Date::decrypt_from_with_context(
+            serde_json::from_str::<date::Date>(&opened).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert_eq!(CivilDate::from(&opened), day("2024-02-29"));
-        let created: Timestamp = cipher
-            .decrypt_as(
-                serde_json::from_str::<timestamp::Timestamp>(&created).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let created = Timestamp::decrypt_from_with_context(
+            serde_json::from_str::<timestamp::Timestamp>(&created).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert_eq!(created.nanoseconds(), 123_456_999);
-        let total: Decimal = cipher
-            .decrypt_as(
-                serde_json::from_str::<numeric::Numeric>(&total).unwrap(),
-                column().into(),
-            )
-            .await
-            .unwrap();
+        let total = Decimal::decrypt_from_with_context(
+            serde_json::from_str::<numeric::Numeric>(&total).unwrap(),
+            &cipher,
+            column(),
+        )
+        .await
+        .unwrap();
         assert_eq!(rust_decimal::Decimal::from(&total).to_string(), "1.50");
     });
 
@@ -706,59 +734,65 @@ mod go_ledger {
         let column = |name: &str| Identifier::for_column("profiles", name).unwrap();
         let p = &row.plaintext;
         let id = row.id;
-        let opened: Date = cipher
-            .decrypt_as(parsed::<date::Date>(row, "opened"), column("opened").into())
-            .await
-            .unwrap();
+        let opened = Date::decrypt_from_with_context(
+            parsed::<date::Date>(row, "opened"),
+            cipher,
+            column("opened"),
+        )
+        .await
+        .unwrap();
         assert_eq!(CivilDate::from(&opened), day(&p.opened), "row {id} opened");
-        let due: Date = cipher
-            .decrypt_as(parsed::<date::DateEq>(row, "due"), column("due").into())
-            .await
-            .unwrap();
+        let due = Date::decrypt_from_with_context(
+            parsed::<date::DateEq>(row, "due"),
+            cipher,
+            column("due"),
+        )
+        .await
+        .unwrap();
         assert_eq!(CivilDate::from(&due), day(&p.due), "row {id} due");
-        let created: Timestamp = cipher
-            .decrypt_as(
-                parsed::<timestamp::Timestamp>(row, "created"),
-                column("created").into(),
-            )
-            .await
-            .unwrap();
+        let created = Timestamp::decrypt_from_with_context(
+            parsed::<timestamp::Timestamp>(row, "created"),
+            cipher,
+            column("created"),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             jiff::Timestamp::from(&created),
             instant(&p.created),
             "row {id} created"
         );
-        let posted: Timestamp = cipher
-            .decrypt_as(
-                parsed::<timestamp::TimestampEq>(row, "posted"),
-                column("posted").into(),
-            )
-            .await
-            .unwrap();
+        let posted = Timestamp::decrypt_from_with_context(
+            parsed::<timestamp::TimestampEq>(row, "posted"),
+            cipher,
+            column("posted"),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             jiff::Timestamp::from(&posted),
             instant(&p.posted),
             "row {id} posted"
         );
-        let total: Decimal = cipher
-            .decrypt_as(
-                parsed::<numeric::Numeric>(row, "total"),
-                column("total").into(),
-            )
-            .await
-            .unwrap();
+        let total = Decimal::decrypt_from_with_context(
+            parsed::<numeric::Numeric>(row, "total"),
+            cipher,
+            column("total"),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             rust_decimal::Decimal::from(&total).to_string(),
             p.total,
             "row {id} total keeps its scale"
         );
-        let amount: Decimal = cipher
-            .decrypt_as(
-                parsed::<numeric::NumericEq>(row, "amount"),
-                column("amount").into(),
-            )
-            .await
-            .unwrap();
+        let amount = Decimal::decrypt_from_with_context(
+            parsed::<numeric::NumericEq>(row, "amount"),
+            cipher,
+            column("amount"),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             rust_decimal::Decimal::from(&amount).to_string(),
             p.amount,
@@ -905,32 +939,42 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
     let keyset = cipher.default_keyset();
     let value = Date::from(day("2024-02-29"));
 
-    let present: date::Date = keyset.encrypt_as(&value, column()).await.unwrap();
-    let absent: date::Date = keyset.encrypt_as(&None::<Date>, column()).await.unwrap();
+    let present: date::Date = value
+        .clone()
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
+    let absent: date::Date = None::<Date>
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     assert_eq!(
         leaf_len(&absent.c),
         leaf_len(&present.c),
         "as long as a value"
     );
-    let opened: Option<Date> = cipher
-        .decrypt_as(absent.clone(), column().into())
+    let opened = Option::<Date>::decrypt_from_with_context(absent.clone(), &cipher, column())
         .await
         .unwrap();
     assert!(opened.is_none());
-    let refused: Result<Date, _> = cipher.decrypt_as(absent.clone(), column().into()).await;
+    let refused = Date::decrypt_from_with_context(absent.clone(), &cipher, column()).await;
     assert!(refused.is_err(), "a None does not open as a value");
 
-    let some: date::Date = keyset
-        .encrypt_as(&Some(value.clone()), column())
+    let some: date::Date = Some(value.clone())
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
-    let opened: Date = cipher.decrypt_as(some, column().into()).await.unwrap();
+    let opened = Date::decrypt_from_with_context(some, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(
         CivilDate::from(&opened),
         day("2024-02-29"),
         "Some seals the plaintext's own leaf"
     );
-    let opened: Option<Date> = cipher.decrypt_as(present, column().into()).await.unwrap();
+    let opened = Option::<Date>::decrypt_from_with_context(present, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(
         opened.as_ref().map(CivilDate::from),
         Some(day("2024-02-29")),
@@ -1022,8 +1066,16 @@ fn postgres_stores_a_sealed_null_in_a_storage_only_column() {
     for (id, value) in &rows {
         let (entry, due): (date::Date, date::DateEq) = runtime.block_on(async {
             (
-                keyset.encrypt_as(value, column()).await.unwrap(),
-                keyset.encrypt_as(value, column()).await.unwrap(),
+                value
+                    .clone()
+                    .encrypt_into_with_context(&keyset, column())
+                    .await
+                    .unwrap(),
+                value
+                    .clone()
+                    .encrypt_into_with_context(&keyset, column())
+                    .await
+                    .unwrap(),
             )
         });
         db.execute(
@@ -1042,14 +1094,20 @@ fn postgres_stores_a_sealed_null_in_a_storage_only_column() {
         .unwrap()
         .get(0);
     let stored: date::Date = serde_json::from_str(&stored).unwrap();
-    let opened: Option<Date> = runtime
-        .block_on(async { cipher.decrypt_as(stored, column().into()).await })
+    let opened = runtime
+        .block_on(async {
+            Option::<Date>::decrypt_from_with_context(stored, &cipher, column()).await
+        })
         .unwrap();
     assert!(opened.is_none(), "the stored null opens as None");
 
     // `=` with the query of a null finds the absent rows, and only them.
     let null_query: date::DateEqQuery = runtime
-        .block_on(async { keyset.encrypt_as(&None::<Date>, column()).await })
+        .block_on(async {
+            None::<Date>
+                .encrypt_into_with_context(&keyset, column())
+                .await
+        })
         .unwrap();
     let found: Vec<i32> = db
         .query(

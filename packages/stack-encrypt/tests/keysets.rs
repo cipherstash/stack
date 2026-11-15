@@ -8,7 +8,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use stack_encrypt::{nonempty, CipherText, Error, SealedValue, StackCipher, StackCipherText};
+use stack_encrypt::{
+    nonempty, CipherText, DecryptFrom, EncryptInto, Error, SealedValue, StackCipher,
+    StackCipherText,
+};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
     IndexKey, IndexKeySource, LoadKeysetError, RetrieveKeyPayload, UnverifiedContext,
@@ -623,28 +626,25 @@ async fn the_target_path_through_a_keyset_handle_is_constrained_too() {
     let globex = cipher.keyset(name("globex")).await.expect("globex");
     // A ciphertext tree is not `Clone`; seal three, one per path.
     let seal = || async {
-        let sealed: StackCipherText = acme
-            .encrypt_as(&34u32, nonempty!("users/age").into())
+        let sealed: StackCipherText = 34u32
+            .encrypt_into_with_context(&acme, nonempty!("users/age"))
             .await
             .expect("seal");
         sealed
     };
 
-    let opened: u32 = acme
-        .decrypt_as(seal().await, nonempty!("users/age").into())
+    let opened: u32 = u32::decrypt_from_with_context(seal().await, &acme, nonempty!("users/age"))
         .await
         .expect("own keyset opens");
     assert_eq!(opened, 34, "the sealing keyset opens its own leaf");
 
-    let opened: u32 = cipher
-        .decrypt_as(seal().await, nonempty!("users/age").into())
+    let opened: u32 = u32::decrypt_from_with_context(seal().await, &cipher, nonempty!("users/age"))
         .await
         .expect("the client opens");
     assert_eq!(opened, 34, "and so does the client it belongs to");
 
-    let result: Result<u32, _> = globex
-        .decrypt_as(seal().await, nonempty!("users/age").into())
-        .await;
+    let result: Result<u32, _> =
+        u32::decrypt_from_with_context(seal().await, &globex, nonempty!("users/age")).await;
     assert!(
         matches!(result, Err(Error::ForeignKeyset { .. })),
         "{result:?}"
@@ -660,17 +660,17 @@ async fn a_mixed_keyset_column_opens_through_the_client_in_one_call_per_keyset()
     // A column whose rows belong to two tenants, interleaved.
     let mut column: Vec<StackCipherText> = Vec::new();
     for (i, tenant) in [(1u32, &acme), (2, &globex), (3, &acme)] {
-        let sealed: StackCipherText = tenant
-            .encrypt_as(&i, nonempty!("users/age").into())
+        let sealed: StackCipherText = i
+            .encrypt_into_with_context(tenant, nonempty!("users/age"))
             .await
             .expect("seal");
         column.push(sealed);
     }
 
-    let opened: Vec<u32> = cipher
-        .decrypt_as(column, nonempty!("users/age").into())
-        .await
-        .expect("open");
+    let opened: Vec<u32> =
+        Vec::<u32>::decrypt_from_with_context(column, &cipher, nonempty!("users/age"))
+            .await
+            .expect("open");
     assert_eq!(
         opened,
         vec![1, 2, 3],
@@ -690,14 +690,15 @@ async fn a_mixed_keyset_column_does_not_open_through_a_keyset_handle() {
     let globex = cipher.keyset(name("globex")).await.expect("globex");
     let mut column: Vec<StackCipherText> = Vec::new();
     for tenant in [&acme, &globex] {
-        let sealed: StackCipherText = tenant
-            .encrypt_as(&1u32, nonempty!("users/age").into())
+        let sealed: StackCipherText = 1u32
+            .encrypt_into_with_context(tenant, nonempty!("users/age"))
             .await
             .expect("seal");
         column.push(sealed);
     }
 
-    let result: Result<Vec<u32>, _> = acme.decrypt_as(column, nonempty!("users/age").into()).await;
+    let result: Result<Vec<u32>, _> =
+        Vec::<u32>::decrypt_from_with_context(column, &acme, nonempty!("users/age")).await;
     assert!(
         matches!(result, Err(Error::ForeignKeyset { .. })),
         "{result:?}"
@@ -783,7 +784,7 @@ async fn reader() -> StackCipher<Reader> {
 #[tokio::test]
 async fn opening_an_open_root_json_document_loads_its_keyset_once() {
     use serde_json::json;
-    use stack_encrypt::json::{JsonDocument, JsonOptions};
+    use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPlaintext};
     use stack_encrypt::target::{json_document, AeadContext, Borrowed, CallerContext};
 
     let value = json!({"a": [1, {"b": "two"}], "c": null});
@@ -810,20 +811,18 @@ async fn opening_an_open_root_json_document_loads_its_keyset_once() {
     let reader = reader().await;
     assert_eq!(reader.kms().loads(), 1, "the reader has its default only");
     let sealed: JsonDocument = seal(true).await;
-    let opened: serde_json::Value = reader
-        .decrypt_as(sealed, aead())
+    let opened = JsonPlaintext::decrypt_from_with_context(sealed, &reader, aead())
         .await
         .expect("a sealed root opens");
-    assert_eq!(opened, value);
+    assert_eq!(opened.value(), &value);
     assert_eq!(reader.kms().loads(), 1, "a sealed root needs no index key");
 
     let open: JsonDocument = seal(false).await;
     for _ in 0..2 {
-        let opened: serde_json::Value = reader
-            .decrypt_as(open.clone(), aead())
+        let opened = JsonPlaintext::decrypt_from_with_context(open.clone(), &reader, aead())
             .await
             .expect("an open root opens through a cipher that had not loaded its keyset");
-        assert_eq!(opened, value);
+        assert_eq!(opened.value(), &value);
     }
     assert_eq!(
         reader.kms().loads(),
@@ -832,9 +831,8 @@ async fn opening_an_open_root_json_document_loads_its_keyset_once() {
     );
     let acme = reader.keyset(name("acme")).await.expect("select");
     assert_eq!(acme.keyset_id(), open.header().keyset_id());
-    let opened: serde_json::Value = acme
-        .decrypt_as(open.clone(), aead())
+    let opened = JsonPlaintext::decrypt_from_with_context(open.clone(), &acme, aead())
         .await
         .expect("and through the keyset's own cipher");
-    assert_eq!(opened, value);
+    assert_eq!(opened.value(), &value);
 }

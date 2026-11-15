@@ -65,8 +65,8 @@ use super::operations::{
 };
 use super::source::{ConsumeSource, Owned, ShareSource};
 use super::{
-    DecryptField, DecryptInto, DecryptSource, Decryptable, Decryption, EncryptFrom, EncryptTarget,
-    Encryption, RequiredContext,
+    DecryptField, DecryptSource, Decryptable, Decryption, EncryptTarget, Encryption,
+    RequiredContext,
 };
 use crate::json::{JsonOptions, JsonTerms};
 use crate::op::Op;
@@ -182,6 +182,51 @@ pub(crate) fn overlapping(indexes: &[IndexSpec]) -> Option<(&IndexSpec, &IndexSp
                 .map(|op| (first, second, *op))
         })
     })
+}
+
+/// Refuse a set of indexes that one value cannot declare together: one
+/// index named twice, or two indexes that answer one operator.
+///
+/// Two match indexes with different options are still one index twice: a
+/// value has one term for each kind of index. `Ore` and `Ope` both answer
+/// the orderings, so a query for one would have to choose between them.
+/// The dynamic path refuses the same declarations when it parses a plan.
+///
+/// A typed declaration calls this when it is described, so the refusal
+/// comes before any key is requested: [`Encrypted<Terms>`] checks the
+/// indexes its terms name, and a derived `plaintext = T` record checks the
+/// indexes of its fields.
+///
+/// # Errors
+///
+/// [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex) or
+/// [`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap), in
+/// [`Error::Plan`](crate::Error::Plan).
+#[doc(hidden)]
+pub fn check_indexes(indexes: &[IndexSpec]) -> Result<(), crate::Error> {
+    const AT: &str = "the value";
+    for (i, index) in indexes.iter().enumerate() {
+        if indexes[..i]
+            .iter()
+            .any(|earlier| earlier.key() == index.key())
+        {
+            return Err(crate::PlanError::DuplicateIndex {
+                at: AT.to_owned(),
+                index: index.key(),
+            }
+            .into());
+        }
+    }
+    if let Some((first, second, operator)) = overlapping(indexes) {
+        return Err(crate::PlanError::IndexOverlap {
+            at: AT.to_owned(),
+            first: first.key(),
+            second: second.key(),
+            operator,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 impl fmt::Display for IndexSpec {
@@ -639,7 +684,7 @@ impl<S, I: Index<S>> Indexes<S> for Vec<I> {
 ///
 /// There are deliberately no named accessors (`out.ore()`): they would need
 /// a type-level search of the tuple to serve a case that barely exists. A
-/// struct with named fields is what `#[derive(EncryptFrom)]` is for.
+/// struct with named fields is what `#[derive(EncryptTarget)]` is for.
 ///
 /// Decrypting it opens the ciphertext: the terms are one-way.
 #[derive(Debug)]
@@ -650,37 +695,11 @@ pub struct Encrypted<Terms> {
     pub terms: Terms,
 }
 
-impl<P: crate::Decrypt + Send + 'static, Terms> DecryptInto<P> for Encrypted<Terms> {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
-        open(self.ciphertext, context)
-    }
-}
-
-/// `Encrypted<Terms>` is a target, so a record field, a typed verb or a
-/// caller names a ciphertext with its terms by type alone:
+/// `Encrypted<Terms>` is a target, so a record field or a caller names a
+/// ciphertext with its terms by type alone:
 /// `email: Encrypted<(EqualityTerm, MatchTerms)>`. The terms name their
-/// indexes ([`TermSet`]), and the description is [`indexed`] over them, so
-/// the bytes are the data spelling's and the hand composition's.
-impl<S, Terms> EncryptFrom<S> for Encrypted<Terms>
-where
-    S: crate::Encrypt + Clone,
-    Terms: TermSet<S>,
-{
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        indexed(Terms::INDEXES)
-    }
-    fn indexes() -> Vec<IndexSpec> {
-        Terms::INDEXES.specs()
-    }
-}
-
-/// The owned declaration of the same layout: the ciphertext with its terms,
-/// under the one caller context that the record field or the caller supplies.
+/// indexes ([`TermSet`]), and the description is [`indexed`] over them, under
+/// the one caller context that the record field or the caller supplies.
 ///
 /// The owned form is handed the value. The ciphertext takes a copy, and the
 /// terms take the value. When the context is refused, the ciphertext wipes its
@@ -695,12 +714,22 @@ where
     where
         S: 's,
     {
+        if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
+            return Encryption::failed(error);
+        }
         indexed(Terms::INDEXES).accepting()
     }
     fn owned_encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput, Owned>
     where
         S: 's,
     {
+        if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
+            // The refused value is the description's to wipe.
+            return Encryption::from_build(Vec::new(), move |mut source: S, cipher, _| {
+                zeroize::Zeroize::zeroize(&mut source);
+                super::Pending::failed(cipher, error)
+            });
+        }
         indexed_beside(wiping_ciphertext::<S, K, Owned>(), Terms::INDEXES).accepting()
     }
     fn indexes() -> Vec<IndexSpec> {
@@ -720,13 +749,13 @@ impl<P: crate::Decrypt + zeroize::Zeroize + Send + 'static, Terms> DecryptSource
 impl<Terms> Decryptable for Encrypted<Terms> {
     const DECRYPTABLE: bool = true;
 }
-impl<P: 'static, Ctx, Terms> DecryptField<P, Ctx> for Encrypted<Terms>
+impl<P: zeroize::Zeroize + 'static, Ctx, Terms> DecryptField<P, Ctx> for Encrypted<Terms>
 where
-    Self: DecryptInto<P>,
-    Ctx: Into<<Self as DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(<Self as DecryptInto<P>>::decryption(self, context.into()))
+        Some(<Self as DecryptSource<P>>::decryption(self, context.into()))
     }
 }
 

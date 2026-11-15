@@ -9,7 +9,6 @@
 use super::elements::{derive, eql_text, frame_of};
 use super::*;
 use eql_bindings::encryption::EqlTargets;
-use stack_encrypt::AsProtectedRef as _;
 
 use stack_encrypt::dynamic::{self, record, Op, Operand};
 use stack_encrypt::KeysetCipher;

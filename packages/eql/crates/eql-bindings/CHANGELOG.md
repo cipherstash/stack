@@ -18,15 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opens one entry, and the value is wiped when it is dropped.
   - The context is required. Pass the document's column. For a document
     that is a field of a record with scopes or bindings, pass the column,
-    then those scopes and bindings. The structural `DecryptInto` takes the
-    column alone, so it cannot open such a document's parts.
-  - The answers and the refusals are those of the structural
-    `DecryptInto`, which stays for now.
-  - These two types now have a `decryption` method from two traits. Code
-    that imports both `DecryptInto` and `DecryptSource` and calls
-    `.decryption(..)` on one of them does not compile, because the call
-    is ambiguous. Name the trait:
-    `DecryptInto::decryption(extracted, column)`.
+    then those scopes and bindings.
 
 - **EQL types as record fields** (#1658). An EQL v4 type can be a field
   of a Stack Encrypt `#[derive(EncryptTarget, DecryptSource)]` record
@@ -333,6 +325,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inventory).
 
 ### Breaking
+
+- **The EQL v4 types no longer implement `EncryptFrom` and `DecryptInto`**
+  (#1661, #1662). Stack Encrypt removed those traits, with `encrypt_as`,
+  `decrypt_as`, the plan builder and the query chain. Every type keeps
+  `EncryptTarget` and `DecryptSource`.
+  - Write with `value.encrypt_into_with_context(&keyset, column)` and read
+    with `P::decrypt_from_with_context(stored, &keyset, column)`, or
+    `P::decrypt_from(stored, &keyset)` to open under the stored column.
+  - A typed query is a field marker of a derived record:
+    `EncryptedMember::EMAIL.eq("bob").encrypt(&keyset)` gives the
+    `TextEqQuery`. `cipher.query(op::Eq, ..).on(&plan)` and `.via(..)` are
+    gone.
+  - A JSON document is a `JsonPlaintext`, not a `serde_json::Value`.
+    `JsonTreeDocument`, `JsonTreeExtracted` and `JsonTreeSubtree` open to
+    it. A typed JSON query has no replacement yet: derive the operand
+    through a data plan that names `JsonSearch` (`EqlTargets`).
+  - `JsonTree` no longer implements `stack_encrypt::target::Layout`, which
+    is removed. `JsonTree::encryption()`, `index()` and `specs()` are its
+    own methods, and `index()` returns the index by value.
 
 - **`v4::text::TextSearchQuery` and `TextSearchOreQuery` hold each term as
   an `Option`**, left out of the JSON when `None`, to match EQL v4's

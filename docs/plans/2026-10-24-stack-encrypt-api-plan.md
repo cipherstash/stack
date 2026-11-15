@@ -1594,8 +1594,9 @@ review.
   `tests/ui/marker_*.rs`). Pull request #1599 gives a field of several
   indexes, a nullable field and a record field their operator methods,
   and a field its query type (`#[stash(query = ..)]`). The chain query
-  `cipher.query(op, value).on(&plan)` still exists until #1488 removes
-  it.
+  `cipher.query(op, value).on(&plan)` is removed (#1662). It was the only
+  typed JSON query, so until the JSON marker methods exist (#1459) a JSON
+  query goes through a query plan.
 - **No hand-built plan.** The review of 7 November 2026 gave a
   hand-built plan the same markers, through `Plan::<Member>::scope(..)`
   with `pick!`. That is withdrawn. No Rust program builds a plan by hand.
@@ -1604,9 +1605,10 @@ review.
 - **Cannot fail.** The derive sees every field, so it refuses a repeated
   field name or a shared name scope at compile time. A typed index set
   that repeats an index, `(Equality, Equality)`, is refused at compile
-  time too. Today the builder refuses it at run time, so that check
-  lands with the builder's removal. The dynamic grammar keeps its
-  run-time checks.
+  time too. The builder refused it at run time. With the builder gone
+  (#1662), `Encrypted<Terms>` and a derived `plaintext` record refuse it
+  at run time, before any key is requested. The compile-time check is
+  not built. The dynamic grammar keeps its run-time checks.
 - **Tracked in.** Issue #1486 is open; pull request #1595 closes it.
   Issue #1596, the operator methods the markers lacked, is closed by
   pull request #1599.
@@ -1760,8 +1762,9 @@ records only the work.
   does today. It stops being a public type. That last step is done
   (#1612): the type is hidden from the documentation and from compile
   errors, and is public only so that code the derives emit can name it.
-  A caller passes a `NonEmpty<T>` or nothing. The rest of this item is
-  not done.
+  A caller passes a `NonEmpty<T>` or nothing. The chain is removed
+  (#1662): a data plan runs as `Planned`, and a typed record runs through
+  the derives and its field markers.
 - **Why.** The typed API already pairs its entry points (#1404). A value
   for the context reads the same on both layers. A builder state for the
   context, and a part added later in a chain, are the mistakes the context
@@ -1780,7 +1783,7 @@ records only the work.
   the Go guest builds one from its keyset selector. A `Keyset` reference
   refuses a foreign leaf with `ForeignKeyset`. A `Cipher` reference opens leaves from any keyset the client has.
   Done, in the second pull request for #1488.
-- **Tracked in.** Issue #1488 is open. It is the chain removal. Issue #1120 is closed. Pull request #1504 is merged and added the record pairs.
+- **Tracked in.** Issue #1488 is open. Its sub-issue #1662 is the chain removal. Issue #1120 is closed. Pull request #1504 is merged and added the record pairs.
 - **Finished when** these are all true:
   - the examples in [Target state](#target-state) compile;
   - the compile-fail cases in `tests/ui` cover a binding in a query, and
@@ -2027,10 +2030,12 @@ table.
   from the parsed plan, and `encrypt_with`, `decrypt_with`, `contexts()`
   and the checks read them. The dynamic path no longer uses the plan
   builder. Those functions do not yet build a `Planned`: they run the
-  lowering themselves. That inversion, the builder, the chain, the old
-  traits and `Label` are still to be removed. The helpers in
-  `target::legacy` are removed, in the fourth pull request for #1488.
-  Their callers use `encrypt_as` and `decrypt_as` until those go too.
+  lowering themselves. That inversion and `Label` are still to be
+  removed. The helpers in `target::legacy` are removed, in the fourth pull
+  request for #1488. The builder, the chain, `EncryptFrom`, `DecryptInto`,
+  their derives, `encrypt_as` and `decrypt_as` are removed (#1661, #1662).
+  EQL, the Go guest, the examples and every test use the owned API, field
+  markers or `Planned`.
   Every JSON target has the new traits over `JsonPlaintext` (#1658 for
   `JsonTreeDocument`, #1660 for the other five), so no target needs the
   old traits any more.

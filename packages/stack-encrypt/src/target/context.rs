@@ -865,8 +865,8 @@ impl<'a, T: Clone + IntoContext<'a>> From<&NonEmpty<T>> for DeclaredContext {
     }
 }
 /// A scope the call adds. A query takes a scope and no binding, so this is
-/// the one conversion from a caller's part: a `Bind` does not convert, and
-/// a query chain's `.extend(Bind::new(..))` does not compile.
+/// the one conversion from a caller's part: a `Bind` does not convert, so
+/// a query's `.scope(Bind::new(..))` does not compile.
 impl<'c, T: IntoContext<'c> + MaybeEmpty> From<Scope<T>> for DeclaredContext {
     fn from(scope: Scope<T>) -> Self {
         Self(vec![scope.into()])
@@ -886,6 +886,7 @@ impl DeclaredContext {
 
     /// Whether any part carries a binding. A query refuses such a context
     /// before any key is requested: a binding is in no query context.
+    #[cfg(any(test, feature = "dynamic"))]
     pub(crate) fn has_bindings(&self) -> bool {
         self.0.iter().any(CallerContext::has_bindings)
     }

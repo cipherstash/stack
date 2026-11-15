@@ -67,26 +67,11 @@
 //! requires the `NonEmpty<T>` it stores. On decrypt the caller may pass that
 //! `NonEmpty<T>` again, and the stored value must then equal it.
 //!
-//! Both derives also implement the structural traits ([`EncryptFrom`],
-//! [`DecryptInto`] and [`DecryptField`]). So an owned record can be a field
-//! of a structural record, or a typed field of a plan. A plan field uses
-//! [`FieldsBuilder::encrypt_into`](crate::plan::FieldsBuilder::encrypt_into),
-//! or [`target`](crate::plan::FieldsBuilder::target) for a target that is
-//! only owned, such as a `Ciphertext`. A hand-written owned target that will
-//! be a record field must implement [`Decryptable`] and [`DecryptField`], as
-//! well as [`DecryptSource`]. A hand-written structural target does the
-//! same.
-//!
-//! # Structural API during migration
-//!
-//! The structural derives, plans, and dynamic targets still use the
-//! declarations below.
-//!
-//! [`EncryptFrom<S>`] describes ciphertext and/or term operations and has an
-//! associated context type. It does not receive plaintext or a cipher. The
-//! cipher's `encrypt_as` executes that description, returning the existing
-//! batched [`Pending`]. [`DecryptInto<P>`] inspects stored output and describes
-//! opening it through `P::Decrypt`.
+//! The `DecryptSource` derive also implements [`DecryptField`], which is how
+//! a record finds the field that decryption opens. A hand-written target
+//! that will be a record field must implement [`Decryptable`] and
+//! [`DecryptField`], as well as [`DecryptSource`]. A term cannot be
+//! decrypted: it is not `Decryptable`, and its `DecryptField` returns `None`.
 //!
 //! # Records and context
 //!
@@ -102,8 +87,7 @@
 //! constructed from a nonempty context, including a borrowed one — an
 //! `AeadContext` from one with the AEAD encoding alone. Records that supply
 //! their own field contexts use [`DeclaredContext`], whose default leaves those
-//! contexts unchanged and whose nonempty form extends them. Custom targets may
-//! instead declare `Context = ()`.
+//! contexts unchanged and whose nonempty form extends them.
 //!
 //! Within one target, every operation runs under the one context the target is
 //! handed: the context is a type parameter of [`Encryption`], zipped
@@ -123,17 +107,23 @@
 //! the final target's own storage remain normal allocations.
 //!
 //! ```
-//! use stack_encrypt::{EncryptFrom, Encryption};
-//! use stack_encrypt::target::{self, CallerContext};
 //! use stack_encrypt::sem::EqualityTerm;
+//! use stack_encrypt::target::{self, CallerContext, EncryptTarget, RequiredContext};
+//! use stack_encrypt::{Encrypt, Encryption};
+//! use zeroize::Zeroize;
 //!
+//! /// An equality term, stored as its bytes.
 //! struct StoredEquality([u8; 32]);
-//! impl<S> EncryptFrom<S> for StoredEquality
-//! where EqualityTerm: EncryptFrom<S, Context = CallerContext> {
-//!     type Context = CallerContext;
-//!     fn encryption<'s,K:'static>()->Encryption<'s,S,Self,K,Self::Context>
-//!     where S:'s {
-//!         <EqualityTerm as EncryptFrom<S>>::encryption().map(|term| Self(term.into_bytes()))
+//!
+//! impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for StoredEquality {
+//!     type ContextInput = RequiredContext<CallerContext>;
+//!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+//!     where
+//!         S: 's,
+//!     {
+//!         target::equality()
+//!             .accepting()
+//!             .map(|term: EqualityTerm| Self(term.into_bytes()))
 //!     }
 //! }
 //! ```
@@ -141,7 +131,7 @@
 //! Ciphertext operations require Vitamin C's `Encrypt`/`Decrypt` on the plaintext;
 //! there is no Serde fallback. Terms require only their PRF or ordering capability.
 //! New cryptographic operations belong in core; output adapters cannot install an
-//! execution callback. The separate cipher-directed API remains public.
+//! execution callback.
 //!
 //! Those schemes consume the plaintext. A description is handed it by
 //! reference by default, and an operation clones it before consuming it, so a
@@ -153,22 +143,14 @@
 //! # Collections and authentication
 //!
 //! `Vec<Target>` describes rows that are each encrypted on their own, under
-//! the same context. That rule applies on the owned path, where a `Vec<S>` encrypts
-//! into a `Vec` of [`EncryptTarget`]s, and on the structural path. Encrypting a plaintext `Vec<T>` into `StackCipherText` instead
-//! follows Vitamin C's native sequence model, including its authenticated empty
+//! the same context: a `Vec<S>` encrypts into a `Vec` of [`EncryptTarget`]s.
+//! Encrypting a plaintext `Vec<T>` into `StackCipherText` instead follows
+//! Vitamin C's native sequence model, including its authenticated empty
 //! marker. The same distinction applies to `Option<Target>` versus a native
 //! encrypted option.
 //! Readers preserve marker ciphertext and map keys; changing a key changes the
 //! authenticated context when opening. Passthrough metadata and query terms are
 //! not presented as AEAD-authenticated values.
-//!
-//! # Migration from the unpublished execution traits
-//!
-//! Implement `encryption`/`decryption`, returning core-owned descriptions, in place
-//! of `encrypt_from`/`decrypt_into` methods that took a cipher. The derives do this
-//! automatically. Call `keyset.encrypt_as(&value, context)` and
-//! `cipher.decrypt_as(record, context)`. New scalar targets implement
-//! [`EncryptTarget`] and [`DecryptSource`].
 mod collections;
 mod context;
 mod conversion;
@@ -180,7 +162,6 @@ mod pending;
 mod request;
 mod source;
 pub mod transcode;
-mod tuples;
 
 pub(crate) use self::core::{bind_pending, seal_pending};
 pub use context::{
@@ -197,6 +178,8 @@ pub use context::{
 #[doc(hidden)]
 pub use context::{ExpectedContext, StoredContext};
 pub use conversion::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
+#[doc(hidden)]
+pub use index::check_indexes;
 pub use index::{
     indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock,
     Select, TermSet, Whole,
@@ -206,19 +189,15 @@ pub use input::{
     OptionalContext, RequiredContext, ScalarContext,
 };
 #[cfg(feature = "dynamic")]
-pub(crate) use operations::chosen;
-pub(crate) use operations::inspect;
+pub(crate) use operations::{chosen, inspect};
 pub use operations::{
     ciphertext, equality, json_document, json_terms, matching, ope, open, ore, ore_block,
-    passthrough, scalar_ciphertext, DecryptField, DecryptInto, Decryptable, Decryption,
-    EncryptFrom, Encryption, Layout,
+    passthrough, scalar_ciphertext, DecryptField, Decryptable, Decryption, Encryption,
 };
 pub use pending::{CipherRef, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
-pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
 pub use stack_encrypt_derive::{DecryptSource, EncryptTarget};
-pub use tuples::JoinContext;
 /// The cleanup trait that every owned plaintext must implement. It is
 /// re-exported here so that the derives can name it, even when the caller's
 /// crate does not depend on `zeroize`.

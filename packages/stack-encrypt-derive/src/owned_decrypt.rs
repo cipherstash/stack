@@ -1,6 +1,5 @@
-//! Emit an owned `DecryptSource` declaration. Also emit the structural
-//! `DecryptInto` and `DecryptField`, so the record works where a structural
-//! record is expected.
+//! Emit an owned `DecryptSource` declaration, and `DecryptField`, so the
+//! record can be a field of another record.
 //!
 //! Decryption follows the same layout as the owned encryption:
 //!
@@ -11,16 +10,15 @@
 //! - A `plaintext = T` record opens its one recoverable field under the
 //!   context the caller supplies. A `context_field` record opens it under the
 //!   context it stores, once that context has passed the caller's check.
-use crate::decrypt::check;
 use crate::owned_encrypt::{encrypt_input, spanned_predicate, threaded_input};
-use crate::shape::{trait_impl, zip_wiping, Field, Flavor, Record};
+use crate::shape::{check, struct_literal_path, trait_impl, zip_wiping, Field, Record};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{parse_quote, DeriveInput, Ident, Member, Result, Type};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
-    let record = Record::parse_as(&input, Flavor::Owned)?;
+    let record = Record::parse(&input)?;
     let krate = &record.krate;
     let name = &input.ident;
     let explicit = record.fields.iter().any(|f| f.decrypt);
@@ -100,26 +98,31 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 }
             },
         ));
-        impls.push(bridge(&input, &record, &plaintext, generic));
         if !generic {
             impls.push(protected(&input, &record, &plaintext));
         }
     }
 
-    // `DecryptField`, emitted the same way as the structural derive emits it.
+    // `DecryptField`: as a field of another record, this record opens
+    // through its own `DecryptSource`, under the context that record gives
+    // the field.
     let mut generics = input.generics.clone();
-    generics.params.push(parse_quote!(__P));
+    generics
+        .params
+        .push(parse_quote!(__P: #krate::target::Zeroize));
     generics.params.push(parse_quote!(__Ctx));
     let predicates = &mut generics.make_where_clause().predicates;
-    predicates.push(parse_quote!(Self: #krate::target::DecryptInto<__P>));
-    predicates.push(parse_quote!(__Ctx: Into<<Self as #krate::target::DecryptInto<__P>>::Context>));
+    predicates.push(parse_quote!(Self: #krate::target::DecryptSource<__P>));
+    predicates.push(
+        parse_quote!(__Ctx: Into<<Self as #krate::target::DecryptSource<__P>>::ContextInput>),
+    );
     let field = trait_impl(
         &input,
         &generics,
         quote!(#krate::target::DecryptField<__P, __Ctx>),
         quote! {
             fn decryption_field<__K: 'static>(self, context: __Ctx) -> Option<#krate::target::Decryption<__P, __K>> {
-                Some(<Self as #krate::target::DecryptInto<__P>>::decryption(self, context.into()))
+                Some(<Self as #krate::target::DecryptSource<__P>>::decryption(self, context.into()))
             }
         },
     );
@@ -158,7 +161,7 @@ fn struct_body(
     explicit: bool,
 ) -> Result<TokenStream> {
     let krate = &record.krate;
-    let literal = crate::decrypt::struct_literal_path(plaintext)?;
+    let literal = struct_literal_path(plaintext)?;
     let mut operations = Vec::new();
     for (index, (_, fields)) in groups.iter().enumerate() {
         let operation = if explicit {
@@ -299,35 +302,6 @@ fn value_body(
         quote!({ #(#bindings)* #first #(.or(#rest))* .unwrap_or_else(|| #krate::target::Decryption::failed(#krate::Error::NotOpened)) })
     };
     quote!(#stored #operation)
-}
-
-/// The structural `DecryptInto`. The record's structural context is converted
-/// into its owned input.
-fn bridge(input: &DeriveInput, record: &Record, plaintext: &Type, generic: bool) -> TokenStream {
-    let krate = &record.krate;
-    let legacy = record.context_type(true);
-    let mut generics = input.generics.clone();
-    if generic {
-        generics
-            .params
-            .push(parse_quote!(__P: #krate::target::Zeroize + 'static));
-    }
-    let predicates = &mut generics.make_where_clause().predicates;
-    predicates.push(parse_quote!(Self: #krate::target::DecryptSource<#plaintext>));
-    predicates.push(parse_quote!(
-        #legacy: ::core::convert::Into<<Self as #krate::target::DecryptSource<#plaintext>>::ContextInput>
-    ));
-    trait_impl(
-        input,
-        &generics,
-        quote!(#krate::target::DecryptInto<#plaintext>),
-        quote! {
-            type Context = #legacy;
-            fn decryption<__K: 'static>(self, __context: Self::Context) -> #krate::target::Decryption<#plaintext, __K> {
-                <Self as #krate::target::DecryptSource<#plaintext>>::decryption::<__K>(self, ::core::convert::Into::into(__context))
-            }
-        },
-    )
 }
 
 /// `DecryptSource<Protected<P>>`, so a caller can decrypt straight into a

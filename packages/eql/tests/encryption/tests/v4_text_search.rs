@@ -24,7 +24,7 @@ use eql_bindings::Identifier;
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::sem::TermError;
 use stack_encrypt::target::IndexSpec;
-use stack_encrypt::{Encrypt, Label, NonEmpty};
+use stack_encrypt::{DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
     ValueFrame::of(value).unwrap()
@@ -222,8 +222,16 @@ async fn the_typed_projections_are_what_the_dispatch_writes() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let text = "A".to_owned();
-    let eq: TextSearchEqualityQuery = keyset.encrypt_as(&text, column()).await.unwrap();
-    let ord: TextSearchOrderQuery = keyset.encrypt_as(&text, column()).await.unwrap();
+    let eq: TextSearchEqualityQuery = text
+        .clone()
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
+    let ord: TextSearchOrderQuery = text
+        .clone()
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     for (typed, key) in [
         (TextSearchQuery::from(eq), "eq"),
         (TextSearchQuery::from(ord), "ope"),
@@ -234,8 +242,9 @@ async fn the_typed_projections_are_what_the_dispatch_writes() {
             "{key}"
         );
     }
-    let matched: TextSearchMatchQuery = keyset
-        .encrypt_as(&"Alice".to_owned(), column())
+    let matched: TextSearchMatchQuery = "Alice"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
     let matched = TextSearchQuery::from(matched);
@@ -253,21 +262,30 @@ async fn the_typed_projections_are_what_the_dispatch_writes() {
     assert!(bare.hm.is_none() && bare.op.is_none() && bare.bf.is_none());
 
     // The stored value round-trips through the typed path too.
-    let stored: TextSearch = keyset
-        .encrypt_as(&"Alice".to_owned(), column())
+    let stored: TextSearch = "Alice"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
-    let opened: String = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    let opened = String::decrypt_from_with_context(stored, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, "Alice");
     // And short text through the typed path stores the empty filter, as the
     // dispatch does.
-    let short: TextSearch = keyset.encrypt_as(&text, column()).await.unwrap();
+    let short: TextSearch = text
+        .clone()
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     assert!(short.bf.0 .0.is_empty());
     assert_eq!(
         serde_json::to_value(&short.bf).unwrap(),
         serde_json::json!([])
     );
-    let opened: String = cipher.decrypt_as(short, column().into()).await.unwrap();
+    let opened = String::decrypt_from_with_context(short, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, "A");
 }
 

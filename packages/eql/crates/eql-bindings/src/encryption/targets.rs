@@ -1,17 +1,18 @@
 //! EQL types as plan field targets, by name.
 //!
-//! A Rust caller names an EQL type as a type: `encrypt_as::<TextEq>` runs the
-//! plan `TextEq`'s own `EncryptFrom` describes. A binding has no type to
-//! name — its plan arrives as data, and a field of that plan names its target
-//! as a string, `"TextEq"`. This module is where that string meets the type:
-//! a catalog-generated table of every EQL type a plan may name
+//! A Rust caller names an EQL type as a type:
+//! `value.encrypt_into_with_context::<TextEq, _>(&keyset, column)` runs the
+//! encryption `TextEq`'s own `EncryptTarget` declares. A binding has no type
+//! to name — its plan arrives as data, and a field of that plan names its
+//! target as a string, `"TextEq"`. This module is where that string meets
+//! the type: a catalog-generated table of every EQL type a plan may name
 //! ([`targets`], [`Target`]) and three entry points ([`encrypt`],
-//! [`decrypt`], [`query`]) that dispatch on the name and run *the same plan*
-//! the typed call runs. Nothing here derives a term or seals a byte itself
-//! (ADR-0007: one engine, entered through a plan); the dispatch is generated
-//! from `eql-domains::CATALOG` by `eql-codegen` into
-//! [`crate::v4::targets`], beside the v4 family modules, so a type cannot be in the
-//! catalog and missing from the table.
+//! [`decrypt`], [`query`]) that dispatch on the name and run *the same
+//! declaration* the typed call runs. Nothing here derives a term or seals a
+//! byte itself (ADR-0007: one engine, entered through a plan); the dispatch
+//! is generated from `eql-domains::CATALOG` by `eql-codegen` into
+//! [`crate::v4::targets`], beside the v4 family modules, so a type cannot be
+//! in the catalog and missing from the table.
 //!
 //! This module needs the `targets` feature, which also turns on Stack
 //! Encrypt's `dynamic` feature. The `stack-encrypt` feature alone gives only
@@ -99,11 +100,10 @@ use stack_encrypt::dynamic::{TargetOptions, ValueFrame, ValueKind};
 use stack_encrypt::json::JsonOptions;
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::target::{
-    CallerContext, DeclaredContext, EncryptTarget, ExpectedContext, IndexSpec, StoredContext,
+    CallerContext, DeclaredContext, DecryptSource, EncryptTarget, ExpectedContext, IndexSpec,
+    StoredContext,
 };
-use stack_encrypt::{
-    Decrypt, DecryptInto, Encrypt, Error, KeysetCipher, Label, NonEmpty, Pending, StackCipher,
-};
+use stack_encrypt::{Decrypt, Encrypt, Error, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
 
 use crate::v4::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
 use crate::Identifier;
@@ -539,25 +539,20 @@ fn decrypt_document<'a, K: 'static>(
     stored: &[u8],
 ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     use crate::v4::json_tree::JsonTreeDocument;
+    use stack_encrypt::json::JsonPlaintext;
     let value: JsonTreeDocument =
         serde_json::from_slice(stored).map_err(|source| TargetError::Stored {
             target: name,
             source,
         })?;
     let expected: ExpectedContext<Identifier> = context.into();
+    let opening = DecryptSource::<JsonPlaintext>::decryption(value, expected);
     Ok(match opener {
-        Opener::Client(cipher) => {
-            cipher.decrypt_as::<serde_json::Value, JsonTreeDocument>(value, expected)
-        }
-        Opener::Keyset(keyset) => {
-            keyset.decrypt_as::<serde_json::Value, JsonTreeDocument>(value, expected)
-        }
+        Opener::Client(cipher) => cipher.run_decryption(opening),
+        Opener::Keyset(keyset) => keyset.run_decryption(opening),
     }
-    .try_map(|mut document| {
-        let frame = stack_encrypt::dynamic::json_frame(&document);
-        stack_encrypt::json::wipe_value(&mut document);
-        frame
-    }))
+    // The document is wiped when it is dropped, once its frame is written.
+    .try_map(|document| stack_encrypt::dynamic::json_frame(document.value())))
 }
 
 /// Run the named type's query twin for one plaintext: the operand that
@@ -923,7 +918,7 @@ where
 }
 
 /// Parse a stored EQL value as the target and describe opening it through
-/// the target's own `DecryptInto`. The stored column must be the field's,
+/// the target's own `DecryptSource`. The stored column must be the field's,
 /// and the value opens under the field's context: its column, then the
 /// scopes and the bindings.
 pub(crate) fn open_target<'a, T, S, K>(
@@ -933,8 +928,8 @@ pub(crate) fn open_target<'a, T, S, K>(
     stored: &[u8],
 ) -> Result<Pending<'a, ValueFrame, K>, TargetError>
 where
-    T: DeserializeOwned + DecryptInto<S, Context = ExpectedContext<Identifier>> + 'static,
-    S: Plaintext,
+    T: DeserializeOwned + DecryptSource<S, ContextInput = ExpectedContext<Identifier>> + 'static,
+    S: Plaintext + zeroize::Zeroize,
     K: 'static,
 {
     let value: T = serde_json::from_slice(stored).map_err(|source| TargetError::Stored {
@@ -942,9 +937,10 @@ where
         source,
     })?;
     let expected: ExpectedContext<Identifier> = context.into();
+    let opening = value.decryption(expected);
     Ok(match opener {
-        Opener::Client(cipher) => cipher.decrypt_as::<S, T>(value, expected),
-        Opener::Keyset(keyset) => keyset.decrypt_as::<S, T>(value, expected),
+        Opener::Client(cipher) => cipher.run_decryption(opening),
+        Opener::Keyset(keyset) => keyset.run_decryption(opening),
     }
     .try_map(S::into_frame))
 }

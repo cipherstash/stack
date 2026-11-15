@@ -8,9 +8,9 @@
 //! A change to any of these bytes is a change to the stored format. After such
 //! a change, a new query no longer finds the rows written before it.
 //!
-//! The fixture contains the output of the structural API (`encrypt_as`). This
-//! test writes through the owned API (`encrypt_into_with_context`). So the test
-//! also checks that the owned API writes what the structural API wrote.
+//! The fixture was recorded from the API that `encrypt_into_with_context`
+//! replaced. This test writes through `encrypt_into_with_context`. So the test
+//! also checks that a new value has the terms of the values stored before.
 //!
 //! The test leaves out two fields. Each contains a random nonce, so its bytes
 //! differ every time:

@@ -1,55 +1,58 @@
-//! Querying an EQL v4 field through Stack Encrypt's typed query chain.
+//! Querying an EQL v4 field from Rust, through a field marker.
 //!
-//! A query names an operator, and the plan it runs on finds the index that
-//! answers it (Stack Encrypt's ADR-0009):
-//! `cipher.query(op::Eq, "bob@example.com").on(&plan)`. On a plan built for
-//! an EQL v4 type, `Plan::value::<String>().encrypt_into::<TextEq>()`, the
-//! type says which operators it answers through its
-//! [`op::Answers`] impls, and the term that comes back is the type's
-//! *query twin*: the value of the `eql_v4.query_*` domain the SQL compares
-//! against the column.
+//! A typed query of an EQL type starts from a field of a derived record.
+//! `#[derive(EncryptTarget)]` on a `struct = ..` record gives each field a
+//! marker, an associated constant named after the field
+//! ([`stack_encrypt::marker`]). The marker has a method for each operator
+//! the field's type answers:
+//! `EncryptedMember::EMAIL.eq("bob@example.com").encrypt(&keyset)`. An EQL
+//! v4 type says which operators it answers through its [`op::Answers`]
+//! impls, and the term that comes back is the type's *query twin*: the
+//! value of the `eql_v4.query_*` domain the SQL compares against the
+//! column.
 //!
-//! | type | operator | query term |
-//! |---|---|---|
-//! | `TextEq` | [`op::Eq`](struct@op::Eq) | `TextEqQuery` |
-//! | `IntegerEq` | [`op::Eq`](struct@op::Eq) | `IntegerEqQuery` |
-//! | `BigintEq` | [`op::Eq`](struct@op::Eq) | `BigintEqQuery` |
-//! | `RealEq` | [`op::Eq`](struct@op::Eq) | `RealEqQuery` |
-//! | `DoubleEq` | [`op::Eq`](struct@op::Eq) | `DoubleEqQuery` |
-//! | `TextMatch` | [`op::Matches`](struct@op::Matches) | [`MatchTwin<TextMatchQuery>`](MatchTwin) |
+//! | type | marker method | operator | query term |
+//! |---|---|---|---|
+//! | `TextEq` | `eq` | [`op::Eq`](struct@op::Eq) | `TextEqQuery` |
+//! | `SmallintEq` | `eq` | [`op::Eq`](struct@op::Eq) | `SmallintEqQuery` |
+//! | `IntegerEq` | `eq` | [`op::Eq`](struct@op::Eq) | `IntegerEqQuery` |
+//! | `BigintEq` | `eq` | [`op::Eq`](struct@op::Eq) | `BigintEqQuery` |
+//! | `RealEq` | `eq` | [`op::Eq`](struct@op::Eq) | `RealEqQuery` |
+//! | `DoubleEq` | `eq` | [`op::Eq`](struct@op::Eq) | `DoubleEqQuery` |
+//! | `DateEq` | `eq` | [`op::Eq`](struct@op::Eq) | `DateEqQuery` |
+//! | `TimestampEq` | `eq` | [`op::Eq`](struct@op::Eq) | `TimestampEqQuery` |
+//! | `NumericEq` | `eq` | [`op::Eq`](struct@op::Eq) | `NumericEqQuery` |
+//! | `TextMatch` | `matches` | [`op::Matches`](struct@op::Matches) | [`MatchTwin<TextMatchQuery>`](MatchTwin) |
 //!
 //! eql-codegen writes those impls from the catalog, by the rule Stack
 //! Encrypt's data path answers an EQL type's operators with: `Eq` through
 //! the equality index, `Matches` through the match index. Each type is also
-//! an [`op::LabelledTarget`], which is what lets its plan be queried. The
-//! ordered types (`IntegerOrdOre`, `TextOrd` and the rest) are not produced
-//! yet, so they answer nothing. An operator a type does not answer does not
-//! compile, and neither does naming another index with `.via(..)`: the
-//! plan sends the type's twin or nothing.
+//! an [`op::LabelledTarget`], which is what lets its marker be queried. The
+//! ordered types (`IntegerOrd`, `TextOrdOre` and the rest) and the text
+//! search types answer nothing from a marker yet: their twins need an order
+//! term, or several terms at once, and a marker's query sends one index's
+//! term. Query them through the data path
+//! (`stack_encrypt::dynamic::query_term`). An operator a type does not
+//! answer does not compile. A marker names its field's type and no index,
+//! so a query cannot send another index's term in place of the type's twin.
 //!
-//! The query is derived under the plan's label, which must name the column
-//! the value was written under: a two-segment label, table then column, is
-//! the [`Identifier`] the value stores, so
-//! `"users/email"` queries values written with
-//! `Identifier::for_column("users", "email")`. A label's segments are plain
-//! ([`Label`]): none may start with a digit or `-`, for
-//! instance, though `Identifier::for_column` takes such a name. A column
-//! whose table or column name is not a plain segment can be written but
-//! not named on a plan, so it cannot be queried this way. A label of any other length
-//! names no column, so the awaited query refuses it, before any keyset is
-//! resolved or term derived.
+//! The query is derived under the marker's label: the record's scope, then
+//! the field's name (or its `identity`). That is the column the field
+//! stores in `i`, so a marker of the field `email` of a record with
+//! `scope = "users"` queries the values written under
+//! `Identifier::for_column("users", "email")`, by the record or by the
+//! type on its own. A marker's label always has those two segments, so it
+//! always names a column. The derive accepts only plain segments
+//! ([`Label`]): none may start with a digit or `-`, for instance, though
+//! `Identifier::for_column` takes such a name. A column whose table or
+//! column name is not a plain segment can be written by the type on its
+//! own, but it cannot be a record field, so it cannot be queried this way.
 //!
-//! A query can carry a scope: `.scope(..)` on a query from a record
-//! field's marker, or the chain's `.extend(..)` on a plan's query. Its term
-//! is then derived under the column and the scope, and matches the values
-//! a record stored under the same scope. The twin stores the column alone,
-//! as the stored value does: a scope is never stored in `i`.
-//!
-//! The plan is for queries. Stack Encrypt runs a plan's encryption under
-//! the label, and an EQL type is sealed under its column instead, so write
-//! with `value.encrypt_into_with_context(&keyset, column)` and open with
-//! `P::decrypt_from_with_context(stored, &keyset, column)`, as the
-//! [encryption example](super#example) does.
+//! A record can list a scope, such as a tenant. A query from its marker
+//! then takes the scope with `.scope(..)` before it can be encrypted. Its
+//! term is derived under the column and the scope, and matches the values
+//! the record stored under the same scope. The twin stores the column
+//! alone, as the stored value does: a scope is never stored in `i`.
 //!
 //! The query is the bytes Stack Encrypt's data path derives for a field
 //! that names the same type (`stack_encrypt::dynamic::query_term`), which
@@ -59,72 +62,92 @@
 //!
 //! The code below is executed by `cargo test -p eql-encryption-tests --test
 //! query_example`, for the reason the [encryption example](super#example)
-//! gives.
+//! gives. It derives `zeroize::Zeroize` for its plaintext struct, so it
+//! also needs `zeroize` with its `derive` feature.
 #![doc = concat!("```rust,ignore\n", include_str!("query_example.rs"), "\n```")]
 //!
 //! # Operators a type does not answer
 //!
-//! A plan for `TextEq` answers `Eq`:
-//! ```no_run
+//! A `TextEq` field answers `eq`:
+//! ```
 //! use eql_bindings::v4::text::TextEq;
-//! use stack_encrypt::plan::{Typed, ValuePlan};
-//! use stack_encrypt::{op, StackCipher};
-//! fn query<K: 'static>(cipher: &StackCipher<K>, plan: &ValuePlan<String, Typed<TextEq>>) {
-//!     let _ = cipher.query(op::Eq, "bob").on(plan);
+//! use stack_encrypt::EncryptTarget;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User {
+//!     email: String,
 //! }
+//!
+//! #[derive(EncryptTarget)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     email: TextEq,
+//! }
+//!
+//! let _ = EncryptedUser::EMAIL.eq("bob");
 //! ```
 //! and no ordering, since `TextEq` carries no order term:
 //! ```compile_fail
 //! use eql_bindings::v4::text::TextEq;
-//! use stack_encrypt::plan::{Typed, ValuePlan};
-//! use stack_encrypt::{op, StackCipher};
-//! fn query<K: 'static>(cipher: &StackCipher<K>, plan: &ValuePlan<String, Typed<TextEq>>) {
-//!     let _ = cipher.query(op::Lt, "bob").on(plan);
+//! use stack_encrypt::EncryptTarget;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User {
+//!     email: String,
 //! }
+//!
+//! #[derive(EncryptTarget)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     email: TextEq,
+//! }
+//!
+//! let _ = EncryptedUser::EMAIL.lt("bob");
 //! ```
-//! A plan for `IntegerEq` answers `Eq`:
-//! ```no_run
+//! An `IntegerEq` field answers `eq`:
+//! ```
 //! use eql_bindings::v4::integer::IntegerEq;
-//! use stack_encrypt::plan::{Typed, ValuePlan};
-//! use stack_encrypt::{op, StackCipher};
-//! fn query<K: 'static>(cipher: &StackCipher<K>, plan: &ValuePlan<i32, Typed<IntegerEq>>) {
-//!     let _ = cipher.query(op::Eq, &42).on(plan);
+//! use stack_encrypt::EncryptTarget;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User {
+//!     age: i32,
 //! }
+//!
+//! #[derive(EncryptTarget)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     age: IntegerEq,
+//! }
+//!
+//! let _ = EncryptedUser::AGE.eq(42i32);
 //! ```
 //! and no text match:
 //! ```compile_fail
 //! use eql_bindings::v4::integer::IntegerEq;
-//! use stack_encrypt::plan::{Typed, ValuePlan};
-//! use stack_encrypt::{op, StackCipher};
-//! fn query<K: 'static>(cipher: &StackCipher<K>, plan: &ValuePlan<i32, Typed<IntegerEq>>) {
-//!     let _ = cipher.query(op::Matches, &42).on(plan);
+//! use stack_encrypt::EncryptTarget;
+//! use zeroize::Zeroize;
+//!
+//! #[derive(Zeroize)]
+//! struct User {
+//!     age: i32,
 //! }
-//! ```
-//! Nor does a plan for `TextEq` take another index, whose term the type's
-//! SQL would not take, such as the bare equality index:
-//! ```compile_fail
-//! use eql_bindings::v4::text::TextEq;
-//! use stack_encrypt::plan::{Typed, ValuePlan};
-//! use stack_encrypt::{op, Equality, StackCipher};
-//! fn query<K: 'static>(cipher: &StackCipher<K>, plan: &ValuePlan<String, Typed<TextEq>>) {
-//!     let _ = cipher.query(op::Eq, "bob").via(Equality).on(plan);
+//!
+//! #[derive(EncryptTarget)]
+//! #[stash(struct = User, scope = "users")]
+//! struct EncryptedUser {
+//!     age: IntegerEq,
 //! }
+//!
+//! let _ = EncryptedUser::AGE.matches("42");
 //! ```
-//! or another type's twin index, which answers that type's plaintext only:
-//! ```compile_fail
-//! use eql_bindings::encryption::query::TwinIndex;
-//! use eql_bindings::v4::integer::IntegerEqQuery;
-//! use eql_bindings::v4::text::TextEq;
-//! use stack_encrypt::plan::{Typed, ValuePlan};
-//! use stack_encrypt::{op, Equality, StackCipher};
-//! fn query<K: 'static>(cipher: &StackCipher<K>, plan: &ValuePlan<String, Typed<TextEq>>) {
-//!     let index = TwinIndex::<Equality, IntegerEqQuery>::default();
-//!     let _ = cipher.query(op::Eq, "bob").via(index).on(plan);
-//! }
+//! The index a type answers through is a [`TwinIndex`]. It answers for its
+//! twin's own plaintext only ([`QueryTwin::Plaintext`]): `TextEqQuery`'s
+//! for a `String`,
 //! ```
-//! The twin index answers for its twin's own plaintext only
-//! ([`QueryTwin::Plaintext`]): `TextEqQuery`'s for a `String`,
-//! ```no_run
 //! use eql_bindings::encryption::query::TwinIndex;
 //! use eql_bindings::v4::text::TextEqQuery;
 //! use stack_encrypt::{op, Equality};
@@ -177,7 +200,7 @@ use crate::Identifier;
 pub trait QueryTwin<T>: Sized {
     /// The plaintext the twin's type is produced from: `String` for
     /// `TextEqQuery`, `i32` for `IntegerEqQuery`. A [`TwinIndex`] answers
-    /// for this plaintext only, so no plan can send one type's twin for
+    /// for this plaintext only, so no query can send one type's twin for
     /// another type's value.
     type Plaintext;
     /// The twin of `term`, derived under `column`.
@@ -187,10 +210,11 @@ pub trait QueryTwin<T>: Sized {
 /// The index an EQL v4 type answers an operator through: Stack Encrypt's
 /// index `I`, whose query term is sent as the type's query twin `Q`.
 ///
-/// It derives exactly what `I` derives, under the plan's label and any
-/// scope the query carries, and checks and refuses what `I` refuses, as
-/// well as a label that names no column; it then writes the term into the
-/// twin, with the column the label names. It answers for the twin's own plaintext
+/// It derives exactly what `I` derives, under the label of the field's
+/// marker and any scope the query carries, and checks and refuses what `I`
+/// refuses, as well as a label that names no column; it then writes the
+/// term into the twin, with the column the label names. It answers for the
+/// twin's own plaintext
 /// ([`QueryTwin::Plaintext`]) only. `TextEq` answers [`op::Eq`](struct@op::Eq) through
 /// `TwinIndex<Equality, TextEqQuery>`, and `TextMatch` answers
 /// [`op::Matches`](struct@op::Matches) through
@@ -227,8 +251,8 @@ impl<I: fmt::Debug, Q> fmt::Debug for TwinIndex<I, Q> {
     }
 }
 
-/// The index `I`, unchanged: the same spec, so a plan holds it as it holds
-/// `I`, and the same derivation, so its term is `I`'s.
+/// The index `I`, unchanged: the same spec, so it is declared as `I` is,
+/// and the same derivation, so its term is `I`'s.
 impl<S, I: Index<S>, Q> Index<S> for TwinIndex<I, Q> {
     type Term = I::Term;
     fn spec(&self) -> IndexSpec {
@@ -245,8 +269,8 @@ impl<S, I: Index<S>, Q> Index<S> for TwinIndex<I, Q> {
 }
 
 /// Refuse a label no EQL query value can record: one that names no column
-/// (it must be two segments, table then column). Before any keyset is
-/// resolved or term derived.
+/// (it must be two segments, table then column). Before any term is
+/// derived.
 ///
 /// A scope the query carries is not refused. The twin stores the column
 /// alone, and so does a value a record stored under that scope: the scope
@@ -261,8 +285,12 @@ fn check_column(label: &Label) -> Result<(), Error> {
 }
 
 /// Why a typed query on an EQL v4 type was refused for its context, before
-/// any keyset was resolved. It arrives as [`Error::Other`]; match it with
+/// any term was derived. It arrives as [`Error::Other`]; match it with
 /// `downcast_ref::<QueryLabelError>()`.
+///
+/// The label of a derived record's field marker is the record's scope and
+/// the field's name, two segments, so a query from such a marker is never
+/// refused this way.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum QueryLabelError {
@@ -288,8 +316,8 @@ impl fmt::Display for QueryLabelError {
 
 impl std::error::Error for QueryLabelError {}
 
-/// The column a query's label names. The chain calls `query` only after
-/// `check_label` accepted the label (`Supports::query`), and every
+/// The column a query's label names. A marker's query calls `query` only
+/// after `check_label` accepted the label (`Supports::query`), and every
 /// `Supports` impl here delegates `check_label` to [`check_column`], so the
 /// label is two segments; a label that is not would be a broken invariant,
 /// and fails here rather than as a twin with an empty column.

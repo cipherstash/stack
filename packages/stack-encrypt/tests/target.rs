@@ -1,8 +1,10 @@
-//! Target-directed encryption tests: leaf `EncryptFrom`/`DecryptInto`
-//! implementations, a hand-written composite record (the shape a future
-//! derive will emit), a "third-party" term type built on the public extension
-//! surface only, and — the point of the design — proof that however large the
-//! assembly, settling it is one batched ZeroKMS call per request kind.
+//! Target-directed encryption tests, through the owned entry points
+//! (`EncryptInto` and `DecryptFrom`): the leaf targets' `EncryptTarget` and
+//! `DecryptSource` declarations, a hand-written composite record, a
+//! "third-party" term type built on the public extension surface only, and
+//! hand-written trees that give a subtree a context of its own. The point of
+//! the design is proved here too: however large the assembly, settling it
+//! is one batched ZeroKMS call per request kind.
 
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -10,12 +12,15 @@ use std::sync::Arc;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OreTerm};
 use stack_encrypt::target::{
-    ciphertext, equality, CallerContext, DeclaredContext, DecryptInto, Decryption, EncryptFrom,
-    Encryption, Pending, Request,
+    ciphertext, equality, CallerContext, DeclaredContext, DecryptSource, Decryption, EncryptTarget,
+    Encryption, NoCallerContext, Pending, Request, RequiredContext,
 };
-use stack_encrypt::{nonempty, EmptyError, Error, NonEmpty, StackCipher, StackCipherText};
+use stack_encrypt::{
+    nonempty, DecryptFrom, EmptyError, EncryptInto, Error, NonEmpty, StackCipher, StackCipherText,
+};
 use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
+use zeroize::Zeroize;
 
 mod common;
 use common::{counting_cipher, stack_cipher};
@@ -35,8 +40,9 @@ async fn equality_leaf_agrees_with_the_descriptor_api() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let via_target: EqualityTerm = generator
-        .encrypt_as(&"alice", nonempty!("users/email").into())
+    let via_target: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/email"))
         .await
         .unwrap();
     let via_descriptor = generator
@@ -60,22 +66,24 @@ async fn terms_agree_between_independently_built_ciphers() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let a: EqualityTerm = cipher
-        .encrypt_as(&"alice", nonempty!("users/email").into())
+    let a: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&cipher, nonempty!("users/email"))
         .await
         .unwrap();
-    let b: EqualityTerm = generator
-        .encrypt_as(&"alice", nonempty!("users/email").into())
+    let b: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/email"))
         .await
         .unwrap();
     assert_eq!(a, b);
 
-    let a: OreTerm<u64> = cipher
-        .encrypt_as(&7u64, nonempty!("users/n").into())
+    let a: OreTerm<u64> = 7u64
+        .encrypt_into_with_context(&cipher, nonempty!("users/n"))
         .await
         .unwrap();
-    let b: OreTerm<u64> = generator
-        .encrypt_as(&7u64, nonempty!("users/n").into())
+    let b: OreTerm<u64> = 7u64
+        .encrypt_into_with_context(&generator, nonempty!("users/n"))
         .await
         .unwrap();
     assert_eq!(a, b);
@@ -86,12 +94,14 @@ async fn equality_leaf_binds_the_context() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let email: EqualityTerm = generator
-        .encrypt_as(&"alice", nonempty!("users/email").into())
+    let email: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/email"))
         .await
         .unwrap();
-    let name: EqualityTerm = generator
-        .encrypt_as(&"alice", nonempty!("users/name").into())
+    let name: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/name"))
         .await
         .unwrap();
 
@@ -108,12 +118,13 @@ async fn term_derivation_makes_no_kms_calls() {
     let (cipher, generates, retrieves) = counting_cipher().await;
     let cipher = cipher.default_keyset();
 
-    let _term: EqualityTerm = cipher
-        .encrypt_as(&"alice", nonempty!("users/email").into())
+    let _term: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&cipher, nonempty!("users/email"))
         .await
         .unwrap();
-    let _ore: OreTerm<u64> = cipher
-        .encrypt_as(&7u64, nonempty!("users/age").into())
+    let _ore: OreTerm<u64> = 7u64
+        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
         .await
         .unwrap();
 
@@ -122,18 +133,19 @@ async fn term_derivation_makes_no_kms_calls() {
 }
 
 #[tokio::test]
-async fn ciphertext_leaf_round_trips_via_decrypt_into() {
+async fn ciphertext_leaf_round_trips_via_decrypt_from() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let ciphertext: StackCipherText = keyset
-        .encrypt_as(&"secret".to_string(), nonempty!("users/email").into())
+    let ciphertext: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
         .await
         .unwrap();
-    let plaintext: String = cipher
-        .decrypt_as(ciphertext, nonempty!("users/email").into())
-        .await
-        .unwrap();
+    let plaintext: String =
+        String::decrypt_from_with_context(ciphertext, &cipher, nonempty!("users/email"))
+            .await
+            .unwrap();
 
     assert_eq!(plaintext, "secret");
 }
@@ -143,14 +155,14 @@ async fn ciphertext_leaf_cannot_be_transplanted_to_another_context() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let ciphertext: StackCipherText = keyset
-        .encrypt_as(&"secret".to_string(), nonempty!("users/email").into())
+    let ciphertext: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
         .await
         .unwrap();
 
-    let transplanted: Result<String, _> = cipher
-        .decrypt_as(ciphertext, nonempty!("users/name").into())
-        .await;
+    let transplanted: Result<String, _> =
+        String::decrypt_from_with_context(ciphertext, &cipher, nonempty!("users/name")).await;
     assert!(
         transplanted.is_err(),
         "the context is bound into the AAD, so a ciphertext must not decrypt under another field's context"
@@ -162,15 +174,14 @@ async fn match_leaf_supports_containment_queries() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let stored: MatchTerms = generator
-        .encrypt_as(
-            &"alice wonderland".to_string(),
-            nonempty!("users/bio").into(),
-        )
+    let stored: MatchTerms = "alice wonderland"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
         .unwrap();
-    let query: MatchTerms = generator
-        .encrypt_as(&"wonder".to_string(), nonempty!("users/bio").into())
+    let query: MatchTerms = "wonder"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
         .unwrap();
 
@@ -207,22 +218,18 @@ async fn match_leaf_config_is_type_level() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let term: MatchTerms<SmallFilter> = generator
-        .encrypt_as(
-            &"a longer piece of text".to_string(),
-            nonempty!("users/bio").into(),
-        )
+    let term: MatchTerms<SmallFilter> = "a longer piece of text"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
         .unwrap();
     assert!(term.positions().iter().all(|&p| u32::from(p) < 64));
 
     // The same text under the default config is a different (larger-filter)
     // term — and a different type, so the two cannot be compared by mistake.
-    let default_term: MatchTerms = generator
-        .encrypt_as(
-            &"a longer piece of text".to_string(),
-            nonempty!("users/bio").into(),
-        )
+    let default_term: MatchTerms = "a longer piece of text"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
         .unwrap();
     assert_ne!(term.positions(), default_term.positions());
@@ -233,20 +240,20 @@ async fn ore_leaf_preserves_order_and_binds_the_context() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let ten: OreTerm<u64> = generator
-        .encrypt_as(&10u64, nonempty!("users/age").into())
+    let ten: OreTerm<u64> = 10u64
+        .encrypt_into_with_context(&generator, nonempty!("users/age"))
         .await
         .unwrap();
-    let ten_again: OreTerm<u64> = generator
-        .encrypt_as(&10u64, nonempty!("users/age").into())
+    let ten_again: OreTerm<u64> = 10u64
+        .encrypt_into_with_context(&generator, nonempty!("users/age"))
         .await
         .unwrap();
-    let twenty: OreTerm<u64> = generator
-        .encrypt_as(&20u64, nonempty!("users/age").into())
+    let twenty: OreTerm<u64> = 20u64
+        .encrypt_into_with_context(&generator, nonempty!("users/age"))
         .await
         .unwrap();
-    let other_field: OreTerm<u64> = generator
-        .encrypt_as(&10u64, nonempty!("users/height").into())
+    let other_field: OreTerm<u64> = 10u64
+        .encrypt_into_with_context(&generator, nonempty!("users/height"))
         .await
         .unwrap();
 
@@ -262,12 +269,12 @@ async fn ope_leaf_compares_with_plain_byte_order() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let ten: OpeTerm<u64> = generator
-        .encrypt_as(&10u64, nonempty!("users/age").into())
+    let ten: OpeTerm<u64> = 10u64
+        .encrypt_into_with_context(&generator, nonempty!("users/age"))
         .await
         .unwrap();
-    let twenty: OpeTerm<u64> = generator
-        .encrypt_as(&20u64, nonempty!("users/age").into())
+    let twenty: OpeTerm<u64> = 20u64
+        .encrypt_into_with_context(&generator, nonempty!("users/age"))
         .await
         .unwrap();
 
@@ -283,8 +290,8 @@ async fn a_column_encrypts_in_one_batched_call() {
     let cipher = cipher.default_keyset();
 
     let ages: Vec<u32> = vec![29, 34, 41, 34, 57];
-    let sealed: Vec<StackCipherText> = cipher
-        .encrypt_as(&ages, nonempty!("users/age").into())
+    let sealed: Vec<StackCipherText> = ages
+        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
         .await
         .unwrap();
 
@@ -302,15 +309,16 @@ async fn a_column_decrypts_in_one_batched_call() {
     let keyset = cipher.default_keyset();
 
     let ages: Vec<u32> = vec![29, 34, 41];
-    let sealed: Vec<StackCipherText> = keyset
-        .encrypt_as(&ages, nonempty!("users/age").into())
+    let sealed: Vec<StackCipherText> = ages
+        .clone()
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .unwrap();
 
-    let roundtrip: Vec<u32> = cipher
-        .decrypt_as(sealed, nonempty!("users/age").into())
-        .await
-        .unwrap();
+    let roundtrip: Vec<u32> =
+        Vec::<u32>::decrypt_from_with_context(sealed, &cipher, nonempty!("users/age"))
+            .await
+            .unwrap();
 
     assert_eq!(roundtrip, ages);
     assert_eq!(
@@ -325,33 +333,30 @@ async fn optional_fields_encrypt_and_decrypt_structurally() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let present: Option<StackCipherText> = keyset
-        .encrypt_as(
-            &Some("here".to_string()),
-            nonempty!("users/nickname").into(),
-        )
+    let present: Option<StackCipherText> = Some("here".to_string())
+        .encrypt_into_with_context(&keyset, nonempty!("users/nickname"))
         .await
         .unwrap();
-    let absent: Option<StackCipherText> = keyset
-        .encrypt_as(&Option::<String>::None, nonempty!("users/nickname").into())
+    let absent: Option<StackCipherText> = Option::<String>::None
+        .encrypt_into_with_context(&keyset, nonempty!("users/nickname"))
         .await
         .unwrap();
 
     assert!(present.is_some());
     assert!(absent.is_none());
 
-    let roundtrip: Option<String> = cipher
-        .decrypt_as(present, nonempty!("users/nickname").into())
-        .await
-        .unwrap();
+    let roundtrip: Option<String> =
+        Option::<String>::decrypt_from_with_context(present, &cipher, nonempty!("users/nickname"))
+            .await
+            .unwrap();
     assert_eq!(roundtrip.as_deref(), Some("here"));
 }
 
 // --- A hand-written composite record ----------------------------------------
 //
-// The shape a `#[derive(EncryptFrom)]` will emit: one impl, pendings combined
-// with zip/map (never awaited), one context fanning out to every field, the
-// caller seeing a single await — and a single batched call.
+// The shape a `plaintext = T` derive emits: one declaration, operations
+// combined with zip/map (never awaited), one context fanning out to every
+// field, the caller seeing a single await — and a single batched call.
 
 /// "An encrypted `u32`, stored as its ciphertext plus an equality term and an
 /// ORE term" — an EQL `integer_ord_ore`-shaped record, minus the EQL.
@@ -361,26 +366,29 @@ struct EncryptedAge {
     ob: OreTerm<u32>,
 }
 
-impl EncryptFrom<u32> for EncryptedAge {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, u32, Self, K, Self::Context>
+impl EncryptTarget<u32> for EncryptedAge {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, u32, Self, K, Self::ContextInput>
     where
         u32: 's,
     {
         // One context reaches all three; there is no second one to pass.
         // The ciphertext seals under the AEAD half of the one context the
-        // terms derive under: `accepting` lets it take theirs.
+        // terms derive under: `accepting` lets it take theirs. The last
+        // `accepting` takes that one context out of the caller's required
+        // input.
         stack_encrypt::target::ciphertext()
-            .accepting()
+            .accepting::<CallerContext>()
             .zip(stack_encrypt::target::equality())
             .zip(stack_encrypt::target::ore())
             .map(|((c, hm), ob)| Self { c, hm, ob })
+            .accepting()
     }
 }
-impl DecryptInto<u32> for EncryptedAge {
-    type Context = CallerContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<u32, K> {
-        stack_encrypt::target::open(self.c, context)
+impl DecryptSource<u32> for EncryptedAge {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<u32, K> {
+        stack_encrypt::target::open(self.c, context.into_inner())
     }
 }
 
@@ -391,32 +399,31 @@ async fn composite_record_encrypts_every_field_from_one_source() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let record: EncryptedAge = keyset
-        .encrypt_as(&42u32, nonempty!("users/age").into())
+    let record: EncryptedAge = 42u32
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .unwrap();
 
     // The ciphertext round-trips through the decrypt mirror.
-    let plaintext: u32 = cipher
-        .decrypt_as(record, nonempty!("users/age").into())
+    let plaintext: u32 = u32::decrypt_from_with_context(record, &cipher, nonempty!("users/age"))
         .await
         .unwrap();
     assert_eq!(plaintext, 42);
 
     // Each term matches what the primitive would derive on its own, so query
     // terms generated leaf-by-leaf find records encrypted as composites.
-    let record: EncryptedAge = keyset
-        .encrypt_as(&42u32, nonempty!("users/age").into())
+    let record: EncryptedAge = 42u32
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .unwrap();
-    let hm: EqualityTerm = generator
-        .encrypt_as(&42u32, nonempty!("users/age").into())
+    let hm: EqualityTerm = 42u32
+        .encrypt_into_with_context(&generator, nonempty!("users/age"))
         .await
         .unwrap();
     assert_eq!(record.hm, hm);
 
-    let ob: OreTerm<u32> = generator
-        .encrypt_as(&42u32, nonempty!("users/age").into())
+    let ob: OreTerm<u32> = 42u32
+        .encrypt_into_with_context(&generator, nonempty!("users/age"))
         .await
         .unwrap();
     assert_eq!(record.ob, ob);
@@ -427,8 +434,8 @@ async fn a_composite_record_is_one_batched_call() {
     let (cipher, generates, _) = counting_cipher().await;
     let cipher = cipher.default_keyset();
 
-    let _record: EncryptedAge = cipher
-        .encrypt_as(&42u32, nonempty!("users/age").into())
+    let _record: EncryptedAge = 42u32
+        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
         .await
         .unwrap();
     assert_eq!(
@@ -439,8 +446,8 @@ async fn a_composite_record_is_one_batched_call() {
 
     // A whole column of records: still one call.
     let ages: Vec<u32> = vec![10, 20, 30];
-    let _column: Vec<EncryptedAge> = cipher
-        .encrypt_as(&ages, nonempty!("users/age").into())
+    let _column: Vec<EncryptedAge> = ages
+        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
         .await
         .unwrap();
     assert_eq!(
@@ -455,12 +462,12 @@ async fn composite_record_terms_preserve_order() {
     let cipher = stack_cipher().await;
     let cipher = cipher.default_keyset();
 
-    let ten: EncryptedAge = cipher
-        .encrypt_as(&10u32, nonempty!("users/age").into())
+    let ten: EncryptedAge = 10u32
+        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
         .await
         .unwrap();
-    let twenty: EncryptedAge = cipher
-        .encrypt_as(&20u32, nonempty!("users/age").into())
+    let twenty: EncryptedAge = 20u32
+        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
         .await
         .unwrap();
 
@@ -471,28 +478,30 @@ async fn composite_record_terms_preserve_order() {
 // cryptographic implementation. Prefix tokenization would need a core operation.
 #[derive(Debug, PartialEq, Eq)]
 struct StoredEquality([u8; 32]);
-impl<S> EncryptFrom<S> for StoredEquality
+impl<S: Zeroize> EncryptTarget<S> for StoredEquality
 where
-    EqualityTerm: EncryptFrom<S>,
+    EqualityTerm: EncryptTarget<S>,
 {
-    type Context = <EqualityTerm as EncryptFrom<S>>::Context;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    type ContextInput = <EqualityTerm as EncryptTarget<S>>::ContextInput;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
         S: 's,
     {
-        <EqualityTerm as EncryptFrom<S>>::encryption().map(|term| Self(term.into_bytes()))
+        <EqualityTerm as EncryptTarget<S>>::encryption().map(|term| Self(term.into_bytes()))
     }
 }
 #[tokio::test]
 async fn third_party_output_wraps_a_core_term() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
-    let stored: StoredEquality = keyset
-        .encrypt_as(&"alice", nonempty!("users/name").into())
+    let stored: StoredEquality = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .unwrap();
-    let canonical: EqualityTerm = keyset
-        .encrypt_as(&"alice", nonempty!("users/name").into())
+    let canonical: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .unwrap();
     assert_eq!(
@@ -588,62 +597,58 @@ async fn wrapped_and_extended_contexts_bind_like_plain_ones() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let sealed: StackCipherText = keyset
-        .encrypt_as(
-            &"secret".to_string(),
-            NonEmpty::new(Some("users/email")).unwrap().into(),
-        )
+    let sealed: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into_with_context(&keyset, NonEmpty::new(Some("users/email")).unwrap())
         .await
         .unwrap();
-    let opened: String = cipher
-        .decrypt_as(sealed, NonEmpty::new(Some("users/email")).unwrap().into())
-        .await
-        .unwrap();
+    let opened: String = String::decrypt_from_with_context(
+        sealed,
+        &cipher,
+        NonEmpty::new(Some("users/email")).unwrap(),
+    )
+    .await
+    .unwrap();
     assert_eq!(opened, "secret");
 
     // Extended with a row id: opens under the same pair, and only there.
     // (Against the fake key source the AEAD refuses; ZeroKMS refuses the
     // key retrieval under the other descriptor first, as `Error::Kms`.)
-    let sealed: StackCipherText = keyset
-        .encrypt_as(
-            &"secret".to_string(),
-            nonempty!("users/email").with(42u64).into(),
-        )
+    let sealed: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/email").with(42u64))
         .await
         .unwrap();
-    let wrong_row: Result<String, _> = cipher
-        .decrypt_as(sealed, nonempty!("users/email").with(43u64).into())
-        .await;
+    let wrong_row: Result<String, _> =
+        String::decrypt_from_with_context(sealed, &cipher, nonempty!("users/email").with(43u64))
+            .await;
     assert!(matches!(wrong_row, Err(Error::Aead)));
-    let sealed: StackCipherText = keyset
-        .encrypt_as(
-            &"secret".to_string(),
-            nonempty!("users/email").with(42u64).into(),
-        )
+    let sealed: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/email").with(42u64))
         .await
         .unwrap();
-    let no_row: Result<String, _> = cipher
-        .decrypt_as(sealed, nonempty!("users/email").into())
-        .await;
+    let no_row: Result<String, _> =
+        String::decrypt_from_with_context(sealed, &cipher, nonempty!("users/email")).await;
     assert!(matches!(no_row, Err(Error::Aead)));
 
     // The pair encodes as the bare tuple would: a term under the extended
     // context equals one under the plain pair, so a query site need not
     // hold a `NonEmpty` head to probe.
-    let extended: EqualityTerm = keyset
-        .encrypt_as(&"alice", nonempty!("users/email").with(42u64).into())
+    let extended: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/email").with(42u64))
         .await
         .unwrap();
-    let plain: EqualityTerm = keyset
-        .encrypt_as(
-            &"alice",
-            NonEmpty::new(("users/email", 42u64)).unwrap().into(),
-        )
+    let plain: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, NonEmpty::new(("users/email", 42u64)).unwrap())
         .await
         .unwrap();
     assert_eq!(extended, plain);
-    let unextended: EqualityTerm = keyset
-        .encrypt_as(&"alice", nonempty!("users/email").into())
+    let unextended: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
         .await
         .unwrap();
     assert_ne!(extended, unextended);
@@ -656,44 +661,54 @@ async fn a_bare_integer_is_a_context() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let sealed: StackCipherText = keyset
-        .encrypt_as(&"secret".to_string(), 42u64.into())
+    let sealed: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into_with_context(&keyset, 42u64)
         .await
         .unwrap();
-    let opened: String = cipher
-        .decrypt_as(sealed, NonEmpty::from(42u64).into())
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, NonEmpty::from(42u64))
         .await
         .unwrap();
     assert_eq!(opened, "secret");
-    let term: EqualityTerm = keyset.encrypt_as(&"alice", 7u32.into()).await.unwrap();
-    let other: EqualityTerm = keyset.encrypt_as(&"alice", 8u32.into()).await.unwrap();
+    let term: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, 7u32)
+        .await
+        .unwrap();
+    let other: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, 8u32)
+        .await
+        .unwrap();
     assert_ne!(term, other);
 }
 
 #[tokio::test]
 async fn containers_pass_the_context_through_to_their_leaves() {
     // `Vec` and `Option` hand the context on untouched, and so hand on the
-    // obligation: a column of leaves is `EncryptFrom<_, _, Ctx>` only for a
-    // `NonEmpty<_>` (`tests/ui/leaf_without_context.rs`), a column of
-    // derived rows — records whose fields carry their own contexts — for
-    // `()` as well. An empty container derives nothing either way.
+    // obligation: their context input is the element target's, so a column
+    // of leaves requires a context as one leaf does. An empty container
+    // derives nothing either way.
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let none: Option<StackCipherText> = keyset
-        .encrypt_as(&None::<String>, nonempty!("users/x").into())
+    let none: Option<StackCipherText> = None::<String>
+        .encrypt_into_with_context(&keyset, nonempty!("users/x"))
         .await
         .unwrap();
     assert!(none.is_none());
-    let empty: Vec<StackCipherText> = keyset
-        .encrypt_as(&Vec::<String>::new(), nonempty!("users/x").into())
+    let empty: Vec<StackCipherText> = Vec::<String>::new()
+        .encrypt_into_with_context(&keyset, nonempty!("users/x"))
         .await
         .unwrap();
     assert!(empty.is_empty());
-    let empty: Vec<String> = cipher
-        .decrypt_as(Vec::<StackCipherText>::new(), nonempty!("users/x").into())
-        .await
-        .unwrap();
+    let empty: Vec<String> = Vec::<String>::decrypt_from_with_context(
+        Vec::<StackCipherText>::new(),
+        &cipher,
+        nonempty!("users/x"),
+    )
+    .await
+    .unwrap();
     assert!(empty.is_empty());
 }
 
@@ -701,9 +716,9 @@ async fn containers_pass_the_context_through_to_their_leaves() {
 /// the shape of a derived record whose stored context fails validation.
 /// Counts how many times it was asked to declare.
 struct Refused(Arc<AtomicUsize>);
-impl DecryptInto<u32> for Refused {
-    type Context = CallerContext;
-    fn decryption<K: 'static>(self, _: Self::Context) -> Decryption<u32, K> {
+impl DecryptSource<u32> for Refused {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn decryption<K: 'static>(self, _: Self::ContextInput) -> Decryption<u32, K> {
         self.0.fetch_add(1, AtomicOrdering::SeqCst);
         Decryption::failed(Error::NotOpened)
     }
@@ -718,9 +733,12 @@ async fn a_column_stops_declaring_at_the_first_refused_row() {
     // `Vec<T>` declares its rows lazily and the collection stops at the
     // first refusal: the rows after it are never asked, and nothing is
     // retrieved.
-    let result: Result<Vec<u32>, _> = cipher
-        .decrypt_as(column, CallerContext::from(nonempty!("users/age")))
-        .await;
+    let result: Result<Vec<u32>, _> = Vec::<u32>::decrypt_from_with_context(
+        column,
+        &cipher,
+        CallerContext::from(nonempty!("users/age")),
+    )
+    .await;
     assert!(matches!(result, Err(Error::NotOpened)), "{result:?}");
     assert_eq!(declared.load(AtomicOrdering::SeqCst), 1);
     assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
@@ -735,16 +753,21 @@ async fn a_failed_field_fails_the_record_before_any_kms_call() {
     let cipher = cipher.default_keyset();
     let b = "b".to_string();
 
-    let zipped = cipher
-        .encrypt_as::<_, MatchTerms<TooManyHashes>>(&"abc", nonempty!("users/x").into())
-        .zip(cipher.encrypt_as::<_, StackCipherText>(&b, nonempty!("users/x").into()))
+    let zipped = "abc"
+        .to_string()
+        .encrypt_into_with_context::<MatchTerms<TooManyHashes>, _>(&cipher, nonempty!("users/x"))
+        .zip(
+            b.clone()
+                .encrypt_into_with_context::<StackCipherText, _>(&cipher, nonempty!("users/x")),
+        )
         .await;
     assert!(matches!(zipped, Err(Error::Term(_))));
 
     let column = Pending::all(
         &cipher,
         vec![
-            cipher.encrypt_as::<_, StackCipherText>(&b, nonempty!("users/x").into()),
+            b.clone()
+                .encrypt_into_with_context::<StackCipherText, _>(&cipher, nonempty!("users/x")),
             Pending::failed(&cipher, Error::NotOpened),
         ],
     )
@@ -778,9 +801,13 @@ async fn pendings_from_two_ciphers_over_the_same_keyset_merge() {
     let v = "v".to_string();
     let w = "w".to_string();
 
-    let zipped = cipher_a
-        .encrypt_as::<_, StackCipherText>(&v, nonempty!("users/x").into())
-        .zip(cipher_b.encrypt_as::<_, StackCipherText>(&w, nonempty!("users/x").into()))
+    let zipped = v
+        .clone()
+        .encrypt_into_with_context::<StackCipherText, _>(&cipher_a, nonempty!("users/x"))
+        .zip(
+            w.clone()
+                .encrypt_into_with_context::<StackCipherText, _>(&cipher_b, nonempty!("users/x")),
+        )
         .await;
     assert!(
         zipped.is_ok(),
@@ -791,8 +818,10 @@ async fn pendings_from_two_ciphers_over_the_same_keyset_merge() {
     let column = Pending::all(
         &cipher_a,
         vec![
-            cipher_a.encrypt_as::<_, StackCipherText>(&v, nonempty!("users/x").into()),
-            cipher_b.encrypt_as::<_, StackCipherText>(&w, nonempty!("users/x").into()),
+            v.clone()
+                .encrypt_into_with_context::<StackCipherText, _>(&cipher_a, nonempty!("users/x")),
+            w.clone()
+                .encrypt_into_with_context::<StackCipherText, _>(&cipher_b, nonempty!("users/x")),
         ],
     )
     .await;
@@ -826,9 +855,13 @@ async fn pendings_from_two_ciphers_over_different_keysets_refuse_to_merge() {
     let v = "v".to_string();
     let w = "w".to_string();
 
-    let zipped = acme
-        .encrypt_as::<_, StackCipherText>(&v, nonempty!("users/x").into())
-        .zip(globex.encrypt_as::<_, StackCipherText>(&w, nonempty!("users/x").into()))
+    let zipped = v
+        .clone()
+        .encrypt_into_with_context::<StackCipherText, _>(&acme, nonempty!("users/x"))
+        .zip(
+            w.clone()
+                .encrypt_into_with_context::<StackCipherText, _>(&globex, nonempty!("users/x")),
+        )
         .await;
     assert!(
         matches!(zipped, Err(Error::KeysetMismatch { left, right })
@@ -869,22 +902,22 @@ async fn terms_rehydrate_from_persisted_parts() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let eq: EqualityTerm = generator
-        .encrypt_as(&"alice", nonempty!("users/email").into())
+    let eq: EqualityTerm = "alice"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/email"))
         .await
         .unwrap();
     let rehydrated = EqualityTerm::from_bytes(eq.clone().into_bytes());
     assert_eq!(eq, rehydrated);
 
-    let stored: MatchTerms = generator
-        .encrypt_as(
-            &"alice wonderland".to_string(),
-            nonempty!("users/bio").into(),
-        )
+    let stored: MatchTerms = "alice wonderland"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
         .unwrap();
-    let query: MatchTerms = generator
-        .encrypt_as(&"wonder".to_string(), nonempty!("users/bio").into())
+    let query: MatchTerms = "wonder"
+        .to_string()
+        .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
         .unwrap();
     // Rehydrate from unsorted positions: from_positions normalises (and
@@ -904,8 +937,9 @@ async fn pending_futures_are_send() {
 
     let handle = tokio::spawn(async move {
         let generator = generator.default_keyset();
-        let term: EqualityTerm = generator
-            .encrypt_as(&"alice", nonempty!("users/email").into())
+        let term: EqualityTerm = "alice"
+            .to_string()
+            .encrypt_into_with_context(&generator, nonempty!("users/email"))
             .await
             .unwrap();
         term
@@ -955,15 +989,16 @@ async fn cipher_directed_and_target_directed_ciphertexts_are_interchangeable() {
         .encrypt_tree(value.clone(), "users/tags")
         .await
         .unwrap();
-    let via_target: Vec<String> = cipher
-        .decrypt_as(ct, nonempty!("users/tags").into())
-        .await
-        .unwrap();
+    let via_target: Vec<String> =
+        Vec::<String>::decrypt_from_with_context(ct, &cipher, nonempty!("users/tags"))
+            .await
+            .unwrap();
     assert_eq!(via_target, value);
 
     // Sealed by the target-directed API, opened by the cipher-directed one.
-    let ct: StackCipherText = keyset
-        .encrypt_as(&value, nonempty!("users/tags").into())
+    let ct: StackCipherText = value
+        .clone()
+        .encrypt_into_with_context(&keyset, nonempty!("users/tags"))
         .await
         .unwrap();
     let via_cipher: Vec<String> = cipher.decrypt(ct, "users/tags").await.unwrap();
@@ -974,8 +1009,9 @@ async fn cipher_directed_and_target_directed_ciphertexts_are_interchangeable() {
 async fn cipher_directed_decrypt_rejects_a_transplanted_ciphertext() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
-    let ct: StackCipherText = keyset
-        .encrypt_as(&"secret".to_string(), nonempty!("users/email").into())
+    let ct: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
         .await
         .unwrap();
     let result: Result<String, Error> = cipher.decrypt(ct, "users/name").await;
@@ -997,17 +1033,26 @@ struct OwnedEmail {
     hm: EqualityTerm,
 }
 
-impl EncryptFrom<String> for OwnedEmail {
-    type Context = DeclaredContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
-    where
-        String: 's,
-    {
+impl OwnedEmail {
+    /// The tree. It runs under a `DeclaredContext`: `()` leaves the tree's
+    /// own context as it is, and a context extends it.
+    fn tree<'s, K: 'static>() -> Encryption<'s, String, Self, K, DeclaredContext> {
         ciphertext()
             .accepting()
             .zip(equality())
             .under(nonempty!("users/email"))
             .map(|(c, hm)| Self { c, hm })
+    }
+}
+
+/// As a target, the tree takes no context from its caller: it has its own.
+impl EncryptTarget<String> for OwnedEmail {
+    type ContextInput = NoCallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::ContextInput>
+    where
+        String: 's,
+    {
+        Self::tree().accepting()
     }
 }
 
@@ -1019,31 +1064,37 @@ async fn under_gives_a_subtree_its_own_context_which_the_callers_extends() {
     let generator = generator.default_keyset();
     let email = "alice@example.com".to_string();
 
-    // Under `()`: the own context as it is, for the ciphertext and the term
-    // alike.
-    let record: OwnedEmail = keyset.encrypt_as(&email, Default::default()).await.unwrap();
-    let probe: EqualityTerm = generator
-        .encrypt_as(&email, nonempty!("users/email").into())
+    // With no caller context: the own context as it is, for the ciphertext
+    // and the term alike.
+    let record: OwnedEmail = email.clone().encrypt_into(&keyset).await.unwrap();
+    let probe: EqualityTerm = email
+        .clone()
+        .encrypt_into_with_context(&generator, nonempty!("users/email"))
         .await
         .unwrap();
     assert_eq!(record.hm, probe);
-    let opened: String = cipher
-        .decrypt_as(record.c, nonempty!("users/email").into())
-        .await
-        .unwrap();
+    let opened: String =
+        String::decrypt_from_with_context(record.c, &cipher, nonempty!("users/email"))
+            .await
+            .unwrap();
     assert_eq!(opened, email);
 
     // Under a caller's context: the own context extended by it, for both.
-    let record: OwnedEmail = keyset.encrypt_as(&email, 7u64.into()).await.unwrap();
-    let probe: EqualityTerm = generator
-        .encrypt_as(&email, nonempty!("users/email").with(7u64).into())
+    // The target takes no caller context, so the tree itself is run.
+    let record: OwnedEmail = keyset
+        .run(OwnedEmail::tree(), &email, DeclaredContext::from(7u64))
+        .await
+        .unwrap();
+    let probe: EqualityTerm = email
+        .clone()
+        .encrypt_into_with_context(&generator, nonempty!("users/email").with(7u64))
         .await
         .unwrap();
     assert_eq!(record.hm, probe);
-    let opened: String = cipher
-        .decrypt_as(record.c, nonempty!("users/email").with(7u64).into())
-        .await
-        .unwrap();
+    let opened: String =
+        String::decrypt_from_with_context(record.c, &cipher, nonempty!("users/email").with(7u64))
+            .await
+            .unwrap();
     assert_eq!(opened, email);
 }
 
@@ -1055,16 +1106,17 @@ struct ShadowedEmail {
     hm: EqualityTerm,
 }
 
-impl EncryptFrom<String> for ShadowedEmail {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+impl EncryptTarget<String> for ShadowedEmail {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::ContextInput>
     where
         String: 's,
     {
         ciphertext()
-            .extend(nonempty!("users/shadow"))
+            .extend::<CallerContext>(nonempty!("users/shadow"))
             .zip(equality())
             .map(|(shadow, hm)| Self { shadow, hm })
+            .accepting()
     }
 }
 
@@ -1076,24 +1128,26 @@ async fn extend_gives_a_subtree_its_own_context_and_still_requires_the_callers()
     let generator = generator.default_keyset();
     let email = "alice@example.com".to_string();
 
-    let record: ShadowedEmail = keyset
-        .encrypt_as(&email, nonempty!("users").into())
+    let record: ShadowedEmail = email
+        .clone()
+        .encrypt_into_with_context(&keyset, nonempty!("users"))
         .await
         .unwrap();
     // The term is under the caller's context as it is ...
-    let probe: EqualityTerm = generator
-        .encrypt_as(&email, nonempty!("users").into())
+    let probe: EqualityTerm = email
+        .clone()
+        .encrypt_into_with_context(&generator, nonempty!("users"))
         .await
         .unwrap();
     assert_eq!(record.hm, probe);
     // ... and the ciphertext under its own, extended by the caller's.
-    let opened: String = cipher
-        .decrypt_as(
-            record.shadow,
-            nonempty!("users/shadow").with(nonempty!("users")).into(),
-        )
-        .await
-        .unwrap();
+    let opened: String = String::decrypt_from_with_context(
+        record.shadow,
+        &cipher,
+        nonempty!("users/shadow").with(nonempty!("users")),
+    )
+    .await
+    .unwrap();
     assert_eq!(opened, email);
 }
 
@@ -1106,17 +1160,17 @@ struct TenantEmail {
     tenant: u64,
 }
 
-impl EncryptFrom<String> for TenantEmail {
-    type Context = NonEmpty<u64>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+impl EncryptTarget<String> for TenantEmail {
+    type ContextInput = RequiredContext<NonEmpty<u64>>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::ContextInput>
     where
         String: 's,
     {
         equality()
-            .accepting::<NonEmpty<u64>>()
+            .accepting::<RequiredContext<NonEmpty<u64>>>()
             .map_with_context(|hm, tenant| Self {
                 hm,
-                tenant: tenant.into_inner(),
+                tenant: tenant.into_inner().into_inner(),
             })
     }
 }
@@ -1129,11 +1183,15 @@ async fn accepting_converts_the_declared_context_once_and_map_with_context_keeps
     let generator = generator.default_keyset();
     let email = "alice@example.com".to_string();
 
-    let record: TenantEmail = keyset
-        .encrypt_as(&email, NonEmpty::from(7u64))
+    let record: TenantEmail = email
+        .clone()
+        .encrypt_into_with_context(&keyset, NonEmpty::from(7u64))
         .await
         .unwrap();
     assert_eq!(record.tenant, 7);
-    let probe: EqualityTerm = generator.encrypt_as(&email, 7u64.into()).await.unwrap();
+    let probe: EqualityTerm = email
+        .encrypt_into_with_context(&generator, 7u64)
+        .await
+        .unwrap();
     assert_eq!(record.hm, probe);
 }

@@ -1116,18 +1116,16 @@ impl DecryptSource<i32> for FixedInteger {
 }
 
 #[tokio::test]
-async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
-    use stack_encrypt::plan::pick;
-    use stack_encrypt::{EncryptFrom, Plan};
-
-    #[derive(Clone)]
+async fn an_owned_record_is_a_field_of_another_record() {
+    #[derive(Clone, Zeroize)]
     struct Profile {
         user: User,
         age: u32,
     }
-    /// A structural record with an owned record as a field. The owned derive
-    /// also implements `EncryptFrom` with a `DeclaredContext`, so this works.
-    #[derive(EncryptFrom)]
+    /// A record whose fields are records: a `struct` record with passthrough
+    /// fields, and a `plaintext` record of the structural leaves. Each is
+    /// given its field's context.
+    #[derive(EncryptTarget)]
     #[stash(struct = Profile, scope = "profiles")]
     struct EncryptedProfile {
         user: EncryptedUser,
@@ -1141,10 +1139,7 @@ async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
         user: alice(),
         age: 34,
     };
-    let encrypted: EncryptedProfile = keyset
-        .encrypt_as(&profile, Default::default())
-        .await
-        .unwrap();
+    let encrypted: EncryptedProfile = profile.encrypt_into(&keyset).await.unwrap();
     assert_eq!(encrypted.user.id, 42);
     assert_eq!(
         sent.lock().unwrap().generated(),
@@ -1153,30 +1148,6 @@ async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
             "(users/email)/(profiles/user)",
             "profiles/age"
         ]
-    );
-
-    // The owned record also works as a typed field of a plan, for the same
-    // reason.
-    let plan = Plan::context("profiles")
-        .fields::<Profile, _>()
-        .encrypt_into::<EncryptedUser, _>(pick("user", |p: &Profile| &p.user))
-        .target::<Ciphertext, _>(pick("age", |p: &Profile| &p.age))
-        .build()
-        .unwrap();
-    let profile = Profile {
-        user: bob(),
-        age: 51,
-    };
-    let mut values = cipher.encrypt(&profile).using(&plan).await.unwrap();
-    let user: EncryptedUser = values.take("user").unwrap();
-    assert_eq!(user.id, 43);
-    let age: Ciphertext = values.take("age").unwrap();
-    assert_eq!(
-        keyset
-            .decrypt_with_context::<u32>(age, ("profiles", "age"))
-            .await
-            .unwrap(),
-        51
     );
     let _ = (
         FixedInteger::encryption::<common::CountingSource>,

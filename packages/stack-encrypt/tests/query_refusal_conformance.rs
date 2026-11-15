@@ -1,6 +1,7 @@
 //! The shared query-refusal profile: what a query is refused for before any
 //! term exists, through the binding's check, the binding's derivation and,
-//! where the typed chain can spell the same query, the typed chain. See
+//! where a field marker of a derived record can spell the same query, the
+//! typed query from that marker. See
 //! conformance/stack-encrypt/query-refusals-contract.md.
 #![cfg(feature = "dynamic")]
 mod common;
@@ -14,10 +15,9 @@ use miette::Diagnostic;
 use serde::Deserialize;
 use serde_json::json;
 use stack_encrypt::dynamic::{self, record, Error, NoTargets, Op, ValueFrame};
-use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{
-    op, AsProtectedRef as _, Equality, Match, Ope, Ore, OreBlock, Plan, StackCipher,
-};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreBlockTerm, OreTerm};
+use stack_encrypt::target::EncryptTarget;
+use stack_encrypt::{AsProtectedRef as _, Encrypted, KeysetCipher, StackCipher};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::atomic::{AtomicUsize, Ordering},
@@ -52,9 +52,11 @@ struct Case {
     input: QueryInput,
     accepted: bool,
     expected_error: Option<ExpectedError>,
-    /// How the typed Rust chain answers the same query, for the queries it
-    /// can spell: refused before the named keyset is loaded, after it, or
-    /// not refused.
+    /// How the typed query answers the same query, for the queries a field
+    /// marker can spell: refused before a keyset is asked for anything, or
+    /// not refused. The corpus has a third value, for a refusal after the
+    /// keyset was loaded. A marker query runs through a keyset the caller
+    /// already holds, so it cannot be refused at that stage.
     typed: Option<Typed>,
 }
 
@@ -146,17 +148,41 @@ fn check(id: &str, path: &str, result: Result<(), Error>, expected: Option<&Expe
     }
 }
 
-/// The typed chain's answer: a `stack_encrypt::Error` code, or none.
+/// The fields of the corpus plan that a typed query can name, each with
+/// the plaintext type the corpus declares for it.
+#[derive(Clone, zeroize::Zeroize)]
+struct Conformance {
+    email: String,
+    name: String,
+    nickname: String,
+    title: String,
+    age: u32,
+    big: i128,
+}
+
+/// The same fields as a derived record, each under `conformance/<field>`
+/// with the indexes the corpus plan declares. Only its field markers are
+/// used: no record is sealed, so no field is read.
+#[derive(EncryptTarget)]
+#[allow(dead_code)]
+#[stash(struct = Conformance, scope = "conformance")]
+struct Fields {
+    email: Encrypted<EqualityTerm>,
+    name: Encrypted<MatchTerms>,
+    nickname: Encrypted<OreTerm<String>>,
+    title: Encrypted<OreBlockTerm<String>>,
+    age: Encrypted<(EqualityTerm, OreTerm<u32>)>,
+    big: Encrypted<(EqualityTerm, OpeTerm<i128>)>,
+}
+
+/// The typed query's answer: a `stack_encrypt::Error` code, or none. The
+/// query starts from the marker of `field`.
 async fn typed(
-    cipher: &StackCipher<CountingSource>,
-    keyset: &str,
+    keyset: &KeysetCipher<'_, CountingSource>,
     field: &str,
-    kind: &str,
-    outputs: &[String],
     operator: Op,
     query: &QueryInput,
 ) -> Option<String> {
-    let context = format!("conformance/{field}");
     let text = |query: &QueryInput| match query {
         QueryInput::Scalar(Input { kind, text }) if kind == "string" => text.clone(),
         other => panic!("{field}: not text: {other:?}"),
@@ -186,97 +212,45 @@ async fn typed(
             hi.text.parse::<i128>().unwrap(),
         )
     };
-    // The index that answers the operator, as the plan declares it: the
-    // equality, match or order index, whichever the operator reads.
-    let answers: &[&str] = match operator {
-        Op::Eq => &["eq"],
-        Op::Matches => &["match"],
-        _ => &["ore", "ore_block", "ope"],
-    };
-    let index = outputs
-        .iter()
-        .map(String::as_str)
-        .find(|output| answers.contains(output))
-        .expect("an index that answers the operator");
+    // The marker's label is the context the corpus plan gives the field,
+    // so the typed query and the binding's query are the same query.
     macro_rules! run {
-        ($plan:expr, $op:expr, $value:expr) => {
-            run!($plan, $op, $value, Ore)
-        };
-        ($plan:expr, $op:expr, $value:expr, $via:expr) => {
-            cipher
-                .query($op, $value)
-                .via($via)
-                .on(&$plan)
-                .keyset(keyset)
+        ($marker:expr, $query:expr) => {{
+            assert_eq!(
+                $marker.label().to_string(),
+                format!("conformance/{field}"),
+                "{field}: the marker's label"
+            );
+            $query
+                .encrypt(keyset)
                 .await
                 .err()
                 .map(|error| error.code().expect("a code").to_string())
-        };
+        }};
     }
-    match (kind, index, operator) {
-        ("string", "eq", Op::Eq) => {
-            let plan = Plan::context(context)
-                .with::<String, _>(Equality)
-                .build()
-                .unwrap();
-            run!(plan, op::Eq, &text(query), Equality)
+    match (field, operator) {
+        ("email", Op::Eq) => run!(Fields::EMAIL, Fields::EMAIL.eq(text(query))),
+        ("name", Op::Matches) => run!(Fields::NAME, Fields::NAME.matches(text(query))),
+        ("nickname", Op::Lt) => run!(Fields::NICKNAME, Fields::NICKNAME.lt(text(query))),
+        ("nickname", Op::Between) => {
+            let (lo, hi) = texts(query);
+            run!(Fields::NICKNAME, Fields::NICKNAME.between(lo, hi))
         }
-        ("string", "match", Op::Matches) => {
-            let plan = Plan::context(context)
-                .with::<String, _>(Match::<DefaultMatch>::default())
-                .build()
-                .unwrap();
-            run!(
-                plan,
-                op::Matches,
-                &text(query),
-                Match::<DefaultMatch>::default()
-            )
+        ("title", Op::Lt) => run!(Fields::TITLE, Fields::TITLE.lt(text(query))),
+        ("title", Op::Gt) => run!(Fields::TITLE, Fields::TITLE.gt(text(query))),
+        ("title", Op::Between) => {
+            let (lo, hi) = texts(query);
+            run!(Fields::TITLE, Fields::TITLE.between(lo, hi))
         }
-        ("string", "ore", Op::Lt) => {
-            let plan = Plan::context(context)
-                .with::<String, _>(Ore)
-                .build()
-                .unwrap();
-            run!(plan, op::Lt, &text(query))
+        ("age", Op::Between) => {
+            let (lo, hi) = u32s(query);
+            run!(Fields::AGE, Fields::AGE.between(lo, hi))
         }
-        ("string", "ore", Op::Between) => {
-            let plan = Plan::context(context)
-                .with::<String, _>(Ore)
-                .build()
-                .unwrap();
-            run!(plan, op::Between, &texts(query))
+        ("big", Op::Between) => {
+            let (lo, hi) = i128s(query);
+            run!(Fields::BIG, Fields::BIG.between(lo, hi))
         }
-        ("string", "ore_block", Op::Lt) => {
-            let plan = Plan::context(context)
-                .with::<String, _>(OreBlock)
-                .build()
-                .unwrap();
-            run!(plan, op::Lt, &text(query), OreBlock)
-        }
-        ("string", "ore_block", Op::Gt) => {
-            let plan = Plan::context(context)
-                .with::<String, _>(OreBlock)
-                .build()
-                .unwrap();
-            run!(plan, op::Gt, &text(query), OreBlock)
-        }
-        ("string", "ore_block", Op::Between) => {
-            let plan = Plan::context(context)
-                .with::<String, _>(OreBlock)
-                .build()
-                .unwrap();
-            run!(plan, op::Between, &texts(query), OreBlock)
-        }
-        ("uint32", "ore", Op::Between) => {
-            let plan = Plan::context(context).with::<u32, _>(Ore).build().unwrap();
-            run!(plan, op::Between, &u32s(query))
-        }
-        ("int128", "ope", Op::Between) => {
-            let plan = Plan::context(context).with::<i128, _>(Ope).build().unwrap();
-            run!(plan, op::Between, &i128s(query), Ope)
-        }
-        other => panic!("{field}: the typed chain is not spelled for {other:?}"),
+        other => panic!("{field}: no typed query is spelled for {other:?}"),
     }
 }
 
@@ -386,20 +360,11 @@ async fn shared_query_refusal_profile() {
         let Some(want) = &case.typed else {
             continue;
         };
-        let spec = field.expect("a declared field");
-        // A named keyset is loaded once and cached, so each typed query
-        // names its own: the load is the observation.
-        let code = typed(
-            &cipher,
-            &format!("keyset-{}", case.id),
-            &case.field,
-            &spec.kind,
-            &spec.outputs,
-            operator,
-            &case.input,
-        )
-        .await;
-        let loads = counters[0].swap(0, Ordering::SeqCst);
+        assert!(field.is_some(), "{}: a declared field", case.id);
+        // A marker query runs through a keyset the caller holds, here the
+        // default one, so it has no keyset to load. The observation is that
+        // it asks the key source for nothing, refused or not.
+        let code = typed(&keyset, &case.field, operator, &case.input).await;
         match want.refusal {
             Refusal::None => {
                 assert!(
@@ -407,20 +372,23 @@ async fn shared_query_refusal_profile() {
                     "{}: typed {code:?}",
                     case.id
                 );
-                assert_eq!(loads, 1, "{}: the typed chain loaded its keyset", case.id);
             }
-            Refusal::BeforeKeyset | Refusal::AfterKeyset => {
+            Refusal::BeforeKeyset => {
                 let expected = expected.expect("a refusal");
                 assert_eq!(expected.class, Class::Term, "{}: typed", case.id);
                 assert_eq!(code.as_deref(), Some(expected.code.as_str()), "{}", case.id);
-                assert_eq!(
-                    loads,
-                    usize::from(want.refusal == Refusal::AfterKeyset),
-                    "{}: typed refusal stage",
-                    case.id
-                );
             }
+            Refusal::AfterKeyset => panic!(
+                "{}: a marker query is prepared before its keyset is asked for anything",
+                case.id
+            ),
         }
+        assert_eq!(
+            counters[0].load(Ordering::SeqCst),
+            0,
+            "{}: typed keyset lookup",
+            case.id
+        );
         assert_eq!(
             counters[1].load(Ordering::SeqCst),
             0,

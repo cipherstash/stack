@@ -1,12 +1,13 @@
-//! The JSON targets through the owned API, with no database: a
+//! The JSON targets through the owned traits, with no database: a
 //! [`JsonPlaintext`] seals into a [`JsonDocument`], and the document, one
 //! entry of it ([`JsonExtracted`]) and the rows of a read ([`JsonSubtree`])
 //! each open to a `JsonPlaintext`, which is wiped when it is dropped.
 //!
 //! The rows here are built as the SQL returns them, from a sealed document,
 //! as `json_read_checks.rs` builds them. That file holds the checks a read
-//! makes on its rows. This one shows that the owned API reaches the same
-//! answers and the same refusals.
+//! makes on its rows. This one holds the forms a caller opens with (one
+//! `JsonPlaintext`, an `Option` of one and a `Vec` of them), the answer
+//! each gives and the refusals each makes.
 
 mod common;
 
@@ -159,31 +160,6 @@ mod given_a_document {
         assert_eq!(
             <JsonDocument as EncryptTarget<JsonPlaintext>>::indexes(),
             vec![IndexSpec::Json(JsonOptions::default())],
-        );
-    }
-
-    /// The owned API and the structural API write the same document: each
-    /// opens what the other sealed. This holds until the structural API is
-    /// removed.
-    #[tokio::test]
-    async fn the_owned_api_and_the_structural_api_open_each_others_documents() {
-        let (cipher, _) = cipher().await;
-        let owned = seal(&cipher, fixture()).await;
-        let opened: Value = cipher.decrypt_as(owned, aead()).await.expect("opens");
-        assert_eq!(opened, fixture(), "sealed owned, opened structural");
-
-        let structural: JsonDocument = cipher
-            .default_keyset()
-            .encrypt_as(&fixture(), column())
-            .await
-            .expect("seals");
-        let opened = JsonPlaintext::decrypt_from_with_context(structural, &cipher, aead())
-            .await
-            .expect("opens");
-        assert_eq!(
-            opened.value(),
-            &fixture(),
-            "sealed structural, opened owned"
         );
     }
 }

@@ -9,8 +9,8 @@
 //! target field, and [`NoTargets`], the resolver of a build without EQL
 //! types, which refuses every name.
 //!
-//! The resolver runs the named type's own plan (its `EncryptFrom` /
-//! `DecryptInto`) and hands back the engine's [`Pending`], so a target field
+//! The resolver runs the named type's own declaration (its `EncryptTarget` /
+//! `DecryptSource`) and hands back the engine's [`Pending`], so a target field
 //! settles in the same ZeroKMS request as the rest of the record: the
 //! lowering zips it in. Nothing here derives a term or seals a byte; the
 //! resolver reaches the engine through the typed call, as any Rust caller
