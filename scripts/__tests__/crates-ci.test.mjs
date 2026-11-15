@@ -16,7 +16,7 @@ import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
  * EQL import, and `integrationSuiteCi.test.ts` for protect-ffi's before it.
  * This file is the same guard for this set, in two halves:
  *
- *   1. Every mise task the set defines — the six crate `tasks.toml` files the
+ *   1. Every mise task the set defines — the seven crate `tasks.toml` files the
  *      root `mise.toml` includes, and the root tasks — is reached from a root
  *      workflow, or named as exempt with a reason. The scan is a smaller copy
  *      of `eql-suite-ci.test.mjs`'s: the same `invokes` rule for "a command,
@@ -281,13 +281,14 @@ const CI_EXEMPT_TASKS = new Map([
 ])
 
 describe('the scan sees every task mise sees', () => {
-  it('reads the six crate task files from the root mise.toml', () => {
+  it('reads the seven crate task files from the root mise.toml', () => {
     expect(INCLUDES.sort()).toEqual(
       [
         'packages/stack-auth/tasks.toml',
         'packages/stack-encrypt/tasks.toml',
         'packages/stack-guest-abi/tasks.toml',
         'packages/stack-kms/tasks.toml',
+        'packages/stack-kms-aws/tasks.toml',
         'packages/stack-kms-vendor/tasks.toml',
         'packages/stack-profile/tasks.toml',
       ].sort(),
@@ -338,6 +339,7 @@ describe('the scan sees every task mise sees', () => {
         'doc:stack-encrypt',
         'doc:stack-guest-abi',
         'doc:stack-kms',
+        'doc:stack-kms-aws',
         'doc:stack-kms-vendor',
         'doc:stack-profile',
       ].sort(),
