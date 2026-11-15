@@ -591,9 +591,8 @@ reasons! {
         /// bindings, a list of scalar context parts: it is not a field name,
         /// and its value is nothing else, so a grouped part is refused.
         Bind => "bind", r#""bind" is reserved for the caller's bindings: not a field name, and its value is a list of scalar context parts"#;
-        /// The plan builder refused the plan for a reason none of the above
-        /// names.
-        Refused => "refused", "the plan builder refused it";
+        /// The plan was refused for a reason none of the above names.
+        Refused => "refused", "the plan was refused";
         /// A field the plan names is not there.
         FieldMissing => "field_missing", "a field the plan names is missing";
         /// A field is there twice.
