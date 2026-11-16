@@ -10,6 +10,79 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+## [0.1.0-rc.5] - 2026-11-16
+
+### Upgrading from rc.4
+
+Install the `eql-v4-install.sql` attached to this release. Your Go code
+needs no change. `AccessKeyCredentials` and its `Secret` type are new. You
+can choose to use them.
+
+The rc.4 bundle gives wrong results in two cases. The Fixed section
+describes both. The rc.5 bundle corrects the first case and refuses the
+second. If either case applies to your application, check the results it
+got from rc.4.
+
+The bundle drops the `eql_v4` and `eql_v4_internal` schemas with `CASCADE`,
+and creates them again. Your columns and their data stay, because the
+column types are in the `public` schema.
+
+But PostgreSQL also drops every object of yours that uses an EQL function or
+operator. That includes indexes, views, row-level security policies, and
+`CHECK` constraints. PostgreSQL drops them without an error. When it drops a
+restrictive policy, more rows of the table become visible. PostgreSQL's
+notice lists only the first 100 objects it drops.
+
+Do these steps before you install the bundle:
+
+1. List your objects that use EQL. Run this query in each database that has
+   EQL installed:
+
+   ```sql
+   WITH eql AS (
+     SELECT 'pg_proc'::regclass AS classid, p.oid AS objid
+     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname IN ('eql_v4', 'eql_v4_internal')
+     UNION ALL
+     SELECT 'pg_operator'::regclass, o.oid
+     FROM pg_operator o JOIN pg_proc p ON p.oid = o.oprcode
+     JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname IN ('eql_v4', 'eql_v4_internal')
+     UNION ALL
+     SELECT 'pg_type'::regclass, t.oid
+     FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+     WHERE n.nspname IN ('eql_v4', 'eql_v4_internal')
+   )
+   SELECT DISTINCT pg_describe_object(d.classid, d.objid, 0) AS object
+   FROM pg_depend d
+   JOIN eql ON eql.classid = d.refclassid AND eql.objid = d.refobjid
+   CROSS JOIN LATERAL pg_identify_object(d.classid, d.objid, 0) AS id
+   WHERE d.deptype = 'n'
+     AND coalesce(id.schema, '') NOT IN ('eql_v4', 'eql_v4_internal')
+     AND d.classid NOT IN ('pg_operator'::regclass, 'pg_cast'::regclass,
+                           'pg_amop'::regclass, 'pg_amproc'::regclass,
+                           'pg_opclass'::regclass, 'pg_opfamily'::regclass)
+   ORDER BY 1;
+   ```
+
+2. Save the definition of each object the query lists. For example, use
+   `pg_dump --schema-only`, or `pg_get_viewdef` and `pg_get_indexdef`.
+3. Install the bundle: `psql -f eql-v4-install.sql`.
+
+Do these steps after you install the bundle, and before the application
+sends queries:
+
+4. Create each saved object again. Then run the query from step 1 again,
+   and check that it lists the same objects.
+5. If the application connects as a role other than the one that installed
+   EQL, grant that role access again. The bundle issues no `GRANT`. The role
+   needs `USAGE` on the schemas `eql_v4` and `eql_v4_internal`, and
+   `EXECUTE` on all their functions. EQL's
+   [permissions reference](../../packages/eql/docs/reference/permissions.md)
+   lists the `GRANT` statements. The reference's examples name `eql_v3`, so
+   write `eql_v4`.
+6. Run `ANALYZE`.
+
 ### Added
 
 - `encrypt.AccessKeyCredentials`: credentials from a struct your program
@@ -25,6 +98,56 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   standard JSON and XML packages. Keep the credentials in an exported field
   of anything you print. `fmt` prints a value in an unexported field in
   full.
+
+### Fixed
+
+- **Comparisons on ORE columns gave wrong results when `public` was not on
+  the `search_path`** (#1551, #1667). ORE is order-revealing encryption.
+  This affected columns of the `…OrdOre` types and `TextSearchOre`. The rc.4
+  functions `eql_v4.eq`, `eql_v4.lt`, `eql_v4.between`, and the other
+  comparison functions for these columns used a bare `<` or `=`. A session
+  can leave `public` off its `search_path`. Examples are a
+  `SECURITY DEFINER` function with `SET search_path = ''`, and a role whose
+  `search_path` leaves it out. In such a session, PostgreSQL used its own
+  record comparison for the encrypted terms. That comparison compares the
+  raw bytes, so the query returned the wrong rows, with no error. The rc.5
+  functions name each operator with its schema, such as
+  `OPERATOR(public.<)`.
+- **PostgreSQL raises an error when a query compares two different EQL
+  types** (#1547). Before, PostgreSQL compared a column of one type with a
+  query value of another type as plain `jsonb`. PostgreSQL then returned
+  false for equal values, with no error. Now the comparison raises
+  `operator … is not supported for …`. An example is a
+  `public.eql_v4_text_search` column compared with `@@` against an
+  `eql_v4.query_text_match` value. A query that returned no rows now fails.
+  The queries the Go SDK builds name the matching type, so they are not
+  affected.
+- **An oversized token lifetime no longer makes the client refresh on every
+  request** (#1553). The credential guest added the server's `expires_in` to
+  the clock without a limit. A value too large to add overflowed, so the
+  token looked expired already. The guest now limits a token's lifetime to
+  30 days.
+- **The credential guest wipes the profile files it reads** (#1553). When
+  it read `auth.json` or `secretkey.json`, it could leave copies of their
+  contents in guest memory without wiping them. The guest now reads each
+  file into a buffer that it wipes.
+- **A failed write into guest memory no longer leaves the data in a guest
+  buffer** (#1550). When the client could not record where a buffer was,
+  the bytes stayed in guest memory. The client now checks where it will
+  record the buffer before it allocates one. If a write fails after the
+  allocation, the client zeroes the bytes.
+
+### Changed
+
+- **The bundle's other comparison functions also name the schema of each
+  built-in operator and function they call** (#1551). For example, the
+  functions write `OPERATOR(pg_catalog.@>)` and
+  `pg_catalog.cardinality(...)`. The results of these functions do not
+  change.
+- **The embedded crypto guest wipes more copies of plaintext before it
+  frees them** (#1643). The copies were in the match index's lowercasing,
+  the decoding of JSON paths and predicates, and the opening of a sealed
+  JSON document. Stored values and query terms do not change.
 
 ## [0.1.0-rc.4] - 2026-11-13
 
