@@ -638,7 +638,7 @@ pub mod json;
 pub mod keyset;
 pub mod op;
 pub mod plan;
-mod refusal;
+pub mod refusal;
 pub mod sem;
 pub mod target;
 #[cfg(feature = "testing")]

@@ -99,13 +99,15 @@
 //!   position (`$.visits[2].at`, [`TermError::JsonOrderingAtPosition`]),
 //!   a value an ordering cannot take, or a NaN or an infinity
 //!   ([`TermError::JsonNumberNotFinite`]).
-//! - [`crate::Error::Other`], the input's own shape, holding the dynamic
-//!   interface's error and its reason: a position where the operand is a
-//!   selector (`at("$.tags[1]").eq(..)`, `JsonPathPosition`), an
-//!   `elements` path with no wildcard (`JsonPathNoWildcard`), a `children`
-//!   path with one (`JsonPathWildcard`), or a predicate the grammar does
-//!   not read (`JsonPredicateSyntax` and the rest). Its
-//!   [`ErrorPayload`](crate::ErrorPayload) carries the reason.
+//! - [`crate::Error::Input`], the input's own shape, holding the dynamic
+//!   interface's error and its [`Reason`](crate::refusal::Reason): a
+//!   position where the operand is a selector (`at("$.tags[1]").eq(..)`,
+//!   `JsonPathPosition`), an `elements` path with no wildcard
+//!   (`JsonPathNoWildcard`), a `children` path with one
+//!   (`JsonPathWildcard`), or a predicate the grammar does not read
+//!   (`JsonPredicateSyntax` and the rest). Its code and its
+//!   [`ErrorPayload`](crate::ErrorPayload) are the ones the dynamic
+//!   interface reports for the same input.
 //!
 //! A value is typed: [`JsonScalar`] for equality, [`JsonOrdered`] (a number
 //! or a string) for an ordering, and a whole document for containment. The
@@ -642,16 +644,6 @@ impl<T, S> JsonFieldQuery<T, Predicate, S> {
     }
 }
 
-/// A refusal of the JSON input, as the crate reports it: a cipher error,
-/// such as a term refusal, passes through; the input's own refusals are
-/// boxed with their reason, as `dynamic::Planned` boxes them.
-fn wrap(error: crate::refusal::Error) -> crate::Error {
-    match error {
-        crate::refusal::Error::Cipher(error) => error,
-        other => crate::Error::Other(Box::new(other)),
-    }
-}
-
 /// An operand that is not the one the query's kind derives: a bug here.
 fn mismatched() -> crate::Error {
     crate::Error::Other("a JSON query derived an operand of another kind".into())
@@ -679,12 +671,12 @@ impl<T: JsonQueries, Op> JsonFieldQuery<T, Op, Ready> {
         };
         let checked = match input.body.into_input(&options) {
             Ok(checked) => checked,
-            Err(error) => return Pending::failed(keyset, wrap(error)),
+            Err(error) => return Pending::failed(keyset, error.into_crate()),
         };
         let under = Under::new(&self.0.label, scopes);
         match inputs::derive(keyset, &under, &options, checked) {
             Ok(pending) => pending,
-            Err(error) => Pending::failed(keyset, wrap(error)),
+            Err(error) => Pending::failed(keyset, error.into_crate()),
         }
     }
 }

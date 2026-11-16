@@ -68,6 +68,11 @@ mod tests {
             Error::Config(_) => Error::Config(cause()),
             Error::Term(_) => Error::Term(TermError::EmptyTermText),
             Error::Other(_) => Error::Other(cause()),
+            // The same refusal as the dynamic `Error::Source` row, whose
+            // code it shows through.
+            Error::Input(_) => Error::Input(Box::new(crate::refusal::Error::bad_source(
+                crate::refusal::Reason::FieldMissing,
+            ))),
             Error::UnsupportedShape => Error::UnsupportedShape,
             Error::ContextMismatch { .. } => Error::ContextMismatch {
                 stored: Descriptor::of("users"),
@@ -405,6 +410,15 @@ mod tests {
                     field: "age".into(),
                 })),
                 json!({ "field": "age" }),
+            ),
+            (
+                Box::new(Error::Input(Box::new(crate::refusal::Error::Predicate {
+                    field: None,
+                    reason: crate::refusal::Reason::JsonPredicateSyntax,
+                    construct: "a path",
+                    at: 3,
+                }))),
+                json!({ "reason": "json_predicate_syntax", "construct": "a path", "at": 3 }),
             ),
             (
                 Box::new(Error::KeyCountMismatch {

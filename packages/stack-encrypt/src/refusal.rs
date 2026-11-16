@@ -1,19 +1,31 @@
-//! The refusals of the dynamic interface: [`Error`] and its [`Reason`].
+//! Refusals of the caller's input: [`Error`] and its [`Reason`].
 //!
-//! They are compiled without the `dynamic` feature too, because the typed
-//! JSON queries of a field reference check their inputs with the same code as
-//! the dynamic interface, and refuse them with the same reasons. With the
-//! feature they are `stack_encrypt::dynamic::Error` and
-//! `stack_encrypt::dynamic::Reason`.
+//! The dynamic interface returns them directly, as `dynamic::Error` and
+//! `dynamic::Reason`. Where an operation's failure is the crate's
+//! [`Error`](crate::Error), a refusal of the input arrives as
+//! [`Error::Input`](crate::Error::Input): a field reference's JSON query whose
+//! input has the wrong shape, say, or a data plan run through
+//! `dynamic::Planned` with a source that does not fit it. The code and the
+//! payload are the refusal's own, so both paths report one refusal the same
+//! way.
+//!
+//! The module compiles without the `dynamic` feature too, because the typed
+//! JSON queries check their inputs with the same code as the dynamic
+//! interface, and refuse them with the same reasons.
 // Without the `dynamic` feature the JSON queries raise only some of the
-// reasons, and nothing names the types from outside the crate.
-#![cfg_attr(not(feature = "dynamic"), allow(dead_code, unreachable_pub))]
+// variants and reasons, and the dynamic items the docs link to are not
+// built, so those links show as text.
+#![cfg_attr(
+    not(feature = "dynamic"),
+    allow(dead_code, rustdoc::broken_intra_doc_links)
+)]
 
 use std::fmt;
 
 use crate::target::IndexSpec;
 
-/// What went wrong in a dynamic operation.
+/// What went wrong in a dynamic operation, or in the input of a typed JSON
+/// query ([`crate::Error::Input`]).
 ///
 /// The split that matters to a caller is malformed input versus something
 /// else: every variant but [`Cipher`](Error::Cipher) and
@@ -276,6 +288,24 @@ impl Error {
             #[cfg(feature = "dynamic")]
             Self::Target(_) => None,
             Self::Internal | Self::Cipher(_) => None,
+        }
+    }
+
+    /// The refusal as the crate's [`Error`](crate::Error), for an operation
+    /// whose failure can only be that. A cipher error is already the
+    /// crate's and passes through, so a refused term keeps its kind. This
+    /// module's own bug, and a target resolver's own failure, are not the
+    /// input's fault, so they are [`Other`](crate::Error::Other). Every
+    /// other refusal is [`Input`](crate::Error::Input).
+    pub(crate) fn into_crate(self) -> crate::Error {
+        match self {
+            Self::Cipher(error) => error,
+            Self::Internal => crate::Error::Other(Box::new(self)),
+            #[cfg(feature = "dynamic")]
+            Self::Target(crate::dynamic::TargetError::Other(_)) => {
+                crate::Error::Other(Box::new(self))
+            }
+            input => crate::Error::Input(Box::new(input)),
         }
     }
 

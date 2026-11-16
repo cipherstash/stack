@@ -279,23 +279,31 @@ pub enum Error {
     Term(#[from] crate::sem::TermError),
     /// A third-party [`EncryptTarget`](crate::target::EncryptTarget) /
     /// [`DecryptSource`](crate::target::DecryptSource) implementation failed
-    /// for a reason of its own; or a JSON query refused the shape of its
-    /// input, as the dynamic interface refuses it.
+    /// for a reason of its own.
     ///
     /// Its message is the implementation's, shown as given: an
     /// implementation that fills this slot writes its message under the
     /// rule on [`ErrorPayload`](crate::ErrorPayload), naming what it refused
     /// and never a byte of the value or the ciphertext.
-    ///
-    /// A JSON query's refusal is the input's fault, not the engine's: a
-    /// field marker's `elements` path with no wildcard, or a predicate the
-    /// grammar does not read. Its payload carries the refusal's `reason`
-    /// (and its `field`, `construct` and `at`, where it has them), as the
-    /// dynamic interface reports them; with the `dynamic` feature it
-    /// downcasts to `dynamic::Error`.
     #[error(transparent)]
     #[diagnostic(code(stack_encrypt::other))]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// The caller's input was refused before any key was requested: a
+    /// field marker's JSON query whose input has the wrong shape (an
+    /// `elements` path with no wildcard, a predicate the grammar does not
+    /// read), or a data plan's source that does not fit the plan, run
+    /// through `dynamic::Planned`.
+    ///
+    /// The refusal is the dynamic interface's own
+    /// ([`refusal::Error`](crate::refusal::Error)), and it shows through:
+    /// its message, its code (`stack_encrypt::dynamic_source`,
+    /// `stack_encrypt::dynamic_predicate` and the rest) and its payload
+    /// (`reason`, and `field`, `construct` and `at` where it has them) are
+    /// the ones the dynamic interface reports. It is always the caller's
+    /// input at fault, never the engine.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Input(Box<crate::refusal::Error>),
     /// A [`transcode::Visitor`](crate::target::transcode::Visitor) was handed
     /// an encrypted output shape its destination does not accept: a scalar
     /// destination offered a sequence, say. Raised by the visitor's default
@@ -469,12 +477,10 @@ impl crate::ErrorPayload for Error {
                 .unwrap_or_default(),
             #[cfg(not(feature = "http"))]
             Self::Config(_) => serde_json::Map::new(),
-            Self::Other(error) => error
-                .downcast_ref::<crate::refusal::Error>()
-                .map(crate::ErrorPayload::payload)
-                .unwrap_or_default(),
+            Self::Input(refusal) => refusal.payload(),
             Self::Aead
             | Self::JsonNotALeaf
+            | Self::Other(_)
             | Self::UnsupportedShape
             | Self::ResponseShape
             | Self::NoKeyset

@@ -100,15 +100,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rules: an ordering at a path the field does not order is
     `TermError::JsonPathNotOrdered`. A refusal of the input's own shape (an
     `elements` path with no wildcard, a predicate the grammar does not
-    read) is `Error::Other` holding the dynamic interface's error, and
-    `Error::Other`'s payload now carries that refusal's `reason`, `field`,
-    `construct` and `at`.
+    read) is the new `Error::Input`, below.
   - **New public items.** `json::JsonTarget`, which seals a document under
     options; `json::JsonQueries`, which converts each operand into the
     field type's query type; `json::JsonElementsQuery` and
     `json::JsonPredicateQuery`, the typed element and predicate operands;
     and `field_reference::json`, the query types.
 
+- **`Error::Input`: a refusal of the caller's input** (#1459). A field
+  field reference's JSON query whose input has the wrong shape, and a data plan run
+  through `dynamic::Planned` whose source does not fit it, now fail with
+  `Error::Input`, which holds the dynamic interface's error. Its message,
+  code (`stack_encrypt::dynamic_source`, `stack_encrypt::dynamic_predicate`
+  and the rest) and payload (`reason`, and `field`, `construct` and `at`
+  where it has them) are that error's, so a refusal reports the same way
+  on both paths. They used to be `Error::Other`, whose code
+  (`stack_encrypt::other`) a caller could not tell from an engine fault.
+  The error type is now public without the `dynamic` feature too, as
+  `stack_encrypt::refusal::Error` and `refusal::Reason` (the same types as
+  `dynamic::Error` and `dynamic::Reason`). This module's own bug
+  (`Internal`) and a target resolver's own failure stay `Error::Other`.
 - **Two more records derive** (#1661). The owned derives did not accept
   these shapes, and the removed derives did:
   - A `plaintext = T` record can have a `struct = ..` record as a field.
@@ -245,8 +256,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them. The caller's scope and bindings are the one context argument,
   after the plan's own. A query takes scopes alone, and refuses a binding
   before any key is requested, as `PlanError::BindInQuery`. A refused
-  term keeps its kind (`Error::Term`); other dynamic refusals are
-  `Error::Other`. `Planned::contexts()` shows every field's context with
+  term keeps its kind (`Error::Term`); a refusal of the caller's input is
+  `Error::Input`. `Planned::contexts()` shows every field's context with
   a placeholder for the caller's scope and one for the caller's binding,
   before any value is encrypted.
 - **Query plans and the dynamic field handle** (#1486). `Plan::query(field,
@@ -318,6 +329,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     jiff has no leap seconds, so the error now says only what is wrong:
     `Timestamp::new` was given nanoseconds of one second or more.
 
+- **An index run over a `ValueFrame` refuses a value as `Error::Input`**
+  (#1459). An `IndexSpec` run directly over a `ValueFrame` it has no term
+  for (a boolean under equality, a container under ORE) failed with the
+  dynamic `Error::Term` boxed in `Error::Other`. It is now in
+  `Error::Input`, matched as `Error::Input(refusal)` with
+  `refusal.as_ref()` the `dynamic::Error::Term`, and its code is
+  `stack_encrypt::dynamic_term` rather than `stack_encrypt::other`.
 - **The structural API is removed** (#1661, #1662). Stack Encrypt had two
   ways to encrypt a record and two ways to query one. The owned API stays:
   `EncryptTarget`, `DecryptSource`, `EncryptInto`, `DecryptFrom`, field

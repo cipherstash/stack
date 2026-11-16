@@ -16,6 +16,7 @@ use std::sync::atomic::Ordering;
 
 use serde_json::{json, Value};
 use stack_encrypt::json::{JsonDocument, JsonLeafQuery, JsonPlaintext, JsonQuery};
+use stack_encrypt::refusal::Reason;
 use stack_encrypt::sem::TermError;
 use stack_encrypt::target::{DecryptSource, EncryptTarget, Scope};
 use stack_encrypt::{DecryptFrom, EncryptInto, Error, KeysetCipher, StackCipher};
@@ -584,6 +585,17 @@ mod refusals {
         assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
     }
 
+    /// The reason an input refusal names, or a panic naming what came
+    /// back instead.
+    fn reason_of<T: std::fmt::Debug>(what: &str, refused: Result<T, Error>) -> Reason {
+        match refused {
+            Err(Error::Input(refusal)) => refusal
+                .reason()
+                .unwrap_or_else(|| panic!("{what}: no reason in {refusal:?}")),
+            other => panic!("{what}: not an input refusal: {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn equality_at_a_position_is_refused() {
         let cipher = cipher().await;
@@ -593,7 +605,10 @@ mod refusals {
             .eq("b")
             .encrypt(&keyset)
             .await;
-        assert!(matches!(refused, Err(Error::Other(_))), "{refused:?}");
+        assert_eq!(
+            reason_of("eq at a position", refused),
+            Reason::JsonPathPosition
+        );
     }
 
     #[tokio::test]
@@ -604,7 +619,8 @@ mod refusals {
             .elements("$.visits")
             .eq("place", "home")
             .encrypt(&keyset)
-            .await;
+            .await
+            .map(drop);
         let wildcard_node = EncryptedCustomer::PROFILE
             .children("$.visits[*]")
             .encrypt(&keyset)
@@ -621,22 +637,34 @@ mod refusals {
             .encrypt(&keyset)
             .await
             .map(drop);
-        for (what, refused) in [
-            ("an elements path with no wildcard", no_wildcard.map(drop)),
-            ("children of a wildcard", wildcard_node),
-            ("a predicate that does not parse", syntax),
-            ("variables that are not an object", vars),
+        for (what, refused, reason) in [
+            (
+                "an elements path with no wildcard",
+                no_wildcard,
+                Reason::JsonPathNoWildcard,
+            ),
+            (
+                "children of a wildcard",
+                wildcard_node,
+                Reason::JsonPathWildcard,
+            ),
+            (
+                "a predicate that does not parse",
+                syntax,
+                Reason::JsonPredicateSyntax,
+            ),
+            ("variables that are not an object", vars, Reason::JsonInput),
         ] {
-            assert!(
-                matches!(refused, Err(Error::Other(_))),
-                "{what}: {refused:?}"
-            );
+            assert_eq!(reason_of(what, refused), reason, "{what}");
         }
     }
 
-    /// The boxed refusal's payload names its reason, as a binding's does.
+    /// An input refusal reports the code and the payload the dynamic
+    /// interface reports for the same input, so a caller that maps codes to
+    /// its own statuses sees the input at fault, not the engine.
     #[tokio::test]
-    async fn a_boxed_refusals_payload_names_its_reason() {
+    async fn an_input_refusal_has_the_dynamic_interfaces_code_and_payload() {
+        use miette::Diagnostic as _;
         use stack_encrypt::ErrorPayload as _;
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
@@ -649,41 +677,32 @@ mod refusals {
             panic!("refused")
         };
         assert_eq!(
+            refusal.code().map(|code| code.to_string()).as_deref(),
+            Some("stack_encrypt::dynamic_source"),
+            "{refusal:?}"
+        );
+        assert_eq!(
             refusal.payload().get("reason"),
             Some(&json!("json_path_no_wildcard")),
             "{refusal:?}"
         );
-    }
-
-    /// With the `dynamic` feature the boxed refusal is the dynamic
-    /// interface's error, with the reason a binding meets for the same
-    /// input.
-    #[cfg(feature = "dynamic")]
-    #[tokio::test]
-    async fn a_boxed_refusal_names_its_reason() {
-        use stack_encrypt::dynamic::{self, Reason};
-        let cipher = cipher().await;
-        let keyset = cipher.default_keyset();
-        let Err(Error::Other(refusal)) = EncryptedCustomer::PROFILE
-            .elements("$.visits")
-            .eq("place", "home")
+        let Err(refusal) = EncryptedCustomer::PROFILE
+            .predicate("$.age >")
             .encrypt(&keyset)
             .await
         else {
             panic!("refused")
         };
-        let refusal = refusal
-            .downcast_ref::<dynamic::Error>()
-            .expect("the dynamic interface's error");
-        assert!(
-            matches!(
-                refusal,
-                dynamic::Error::Source {
-                    reason: Reason::JsonPathNoWildcard,
-                    ..
-                }
-            ),
+        assert_eq!(
+            refusal.code().map(|code| code.to_string()).as_deref(),
+            Some("stack_encrypt::dynamic_predicate"),
             "{refusal:?}"
+        );
+        let payload = refusal.payload();
+        assert_eq!(payload.get("reason"), Some(&json!("json_predicate_syntax")));
+        assert!(
+            payload.contains_key("at") && payload.contains_key("construct"),
+            "{payload:?}"
         );
     }
 }

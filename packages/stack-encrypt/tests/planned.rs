@@ -566,12 +566,12 @@ mod a_query_plan {
             .await
             .unwrap_err();
         assert!(matches!(refused, Error::Term(_)), "{refused}");
-        // An empty scope is refused as the typed path refuses it.
+        // An empty scope is the caller's input, refused before any key.
         let refused = Planned::new(&by_email, frame("ada@example.com"))
             .encrypt_into_with_context::<QueryTerm, _>(&keyset, Scope::new(""))
             .await
             .unwrap_err();
-        assert!(matches!(refused, Error::Other(_)), "{refused}");
+        assert!(matches!(&refused, Error::Input(_)), "{refused}");
         assert_eq!(generates.load(Ordering::SeqCst), 0);
         assert_eq!(retrieves.load(Ordering::SeqCst), 0);
     }
