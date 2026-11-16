@@ -152,7 +152,7 @@ pub use query::{
     JsonSubtreeKey,
 };
 #[doc(hidden)]
-pub use target::{default_options, seal_field, seal_field_owned, FieldOptions};
+pub use target::{seal_field, seal_field_owned, FieldOptions};
 pub use target::{JsonQueries, JsonTarget};
 pub use text::{parse_text, to_text, JsonTextError};
 
@@ -208,7 +208,8 @@ pub struct JsonOptions {
     /// whole document from the root's token.
     pub sealed_root: bool,
     /// The paths whose number and string leaves carry an ordering term
-    /// `op`, and so answer `op::AtPath(op::Lt)` and the other orderings.
+    /// `op`, and so answer a field reference's `at(path).lt(v)` and the other
+    /// orderings, and the dynamic interface's `lt_at` and the rest.
     /// None by default: an ordering term reveals the order of the leaf
     /// across every row that holds one, and costs about eighty bytes a
     /// leaf, so a path pays for it only when asked. A wildcard step covers

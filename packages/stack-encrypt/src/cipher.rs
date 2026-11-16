@@ -279,12 +279,20 @@ pub enum Error {
     Term(#[from] crate::sem::TermError),
     /// A third-party [`EncryptTarget`](crate::target::EncryptTarget) /
     /// [`DecryptSource`](crate::target::DecryptSource) implementation failed
-    /// for a reason of its own.
+    /// for a reason of its own; or a JSON query refused the shape of its
+    /// input, as the dynamic interface refuses it.
     ///
     /// Its message is the implementation's, shown as given: an
     /// implementation that fills this slot writes its message under the
     /// rule on [`ErrorPayload`](crate::ErrorPayload), naming what it refused
     /// and never a byte of the value or the ciphertext.
+    ///
+    /// A JSON query's refusal is the input's fault, not the engine's: a
+    /// field marker's `elements` path with no wildcard, or a predicate the
+    /// grammar does not read. Its payload carries the refusal's `reason`
+    /// (and its `field`, `construct` and `at`, where it has them), as the
+    /// dynamic interface reports them; with the `dynamic` feature it
+    /// downcasts to `dynamic::Error`.
     #[error(transparent)]
     #[diagnostic(code(stack_encrypt::other))]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
@@ -461,9 +469,12 @@ impl crate::ErrorPayload for Error {
                 .unwrap_or_default(),
             #[cfg(not(feature = "http"))]
             Self::Config(_) => serde_json::Map::new(),
+            Self::Other(error) => error
+                .downcast_ref::<crate::refusal::Error>()
+                .map(crate::ErrorPayload::payload)
+                .unwrap_or_default(),
             Self::Aead
             | Self::JsonNotALeaf
-            | Self::Other(_)
             | Self::UnsupportedShape
             | Self::ResponseShape
             | Self::NoKeyset

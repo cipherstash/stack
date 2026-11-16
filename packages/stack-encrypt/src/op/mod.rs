@@ -493,15 +493,15 @@ impl LeafArity for Pair {}
 /// an input of [`Pair`] over `S`. A query's value type is the input, and
 /// the field's index is checked against the plaintext.
 ///
-/// A `(P, V)` is an input of [`Pathed<One>`] over a `serde_json::Value`,
-/// and a `(P, (V, V))` of [`Pathed<Pair>`]: the path and the value become
-/// the document that holds the value at the path, and the JSON index's
-/// terms of it. The arity decides how a query derives terms from the
-/// input, which is what [`derive`](Self::derive) does.
+/// No input of [`Pathed`] is implemented: a JSON query at a path is a
+/// document field's reference query, [`at(path)`](crate::field_reference::FieldReference::at),
+/// which builds the JSON operators' own inputs. The arity decides how a
+/// query derives terms from the input, which is what
+/// [`derive`](Self::derive) does.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not what a query of arity `{A}` takes",
     label = "the operator takes another input",
-    note = "an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes a path and the leaf's input, `&(\"$.a\", value)` or `&(\"$.a\", (lo, hi))`"
+    note = "an operator of arity `One` takes one value, and `op::Between` (arity `Pair`) takes a pair, `(lo, hi)`; a JSON query at a path is a document field's reference query, `at(\"$.a\")`"
 )]
 pub trait Input<A: Arity>: Sized + 'static {
     /// The plaintext the index is declared over.

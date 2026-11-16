@@ -532,7 +532,15 @@ binding's frames into (`json::inputs`, compiled without the `dynamic`
 feature), so the typed form and the dynamic form share one set of input
 rules and derive the same operands. The operand types `Contains`, `AtPath`,
 `ElementMatch`, `Predicate`, and `Children` that the plan proposed earlier
-are retired, replaced by these methods, on 7 November 2026.
+were retired as operands a caller builds, on 7 November 2026: a caller
+writes the methods above. The query a method returns,
+`field_reference::json::JsonFieldQuery<T, Op, S>`, names its kind as a type with no
+values, `Op`: `op::Contains`, `op::ContainedBy`, or `op::AtPath` of a
+comparison, which the dynamic `Op` enum is generated from, and, for the
+kinds that have no operator type, `field_reference::json::Selector`,
+`ElementMatch`, `Predicate` and `Children`. That kind decides what
+`encrypt` returns. Recorded on 16 November 2026, in #1459's pull
+request.
 
 A document encrypted straight into `JsonTreeDocument`, with no record,
 has no field reference. It is queried through a [query plan](#a-query-plan), as any
@@ -1562,9 +1570,12 @@ Base64.
   returns the EQL query type. The field reference supplies the column and the
   options. The dynamic parser keeps reading into the same input types, so
   there is one definition of each input.
-- **Names.** The method names above are proposals. The operand types
-  `Contains`, `AtPath`, `ElementMatch`, `Predicate`, and `Children` that
-  this plan proposed earlier are retired, on 7 November 2026.
+- **Names.** The method names above were confirmed in the naming review
+  of 8 November 2026. The operand types `Contains`, `AtPath`,
+  `ElementMatch`, `Predicate`, and `Children` that this plan proposed
+  earlier were retired as operands a caller builds, on 7 November 2026;
+  the query a method returns names its kind with value-free type tags of
+  those names (see [Query a JSON document](#query-a-json-document)).
 - **Why.** On `next`, a Rust program needs a plan for any JSON query, and
   needs the dynamic interface for element match, predicates, and children.
   Go already has typed methods for these.

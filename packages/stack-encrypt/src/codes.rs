@@ -123,6 +123,7 @@ mod tests {
             TermError::JsonPathNotOrdered => TermError::JsonPathNotOrdered,
             TermError::JsonOrderingAtPosition => TermError::JsonOrderingAtPosition,
             TermError::JsonValueNotScalar => TermError::JsonValueNotScalar,
+            TermError::JsonNumberNotFinite => TermError::JsonNumberNotFinite,
         ]));
         errors.extend(boxed(variants![
             TermBytesError::WrongEqualityTermLength(_) => {

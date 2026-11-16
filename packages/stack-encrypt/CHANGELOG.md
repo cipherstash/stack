@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `contains(doc)`, `contained_by(doc)`, `at(path).eq(v)` | `JsonQuery` |
   | `at(path).lt(v)`, `.lte`, `.gt`, `.gte` | `JsonLeafQuery` |
   | `at(path).between(lo, hi)` | `(JsonLeafQuery, JsonLeafQuery)`, low then high |
+  | `at(path).is_null()` | `JsonQuery` |
   | `at(path).selector()` | `JsonSelector` |
   | `elements(path).eq(member, v).gt(member, v)` | `JsonElementsQuery` |
   | `predicate(text).vars(object)` | `JsonPredicateQuery` |
@@ -82,19 +83,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     sealed_root = false))]` on the field names the JSON index's options.
     The derive seals the field under them, and the field queries under
     them. Without it the field takes the default options, which order no
-    path, so every ordering at a path is refused.
+    path, so every ordering at a path is refused. A document type that
+    seals under other options when its field names none says so with
+    `JsonQueries::default_options`, which its field queries under.
   - **Typed values.** An ordering takes a number or a string
-    (`json::JsonOrdered`), equality at a path a scalar (`JsonScalar`), and
-    containment a document. A boolean ordering, or equality with an
-    object, does not compile. `elements` with no condition has no
-    `encrypt`.
+    (`field_reference::json::JsonOrdered`), equality at a path a scalar
+    (`JsonScalar`), and containment a document. A boolean ordering, or
+    equality with an object, does not compile. `elements` with no
+    condition has no `encrypt`. A NaN or an infinity, which no JSON number
+    is, is refused with the new `TermError::JsonNumberNotFinite`
+    (`stack_encrypt::json_number_not_finite`) before any key is requested,
+    rather than becoming `null`. An `f32` is the number its shortest
+    decimal form names, so `0.1f32` finds a stored `0.1`.
   - **Refusals.** A path is JSONPath text, checked when the query is
     encrypted, before any key is requested, by the dynamic interface's
     rules: an ordering at a path the field does not order is
     `TermError::JsonPathNotOrdered`. A refusal of the input's own shape (an
     `elements` path with no wildcard, a predicate the grammar does not
-    read) is `Error::Other` holding the dynamic interface's error and its
-    reason.
+    read) is `Error::Other` holding the dynamic interface's error, and
+    `Error::Other`'s payload now carries that refusal's `reason`, `field`,
+    `construct` and `at`.
   - **New public items.** `json::JsonTarget`, which seals a document under
     options; `json::JsonQueries`, which converts each operand into the
     field type's query type; `json::JsonElementsQuery` and

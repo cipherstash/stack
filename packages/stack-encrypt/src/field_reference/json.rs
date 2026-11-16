@@ -90,13 +90,22 @@
 //!
 //! A path is JSONPath text. It is checked when the query is encrypted,
 //! before any key is requested, by the rules the dynamic interface's JSON
-//! operators apply, through the same code: an ordering at a path the field
-//! does not order is refused
-//! ([`TermError::JsonPathNotOrdered`](crate::sem::TermError::JsonPathNotOrdered)), and so is
-//! a position (`[2]`) where the operand is a selector. A refusal that is
-//! the JSON input's own, such as an `elements` path with no wildcard or a
-//! predicate the grammar does not read, is [`crate::Error::Other`] holding
-//! the dynamic interface's error, with its reason.
+//! operators apply, through the same code. A refusal comes in one of two
+//! classes:
+//!
+//! - [`crate::Error::Term`], the JSON index's own refusals: an ordering at
+//!   a path the field does not order
+//!   ([`TermError::JsonPathNotOrdered`]), an ordering that names a
+//!   position (`$.visits[2].at`, [`TermError::JsonOrderingAtPosition`]),
+//!   a value an ordering cannot take, or a NaN or an infinity
+//!   ([`TermError::JsonNumberNotFinite`]).
+//! - [`crate::Error::Other`], the input's own shape, holding the dynamic
+//!   interface's error and its reason: a position where the operand is a
+//!   selector (`at("$.tags[1]").eq(..)`, `JsonPathPosition`), an
+//!   `elements` path with no wildcard (`JsonPathNoWildcard`), a `children`
+//!   path with one (`JsonPathWildcard`), or a predicate the grammar does
+//!   not read (`JsonPredicateSyntax` and the rest). Its
+//!   [`ErrorPayload`](crate::ErrorPayload) carries the reason.
 //!
 //! A value is typed: [`JsonScalar`] for equality, [`JsonOrdered`] (a number
 //! or a string) for an ordering, and a whole document for containment. The
@@ -114,6 +123,7 @@ use crate::json::inputs::{
 };
 use crate::json::{FieldOptions, JsonOptions, JsonPlaintext, JsonQueries};
 use crate::op::{AtPath, Between, ContainedBy, Contains, Eq, Gt, Gte, Lt, Lte};
+use crate::sem::TermError;
 use crate::target::Pending;
 use crate::KeysetCipher;
 
@@ -163,21 +173,23 @@ impl<T, Op, C: GivenScopes> JsonFieldQuery<T, Op, Needs<C>> {
 /// What a JSON query from a field reference holds until it is encrypted: the field's
 /// options and the query's path and values.
 struct JsonInput {
-    options: FieldOptions,
+    /// The options the field's `#[stash(json(..))]` names, or `None` for
+    /// the options its type seals under.
+    options: Option<FieldOptions>,
     body: Body,
 }
 
 /// A JSON query's paths and values, as the caller gave them.
 enum Body {
     Document(Parsed),
-    EqAt(Zeroizing<String>, Parsed),
-    Ordering(Compare, Zeroizing<String>, Parsed),
-    Between(Zeroizing<String>, Parsed, Parsed),
+    EqAt(Zeroizing<String>, Held),
+    Ordering(Compare, Zeroizing<String>, Held),
+    Between(Zeroizing<String>, Held, Held),
     Selector(Zeroizing<String>),
     Elements {
         path: Zeroizing<String>,
         bound: Option<NonZeroU32>,
-        members: Vec<(Zeroizing<String>, Bounds)>,
+        members: Vec<(Zeroizing<String>, Condition)>,
     },
     Predicate {
         text: Zeroizing<String>,
@@ -194,9 +206,13 @@ impl Body {
     fn into_input(self, options: &JsonOptions) -> Result<Input, crate::refusal::Error> {
         match self {
             Body::Document(document) => Ok(Input::Document(document)),
-            Body::EqAt(path, value) => Input::eq_at(&path, value),
-            Body::Ordering(compare, path, value) => Input::ordering(options, compare, &path, value),
-            Body::Between(path, low, high) => Input::between(options, &path, low, high),
+            Body::EqAt(path, value) => Input::eq_at(&path, value.checked()?),
+            Body::Ordering(compare, path, value) => {
+                Input::ordering(options, compare, &path, value.checked()?)
+            }
+            Body::Between(path, low, high) => {
+                Input::between(options, &path, low.checked()?, high.checked()?)
+            }
             Body::Selector(path) => Ok(Input::Selector(selector_path(&path)?)),
             Body::Elements {
                 path,
@@ -206,7 +222,9 @@ impl Body {
                 let base = elements_base(&path)?;
                 let predicates = members
                     .into_iter()
-                    .map(|(member, bounds)| member_predicate(options, &base, &member, bounds))
+                    .map(|(member, condition)| {
+                        member_predicate(options, &base, &member, condition.checked()?)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 Input::elements(bound.map(NonZeroU32::get), predicates)
             }
@@ -218,12 +236,49 @@ impl Body {
     }
 }
 
+/// A value moved into a query, or a number JSON cannot hold, which the
+/// query refuses when it is encrypted.
+enum Held {
+    Value(Parsed),
+    /// A NaN or an infinity: no JSON number, so no stored value is one.
+    NotFinite,
+}
+
+impl Held {
+    /// The value, or the refusal of a number JSON cannot hold
+    /// ([`TermError::JsonNumberNotFinite`]).
+    fn checked(self) -> Result<Parsed, crate::refusal::Error> {
+        match self {
+            Held::Value(value) => Ok(value),
+            Held::NotFinite => Err(crate::refusal::Error::Cipher(
+                TermError::JsonNumberNotFinite.into(),
+            )),
+        }
+    }
+}
+
+/// One condition of an element predicate, as the caller gave it.
+enum Condition {
+    One(Compare, Held),
+    Between(Held, Held),
+}
+
+impl Condition {
+    fn checked(self) -> Result<Bounds, crate::refusal::Error> {
+        Ok(match self {
+            Condition::One(compare, value) => Bounds::One(compare, value.checked()?),
+            Condition::Between(low, high) => Bounds::Between(low.checked()?, high.checked()?),
+        })
+    }
+}
+
 /// A value that equality at a path compares: a boolean, a number or a
 /// string. Sealed.
 pub trait JsonScalar: scalar_sealed::Sealed {
-    /// The value as JSON.
+    /// The value as JSON: `None` for a NaN or an infinity, which no JSON
+    /// number is.
     #[doc(hidden)]
-    fn into_json(self) -> Value;
+    fn into_json(self) -> Option<Value>;
 }
 
 /// A value an ordering at a path compares: a number or a string, the
@@ -239,8 +294,8 @@ macro_rules! json_values {
         $(
             impl scalar_sealed::Sealed for $ordered {}
             impl JsonScalar for $ordered {
-                fn into_json(self) -> Value {
-                    Value::from(self)
+                fn into_json(self) -> Option<Value> {
+                    Some(Value::from(self))
                 }
             }
             impl JsonOrdered for $ordered {}
@@ -248,29 +303,56 @@ macro_rules! json_values {
         $(
             impl scalar_sealed::Sealed for $scalar {}
             impl JsonScalar for $scalar {
-                fn into_json(self) -> Value {
-                    Value::from(self)
+                fn into_json(self) -> Option<Value> {
+                    Some(Value::from(self))
                 }
             }
         )+
     };
 }
 json_values! {
-    ordered: i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, String, &str;
+    ordered: i8, i16, i32, i64, u8, u16, u32, u64, String, &str;
     scalar: bool;
 }
 impl scalar_sealed::Sealed for &String {}
 impl JsonScalar for &String {
-    fn into_json(self) -> Value {
-        Value::from(self.as_str())
+    fn into_json(self) -> Option<Value> {
+        Some(Value::from(self.as_str()))
     }
 }
 impl JsonOrdered for &String {}
 
+/// A finite `f64` is the JSON number it is. A NaN or an infinity is no
+/// JSON number, and is refused when the query is encrypted.
+impl scalar_sealed::Sealed for f64 {}
+impl JsonScalar for f64 {
+    fn into_json(self) -> Option<Value> {
+        self.is_finite().then(|| Value::from(self))
+    }
+}
+impl JsonOrdered for f64 {}
+
+/// An `f32` is the number its shortest decimal form names, as it would be
+/// written in a document: `0.1f32` is `0.1`, not the `f64` the bits widen
+/// to, `0.10000000149011612`.
+impl scalar_sealed::Sealed for f32 {}
+impl JsonScalar for f32 {
+    fn into_json(self) -> Option<Value> {
+        if !self.is_finite() {
+            return None;
+        }
+        self.to_string().parse::<f64>().ok().map(Value::from)
+    }
+}
+impl JsonOrdered for f32 {}
+
 /// A value moved into a query: wiped when the query is encrypted, refused
 /// or dropped.
-fn held(value: impl JsonScalar) -> Parsed {
-    Parsed::of(value.into_json())
+fn held(value: impl JsonScalar) -> Held {
+    match value.into_json() {
+        Some(value) => Held::Value(Parsed::of(value)),
+        None => Held::NotFinite,
+    }
 }
 
 /// A path's text, held in storage that is wiped on drop: a path names
@@ -369,6 +451,15 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> ValueAt<W, T, C, P> {
         self.reference.json(Body::EqAt(self.path, held(value)))
     }
 
+    /// Rows with a JSON `null` at the path: equality with `null`, which is
+    /// containment of the document that holds it there. At a path with a
+    /// wildcard, rows where any element is `null`. A row with no node at
+    /// the path does not match: that is `SQL NULL`, not a JSON `null`.
+    pub fn is_null(self) -> JsonFieldQuery<T, AtPath<Eq>, C::Start> {
+        self.reference
+            .json(Body::EqAt(self.path, Held::Value(Parsed::of(Value::Null))))
+    }
+
     /// Rows where the value at the path is below `value`. The path must be
     /// one the field orders.
     pub fn lt(self, value: impl JsonOrdered) -> JsonFieldQuery<T, AtPath<Lt>, C::Start> {
@@ -436,7 +527,7 @@ macro_rules! element_conditions {
                     member: &str,
                     value: impl JsonOrdered,
                 ) -> JsonFieldQuery<T, ElementMatch, C::Start> {
-                    self.first(member, Bounds::One(Compare::$compare, held(value)))
+                    self.first(member, Condition::One(Compare::$compare, held(value)))
                 }
             )+
         }
@@ -444,7 +535,7 @@ macro_rules! element_conditions {
             $(
                 $(#[$doc])*
                 pub fn $method(self, member: &str, value: impl JsonOrdered) -> Self {
-                    self.condition(member, Bounds::One(Compare::$compare, held(value)))
+                    self.condition(member, Condition::One(Compare::$compare, held(value)))
                 }
             )+
         }
@@ -473,14 +564,18 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> Elements<W, T, C, P> {
         low: V,
         high: V,
     ) -> JsonFieldQuery<T, ElementMatch, C::Start> {
-        self.first(member, Bounds::Between(held(low), held(high)))
+        self.first(member, Condition::Between(held(low), held(high)))
     }
 
-    fn first(self, member: &str, bounds: Bounds) -> JsonFieldQuery<T, ElementMatch, C::Start> {
+    fn first(
+        self,
+        member: &str,
+        condition: Condition,
+    ) -> JsonFieldQuery<T, ElementMatch, C::Start> {
         self.reference.json(Body::Elements {
             path: self.path,
             bound: None,
-            members: vec![(path_text(member), bounds)],
+            members: vec![(path_text(member), condition)],
         })
     }
 }
@@ -488,7 +583,7 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> Elements<W, T, C, P> {
 impl<T, S> JsonFieldQuery<T, ElementMatch, S> {
     /// The member lies between `low` and `high`, both included.
     pub fn between<V: JsonOrdered>(self, member: &str, low: V, high: V) -> Self {
-        self.condition(member, Bounds::Between(held(low), held(high)))
+        self.condition(member, Condition::Between(held(low), held(high)))
     }
 
     /// How many elements of each array the predicate reads: 64 unless
@@ -505,13 +600,13 @@ impl<T, S> JsonFieldQuery<T, ElementMatch, S> {
         self
     }
 
-    fn condition(mut self, member: &str, bounds: Bounds) -> Self {
+    fn condition(mut self, member: &str, condition: Condition) -> Self {
         if let Some(JsonInput {
             body: Body::Elements { members, .. },
             ..
         }) = self.0.value.as_mut()
         {
-            members.push((path_text(member), bounds));
+            members.push((path_text(member), condition));
         }
         self
     }
@@ -562,8 +657,9 @@ fn mismatched() -> crate::Error {
     crate::Error::Other("a JSON query derived an operand of another kind".into())
 }
 
-impl<T, Op> JsonFieldQuery<T, Op, Ready> {
-    /// Check the query under the field's options and derive its operand
+impl<T: JsonQueries, Op> JsonFieldQuery<T, Op, Ready> {
+    /// Check the query under the field's options, or the options the
+    /// field's type seals under when it names none, and derive its operand
     /// under the field's query context: the field reference's label, extended by the
     /// outer fields' contexts and the scopes.
     fn derive_json<'a, K: 'static>(
@@ -574,7 +670,10 @@ impl<T, Op> JsonFieldQuery<T, Op, Ready> {
             unreachable!("a query holds its value until it is encrypted or dropped")
         };
         let scopes = self.0.extension();
-        let options = match (input.options)() {
+        let options = match input
+            .options
+            .map_or_else(|| Ok(T::default_options()), |f| f())
+        {
             Ok(options) => options,
             Err(error) => return Pending::failed(keyset, error.into()),
         };

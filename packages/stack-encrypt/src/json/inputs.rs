@@ -504,6 +504,9 @@ pub(crate) fn derive<'a, K: 'static>(
                 JsonSubtreeKey::DEFAULT_BOUND,
                 under.query()?,
             )?;
+            if key.tokens().len() != 1 {
+                return Err(Error::Internal);
+            }
             Pending::ready(keyset, Ok(Derived::Node(key)))
         }
         Input::Read(path, bound) => {

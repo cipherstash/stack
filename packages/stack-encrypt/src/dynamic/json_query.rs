@@ -569,10 +569,8 @@ fn operand(derived: Derived) -> Result<Operand, crate::Error> {
         },
         Derived::Selector(selector) => Operand::Text(selector.to_string()),
         Derived::Node(key) => {
-            let [token]: [String; 1] = key.tokens().try_into().map_err(|_| {
-                crate::Error::Other("a path with no wildcard names one node".into())
-            })?;
-            Operand::Text(token)
+            // `json::inputs::derive` checked the key holds one token.
+            Operand::Text(key.tokens().concat())
         }
         Derived::Read(key) => Operand::TextList(key.tokens()),
         Derived::Elements(elements) => Operand::One(eql(&elements)?),

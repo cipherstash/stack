@@ -188,6 +188,344 @@ mod given_a_document_field {
     }
 }
 
+/// The options a field names reach the stored document, and its field reference
+/// derives under the same ones: an ordered path's entry carries an
+/// ordering term at the selector the field reference derives, and the token the
+/// field reference derives names an entry of the document.
+mod the_fields_options {
+    use super::*;
+    use stack_encrypt::json::JsonSubtreeKey;
+
+    /// The entry the token in `key` names, as the server finds it.
+    fn entry<'d>(
+        doc: &'d JsonDocument,
+        key: &JsonSubtreeKey,
+    ) -> Option<&'d stack_encrypt::json::JsonEntry> {
+        doc.find(&key.token_bytes()[0]).map(|(_, entry)| entry)
+    }
+
+    #[tokio::test]
+    async fn an_ordered_paths_entry_carries_an_ordering_term_at_the_field_references_selector() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let doc = stored(&keyset).await.profile;
+        let key = EncryptedCustomer::PROFILE
+            .children("$.age")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let selector = EncryptedCustomer::PROFILE
+            .at("$.age")
+            .selector()
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let age = entry(&doc, &key).expect("the token names the entry");
+        assert_eq!(age.selector(), selector.as_bytes());
+        assert!(age.ordering_term().is_some(), "an ordered path's leaf");
+        let key = EncryptedCustomer::PROFILE
+            .children("$.name")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let name = entry(&doc, &key).expect("the token names the entry");
+        assert!(name.ordering_term().is_none(), "an unordered path's leaf");
+    }
+
+    /// `sealed_root = false` reaches the stored document's header, and the
+    /// field reference derives the root's token under the same options.
+    #[derive(EncryptTarget)]
+    #[stash(struct = Customer, scope = "customers")]
+    #[allow(dead_code)] // only the profile is read
+    struct OpenCustomer {
+        name: stack_encrypt::StackCipherText,
+        #[stash(json(ordered = ["$.age"], sealed_root = false))]
+        profile: JsonDocument,
+    }
+
+    #[tokio::test]
+    async fn an_open_root_is_sealed_and_queried_open() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let open: OpenCustomer = customer().encrypt_into(&keyset).await.unwrap();
+        assert!(!open.profile.header().sealed_root());
+        let root = OpenCustomer::PROFILE
+            .children("$")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert!(entry(&open.profile, &root).is_some(), "the root's token");
+        assert!(
+            stored(&keyset).await.profile.header().sealed_root(),
+            "the default seals it"
+        );
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(struct = Customer, scope = "customers", scope(tenant: u64))]
+    #[allow(dead_code)] // only the profile is read
+    struct TenantCustomer {
+        name: stack_encrypt::StackCipherText,
+        #[stash(json(ordered = ["$.age"]))]
+        profile: JsonDocument,
+    }
+
+    #[tokio::test]
+    async fn under_a_scope_the_tokens_and_selectors_are_the_scopes() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let seven: TenantCustomer = customer()
+            .encrypt_into_with_context(&keyset, Scope::new(7u64))
+            .await
+            .unwrap();
+        for (tenant, found) in [(7u64, true), (8, false)] {
+            let key = TenantCustomer::PROFILE
+                .children("$.age")
+                .scope(Scope::new(tenant))
+                .encrypt(&keyset)
+                .await
+                .unwrap();
+            let age = entry(&seven.profile, &key);
+            assert_eq!(age.is_some(), found, "tenant {tenant}");
+            let selector = TenantCustomer::PROFILE
+                .at("$.age")
+                .selector()
+                .scope(Scope::new(tenant))
+                .encrypt(&keyset)
+                .await
+                .unwrap();
+            if let Some(age) = age {
+                assert_eq!(age.selector(), selector.as_bytes());
+                assert!(age.ordering_term().is_some());
+            }
+        }
+    }
+
+    #[derive(Zeroize)]
+    struct Account {
+        customer: Customer,
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(struct = Account, scope = "accounts")]
+    struct EncryptedAccount {
+        customer: EncryptedCustomer,
+    }
+
+    #[tokio::test]
+    async fn through_an_outer_field_the_tokens_and_selectors_are_the_inner_fields() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let account: EncryptedAccount = Account {
+            customer: customer(),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        let reference = EncryptedAccount::CUSTOMER.field(EncryptedCustomer::PROFILE);
+        let key = reference.children("$.age").encrypt(&keyset).await.unwrap();
+        let age = entry(&account.customer.profile, &key).expect("the inner field's token");
+        let selector = reference
+            .at("$.age")
+            .selector()
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(age.selector(), selector.as_bytes());
+        assert!(age.ordering_term().is_some());
+    }
+
+    /// A document type that seals under options of its own when its field
+    /// names none: its field queries under the same options.
+    struct AgeOrdered(JsonDocument);
+
+    fn age_ordered() -> stack_encrypt::json::JsonOptions {
+        stack_encrypt::json::JsonOptions::new()
+            .ordering(["$.age"])
+            .unwrap()
+    }
+
+    impl EncryptTarget<JsonPlaintext> for AgeOrdered {
+        type ContextInput =
+            stack_encrypt::target::RequiredContext<stack_encrypt::target::CallerContext>;
+        fn encryption<'s, K: 'static>(
+        ) -> stack_encrypt::Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
+        where
+            JsonPlaintext: 's,
+        {
+            stack_encrypt::target::json_document(age_ordered())
+                .project(JsonPlaintext::value)
+                .accepting()
+                .map(AgeOrdered)
+        }
+    }
+
+    impl stack_encrypt::target::Decryptable for AgeOrdered {
+        const DECRYPTABLE: bool = true;
+    }
+
+    impl stack_encrypt::json::JsonQueries for AgeOrdered {
+        type Query = <JsonDocument as stack_encrypt::json::JsonQueries>::Query;
+        type LeafQuery = JsonLeafQuery;
+        type ElementsQuery = stack_encrypt::json::JsonElementsQuery;
+        type PredicateQuery = stack_encrypt::json::JsonPredicateQuery;
+        type Selector = stack_encrypt::json::JsonSelector;
+        type Token = JsonSubtreeKey;
+        fn default_options() -> stack_encrypt::json::JsonOptions {
+            age_ordered()
+        }
+        fn query(query: JsonQuery) -> Result<JsonQuery, Error> {
+            Ok(query)
+        }
+        fn leaf_query(query: JsonLeafQuery) -> Result<JsonLeafQuery, Error> {
+            Ok(query)
+        }
+        fn elements_query(
+            query: stack_encrypt::json::JsonElementsQuery,
+        ) -> Result<stack_encrypt::json::JsonElementsQuery, Error> {
+            Ok(query)
+        }
+        fn predicate_query(
+            query: stack_encrypt::json::JsonPredicateQuery,
+        ) -> Result<stack_encrypt::json::JsonPredicateQuery, Error> {
+            Ok(query)
+        }
+        fn selector(
+            selector: stack_encrypt::json::JsonSelector,
+        ) -> Result<stack_encrypt::json::JsonSelector, Error> {
+            Ok(selector)
+        }
+        fn token(key: JsonSubtreeKey) -> Result<JsonSubtreeKey, Error> {
+            Ok(key)
+        }
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(struct = Customer, scope = "customers")]
+    #[allow(dead_code)] // only the profile is read
+    struct OwnOptionsCustomer {
+        name: stack_encrypt::StackCipherText,
+        profile: AgeOrdered,
+    }
+
+    #[tokio::test]
+    async fn a_field_that_names_no_options_queries_under_its_types_own() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: OwnOptionsCustomer = customer().encrypt_into(&keyset).await.unwrap();
+        let older = OwnOptionsCustomer::PROFILE
+            .at("$.age")
+            .gt(30)
+            .encrypt(&keyset)
+            .await;
+        assert!(older.is_ok(), "the type orders `$.age`: {older:?}");
+        let key = OwnOptionsCustomer::PROFILE
+            .children("$.age")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let age = entry(&stored.profile.0, &key).expect("the token names the entry");
+        assert!(age.ordering_term().is_some());
+    }
+}
+
+/// Values a query takes: a number JSON can hold, as a document writes it,
+/// and a JSON `null` by name.
+mod values {
+    use super::*;
+
+    #[derive(Zeroize)]
+    struct Reading {
+        doc: JsonPlaintext,
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(struct = Reading, scope = "readings")]
+    struct EncryptedReading {
+        #[stash(json(ordered = ["$.score"]))]
+        doc: JsonDocument,
+    }
+
+    async fn reading(keyset: &KeysetCipher<'_, FakeDataKeySource>, doc: Value) -> JsonDocument {
+        let stored: EncryptedReading = Reading { doc: doc.into() }
+            .encrypt_into(keyset)
+            .await
+            .unwrap();
+        stored.doc
+    }
+
+    #[tokio::test]
+    async fn a_nan_or_an_infinity_is_refused_before_any_key_and_never_matches_null() {
+        let (cipher, generates, _) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let refused = [
+            EncryptedReading::DOC
+                .at("$.score")
+                .eq(f64::NAN)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
+            EncryptedReading::DOC
+                .at("$.score")
+                .eq(f32::INFINITY)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
+            EncryptedReading::DOC
+                .at("$.score")
+                .gt(f64::NEG_INFINITY)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
+            EncryptedReading::DOC
+                .at("$.score")
+                .between(0.0, f64::NAN)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
+        ];
+        for refused in refused {
+            assert!(
+                matches!(refused, Err(Error::Term(TermError::JsonNumberNotFinite))),
+                "{refused:?}"
+            );
+        }
+        assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
+    }
+
+    #[tokio::test]
+    async fn an_f32_is_the_number_its_shortest_form_names() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let doc = reading(&keyset, json!({"score": 0.1})).await;
+        for (what, query) in [
+            ("f32", EncryptedReading::DOC.at("$.score").eq(0.1f32)),
+            ("f64", EncryptedReading::DOC.at("$.score").eq(0.1f64)),
+        ] {
+            let query = query.encrypt(&keyset).await.unwrap();
+            assert!(query.matches(doc.selector_set()), "{what}");
+        }
+    }
+
+    #[tokio::test]
+    async fn is_null_finds_a_json_null_and_not_an_absent_path() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let null = reading(&keyset, json!({"score": null})).await;
+        let absent = reading(&keyset, json!({"other": 1})).await;
+        let number = reading(&keyset, json!({"score": 1})).await;
+        let query = EncryptedReading::DOC
+            .at("$.score")
+            .is_null()
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert!(query.matches(null.selector_set()));
+        assert!(!query.matches(absent.selector_set()));
+        assert!(!query.matches(number.selector_set()));
+    }
+}
+
 mod refusals {
     use super::*;
 
@@ -294,6 +632,27 @@ mod refusals {
                 "{what}: {refused:?}"
             );
         }
+    }
+
+    /// The boxed refusal's payload names its reason, as a binding's does.
+    #[tokio::test]
+    async fn a_boxed_refusals_payload_names_its_reason() {
+        use stack_encrypt::ErrorPayload as _;
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let Err(refusal) = EncryptedCustomer::PROFILE
+            .elements("$.visits")
+            .eq("place", "home")
+            .encrypt(&keyset)
+            .await
+        else {
+            panic!("refused")
+        };
+        assert_eq!(
+            refusal.payload().get("reason"),
+            Some(&json!("json_path_no_wildcard")),
+            "{refusal:?}"
+        );
     }
 
     /// With the `dynamic` feature the boxed refusal is the dynamic

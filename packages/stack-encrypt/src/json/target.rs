@@ -156,6 +156,16 @@ pub trait JsonQueries {
     /// One node's token, which the child functions take: `children(path)`.
     type Token: MaybeSend + 'static;
 
+    /// The options a field of this type is sealed under when its record
+    /// names none with `#[stash(json(..))]`: the options its
+    /// [`EncryptTarget::encryption`] seals under. A query of such a field
+    /// derives under them, so they must be the same, or the field's
+    /// orderings are refused and its tokens match nothing. The defaults,
+    /// which order no path, unless the type seals under others.
+    fn default_options() -> JsonOptions {
+        JsonOptions::default()
+    }
+
     /// The containment needle the engine derived, as this type stores it.
     ///
     /// # Errors
@@ -228,6 +238,9 @@ impl JsonQueries for JsonDocument {
 /// A nullable document field is queried as a present one is. A row whose
 /// field is `None` stores no document, so no query matches it.
 impl<T: JsonQueries> JsonQueries for Option<T> {
+    fn default_options() -> JsonOptions {
+        T::default_options()
+    }
     type Query = T::Query;
     type LeafQuery = T::LeafQuery;
     type ElementsQuery = T::ElementsQuery;
@@ -259,13 +272,6 @@ impl<T: JsonQueries> JsonQueries for Option<T> {
 /// meet before any key is requested.
 #[doc(hidden)]
 pub type FieldOptions = fn() -> Result<JsonOptions, TermError>;
-
-/// The options of a document field that names none: the defaults, which
-/// order no path.
-#[doc(hidden)]
-pub fn default_options() -> Result<JsonOptions, TermError> {
-    Ok(JsonOptions::default())
-}
 
 /// The borrowed description of a `#[stash(json(..))]` field: `T`'s
 /// encryption under `options`, or, for options the attribute names wrongly,

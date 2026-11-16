@@ -228,9 +228,10 @@ pub struct FieldReference<W, T, C = NoScope, P = TakesAny> {
     identity: &'static str,
     contexts: fn() -> Contexts,
     /// The JSON index's options of a field that stores a document, which
-    /// its JSON queries derive under: the defaults unless the field's
-    /// `#[stash(json(..))]` names others.
-    json: FieldOptions,
+    /// its JSON queries derive under: the ones the field's
+    /// `#[stash(json(..))]` names, or `None` for the options its type
+    /// seals under ([`JsonQueries::default_options`](crate::json::JsonQueries::default_options)).
+    json: Option<FieldOptions>,
     place: W,
     target: FieldTags<T, C, P>,
 }
@@ -276,7 +277,7 @@ impl<R, T, C, P> FieldReference<Root<R>, T, C, P> {
             scope,
             identity,
             contexts,
-            json: crate::json::default_options,
+            json: None,
             place: Root(PhantomData),
             target: PhantomData,
         }
@@ -286,7 +287,7 @@ impl<R, T, C, P> FieldReference<Root<R>, T, C, P> {
     /// the field's `#[stash(json(..))]` names. For generated code.
     #[doc(hidden)]
     pub const fn with_json_options(mut self, options: FieldOptions) -> Self {
-        self.json = options;
+        self.json = Some(options);
         self
     }
 }
