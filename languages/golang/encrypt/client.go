@@ -159,7 +159,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	if cfg.requireLockedMemory && resolved.MemoryLockError != nil {
 		// The credentials' own guest held the key, and holds the token
 		// strategy: under the strict policy its memory must be locked too.
-		// AutoCredentials, AccessKeyCredentials and OIDCFederation open it
+		// AutoCredentials, AccessKeyCredentials, and OIDCFederation open it
 		// strict and cannot get here unlocked; NewCredentials' store is the caller's, opened
 		// however the caller chose.
 		if lockErr := resolved.MemoryLockError(); lockErr != nil {
@@ -209,8 +209,8 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	return c, nil
 }
 
-// checkCredentials refuses credentials that are wrong as they were built,
-// knowable without resolving them: the one place each of these is decided.
+// checkCredentials refuses credentials that were built wrong. Each of these
+// checks needs nothing resolved, and this is the only place it is made.
 func checkCredentials(creds Credentials) error {
 	switch c := creds.(type) {
 	case *explicitCredentials:
@@ -220,8 +220,8 @@ func checkCredentials(creds Credentials) error {
 	case AccessKeyCredentials:
 		return c.validate()
 	case *AccessKeyCredentials:
-		// A nil pointer would pass NewClient's nil check, inside the
-		// interface, and panic when its value method is called.
+		// A nil pointer inside the Credentials interface passes NewClient's
+		// nil check. Calling its value method would then panic.
 		if c == nil {
 			return fmt.Errorf("%w: the credentials are a nil *AccessKeyCredentials", ErrEncoding)
 		}
@@ -265,7 +265,7 @@ func newClient(inst *instance, t *transport) *Client {
 // MemoryLocked reports whether the memory the client's key material lives
 // in — this guest's, where the client key and every loaded index key are,
 // and whatever the credentials held it in on the way (auth's
-// credential guest, for [AutoCredentials], [AccessKeyCredentials] and
+// credential guest, for [AutoCredentials], [AccessKeyCredentials], and
 // [OIDCFederation]) — is locked in RAM and, on
 // Linux, excluded from core dumps. False means a lock was refused (on
 // Linux, most often RLIMIT_MEMLOCK, which defaults to 64 KiB on many

@@ -27,9 +27,9 @@ type clientOptions struct {
 // WithCredentials supplies the client id, the client key and the auth
 // strategy the token comes from. The default, and what nil means, is
 // [AutoCredentials]: the environment, then the developer profile.
-// [AccessKeyCredentials] takes the four values from a struct the program
-// fills, [NewCredentials] takes the three explicitly, and [OIDCFederation]
-// mints tokens from an identity provider's.
+// [AccessKeyCredentials] takes four values from a struct the program
+// fills. [NewCredentials] takes the three explicitly. [OIDCFederation]
+// exchanges a token from an identity provider for a CipherStash token.
 //
 // The client key is consumed: NewClient marshals it into the config buffer,
 // wipes the key, and wipes the buffer once the guest has the key, so after
@@ -53,7 +53,7 @@ func WithKeysetCacheSize(n int) ClientOption {
 }
 
 // WithTransport performs the client's HTTP requests: to ZeroKMS, and, for
-// [AutoCredentials], [AccessKeyCredentials] and [OIDCFederation], the
+// [AutoCredentials], [AccessKeyCredentials], and [OIDCFederation], the
 // authentication requests auth's credential guest makes to CTS: an
 // access-key exchange, a device-session refresh, a federation exchange. A
 // RoundTripper scoped to the ZeroKMS host alone (a pinned client
@@ -89,7 +89,7 @@ func withGuest(wasm []byte) ClientOption {
 //
 // It covers the credential guest too, where the token strategy lives and the
 // client key may have passed through. [AutoCredentials],
-// [AccessKeyCredentials] and [OIDCFederation] open that guest under the same
+// [AccessKeyCredentials], and [OIDCFederation] open that guest under the same
 // policy, so it is refused at NewClient and on every later growth alike.
 // [NewCredentials]' guest is the auth store the caller opened: NewClient
 // fails with ErrMemoryLock if that store's memory is unlocked when it is

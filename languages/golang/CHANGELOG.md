@@ -13,16 +13,18 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 ### Added
 
 - `encrypt.AccessKeyCredentials`: credentials from a struct your program
-  fills, holding the client id, the client key, the client access key and
-  the workspace CRN. Nothing falls back to the environment or to the
-  developer profile. Its fields carry `env` tags naming the `CS_*`
-  variables, so a configuration loader such as go-envconfig or caarlos0/env
-  can fill it. Pass it to `encrypt.WithCredentials`.
-- `encrypt.Secret`: the type of the struct's two key fields. Every `fmt`
-  verb, `slog`, and every encoder that uses `encoding.TextMarshaler` (JSON,
-  XML, and the common YAML and TOML libraries) show it as `[redacted]`.
-  Keep the credentials in an exported field of anything you print: `fmt`
-  prints a value it reaches through an unexported field in full.
+  fills. The struct has four fields: the client id, the client key, the
+  client access key, and the workspace CRN (Cloud Resource Name).
+  `NewClient` does not read the environment or the developer profile for
+  these credentials. Each field has an `env` tag that names its `CS_*`
+  variable, so a configuration loader such as go-envconfig or caarlos0/env
+  can fill the struct. Pass it to `encrypt.WithCredentials`.
+- `encrypt.Secret`: the type of the struct's two key fields. `fmt` and
+  `slog` print a `Secret` as `[redacted]`. Every encoder that uses
+  `encoding.TextMarshaler` writes it as `[redacted]` too, including the
+  standard JSON and XML packages. Keep the credentials in an exported field
+  of anything you print. `fmt` prints a value in an unexported field in
+  full.
 
 ## [0.1.0-rc.4] - 2026-11-13
 

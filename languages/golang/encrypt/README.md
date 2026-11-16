@@ -163,8 +163,9 @@ and `CS_CLIENT_KEY` for the key), then the developer profile `stash auth login`
 writes, through the [`auth`](../auth) package.
 
 `AccessKeyCredentials` takes the same four values from a struct your program
-fills, with no fallback. Its fields carry `env` tags
-(`env:"CS_CLIENT_ID,required"` and so on), so a configuration loader such as
+fills. `NewClient` does not read the environment or the developer profile for
+these credentials. Each field has an `env` tag, such as
+`env:"CS_CLIENT_ID,required"`. A configuration loader such as
 [go-envconfig](https://github.com/sethvargo/go-envconfig) or
 [caarlos0/env](https://github.com/caarlos0/env) can fill it:
 
@@ -176,16 +177,18 @@ if err := envconfig.Process(ctx, &creds); err != nil {
 client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
 ```
 
-The two keys are `encrypt.Secret` values. Every `fmt` verb, `slog`, and every
-encoder that uses `encoding.TextMarshaler` (JSON, XML, and the common YAML and
-TOML libraries) show them as `[redacted]`. Keep the credentials in an exported
-field of any struct you print or log: `fmt` prints a value it reaches through
-an unexported field in full. `ExampleAccessKeyCredentials` in the package tests
-is a complete program.
+The two keys are `encrypt.Secret` values. `fmt` and `slog` print them as
+`[redacted]`, under every verb. Every encoder that uses
+`encoding.TextMarshaler` writes them as `[redacted]` too. Those encoders include
+the standard JSON and XML packages, and the common YAML and TOML libraries.
 
-`NewCredentials` takes a client
-id, a client key and an `auth` strategy explicitly; `OIDCFederation` mints the
-token from an identity provider's. No credentials take a raw token. The client
+Keep the credentials in an exported field of any struct you print or log.
+`fmt` prints a value in an unexported field in full.
+`ExampleAccessKeyCredentials` in the package tests is a complete program.
+
+`NewCredentials` takes a client id, a client key, and an `auth` strategy
+explicitly. `OIDCFederation` exchanges a token from an identity provider for a
+CipherStash token. No credentials take a raw token. The client
 key is consumed by `NewClient` and wiped, whatever the outcome.
 
 ## The cipher

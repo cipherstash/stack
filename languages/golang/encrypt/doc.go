@@ -318,7 +318,7 @@
 // which sends it with any [net/http.RoundTripper] and resumes the operation
 // with the response. What crosses per ZeroKMS call is what would cross TLS
 // anyway; derived key material never leaves the guest. Under
-// [AutoCredentials], [AccessKeyCredentials] and [OIDCFederation] the same
+// [AutoCredentials], [AccessKeyCredentials], and [OIDCFederation] the same
 // RoundTripper also carries the authentication requests to CTS, so one
 // scoped to the ZeroKMS host alone is not enough. Under [NewCredentials]
 // those requests go through the store the caller opened the strategy from.
@@ -333,14 +333,18 @@
 // token, CS_CLIENT_ID with CS_CLIENT_KEY for the key), then the developer
 // profile, which it reads through the auth package's credential guest.
 // CS_ZEROKMS_HOST (or CS_VITUR_HOST) pins the endpoint whatever the
-// credentials. [AccessKeyCredentials] takes the four values from a struct
-// the program fills, with env tags for configuration loaders such as
-// go-envconfig. [NewCredentials] takes a client id, a client key and a
-// strategy explicitly, and [OIDCFederation] mints the token from an identity
-// provider's. None takes a raw token: a token is always a strategy's, since
-// a raw one cannot be refreshed when it expires. Credentials that cannot be
-// resolved fail NewClient with [ErrNoCredentials]; credentials that resolve
-// but do not work fail it too, at the one ZeroKMS round trip it makes.
+// credentials.
+//
+// [AccessKeyCredentials] takes four values from a struct the program fills.
+// The struct's fields have env tags, so a configuration loader such as
+// go-envconfig can fill it. [NewCredentials] takes a client id, a client
+// key, and a strategy explicitly. [OIDCFederation] exchanges a token from an
+// identity provider for a CipherStash token.
+//
+// None takes a raw token: a token is always a strategy's, since a raw one
+// cannot be refreshed when it expires. Credentials that cannot be resolved
+// fail NewClient with [ErrNoCredentials]; credentials that resolve but do
+// not work fail it too, at the one ZeroKMS round trip it makes.
 //
 // # Errors
 //

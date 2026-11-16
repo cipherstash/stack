@@ -22,10 +22,12 @@ import (
 // and hands the key to the guest.
 //
 // [AutoCredentials] is the default: the environment, then the developer
-// profile, in the Rust client's order. [AccessKeyCredentials] takes the four
-// values the program loaded itself, with no fallback. [NewCredentials] takes
-// a client id, a client key and a strategy explicitly; [OIDCFederation] mints
-// the token from an identity provider's. Those four are the only implementations:
+// profile, in the Rust client's order. [AccessKeyCredentials] takes four
+// values from a struct the program fills, with no fallback. [NewCredentials]
+// takes a client id, a client key, and a strategy explicitly. [OIDCFederation]
+// exchanges a token from an identity provider for a CipherStash token.
+//
+// Those four are the only implementations:
 // the interface is sealed, so a bearer token always comes from an auth
 // strategy. A raw token cannot be refreshed when it expires, and a source
 // outside the strategies would bypass the cross-process refresh lock the
@@ -45,13 +47,14 @@ type Credentials interface {
 // material of its own can do so under the client's settings.
 type resolveOptions struct {
 	// Transport is the client's RoundTripper (never nil). AutoCredentials,
-	// AccessKeyCredentials and OIDCFederation send their authentication
+	// AccessKeyCredentials, and OIDCFederation send their authentication
 	// requests through it too.
 	Transport http.RoundTripper
 	// RequireLockedMemory is the client's setting. AutoCredentials,
-	// AccessKeyCredentials and OIDCFederation apply it to the credential
-	// guest, which holds the token strategy for the life of the client
-	// (and, for AutoCredentials, the client key while it reads it).
+	// AccessKeyCredentials, and OIDCFederation apply it to the credential
+	// guest. That guest contains the token strategy for the life of the
+	// client. Under AutoCredentials it also contains the client key while
+	// AutoCredentials reads it.
 	RequireLockedMemory bool
 }
 
@@ -66,9 +69,9 @@ type resolvedCredentials struct {
 	// Token supplies the bearer token for every request: an auth
 	// strategy, outside the package's own tests.
 	Token tokenSource
-	// Close, when not nil, releases what the credentials hold open — the
-	// credential guest and its token strategy, for AutoCredentials,
-	// AccessKeyCredentials and OIDCFederation.
+	// Close, when not nil, releases what the credentials keep open. For
+	// AutoCredentials, AccessKeyCredentials, and OIDCFederation, that is the
+	// credential guest and its token strategy.
 	// The client calls it from Client.Close, or from NewClient when the
 	// client is not made. A Token that outlives it must not be asked again.
 	Close func() error
@@ -76,7 +79,7 @@ type resolvedCredentials struct {
 	// hold key material in is not locked in RAM: the credential guest's,
 	// which the token strategy lives in and (for AutoCredentials and
 	// OIDCFederation) the client key passed through. AutoCredentials,
-	// AccessKeyCredentials and OIDCFederation hand over their store's
+	// AccessKeyCredentials, and OIDCFederation pass on their store's
 	// ProfileStore.MemoryLockError;
 	// NewCredentials, the caller's strategy's Strategy.MemoryLockError,
 	// which is its store's. It is asked each time, not once: under
@@ -273,15 +276,18 @@ func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*res
 }
 
 // AccessKeyCredentials is [Credentials] from four values your program loads.
-// The client id and client key identify the client. The client access key
-// is exchanged for a token in the workspace that WorkspaceCRN names.
-// Nothing falls back to the environment or to the developer profile.
-// NewClient refuses a blank field with [ErrEncoding] and names the field.
+// The client id and client key identify your application to ZeroKMS.
+// NewClient exchanges the client access key for a token. The token is for
+// the workspace that WorkspaceCRN names.
 //
-// Each field has an env tag naming the variable [AutoCredentials] reads.
-// The tags are in the form that github.com/sethvargo/go-envconfig and
-// github.com/caarlos0/env read. Fill the struct on its own, or as a field of
-// your configuration struct:
+// NewClient does not read the environment or the developer profile for
+// these credentials. If a field is empty or blank, NewClient returns
+// [ErrEncoding] and names the field.
+//
+// Each field has an env tag that names the variable [AutoCredentials] reads.
+// github.com/sethvargo/go-envconfig and github.com/caarlos0/env both read
+// tags in this form. Fill the struct on its own, or as a field of your
+// configuration struct:
 //
 //	var creds encrypt.AccessKeyCredentials
 //	if err := envconfig.Process(ctx, &creds); err != nil {
@@ -289,45 +295,49 @@ func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*res
 //	}
 //	client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
 //
-// NewClient opens auth's credential guest for the token exchange. It opens
-// the guest with nothing mounted, under the client's [WithTransport] and
-// [WithRequireLockedMemory] settings. Client.Close releases it. CS_CTS_HOST
-// and CS_ZEROKMS_HOST still override the endpoints, as for every Credentials.
+// NewClient opens auth's credential guest for the token exchange. The guest
+// has no files mounted, and uses the client's [WithTransport] and
+// [WithRequireLockedMemory] settings. Client.Close releases the guest.
+// CS_CTS_HOST and CS_ZEROKMS_HOST still override the endpoints, as they do
+// for every Credentials.
 //
-// The two keys are [Secret] values, so printing, logging or encoding the
-// struct shows neither, when fmt reaches it through exported fields. Keep
-// it in an exported field of any configuration struct you print: fmt
-// prints a value it reaches through an unexported field in full. A Go
-// string cannot be wiped, so each key stays in memory while the struct
-// does. NewClient wipes its own copy of the client key. When the
-// program can hold the key as bytes, [NewCredentials] takes a [ClientKey]
-// that can be wiped.
+// The two keys are [Secret] values. Printing, logging, or encoding the
+// struct shows neither key. Keep the struct in an exported field of any
+// configuration struct you print. fmt prints a value in an unexported field
+// in full.
+//
+// A Go string cannot be wiped, so each key stays in memory as long as the
+// struct does. NewClient wipes its own copy of the client key. A [ClientKey]
+// can be wiped. If your program can keep the key as bytes, pass a ClientKey
+// to [NewCredentials] instead.
 type AccessKeyCredentials struct {
-	// ClientID is the ZeroKMS client id, a UUID.
+	// ClientID is the ZeroKMS client id. The id is a UUID (universally
+	// unique identifier).
 	ClientID string `env:"CS_CLIENT_ID,required"`
-	// ClientKey is the client key: the hex form, or the base64 of
-	// secretkey.json.
+	// ClientKey is the client key, in hex. The base64 encoding of the
+	// secretkey.json file that `stash auth login` writes also works.
 	ClientKey Secret `env:"CS_CLIENT_KEY,required"`
-	// ClientAccessKey is the client access key, which is exchanged for a
-	// bearer token.
+	// ClientAccessKey is the client access key. NewClient exchanges it for
+	// a bearer token.
 	ClientAccessKey Secret `env:"CS_CLIENT_ACCESS_KEY,required"`
-	// WorkspaceCRN is the workspace the client access key belongs to.
+	// WorkspaceCRN is the CRN (Cloud Resource Name) of the workspace that
+	// the client access key belongs to.
 	WorkspaceCRN string `env:"CS_WORKSPACE_CRN,required"`
 }
 
-// Secret is a credential that does not print. Every fmt verb, slog, and
-// every encoder that uses [encoding.TextMarshaler] show it as [redacted].
-// That covers encoding/json and encoding/xml, and the common YAML and TOML
-// libraries. Convert it to a string to read it. A configuration loader
-// fills it as it fills any string field.
+// Secret is a credential. fmt and slog print a Secret as [redacted], under
+// every verb. Every encoder that uses [encoding.TextMarshaler] writes it as
+// [redacted] too. Those encoders include the standard JSON and XML packages,
+// and the common YAML and TOML libraries. Convert a Secret to a string to read it.
+// A configuration loader fills a Secret as it fills any string field.
 //
-// fmt calls no method on a value it reaches through an unexported struct
-// field. A Secret in an unexported field, or in a struct held in one,
-// prints in full. Keep credentials in exported fields of anything you
-// print or log.
+// fmt calls no method on a value in an unexported struct field. A Secret in
+// an unexported field prints in full. That includes a Secret in a struct
+// that is in an unexported field. Keep credentials in exported fields of
+// anything you print or log.
 //
-// Encoding a Secret and decoding it again gives the text [redacted], not
-// the key. NewClient refuses credentials that hold it.
+// If you encode a Secret and decode it again, you get the text [redacted],
+// not the key. NewClient refuses credentials that contain that text.
 type Secret string
 
 // String returns [redacted].
@@ -342,14 +352,14 @@ func (s Secret) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.String(
 // LogValue logs [redacted].
 func (Secret) LogValue() slog.Value { return slog.StringValue(redacted) }
 
-// MarshalText encodes [redacted], so encoding/json, encoding/xml and the
-// encoders that follow them write no key.
+// MarshalText returns [redacted]. The standard JSON and XML packages call
+// it, and so do the other encoders that use [encoding.TextMarshaler].
 func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
-// validate refuses a field that is empty or only whitespace, and a key
-// that is the text [redacted]: what a Secret encoded and decoded again
-// holds. It resolves nothing, so NewClient runs it host-side, before the
-// guest is loaded.
+// validate refuses a field that is empty or only whitespace. The check also
+// refuses a key that is the text [redacted]. A Secret contains that text
+// after it is encoded and decoded again. The check resolves nothing, so
+// NewClient runs it host-side, before it loads the guest.
 func (c AccessKeyCredentials) validate() error {
 	var blank, redactedKeys []string
 	for _, field := range []struct{ name, env, value string }{
@@ -370,14 +380,15 @@ func (c AccessKeyCredentials) validate() error {
 		return fmt.Errorf("%w: AccessKeyCredentials: empty or blank: %s", ErrEncoding, strings.Join(blank, ", "))
 	}
 	if len(redactedKeys) > 0 {
-		return fmt.Errorf("%w: AccessKeyCredentials: %s holds %s: the credentials were encoded, which redacts each key, and decoded again",
+		return fmt.Errorf("%w: AccessKeyCredentials: %s contains %s: the credentials were encoded and decoded again, and encoding redacts each key",
 			ErrEncoding, strings.Join(redactedKeys, ", "), redacted)
 	}
 	return nil
 }
 
 func (c AccessKeyCredentials) resolve(ctx context.Context, opts resolveOptions) (_ *resolvedCredentials, err error) {
-	// NewClient has checked already; this keeps resolve safe on its own.
+	// NewClient has run this check already. Running it again keeps resolve
+	// safe to call on its own.
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
