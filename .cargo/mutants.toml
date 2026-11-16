@@ -92,6 +92,11 @@ exclude_re = [
   # `Ok(())`, so the replacement is the body. Text overrides it with
   # `query::order_text`, pinned by `an_ordering_refuses_only_text_it_cannot_encode`.
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace sealed::Sealed::check_query -> Result<\(\), super::TermError> with Ok\(\(\)\)$',
+  # A JSON document type's default options are the defaults: the trait's
+  # body is `JsonOptions::default()`. A type that overrides them is pinned
+  # by `a_field_that_names_no_options_queries_under_its_types_own`, and
+  # `Option<T>` forwarding by `a_nullable_field_queries_under_its_types_own_options`.
+  'stack-encrypt/src/json/target\.rs:\d+:\d+: replace JsonQueries::default_options -> JsonOptions with Default::default\(\)$',
   # Both unit-context conversions explicitly return Self::default().
   'stack-encrypt/src/target/context\.rs:\d+:\d+: replace <impl From<\(\)> for (DeclaredContext|ExpectedContext<T>)>::from -> Self with Default::default\(\)$',
   # A caller shape with no placeholder IS `CallerShape::default()`:

@@ -600,3 +600,59 @@ fn member(
     }
     member
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at() -> JsonPath {
+        path("$.a").expect("a path")
+    }
+
+    fn one() -> Parsed {
+        Parsed::of(Value::from(1))
+    }
+
+    /// Each input names its operator in both spellings: the variant a
+    /// compiled predicate's `Debug` prints, and the wire name.
+    #[test]
+    fn every_input_names_its_operator() {
+        let inputs = [
+            (Input::Document(one()), "Contains", "contains"),
+            (Input::EqAt(at(), one()), "EqAt", "eq_at"),
+            (Input::Ordering(Compare::Lt, at(), one()), "LtAt", "lt_at"),
+            (
+                Input::Ordering(Compare::Lte, at(), one()),
+                "LteAt",
+                "lte_at",
+            ),
+            (Input::Ordering(Compare::Gt, at(), one()), "GtAt", "gt_at"),
+            (
+                Input::Ordering(Compare::Gte, at(), one()),
+                "GteAt",
+                "gte_at",
+            ),
+            (
+                Input::Between(at(), one(), one()),
+                "BetweenAt",
+                "between_at",
+            ),
+            (Input::Selector(at()), "Selector", "selector"),
+            (Input::Node(at()), "Children", "children"),
+            (Input::Read(at(), 8), "Subtree", "subtree"),
+            (
+                Input::Elements(8, Vec::new()),
+                "ElementMatch",
+                "element_match",
+            ),
+            (
+                Input::Predicate(Box::new(Node::Leaf(Input::Selector(at())))),
+                "Match",
+                "match",
+            ),
+        ];
+        for (input, variant, name) in inputs {
+            assert_eq!((input.variant(), input.name()), (variant, name));
+        }
+    }
+}
