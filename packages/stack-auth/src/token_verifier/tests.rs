@@ -517,6 +517,34 @@ mod given_the_keys_cannot_be_fetched {
     }
 
     #[tokio::test]
+    async fn a_failed_fetch_is_not_retried_more_than_once_per_interval() {
+        let cts = FakeCts::unreachable();
+        let clock = ManualClock::at(NOW);
+        let verifier = verifier(&cts, &clock);
+
+        for _ in 0..3 {
+            let err = verifier
+                .verify(token(KEY_A.jwt(claims())))
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AuthError::Request(_)), "got {err:?}");
+        }
+        assert_eq!(
+            cts.requests().len(),
+            1,
+            "an outage must not turn every call into a fetch"
+        );
+
+        clock.advance(MIN_REFETCH_SECS);
+        let _ = verifier.verify(token(KEY_A.jwt(claims()))).await;
+        assert_eq!(
+            cts.requests().len(),
+            2,
+            "the fetch is retried after the interval"
+        );
+    }
+
+    #[tokio::test]
     async fn an_error_status_is_a_server_error() {
         let cts = FakeCts::serving("{}".to_string());
         cts.status.store(503, Ordering::SeqCst);
@@ -531,7 +559,7 @@ mod given_the_keys_cannot_be_fetched {
     }
 
     #[tokio::test]
-    async fn an_unreadable_jwks_refuses_the_token() {
+    async fn an_unreadable_jwks_is_a_request_error_not_the_tokens() {
         let cts = FakeCts::serving("<html>".to_string());
         let verifier = verifier(&cts, &ManualClock::at(NOW));
 
@@ -540,7 +568,42 @@ mod given_the_keys_cannot_be_fetched {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, AuthError::InvalidToken(_)), "got {err:?}");
+        assert!(matches!(err, AuthError::Request(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn cached_keys_still_verify_when_a_refresh_fails() {
+        let cts = FakeCts::serving(jwks(&[&KEY_A]));
+        let clock = ManualClock::at(NOW);
+        let verifier = verifier(&cts, &clock);
+        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+
+        cts.status.store(503, Ordering::SeqCst);
+        clock.advance(KEYS_TTL_SECS);
+
+        assert_eq!(
+            verdict(&verifier, KEY_A.jwt(claims())).await,
+            Ok(()),
+            "a JWKS outage must not refuse a token the cached keys verify"
+        );
+        assert_eq!(cts.requests().len(), 2, "the refresh was attempted");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_key_during_an_outage_is_not_accepted() {
+        let cts = FakeCts::serving(jwks(&[&KEY_A]));
+        let clock = ManualClock::at(NOW);
+        let verifier = verifier(&cts, &clock);
+        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+
+        cts.status.store(503, Ordering::SeqCst);
+        clock.advance(MIN_REFETCH_SECS);
+
+        let err = verifier
+            .verify(token(KEY_B.jwt(claims())))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AuthError::Server(_)), "got {err:?}");
     }
 }
 

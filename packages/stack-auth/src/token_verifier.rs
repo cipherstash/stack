@@ -27,9 +27,10 @@
 //! nothing from the token itself is.
 //!
 //! The JWKS is cached for [`KEYS_TTL_SECS`]. A token signed by a key the
-//! cache does not hold triggers one early refetch, so a rotated key works
-//! immediately, but no more than once every [`MIN_REFETCH_SECS`], so a run of
-//! forged `kid`s cannot turn every call into a request to CTS.
+//! cache does not hold triggers an early refetch, so a rotated key works
+//! immediately. Fetches, successful or failed, are at most one every
+//! [`MIN_REFETCH_SECS`], so neither a run of forged `kid`s nor a CTS outage
+//! turns every call into a request to CTS.
 
 use std::fmt;
 
@@ -130,6 +131,10 @@ struct KeyCache {
     keys: Vec<SigningKey>,
     /// When the keys were last fetched; `None` before the first fetch.
     fetched_at: Option<u64>,
+    /// When a fetch was last attempted, successful or not.
+    attempted_at: Option<u64>,
+    /// Whether that attempt failed.
+    attempt_failed: bool,
 }
 
 /// One RSA public key from the JWKS, as big-endian modulus and exponent.
@@ -200,7 +205,7 @@ impl TokenVerifier {
 
     fn check_claims(&self, parts: &Parts<'_>) -> Result<(), Rejection> {
         if parts.header.alg != ALGORITHM {
-            return Err(Rejection::Algorithm(parts.header.alg.clone()));
+            return Err(Rejection::Algorithm);
         }
         let claims = &parts.claims;
         let issuer = Url::parse(&claims.iss)
@@ -225,26 +230,60 @@ impl TokenVerifier {
     }
 
     /// The key `kid` names, fetching the JWKS when the cache is empty or
-    /// stale, or when it lacks that key and was not fetched too recently.
+    /// stale, or when it lacks that key.
+    ///
+    /// No more than one fetch is attempted every [`MIN_REFETCH_SECS`],
+    /// whether the last one succeeded or failed, so neither a run of forged
+    /// `kid`s nor a CTS outage turns every call into a request. While a fetch
+    /// cannot be made or has failed, a key already in the cache is still
+    /// used, even past [`KEYS_TTL_SECS`]: the keys are public, and a short
+    /// outage of CTS's JWKS should not refuse tokens they verify.
     ///
     /// The lock is held across the fetch, so concurrent callers wait for one
     /// request rather than each sending their own.
     async fn key_for(&self, kid: Option<&str>) -> Result<Option<SigningKey>, AuthError> {
         let mut cache = self.keys.lock().await;
         let now = self.clock.now_unix_secs();
-        let age = cache.fetched_at.map(|at| now.saturating_sub(at));
-        let stale = age.is_none_or(|age| age >= KEYS_TTL_SECS);
-        if !stale {
-            if let Some(key) = cache.find(kid) {
-                return Ok(Some(key));
+        let fresh = cache
+            .fetched_at
+            .is_some_and(|at| now.saturating_sub(at) < KEYS_TTL_SECS);
+        let cached = cache.find(kid);
+        if fresh && cached.is_some() {
+            return Ok(cached);
+        }
+        let tried_recently = cache
+            .attempted_at
+            .is_some_and(|at| now.saturating_sub(at) < MIN_REFETCH_SECS);
+        if tried_recently {
+            return match cached {
+                Some(key) => Ok(Some(key)),
+                None if cache.attempt_failed => Err(keys_unavailable()),
+                None => Ok(None),
+            };
+        }
+        cache.attempted_at = Some(now);
+        match self.fetch_keys().await {
+            Ok(keys) => {
+                cache.keys = keys;
+                cache.fetched_at = Some(now);
+                cache.attempt_failed = false;
+                Ok(cache.find(kid))
             }
-            if age.is_some_and(|age| age < MIN_REFETCH_SECS) {
-                return Ok(None);
+            Err(err) => {
+                cache.attempt_failed = true;
+                match cached {
+                    Some(key) => {
+                        tracing::warn!(
+                            url = %self.jwks_url,
+                            error = %err,
+                            "could not refresh CTS's signing keys; using the cached ones"
+                        );
+                        Ok(Some(key))
+                    }
+                    None => Err(err),
+                }
             }
         }
-        cache.keys = self.fetch_keys().await?;
-        cache.fetched_at = Some(now);
-        Ok(cache.find(kid))
     }
 
     async fn fetch_keys(&self) -> Result<Vec<SigningKey>, AuthError> {
@@ -257,11 +296,8 @@ impl TokenVerifier {
                 &response.text(),
             )));
         }
-        let jwks: Jwks = response.json().map_err(|_| {
-            AuthError::InvalidToken(InvalidToken(
-                "CTS's signing keys (its JWKS) could not be read".to_string(),
-            ))
-        })?;
+        // An unreadable JWKS is the server's fault, not the token's.
+        let jwks: Jwks = response.json()?;
         Ok(jwks.keys.into_iter().filter_map(Jwk::into_key).collect())
     }
 }
@@ -284,13 +320,19 @@ impl KeyCache {
     }
 }
 
+/// The last fetch of the signing keys failed, and it is too soon to try
+/// again.
+fn keys_unavailable() -> AuthError {
+    AuthError::Request(crate::error::RequestError(Box::new(std::io::Error::other(
+        "CTS's signing keys could not be fetched; retrying at most once a minute",
+    ))))
+}
+
 /// Why a token was refused. Logged, never returned.
 #[derive(Debug)]
 enum Rejection {
     Malformed,
-    /// The header's algorithm, which CTS chose rather than the caller, so it
-    /// is safe to log.
-    Algorithm(String),
+    Algorithm,
     Issuer,
     Expired,
     Audience,
@@ -302,7 +344,7 @@ impl fmt::Display for Rejection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Rejection::Malformed => f.write_str("the token is not a well-formed JWT"),
-            Rejection::Algorithm(alg) => write!(f, "the token is signed with {alg:?}, not RS256"),
+            Rejection::Algorithm => f.write_str("the token is not signed with RS256"),
             Rejection::Issuer => f.write_str("the token's issuer is not the trusted issuer"),
             Rejection::Expired => f.write_str("the token has expired"),
             Rejection::Audience => f.write_str("the token is not for the expected audience"),
@@ -314,26 +356,28 @@ impl fmt::Display for Rejection {
     }
 }
 
-/// A JWT split into what verification needs.
+/// A JWT split into what verification needs. Its header and claims are
+/// read before the signature is checked, and are named for it.
 struct Parts<'a> {
-    header: Header,
-    claims: Claims,
+    header: UnverifiedHeader,
+    claims: UnverifiedClaims,
     /// `header.claims`, the bytes the signature covers.
     signed: &'a str,
     signature: Vec<u8>,
 }
 
 #[derive(serde::Deserialize)]
-struct Header {
+struct UnverifiedHeader {
     alg: String,
     #[serde(default)]
     kid: Option<String>,
 }
 
-/// The claims verification checks. The rest are read, unverified, by
-/// [`ServiceToken`]; once this check has passed they are the issuer's.
+/// The claims verification checks, as the token states them. The rest are
+/// read, unverified, by [`ServiceToken`]; once every check has passed they
+/// are the issuer's.
 #[derive(serde::Deserialize)]
-struct Claims {
+struct UnverifiedClaims {
     iss: String,
     exp: u64,
     #[serde(default)]
@@ -410,7 +454,8 @@ impl Jwk {
 /// RSASSA-PKCS1-v1_5 with SHA-256 over a key from the JWKS.
 ///
 /// aws-lc-rs where it builds; RustCrypto's `rsa` on wasm32, where it does
-/// not. Both refuse a modulus under 2048 bits. The RustCrypto backend is also
+/// not. Not vitaminc, the first choice for crypto here: it has no RSA
+/// signature verification. Both refuse a modulus under 2048 bits. The RustCrypto backend is also
 /// compiled into the host's tests, so both are run against the same vectors.
 mod rs256 {
     use super::SigningKey;

@@ -44,7 +44,7 @@ pub(crate) const DEFAULT_CACHE_CAPACITY: usize = 1024;
 /// the call that created the strategy instead, and lose the request.
 ///
 /// The cache is keyed on the whole JWT, never on claims read from it (the
-/// client cannot verify a JWT, so a forged one naming another user's `sub`
+/// client cannot verify the provider's JWT, so a forged one naming another user's `sub`
 /// must not reach that user's token), and holds at most
 /// [`cache_capacity`](OidcFederationStrategyBuilder::cache_capacity) JWTs
 /// (1024 by default), dropping the least recently used. Because
@@ -962,7 +962,7 @@ mod tests {
     /// The cache is keyed on the JWT's bytes, not its claims: a JWT that
     /// copies a cached user's header and payload under another signature is
     /// exchanged (and refused here), never served that user's token. The
-    /// client cannot verify a signature, so a cache keyed on `iss`/`sub`
+    /// client cannot verify the provider JWT's signature, so a cache keyed on `iss`/`sub`
     /// would hand this forgery the victim's CTS token without CTS ever
     /// seeing it.
     #[tokio::test]
