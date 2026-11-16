@@ -87,6 +87,8 @@ export interface CookieStoreOptions extends CookieStoreAttributeOptions {
   request: Request;
   /** Outgoing response headers — `Set-Cookie` is appended on every save. */
   responseHeaders: Headers;
+  /** Not with `request` / `responseHeaders`: a jar replaces them. */
+  jar?: never;
 }
 
 /**
@@ -96,6 +98,10 @@ export interface CookieStoreOptions extends CookieStoreAttributeOptions {
 export interface CookieJarStoreOptions extends CookieStoreAttributeOptions {
   /** The framework's cookie API. Used instead of `request` / `responseHeaders`. */
   jar: CookieJar;
+  /** Not with `jar`. */
+  request?: never;
+  /** Not with `jar`. */
+  responseHeaders?: never;
 }
 
 /**

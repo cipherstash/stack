@@ -500,7 +500,9 @@ The `@cipherstash/auth/start` entry wires the same federate-or-reuse core as the
 Next.js adapter (`csFederate`) into [TanStack Start](https://tanstack.com/start).
 It is the only entry that loads `@tanstack/react-start`, which is an *optional*
 peer dependency: install it yourself (1.132 or later), as a Start app already
-has.
+has. It is built on the React package; on Solid Start, call `csFederate` with a
+[`jar`](#caching-with-cookiestore) over `@tanstack/solid-start/server`'s
+`getCookie` / `setCookie`.
 
 **Why there is no header hand-off.** Next.js middleware cannot pass an object to
 the render, so the Next adapter has to carry the freshly minted token across the
@@ -603,13 +605,22 @@ signed out.
 - **Within a request**, every `csFederateCurrent` call for the same workspace
   shares one federation. A server render that calls several server functions
   runs your middleware once per function, but asks `getJwt` and exchanges with
-  CTS once.
+  CTS once. The first caller's `secure` / `sameSite` / `getJwt` are the ones
+  used.
 - **Across requests**, the cookie is reused only for the JWT it was federated
   from. That binding is what stops a cookie left over from a previous sign-in
   serving another user. It also means the cookie only helps when `getJwt`
   returns the *same* JWT on the next request. An identity provider that mints a
   new JWT on every server-side call — Clerk's `getToken({ template })` asks
   Clerk's API each time — gets a fresh exchange per request, not a reuse.
+
+- **The cookie can only be written before the response starts.** If the first
+  federation of a request runs after Start has begun streaming the response — a
+  server function reached from a late `Suspense` boundary, or from a loader
+  promise you return without awaiting — it still gives you a working strategy,
+  but the cookie is not saved and nothing reports it, so the next request
+  federates again. Have the first call happen in an awaited loader,
+  `beforeLoad`, or a request middleware.
 
 ### Signed-out requests — `onError`
 
@@ -641,8 +652,9 @@ export const dashboard = createServerFn({ method: "GET" })
 
 `"null"` folds *every* federation failure into `null` — a misconfigured
 `workspaceCrn` included — so prefer the default wherever a failure should be
-loud. Misuse is never folded in: an unknown `onError`, or a call outside a Start
-request, throws either way.
+loud. Misuse is never folded in: an unknown `onError`, a `request` /
+`responseHeaders` / `jar` option, or a call outside a Start request, throws
+either way.
 
 ### With an explicit request — `csFederateRequest`
 

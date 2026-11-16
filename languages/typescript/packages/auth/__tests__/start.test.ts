@@ -312,6 +312,31 @@ describe('csFederateCurrent', () => {
       ).rejects.toThrow(/StartEvent|server runtime/)
       expect(create).not.toHaveBeenCalled()
     })
+
+    it('rejects a request, responseHeaders or jar instead of reporting signed out', async () => {
+      // The types exclude these, but a `csFederate` options object held in a
+      // variable is structurally assignable. Forwarded, they would collide
+      // with Start's jar on every call — and onError: "null" would turn that
+      // into "signed out" for every user.
+      const explicit = {
+        ...options,
+        request: requestWith(),
+        responseHeaders: new Headers(),
+      }
+      for (const extra of [
+        explicit,
+        { ...options, request: requestWith() },
+        { ...options, jar: { get: () => undefined, set: () => {} } },
+      ]) {
+        await expect(
+          inRequest(requestWith(), () =>
+            // biome-ignore lint/suspicious/noExplicitAny: deliberately off-type
+            csFederateCurrent({ ...extra, onError: 'null' } as any),
+          ),
+        ).rejects.toThrow(/are not options here/)
+      }
+      expect(create).not.toHaveBeenCalled()
+    })
   })
 })
 
@@ -358,6 +383,8 @@ describe('csFederateRequest', () => {
 
 const CONSUMER = `
 import { createMiddleware, createServerFn, createStart } from "@tanstack/react-start";
+import { cookieStore, type CookieJar } from "@cipherstash/auth/cookies";
+import { csFederate, type CsFederateOptions } from "@cipherstash/auth/next";
 import {
   csFederateCurrent,
   csFederateRequest,
@@ -414,6 +441,29 @@ export async function narrowing(isPublic: boolean) {
   const notNull: WarmedAuthStrategy = chosen;
   const whole: WarmedAuthStrategy | null = await csFederateCurrent(anyOptions);
   void strict; void notNull; void whole;
+}
+
+// A cookie jar and the request/responseHeaders pair are alternatives: each
+// call takes exactly one, and csFederateCurrent takes neither.
+export function oneCookieSource(request: Request, responseHeaders: Headers, jar: CookieJar) {
+  const common = { workspaceCrn: "crn:r:w", getJwt: () => "jwt" };
+  const explicit: CsFederateOptions = { ...common, request, responseHeaders };
+  cookieStore({ request, responseHeaders });
+  cookieStore({ jar });
+  void csFederate(explicit);
+  void csFederate({ ...common, jar });
+  // @ts-expect-error both sources
+  cookieStore({ request, responseHeaders, jar });
+  // @ts-expect-error half of the header pair, plus a jar
+  cookieStore({ request, jar });
+  // @ts-expect-error both sources
+  void csFederate({ ...common, request, responseHeaders, jar });
+  // @ts-expect-error csFederateCurrent reads the request Start is handling
+  void csFederateCurrent({ ...common, request, responseHeaders });
+  // @ts-expect-error nor through a csFederate options variable
+  void csFederateCurrent(explicit);
+  // @ts-expect-error csFederateCurrent passes Start's own jar
+  void csFederateCurrent({ ...common, jar });
 }
 
 export async function handler(request: Request) {

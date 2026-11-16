@@ -87,12 +87,32 @@ const federations = new WeakMap();
  * @param {CsFederateCurrentOptions} options
  */
 export async function csFederateCurrent(options) {
-  const { onError = "throw", ...federate } = options;
-  // Misuse is never folded into `null`: a typo in `onError`, or a call outside
-  // a request scope, must not read as "signed out".
+  const {
+    onError = "throw",
+    request: explicitRequest,
+    responseHeaders,
+    jar,
+    ...federate
+  } = options;
+  // Misuse is never folded into `null`: a typo in `onError`, a cookie source
+  // this function does not take, or a call outside a request scope must not
+  // read as "signed out".
   if (onError !== "throw" && onError !== "null") {
     throw new TypeError(
       `csFederateCurrent: onError must be "throw" or "null", got ${JSON.stringify(onError)}`,
+    );
+  }
+  // The declared options exclude these, but a `csFederate` options object held
+  // in a variable gets past a structural check. Forwarded, they would meet the
+  // Start jar in `cookieStore` and fail every call as "not both" — which
+  // `onError: "null"` would then report as signed out.
+  if (
+    explicitRequest !== undefined ||
+    responseHeaders !== undefined ||
+    jar !== undefined
+  ) {
+    throw new TypeError(
+      "csFederateCurrent: `request`, `responseHeaders` and `jar` are not options here — the request Start is handling supplies them. For an explicit request, use csFederateRequest.",
     );
   }
   const request = getRequest();
@@ -107,7 +127,9 @@ export async function csFederateCurrent(options) {
 /**
  * One federation per request and cookie. A failure is forgotten, so the next
  * caller in the same request tries again rather than inheriting an error that
- * may have been transient.
+ * may have been transient. The first caller's `secure` / `sameSite` / `getJwt`
+ * are the ones used: a later caller with the same workspace, `baseUrl` and
+ * cookie name joins the federation already started.
  *
  * @param {Request} request
  * @param {Omit<CsFederateCurrentOptions, "onError">} options

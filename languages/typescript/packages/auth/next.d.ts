@@ -43,6 +43,8 @@ export interface CsFederateOptions extends CsFederateCommonOptions {
   request: Request;
   /** Outgoing headers — the refreshed token cookie is appended as `Set-Cookie`. */
   responseHeaders: Headers;
+  /** Not with `request` / `responseHeaders`: a jar replaces them. */
+  jar?: never;
 }
 
 /**
@@ -54,6 +56,10 @@ export interface CsFederateOptions extends CsFederateCommonOptions {
 export interface CsFederateJarOptions extends CsFederateCommonOptions {
   /** The framework's cookie API. */
   jar: CookieJar;
+  /** Not with `jar`. */
+  request?: never;
+  /** Not with `jar`. */
+  responseHeaders?: never;
 }
 
 /**

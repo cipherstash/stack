@@ -43,10 +43,17 @@ export interface CsFederateCurrentOptions extends CsFederateCommonOptions {
    *   into `null`, a misconfigured `workspaceCrn` included; prefer `"throw"`
    *   wherever a failure should be loud.
    *
-   * Misuse is never folded into `null`: an unknown `onError`, or a call outside
-   * a Start request, throws either way.
+   * Misuse is never folded into `null`: an unknown `onError`, a `request` /
+   * `responseHeaders` / `jar`, or a call outside a Start request, throws either
+   * way.
    */
   onError?: "throw" | "null";
+  /** Not an option here — the request Start is handling supplies it. Use {@link csFederateRequest}. */
+  request?: never;
+  /** Not an option here — Start's response is written through `setCookie`. Use {@link csFederateRequest}. */
+  responseHeaders?: never;
+  /** Not an option here — this function passes Start's own cookie helpers. */
+  jar?: never;
 }
 
 /**
@@ -59,7 +66,17 @@ export interface CsFederateCurrentOptions extends CsFederateCommonOptions {
  * `getCookie` / `setCookie`, which merge it into the response next to the
  * cookies already there (Clerk's, Start's own). Every caller inside one request
  * shares one federation, so a render that calls several server functions pays
- * for `getJwt` and the exchange once.
+ * for `getJwt` and the exchange once — and the first caller's `secure` /
+ * `sameSite` / `getJwt` are the ones used.
+ *
+ * **The cookie can only be written while the response's headers are still
+ * open.** If the first federation of a request runs after Start has begun
+ * streaming the response — a server function reached from a late `Suspense`
+ * boundary, or from a loader promise you return without awaiting — it still
+ * resolves a working strategy, but the cookie is not saved and nothing reports
+ * it, so the next request federates again. Have the first call happen before
+ * the response starts: an awaited loader, `beforeLoad`, or a request
+ * middleware.
  *
  * **Call it inside the `.server()` callback of a middleware you declare in your
  * own code**, as below — not at module level, and not from a helper that builds

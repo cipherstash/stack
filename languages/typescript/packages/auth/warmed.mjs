@@ -3,8 +3,10 @@
 // The warmed `AuthStrategy` shape shared by the `/next` and `/start` adapters:
 // a `TokenResult` that some earlier step already federated, wrapped so the
 // CipherStash SDKs (and protect-ffi) can drive it like any other strategy.
-// Kept out of `next.mjs` so `start.mjs` can build one without importing the
-// request-header hand-off that only Next.js needs.
+// In a module of its own so both adapters build one shape from one place.
+// (`start.mjs` still imports `csFederate` from `next.mjs`, where the
+// framework-agnostic federation core lives next to the Next.js header
+// hand-off; that module has no import-time side effects.)
 
 /**
  * Wrap an already-federated token in the no-federation `AuthStrategy` shape.
