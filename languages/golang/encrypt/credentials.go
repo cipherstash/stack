@@ -44,12 +44,14 @@ type Credentials interface {
 // it is resolving for, so a source that makes requests or holds key
 // material of its own can do so under the client's settings.
 type resolveOptions struct {
-	// Transport is the client's RoundTripper (never nil). AutoCredentials
-	// sends its authentication requests through it too.
+	// Transport is the client's RoundTripper (never nil). AutoCredentials,
+	// AccessKeyCredentials and OIDCFederation send their authentication
+	// requests through it too.
 	Transport http.RoundTripper
-	// RequireLockedMemory is the client's setting. AutoCredentials applies
-	// it to the credential guest, which holds the client key while it
-	// reads it and the token strategy for the life of the client.
+	// RequireLockedMemory is the client's setting. AutoCredentials,
+	// AccessKeyCredentials and OIDCFederation apply it to the credential
+	// guest, which holds the token strategy for the life of the client
+	// (and, for AutoCredentials, the client key while it reads it).
 	RequireLockedMemory bool
 }
 
@@ -65,15 +67,17 @@ type resolvedCredentials struct {
 	// strategy, outside the package's own tests.
 	Token tokenSource
 	// Close, when not nil, releases what the credentials hold open — the
-	// profile's guest and a refreshing token strategy, for AutoCredentials.
+	// credential guest and its token strategy, for AutoCredentials,
+	// AccessKeyCredentials and OIDCFederation.
 	// The client calls it from Client.Close, or from NewClient when the
 	// client is not made. A Token that outlives it must not be asked again.
 	Close func() error
 	// MemoryLockError, when not nil, reports why memory the credentials
 	// hold key material in is not locked in RAM: the credential guest's,
 	// which the token strategy lives in and (for AutoCredentials and
-	// OIDCFederation) the client key passed through. AutoCredentials and
-	// OIDCFederation hand over their profile's ProfileStore.MemoryLockError;
+	// OIDCFederation) the client key passed through. AutoCredentials,
+	// AccessKeyCredentials and OIDCFederation hand over their store's
+	// ProfileStore.MemoryLockError;
 	// NewCredentials, the caller's strategy's Strategy.MemoryLockError,
 	// which is its store's. It is asked each time, not once: under
 	// best-effort locking a guest's memory can become unlocked later, when
@@ -290,9 +294,12 @@ func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*res
 // [WithRequireLockedMemory] settings. Client.Close releases it. CS_CTS_HOST
 // and CS_ZEROKMS_HOST still override the endpoints, as for every Credentials.
 //
-// The two keys are [Secret] values, so printing or logging the struct shows
-// neither. A Go string cannot be wiped, so each key stays in memory while
-// the struct does. NewClient wipes its own copy of the client key. When the
+// The two keys are [Secret] values, so printing, logging or encoding the
+// struct shows neither, when fmt reaches it through exported fields. Keep
+// it in an exported field of any configuration struct you print: fmt
+// prints a value it reaches through an unexported field in full. A Go
+// string cannot be wiped, so each key stays in memory while the struct
+// does. NewClient wipes its own copy of the client key. When the
 // program can hold the key as bytes, [NewCredentials] takes a [ClientKey]
 // that can be wiped.
 type AccessKeyCredentials struct {
@@ -308,36 +315,71 @@ type AccessKeyCredentials struct {
 	WorkspaceCRN string `env:"CS_WORKSPACE_CRN,required"`
 }
 
-// Secret is a credential that never prints. Every fmt verb, slog and
-// encoding/json show it as [redacted]. Convert it to a string to read it.
-// A configuration loader fills it as it fills any string field.
+// Secret is a credential that does not print. Every fmt verb, slog, and
+// every encoder that uses [encoding.TextMarshaler] show it as [redacted].
+// That covers encoding/json and encoding/xml, and the common YAML and TOML
+// libraries. Convert it to a string to read it. A configuration loader
+// fills it as it fills any string field.
+//
+// fmt calls no method on a value it reaches through an unexported struct
+// field. A Secret in an unexported field, or in a struct held in one,
+// prints in full. Keep credentials in exported fields of anything you
+// print or log.
+//
+// Encoding a Secret and decoding it again gives the text [redacted], not
+// the key. NewClient refuses credentials that hold it.
 type Secret string
 
+// String returns [redacted].
+func (Secret) String() string { return redacted }
+
+// GoString returns [redacted].
+func (Secret) GoString() string { return redacted }
+
 // Format prints [redacted] under every verb, %d and %#v included.
-func (Secret) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, redacted) }
+func (s Secret) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.String()) }
 
 // LogValue logs [redacted].
 func (Secret) LogValue() slog.Value { return slog.StringValue(redacted) }
 
-// MarshalJSON encodes [redacted], so a JSON logger shows no secret.
-func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"` + redacted + `"`), nil }
+// MarshalText encodes [redacted], so encoding/json, encoding/xml and the
+// encoders that follow them write no key.
+func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
-func (c AccessKeyCredentials) resolve(ctx context.Context, opts resolveOptions) (_ *resolvedCredentials, err error) {
-	// Whitespace alone is as unset as nothing: refused here, by name,
-	// rather than sent to CTS or the guest to fail there.
-	var blank []string
+// validate refuses a field that is empty or only whitespace, and a key
+// that is the text [redacted]: what a Secret encoded and decoded again
+// holds. It resolves nothing, so NewClient runs it host-side, before the
+// guest is loaded.
+func (c AccessKeyCredentials) validate() error {
+	var blank, redactedKeys []string
 	for _, field := range []struct{ name, env, value string }{
 		{"ClientID", envClientID, c.ClientID},
 		{"ClientKey", envClientKey, string(c.ClientKey)},
 		{"ClientAccessKey", envAccessKey, string(c.ClientAccessKey)},
 		{"WorkspaceCRN", envWorkspaceCRN, c.WorkspaceCRN},
 	} {
-		if strings.TrimSpace(field.value) == "" {
-			blank = append(blank, fmt.Sprintf("%s (%s)", field.name, field.env))
+		name := fmt.Sprintf("%s (%s)", field.name, field.env)
+		switch {
+		case strings.TrimSpace(field.value) == "":
+			blank = append(blank, name)
+		case field.value == redacted:
+			redactedKeys = append(redactedKeys, name)
 		}
 	}
 	if len(blank) > 0 {
-		return nil, fmt.Errorf("%w: AccessKeyCredentials: empty or blank: %s", ErrEncoding, strings.Join(blank, ", "))
+		return fmt.Errorf("%w: AccessKeyCredentials: empty or blank: %s", ErrEncoding, strings.Join(blank, ", "))
+	}
+	if len(redactedKeys) > 0 {
+		return fmt.Errorf("%w: AccessKeyCredentials: %s holds %s: the credentials were encoded, which redacts each key, and decoded again",
+			ErrEncoding, strings.Join(redactedKeys, ", "), redacted)
+	}
+	return nil
+}
+
+func (c AccessKeyCredentials) resolve(ctx context.Context, opts resolveOptions) (_ *resolvedCredentials, err error) {
+	// NewClient has checked already; this keeps resolve safe on its own.
+	if err := c.validate(); err != nil {
+		return nil, err
 	}
 	store, err := openCredentialGuest(ctx, opts, auth.OpenWithoutProfile)
 	if err != nil {
@@ -349,8 +391,11 @@ func (c AccessKeyCredentials) resolve(ctx context.Context, opts resolveOptions) 
 		}
 	}()
 	token, err := store.AccessKey(ctx, c.WorkspaceCRN, string(c.ClientAccessKey))
-	if err != nil {
+	switch {
+	case errors.Is(err, auth.ErrConfig):
 		return nil, fmt.Errorf("encrypt: credentials: check ClientAccessKey and WorkspaceCRN: %w", err)
+	case err != nil:
+		return nil, fmt.Errorf("encrypt: credentials: %w", err)
 	}
 	return &resolvedCredentials{
 		ClientID: c.ClientID,

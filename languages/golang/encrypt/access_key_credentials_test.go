@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -149,17 +150,48 @@ func TestNewClientWithAccessKeyCredentials(t *testing.T) {
 	}
 }
 
-// NewClient refuses an empty field without asking ZeroKMS.
-func TestNewClientRefusesEmptyAccessKeyCredentials(t *testing.T) {
-	guestOrSkip(t)
+// NewClient refuses credentials that are wrong as they were built before it
+// loads the guest, so the refusal names the field even where no guest is
+// built: an empty struct, the same as a pointer, and a nil pointer, which
+// would otherwise panic inside the Credentials interface.
+func TestNewClientRefusesAccessKeyCredentialsHostSide(t *testing.T) {
 	stub := newStub(t, http.StatusOK, "", "")
 	t.Setenv("CS_ZEROKMS_HOST", stub.URL)
-	_, err := NewClient(context.Background(), WithCredentials(AccessKeyCredentials{}))
-	if !errors.Is(err, ErrEncoding) {
-		t.Fatalf("NewClient: %v, want ErrEncoding", err)
+	for name, creds := range map[string]Credentials{
+		"empty":       AccessKeyCredentials{},
+		"empty, *":    &AccessKeyCredentials{},
+		"nil pointer": (*AccessKeyCredentials)(nil),
+	} {
+		_, err := NewClient(context.Background(), WithCredentials(creds), withGuest([]byte("not wasm")))
+		if !errors.Is(err, ErrEncoding) || !strings.Contains(err.Error(), "AccessKeyCredentials") {
+			t.Errorf("%s: NewClient: %v, want ErrEncoding naming AccessKeyCredentials", name, err)
+		}
 	}
 	if len(stub.requests) != 0 {
 		t.Fatalf("ZeroKMS was asked %d times", len(stub.requests))
+	}
+}
+
+// Encoding the credentials redacts the keys, so decoding them again gives
+// the text [redacted]. NewClient refuses that and says why, rather than
+// sending it to CTS and blaming the access key.
+func TestNewClientRefusesRedactedAccessKeyCredentials(t *testing.T) {
+	encoded, err := json.Marshal(testAccessKeyCredentials())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded AccessKeyCredentials
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewClient(context.Background(), WithCredentials(decoded), withGuest([]byte("not wasm")))
+	if !errors.Is(err, ErrEncoding) {
+		t.Fatalf("NewClient: %v, want ErrEncoding", err)
+	}
+	for _, want := range []string{"ClientKey (CS_CLIENT_KEY)", "ClientAccessKey (CS_CLIENT_ACCESS_KEY)", "encoded"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not say %q: %q", want, err)
+		}
 	}
 }
 
@@ -193,6 +225,13 @@ func TestAccessKeyCredentialsPrintNoKey(t *testing.T) {
 			t.Fatal(err)
 		}
 		outputs = append(outputs, string(encoded))
+		if name != "a pointer" { // xml has no name for an unnamed pointer's element
+			encoded, err = xml.Marshal(v)
+			if err != nil {
+				t.Fatalf("%s: xml: %v", name, err)
+			}
+			outputs = append(outputs, string(encoded))
+		}
 		for _, handler := range []func(*bytes.Buffer) slog.Handler{
 			func(b *bytes.Buffer) slog.Handler { return slog.NewTextHandler(b, nil) },
 			func(b *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(b, nil) },
@@ -213,11 +252,14 @@ func TestAccessKeyCredentialsPrintNoKey(t *testing.T) {
 			t.Errorf("%s: %%+v hides a field: %q", name, out)
 		}
 	}
-	// A Secret logged on its own.
+	// A Secret on its own: logged, and through the methods a Stringer or
+	// GoStringer API calls.
 	var logged bytes.Buffer
 	slog.New(slog.NewTextHandler(&logged, nil)).Info("key", "key", creds.ClientKey)
-	if strings.Contains(logged.String(), testClientKey[:16]) || !strings.Contains(logged.String(), redacted) {
-		t.Errorf("a Secret logged: %q", logged.String())
+	for _, out := range []string{logged.String(), creds.ClientKey.String(), creds.ClientKey.GoString()} {
+		if strings.Contains(out, testClientKey[:16]) || !strings.Contains(out, redacted) {
+			t.Errorf("a Secret printed: %q", out)
+		}
 	}
 }
 

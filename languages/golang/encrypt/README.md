@@ -176,10 +176,12 @@ if err := envconfig.Process(ctx, &creds); err != nil {
 client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
 ```
 
-The two keys are `encrypt.Secret` values. Every `fmt` verb, `slog` and
-`encoding/json` print them as `[redacted]`, so you can print or log a
-configuration struct that holds the credentials. `ExampleAccessKeyCredentials`
-in the package tests is a complete program.
+The two keys are `encrypt.Secret` values. Every `fmt` verb, `slog`, and every
+encoder that uses `encoding.TextMarshaler` (JSON, XML, and the common YAML and
+TOML libraries) show them as `[redacted]`. Keep the credentials in an exported
+field of any struct you print or log: `fmt` prints a value it reaches through
+an unexported field in full. `ExampleAccessKeyCredentials` in the package tests
+is a complete program.
 
 `NewCredentials` takes a client
 id, a client key and an `auth` strategy explicitly; `OIDCFederation` mints the

@@ -19,8 +19,10 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   variables, so a configuration loader such as go-envconfig or caarlos0/env
   can fill it. Pass it to `encrypt.WithCredentials`.
 - `encrypt.Secret`: the type of the struct's two key fields. Every `fmt`
-  verb, `slog` and `encoding/json` show it as `[redacted]`, so printing or
-  logging a configuration struct that holds the credentials shows no key.
+  verb, `slog`, and every encoder that uses `encoding.TextMarshaler` (JSON,
+  XML, and the common YAML and TOML libraries) show it as `[redacted]`.
+  Keep the credentials in an exported field of anything you print: `fmt`
+  prints a value it reaches through an unexported field in full.
 
 ## [0.1.0-rc.4] - 2026-11-13
 
