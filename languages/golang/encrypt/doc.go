@@ -316,12 +316,12 @@
 // by the credentials' auth strategy. It never performs a request itself: an
 // operation that needs ZeroKMS pauses and hands the request to the client,
 // which sends it with any [net/http.RoundTripper] and resumes the operation
-// with the response. What crosses per ZeroKMS call is what would
-// cross TLS anyway; derived key material never leaves the guest. Under
-// [AutoCredentials], [AccessKeyCredentials] and [OIDCFederation] the same RoundTripper also carries
-// the authentication requests to CTS, so one scoped to the ZeroKMS host alone
-// is not enough. Under [NewCredentials] those requests go through the store
-// the caller opened the strategy from.
+// with the response. What crosses per ZeroKMS call is what would cross TLS
+// anyway; derived key material never leaves the guest. Under
+// [AutoCredentials], [AccessKeyCredentials] and [OIDCFederation] the same
+// RoundTripper also carries the authentication requests to CTS, so one
+// scoped to the ZeroKMS host alone is not enough. Under [NewCredentials]
+// those requests go through the store the caller opened the strategy from.
 //
 // # Credentials
 //
@@ -333,8 +333,8 @@
 // token, CS_CLIENT_ID with CS_CLIENT_KEY for the key), then the developer
 // profile, which it reads through the auth package's credential guest.
 // CS_ZEROKMS_HOST (or CS_VITUR_HOST) pins the endpoint whatever the
-// credentials. [AccessKeyCredentials] takes the four values the program
-// loaded itself, with env tags for configuration loaders such as
+// credentials. [AccessKeyCredentials] takes the four values from a struct
+// the program fills, with env tags for configuration loaders such as
 // go-envconfig. [NewCredentials] takes a client id, a client key and a
 // strategy explicitly, and [OIDCFederation] mints the token from an identity
 // provider's. None takes a raw token: a token is always a strategy's, since

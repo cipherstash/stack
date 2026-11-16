@@ -13,11 +13,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 ### Added
 
 - `encrypt.AccessKeyCredentials`: credentials from a struct your program
-  fills, holding the client id, the client key, the access key and the
-  workspace CRN. Nothing falls back to the environment or to the developer
-  profile. Its fields carry `env` tags naming the `CS_*` variables, so a
-  configuration loader such as go-envconfig or caarlos0/env can fill it.
-  Pass it to `encrypt.WithCredentials`. It prints and logs no key.
+  fills, holding the client id, the client key, the client access key and
+  the workspace CRN. Nothing falls back to the environment or to the
+  developer profile. Its fields carry `env` tags naming the `CS_*`
+  variables, so a configuration loader such as go-envconfig or caarlos0/env
+  can fill it. Pass it to `encrypt.WithCredentials`.
+- `encrypt.Secret`: the type of the struct's two key fields. Every `fmt`
+  verb, `slog` and `encoding/json` show it as `[redacted]`, so printing or
+  logging a configuration struct that holds the credentials shows no key.
 
 ## [0.1.0-rc.4] - 2026-11-13
 

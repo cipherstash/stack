@@ -160,10 +160,11 @@ client, err := encrypt.NewClient(ctx,
 `AutoCredentials`, the default, reads the environment first
 (`CS_CLIENT_ACCESS_KEY` and `CS_WORKSPACE_CRN` for the token, `CS_CLIENT_ID`
 and `CS_CLIENT_KEY` for the key), then the developer profile `stash auth login`
-writes, through the [`auth`](../auth) package. `AccessKeyCredentials` takes
-the same four values from a struct your program fills, with no fallback. Its
-fields carry `env` tags (`env:"CS_CLIENT_ID,required"` and so on), so a
-configuration loader such as
+writes, through the [`auth`](../auth) package.
+
+`AccessKeyCredentials` takes the same four values from a struct your program
+fills, with no fallback. Its fields carry `env` tags
+(`env:"CS_CLIENT_ID,required"` and so on), so a configuration loader such as
 [go-envconfig](https://github.com/sethvargo/go-envconfig) or
 [caarlos0/env](https://github.com/caarlos0/env) can fill it:
 
@@ -174,6 +175,11 @@ if err := envconfig.Process(ctx, &creds); err != nil {
 }
 client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
 ```
+
+The two keys are `encrypt.Secret` values. Every `fmt` verb, `slog` and
+`encoding/json` print them as `[redacted]`, so you can print or log a
+configuration struct that holds the credentials. `ExampleAccessKeyCredentials`
+in the package tests is a complete program.
 
 `NewCredentials` takes a client
 id, a client key and an `auth` strategy explicitly; `OIDCFederation` mints the

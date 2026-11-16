@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -267,16 +268,16 @@ func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*res
 	})
 }
 
-// AccessKeyCredentials is [Credentials] from four values the program loads
-// itself: the client id and client key, and the access key that is
-// exchanged for a token in the workspace WorkspaceCRN names. Nothing falls
-// back to the environment or to the developer profile; an empty field fails
-// NewClient with [ErrEncoding], naming the field.
+// AccessKeyCredentials is [Credentials] from four values your program loads.
+// The client id and client key identify the client. The client access key
+// is exchanged for a token in the workspace that WorkspaceCRN names.
+// Nothing falls back to the environment or to the developer profile.
+// NewClient refuses a blank field with [ErrEncoding] and names the field.
 //
-// The field tags name the variables [AutoCredentials] reads, in the form
-// github.com/sethvargo/go-envconfig and github.com/caarlos0/env read, so a
-// service that loads its configuration with either can embed the struct or
-// fill it directly:
+// Each field has an env tag naming the variable [AutoCredentials] reads.
+// The tags are in the form that github.com/sethvargo/go-envconfig and
+// github.com/caarlos0/env read. Fill the struct on its own, or as a field of
+// your configuration struct:
 //
 //	var creds encrypt.AccessKeyCredentials
 //	if err := envconfig.Process(ctx, &creds); err != nil {
@@ -284,58 +285,59 @@ func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*res
 //	}
 //	client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
 //
-// The access-key exchange runs in auth's credential guest, which
-// NewClient opens with nothing mounted and the client's [WithTransport]
-// and [WithRequireLockedMemory] settings, and Client.Close releases.
-// CS_CTS_HOST and CS_ZEROKMS_HOST still override the endpoints, as they do
-// for every Credentials.
+// NewClient opens auth's credential guest for the token exchange. It opens
+// the guest with nothing mounted, under the client's [WithTransport] and
+// [WithRequireLockedMemory] settings. Client.Close releases it. CS_CTS_HOST
+// and CS_ZEROKMS_HOST still override the endpoints, as for every Credentials.
 //
-// A Go string cannot be wiped, so the client key in ClientKey stays in the
-// program's memory as long as the struct does; NewClient wipes its own copy.
-// The struct prints and logs the client id and workspace only.
+// The two keys are [Secret] values, so printing or logging the struct shows
+// neither. A Go string cannot be wiped, so each key stays in memory while
+// the struct does. NewClient wipes its own copy of the client key. When the
+// program can hold the key as bytes, [NewCredentials] takes a [ClientKey]
+// that can be wiped.
 type AccessKeyCredentials struct {
-	// ClientID is the ZeroKMS client id (a UUID).
+	// ClientID is the ZeroKMS client id, a UUID.
 	ClientID string `env:"CS_CLIENT_ID,required"`
 	// ClientKey is the client key: the hex form, or the base64 of
 	// secretkey.json.
-	ClientKey string `env:"CS_CLIENT_KEY,required"`
-	// ClientAccessKey is the access key exchanged for a bearer token.
-	ClientAccessKey string `env:"CS_CLIENT_ACCESS_KEY,required"`
-	// WorkspaceCRN is the workspace the access key belongs to.
+	ClientKey Secret `env:"CS_CLIENT_KEY,required"`
+	// ClientAccessKey is the client access key, which is exchanged for a
+	// bearer token.
+	ClientAccessKey Secret `env:"CS_CLIENT_ACCESS_KEY,required"`
+	// WorkspaceCRN is the workspace the client access key belongs to.
 	WorkspaceCRN string `env:"CS_WORKSPACE_CRN,required"`
 }
 
-// String names the credentials' kind, client id and workspace. The client
-// key and the access key are never printed.
-func (c AccessKeyCredentials) String() string {
-	return fmt.Sprintf("encrypt.AccessKeyCredentials{client_id: %s, workspace_crn: %s}", c.ClientID, c.WorkspaceCRN)
-}
+// Secret is a credential that never prints. Every fmt verb, slog and
+// encoding/json show it as [redacted]. Convert it to a string to read it.
+// A configuration loader fills it as it fills any string field.
+type Secret string
 
-// GoString is String, so %#v prints no key either.
-func (c AccessKeyCredentials) GoString() string { return c.String() }
+// Format prints [redacted] under every verb, %d and %#v included.
+func (Secret) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, redacted) }
 
-// LogValue logs the client id and workspace, and neither key.
-func (c AccessKeyCredentials) LogValue() slog.Value {
-	return slog.GroupValue(
-		slog.String("client_id", c.ClientID),
-		slog.String("workspace_crn", c.WorkspaceCRN),
-	)
-}
+// LogValue logs [redacted].
+func (Secret) LogValue() slog.Value { return slog.StringValue(redacted) }
+
+// MarshalJSON encodes [redacted], so a JSON logger shows no secret.
+func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"` + redacted + `"`), nil }
 
 func (c AccessKeyCredentials) resolve(ctx context.Context, opts resolveOptions) (_ *resolvedCredentials, err error) {
-	var empty []string
+	// Whitespace alone is as unset as nothing: refused here, by name,
+	// rather than sent to CTS or the guest to fail there.
+	var blank []string
 	for _, field := range []struct{ name, env, value string }{
 		{"ClientID", envClientID, c.ClientID},
-		{"ClientKey", envClientKey, c.ClientKey},
-		{"ClientAccessKey", envAccessKey, c.ClientAccessKey},
+		{"ClientKey", envClientKey, string(c.ClientKey)},
+		{"ClientAccessKey", envAccessKey, string(c.ClientAccessKey)},
 		{"WorkspaceCRN", envWorkspaceCRN, c.WorkspaceCRN},
 	} {
-		if field.value == "" {
-			empty = append(empty, fmt.Sprintf("%s (%s)", field.name, field.env))
+		if strings.TrimSpace(field.value) == "" {
+			blank = append(blank, fmt.Sprintf("%s (%s)", field.name, field.env))
 		}
 	}
-	if len(empty) > 0 {
-		return nil, fmt.Errorf("%w: AccessKeyCredentials: empty: %s", ErrEncoding, strings.Join(empty, ", "))
+	if len(blank) > 0 {
+		return nil, fmt.Errorf("%w: AccessKeyCredentials: empty or blank: %s", ErrEncoding, strings.Join(blank, ", "))
 	}
 	store, err := openCredentialGuest(ctx, opts, auth.OpenWithoutProfile)
 	if err != nil {
@@ -346,7 +348,7 @@ func (c AccessKeyCredentials) resolve(ctx context.Context, opts resolveOptions) 
 			_ = store.Close()
 		}
 	}()
-	token, err := store.AccessKey(ctx, c.WorkspaceCRN, c.ClientAccessKey)
+	token, err := store.AccessKey(ctx, c.WorkspaceCRN, string(c.ClientAccessKey))
 	if err != nil {
 		return nil, fmt.Errorf("encrypt: credentials: check ClientAccessKey and WorkspaceCRN: %w", err)
 	}

@@ -3,6 +3,7 @@ package encrypt
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -162,21 +163,102 @@ func TestNewClientRefusesEmptyAccessKeyCredentials(t *testing.T) {
 	}
 }
 
-// Neither key is printed or logged, under any verb a program might use.
+// Neither key is printed or logged under any verb, by slog, or by
+// encoding/json: not on its own, not as a named field of a configuration
+// struct, and not embedded in one. Embedding hides none of the outer
+// struct's own fields.
 func TestAccessKeyCredentialsPrintNoKey(t *testing.T) {
 	creds := testAccessKeyCredentials()
+	type named struct {
+		Port        int
+		CipherStash AccessKeyCredentials
+	}
+	type embedded struct {
+		Port int
+		AccessKeyCredentials
+	}
+	values := map[string]any{
+		"on its own": creds,
+		"a pointer":  &creds,
+		"named":      named{Port: 8080, CipherStash: creds},
+		"embedded":   embedded{Port: 8080, AccessKeyCredentials: creds},
+	}
+	for name, v := range values {
+		var outputs []string
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%d", "%t", "%x"} {
+			outputs = append(outputs, fmt.Sprintf(verb, v))
+		}
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outputs = append(outputs, string(encoded))
+		for _, handler := range []func(*bytes.Buffer) slog.Handler{
+			func(b *bytes.Buffer) slog.Handler { return slog.NewTextHandler(b, nil) },
+			func(b *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(b, nil) },
+		} {
+			var logged bytes.Buffer
+			slog.New(handler(&logged)).Info("config", "config", v)
+			outputs = append(outputs, logged.String())
+		}
+		for _, out := range outputs {
+			if strings.Contains(out, testClientKey[:16]) || strings.Contains(out, testAccessKey) {
+				t.Errorf("%s: printed a key: %q", name, out)
+			}
+		}
+		// %+v names every field, so a field hidden by a promoted method
+		// would be missing here.
+		if out := fmt.Sprintf("%+v", v); !strings.Contains(out, "ClientID:"+testClientID) ||
+			(name == "named" || name == "embedded") && !strings.Contains(out, "Port:8080") {
+			t.Errorf("%s: %%+v hides a field: %q", name, out)
+		}
+	}
+	// A Secret logged on its own.
 	var logged bytes.Buffer
-	slog.New(slog.NewTextHandler(&logged, nil)).Info("config", "creds", creds)
-	outputs := []string{logged.String()}
-	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
-		outputs = append(outputs, fmt.Sprintf(verb, creds), fmt.Sprintf(verb, &creds))
+	slog.New(slog.NewTextHandler(&logged, nil)).Info("key", "key", creds.ClientKey)
+	if strings.Contains(logged.String(), testClientKey[:16]) || !strings.Contains(logged.String(), redacted) {
+		t.Errorf("a Secret logged: %q", logged.String())
 	}
-	for _, out := range outputs {
-		if strings.Contains(out, testClientKey[:16]) || strings.Contains(out, testAccessKey) {
-			t.Errorf("printed a key: %q", out)
-		}
-		if !strings.Contains(out, testClientID) {
-			t.Errorf("does not name the client id: %q", out)
-		}
+}
+
+// A field holding only whitespace is as unset as an empty one.
+func TestAccessKeyCredentialsRefusesBlankFields(t *testing.T) {
+	creds := testAccessKeyCredentials()
+	creds.ClientAccessKey = " \t\n"
+	_, err := creds.resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
+	if !errors.Is(err, ErrEncoding) || !strings.Contains(err.Error(), "ClientAccessKey (CS_CLIENT_ACCESS_KEY)") {
+		t.Fatalf("resolve: %v, want ErrEncoding naming ClientAccessKey", err)
 	}
+}
+
+func ExampleAccessKeyCredentials() {
+	// A configuration loader such as go-envconfig or caarlos0/env fills
+	// this from CS_CLIENT_ID, CS_CLIENT_KEY, CS_CLIENT_ACCESS_KEY and
+	// CS_WORKSPACE_CRN. Here the values are written out instead.
+	type Config struct {
+		Port        int `env:"PORT"`
+		CipherStash AccessKeyCredentials
+	}
+	cfg := Config{
+		Port: 8080,
+		CipherStash: AccessKeyCredentials{
+			ClientID:        "6a70bd18-99ac-4650-b104-37eec3a15b09",
+			ClientKey:       "...", // not a real key: NewClient refuses it
+			ClientAccessKey: "CSAK...",
+			WorkspaceCRN:    "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY",
+		},
+	}
+	// The keys never print.
+	fmt.Printf("%+v\n", cfg)
+
+	// NewClient owns the token exchange, and Close releases it.
+	ctx := context.Background()
+	client, err := NewClient(ctx, WithCredentials(cfg.CipherStash))
+	if err == nil {
+		err = client.Close()
+	}
+	fmt.Println(err != nil)
+	// Output:
+	// {Port:8080 CipherStash:{ClientID:6a70bd18-99ac-4650-b104-37eec3a15b09 ClientKey:[redacted] ClientAccessKey:[redacted] WorkspaceCRN:crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY}}
+	// true
 }
