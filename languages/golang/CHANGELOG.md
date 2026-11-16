@@ -10,6 +10,36 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+## [0.1.0-rc.5] - 2026-11-16
+
+### Upgrading from rc.4
+
+Install the `eql-v4-install.sql` attached to this release
+(`psql -f eql-v4-install.sql`). The Go code in rc.5 sends no query that
+needs the new SQL. But with the rc.4 bundle, PostgreSQL gives wrong
+results for some comparisons. The rc.5 bundle refuses them, as the Changed
+section below describes.
+
+Re-running the bundle keeps your columns and data, because the column types
+are in the `public` schema. The bundle drops the `eql_v4` and
+`eql_v4_internal` schemas with `CASCADE`, and creates them again. That
+removes every index that uses an `eql_v4` function, such as
+`eql_v4.ord_term(col)`. Dropping the schemas also removes every grant on
+them and their functions, and the bundle issues no `GRANT`. After the bundle
+runs, and before the application sends queries:
+
+1. If the application connects as a role other than the one that installed
+   EQL, grant that role access again. The role needs `USAGE` on the
+   schemas `eql_v4` and `eql_v4_internal`, and `EXECUTE` on all their
+   functions. EQL's
+   [permissions reference](../../packages/eql/docs/reference/permissions.md)
+   lists the `GRANT` statements. The reference's examples name `eql_v3`, so
+   write `eql_v4`.
+2. Re-create the indexes, then run `ANALYZE`.
+
+Your Go code needs no change. `AccessKeyCredentials` is new. You can choose
+to use it.
+
 ### Added
 
 - `encrypt.AccessKeyCredentials`: credentials from a struct your program
@@ -25,6 +55,35 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   standard JSON and XML packages. Keep the credentials in an exported field
   of anything you print. `fmt` prints a value in an unexported field in
   full.
+
+### Changed
+
+- **The EQL v4 bundle refuses a comparison between two different EQL
+  types** (#1547). Before, a column of one type compared with a query
+  value of another type was compared as plain `jsonb`. PostgreSQL then
+  returned false for equal values, with no error. Now the comparison
+  raises `operator … is not supported for …`. An example is a
+  `public.eql_v4_text_search` column compared with `@@` against an
+  `eql_v4.query_text_match` value. The queries the Go SDK builds name the
+  matching type, so they are not affected.
+- **The bundle's comparison functions name the schema of each built-in
+  operator and function they call** (#1551, #1667). For example, the
+  functions write `OPERATOR(pg_catalog.@>)` and
+  `pg_catalog.cardinality(...)`. A `search_path` that puts another schema first can no longer
+  change which operator a comparison uses. `eql_v4.between` gets the same
+  change.
+- **The embedded crypto guest wipes more copies of plaintext before it
+  frees them** (#1643). The copies were in the match index's lowercasing,
+  the decoding of JSON paths and predicates, and the opening of a sealed
+  JSON document. Stored values and query terms do not change.
+
+### Fixed
+
+- **A failed write into guest memory no longer leaves the data in a guest
+  buffer** (#1550). When the client could not record where a buffer was,
+  the bytes stayed in guest memory. The client now checks where it will
+  record the buffer before it allocates one. If a write fails after the
+  allocation, the client zeroes the bytes.
 
 ## [0.1.0-rc.4] - 2026-11-13
 
