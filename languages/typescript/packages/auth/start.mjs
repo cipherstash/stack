@@ -14,32 +14,136 @@
 // encode, nothing to strip, nothing a client could forge. `csSanitizeHeaders`
 // and `csAuthHeader` therefore have no counterpart in this entry.
 //
-// The cookie half is unchanged: the CTS token is persisted to the per-workspace
-// `cs_token_<workspaceId>` HttpOnly cookie as the cross-request cache, and the
-// `Set-Cookie` lands on Start's response through the live response headers.
+// Why this entry exports a function to call INSIDE a middleware rather than a
+// ready-made middleware: Start keeps a server function's `.middleware([...])`
+// chain in the CLIENT bundle (client middleware has to run there) and relies on
+// its compiler to strip each middleware's `.server(...)` callback — which it
+// can only do where `createMiddleware().server()` is written out in the app's
+// own module. A middleware built inside this package leaves the app's module
+// with nothing to strip, so its `getJwt`, its workspace config and this
+// package's inline wasm (about 1 MB) all ship to the browser; measured, not
+// supposed. So the app writes the three-line `createMiddleware().server()`
+// chain and calls `csFederateCurrent` inside it, where the compiler removes it
+// — and the import of this module with it — from the client build.
+//
+// The cookie half is unchanged in substance: the CTS token is persisted to the
+// per-workspace `cs_token_<workspaceId>` HttpOnly cookie as the cross-request
+// cache. It is read and written through Start's own `getCookie` / `setCookie`,
+// which exist unchanged on every Start this entry supports and merge the cookie
+// into the response next to the ones already there (Clerk's session cookies,
+// Start's own) — so there is no serialised `Set-Cookie` to copy across and no
+// Start-version seam in how the response is written.
 
-import { createMiddleware } from "@tanstack/react-start";
-// A namespace import, not named: `appendResponseHeader` exists only from Start
-// 1.169 (see `appendToResponse`), and a named import of a missing ESM export
-// is a link-time error on every older version this entry supports.
-import * as startServer from "@tanstack/react-start/server";
+import { getCookie, getRequest, setCookie } from "@tanstack/react-start/server";
 import { csFederate } from "./next.mjs";
 import { warmedStrategy } from "./warmed.mjs";
 
 /**
- * @typedef {import("./start.d.mts").CsStartFederateOptions} CsStartFederateOptions
- * @typedef {import("./start.d.mts").CsFederationMiddlewareOptions} CsFederationMiddlewareOptions
+ * @typedef {import("./start.d.mts").CsFederateCurrentOptions} CsFederateCurrentOptions
  * @typedef {import("./start.d.mts").CsFederateRequestOptions} CsFederateRequestOptions
  * @typedef {import("./start.d.mts").CsFederateRequestResult} CsFederateRequestResult
  */
 
 /**
+ * Start's cookie helpers as a `CookieJar` (see `./cookies.d.ts`). Start's
+ * `setCookie` takes cookie-es options, whose `sameSite` is lower-case.
+ *
+ * @type {import("./cookies.d.ts").CookieJar}
+ */
+const startCookies = {
+  get: (name) => getCookie(name),
+  set(name, value, { sameSite, ...attributes }) {
+    setCookie(name, value, {
+      ...attributes,
+      sameSite: /** @type {"strict" | "lax" | "none"} */ (
+        sameSite.toLowerCase()
+      ),
+    });
+  },
+};
+
+/**
+ * Federations already started for a request, so every caller in that request
+ * shares one. A server render calls several server functions inside ONE
+ * request, each running the app's middleware; without this each would ask the
+ * identity provider for a JWT and exchange it with CTS again, and write the
+ * cookie again. Keyed weakly on the `Request` Start is handling, so an entry
+ * lives exactly as long as its request.
+ *
+ * @type {WeakMap<Request, Map<string, Promise<import("./wasm-types.d.ts").TokenResult>>>}
+ */
+const federations = new WeakMap();
+
+/**
+ * Federate-or-reuse for the request Start is currently handling, and return
+ * the token as a warmed strategy — or `null` on the signed-out / failed path
+ * when `onError: "null"`.
+ *
+ * Call it inside the `.server()` callback of a middleware the app declares
+ * itself (see the module comment for why), or inside a server function or
+ * route handler. It reads the request with Start's `getRequest()`, so it fails
+ * outside a Start request scope — loudly, whatever `onError` says.
+ *
+ * @param {CsFederateCurrentOptions} options
+ */
+export async function csFederateCurrent(options) {
+  const { onError = "throw", ...federate } = options;
+  // Misuse is never folded into `null`: a typo in `onError`, or a call outside
+  // a request scope, must not read as "signed out".
+  if (onError !== "throw" && onError !== "null") {
+    throw new TypeError(
+      `csFederateCurrent: onError must be "throw" or "null", got ${JSON.stringify(onError)}`,
+    );
+  }
+  const request = getRequest();
+  try {
+    return warmedStrategy(await federateOnce(request, federate));
+  } catch (error) {
+    if (onError === "null") return null;
+    throw error;
+  }
+}
+
+/**
+ * One federation per request and cookie. A failure is forgotten, so the next
+ * caller in the same request tries again rather than inheriting an error that
+ * may have been transient.
+ *
+ * @param {Request} request
+ * @param {Omit<CsFederateCurrentOptions, "onError">} options
+ */
+function federateOnce(request, options) {
+  let started = federations.get(request);
+  if (!started) {
+    started = new Map();
+    federations.set(request, started);
+  }
+  // What decides which token comes back: the workspace, where it is exchanged,
+  // and which cookie caches it. `getJwt` is deliberately not part of the key —
+  // within one request it is the same user's JWT whichever closure asks.
+  const key = JSON.stringify([
+    options.workspaceCrn,
+    options.baseUrl ?? null,
+    options.cookieName ?? null,
+  ]);
+  let federation = started.get(key);
+  if (!federation) {
+    federation = csFederate({ ...options, jar: startCookies });
+    started.set(key, federation);
+    const pending = federation;
+    pending.catch(() => {
+      if (started.get(key) === pending) started.delete(key);
+    });
+  }
+  return federation;
+}
+
+/**
  * Federate-or-reuse against an explicit `request` / `responseHeaders` pair and
- * return both the `TokenResult` and the warmed strategy built from it. For a
- * request middleware or a route handler that already holds the request and
- * owns the response — anywhere the function-middleware wrapper
- * ({@link csFederationMiddleware}) is the wrong shape. Throws on failure,
- * including the ordinary signed-out case, exactly like `csFederate`.
+ * return both the `TokenResult` and the warmed strategy built from it. For
+ * code that already holds the request and builds the response itself. Throws
+ * on failure, including the ordinary signed-out case, exactly like
+ * `csFederate`.
  *
  * @param {CsFederateRequestOptions} options
  * @returns {Promise<CsFederateRequestResult>}
@@ -47,97 +151,4 @@ import { warmedStrategy } from "./warmed.mjs";
 export async function csFederateRequest(options) {
   const result = await csFederate(options);
   return { result, strategy: warmedStrategy(result) };
-}
-
-/**
- * Build a Start function middleware that federates (or reuses) the current
- * user's CTS token on every server-function call and passes it to the handler
- * as `context.csAuth` — a `WarmedAuthStrategy`, or `null` on the signed-out /
- * failed path when `onError: "null"`.
- *
- * The request is read with Start's `getRequest()` and the refreshed cookie is
- * appended to Start's live response headers, so the server function needs no
- * request/response plumbing of its own.
- *
- * @param {CsFederationMiddlewareOptions} options
- */
-export function csFederationMiddleware(options) {
-  const { onError = "throw", ...federate } = options;
-  // Validate eagerly, at module-evaluation time where the middleware is built,
-  // rather than on the first request — a typo here must not surface as every
-  // signed-out call 500ing (or, worse, as `csAuth: null` where a throw was
-  // expected).
-  if (onError !== "throw" && onError !== "null") {
-    throw new TypeError(
-      `csFederationMiddleware: onError must be "throw" or "null", got ${JSON.stringify(onError)}`,
-    );
-  }
-  return createMiddleware({ type: "function" }).server(async ({ next }) => {
-    const csAuth = await federateCurrentRequest(federate, onError);
-    return next({ context: { csAuth } });
-  });
-}
-
-/**
- * Federate-or-reuse for the request Start is currently handling. The
- * `responseHeaders` passed to `csFederate` is a scratch `Headers` this function
- * owns; whatever it collects (today: the `Set-Cookie` for the token cookie) is
- * copied onto Start's response afterwards — on the failure path too, so a
- * cookie a store wrote before a later failure is not lost.
- *
- * @param {CsStartFederateOptions} options
- * @param {"throw" | "null"} onError
- * @returns {Promise<import("./warmed.d.ts").WarmedAuthStrategy | null>}
- */
-async function federateCurrentRequest(options, onError) {
-  const request = startServer.getRequest();
-  const responseHeaders = new Headers();
-  try {
-    const result = await csFederate({ ...options, request, responseHeaders });
-    return warmedStrategy(result);
-  } catch (error) {
-    if (onError === "null") return null;
-    throw error;
-  } finally {
-    appendToResponse(responseHeaders);
-  }
-}
-
-/**
- * Append every header `csFederate` collected onto Start's response. Append,
- * never set: the only header written is `Set-Cookie`, and the response usually
- * already carries one or more — Clerk's session cookies, Start's own — that an
- * overwrite would drop. That rules out Start's `setResponseHeader(name, [..])`
- * (it deletes the name first) and `setResponseHeaders(headers)` (a `set` per
- * name).
- *
- * Which append primitive exists depends on the Start version:
- *
- * - Start 1.169 and later (`@tanstack/start-server-core` 1.169.41+):
- *   `appendResponseHeader(name, value)`. For `set-cookie` it merges into the
- *   outgoing cookies and dedupes by cookie identity (name + domain + path),
- *   exactly like `setCookie`. `getResponseHeaders()` is a read-only snapshot
- *   there — mutating it warns and changes nothing.
- * - Earlier Start, back to this entry's 1.132 floor: no `appendResponseHeader`,
- *   and `getResponseHeaders()` is the response's own mutable `Headers`, so
- *   appending to it is the one path that keeps the cookies already there.
- *
- * A `Headers` iterator yields each `Set-Cookie` as its own entry rather than
- * joining them, so iteration is the portable way to walk them (`getSetCookie()`
- * is Node 19.7+ only).
- *
- * @param {Headers} collected
- */
-function appendToResponse(collected) {
-  const { appendResponseHeader, getResponseHeaders } = startServer;
-  if (typeof appendResponseHeader === "function") {
-    for (const [name, value] of collected) {
-      appendResponseHeader(name, value);
-    }
-    return;
-  }
-  const response = getResponseHeaders();
-  for (const [name, value] of collected) {
-    response.append(name, value);
-  }
 }

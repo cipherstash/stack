@@ -27,7 +27,7 @@ The package exposes six entries:
 | `@cipherstash/auth/wasm-inline` | **Supabase Edge Functions / Cloudflare Workers / Bun / Deno via `npm:`** — runtimes that can't auto-bundle a sibling `.wasm` | Inline-bytes shim (wasm embedded as base64) | `AccessKeyStrategy`, `OidcFederationStrategy` |
 | `@cipherstash/auth/cookies` | Any runtime with WHATWG `Request`/`Headers` (Edge, Workers, Bun, Deno, Node 18+, Next.js App Router) | Pure-JS helper | `cookieStore(...)` — builds a `TokenStore` from a `Request + Headers` pair |
 | `@cipherstash/auth/next` | **Next.js App Router** / request-response server frameworks | Pure-JS adapter over `OidcFederationStrategy` | `csFederationMiddleware`, `csFederate`, `csAuthHeader` — federate-or-reuse + warmed-token handoff ([details](#nextjs-app-router-adapter--cipherstashauthnext)) |
-| `@cipherstash/auth/start` | **TanStack Start** | Pure-JS adapter over `csFederate`; loads `@tanstack/react-start` (optional peer) | `csFederationMiddleware`, `csFederateRequest` — federate-or-reuse, handed to server functions as typed `context.csAuth` with no header hand-off ([details](#tanstack-start-adapter--cipherstashauthstart)) |
+| `@cipherstash/auth/start` | **TanStack Start** | Pure-JS adapter over `csFederate`; loads `@tanstack/react-start` (optional peer) | `csFederateCurrent`, `csFederateRequest` — federate-or-reuse inside your own function middleware, handed to server functions as typed `context.csAuth` with no header hand-off ([details](#tanstack-start-adapter--cipherstashauthstart)) |
 
 The wasm bindings expose `AccessKeyStrategy` (static M2M keys) and `OidcFederationStrategy` (federating a third-party OIDC JWT — Clerk, Supabase, … — into a CTS service token). The interactive device-code flow and profile-store loading stay Node-only — they depend on filesystem and browser-launching APIs that can't be ported to wasm.
 
@@ -148,8 +148,9 @@ Available options:
 
 | Option | Default | Notes |
 |---|---|---|
-| `request` | — required — | Incoming `Request` to read the cookie from |
-| `responseHeaders` | — required — | Outgoing `Headers` to append `Set-Cookie` to |
+| `request` | — required, with `responseHeaders` — | Incoming `Request` to read the cookie from |
+| `responseHeaders` | — required, with `request` — | Outgoing `Headers` to append `Set-Cookie` to |
+| `jar` | unset | A framework's own cookie API, *instead of* `request` / `responseHeaders` — see below |
 | `name` | `"cs_token"` | Cookie name |
 | `domain` | unset | `Domain` attribute (host-only by default) |
 | `path` | `"/"` | `Path` attribute |
@@ -159,6 +160,23 @@ Available options:
 | `expirySafetyMarginSeconds` | `30` | Seconds subtracted from `expires_at` when computing `Max-Age` |
 
 The base64url encoding skirts RFC 6265's cookie-value char range, which would otherwise reject the `"` characters present in raw JSON.
+
+When the framework owns the response and has its own cookie API, pass that as `jar` instead of `request` / `responseHeaders`, so the framework serialises the cookie and merges it with the ones it is already setting. A jar is `{ get(name), set(name, value, attributes) }` (either may be async); `attributes` is `{ path, secure, httpOnly, sameSite, domain?, maxAge? }`. Passing both a jar and the header pair, or neither, throws. The [TanStack Start adapter](#tanstack-start-adapter--cipherstashauthstart) is built this way, over Start's `getCookie` / `setCookie`:
+
+```ts
+import { getCookie, setCookie } from "@tanstack/react-start/server";
+
+const store = cookieStore({
+  jar: {
+    get: (name) => getCookie(name),
+    set: (name, value, { sameSite, ...attributes }) =>
+      setCookie(name, value, {
+        ...attributes,
+        sameSite: sameSite.toLowerCase() as Lowercase<typeof sameSite>,
+      }),
+  },
+});
+```
 
 ### Rolling your own store
 
@@ -467,6 +485,7 @@ production rollout rather than a nice-to-have.
 |---|---|---|
 | `request` | — required — | Incoming `Request` (reads the token cookie) |
 | `responseHeaders` | — required — | Outgoing `Headers` (the refreshed cookie is appended as `Set-Cookie`) |
+| `jar` | unset | (`csFederate` only) a framework's own cookie API, *instead of* `request` / `responseHeaders` — see [`cookieStore`](#caching-with-cookiestore) |
 | `workspaceCrn` | — required — | `crn:<region>:<workspace-id>` |
 | `getJwt` | — required — | Returns the third-party OIDC JWT of this request's user (asked on every call) |
 | `baseUrl` | region discovery | Pin federation to a specific CTS host / mock |
@@ -495,43 +514,37 @@ encode, nothing to strip, and nothing a client could forge. So this entry has no
 `csSanitizeHeaders` and no `csAuthHeader` — the handler reads `context.csAuth`.
 
 The cookie half is unchanged: the CTS token is persisted to the per-workspace
-`HttpOnly` cookie (`cs_token_<workspace-id>`) as the cross-request cache, and the
-refreshed `Set-Cookie` is *appended* to Start's response — appended, not set, so
-Clerk's session cookies and Start's own survive. (On Start 1.169+ that goes
-through `appendResponseHeader`, which also dedupes by cookie identity; on
-earlier Start it appends to the live response headers.)
+`HttpOnly` cookie (`cs_token_<workspace-id>`) as the cross-request cache. It is
+read and written through Start's own `getCookie` / `setCookie`, so Start merges
+it into the response next to the cookies already there — Clerk's session
+cookies, Start's own.
 
-### Wiring — one middleware, reused by every server function
+### Wiring — one middleware you declare, reused by every server function
 
-`getJwt` must return the *current request's* user's OIDC JWT. With Clerk, that
-is `auth().getToken({ template })` — which works from inside the middleware
-because Clerk's `clerkMiddleware()` is registered as a *request* middleware in
-`src/start.ts` and runs first:
+`csFederateCurrent(options)` federates (or reuses) the token for the request
+Start is handling and returns it as a strategy. Call it inside the `.server()`
+callback of a middleware **you declare in your own code**:
 
 ```ts
-// src/start.ts — global Start instance, auto-discovered by the Start plugin.
-import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
-import { createStart } from "@tanstack/react-start";
-
-export const startInstance = createStart(() => ({
-  requestMiddleware: [clerkMiddleware()],
-}));
-```
-
-```ts
-// src/server/cs-auth.ts — federate-or-reuse once per server-function call.
+// src/server/cs-auth.ts — federate-or-reuse once per request.
 import { auth } from "@clerk/tanstack-react-start/server";
-import { csFederationMiddleware } from "@cipherstash/auth/start";
+import { createMiddleware } from "@tanstack/react-start";
+import { csFederateCurrent } from "@cipherstash/auth/start";
 
-export const csAuth = csFederationMiddleware({
-  workspaceCrn: process.env.CS_WORKSPACE_CRN!, // "crn:<region>:<workspace-id>"
-  getJwt: async () => {
-    const { getToken } = await auth();
-    const jwt = await getToken({ template: "cipherstash" }); // your CipherStash JWT template
-    if (!jwt) throw new Error("signed out");
-    return jwt;
+export const csAuth = createMiddleware({ type: "function" }).server(
+  async ({ next }) => {
+    const csAuth = await csFederateCurrent({
+      workspaceCrn: process.env.CS_WORKSPACE_CRN!, // "crn:<region>:<workspace-id>"
+      getJwt: async () => {
+        const { getToken } = await auth();
+        const jwt = await getToken({ template: "cipherstash" }); // your CipherStash JWT template
+        if (!jwt) throw new Error("signed out");
+        return jwt;
+      },
+    });
+    return next({ context: { csAuth } });
   },
-});
+);
 ```
 
 ```ts
@@ -543,17 +556,40 @@ import { csAuth } from "./cs-auth";
 export const loadSecret = createServerFn({ method: "GET" })
   .middleware([csAuth])
   .handler(async ({ context }) => {
-    // `context.csAuth` is a WarmedAuthStrategy — typed by the middleware.
+    // `context.csAuth` is a WarmedAuthStrategy — typed by your middleware.
     // The SDK calls getToken() as needed; the strategy is good for this call.
     const encryption = new Encryption({ authStrategy: context.csAuth });
     // ... encrypt / decrypt with `encryption` ...
   });
 ```
 
-To run it on *every* server function instead, register it globally —
-`createStart(() => ({ requestMiddleware: [clerkMiddleware()], functionMiddleware: [csAuth] }))`
-— and build it with `onError: "null"` (below), since some of those calls will be
+`getJwt` must return the *current request's* user's OIDC JWT. With Clerk, that
+is `auth().getToken({ template })` — which works from inside the middleware
+because Clerk's `clerkMiddleware()` is registered as a *request* middleware and
+runs first:
+
+```ts
+// src/start.ts — global Start instance, auto-discovered by the Start plugin.
+import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+import { createStart } from "@tanstack/react-start";
+
+export const startInstance = createStart(() => ({
+  requestMiddleware: [clerkMiddleware()],
+}));
+```
+
+To run it on *every* server function instead, add `functionMiddleware: [csAuth]`
+there — and pass `onError: "null"` (below), since some of those calls will be
 signed out.
+
+> **Keep everything inside the `.server()` callback, in your own module.** Start
+> keeps a server function's middleware chain in the *client* bundle, and relies
+> on its compiler to strip each `.server()` callback out of it. The compiler can
+> only do that where `createMiddleware().server()` is written out in your code —
+> which is why this entry gives you a function to call inside your middleware
+> rather than a ready-made one. A middleware built by a helper, or options
+> hoisted to module level, leave your `getJwt`, your environment reads and this
+> package's inline wasm (about 1 MB) in the browser bundle.
 
 > **`context.csAuth` does not refresh.** Like `csAuthHeader`'s strategy in the
 > Next adapter, it hands back the *same* token on every `getToken()` — valid
@@ -562,20 +598,38 @@ signed out.
 > use it within the call (a detached callback *within* the call is fine), and
 > never cache it across calls — the middleware runs again on the next one.
 
+### What is reused, and when
+
+- **Within a request**, every `csFederateCurrent` call for the same workspace
+  shares one federation. A server render that calls several server functions
+  runs your middleware once per function, but asks `getJwt` and exchanges with
+  CTS once.
+- **Across requests**, the cookie is reused only for the JWT it was federated
+  from. That binding is what stops a cookie left over from a previous sign-in
+  serving another user. It also means the cookie only helps when `getJwt`
+  returns the *same* JWT on the next request. An identity provider that mints a
+  new JWT on every server-side call — Clerk's `getToken({ template })` asks
+  Clerk's API each time — gets a fresh exchange per request, not a reuse.
+
 ### Signed-out requests — `onError`
 
-`csFederationMiddleware` **throws on federation failure** by default, including
-the ordinary signed-out case where `getJwt` has no JWT to return — so a server
+`csFederateCurrent` **throws on federation failure** by default, including the
+ordinary signed-out case where `getJwt` has no JWT to return — so a server
 function that only makes sense signed in fails as it should. For a function that
-can render a signed-out state, pass `onError: "null"`: the handler then receives
-`context.csAuth === null` (and the type says so):
+can render a signed-out state, pass `onError: "null"`: it resolves to `null`,
+and the type of `context.csAuth` says so:
 
 ```ts
-export const csAuthOptional = csFederationMiddleware({
-  workspaceCrn: process.env.CS_WORKSPACE_CRN!,
-  getJwt: () => getSessionJwt(),
-  onError: "null",
-});
+export const csAuthOptional = createMiddleware({ type: "function" }).server(
+  async ({ next }) => {
+    const csAuth = await csFederateCurrent({
+      workspaceCrn: process.env.CS_WORKSPACE_CRN!,
+      getJwt: () => getSessionJwt(),
+      onError: "null",
+    });
+    return next({ context: { csAuth } });
+  },
+);
 
 export const dashboard = createServerFn({ method: "GET" })
   .middleware([csAuthOptional])
@@ -585,15 +639,18 @@ export const dashboard = createServerFn({ method: "GET" })
   });
 ```
 
-`"null"` folds *every* failure into `null` — a misconfigured `workspaceCrn`
-included — so prefer the default wherever a failure should be loud.
+`"null"` folds *every* federation failure into `null` — a misconfigured
+`workspaceCrn` included — so prefer the default wherever a failure should be
+loud. Misuse is never folded in: an unknown `onError`, or a call outside a Start
+request, throws either way.
 
-### Outside a server function — `csFederateRequest`
+### With an explicit request — `csFederateRequest`
 
-For a Start *request* middleware, a route handler, or anywhere else that already
-holds the `Request` and owns the response, `csFederateRequest` takes the explicit
-`request` / `responseHeaders` pair (exactly `csFederate`'s options) and returns
-both the `TokenResult` and the warmed strategy. It throws on failure:
+For code that already holds the `Request` and builds the `Response` itself,
+`csFederateRequest` takes the explicit `request` / `responseHeaders` pair
+(exactly `csFederate`'s options) and returns both the `TokenResult` and the
+warmed strategy. It throws on failure, and does not share a federation with
+other callers:
 
 ```ts
 // src/routes/api/data.ts
@@ -628,17 +685,17 @@ export const Route = createFileRoute("/api/data")({
 
 | Export | Description |
 |---|---|
-| `csFederationMiddleware(options)` | A Start function middleware (`createMiddleware({ type: "function" }).server(…)`) that federates-or-reuses on every server-function call, appends the refreshed cookie to Start's response, and passes `context.csAuth` — a `WarmedAuthStrategy`, or `null` with `onError: "null"`. Throws on failure by default. |
+| `csFederateCurrent(options)` | Federate-or-reuse for the request Start is handling: reads and writes the token cookie through Start's `getCookie` / `setCookie`, shares one federation per request, and resolves a `WarmedAuthStrategy` — or `null` with `onError: "null"`. Throws on failure by default. Call it inside your own middleware's `.server()` callback. |
 | `csFederateRequest(options)` | Federate-or-reuse against an explicit `request` / `responseHeaders` pair. Returns `{ result, strategy }`; throws on failure. |
-| `CsAuthContext`, `CsFederationMiddleware`, `WarmedAuthStrategy` | The types: the `{ csAuth }` context, the middleware's type, and the no-federation strategy (shared with `@cipherstash/auth/next`). |
+| `CsFederateCurrentOptions`, `WarmedAuthStrategy` | The types: the options above, and the no-federation strategy (shared with `@cipherstash/auth/next`). |
 
-`options` for `csFederationMiddleware` are `csFederate`'s
-([above](#api-1)) minus `request` and `responseHeaders`, which the middleware
-reads from and writes to the request Start is handling, plus:
+`options` for `csFederateCurrent` are `csFederate`'s ([above](#api-1)) minus
+`request`, `responseHeaders` and `jar`, which the request Start is handling
+supplies, plus:
 
 | Option | Default | Notes |
 |---|---|---|
-| `onError` | `"throw"` | `"null"` passes `context.csAuth = null` on the signed-out / failed path instead of throwing |
+| `onError` | `"throw"` | `"null"` resolves `null` on the signed-out / failed path instead of throwing |
 
 `csFederateRequest` takes `csFederate`'s options unchanged.
 

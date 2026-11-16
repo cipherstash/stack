@@ -7,6 +7,7 @@
  * Router, framework-agnostic by construction). See `next.mjs` for the model.
  */
 
+import type { CookieJar } from "./cookies.d.ts";
 import type { TokenResult } from "./wasm-types.d.ts";
 import type { WarmedAuthStrategy } from "./warmed.d.ts";
 
@@ -18,11 +19,8 @@ export declare const CS_TOKEN_HEADER: "x-cs-cts-token";
 /** Per-workspace cookie name for the cached CTS token (`cs_token_<workspaceId>`). */
 export declare function csTokenCookieName(workspaceId: string): string;
 
-export interface CsFederateOptions {
-  /** Incoming request — the token cookie is read from its `Cookie` header. */
-  request: Request;
-  /** Outgoing headers — the refreshed token cookie is appended as `Set-Cookie`. */
-  responseHeaders: Headers;
+/** The federation options that do not depend on where the cookie lives. */
+export interface CsFederateCommonOptions {
   /** Workspace CRN, `crn:<region>:<workspace-id>`. */
   workspaceCrn: string;
   /** The third-party OIDC JWT of the user this request is for (asked on every call). */
@@ -38,6 +36,24 @@ export interface CsFederateOptions {
   secure?: boolean;
   /** Cookie `SameSite`. Default `"Lax"`. */
   sameSite?: "Strict" | "Lax" | "None";
+}
+
+export interface CsFederateOptions extends CsFederateCommonOptions {
+  /** Incoming request — the token cookie is read from its `Cookie` header. */
+  request: Request;
+  /** Outgoing headers — the refreshed token cookie is appended as `Set-Cookie`. */
+  responseHeaders: Headers;
+}
+
+/**
+ * {@link csFederate} options for a framework that owns the response and has
+ * its own cookie API: the token cookie is read and written through `jar`
+ * (see `CookieJar` in `@cipherstash/auth/cookies`) instead of `request` /
+ * `responseHeaders`. `@cipherstash/auth/start` is built on this.
+ */
+export interface CsFederateJarOptions extends CsFederateCommonOptions {
+  /** The framework's cookie API. */
+  jar: CookieJar;
 }
 
 /**
@@ -63,7 +79,9 @@ export interface CsFederateOptions {
  * }
  * ```
  */
-export declare function csFederate(options: CsFederateOptions): Promise<TokenResult>;
+export declare function csFederate(
+  options: CsFederateOptions | CsFederateJarOptions,
+): Promise<TokenResult>;
 
 export interface CsFederationMiddlewareOptions extends CsFederateOptions {
   /** Request header to carry the warmed token. Default {@link CS_TOKEN_HEADER}. */

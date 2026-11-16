@@ -1,58 +1,48 @@
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { createMiddleware } from '@tanstack/react-start'
 import {
-  appendResponseHeader,
   createServerEntry,
   getResponseHeaders,
+  setCookie,
 } from '@tanstack/react-start/server'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { csTokenCookieName } from '../next.mjs'
-import { csFederateRequest, csFederationMiddleware } from '../start.mjs'
+import { csFederateCurrent, csFederateRequest } from '../start.mjs'
+import {
+  create,
+  type FakeStore,
+  failFederation,
+  free,
+  getToken,
+  installFakeStrategy,
+  storedTokenJson,
+  tokenResult,
+  WORKSPACE_CRN,
+  WORKSPACE_ID,
+} from './helpers/fake-federation'
+import {
+  packageDir,
+  packedFiles,
+  removeScratchDirs,
+  runTsc,
+  scratchDir,
+} from './helpers/tsc-consumer'
 
-// Mock the wasm strategy exactly as `next.test.ts` does, so these tests
-// exercise the Start adapter's OWN wiring — reading the request Start is
-// handling, appending the cookie to Start's response, passing the warmed
-// strategy through `next({ context })` — deterministically and offline. The
-// real federate-or-reuse + cookie round-trip is covered by
-// `oidc-cookie-roundtrip.test.ts`. What is NOT mocked is TanStack Start: the
-// middleware is built with the real `createMiddleware`, and its server half
-// runs inside a real `createServerEntry` request scope, so `getRequest()` and
-// `appendResponseHeader()` are the production helpers, not stand-ins. (The
-// pre-1.169 fallback, where `appendResponseHeader` does not exist, is covered
-// by `start-legacy-server.test.ts`.)
-const { getToken, free, create } = vi.hoisted(() => ({
-  getToken: vi.fn(),
-  free: vi.fn(),
-  create: vi.fn(),
-}))
+// The wasm strategy is the shared fake; TanStack Start is NOT mocked. Every
+// test below runs inside a real `createServerEntry` request scope, so
+// `getRequest()`, `getCookie()` and `setCookie()` are the production helpers,
+// and what is asserted about the response is what Start will emit.
+vi.mock('../wasm-inline.mjs', async () =>
+  (await import('./helpers/fake-federation')).wasmInlineMock(),
+)
 
-vi.mock('../wasm-inline.mjs', () => ({
-  OidcFederationStrategy: {
-    create: (
-      crn: string,
-      getJwt: () => unknown,
-      options: { store?: { load(): unknown; save(json: string): unknown } },
-    ) => create(crn, getJwt, options),
-  },
-}))
-
-const WORKSPACE_ID = 'ZVATKW3VHMFG27DY'
-const WORKSPACE_CRN = `crn:ap-southeast-2.aws:${WORKSPACE_ID}`
 const COOKIE = csTokenCookieName(WORKSPACE_ID)
 
-type Store = { load(): Promise<string | null>; save(json: string): unknown }
-
-function tokenResult(overrides: Record<string, unknown> = {}) {
-  return {
-    token: 'header.payload.signature',
-    subject: `CS|${WORKSPACE_ID}`,
-    workspaceId: WORKSPACE_ID,
-    issuer: 'https://cts.example.com',
-    services: { zerokms: 'https://zerokms.example.com' },
-    ...overrides,
-  }
+const options = {
+  workspaceCrn: WORKSPACE_CRN,
+  getJwt: () => 'jwt',
+  baseUrl: 'https://cts.example.com',
 }
 
 function requestWith(cookie?: string): Request {
@@ -63,18 +53,17 @@ function requestWith(cookie?: string): Request {
 
 /**
  * Run `fn` the way Start runs a server function: inside a `createServerEntry`
- * request scope, where `getRequest()` / `appendResponseHeader()` resolve.
- * Returns what `fn` produced plus a snapshot of the response headers Start
- * will emit, taken inside the scope once `fn` has run (`createServerEntry`
+ * request scope. Returns what `fn` produced plus the `Set-Cookie` values Start
+ * will emit, read inside the scope once `fn` has run (`createServerEntry`
  * establishes the scope; applying the header state to the final `Response` is
  * the job of Start's handler pipeline, which this test does not run).
  */
 async function inRequest<T>(
   request: Request,
   fn: () => Promise<T>,
-): Promise<{ value: T; responseHeaders: Headers }> {
+): Promise<{ value: T; cookies: string[] }> {
   let value: T | undefined
-  let responseHeaders: Headers | undefined
+  let cookies: string[] | undefined
   let thrown: { error: unknown } | undefined
   const entry = createServerEntry({
     fetch: async () => {
@@ -85,116 +74,39 @@ async function inRequest<T>(
       } catch (error) {
         thrown = { error }
       }
-      responseHeaders = getResponseHeaders()
+      cookies = getResponseHeaders().getSetCookie()
       return new Response('ok')
     },
   })
   await entry.fetch(request, {})
   if (thrown) throw thrown.error
-  if (!responseHeaders) throw new Error('fetch did not run')
-  return { value: value as T, responseHeaders }
+  if (!cookies) throw new Error('fetch did not run')
+  return { value: value as T, cookies }
 }
 
-/** Drive a function middleware's server half the way Start does. */
-async function runServer(
-  middleware: ReturnType<typeof csFederationMiddleware>,
-) {
-  const next = vi.fn(async (ctx?: { context?: unknown }) => ({
-    context: ctx?.context,
-  }))
-  const server = middleware.options.server
-  if (!server) throw new Error('middleware has no server half')
-  const result = await server({
-    data: undefined,
-    context: {},
-    next,
-    method: 'GET',
-    serverFnMeta: { id: 'test', name: 'loadSecret' },
-    signal: new AbortController().signal,
-    // biome-ignore lint/suspicious/noExplicitAny: Start's full generic option bag is irrelevant to the adapter
-  } as any)
-  return { next, result }
-}
+beforeEach(installFakeStrategy)
+afterAll(removeScratchDirs)
 
-/** The `csAuth` the middleware passed to `next()`. */
-function contextOf(next: ReturnType<typeof vi.fn>) {
-  const call = next.mock.calls[0]?.[0] as
-    | { context?: { csAuth?: unknown } }
-    | undefined
-  return call?.context
-}
-
-/** Every `Set-Cookie` Start will emit, as its own entry. */
-function setCookies(headers: Headers): string[] {
-  return headers.getSetCookie()
-}
-
-beforeEach(() => {
-  getToken.mockReset()
-  free.mockReset()
-  create.mockReset()
-  // Default fake strategy: writes the token to the store (so the cookie path is
-  // exercised) and returns a Result-wrapped TokenResult, matching the real
-  // wasm surface `csFederate` unwraps.
-  create.mockImplementation(
-    (_crn: string, _getJwt: () => unknown, options: { store?: Store }) => {
-      getToken.mockImplementation(async () => {
-        await options.store?.save(
-          JSON.stringify({
-            access_token: 'header.payload.signature',
-            expires_at: Math.floor(Date.now() / 1000) + 3600,
-          }),
-        )
-        return { data: tokenResult() }
-      })
-      return { data: { getToken, free } }
-    },
-  )
-})
-
-describe('csFederationMiddleware', () => {
-  const options = {
-    workspaceCrn: WORKSPACE_CRN,
-    getJwt: () => 'jwt',
-    baseUrl: 'https://cts.example.com',
-  }
-
-  it('builds a Start function middleware', () => {
-    const middleware = csFederationMiddleware(options)
-    // The real `createMiddleware({ type: 'function' }).server(...)` shape: an
-    // `options` bag with the server half, which is what `createServerFn()
-    // .middleware([...])` executes. Nothing is a request header.
-    expect(typeof middleware.options.server).toBe('function')
-    expect(middleware.options.client).toBeUndefined()
-  })
-
-  it('passes the warmed strategy to the handler through next({ context })', async () => {
-    const middleware = csFederationMiddleware(options)
-    const { value, responseHeaders } = await inRequest(requestWith(), () =>
-      runServer(middleware),
+describe('csFederateCurrent', () => {
+  it('returns the federated token as a warmed strategy and caches it in the cookie', async () => {
+    const { value: strategy, cookies } = await inRequest(requestWith(), () =>
+      csFederateCurrent(options),
     )
 
-    expect(value.next).toHaveBeenCalledOnce()
-    const context = contextOf(value.next)
-    expect(context).toEqual({ csAuth: expect.any(Object) })
-    const csAuth = context?.csAuth as {
-      requiresFederation: boolean
-      getToken(): Promise<{ data?: unknown }>
-      free(): void
-    }
     // A drop-in for a real strategy: no federation needed, Result-returning
     // getToken() resolving the federated token, releasable.
-    expect(csAuth.requiresFederation).toBe(false)
-    expect((await csAuth.getToken()).data).toEqual(tokenResult())
-    expect(typeof csAuth.free).toBe('function')
-    // next()'s result is what the middleware returns, so Start sees it.
-    expect(value.result).toEqual({ context: { csAuth } })
+    expect(strategy.requiresFederation).toBe(false)
+    expect((await strategy.getToken()).data).toEqual(tokenResult())
+    expect(typeof strategy.free).toBe('function')
 
-    // The cross-request cache: the refreshed cookie reached Start's response.
-    const cookies = setCookies(responseHeaders)
+    // The cross-request cache, written through Start's own setCookie.
     expect(cookies).toHaveLength(1)
-    expect(cookies[0]).toMatch(new RegExp(`^${COOKIE}=`))
+    expect(cookies[0]).toMatch(new RegExp(`^${COOKIE}=[A-Za-z0-9_-]+;`))
+    expect(cookies[0]).toMatch(/Path=\//)
     expect(cookies[0]).toMatch(/HttpOnly/)
+    expect(cookies[0]).toMatch(/Secure/)
+    expect(cookies[0]).toMatch(/SameSite=Lax/)
+    expect(cookies[0]).toMatch(/Max-Age=35\d\d/)
     // baseUrl threaded through to the strategy; wasm resources released.
     expect(create).toHaveBeenCalledWith(WORKSPACE_CRN, expect.any(Function), {
       store: expect.anything(),
@@ -203,144 +115,203 @@ describe('csFederationMiddleware', () => {
     expect(free).toHaveBeenCalledOnce()
   })
 
+  it('honours the cookie options', async () => {
+    const { cookies } = await inRequest(requestWith(), () =>
+      csFederateCurrent({
+        ...options,
+        cookieName: 'custom',
+        secure: false,
+        sameSite: 'Strict',
+      }),
+    )
+    expect(cookies[0]).toMatch(/^custom=/)
+    expect(cookies[0]).not.toMatch(/Secure/)
+    expect(cookies[0]).toMatch(/SameSite=Strict/)
+  })
+
   it('reads the token cookie from the request Start is handling', async () => {
-    // The store is built over `getRequest()`: a cookie on the inbound request
-    // must be what `load()` hands the strategy for reuse.
-    const stored = JSON.stringify({ access_token: 'cached', expires_at: 1 })
+    // A cookie on the inbound request must be what `load()` hands the strategy
+    // for reuse — read through Start's getCookie, next to unrelated cookies.
+    const stored = storedTokenJson()
     const encoded = Buffer.from(stored).toString('base64url')
-    let store: Store | undefined
+    let loaded: string | null | undefined
     create.mockImplementation(
-      (_crn: string, _getJwt: () => unknown, options: { store?: Store }) => {
-        store = options.store
-        getToken.mockResolvedValue({ data: tokenResult() })
+      (_crn: string, _getJwt: unknown, o: { store: FakeStore }) => {
+        getToken.mockImplementation(async () => {
+          loaded = await o.store.load()
+          return { data: tokenResult() }
+        })
         return { data: { getToken, free } }
       },
     )
 
-    await inRequest(requestWith(`${COOKIE}=${encoded}; other=1`), () =>
-      runServer(csFederationMiddleware(options)),
+    const { cookies } = await inRequest(
+      requestWith(`other=1; ${COOKIE}=${encoded}; __session=clerk`),
+      () => csFederateCurrent(options),
     )
-    expect(await store?.load()).toBe(stored)
+    expect(loaded).toBe(stored)
+    // A reuse writes nothing.
+    expect(cookies).toEqual([])
   })
 
-  it('appends the cookie without dropping cookies already on the response', async () => {
-    // Clerk (and Start itself) set cookies on the same response. The adapter
-    // must APPEND its Set-Cookie: `setResponseHeader(name, [..])` deletes the
-    // name first and `setResponseHeaders()` sets the first value per name, so
-    // either would silently drop the session cookie.
-    const middleware = csFederationMiddleware(options)
-    const { responseHeaders } = await inRequest(requestWith(), async () => {
-      appendResponseHeader('set-cookie', '__session=clerk; Path=/; HttpOnly')
-      return runServer(middleware)
+  it('keeps the cookies already on the response', async () => {
+    // Clerk (and Start itself) set cookies on the same response. Writing the
+    // token cookie must not drop them.
+    const { cookies } = await inRequest(requestWith(), async () => {
+      setCookie('__session', 'clerk', { httpOnly: true, path: '/' })
+      return csFederateCurrent(options)
     })
 
-    const cookies = setCookies(responseHeaders)
     expect(cookies).toHaveLength(2)
-    expect(cookies[0]).toBe('__session=clerk; Path=/; HttpOnly')
+    expect(cookies[0]).toMatch(/^__session=clerk;/)
     expect(cookies[1]).toMatch(new RegExp(`^${COOKIE}=`))
   })
 
-  it('asks getJwt on every call, inside the request scope', async () => {
-    // The strategy calls `getJwt` per `getToken()`; the adapter passes the
-    // caller's function through untouched so Clerk's `auth()` (which reads
-    // request-scoped storage) works from it.
-    const getJwt = vi.fn(() => 'jwt')
-    await inRequest(requestWith(), () =>
-      runServer(csFederationMiddleware({ ...options, getJwt })),
+  it('slots into a middleware the app declares, passing context.csAuth', async () => {
+    // The documented wiring: the app writes the createMiddleware().server()
+    // chain (so Start's compiler can strip it from the client bundle) and calls
+    // csFederateCurrent inside it.
+    const middleware = createMiddleware({ type: 'function' }).server(
+      async ({ next }) => {
+        const csAuth = await csFederateCurrent(options)
+        return next({ context: { csAuth } })
+      },
     )
-    expect(create).toHaveBeenCalledWith(
-      WORKSPACE_CRN,
-      getJwt,
-      expect.anything(),
-    )
-  })
+    const next = vi.fn(async (ctx?: { context?: unknown }) => ({
+      context: ctx?.context,
+    }))
 
-  it("throws the failure's error by default (signed out / federation failed)", async () => {
-    create.mockImplementation(() => {
-      getToken.mockResolvedValue({
-        failure: {
-          type: 'SERVER_ERROR',
-          error: new Error('federation failed'),
-        },
-      })
-      return { data: { getToken, free } }
+    await inRequest(requestWith(), async () => {
+      const server = middleware.options.server
+      if (!server) throw new Error('middleware has no server half')
+      // biome-ignore lint/suspicious/noExplicitAny: Start's full option bag is irrelevant here
+      return server({ next, context: {}, method: 'GET' } as any)
     })
-    const middleware = csFederationMiddleware(options)
-    const next = vi.fn()
 
-    await expect(
-      inRequest(requestWith(), async () => {
-        const server = middleware.options.server
-        if (!server) throw new Error('no server half')
-        // biome-ignore lint/suspicious/noExplicitAny: see runServer
-        return server({ next, context: {}, method: 'GET' } as any)
-      }),
-    ).rejects.toThrow('federation failed')
-    expect(next).not.toHaveBeenCalled()
-    expect(free).toHaveBeenCalledOnce()
-  })
-
-  it('passes csAuth: null instead when onError is "null"', async () => {
-    create.mockImplementation(() => {
-      getToken.mockResolvedValue({
-        failure: {
-          type: 'SERVER_ERROR',
-          error: new Error('federation failed'),
-        },
-      })
-      return { data: { getToken, free } }
-    })
-    const middleware = csFederationMiddleware({ ...options, onError: 'null' })
-    const { value, responseHeaders } = await inRequest(requestWith(), () =>
-      runServer(middleware),
-    )
-
-    expect(value.next).toHaveBeenCalledOnce()
-    expect(contextOf(value.next)).toEqual({ csAuth: null })
-    // Nothing was federated, so nothing was cached.
-    expect(setCookies(responseHeaders)).toEqual([])
-  })
-
-  it('treats a getJwt that throws (the signed-out case) the same way', async () => {
-    // With Clerk, a signed-out request has no JWT; the documented wiring throws
-    // from getJwt. The fake strategy surfaces that as a getToken rejection.
-    create.mockImplementation((_crn: string, getJwt: () => unknown) => {
-      getToken.mockImplementation(async () => {
-        getJwt()
-        return { data: tokenResult() }
-      })
-      return { data: { getToken, free } }
-    })
-    const getJwt = () => {
-      throw new Error('signed out')
+    expect(next).toHaveBeenCalledOnce()
+    const context = next.mock.calls[0][0]?.context as {
+      csAuth: { getToken(): Promise<{ data?: unknown }> }
     }
-
-    await expect(
-      inRequest(requestWith(), () =>
-        runServer(csFederationMiddleware({ ...options, getJwt })),
-      ),
-    ).rejects.toThrow('signed out')
-
-    const { value } = await inRequest(requestWith(), () =>
-      runServer(
-        csFederationMiddleware({ ...options, getJwt, onError: 'null' }),
-      ),
-    )
-    expect(contextOf(value.next)).toEqual({ csAuth: null })
+    expect((await context.csAuth.getToken()).data).toEqual(tokenResult())
   })
 
-  it('rejects an unknown onError when the middleware is built, not on the first request', () => {
-    expect(() =>
-      // biome-ignore lint/suspicious/noExplicitAny: deliberately off-type
-      csFederationMiddleware({ ...options, onError: 'swallow' as any }),
-    ).toThrow(TypeError)
+  describe('sharing one federation per request', () => {
+    it('federates once for every caller in a request', async () => {
+      // A server render calls several server functions in ONE request, each
+      // running the middleware. They must share one exchange and one cookie.
+      const { value, cookies } = await inRequest(requestWith(), async () => {
+        const first = await csFederateCurrent(options)
+        const [second, third] = await Promise.all([
+          csFederateCurrent(options),
+          csFederateCurrent({ ...options, onError: 'null' }),
+        ])
+        return [first, second, third]
+      })
+
+      expect(create).toHaveBeenCalledOnce()
+      expect(getToken).toHaveBeenCalledOnce()
+      expect(cookies).toHaveLength(1)
+      for (const strategy of value) {
+        expect((await strategy?.getToken())?.data).toEqual(tokenResult())
+      }
+    })
+
+    it('federates again for the next request', async () => {
+      await inRequest(requestWith(), () => csFederateCurrent(options))
+      await inRequest(requestWith(), () => csFederateCurrent(options))
+      expect(create).toHaveBeenCalledTimes(2)
+    })
+
+    it('keeps different workspaces and cookies apart within a request', async () => {
+      const { cookies } = await inRequest(requestWith(), async () => {
+        await csFederateCurrent(options)
+        await csFederateCurrent({ ...options, cookieName: 'other' })
+        await csFederateCurrent({
+          ...options,
+          workspaceCrn: 'crn:ap-southeast-2.aws:OTHERWORKSPACE00',
+        })
+      })
+      expect(create).toHaveBeenCalledTimes(3)
+      expect(cookies.map((c) => c.split('=')[0])).toEqual([
+        COOKIE,
+        'other',
+        csTokenCookieName('OTHERWORKSPACE00'),
+      ])
+    })
+
+    it('does not remember a failure', async () => {
+      // A failed exchange may be transient: the next caller in the same
+      // request tries again instead of inheriting the error.
+      failFederation()
+      const { value } = await inRequest(requestWith(), async () => {
+        const first = await csFederateCurrent({ ...options, onError: 'null' })
+        installFakeStrategy()
+        const second = await csFederateCurrent(options)
+        return { first, second }
+      })
+      expect(value.first).toBeNull()
+      expect((await value.second.getToken()).data).toEqual(tokenResult())
+    })
   })
 
-  it('fails outside a Start request scope rather than federating blind', async () => {
-    // No `createServerEntry` around it: `getRequest()` has no request to read.
-    const middleware = csFederationMiddleware(options)
-    await expect(runServer(middleware)).rejects.toThrow()
-    expect(create).not.toHaveBeenCalled()
+  describe('onError', () => {
+    it("throws the failure's error by default (signed out / federation failed)", async () => {
+      failFederation()
+      await expect(
+        inRequest(requestWith(), () => csFederateCurrent(options)),
+      ).rejects.toThrow('federation failed')
+      expect(free).toHaveBeenCalledOnce()
+    })
+
+    it('resolves null instead when onError is "null", and writes no cookie', async () => {
+      failFederation()
+      const { value, cookies } = await inRequest(requestWith(), () =>
+        csFederateCurrent({ ...options, onError: 'null' }),
+      )
+      expect(value).toBeNull()
+      expect(cookies).toEqual([])
+    })
+
+    it('treats a getJwt that throws (the signed-out case) the same way', async () => {
+      // With Clerk, a signed-out request has no JWT; the documented wiring
+      // throws from getJwt. The fake strategy surfaces that as a rejection.
+      create.mockImplementation((_crn: string, getJwt: () => unknown) => {
+        getToken.mockImplementation(async () => {
+          getJwt()
+          return { data: tokenResult() }
+        })
+        return { data: { getToken, free } }
+      })
+      const getJwt = () => {
+        throw new Error('signed out')
+      }
+
+      await expect(
+        inRequest(requestWith(), () =>
+          csFederateCurrent({ ...options, getJwt }),
+        ),
+      ).rejects.toThrow('signed out')
+      const { value } = await inRequest(requestWith(), () =>
+        csFederateCurrent({ ...options, getJwt, onError: 'null' }),
+      )
+      expect(value).toBeNull()
+    })
+
+    it('never folds misuse into null', async () => {
+      // An unknown onError is a bug, not "signed out"...
+      await expect(
+        inRequest(requestWith(), () =>
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately off-type
+          csFederateCurrent({ ...options, onError: 'swallow' as any }),
+        ),
+      ).rejects.toThrow(TypeError)
+      // ...and so is calling it outside a Start request scope, where there is
+      // no request to read: it must not federate blind or resolve null.
+      await expect(
+        csFederateCurrent({ ...options, onError: 'null' }),
+      ).rejects.toThrow(/StartEvent|server runtime/)
+      expect(create).not.toHaveBeenCalled()
+    })
   })
 })
 
@@ -377,47 +348,42 @@ describe('csFederateRequest', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Type surface. vitest never runs tsc, so without this a `start.d.mts` whose
-// `@tanstack/react-start` import stopped resolving — or whose middleware type
-// drifted from what `createMiddleware().server()` returns — would pass every
-// runtime test above while every consumer lost `context.csAuth`'s type. Like
-// `consumer-typecheck.test.ts`, this type-checks a consumer by package name
-// through the `exports` map; unlike it, the consumer is ESM (`.mts`) and is
-// checked under both resolutions a Start app uses, because TanStack Start is
-// ESM-only and a CommonJS-typed `.d.ts` cannot even resolve it under Node16.
+// Type surface. vitest never runs tsc, so without this a broken `start.d.mts`
+// would pass every runtime test above while consumers lost `context.csAuth`'s
+// type. The consumer is ESM (`.mts`) and is checked under both resolutions a
+// Start app uses; it writes the documented wiring, so the test also proves the
+// strategy's type reaches a server function's handler through a middleware the
+// app declares itself.
 // ---------------------------------------------------------------------------
-
-const packageDir = join(__dirname, '..')
-const tscBin = require.resolve('typescript/bin/tsc')
 
 const CONSUMER = `
 import { createMiddleware, createServerFn, createStart } from "@tanstack/react-start";
 import {
+  csFederateCurrent,
   csFederateRequest,
-  csFederationMiddleware,
-  type CsAuthContext,
-  type CsFederationMiddleware,
+  type CsFederateCurrentOptions,
   type WarmedAuthStrategy,
 } from "@cipherstash/auth/start";
 
-const strict = csFederationMiddleware({ workspaceCrn: "crn:r:w", getJwt: () => "jwt" });
-const lenient = csFederationMiddleware({
+const federate = {
   workspaceCrn: "crn:r:w",
   getJwt: async () => "jwt",
-  onError: "null",
+};
+// An options object typed as the whole options type may carry either onError.
+const anyOptions: CsFederateCurrentOptions = federate;
+
+const csAuth = createMiddleware({ type: "function" }).server(async ({ next }) => {
+  const csAuth = await csFederateCurrent(federate);
+  return next({ context: { csAuth } });
 });
 
-// The declared type is exactly what createMiddleware().server() produces, in
-// both directions — so the middleware composes with hand-written ones.
-const handWritten = createMiddleware({ type: "function" }).server(({ next }) =>
-  next({ context: { csAuth: null as unknown as WarmedAuthStrategy } }),
-);
-const a: CsFederationMiddleware<CsAuthContext> = handWritten;
-const b: typeof handWritten = strict;
-void a; void b;
+const csAuthOptional = createMiddleware({ type: "function" }).server(async ({ next }) => {
+  const csAuth = await csFederateCurrent({ ...federate, onError: "null" });
+  return next({ context: { csAuth } });
+});
 
 export const loadSecret = createServerFn({ method: "GET" })
-  .middleware([strict])
+  .middleware([csAuth])
   .handler(async ({ context }) => {
     const strategy: WarmedAuthStrategy = context.csAuth;
     const result = await strategy.getToken();
@@ -425,7 +391,7 @@ export const loadSecret = createServerFn({ method: "GET" })
   });
 
 export const maybeSignedOut = createServerFn()
-  .middleware([lenient])
+  .middleware([csAuthOptional])
   .handler(async ({ context }) => {
     // @ts-expect-error csAuth may be null under onError: "null"
     const strategy: WarmedAuthStrategy = context.csAuth;
@@ -433,7 +399,22 @@ export const maybeSignedOut = createServerFn()
     return context.csAuth === null;
   });
 
-export const startInstance = createStart(() => ({ functionMiddleware: [lenient] }));
+export const startInstance = createStart(() => ({ functionMiddleware: [csAuthOptional] }));
+
+// A default call is non-null; an onError chosen at runtime is accepted, and
+// typed as possibly null.
+export async function narrowing(isPublic: boolean) {
+  const strict: WarmedAuthStrategy = await csFederateCurrent({ workspaceCrn: "crn:r:w", getJwt: () => "jwt" });
+  const chosen = await csFederateCurrent({
+    workspaceCrn: "crn:r:w",
+    getJwt: () => "jwt",
+    onError: isPublic ? "null" : "throw",
+  });
+  // @ts-expect-error a runtime-chosen onError may resolve null
+  const notNull: WarmedAuthStrategy = chosen;
+  const whole: WarmedAuthStrategy | null = await csFederateCurrent(anyOptions);
+  void strict; void notNull; void whole;
+}
 
 export async function handler(request: Request) {
   const responseHeaders = new Headers();
@@ -452,27 +433,28 @@ export async function handler(request: Request) {
 // A consumer that must NOT compile: csAuth is a strategy, not a string. Proves
 // the harness goes red when types are wrong rather than only green when right.
 const BROKEN_CONSUMER = `
-import { createServerFn } from "@tanstack/react-start";
-import { csFederationMiddleware } from "@cipherstash/auth/start";
+import { createMiddleware, createServerFn } from "@tanstack/react-start";
+import { csFederateCurrent } from "@cipherstash/auth/start";
 
-const strict = csFederationMiddleware({ workspaceCrn: "crn:r:w", getJwt: () => "jwt" });
+const csAuth = createMiddleware({ type: "function" }).server(async ({ next }) => {
+  const csAuth = await csFederateCurrent({ workspaceCrn: "crn:r:w", getJwt: () => "jwt" });
+  return next({ context: { csAuth } });
+});
 export const fn = createServerFn()
-  .middleware([strict])
+  .middleware([csAuth])
   .handler(async ({ context }) => {
     const s: string = context.csAuth;
     return s;
   });
 `
 
-type Resolution = 'Node16' | 'bundler'
-
 /**
  * A scratch project whose `node_modules` links `@cipherstash/auth` to this
- * package and `@tanstack` to the package's own install, so both the consumer
- * and `start.d.mts` resolve TanStack Start the way a real install does.
+ * package and `@tanstack` to the package's own install, so the consumer
+ * resolves both the way a real install does.
  */
 function scratchProject(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'cs-auth-start-tscheck-'))
+  const dir = scratchDir('cs-auth-start-tscheck-')
   mkdirSync(join(dir, 'node_modules', '@cipherstash'), { recursive: true })
   symlinkSync(packageDir, join(dir, 'node_modules', '@cipherstash', 'auth'))
   symlinkSync(
@@ -482,33 +464,22 @@ function scratchProject(): string {
   return dir
 }
 
-function tsc(dir: string, config: object): { ok: boolean; output: string } {
-  writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify(config))
-  try {
-    const output = execFileSync(
-      process.execPath,
-      [tscBin, '-p', join(dir, 'tsconfig.json')],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-    )
-    return { ok: true, output }
-  } catch (err) {
-    const e = err as { stdout?: Buffer | string; stderr?: Buffer | string }
-    return { ok: false, output: `${e.stdout ?? ''}${e.stderr ?? ''}` }
-  }
-}
-
-function typecheckConsumer(source: string, moduleResolution: Resolution) {
+function typecheckConsumer(
+  source: string,
+  moduleResolution: 'Node16' | 'bundler',
+) {
   const dir = scratchProject()
   writeFileSync(join(dir, 'consumer.mts'), source)
-  return tsc(dir, {
+  return runTsc(dir, {
     compilerOptions: {
       target: 'ES2022',
       module: moduleResolution === 'Node16' ? 'Node16' : 'ESNext',
       moduleResolution,
       strict: true,
       esModuleInterop: true,
-      // What a Start app sets: library typings (React's, Node's) are not
-      // checked. The declaration files themselves are checked below.
+      // What a Start app sets: TanStack's own typings reference `react` and
+      // `node:` modules whose `@types` this package does not install. This
+      // package's declarations are checked with it off, below.
       skipLibCheck: true,
       noEmit: true,
     },
@@ -530,14 +501,13 @@ describe('consumer typecheck (@cipherstash/auth/start)', () => {
     })
   }
 
-  it('the /start declaration files type-check with skipLibCheck off', () => {
-    // `skipLibCheck: true` above would also hide an error INSIDE start.d.mts —
-    // an unresolved import there degrades to `any` silently. Check the
-    // declarations directly, keeping only diagnostics raised in this package's
-    // own files: TanStack's typings reference `react` and `node:` modules whose
-    // `@types` this package does not install, and that noise is theirs.
+  it('the declaration files type-check on their own with skipLibCheck off', () => {
+    // `skipLibCheck: true` above would also hide an error INSIDE a declaration
+    // file — an unresolved import there degrades to `any` silently. These
+    // files import nothing outside the package, so they must be clean with
+    // every declaration checked.
     const dir = scratchProject()
-    const { output } = tsc(dir, {
+    const { ok, output } = runTsc(dir, {
       compilerOptions: {
         target: 'ES2022',
         module: 'Node16',
@@ -546,17 +516,11 @@ describe('consumer typecheck (@cipherstash/auth/start)', () => {
         skipLibCheck: false,
         noEmit: true,
       },
-      files: [
-        'node_modules/@cipherstash/auth/start.d.mts',
-        'node_modules/@cipherstash/auth/warmed.d.ts',
-        'node_modules/@cipherstash/auth/next.d.ts',
-      ],
+      files: ['start.d.mts', 'next.d.ts', 'cookies.d.ts', 'warmed.d.ts'].map(
+        (file) => `node_modules/@cipherstash/auth/${file}`,
+      ),
     })
-    const own = output
-      .split('\n')
-      .filter((line) => /\): error TS\d+/.test(line))
-      .filter((line) => !line.includes('node_modules/.pnpm/'))
-    expect(own, `own-file diagnostics:\n${own.join('\n')}`).toEqual([])
+    expect(ok, `tsc reported errors:\n${output}`).toBe(true)
   })
 })
 
@@ -565,15 +529,7 @@ describe('publish contract (npm pack)', () => {
     // `start.mjs` imports `./warmed.mjs` and `start.d.mts` imports
     // `./warmed.d.ts`; a `files` allowlist that forgot either would publish an
     // entry that dangles on a missing file.
-    const out = execFileSync('npm', ['pack', '--json', '--dry-run'], {
-      cwd: packageDir,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-    const packed = (
-      JSON.parse(out) as Array<{ files: Array<{ path: string }> }>
-    )[0].files.map((f) => f.path)
-    expect(packed).toEqual(
+    expect(packedFiles()).toEqual(
       expect.arrayContaining([
         'start.mjs',
         'start.d.mts',
