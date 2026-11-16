@@ -44,7 +44,8 @@ export interface CsFederateCurrentOptions extends CsFederateCommonOptions {
    *   wherever a failure should be loud.
    *
    * Misuse is never folded into `null`: an unknown `onError`, a `request` /
-   * `responseHeaders` / `jar`, or a call outside a Start request, throws either
+   * `responseHeaders` / `jar`, cookie settings that conflict with an earlier
+   * call in the same request, or a call outside a Start request, throws either
    * way.
    */
   onError?: "throw" | "null";
@@ -66,8 +67,9 @@ export interface CsFederateCurrentOptions extends CsFederateCommonOptions {
  * `getCookie` / `setCookie`, which merge it into the response next to the
  * cookies already there (Clerk's, Start's own). Every caller inside one request
  * shares one federation, so a render that calls several server functions pays
- * for `getJwt` and the exchange once — and the first caller's `secure` /
- * `sameSite` / `getJwt` are the ones used.
+ * for `getJwt` and the exchange once. The first caller's `getJwt` is the one
+ * asked; a later call for the same workspace and cookie with a different
+ * `secure` or `sameSite` throws, since its settings could no longer be applied.
  *
  * **The cookie can only be written while the response's headers are still
  * open.** If the first federation of a request runs after Start has begun

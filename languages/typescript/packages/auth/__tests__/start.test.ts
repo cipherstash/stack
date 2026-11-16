@@ -239,6 +239,29 @@ describe('csFederateCurrent', () => {
       ])
     })
 
+    it('rejects conflicting cookie settings instead of silently keeping the first', async () => {
+      // A later caller joins the federation already started, so its settings
+      // are never applied. Asking for a Secure cookie and getting the
+      // non-Secure one an earlier caller wrote must not pass silently — and
+      // must not read as "signed out" under onError: "null".
+      const { cookies } = await inRequest(requestWith(), async () => {
+        await csFederateCurrent({ ...options, secure: false })
+        await expect(
+          csFederateCurrent({ ...options, secure: true, onError: 'null' }),
+        ).rejects.toThrow(/already federated .* secure: false/)
+        await expect(
+          csFederateCurrent({ ...options, secure: false, sameSite: 'Strict' }),
+        ).rejects.toThrow(TypeError)
+        // The defaults count: omitted means secure: true, sameSite: "Lax".
+        await expect(csFederateCurrent(options)).rejects.toThrow(TypeError)
+        // Same settings, spelled out or not, still share.
+        await csFederateCurrent({ ...options, secure: false, sameSite: 'Lax' })
+      })
+      expect(create).toHaveBeenCalledOnce()
+      expect(cookies).toHaveLength(1)
+      expect(cookies[0]).not.toMatch(/Secure/)
+    })
+
     it('does not remember a failure', async () => {
       // A failed exchange may be transient: the next caller in the same
       // request tries again instead of inheriting the error.

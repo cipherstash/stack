@@ -70,7 +70,7 @@ const startCookies = {
  * cookie again. Keyed weakly on the `Request` Start is handling, so an entry
  * lives exactly as long as its request.
  *
- * @type {WeakMap<Request, Map<string, Promise<import("./wasm-types.d.ts").TokenResult>>>}
+ * @type {WeakMap<Request, Map<string, { federation: Promise<import("./wasm-types.d.ts").TokenResult>; secure: boolean; sameSite: string }>>}
  */
 const federations = new WeakMap();
 
@@ -116,8 +116,11 @@ export async function csFederateCurrent(options) {
     );
   }
   const request = getRequest();
+  // Started outside the `try`: a conflict with a federation already under way
+  // in this request is misuse too, and throws synchronously from here.
+  const federation = federateOnce(request, federate);
   try {
-    return warmedStrategy(await federateOnce(request, federate));
+    return warmedStrategy(await federation);
   } catch (error) {
     if (onError === "null") return null;
     throw error;
@@ -127,12 +130,18 @@ export async function csFederateCurrent(options) {
 /**
  * One federation per request and cookie. A failure is forgotten, so the next
  * caller in the same request tries again rather than inheriting an error that
- * may have been transient. The first caller's `secure` / `sameSite` / `getJwt`
- * are the ones used: a later caller with the same workspace, `baseUrl` and
- * cookie name joins the federation already started.
+ * may have been transient.
+ *
+ * A later caller joins the federation already started, so its own cookie
+ * settings would never be applied. Joining with DIFFERENT `secure` /
+ * `sameSite` therefore throws rather than leaving, say, a caller that asked
+ * for a `Secure` cookie with the non-Secure one an earlier caller wrote.
+ * `getJwt` cannot be compared (it is a new closure on every call), so the
+ * first caller's is the one asked.
  *
  * @param {Request} request
  * @param {Omit<CsFederateCurrentOptions, "onError">} options
+ * @returns {Promise<import("./wasm-types.d.ts").TokenResult>}
  */
 function federateOnce(request, options) {
   let started = federations.get(request);
@@ -148,15 +157,26 @@ function federateOnce(request, options) {
     options.baseUrl ?? null,
     options.cookieName ?? null,
   ]);
-  let federation = started.get(key);
-  if (!federation) {
-    federation = csFederate({ ...options, jar: startCookies });
-    started.set(key, federation);
-    const pending = federation;
-    pending.catch(() => {
-      if (started.get(key) === pending) started.delete(key);
-    });
+  // The cookie settings as `cookieStore` will resolve them.
+  const secure = options.secure ?? true;
+  const sameSite = options.sameSite ?? "Lax";
+
+  const existing = started.get(key);
+  if (existing) {
+    if (existing.secure !== secure || existing.sameSite !== sameSite) {
+      throw new TypeError(
+        `csFederateCurrent: this request already federated ${options.workspaceCrn} with cookie settings secure: ${existing.secure}, sameSite: "${existing.sameSite}", and this call asks for secure: ${secure}, sameSite: "${sameSite}". Use the same settings for every call, or a different cookieName.`,
+      );
+    }
+    return existing.federation;
   }
+
+  const federation = csFederate({ ...options, jar: startCookies });
+  const entry = { federation, secure, sameSite };
+  started.set(key, entry);
+  federation.catch(() => {
+    if (started.get(key) === entry) started.delete(key);
+  });
   return federation;
 }
 
