@@ -160,7 +160,22 @@ client, err := encrypt.NewClient(ctx,
 `AutoCredentials`, the default, reads the environment first
 (`CS_CLIENT_ACCESS_KEY` and `CS_WORKSPACE_CRN` for the token, `CS_CLIENT_ID`
 and `CS_CLIENT_KEY` for the key), then the developer profile `stash auth login`
-writes, through the [`auth`](../auth) package. `NewCredentials` takes a client
+writes, through the [`auth`](../auth) package. `AccessKeyCredentials` takes
+the same four values from a struct your program fills, with no fallback. Its
+fields carry `env` tags (`env:"CS_CLIENT_ID,required"` and so on), so a
+configuration loader such as
+[go-envconfig](https://github.com/sethvargo/go-envconfig) or
+[caarlos0/env](https://github.com/caarlos0/env) can fill it:
+
+```go
+var creds encrypt.AccessKeyCredentials
+if err := envconfig.Process(ctx, &creds); err != nil {
+    return err
+}
+client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
+```
+
+`NewCredentials` takes a client
 id, a client key and an `auth` strategy explicitly; `OIDCFederation` mints the
 token from an identity provider's. No credentials take a raw token. The client
 key is consumed by `NewClient` and wiped, whatever the outcome.

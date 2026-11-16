@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 
 	"github.com/cipherstash/stack/languages/golang/auth"
@@ -19,9 +21,10 @@ import (
 // and hands the key to the guest.
 //
 // [AutoCredentials] is the default: the environment, then the developer
-// profile, in the Rust client's order. [NewCredentials] takes a client id,
-// a client key and a strategy explicitly; [OIDCFederation] mints the token
-// from an identity provider's. Those three are the only implementations:
+// profile, in the Rust client's order. [AccessKeyCredentials] takes the four
+// values the program loaded itself, with no fallback. [NewCredentials] takes
+// a client id, a client key and a strategy explicitly; [OIDCFederation] mints
+// the token from an identity provider's. Those four are the only implementations:
 // the interface is sealed, so a bearer token always comes from an auth
 // strategy. A raw token cannot be refreshed when it expires, and a source
 // outside the strategies would bypass the cross-process refresh lock the
@@ -264,6 +267,128 @@ func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*res
 	})
 }
 
+// AccessKeyCredentials is [Credentials] from four values the program loads
+// itself: the client id and client key, and the access key that is
+// exchanged for a token in the workspace WorkspaceCRN names. Nothing falls
+// back to the environment or to the developer profile; an empty field fails
+// NewClient with [ErrEncoding], naming the field.
+//
+// The field tags name the variables [AutoCredentials] reads, in the form
+// github.com/sethvargo/go-envconfig and github.com/caarlos0/env read, so a
+// service that loads its configuration with either can embed the struct or
+// fill it directly:
+//
+//	var creds encrypt.AccessKeyCredentials
+//	if err := envconfig.Process(ctx, &creds); err != nil {
+//		return err
+//	}
+//	client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
+//
+// The access-key exchange runs in auth's credential guest, which
+// NewClient opens with nothing mounted and the client's [WithTransport]
+// and [WithRequireLockedMemory] settings, and Client.Close releases.
+// CS_CTS_HOST and CS_ZEROKMS_HOST still override the endpoints, as they do
+// for every Credentials.
+//
+// A Go string cannot be wiped, so the client key in ClientKey stays in the
+// program's memory as long as the struct does; NewClient wipes its own copy.
+// The struct prints and logs the client id and workspace only.
+type AccessKeyCredentials struct {
+	// ClientID is the ZeroKMS client id (a UUID).
+	ClientID string `env:"CS_CLIENT_ID,required"`
+	// ClientKey is the client key: the hex form, or the base64 of
+	// secretkey.json.
+	ClientKey string `env:"CS_CLIENT_KEY,required"`
+	// ClientAccessKey is the access key exchanged for a bearer token.
+	ClientAccessKey string `env:"CS_CLIENT_ACCESS_KEY,required"`
+	// WorkspaceCRN is the workspace the access key belongs to.
+	WorkspaceCRN string `env:"CS_WORKSPACE_CRN,required"`
+}
+
+// String names the credentials' kind, client id and workspace. The client
+// key and the access key are never printed.
+func (c AccessKeyCredentials) String() string {
+	return fmt.Sprintf("encrypt.AccessKeyCredentials{client_id: %s, workspace_crn: %s}", c.ClientID, c.WorkspaceCRN)
+}
+
+// GoString is String, so %#v prints no key either.
+func (c AccessKeyCredentials) GoString() string { return c.String() }
+
+// LogValue logs the client id and workspace, and neither key.
+func (c AccessKeyCredentials) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("client_id", c.ClientID),
+		slog.String("workspace_crn", c.WorkspaceCRN),
+	)
+}
+
+func (c AccessKeyCredentials) resolve(ctx context.Context, opts resolveOptions) (_ *resolvedCredentials, err error) {
+	var empty []string
+	for _, field := range []struct{ name, env, value string }{
+		{"ClientID", envClientID, c.ClientID},
+		{"ClientKey", envClientKey, c.ClientKey},
+		{"ClientAccessKey", envAccessKey, c.ClientAccessKey},
+		{"WorkspaceCRN", envWorkspaceCRN, c.WorkspaceCRN},
+	} {
+		if field.value == "" {
+			empty = append(empty, fmt.Sprintf("%s (%s)", field.name, field.env))
+		}
+	}
+	if len(empty) > 0 {
+		return nil, fmt.Errorf("%w: AccessKeyCredentials: empty: %s", ErrEncoding, strings.Join(empty, ", "))
+	}
+	store, err := openCredentialGuest(ctx, opts, auth.OpenWithoutProfile)
+	if err != nil {
+		return nil, credentialGuestError(err)
+	}
+	defer func() {
+		if err != nil {
+			_ = store.Close()
+		}
+	}()
+	token, err := store.AccessKey(ctx, c.WorkspaceCRN, c.ClientAccessKey)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt: credentials: check ClientAccessKey and WorkspaceCRN: %w", err)
+	}
+	return &resolvedCredentials{
+		ClientID: c.ClientID,
+		// This copy can be wiped, and the ClientKey owns it.
+		ClientKey: NewClientKey([]byte(c.ClientKey)),
+		Token:     token,
+		Close: func() error {
+			return errors.Join(token.Close(), store.Close())
+		},
+		MemoryLockError: store.MemoryLockError,
+	}, nil
+}
+
+// openCredentialGuest opens auth's credential guest with open (auth.Resolve
+// or auth.OpenWithoutProfile) under the client's transport and memory-lock
+// policy.
+func openCredentialGuest(
+	ctx context.Context,
+	opts resolveOptions,
+	open func(context.Context, ...auth.Option) (*auth.ProfileStore, error),
+) (*auth.ProfileStore, error) {
+	authOpts := []auth.Option{auth.WithRoundTripper(opts.Transport)}
+	if opts.RequireLockedMemory {
+		authOpts = append(authOpts, auth.RequireLockedMemory())
+	}
+	return open(ctx, authOpts...)
+}
+
+// credentialGuestError wraps a failure to open the credential guest.
+func credentialGuestError(err error) error {
+	if errors.Is(err, ErrMemoryLock) {
+		// Under RequireLockedMemory the guest is refused before anything is
+		// resolved — on a host that cannot lock or reserve its memory at all
+		// (a 32-bit address space, a zero RLIMIT_MEMLOCK). Name which guest,
+		// as the client's own report does.
+		return fmt.Errorf("encrypt: credentials: the credential guest: %w", err)
+	}
+	return fmt.Errorf("encrypt: credentials: %w", err)
+}
+
 // resolveWithStrategy opens the credential guest — over the profile when
 // there is one, with nothing mounted when there is not — asks strategy for
 // the token source (passing why there is no profile, when there is none),
@@ -275,11 +400,7 @@ func resolveWithStrategy(
 	opts resolveOptions,
 	strategy func(ctx context.Context, profile *auth.ProfileStore, noProfile error) (*auth.Strategy, error),
 ) (_ *resolvedCredentials, err error) {
-	authOpts := []auth.Option{auth.WithRoundTripper(opts.Transport)}
-	if opts.RequireLockedMemory {
-		authOpts = append(authOpts, auth.RequireLockedMemory())
-	}
-	profile, err := auth.Resolve(ctx, authOpts...)
+	profile, err := openCredentialGuest(ctx, opts, auth.Resolve)
 	// noProfile is why there is no profile to consult, when there is none:
 	// kept for the errors that would have consulted it, so a profile that
 	// exists but cannot be opened is not reported as "not logged in".
@@ -288,17 +409,10 @@ func resolveWithStrategy(
 		// The strategies that need no profile still run, in a guest with
 		// nothing mounted; every profile read on it is ErrNoProfile.
 		noProfile = err
-		profile, err = auth.OpenWithoutProfile(ctx, authOpts...)
-	}
-	if errors.Is(err, ErrMemoryLock) {
-		// Under RequireLockedMemory the guest is refused before anything is
-		// resolved — on a host that cannot lock or reserve its memory at all
-		// (a 32-bit address space, a zero RLIMIT_MEMLOCK). Name which guest,
-		// as the client's own report does.
-		return nil, fmt.Errorf("encrypt: credentials: the credential guest: %w", err)
+		profile, err = openCredentialGuest(ctx, opts, auth.OpenWithoutProfile)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("encrypt: credentials: %w", err)
+		return nil, credentialGuestError(err)
 	}
 	defer func() {
 		if err != nil {
