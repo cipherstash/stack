@@ -134,9 +134,13 @@ pub(crate) mod signing {
 
     impl TestKey {
         pub(crate) fn generate(kid: &'static str) -> Self {
+            Self::generate_with_size(kid, KeySize::Rsa2048)
+        }
+
+        pub(crate) fn generate_with_size(kid: &'static str, size: KeySize) -> Self {
             Self {
                 kid,
-                pair: KeyPair::generate(KeySize::Rsa2048).unwrap(),
+                pair: KeyPair::generate(size).unwrap(),
             }
         }
 

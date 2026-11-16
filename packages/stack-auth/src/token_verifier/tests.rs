@@ -433,6 +433,37 @@ mod given_the_key_cache {
         assert_eq!(cts.requests().len(), 1);
     }
 
+    /// Each filter on its own: the key carries key-b's RSA modulus and
+    /// exponent, so only the named field keeps it out.
+    #[tokio::test]
+    async fn a_key_not_typed_rsa_or_not_for_rs256_is_ignored() {
+        for (field, value) in [("kty", "EC"), ("alg", "RS512"), ("use", "enc")] {
+            let mut key = KEY_B.jwk();
+            key[field] = value.into();
+            let jwks = serde_json::json!({"keys": [KEY_A.jwk(), key]}).to_string();
+            let cts = FakeCts::serving(jwks);
+            let verifier = verifier(&cts, &ManualClock::at(NOW));
+
+            assert!(
+                verdict(&verifier, KEY_B.jwt(claims())).await.is_err(),
+                "a key with {field} {value:?} must not verify an RS256 signature"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_jwks_is_reused_for_an_hour() {
+        let cts = FakeCts::serving(jwks(&[&KEY_A]));
+        let clock = ManualClock::at(NOW);
+        let verifier = verifier(&cts, &clock);
+
+        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+        clock.advance(59 * 60);
+        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+
+        assert_eq!(cts.requests().len(), 1, "an hour-old JWKS is still fresh");
+    }
+
     #[tokio::test]
     async fn the_jwks_is_fetched_again_once_stale() {
         let cts = FakeCts::serving(jwks(&[&KEY_A]));
@@ -652,6 +683,32 @@ mod given_the_verification_setting {
     }
 }
 
+mod given_a_refusal {
+    use super::*;
+
+    /// The log line is the only place a refusal's reason appears, so each
+    /// one must say something, and something different.
+    #[test]
+    fn each_reason_describes_itself() {
+        let reasons: Vec<String> = [
+            Rejection::Malformed,
+            Rejection::Algorithm,
+            Rejection::Issuer,
+            Rejection::Expired,
+            Rejection::Audience,
+            Rejection::UnknownKey,
+            Rejection::Signature,
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+
+        let distinct: std::collections::HashSet<&String> = reasons.iter().collect();
+        assert!(reasons.iter().all(|r| !r.is_empty()), "got {reasons:?}");
+        assert_eq!(distinct.len(), reasons.len(), "got {reasons:?}");
+    }
+}
+
 /// Both RS256 backends, against the same vectors: the host runs aws-lc-rs,
 /// wasm32 runs RustCrypto's `rsa`, and only the host runs tests.
 mod given_each_rs256_backend {
@@ -672,6 +729,15 @@ mod given_each_rs256_backend {
                 verify(&signing_key(&KEY_A), b"message", &signature),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn a_4096_bit_key_verifies() {
+        let key = TestKey::generate_with_size("key-4096", aws_lc_rs::rsa::KeySize::Rsa4096);
+        let signature = key.sign(b"message");
+        for (name, verify) in BACKENDS {
+            assert!(verify(&signing_key(&key), b"message", &signature), "{name}");
         }
     }
 
