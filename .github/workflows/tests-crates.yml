@@ -136,10 +136,13 @@ jobs:
       - name: rustdoc
         run: mise run doc
 
-      # The stack-encrypt examples need live credentials, so they are built
-      # here and run in tests-golang.yml `live`.
+      # The stack-encrypt examples and stack-auth's `verify_tokens` need live
+      # credentials, so they are built here and run in tests-golang.yml `live`.
       - name: Build the stack-encrypt examples
         run: cargo build --locked -p stack-encrypt --examples
+
+      - name: Build the stack-auth verify_tokens example
+        run: cargo build --locked -p stack-auth --example verify_tokens
 
       # The crates release-plz publishes. `--dry-run` packages and compiles
       # each the way crates.io would (all five together, so each resolves the

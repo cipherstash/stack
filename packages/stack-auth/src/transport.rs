@@ -368,6 +368,25 @@ pub(crate) async fn post_form<B: serde::Serialize>(
     .await
 }
 
+/// `GET` `url` with an `accept` header and [`user_agent`], and no body. Used
+/// for CTS's public signing keys, so nothing it sends is a secret.
+pub(crate) async fn get(
+    transport: &SharedTransport,
+    url: Url,
+    accept: &str,
+) -> Result<HttpResponse, RequestError> {
+    let request = HttpRequest {
+        method: "GET",
+        url,
+        headers: Zeroizing::new(vec![
+            ("accept".to_string(), accept.to_string()),
+            ("user-agent".to_string(), user_agent().to_string()),
+        ]),
+        body: Zeroizing::new(Vec::new()),
+    };
+    transport.send_dyn(request).await
+}
+
 /// `POST` `body` as `content_type`, with `extra` headers first and then
 /// `content-type` and [`user_agent`]. A failure
 /// here is the transport's (or the encoder's); the caller lifts it into

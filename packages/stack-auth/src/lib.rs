@@ -59,6 +59,7 @@ mod error;
 mod service_token;
 mod token;
 mod token_store;
+mod token_verifier;
 mod transport;
 
 // The strategies that acquire and refresh tokens over HTTP, and the refresh

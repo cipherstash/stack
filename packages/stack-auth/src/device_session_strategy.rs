@@ -5,6 +5,7 @@ use stack_profile::ProfileStore;
 
 use crate::auto_refresh::AutoRefresh;
 use crate::device_session_refresher::{ensure_workspace, DeviceSessionRefresher};
+use crate::token_verifier::{self, TokenVerifier, Verification};
 use crate::transport::{self, SharedTransport};
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, HttpTransport, ServiceToken, Token};
 
@@ -37,6 +38,7 @@ pub struct DeviceSessionStrategy {
     crn: Option<Crn>,
     /// When set, every token is checked against this workspace.
     expected_workspace: Option<WorkspaceId>,
+    verifier: Option<TokenVerifier>,
     inner: AutoRefresh<DeviceSessionRefresher>,
 }
 
@@ -59,6 +61,7 @@ impl DeviceSessionStrategy {
             base_url_override: None,
             transport: None,
             expected_workspace: None,
+            verification: Verification::Off,
         }
     }
 
@@ -76,6 +79,7 @@ impl DeviceSessionStrategy {
             base_url_override: None,
             transport: None,
             expected_workspace: None,
+            verification: Verification::Off,
         }
     }
 
@@ -90,6 +94,7 @@ impl DeviceSessionStrategy {
             base_url_override: None,
             transport: None,
             expected_workspace: None,
+            verification: Verification::Off,
         }
     }
 
@@ -102,6 +107,7 @@ impl DeviceSessionStrategy {
 impl AuthStrategy for &DeviceSessionStrategy {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
         let token = self.inner.get_token().await?;
+        let token = token_verifier::verify_if(self.verifier.as_ref(), token).await?;
         match self.expected_workspace {
             Some(expected) => token.verify_workspace(expected),
             None => Ok(token),
@@ -130,9 +136,44 @@ pub struct DeviceSessionStrategyBuilder {
     base_url_override: Option<url::Url>,
     transport: Option<SharedTransport>,
     expected_workspace: Option<WorkspaceId>,
+    verification: Verification,
 }
 
 impl DeviceSessionStrategyBuilder {
+    /// Verify every token before [`get_token`](AuthStrategy::get_token)
+    /// returns it, against the CTS that serves the session's region.
+    ///
+    /// The token must be signed with RS256 by a key that issuer publishes at
+    /// `<issuer>/.well-known/jwks.json`, name that issuer as `iss`, and not
+    /// have expired. The issuer is pinned from the region (the one passed to
+    /// [`with_token`](DeviceSessionStrategy::with_token), or the one saved
+    /// with the session), not from [`base_url`](Self::base_url),
+    /// `CS_CTS_HOST` or the saved token's own `iss`, so redirecting where
+    /// tokens are requested does not change which tokens are accepted. A token
+    /// that fails is refused with [`AuthError::InvalidToken`].
+    pub fn verify_tokens(mut self) -> Self {
+        self.verification = self.verification.enable();
+        self
+    }
+
+    /// Verify every token against `issuer` instead of the region's CTS.
+    ///
+    /// Implies [`verify_tokens`](Self::verify_tokens). For a staging CTS or a
+    /// local one: unlike [`base_url`](Self::base_url) and `CS_CTS_HOST`,
+    /// which only change where tokens are requested, this changes which
+    /// issuer is trusted, so set it only from configuration you control.
+    pub fn trusted_issuer(mut self, issuer: url::Url) -> Self {
+        self.verification = Verification::Issuer(issuer);
+        self
+    }
+
+    /// The auto strategy's verification setting, handed through.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn verification(mut self, verification: Verification) -> Self {
+        self.verification = verification;
+        self
+    }
+
     /// Pin the strategy to the workspace named by `crn`.
     ///
     /// Every token returned by `get_token` is checked against the CRN's
@@ -196,6 +237,7 @@ impl DeviceSessionStrategyBuilder {
             base_url_override,
             transport,
             expected_workspace,
+            verification,
         } = self;
         let transport = transport::resolve(transport)?;
         match source {
@@ -210,6 +252,7 @@ impl DeviceSessionStrategyBuilder {
                 base_url_override,
                 transport,
                 expected_workspace,
+                verification,
             ),
             OAuthTokenSource::Store(store) => {
                 let ws_store = match expected_workspace {
@@ -221,6 +264,7 @@ impl DeviceSessionStrategyBuilder {
                     base_url_override,
                     transport,
                     expected_workspace,
+                    verification,
                 )
             }
             OAuthTokenSource::WorkspaceStore(store) => Self::build_from_workspace_store(
@@ -228,6 +272,7 @@ impl DeviceSessionStrategyBuilder {
                 base_url_override,
                 transport,
                 expected_workspace,
+                verification,
             ),
         }
     }
@@ -240,7 +285,9 @@ impl DeviceSessionStrategyBuilder {
         base_url_override: Option<url::Url>,
         transport: SharedTransport,
         expected_workspace: Option<WorkspaceId>,
+        verification: Verification,
     ) -> Result<DeviceSessionStrategy, AuthError> {
+        let verifier = verification.resolve(|| Ok(region), None, &transport)?;
         let base_url = match base_url_override {
             Some(url) => url,
             None => {
@@ -275,6 +322,7 @@ impl DeviceSessionStrategyBuilder {
         Ok(DeviceSessionStrategy {
             crn,
             expected_workspace,
+            verifier,
             inner: AutoRefresh::with_token(refresher, token),
         })
     }
@@ -285,6 +333,7 @@ impl DeviceSessionStrategyBuilder {
         base_url_override: Option<url::Url>,
         transport: SharedTransport,
         expected_workspace: Option<WorkspaceId>,
+        verification: Verification,
     ) -> Result<DeviceSessionStrategy, AuthError> {
         let token: Token = ws_store.load_profile()?;
         // Before `AutoRefresh` can see it: refreshing another workspace's
@@ -307,6 +356,9 @@ impl DeviceSessionStrategyBuilder {
             })
             .ok();
         let device_instance_id = token.device_instance_id().map(String::from);
+        // The region saved with the session, not the token's `iss`: the
+        // issuer a saved token names is exactly what is being checked.
+        let verifier = verification.resolve(|| Ok(Region::new(&region_str)?), None, &transport)?;
 
         let base_url = match base_url_override {
             Some(url) => url,
@@ -325,6 +377,7 @@ impl DeviceSessionStrategyBuilder {
         Ok(DeviceSessionStrategy {
             crn,
             expected_workspace,
+            verifier,
             inner: AutoRefresh::with_token(refresher, token),
         })
     }

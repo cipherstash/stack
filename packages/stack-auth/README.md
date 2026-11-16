@@ -178,6 +178,35 @@ Sensitive values ([`SecretToken`]) are automatically zeroized when dropped
 and are masked in [`Debug`](std::fmt::Debug) output to prevent accidental
 leaks in logs.
 
+### Verifying tokens
+
+By default a strategy trusts the token CTS returns. Call `verify_tokens()` on
+a strategy builder to check every token before it is handed out: it must be
+signed with RS256 by a key that the trusted issuer publishes at
+`<issuer>/.well-known/jwks.json`, name that issuer as `iss`, and not have
+expired (and, for an access key strategy with an `audience`, be for that
+audience). A token that fails is refused with [`AuthError::InvalidToken`].
+
+The trusted issuer is the CTS that serves the workspace's region. It is
+pinned separately from the auth URL: `base_url()` and `CS_CTS_HOST` change
+where tokens are requested, never which issuer is trusted, so a redirected
+auth URL cannot hand the client a token naming its own ZeroKMS endpoint. Use
+`trusted_issuer(url)` to trust a different CTS, such as a staging one.
+
+```rust,no_run
+use stack_auth::{AccessKey, AccessKeyStrategy};
+use cts_common::Crn;
+
+# fn run() -> Result<(), Box<dyn std::error::Error>> {
+let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse()?;
+let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse()?;
+let strategy = AccessKeyStrategy::builder(crn, key)
+    .verify_tokens()
+    .build()?;
+# Ok(())
+# }
+```
+
 ## Token refresh
 
 All strategies that cache tokens ([`AccessKeyStrategy`], [`DeviceSessionStrategy`],

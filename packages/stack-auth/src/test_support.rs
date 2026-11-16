@@ -107,3 +107,162 @@ pub(crate) fn jwt_for_principal(workspace: &str, sub: &str) -> String {
     )
     .expect("JWT encode")
 }
+
+/// RS256 keys and a stub CTS that signs with them, for exercising token
+/// verification (`token_verifier`) without a real CTS.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod signing {
+    use std::sync::{LazyLock, Mutex};
+
+    use aws_lc_rs::rand::SystemRandom;
+    use aws_lc_rs::rsa::{KeyPair, KeySize, PublicKeyComponents};
+    use aws_lc_rs::signature::{KeyPair as _, RSA_PKCS1_SHA256};
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+
+    use crate::error::RequestError;
+    use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
+
+    /// RSA keys are slow to generate, so each test borrows these.
+    pub(crate) static KEY_A: LazyLock<TestKey> = LazyLock::new(|| TestKey::generate("key-a"));
+    pub(crate) static KEY_B: LazyLock<TestKey> = LazyLock::new(|| TestKey::generate("key-b"));
+
+    pub(crate) struct TestKey {
+        pub(crate) kid: &'static str,
+        pair: KeyPair,
+    }
+
+    impl TestKey {
+        pub(crate) fn generate(kid: &'static str) -> Self {
+            Self {
+                kid,
+                pair: KeyPair::generate(KeySize::Rsa2048).unwrap(),
+            }
+        }
+
+        pub(crate) fn components(&self) -> PublicKeyComponents<Vec<u8>> {
+            PublicKeyComponents::from(self.pair.public_key())
+        }
+
+        pub(crate) fn jwk(&self) -> serde_json::Value {
+            let public = self.components();
+            serde_json::json!({
+                "kty": "RSA",
+                "kid": self.kid,
+                "alg": "RS256",
+                "use": "sig",
+                "n": URL_SAFE_NO_PAD.encode(&public.n),
+                "e": URL_SAFE_NO_PAD.encode(&public.e),
+            })
+        }
+
+        pub(crate) fn sign(&self, message: &[u8]) -> Vec<u8> {
+            let mut signature = vec![0; self.pair.public_modulus_len()];
+            self.pair
+                .sign(
+                    &RSA_PKCS1_SHA256,
+                    &SystemRandom::new(),
+                    message,
+                    &mut signature,
+                )
+                .unwrap();
+            signature
+        }
+
+        /// A compact JWT over `header` and `claims`, signed with this key.
+        pub(crate) fn jwt_with_header(
+            &self,
+            header: serde_json::Value,
+            claims: serde_json::Value,
+        ) -> String {
+            let signed = format!(
+                "{}.{}",
+                URL_SAFE_NO_PAD.encode(header.to_string()),
+                URL_SAFE_NO_PAD.encode(claims.to_string()),
+            );
+            let signature = self.sign(signed.as_bytes());
+            format!("{signed}.{}", URL_SAFE_NO_PAD.encode(signature))
+        }
+
+        pub(crate) fn jwt(&self, claims: serde_json::Value) -> String {
+            self.jwt_with_header(
+                serde_json::json!({"alg": "RS256", "typ": "JWT", "kid": self.kid}),
+                claims,
+            )
+        }
+    }
+
+    /// A JWKS publishing `keys`.
+    pub(crate) fn jwks(keys: &[&TestKey]) -> String {
+        serde_json::json!({ "keys": keys.iter().map(|key| key.jwk()).collect::<Vec<_>>() })
+            .to_string()
+    }
+
+    /// A stub CTS: `POST .../api/authorise` returns `token`, and
+    /// `GET .../.well-known/jwks.json` returns `jwks`, whatever the host. It
+    /// records each `(method, url)` it is sent.
+    pub(crate) struct StubCts {
+        token: String,
+        jwks: String,
+        seen: Mutex<Vec<(String, String)>>,
+    }
+
+    impl StubCts {
+        pub(crate) fn new(token: String, jwks: String) -> Self {
+            Self {
+                token,
+                jwks,
+                seen: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// The URLs of the JWKS requests the stub has seen.
+        pub(crate) fn jwks_requests(&self) -> Vec<String> {
+            self.seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(method, _)| method == "GET")
+                .map(|(_, url)| url.clone())
+                .collect()
+        }
+    }
+
+    impl HttpTransport for StubCts {
+        async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+            let url = request.url().clone();
+            self.seen
+                .lock()
+                .unwrap()
+                .push((request.method().to_string(), url.to_string()));
+            let body = match (request.method(), url.path()) {
+                ("GET", path) if path.ends_with("/.well-known/jwks.json") => self.jwks.clone(),
+                ("POST", path) if path.ends_with("/api/authorise") => serde_json::json!({
+                    "accessToken": self.token,
+                    "expiry": u64::from(u32::MAX),
+                })
+                .to_string(),
+                _ => return Ok(HttpResponse::new(404, Vec::new(), Vec::new())),
+            };
+            Ok(HttpResponse::new(200, Vec::new(), body.into_bytes()))
+        }
+    }
+
+    /// CTS claims for `workspace`, issued by `iss`, valid for an hour.
+    pub(crate) fn claims(iss: &str, workspace: &str) -> serde_json::Value {
+        let now = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        serde_json::json!({
+            "iss": iss,
+            "sub": "CS|test-principal",
+            "aud": "test-audience",
+            "iat": now,
+            "exp": now + 3600,
+            "workspace": workspace,
+            "org_id": "org_test_default",
+            "scope": "",
+        })
+    }
+}
