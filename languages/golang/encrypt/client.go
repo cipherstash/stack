@@ -118,10 +118,8 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	if err == nil && cfg.keysetCacheSize < 0 {
 		err = fmt.Errorf("%w: WithKeysetCacheSize must not be negative", ErrEncoding)
 	}
-	if explicit, ok := creds.(*explicitCredentials); ok && err == nil && explicit.token == nil {
-		// Knowable from the credentials as they were built: the one place
-		// a missing token source is decided.
-		err = fmt.Errorf("%w: NewCredentials needs an auth strategy for the token", ErrEncoding)
+	if err == nil {
+		err = checkCredentials(creds)
 	}
 	wasm := cfg.guest
 	if err == nil && wasm == nil {
@@ -161,8 +159,8 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	if cfg.requireLockedMemory && resolved.MemoryLockError != nil {
 		// The credentials' own guest held the key, and holds the token
 		// strategy: under the strict policy its memory must be locked too.
-		// AutoCredentials and OIDCFederation open it strict and cannot get
-		// here unlocked; NewCredentials' store is the caller's, opened
+		// AutoCredentials, AccessKeyCredentials, and OIDCFederation open it
+		// strict and cannot get here unlocked; NewCredentials' store is the caller's, opened
 		// however the caller chose.
 		if lockErr := resolved.MemoryLockError(); lockErr != nil {
 			return nil, fmt.Errorf("encrypt: the credentials' memory: %w", lockErr)
@@ -211,6 +209,27 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	return c, nil
 }
 
+// checkCredentials refuses credentials that were built wrong. Each of these
+// checks needs nothing resolved, and this is the only place it is made.
+func checkCredentials(creds Credentials) error {
+	switch c := creds.(type) {
+	case *explicitCredentials:
+		if c.token == nil {
+			return fmt.Errorf("%w: NewCredentials needs an auth strategy for the token", ErrEncoding)
+		}
+	case AccessKeyCredentials:
+		return c.validate()
+	case *AccessKeyCredentials:
+		// A nil pointer inside the Credentials interface passes NewClient's
+		// nil check. Calling its value method would then panic.
+		if c == nil {
+			return fmt.Errorf("%w: the credentials are a nil *AccessKeyCredentials", ErrEncoding)
+		}
+		return c.validate()
+	}
+	return nil
+}
+
 // consumeUnresolved is what NewClient owes a Credentials it refuses a
 // config without asking: explicit credentials hold their key from
 // construction, so it is wiped rather than handed back live, and they are
@@ -246,7 +265,8 @@ func newClient(inst *instance, t *transport) *Client {
 // MemoryLocked reports whether the memory the client's key material lives
 // in — this guest's, where the client key and every loaded index key are,
 // and whatever the credentials held it in on the way (auth's
-// credential guest, for [AutoCredentials]) — is locked in RAM and, on
+// credential guest, for [AutoCredentials], [AccessKeyCredentials], and
+// [OIDCFederation]) — is locked in RAM and, on
 // Linux, excluded from core dumps. False means a lock was refused (on
 // Linux, most often RLIMIT_MEMLOCK, which defaults to 64 KiB on many
 // hosts) or is not available on this platform, and the client is working

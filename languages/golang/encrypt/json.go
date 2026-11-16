@@ -135,7 +135,7 @@ func (t JSONToken) Value() (driver.Value, error) {
 }
 
 // redacted stands in for a token, a selector or a path in what the JSON
-// read types print and log.
+// read types print and log. It also stands in for a [Secret].
 const redacted = "[redacted]"
 
 // String hides the token: it is a capability, so it does not print.
