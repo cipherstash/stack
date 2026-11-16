@@ -248,7 +248,7 @@ describe('csFederateCurrent', () => {
         await csFederateCurrent({ ...options, secure: false })
         await expect(
           csFederateCurrent({ ...options, secure: true, onError: 'null' }),
-        ).rejects.toThrow(/already federated .* secure: false/)
+        ).rejects.toThrow(/already writing the cookie .* secure: false/)
         await expect(
           csFederateCurrent({ ...options, secure: false, sameSite: 'Strict' }),
         ).rejects.toThrow(TypeError)
@@ -260,6 +260,48 @@ describe('csFederateCurrent', () => {
       expect(create).toHaveBeenCalledOnce()
       expect(cookies).toHaveLength(1)
       expect(cookies[0]).not.toMatch(/Secure/)
+    })
+
+    it('checks cookie settings by the cookie that is written, not by how it was named', async () => {
+      // The default cookie name left out and the same name spelled out are one
+      // cookie: they share a federation, and may not disagree about it.
+      await inRequest(requestWith(), async () => {
+        await csFederateCurrent({ ...options, secure: false })
+        await expect(
+          csFederateCurrent({ ...options, cookieName: COOKIE, secure: true }),
+        ).rejects.toThrow(new RegExp(`already writing the cookie "${COOKIE}"`))
+        await csFederateCurrent({
+          ...options,
+          cookieName: COOKIE,
+          secure: false,
+        })
+      })
+      expect(create).toHaveBeenCalledOnce()
+    })
+
+    it('checks cookie settings across federations that share a cookie', async () => {
+      // Two CTS hosts for one workspace are two federations, but one cookie.
+      const elsewhere = { ...options, baseUrl: 'https://cts.other.example' }
+      const { cookies } = await inRequest(requestWith(), async () => {
+        await csFederateCurrent({ ...options, sameSite: 'Strict' })
+        await expect(
+          csFederateCurrent({ ...elsewhere, onError: 'null' }),
+        ).rejects.toThrow(/already writing the cookie .* sameSite: "Strict"/)
+        // With the same settings the second federation is allowed.
+        await csFederateCurrent({ ...elsewhere, sameSite: 'Strict' })
+      })
+      expect(create).toHaveBeenCalledTimes(2)
+      expect(cookies.every((c) => /SameSite=Strict/.test(c))).toBe(true)
+    })
+
+    it("forgets a cookie's settings with the failure that set them", async () => {
+      failFederation()
+      await inRequest(requestWith(), async () => {
+        await csFederateCurrent({ ...options, secure: false, onError: 'null' })
+        installFakeStrategy()
+        // Nothing was written, so nothing is in conflict.
+        await csFederateCurrent({ ...options, secure: true })
+      })
     })
 
     it('does not remember a failure', async () => {

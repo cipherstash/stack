@@ -605,9 +605,9 @@ signed out.
 - **Within a request**, every `csFederateCurrent` call for the same workspace
   shares one federation. A server render that calls several server functions
   runs your middleware once per function, but asks `getJwt` and exchanges with
-  CTS once. The first caller's `getJwt` is the one asked. A later call for the
-  same workspace and cookie with a different `secure` or `sameSite` throws,
-  because its settings could no longer be applied to a cookie already written.
+  CTS once. The first caller's `getJwt` is the one asked. A later call that
+  writes the same cookie with a different `secure` or `sameSite` throws, because
+  one cookie cannot carry both.
 - **Across requests**, the cookie is reused only for the JWT it was federated
   from. That binding is what stops a cookie left over from a previous sign-in
   serving another user. It also means the cookie only helps when `getJwt`

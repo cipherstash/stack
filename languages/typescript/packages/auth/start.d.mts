@@ -68,8 +68,8 @@ export interface CsFederateCurrentOptions extends CsFederateCommonOptions {
  * cookies already there (Clerk's, Start's own). Every caller inside one request
  * shares one federation, so a render that calls several server functions pays
  * for `getJwt` and the exchange once. The first caller's `getJwt` is the one
- * asked; a later call for the same workspace and cookie with a different
- * `secure` or `sameSite` throws, since its settings could no longer be applied.
+ * asked; a later call that writes the same cookie with a different `secure` or
+ * `sameSite` throws, since the cookie cannot carry both.
  *
  * **The cookie can only be written while the response's headers are still
  * open.** If the first federation of a request runs after Start has begun

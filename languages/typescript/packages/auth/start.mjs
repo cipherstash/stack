@@ -35,7 +35,7 @@
 // Start-version seam in how the response is written.
 
 import { getCookie, getRequest, setCookie } from "@tanstack/react-start/server";
-import { csFederate } from "./next.mjs";
+import { csFederate, csTokenCookieName } from "./next.mjs";
 import { warmedStrategy } from "./warmed.mjs";
 
 /**
@@ -63,16 +63,25 @@ const startCookies = {
 };
 
 /**
- * Federations already started for a request, so every caller in that request
- * shares one. A server render calls several server functions inside ONE
- * request, each running the app's middleware; without this each would ask the
- * identity provider for a JWT and exchange it with CTS again, and write the
- * cookie again. Keyed weakly on the `Request` Start is handling, so an entry
- * lives exactly as long as its request.
+ * What this module has started for a request, so every caller in that request
+ * shares it. A server render calls several server functions inside ONE request,
+ * each running the app's middleware; without this each would ask the identity
+ * provider for a JWT and exchange it with CTS again, and write the cookie
+ * again. Keyed weakly on the `Request` Start is handling, so an entry lives
+ * exactly as long as its request.
  *
- * @type {WeakMap<Request, Map<string, { federation: Promise<import("./wasm-types.d.ts").TokenResult>; secure: boolean; sameSite: string }>>}
+ * Two maps because they answer different questions. `federations` is keyed on
+ * what decides which token comes back. `cookies` is keyed on the cookie's NAME
+ * alone and records the settings it is being written with: two federations can
+ * target one cookie (the default name spelled out or left out, or two
+ * `baseUrl`s for one workspace), and they must not write it with different
+ * `secure` / `sameSite`.
+ *
+ * @typedef {{ secure: boolean; sameSite: string; writers: number }} CookieSettings
+ * @typedef {{ federation: Promise<import("./wasm-types.d.ts").TokenResult>; cookieName: string }} Federation
+ * @type {WeakMap<Request, { federations: Map<string, Federation>; cookies: Map<string, CookieSettings> }>}
  */
-const federations = new WeakMap();
+const requests = new WeakMap();
 
 /**
  * Federate-or-reuse for the request Start is currently handling, and return
@@ -128,54 +137,82 @@ export async function csFederateCurrent(options) {
 }
 
 /**
- * One federation per request and cookie. A failure is forgotten, so the next
- * caller in the same request tries again rather than inheriting an error that
- * may have been transient.
+ * One federation per request, workspace and cookie. A failure is forgotten, so
+ * the next caller in the same request tries again rather than inheriting an
+ * error that may have been transient.
  *
  * A later caller joins the federation already started, so its own cookie
- * settings would never be applied. Joining with DIFFERENT `secure` /
- * `sameSite` therefore throws rather than leaving, say, a caller that asked
- * for a `Secure` cookie with the non-Secure one an earlier caller wrote.
- * `getJwt` cannot be compared (it is a new closure on every call), so the
- * first caller's is the one asked.
+ * settings would never be applied; and a separate federation that targets the
+ * same cookie would overwrite it. Either way, asking for a cookie this request
+ * is already writing with DIFFERENT `secure` / `sameSite` throws rather than
+ * leaving, say, a caller that asked for a `Secure` cookie with the non-Secure
+ * one an earlier caller wrote. `getJwt` cannot be compared (it is a new closure
+ * on every call), so the first caller's is the one asked.
  *
  * @param {Request} request
  * @param {Omit<CsFederateCurrentOptions, "onError">} options
  * @returns {Promise<import("./wasm-types.d.ts").TokenResult>}
  */
 function federateOnce(request, options) {
-  let started = federations.get(request);
-  if (!started) {
-    started = new Map();
-    federations.set(request, started);
+  let state = requests.get(request);
+  if (!state) {
+    state = { federations: new Map(), cookies: new Map() };
+    requests.set(request, state);
   }
+  const { federations, cookies } = state;
+
+  // The cookie's name as `csFederate` would resolve it, resolved here so the
+  // name that is checked is the name that is written: it is passed on
+  // explicitly below. (A `workspaceCrn` that is not a string is left for
+  // `csFederate` to reject, as a federation failure like any other.)
+  const workspaceId =
+    typeof options.workspaceCrn === "string"
+      ? options.workspaceCrn.split(":").at(-1)
+      : undefined;
+  const cookieName =
+    options.cookieName ??
+    (workspaceId ? csTokenCookieName(workspaceId) : undefined);
+  // `cookieStore`'s own defaults, for the name and for the settings.
+  const cookieKey = cookieName ?? "cs_token";
+  const secure = options.secure ?? true;
+  const sameSite = options.sameSite ?? "Lax";
+
+  const writing = cookies.get(cookieKey);
+  if (writing && (writing.secure !== secure || writing.sameSite !== sameSite)) {
+    throw new TypeError(
+      `csFederateCurrent: this request is already writing the cookie "${cookieKey}" with secure: ${writing.secure}, sameSite: "${writing.sameSite}", and this call asks for secure: ${secure}, sameSite: "${sameSite}". Use the same settings for every call that writes one cookie, or a different cookieName.`,
+    );
+  }
+
   // What decides which token comes back: the workspace, where it is exchanged,
   // and which cookie caches it. `getJwt` is deliberately not part of the key —
   // within one request it is the same user's JWT whichever closure asks.
   const key = JSON.stringify([
     options.workspaceCrn,
     options.baseUrl ?? null,
-    options.cookieName ?? null,
+    cookieKey,
   ]);
-  // The cookie settings as `cookieStore` will resolve them.
-  const secure = options.secure ?? true;
-  const sameSite = options.sameSite ?? "Lax";
+  const existing = federations.get(key);
+  if (existing) return existing.federation;
 
-  const existing = started.get(key);
-  if (existing) {
-    if (existing.secure !== secure || existing.sameSite !== sameSite) {
-      throw new TypeError(
-        `csFederateCurrent: this request already federated ${options.workspaceCrn} with cookie settings secure: ${existing.secure}, sameSite: "${existing.sameSite}", and this call asks for secure: ${secure}, sameSite: "${sameSite}". Use the same settings for every call, or a different cookieName.`,
-      );
-    }
-    return existing.federation;
-  }
-
-  const federation = csFederate({ ...options, jar: startCookies });
-  const entry = { federation, secure, sameSite };
-  started.set(key, entry);
+  const federation = csFederate({
+    ...options,
+    ...(cookieName ? { cookieName } : {}),
+    jar: startCookies,
+  });
+  const entry = { federation, cookieName: cookieKey };
+  federations.set(key, entry);
+  const settings = writing ?? { secure, sameSite, writers: 0 };
+  settings.writers += 1;
+  cookies.set(cookieKey, settings);
   federation.catch(() => {
-    if (started.get(key) === entry) started.delete(key);
+    // Forget the failure, and the cookie's settings with it once nothing is
+    // writing that cookie any more.
+    if (federations.get(key) === entry) federations.delete(key);
+    settings.writers -= 1;
+    if (settings.writers === 0 && cookies.get(cookieKey) === settings) {
+      cookies.delete(cookieKey);
+    }
   });
   return federation;
 }
