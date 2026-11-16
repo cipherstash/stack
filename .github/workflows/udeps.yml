@@ -67,8 +67,28 @@ env:
 
 jobs:
   udeps:
-    name: Check unused Rust dependencies
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: Check unused Rust dependencies (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - id: github
+            name: github
+            label: ubuntu-24.04
+          - id: runs-on-2
+            name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6

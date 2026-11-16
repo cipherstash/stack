@@ -62,10 +62,47 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
 
 jobs:
+  # RunsOn trial: the same job on the current Blacksmith runner, GitHub's
+  # runner and RunsOn sizes, for a side-by-side timing comparison. Collapse
+  # back to a single runner before merging.
   mutants:
-    name: Mutants gate
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    name: Mutants gate (${{ matrix.name }})
+    runs-on: ${{ matrix.label }}
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # The run id is shared by every entry, so each RunsOn label must
+        # differ, or one entry's runner can be taken by another.
+        # `family=c8a`: cargo-mutants builds and tests one mutant at a time,
+        # so per-core speed decides the run time. c8a (AMD Turin) has the
+        # best x64 single-thread score in RunsOn's EC2 benchmark and about
+        # 1.7x m8i's multi-core score at about the same price; older
+        # generations save ~5% an hour and run slower.
+        # `image=ubuntu22-full-x64` matches the Blacksmith baseline's Ubuntu
+        # 22.04; RunsOn defaults to 24.04.
+        # The default root volume leaves ~10 GiB free, which a Rust build
+        # fills; rust-lld then dies with SIGBUS (seen in cipherstash/vitaminc#487).
+        # `s3-cache` serves actions/cache from the stack's S3 bucket, so
+        # RunsOn entries share no cache entries with GitHub's or Blacksmith's.
+        include:
+          - name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - name: github
+            label: ubuntu-22.04
+          - name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          # arm64 (Graviton4) at the c8a sizes above, c8g only so the
+          # comparison is one CPU against another. `c8g.*`, not `c8g`: a bare
+          # family is a prefix, and RunsOn handed out c8gd and c8gn for it.
+          - name: runs-on c8g 16cpu arm64
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=16/image=ubuntu22-full-arm64/volume=80gb/extras=s3-cache
+          - name: runs-on c8g 8cpu arm64
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=8/image=ubuntu22-full-arm64/volume=80gb/extras=s3-cache
     permissions:
       contents: read
       # Posts and updates the report comment on the PR.
@@ -83,21 +120,24 @@ jobs:
           install: true
           working_directory: .
           install_args: rust cargo:cargo-nextest cargo:cargo-mutants
-          cache: true
-          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
-          cache_key_prefix: mise-v1-ubuntu-2204
+          # Off for the trial: a matrix `runs-on` names no image to key the
+          # cache by (scripts/__tests__/workflow-mise-cache-image.test.mjs).
+          # Every entry pays the same tool install, so compare the
+          # "Run cargo-mutants" step times, not only the job totals.
+          cache: false
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       # PR only: a manual dispatch has no base to diff against, so it sweeps
       # both crates instead (see the next step).
+      # RunsOn trial: this PR changes no crate source, so its own diff has no
+      # mutants and every runner would finish in seconds. Mutate the lines of
+      # a fixed stack-auth/stack-encrypt commit range instead (125 mutants), so
+      # every entry does the same real work.
       - name: Compute the PR diff
         if: github.event_name == 'pull_request'
-        env:
-          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch --no-tags origin "$BASE_REF"
-          git diff "origin/$BASE_REF" > pr.diff
+          git diff fb75f40d541df8158154b86ec5b7708aefe66836 9b7e122e4a0b74215743e6b4a60770160d38884e > pr.diff
           echo "Changed lines under mutation:"
           cat pr.diff
 
@@ -164,7 +204,8 @@ jobs:
       # Posted before the gate, so the comment always shows what tripped it.
       # Best effort: a comment failure must not turn the gate red.
       - name: Post the report as a sticky PR comment
-        if: always() && github.event_name == 'pull_request'
+        # Trial: one entry posts, so the matrix does not race on the comment.
+        if: always() && github.event_name == 'pull_request' && matrix.name == 'blacksmith 16vcpu'
         continue-on-error: true
         uses: actions/github-script@v9
         with:

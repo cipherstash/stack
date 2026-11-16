@@ -159,8 +159,28 @@ concurrency:
 
 jobs:
   integration:
-    name: protect-ffi integration suite
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: protect-ffi integration suite (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - id: github
+            name: github
+            label: ubuntu-24.04
+          - id: runs-on-2
+            name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     # Generous, because a cold `build-ffi-binding` compiles the cipherstash
     # client graph from scratch. It is also the backstop for `mise run
     # start-db`, whose readiness loop retries `pg_isready` forever rather than

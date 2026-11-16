@@ -58,8 +58,28 @@ env:
 
 jobs:
   crap-stack-auth:
-    name: CRAP (stack-auth)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: CRAP (stack-auth) (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -82,8 +102,28 @@ jobs:
         run: mise run crap:stack-auth -- --format github
 
   crap-stack-encrypt:
-    name: CRAP (stack-encrypt)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: CRAP (stack-encrypt) (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
