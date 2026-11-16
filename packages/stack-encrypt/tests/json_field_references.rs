@@ -151,7 +151,20 @@ mod given_a_document_field {
         ] {
             let query = match value {
                 Value::Number(n) => EncryptedCustomer::PROFILE.at(path).eq(n.as_i64().unwrap()),
-                Value::String(s) => EncryptedCustomer::PROFILE.at(path).eq(s),
+                Value::String(s) => {
+                    let borrowed = EncryptedCustomer::PROFILE
+                        .at(path)
+                        .eq(&s)
+                        .encrypt(&keyset)
+                        .await
+                        .expect("derives");
+                    assert_eq!(
+                        borrowed.matches(doc.selector_set()),
+                        holds,
+                        "{path}, a `&String`"
+                    );
+                    EncryptedCustomer::PROFILE.at(path).eq(s)
+                }
                 _ => unreachable!(),
             }
             .encrypt(&keyset)
@@ -186,6 +199,31 @@ mod given_a_document_field {
             .expect("derives");
         assert_eq!((low.selector(), high.selector()), (selector, selector));
         assert_ne!(low.ordering_term(), high.ordering_term());
+    }
+
+    #[tokio::test]
+    async fn an_element_predicate_holds_one_member_per_condition() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let visit = EncryptedCustomer::PROFILE
+            .elements("$.visits[*]")
+            .eq("place", "home")
+            .encrypt(&keyset)
+            .await
+            .expect("derives");
+        assert_eq!(visit.len(), 1);
+        assert!(!visit.is_empty());
+    }
+
+    #[test]
+    fn a_query_prints_its_field_and_not_its_values() {
+        let shown = format!(
+            "{:?}",
+            EncryptedCustomer::PROFILE.contains(json!({"name": "Ada"}))
+        );
+        assert!(shown.starts_with("JsonFieldQuery("), "{shown}");
+        assert!(shown.contains("profile"), "{shown}");
+        assert!(!shown.contains("Ada"), "{shown}");
     }
 }
 
@@ -427,6 +465,30 @@ mod the_fields_options {
             .unwrap();
         let age = entry(&stored.profile.0, &key).expect("the token names the entry");
         assert!(age.ordering_term().is_some());
+    }
+
+    #[derive(Zeroize)]
+    struct Lead {
+        profile: Option<JsonPlaintext>,
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(struct = Lead, scope = "leads")]
+    #[allow(dead_code)] // only queried
+    struct OwnOptionsLead {
+        profile: Option<AgeOrdered>,
+    }
+
+    #[tokio::test]
+    async fn a_nullable_field_queries_under_its_types_own_options() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let older = OwnOptionsLead::PROFILE
+            .at("$.age")
+            .gt(30)
+            .encrypt(&keyset)
+            .await;
+        assert!(older.is_ok(), "the type orders `$.age`: {older:?}");
     }
 }
 

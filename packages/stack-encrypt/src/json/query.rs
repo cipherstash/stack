@@ -677,6 +677,15 @@ mod tests {
         }
     }
 
+    /// The engine never derives an empty element predicate, so only a
+    /// constructed one shows `is_empty` answering true.
+    #[test]
+    fn an_element_predicate_with_no_member_is_empty() {
+        let none = JsonElementsQuery::of(Vec::new());
+        assert!(none.is_empty());
+        assert_eq!(none.len(), 0);
+    }
+
     /// Selector sets compare as the sets `jsonb @>` reads: the order of
     /// their lists does not count, their contents and their grouping do.
     #[test]
