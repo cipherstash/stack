@@ -104,6 +104,14 @@
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "cache": false
     },
+    // The DynamoDB <-> Postgres cross-store suite: CS_* credentials plus
+    // DATABASE_URL, so it too runs with `--env-mode=loose`. `^build` builds the
+    // stash CLI it installs EQL v3 with.
+    "test:protect-crossover": {
+      "dependsOn": ["^build", "build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "cache": false
+    },
     "test:integration": {
       "dependsOn": ["^build", "build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],

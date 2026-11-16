@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { findGeneratedMigration } from '../../eql/migration.js'
+import { findGeneratedMigration } from '../drizzle-migration.js'
 
 /**
  * `findGeneratedMigration` locates the custom migration scaffolded by

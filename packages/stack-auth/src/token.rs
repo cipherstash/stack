@@ -17,6 +17,29 @@ impl stack_profile::ProfileData for Token {
 /// callers can still use the current token.
 const EXPIRY_LEEWAY_SECS: u64 = 90;
 
+/// The longest token lifetime this crate accepts from a server, in seconds
+/// (30 days).
+///
+/// `expires_in` is server-supplied. A larger value is clamped to this rather
+/// than trusted: a token that claims to outlive it is refreshed early, which
+/// is safe, whereas an unbounded value would overflow `now + expires_in`
+/// (see [`expires_at_after`]).
+pub(crate) const MAX_TOKEN_LIFETIME_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// The absolute expiry (seconds since the Unix epoch) of a token issued at
+/// `now` with a server-supplied lifetime of `expires_in` seconds.
+///
+/// Every place that turns an OAuth `expires_in` into a [`Token::expires_at`]
+/// goes through here. The lifetime is clamped to [`MAX_TOKEN_LIFETIME_SECS`]
+/// and the addition saturates, so a buggy or hostile server cannot make it
+/// panic (debug builds) or wrap to an already-expired timestamp and send the
+/// caller into a refresh loop (release builds, which carry no
+/// `overflow-checks`). This is the same rule [`Token::is_expired_at`]
+/// follows for its leeway.
+pub(crate) fn expires_at_after(now: u64, expires_in: u64) -> u64 {
+    now.saturating_add(expires_in.min(MAX_TOKEN_LIFETIME_SECS))
+}
+
 /// The current Unix time in whole seconds, from the system wall clock.
 ///
 /// Delegates to [`SystemClock`](crate::clock::SystemClock) so the crate has a
@@ -329,7 +352,7 @@ impl Token {
         Ok(Token {
             access_token: token_resp.access_token,
             token_type: token_resp.token_type,
-            expires_at: now_unix_secs() + token_resp.expires_in,
+            expires_at: expires_at_after(now_unix_secs(), token_resp.expires_in),
             refresh_token: token_resp.refresh_token,
             region: None,
             client_id: None,
@@ -477,6 +500,39 @@ mod tests {
         );
     }
 
+    // ---- expires_at_after ----
+
+    #[test]
+    fn expires_at_after_passes_an_ordinary_lifetime_through() {
+        assert_eq!(expires_at_after(1_000, 3_600), 4_600);
+    }
+
+    #[test]
+    fn the_token_lifetime_cap_is_thirty_days() {
+        assert_eq!(MAX_TOKEN_LIFETIME_SECS, 2_592_000);
+    }
+
+    #[test]
+    fn expires_at_after_clamps_an_oversized_lifetime() {
+        assert_eq!(
+            expires_at_after(1_000, u64::MAX),
+            1_000 + MAX_TOKEN_LIFETIME_SECS,
+            "a server-supplied lifetime past the cap must be clamped, not trusted"
+        );
+        assert_eq!(
+            expires_at_after(1_000, MAX_TOKEN_LIFETIME_SECS),
+            1_000 + MAX_TOKEN_LIFETIME_SECS,
+            "the cap itself is accepted as-is"
+        );
+    }
+
+    #[test]
+    fn expires_at_after_saturates_instead_of_wrapping() {
+        // A wrapped sum would be a timestamp in the past: an already-expired
+        // token, and so a refresh loop.
+        assert_eq!(expires_at_after(u64::MAX - 10, 3_600), u64::MAX);
+    }
+
     // ---- refresh() tests ----
     //
     // Grouped under one feature gate rather than one per item: every helper
@@ -534,6 +590,37 @@ mod tests {
             );
             assert!(!refreshed.is_expired());
             assert!((3598..=3600).contains(&refreshed.expires_in()));
+        }
+
+        #[tokio::test]
+        async fn test_refresh_clamps_an_oversized_expires_in() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.json(serde_json::json!({
+                    "access_token": "new-access-token",
+                    "token_type": "Bearer",
+                    "expires_in": u64::MAX,
+                }));
+            });
+            let server = start_server(mocks).await;
+            let base_url = server.url("");
+
+            let refresh_token = SecretToken::new("test-refresh-token");
+            let refreshed = Token::refresh(&refresh_token, &base_url, "cli", None)
+                .await
+                .expect("an oversized expires_in must not fail or panic the refresh");
+
+            assert!(
+                !refreshed.is_expired(),
+                "the token must not wrap to an already-expired timestamp"
+            );
+            assert!(
+                (MAX_TOKEN_LIFETIME_SECS - 2..=MAX_TOKEN_LIFETIME_SECS)
+                    .contains(&refreshed.expires_in()),
+                "lifetime should be clamped to MAX_TOKEN_LIFETIME_SECS; got {}",
+                refreshed.expires_in()
+            );
         }
 
         #[tokio::test]

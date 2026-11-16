@@ -1,5 +1,7 @@
 import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
 import {
+  describeFailure,
+  likeWildcardError,
   logger,
   parseSelectorSegments,
   reconstructSelectorDocument,
@@ -594,12 +596,12 @@ export class EncryptedQueryBuilderImpl<
         ...ctx,
         selectColumns: this.selectColumns,
         resultMode: this.resultMode,
-        hasMutation: this.mutation !== null,
       } satisfies DecryptContext)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      // Log-safe: see describeFailure. The full message goes back in `error`.
       logger.error(
-        `Supabase encrypted query failed on table "${this.tableName}": ${message}`,
+        `Supabase encrypted query failed on table "${this.tableName}" (${describeFailure(err)}).`,
       )
 
       // A failure inside any of the encrypt/decrypt steps above is thrown as an
@@ -894,7 +896,7 @@ export class EncryptedQueryBuilderImpl<
     const { needle, hasUnsupportedWildcard } = parseLikeNeedle(pattern)
     if (hasUnsupportedWildcard) {
       throw new Error(
-        `[supabase v3]: "${op}" pattern "${pattern}" on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an unescaped internal "%" or any unescaped "_"). Use matches("${column}", term) with a literal search term.`,
+        `[supabase v3]: "${op}" on encrypted column "${column}": ${likeWildcardError(pattern)} Escape a literal "%" or "_" as "\\%" or "\\_", or use matches("${column}", term) with a literal search term.`,
       )
     }
     const key = `${op}:${column}`

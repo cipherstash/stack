@@ -7,6 +7,11 @@
 - [Stack Encrypt](./packages/stack-encrypt/CONTEXT.md) — encrypts values under
   per-value ZeroKMS data keys and derives searchable terms from them, for Rust
   and, through a WASI guest, Go.
+- [Migrate](./languages/typescript/packages/migrate/CONTEXT.md) — moves an
+  existing column between plaintext and encrypted form, resumably, for the
+  Stack CLI and customer workers.
+- [Migration Harness](./e2e/migration-harness/CONTEXT.md) — tests the
+  Protect.js upgrade guide by having agents follow it and judging the result.
 
 ## Relationships
 
@@ -18,3 +23,6 @@
 - **Stack Encrypt → EQL**: Stack Encrypt seals values and renders the ZeroKMS
   descriptor; EQL's `eql-bindings` transcodes those into EQL payloads, and its
   `Identifier` (a table and a column) is a two-segment Stack Encrypt `Label`.
+- **Migrate → Stack CLI**: the Stack CLI drives each column migration through
+  `stash encrypt *` and `stash decrypt *`; Migrate records it and owns its
+  rules, including the forced-pass obligation, so embedded workers get them too.

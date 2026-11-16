@@ -1,42 +1,35 @@
 import type { ClerkMiddlewareAuth } from '@clerk/nextjs/server'
 import type { NextRequest } from 'next/server'
-import { NextResponse } from 'next/server'
-import { logger } from '../../../utils/logger'
-import { setCtsToken } from '../cts'
-import { CS_COOKIE_NAME, resetCtsToken } from '../index'
+import { nonEmptyString } from '../session'
+import { syncCtsSession } from '../sync'
 
+/**
+ * Keep the CipherStash session cookie in step with the signed-in Clerk user.
+ *
+ * A session is only reused for the Clerk user it was minted for. One left
+ * behind by another user (a multi-session `setActive` switch, or a sign-out on
+ * a route the matcher does not cover) is replaced, or cleared if a new one
+ * cannot be minted. When nobody is signed in, the cookie is cleared.
+ */
 export const protectClerkMiddleware = async (
   auth: ClerkMiddlewareAuth,
   req: NextRequest,
 ) => {
-  const { userId, getToken } = await auth()
-  const ctsSession = req.cookies.has(CS_COOKIE_NAME)
+  const { userId, sessionClaims, getToken } = await auth()
+  const issuer = sessionClaims?.iss
 
-  if (userId && !ctsSession) {
-    const oidcToken = await getToken()
-
-    if (!oidcToken) {
-      logger.debug(
-        'No Clerk token found in the request, so the CipherStash session was not set.',
-      )
-
-      return NextResponse.next()
-    }
-
-    return await setCtsToken(oidcToken)
-  }
-
-  if (!userId && ctsSession) {
-    logger.debug(
-      'No Clerk token found in the request, so the CipherStash session was reset.',
-    )
-
-    return resetCtsToken()
-  }
-
-  logger.debug(
-    'No Clerk token found in the request, so the CipherStash session was not set.',
+  // `userId` and `sessionClaims` come from the Clerk session token Clerk has
+  // already verified, and are the `sub` and `iss` of the token `getToken()`
+  // returns, which is what a session is labelled with when minted.
+  return await syncCtsSession(
+    req,
+    userId
+      ? {
+          owner: nonEmptyString(issuer)
+            ? { issuer, subject: userId }
+            : undefined,
+          getOidcToken: () => getToken(),
+        }
+      : undefined,
   )
-
-  return NextResponse.next()
 }

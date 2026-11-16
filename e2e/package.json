@@ -7,7 +7,8 @@
   "scripts": {
     "test:e2e": "vitest run",
     "test:protect-compat": "vitest run --config vitest.protect-compat.config.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:protect-crossover": "vitest run --config vitest.protect-crossover.config.ts"
   },
   "dependencies": {
     "@cipherstash/stack": "workspace:*",
@@ -18,8 +19,10 @@
     "@cipherstash/protect": "10.2.1",
     "@cipherstash/protect-dynamodb": "6.0.1",
     "@cipherstash/stack-0.19": "npm:@cipherstash/stack@0.19.0",
+    "@cipherstash/test-kit": "workspace:*",
     "@types/semver": "7.8.0",
     "dotenv": "17.4.2",
+    "postgres": "^3.4.8",
     "semver": "^7.8.0",
     "typescript": "catalog:repo",
     "vitest": "catalog:repo",
