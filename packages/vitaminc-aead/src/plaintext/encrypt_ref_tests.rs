@@ -67,6 +67,26 @@ fn the_borrowed_constants_are_the_borrows() {
     );
 }
 
+/// A `Lent` is itself lendable: borrowed, it walks as what it lends, so a
+/// container walked by reference can hold one.
+#[test]
+fn a_lent_value_can_be_lent_again() {
+    let text = String::from("text");
+    assert_eq!(
+        lent(&vec![text.lend(), text.lend()]),
+        lent(&vec![text.clone(), text.clone()])
+    );
+    assert_eq!(lent(&Some(text.lend())), lent(&Some(text.clone())));
+    assert_eq!(
+        <&super::Lent<'_, Option<i64>> as Encrypt>::FIXED,
+        <&Option<i64> as Encrypt>::FIXED
+    );
+    assert_eq!(
+        <&super::Lent<'_, Vec<u32>> as Encrypt>::DEPTH,
+        <&Vec<u32> as Encrypt>::DEPTH
+    );
+}
+
 /// A borrowed `None` of a fixed-width type is still a typed null.
 #[test]
 fn a_lent_none_is_typed() {

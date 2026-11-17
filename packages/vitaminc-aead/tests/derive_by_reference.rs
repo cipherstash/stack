@@ -130,3 +130,22 @@ fn a_passthrough_field_need_only_be_a_source_by_reference() {
         })
     );
 }
+
+#[derive(Encrypt)]
+struct Borrowing<'a> {
+    name: vitaminc_aead::Lent<'a, String>,
+}
+
+/// A field that lends another value walks as that value, by value and by
+/// reference.
+#[test]
+fn a_lent_field_walks_as_what_it_lends() {
+    #[derive(Encrypt)]
+    struct Owning {
+        name: String,
+    }
+    let name = String::from("Ada");
+    let owning = frame(Owning { name: name.clone() });
+    assert_eq!(frame(Borrowing { name: name.lend() }), owning);
+    assert_eq!(lent(&Borrowing { name: name.lend() }), owning);
+}

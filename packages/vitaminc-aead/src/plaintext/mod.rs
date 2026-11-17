@@ -188,6 +188,17 @@ impl<T: ?Sized + EncryptRef> Encrypt for Lent<'_, T> {
     }
 }
 
+/// A borrow of a `Lent` walks as the `Lent` does, so a `Lent` is itself
+/// [`EncryptRef`]: it can sit in a container walked by reference
+/// (`&Vec<Lent<T>>`) or in a derived struct's field.
+impl<T: ?Sized + EncryptRef> Encrypt for &Lent<'_, T> {
+    const DEPTH: Option<usize> = T::REF_DEPTH;
+    const FIXED: Option<FixedType> = T::REF_FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.0.visit_ref(sink)
+    }
+}
+
 /// A source whose walk is exactly one leaf.
 ///
 /// The encrypt-side counterpart of [`FromScalar`](crate::FromScalar). An
