@@ -201,6 +201,8 @@ impl TokenVerifier {
             .key_for(parts.header.kid.as_deref())
             .await?
             .ok_or(Rejection::UnknownKey)?;
+        // Fetching the keys can take long enough for the token to expire.
+        self.check_expiry(parts.claims.exp)?;
         if !rs256::verify(&key, parts.signed.as_bytes(), &parts.signature) {
             return Err(Rejection::Signature.into());
         }

@@ -266,6 +266,41 @@ mod given_a_token_from_another_issuer {
 
 mod given_the_tokens_expiry {
     use super::*;
+    use crate::error::RequestError;
+    use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
+
+    /// A CTS so slow to serve its keys that `clock` moves on by `secs`.
+    struct Slow {
+        cts: Arc<StubCts>,
+        clock: TestClock,
+        secs: u64,
+    }
+
+    impl HttpTransport for Slow {
+        async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+            self.clock.advance(self.secs);
+            self.cts.send(request).await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_token_that_expires_while_the_keys_are_fetched_is_refused() {
+        let clock = TestClock::new(NOW);
+        let slow = Slow {
+            cts: StubCts::serving(jwks(&[&KEY_A])),
+            clock: clock.clone(),
+            secs: 3600 + LEEWAY_SECS,
+        };
+        let verifier = TokenVerifier::new(
+            ISSUER.parse().unwrap(),
+            None,
+            transport::share(slow),
+            clock.shared(),
+        )
+        .unwrap();
+
+        assert!(verdict(&verifier, KEY_A.jwt(claims())).await.is_err());
+    }
 
     #[tokio::test]
     async fn a_token_past_its_expiry_and_the_leeway_is_refused() {
@@ -477,6 +512,42 @@ mod given_a_token_that_has_already_verified {
 
 mod given_the_keys_cannot_be_fetched {
     use super::*;
+    use crate::error::RequestError;
+    use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
+
+    /// A CTS that never answers.
+    struct Hanging;
+
+    impl HttpTransport for Hanging {
+        async fn send(&self, _: HttpRequest) -> Result<HttpResponse, RequestError> {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fetch_abandoned_part_way_counts_as_failed() {
+        let verifier = TokenVerifier::new(
+            ISSUER.parse().unwrap(),
+            None,
+            transport::share(Hanging),
+            TestClock::new(NOW).shared(),
+        )
+        .unwrap();
+        let abandoned = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            verifier.verify(token(KEY_A.jwt(claims()))),
+        )
+        .await;
+        assert!(abandoned.is_err(), "the fetch should still be pending");
+
+        // Within the retry interval: no fetch, and no key. That is the keys
+        // being unavailable, not the token being signed by an unknown key.
+        let err = verifier
+            .verify(token(KEY_A.jwt(claims())))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AuthError::Request(_)), "got {err:?}");
+    }
 
     #[tokio::test]
     async fn an_unreachable_cts_is_a_request_error() {
