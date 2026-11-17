@@ -42,6 +42,15 @@ impl AccessKey {
     }
 }
 
+/// The `sub` CTS gives the tokens it issues to `access_key`
+/// (`CS|CSAK<key_id>`), or `None` if `access_key` is not one. Only the key ID
+/// is used; the secret is not copied.
+pub(crate) fn token_subject(access_key: &SecretToken) -> Option<String> {
+    let rest = access_key.as_str().strip_prefix(ACCESS_KEY_PREFIX)?;
+    let (key_id, _) = rest.split_once('.')?;
+    Some(format!("CS|{ACCESS_KEY_PREFIX}{key_id}"))
+}
+
 // NOTE: The format validation here mirrors `UnverifiedAccessKey::new()` in
 // `cts-domain`. If the `CSAK<key_id>.<key_secret>` format changes, both
 // locations must be updated.
@@ -100,6 +109,21 @@ impl stack_profile::ErrorPayload for InvalidAccessKey {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_token_subject_names_the_key_id_only() {
+        let key = SecretToken::new("CSAKT4ZMT2AUPXI7TCD2.ZAQRW2BWXP3Z6SHR4YG2");
+        assert_eq!(
+            token_subject(&key).as_deref(),
+            Some("CS|CSAKT4ZMT2AUPXI7TCD2")
+        );
+    }
+
+    #[test]
+    fn a_string_that_is_not_an_access_key_has_no_token_subject() {
+        assert_eq!(token_subject(&SecretToken::new("not-a-key")), None);
+        assert_eq!(token_subject(&SecretToken::new("CSAKno-dot")), None);
+    }
 
     #[test]
     fn valid_key() {

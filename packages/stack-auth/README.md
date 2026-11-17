@@ -183,9 +183,14 @@ leaks in logs.
 By default a strategy trusts the token CTS returns. Call `verify_tokens()` on
 a strategy builder to check every token before it is handed out: it must be
 signed with RS256 by a key that the trusted issuer publishes at
-`<issuer>/.well-known/jwks.json`, name that issuer as `iss`, and not have
-expired (and, for an access key strategy with an `audience`, be for that
-audience). A token that fails is refused with [`AuthError::InvalidToken`].
+`<issuer>/.well-known/jwks.json`, name that issuer as `iss`, and be within
+its `exp` and `nbf`. An access key strategy also requires `sub` to name its
+key (`CS|CSAK<key_id>`), so a real token issued to another key cannot stand
+in for this one, and with an `audience` the token must be for that audience.
+A token that fails is refused with [`AuthError::InvalidToken`]. As without
+verification, a token for another workspace is refused with
+[`AuthError::WorkspaceMismatch`]; with verification on, that check is on a
+`workspace` claim the issuer signed.
 
 The trusted issuer is the CTS that serves the workspace's region. It is
 pinned separately from the auth URL: `base_url()` and `CS_CTS_HOST` change

@@ -384,6 +384,38 @@ mod given_a_not_before_time {
     }
 }
 
+mod given_an_expected_subject {
+    use super::*;
+
+    const SUBJECT: &str = "CS|CSAKkeyId";
+
+    fn verifier() -> TokenVerifier {
+        serving_key_a().1.with_subject(Some(SUBJECT.to_string()))
+    }
+
+    #[tokio::test]
+    async fn a_token_for_that_subject_is_accepted() {
+        let jwt = KEY_A.jwt(with(claims(), "sub", SUBJECT.into()));
+
+        assert_eq!(verdict(&verifier(), jwt).await, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn a_token_for_another_subject_is_refused() {
+        let jwt = KEY_A.jwt(with(claims(), "sub", "CS|CSAKanotherKeyId".into()));
+
+        assert!(verdict(&verifier(), jwt).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_token_with_no_subject_is_refused() {
+        let mut claims = claims();
+        claims.as_object_mut().unwrap().remove("sub");
+
+        assert!(verdict(&verifier(), KEY_A.jwt(claims)).await.is_err());
+    }
+}
+
 mod given_an_expected_audience {
     use super::*;
 
@@ -1015,14 +1047,22 @@ mod given_a_strategy_that_verifies_tokens {
         "CSAKkeyId.keySecret".parse().unwrap()
     }
 
+    /// The `sub` CTS gives a token issued for [`key`].
+    const KEY_SUBJECT: &str = "CS|CSAKkeyId";
+
+    /// CTS's claims for a token issued to [`key`].
+    fn key_claims(iss: &str, workspace: &str) -> serde_json::Value {
+        with(cts_claims(iss, workspace), "sub", KEY_SUBJECT.into())
+    }
+
     fn genuine() -> String {
-        KEY_A.jwt(cts_claims(ISSUER, WORKSPACE))
+        KEY_A.jwt(key_claims(ISSUER, WORKSPACE))
     }
 
     /// Signed by a key the trusted issuer does not publish, naming a rogue
     /// issuer: what an attacker who controls the auth URL would mint.
     fn forged() -> String {
-        KEY_B.jwt(cts_claims("https://rogue.example/", WORKSPACE))
+        KEY_B.jwt(key_claims("https://rogue.example/", WORKSPACE))
     }
 
     fn cts(token: String) -> Arc<StubCts> {
@@ -1076,6 +1116,33 @@ mod given_a_strategy_that_verifies_tokens {
 
         assert!(matches!(err, AuthError::InvalidToken(_)), "got {err:?}");
         assert!(cts.jwks_requests().is_empty());
+    }
+
+    /// A real token CTS issued to another access key in the workspace, which
+    /// whoever controls the auth URL could hand over in place of this key's.
+    #[tokio::test]
+    async fn the_access_key_strategy_refuses_a_genuine_token_for_another_key() {
+        let cts = cts(KEY_A.jwt(with(
+            cts_claims(ISSUER, WORKSPACE),
+            "sub",
+            "CS|CSAKanotherKeyId".into(),
+        )));
+
+        let err = access_key(&cts).await.unwrap_err();
+
+        assert!(matches!(err, AuthError::InvalidToken(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn the_access_key_strategy_refuses_a_genuine_token_for_another_workspace() {
+        let cts = cts(KEY_A.jwt(key_claims(ISSUER, "AAAAAAAAAAAAAAAA")));
+
+        let err = access_key(&cts).await.unwrap_err();
+
+        assert!(
+            matches!(err, AuthError::WorkspaceMismatch(_)),
+            "got {err:?}"
+        );
     }
 
     #[tokio::test]

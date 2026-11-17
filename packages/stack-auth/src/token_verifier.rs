@@ -18,7 +18,9 @@
 //! 2. `iss` is the trusted issuer;
 //! 3. `exp` has not passed and `nbf`, when present, has (with
 //!    [`LEEWAY_SECS`] of clock skew allowed on each);
-//! 4. `aud` contains the expected audience, when the strategy requested one;
+//! 4. `aud` contains the expected audience, when the strategy requested one,
+//!    and `sub` is the expected principal, when the strategy knows it (an
+//!    access key does: `CS|CSAK<key_id>`);
 //! 5. the signature verifies under a key from the trusted issuer's JWKS
 //!    (`<issuer>/.well-known/jwks.json`), never from a URL the token names.
 //!
@@ -116,6 +118,8 @@ pub(crate) struct TokenVerifier {
     issuer: Url,
     jwks_url: Url,
     audience: Option<String>,
+    /// The principal every token must name in `sub`, when known.
+    subject: Option<String>,
     transport: SharedTransport,
     clock: SharedClock,
     keys: std::sync::Mutex<KeyCache>,
@@ -191,12 +195,19 @@ impl TokenVerifier {
             issuer,
             jwks_url,
             audience,
+            subject: None,
             transport,
             clock,
             keys: std::sync::Mutex::new(KeyCache::default()),
             fetching: tokio::sync::Mutex::new(()),
             last_verified: std::sync::Mutex::new(None),
         })
+    }
+
+    /// Also require `sub` to be `subject`, when there is one.
+    pub(crate) fn with_subject(mut self, subject: Option<String>) -> Self {
+        self.subject = subject;
+        self
     }
 
     /// Return `token` if it verifies, else [`AuthError::InvalidToken`].
@@ -288,6 +299,11 @@ impl TokenVerifier {
                 .is_some_and(|aud| aud.contains(expected))
             {
                 return Err(Rejection::Audience.into());
+            }
+        }
+        if let Some(expected) = &self.subject {
+            if claims.sub.as_ref() != Some(expected) {
+                return Err(Rejection::Subject.into());
             }
         }
         Ok(())
@@ -453,6 +469,7 @@ enum Rejection {
     Expired,
     NotYetValid,
     Audience,
+    Subject,
     UnknownKey,
     Signature,
 }
@@ -466,6 +483,7 @@ impl fmt::Display for Rejection {
             Rejection::Expired => f.write_str("the token has expired"),
             Rejection::NotYetValid => f.write_str("the token is not valid yet"),
             Rejection::Audience => f.write_str("the token is not for the expected audience"),
+            Rejection::Subject => f.write_str("the token is not for the expected principal"),
             Rejection::UnknownKey => {
                 f.write_str("the token's signing key is not one the trusted issuer publishes")
             }
@@ -500,6 +518,8 @@ struct UnverifiedClaims {
     exp: u64,
     #[serde(default)]
     nbf: Option<u64>,
+    #[serde(default)]
+    sub: Option<String>,
     #[serde(default)]
     aud: Option<Audience>,
 }

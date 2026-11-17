@@ -226,12 +226,16 @@ impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
         let transport = transport::resolve(self.transport)?;
         // The trusted issuer comes from the region, never from `base_url`:
         // see `token_verifier`.
+        // A token CTS issued to this key names it in `sub`. Checking that
+        // stops a real token for another principal standing in for this one.
+        let subject = crate::access_key::token_subject(&self.access_key);
         let verifier = token_verifier::resolve(
             self.verify_tokens,
             || Ok(region),
             self.audience.clone(),
             &transport,
-        )?;
+        )?
+        .map(|verifier| verifier.with_subject(subject));
         let refresher = AccessKeyRefresher::new(
             self.access_key,
             ensure_trailing_slash(base_url),
