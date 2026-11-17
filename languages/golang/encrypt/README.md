@@ -803,7 +803,19 @@ A filter with more than one condition reads each array to
 Package `encrypttest` gives a test a client that needs no network and no
 CipherStash credentials. Use it in CI that has no route to ZeroKMS.
 
-1. Create the client in the test. It closes when the test ends.
+1. Add the module at the same version as the SDK. It is a module of its own,
+   so a program that never imports it never downloads the test builds of the
+   engine it embeds.
+
+   ```sh
+   go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@v0.1.0
+   ```
+
+   Use the SDK's version in place of `v0.1.0`. `NewClient` fails the test
+   when the two versions differ, because its test builds match one version
+   of the SDK.
+
+2. Create the client in the test. It closes when the test ends.
 
    ```go
    import "github.com/cipherstash/stack/languages/golang/encrypt/encrypttest"
@@ -813,7 +825,7 @@ CipherStash credentials. Use it in CI that has no route to ZeroKMS.
    	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
    ```
 
-2. Call your code with it, as you would call it with a production client.
+3. Call your code with it, as you would call it with a production client.
 
    ```go
    	encrypted, err := users.Encrypt(t.Context(), cipher, people)
@@ -862,8 +874,12 @@ credential guest) before `go test`, and
 `mise run wasm:guest:build:eql:deterministic` for the test builds that
 package `encrypttest` embeds. The hermetic round-trip and fixture tests use
 them too. Without the builds `NewClient` returns `ErrGuestNotBuilt` and the
-tests skip; `encrypttest.NewClient` fails its test. A tagged version carries
-the test builds too.
+tests skip; `encrypttest.NewClient` fails its test. The `encrypttest`
+module's tag at the same version carries the test builds.
+
+`encrypt/encrypttest` and `encrypt/example` are modules of their own, so
+`go test ./...` from `languages/golang` does not reach them. `mise run
+go:test` tests all three modules.
 
 ## Licence
 

@@ -314,8 +314,14 @@ updates:
           - version-update:semver-major
 
   # ── Go (languages/golang) ──────────────────────────────────────
+  # One entry for the three modules, so one PR moves a dependency in all of
+  # them. The nested modules replace the SDK with ../.. and build against its
+  # dependencies, so a bump to the SDK's go.sum alone breaks their builds.
   - package-ecosystem: gomod
-    directory: /languages/golang
+    directories:
+      - /languages/golang
+      - /languages/golang/encrypt/encrypttest
+      - /languages/golang/encrypt/example
     schedule:
       interval: monthly
     cooldown:

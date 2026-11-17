@@ -21,8 +21,18 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   value with `ErrForeignKeyset`, and a wrong context fails with
   `ErrForbidden`. `encrypttest.WithSeed` chooses the seed. The keys are not
   secret, so import `encrypttest` only from `_test.go` files.
-  The release now ships the two test builds of the engine, under
-  `encrypt/encrypttest/wasm`.
+  The release ships the two test builds of the engine in the `encrypttest`
+  module, so a program that does not import it does not download them.
+
+### Breaking
+
+- **`encrypttest` is a module of its own:
+  `github.com/cipherstash/stack/languages/golang/encrypt/encrypttest`.** Its
+  import path is unchanged. A program that imports it, for
+  `encrypttest.AssertContexts` for example, stops building with "no required
+  module provides package" until you add the module at the SDK's version:
+  `go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@<version>`.
+  `encrypttest.NewClient` fails the test when the two versions differ.
 
 ### Fixed
 

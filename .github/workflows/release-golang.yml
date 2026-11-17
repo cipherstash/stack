@@ -1,19 +1,23 @@
 name: Release (Go)
 
-# Tags a release of the Go module (languages/golang) that `go get` can use.
+# Tags a release of the Go modules that `go get` can use: the SDK
+# (languages/golang) and its test module (languages/golang/encrypt/encrypttest),
+# at one version.
 #
-# The module embeds five WASI guests built from Rust: the three production
-# guests (encrypt/wasm, encrypt/eql/wasm, auth/wasm) and the two
-# deterministic-kms test builds that package encrypttest embeds
+# They embed five WASI guests built from Rust. The SDK embeds the three
+# production guests (encrypt/wasm, encrypt/eql/wasm, auth/wasm). The test
+# module embeds the two deterministic-kms test builds
 # (encrypt/encrypttest/wasm), which give an application's tests a client with
-# no ZeroKMS. They are gitignored on main, and Go fetches a module version as
-# the files committed at its tag, so a tag on a main commit would build and
-# then fail at `NewClient` with ErrGuestNotBuilt, and at
-# `encrypttest.NewClient` with its own not-built error. This
-# workflow builds the guests at the commit it runs on, commits them on a
-# release-only commit that no branch points at, tags that commit
-# `languages/golang/v<version>` (the prefix Go requires for a module in a
-# subdirectory) and pushes the tag alone. main stays free of binaries.
+# no ZeroKMS; it is a module of its own so that only a program that imports it
+# downloads them. The guests are gitignored on main, and Go fetches a module
+# version as the files committed at its tag, so a tag on a main commit would
+# build and then fail at `NewClient` with ErrGuestNotBuilt, and at
+# `encrypttest.NewClient` with its own not-built error. This workflow builds
+# the guests at the commit it runs on, commits them on a release-only commit
+# that no branch points at, with the test module's go.mod pinned to the SDK
+# version, tags that commit `<module directory>/v<version>` for each module
+# in MODULES (the prefix Go requires for a module in a subdirectory) and
+# pushes the tags alone. main stays free of binaries.
 #
 # The GitHub release it creates carries the EQL v4 SQL bundle the module's
 # EQL types are stored in, built from the same commit, so one release page
@@ -35,9 +39,10 @@ name: Release (Go)
 #   an artifact, with the git tree it built and tested as a job output.
 # - `publish` holds `contents: write` and runs only git and gh. It rebuilds
 #   the release commit from the artifact, refuses it unless its tree is the one
-#   `build` tested, pushes the tag and creates the release.
-# - `verify` is read-only again: it asks the Go proxy for the version, which
-#   fetches it, and checks the guests in the module zip are the ones built.
+#   `build` tested, pushes the tags and creates the release.
+# - `verify` is read-only again: it asks the Go proxy for each module at the
+#   version, which fetches it, and checks the guests in each module zip are
+#   the ones built.
 #
 # A version is immutable once the proxy has fetched it, so a tag is never
 # moved or deleted. If `publish` or `verify` fails after the tag is pushed,
@@ -71,6 +76,16 @@ env:
     languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm
     languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm
 
+  # The Go modules a release tags, by directory. Each gets the tag
+  # `<directory>/v<version>` (the prefix Go requires for a module in a
+  # subdirectory) on the one release commit. encrypt/encrypttest is a module
+  # of its own so that only a program that imports it downloads the test
+  # builds of the engine it embeds; its go.mod is pinned to this version on
+  # the release commit (scripts/go-release-pin-encrypttest.sh).
+  MODULES: >-
+    languages/golang
+    languages/golang/encrypt/encrypttest
+
 concurrency:
   group: release-golang
   cancel-in-progress: false
@@ -100,11 +115,13 @@ jobs:
 
       - name: Refuse a tag that already exists
         run: |
-          tag="languages/golang/v$VERSION"
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
-            echo "::error::$tag already exists; a Go module version is immutable once fetched. To finish a failed release, re-run its failed jobs instead."
-            exit 1
-          fi
+          for dir in $MODULES; do
+            tag="$dir/v$VERSION"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "::error::$tag already exists; a Go module version is immutable once fetched. To finish a failed release, re-run its failed jobs instead."
+              exit 1
+            fi
+          done
 
       # The tag check misses a version whose tag was deleted after the proxy
       # fetched it. The proxy goes on serving that version and sum.golang.org
@@ -119,13 +136,15 @@ jobs:
       - name: Refuse a version the Go proxy already lists
         run: |
           set -euo pipefail
-          module=github.com/cipherstash/stack/languages/golang
-          list=$(curl -fsS --retry 3 "https://proxy.golang.org/$module/@v/list") \
-            || { echo "::error::could not read the Go proxy's version list for $module"; exit 1; }
-          if grep -qxF "v$VERSION" <<< "$list"; then
-            echo "::error::the Go proxy already lists $module v$VERSION; its contents are fixed even though the tag is gone. Release a new version."
-            exit 1
-          fi
+          for dir in $MODULES; do
+            module="github.com/cipherstash/stack/$dir"
+            list=$(curl -fsS --retry 3 "https://proxy.golang.org/$module/@v/list") \
+              || { echo "::error::could not read the Go proxy's version list for $module"; exit 1; }
+            if grep -qxF "v$VERSION" <<< "$list"; then
+              echo "::error::the Go proxy already lists $module v$VERSION; its contents are fixed even though the tag is gone. Release a new version."
+              exit 1
+            fi
+          done
 
       # No cache: this job builds the binaries that are published, and a
       # poisoned restore would ship in them. scripts/lint-no-workflow-caching.mjs
@@ -215,6 +234,17 @@ jobs:
       - name: Check the tests ran against the guests being released
         run: sha256sum -c release-out/guests.sha256
 
+      # In the tree, encrypttest requires the SDK at the zero pseudo-version
+      # and replaces it with ../..; a consumer ignores the replace, so the
+      # release commit names the version it tags. Staged for the commit
+      # below. `publish` runs the same script before it commits, and refuses
+      # a tree that differs.
+      - name: Pin the encrypttest module to this version
+        run: |
+          set -euo pipefail
+          scripts/go-release-pin-encrypttest.sh "$VERSION"
+          git add languages/golang/encrypt/encrypttest/go.mod
+
       # The release commit, made here only to prove it: `publish` makes it
       # again from the artifact and must arrive at the same tree. Built from
       # `git archive` of that commit, so only committed files take part, as
@@ -240,6 +270,7 @@ jobs:
           git archive HEAD languages/golang | tar -x -C "$fetched"
           (cd "$fetched" && sha256sum -c "$GITHUB_WORKSPACE/release-out/guests.sha256")
           (cd "$fetched/languages/golang" && GOWORK=off GOFLAGS=-mod=readonly go build ./...)
+          (cd "$fetched/languages/golang/encrypt/encrypttest" && GOWORK=off GOFLAGS=-mod=readonly go build ./...)
 
           echo "tree=$tree" >> "$GITHUB_OUTPUT"
           echo "release tree $tree"
@@ -295,6 +326,14 @@ jobs:
           name: go-release
           path: release-out
 
+      # The same pin the build job made before it committed: run from this
+      # commit's own script, not from the artifact.
+      - name: Pin the encrypttest module to this version
+        run: |
+          set -euo pipefail
+          scripts/go-release-pin-encrypttest.sh "$VERSION"
+          git add languages/golang/encrypt/encrypttest/go.mod
+
       # The artifact comes from a job that ran third-party code after it wrote
       # guests.sha256, so the manifest is data to check, not a list of paths
       # to trust: a line naming any other file would put that file in the
@@ -336,27 +375,35 @@ jobs:
             exit 1
           fi
 
-      # A tag already there is accepted only if an earlier attempt of this
-      # run pushed it: the same tree, on top of the same source commit.
-      - name: Push the tag
+      # One tag for each module, on the one release commit. A tag already
+      # there is accepted only if an earlier attempt of this run pushed it:
+      # the same tree, on top of the same source commit. The rest are pushed
+      # together, atomically, so a module is never tagged without the other.
+      - name: Push the tags
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="languages/golang/v$VERSION"
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
-            git fetch -q --no-tags --depth=1 origin "+refs/tags/$tag:refs/existing-release"
-            existing=$(git rev-parse 'refs/existing-release^{commit}')
-            parent=$(git cat-file -p "$existing" | sed -n 's/^parent //p')
-            if [ "$(git rev-parse "$existing^{tree}")" = "$TREE" ] && [ "$parent" = "$GITHUB_SHA" ]; then
-              echo "$tag was pushed by an earlier attempt of this run; keeping it"
-              exit 0
+          push=()
+          for dir in $MODULES; do
+            tag="$dir/v$VERSION"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              git fetch -q --no-tags --depth=1 origin "+refs/tags/$tag:refs/existing-release"
+              existing=$(git rev-parse 'refs/existing-release^{commit}')
+              parent=$(git cat-file -p "$existing" | sed -n 's/^parent //p')
+              if [ "$(git rev-parse "$existing^{tree}")" = "$TREE" ] && [ "$parent" = "$GITHUB_SHA" ]; then
+                echo "$tag was pushed by an earlier attempt of this run; keeping it"
+                continue
+              fi
+              echo "::error::$tag already exists and is not this run's release commit"
+              exit 1
             fi
-            echo "::error::$tag already exists and is not this run's release commit"
-            exit 1
+            git tag -a "$tag" -m "Go module $dir v$VERSION (built from $GITHUB_SHA)"
+            push+=("refs/tags/$tag")
+          done
+          if [ "${#push[@]}" -gt 0 ]; then
+            git push --atomic "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${push[@]}"
           fi
-          git tag -a "$tag" -m "Go module v$VERSION (built from $GITHUB_SHA)"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$tag"
 
       - name: Create the GitHub release
         env:
@@ -376,6 +423,8 @@ jobs:
             echo '```sh'
             echo "go get github.com/cipherstash/stack/languages/golang@v$VERSION"
             echo "go install github.com/cipherstash/stack/languages/golang/cmd/stashgen@v$VERSION"
+            echo "# for your tests: an offline client (encrypttest.NewClient), at the same version"
+            echo "go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@v$VERSION"
             echo '```'
             echo
             echo "Values this version writes are stored in EQL v4 columns. Install EQL v4 into PostgreSQL with the attached \`eql-v4-install.sql\` (\`psql -f eql-v4-install.sql\`)."
@@ -428,17 +477,40 @@ jobs:
           GOFLAGS: ""
         run: |
           set -euo pipefail
-          module=github.com/cipherstash/stack/languages/golang
-          # guests.sha256 names paths from the repository root; the module
-          # zip starts at languages/golang.
-          sed 's#  languages/golang/#  #' release-out/guests.sha256 > "$RUNNER_TEMP/module.sha256"
+          manifest="$PWD/release-out/guests.sha256"
           cd "$(mktemp -d)"
-          for attempt in 1 2 3 4 5 6; do
-            if dir=$(go mod download -json "$module@v$VERSION" | jq -er .Dir); then
-              (cd "$dir" && sha256sum -c "$RUNNER_TEMP/module.sha256")
-              exit 0
+          for module_dir in $MODULES; do
+            module="github.com/cipherstash/stack/$module_dir"
+            # guests.sha256 names paths from the repository root. A guest
+            # belongs to the module with the longest directory above it, and
+            # that module's zip starts at its directory.
+            : > "$RUNNER_TEMP/module.sha256"
+            while read -r sum path; do
+              owner=""
+              for candidate in $MODULES; do
+                case "$path" in
+                  "$candidate"/*) if [ "${#candidate}" -gt "${#owner}" ]; then owner=$candidate; fi ;;
+                esac
+              done
+              if [ "$owner" = "$module_dir" ]; then
+                echo "$sum  ${path#"$module_dir"/}" >> "$RUNNER_TEMP/module.sha256"
+              fi
+            done < "$manifest"
+            if [ ! -s "$RUNNER_TEMP/module.sha256" ]; then
+              echo "::error::no guest belongs to $module"
+              exit 1
             fi
-            sleep 20
+            resolved=""
+            for attempt in 1 2 3 4 5 6; do
+              if dir=$(go mod download -json "$module@v$VERSION" | jq -er .Dir); then
+                (cd "$dir" && sha256sum -c "$RUNNER_TEMP/module.sha256")
+                resolved=yes
+                break
+              fi
+              sleep 20
+            done
+            if [ -z "$resolved" ]; then
+              echo "::error::the Go proxy did not resolve $module v$VERSION"
+              exit 1
+            fi
           done
-          echo "::error::the Go proxy did not resolve v$VERSION"
-          exit 1

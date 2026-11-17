@@ -17,8 +17,8 @@ From the repository root:
 ```sh
 mise run wasm:guest:build:eql wasm:auth-guest:build
 export DATABASE_URL='postgres://localhost:5432/your_database'
-cd languages/golang
-go run ./encrypt/example/json
+cd languages/golang/encrypt/example
+go run ./json
 ```
 
 For a fresh database, install the `eql-v4-install.sql` asset attached to the
@@ -30,10 +30,11 @@ module version carries them.
 
 The declaration is in `model.go`. `stashgen` writes `customer_stash.go` from
 its `stash` tags. After changing the struct or tags, run this from
-`languages/golang` and commit the changed generated file:
+`languages/golang/encrypt/example`, the example's module, and commit the
+changed generated file:
 
 ```sh
-go generate ./encrypt/example/json
+go generate ./json
 ```
 
 `Profile` uses `encoding/json` for the document shape. The

@@ -18,7 +18,7 @@ require (
 )
 
 require (
-	github.com/jackc/pgx/v5 v5.11.0 // test only: encrypt/postgres_test.go, encrypt/eql_postgres_test.go, encrypt/encrypttest/internal/witheql/postgres_test.go
+	github.com/jackc/pgx/v5 v5.11.0 // test only: encrypt/postgres_test.go, encrypt/eql_postgres_test.go
 	golang.org/x/sys v0.49.0
 	golang.org/x/tools v0.52.0
 	google.golang.org/protobuf v1.36.12

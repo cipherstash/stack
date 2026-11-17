@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"embed"
+	"fmt"
+	"runtime/debug"
 	"sync"
 	"testing"
 
@@ -107,6 +109,18 @@ func WithSeed(seed [32]byte) ClientOption {
 // builds of the engine it embeds into test binaries only. NewClient also
 // fails the test outside a test binary, as [testing.Testing] reports.
 //
+// # Versions
+//
+// This package is its own module, so a program that never imports it never
+// downloads the test builds:
+//
+//	go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@v0.1.0
+//
+// Require it at the same version as
+// github.com/cipherstash/stack/languages/golang. Its test builds match the
+// engine host code of that version only, so NewClient fails the test when
+// the two versions differ.
+//
 // # Engine builds
 //
 // A program whose generated code names an EQL type links package
@@ -118,6 +132,11 @@ func NewClient(tb testing.TB, opts ...ClientOption) *encrypt.Client {
 	tb.Helper()
 	if !testing.Testing() {
 		tb.Fatal("encrypttest: NewClient runs only in a test binary, because its keys are not secret")
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if err := sameVersion(info); err != nil {
+			tb.Fatal(err)
+		}
 	}
 	o := clientOptions{seed: defaultSeed}
 	for _, opt := range opts {
@@ -140,6 +159,34 @@ func NewClient(tb testing.TB, opts ...ClientOption) *encrypt.Client {
 		}
 	})
 	return client
+}
+
+const (
+	sdkModule  = "github.com/cipherstash/stack/languages/golang"
+	thisModule = sdkModule + "/encrypt/encrypttest"
+)
+
+// sameVersion refuses a build in which this module and the SDK module are
+// at different versions. A version it cannot know, such as a module
+// replaced by a local directory or one built from a checkout, is not
+// compared.
+func sameVersion(info *debug.BuildInfo) error {
+	versions := map[string]string{}
+	record := func(m *debug.Module) {
+		if m != nil && m.Replace == nil && m.Version != "" && m.Version != "(devel)" {
+			versions[m.Path] = m.Version
+		}
+	}
+	record(&info.Main)
+	for _, dep := range info.Deps {
+		record(dep)
+	}
+	sdk, okSDK := versions[sdkModule]
+	this, okThis := versions[thisModule]
+	if okSDK && okThis && sdk != this {
+		return fmt.Errorf("encrypttest: this module is at %s and %s is at %s; require both at the same version, for example `go get %s@%s`", this, sdkModule, sdk, thisModule, sdk)
+	}
+	return nil
 }
 
 // The test builds, each read once: embed.FS copies a file on every read,

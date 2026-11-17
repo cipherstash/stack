@@ -10,7 +10,9 @@ ZeroKMS, no token and no network.
   types, from `mise run wasm:guest:build:eql:deterministic`.
 
 They are not committed on main. The Go release workflow builds them and commits
-them on the release tag, so a module fetched with `go get` carries them.
+them on the release tag of the `encrypttest` module, so that module fetched
+with `go get` carries them. `encrypttest` is a module of its own, so a program
+that does not require it never downloads them.
 
 Package `encrypttest` embeds this directory, and `encrypttest.NewClient` fails
 the test when the build it needs is absent. The `encrypt` package's own tests

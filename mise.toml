@@ -398,9 +398,13 @@ TESTS=(
 pattern="^($(IFS='|'; echo "${TESTS[*]}"))$"
 # The tests skip without DATABASE_URL and without their guest builds; -v and
 # the grep turn either skip into a failure here, where both are provided.
-DATABASE_URL="$EQL_TEST_DATABASE_URL" CGO_ENABLED=0 go test -count=1 -v \
-  -run "$pattern" ./encrypt ./encrypt/encrypttest/internal/witheql \
-  | tee "${TMPDIR:-/tmp}/go-test-postgres.log"
+# encrypttest is a module of its own, so its test runs from its directory.
+{
+  DATABASE_URL="$EQL_TEST_DATABASE_URL" CGO_ENABLED=0 go test -count=1 -v \
+    -run "$pattern" ./encrypt
+  (cd encrypt/encrypttest && DATABASE_URL="$EQL_TEST_DATABASE_URL" CGO_ENABLED=0 \
+    go test -count=1 -v -run "$pattern" ./internal/witheql)
+} | tee "${TMPDIR:-/tmp}/go-test-postgres.log"
 if grep -q -- '--- SKIP' "${TMPDIR:-/tmp}/go-test-postgres.log"; then
   echo "error: a PostgreSQL test skipped; build the deterministic guests first" >&2
   exit 1
@@ -416,9 +420,19 @@ done
 """
 
 [tasks."go:lint"]
-description = "Lint and format-check the Go module (languages/golang) with golangci-lint; config in languages/golang/.golangci.yaml"
+description = "Lint and format-check the Go module (languages/golang) and the modules nested in it with golangci-lint; config in languages/golang/.golangci.yaml"
 dir = "languages/golang"
-run = "golangci-lint run ./..."
+shell = "bash -c"
+# `./...` stops at a nested module (encrypt/encrypttest, encrypt/example),
+# so each is linted from its own directory; golangci-lint finds the config
+# by walking up. Found, as scripts/go-binding-test.sh finds them.
+run = """
+set -euo pipefail
+golangci-lint run ./...
+find . -name go.mod -not -path ./go.mod -not -path '*/testdata/*' | sort | while IFS= read -r mod; do
+  (cd "$(dirname "$mod")" && golangci-lint run ./...)
+done
+"""
 
 [tasks."go:encrypt:example"]
 description = "Run the Go SDK example (languages/golang/encrypt/example) against real ZeroKMS; needs `stash auth login` first"
@@ -427,10 +441,12 @@ shell = "bash -c"
 depends = ["wasm:guest:build", "wasm:auth-guest:build"]
 run = """
 set -euo pipefail
-cd languages/golang
+# The example is a module of its own, which requires the SDK as an
+# application does.
+cd languages/golang/encrypt/example
 # Credentials come from encrypt.AutoCredentials: the CS_* variables
 # if set, else the developer profile. See encrypt/example/README.md.
-CGO_ENABLED=0 go run ./encrypt/example
+CGO_ENABLED=0 go run .
 """
 
 [tasks."test:conformance:eql"]

@@ -32,13 +32,14 @@ It also carries the source of five Rust crates published to crates.io,
 **`stack-auth`** and **`stack-profile`** (`packages/stack-auth`,
 `packages/stack-profile`) and **`stack-kms`**, **`stack-encrypt`** and
 **`stack-encrypt-derive`** (`packages/stack-kms`, `packages/stack-encrypt`,
-`packages/stack-encrypt-derive`), and of the **Go module** at
+`packages/stack-encrypt-derive`), and of the **Go modules** at
 `languages/golang` (`encrypt` and `auth`, over WASI guests built
-from the stack-* crates), released by `.github/workflows/release-golang.yml`
-as `languages/golang/vX.Y.Z` tags. All of these are in scope
+from the stack-* crates) and `languages/golang/encrypt/encrypttest`, released
+by `.github/workflows/release-golang.yml` as `languages/golang/vX.Y.Z` and
+`languages/golang/encrypt/encrypttest/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
-The Go module's `encrypt/encrypttest` package ships test builds of the
+The `encrypttest` module ships test builds of the
 engine whose keys derive from a published seed. Those keys are not secret by
 design: the package is for tests only. A way for a production client to load
 a test build, or for a test build to reach ZeroKMS, is in scope.

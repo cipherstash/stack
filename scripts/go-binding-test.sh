@@ -9,6 +9,7 @@
 # the Rust build is the slow part.
 #
 # Usage: go-binding-test.sh <module dir> [<guest path, relative to it>...]
+# The modules nested under <module dir> are tested too: see the end.
 # With no guest paths, every guest the module embeds is expected: the
 # stack-encrypt guest, its build with the EQL types, the credential guest,
 # and the two deterministic test builds package encrypttest embeds. Its
@@ -61,3 +62,23 @@ if [ "$(uname -s)" = "Linux" ]; then
 else
   CGO_ENABLED=0 GOOS=linux GOARCH=386 go vet ./...
 fi
+
+# Nested modules (encrypt/encrypttest, encrypt/example): `./...` stops at a
+# directory with its own go.mod, so each is vetted and tested in turn. They
+# are found rather than listed, so a new one is covered the day it lands;
+# the stashgen fixtures under testdata are not modules of this repository's.
+# gofmt above already walked their files.
+find . -name go.mod -not -path ./go.mod -not -path '*/testdata/*' | sort | while IFS= read -r mod; do
+  nested=$(dirname "$mod")
+  echo "nested module $nested"
+  (
+    cd "$nested"
+    go vet ./...
+    CGO_ENABLED=0 go test "$@" ./...
+    if [ "$(uname -s)" = "Linux" ]; then
+      CGO_ENABLED=0 GOOS=linux GOARCH=386 go test "$@" ./...
+    else
+      CGO_ENABLED=0 GOOS=linux GOARCH=386 go vet ./...
+    fi
+  )
+done

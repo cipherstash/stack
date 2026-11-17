@@ -1,5 +1,11 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -29,20 +35,29 @@ afterEach(() => {
   rmSync(bin, { recursive: true, force: true })
 })
 
-/** Run the step with a `curl` that answers `list`, or fails when null. */
+/**
+ * Run the step with a `curl` that answers `list`, or fails when null. Each
+ * URL the step asks for is appended to `asked`.
+ */
 function runWithProxyList(version, list) {
   const curl = join(bin, 'curl')
+  const asked = join(bin, 'asked')
   writeFileSync(
     curl,
     list === null
       ? '#!/bin/sh\necho "curl: (22) 503" >&2\nexit 22\n'
-      : `#!/bin/sh\nprintf '%s' '${list}'\n`,
+      : `#!/bin/sh\nfor a in "$@"; do last=$a; done\necho "$last" >> '${asked}'\nprintf '%s' '${list}'\n`,
   )
   chmodSync(curl, 0o755)
-  return spawnSync('bash', ['-c', String(PROXY_STEP.run)], {
+  const result = spawnSync('bash', ['-c', String(PROXY_STEP.run)], {
     encoding: 'utf8',
-    env: { PATH: `${bin}:${process.env.PATH}`, VERSION: version },
+    env: {
+      PATH: `${bin}:${process.env.PATH}`,
+      VERSION: version,
+      MODULES: WORKFLOW.env.MODULES,
+    },
   })
+  return { ...result, asked: () => readFileSync(asked, 'utf8') }
 }
 
 describe('release-golang.yml: the Go proxy check', () => {
@@ -88,6 +103,15 @@ describe('release-golang.yml: the Go proxy check', () => {
     )
     expect(result.stdout).not.toContain('::error::')
     expect(result.status).toBe(0)
+  })
+
+  it('reads the list of every module the release tags', () => {
+    const result = runWithProxyList('0.1.0-alpha.1', '')
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.asked().trim().split('\n')).toEqual([
+      'https://proxy.golang.org/github.com/cipherstash/stack/languages/golang/@v/list',
+      'https://proxy.golang.org/github.com/cipherstash/stack/languages/golang/encrypt/encrypttest/@v/list',
+    ])
   })
 
   it('passes when the proxy lists nothing yet', () => {
