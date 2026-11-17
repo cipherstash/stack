@@ -124,6 +124,15 @@ describe('cipherstash v3 operator lowering — eqlMatch needle guards', () => {
     }
   })
 
+  // The pattern is the caller's plaintext search term. The error is thrown to
+  // the caller, who commonly logs it, so it reports the term's length only.
+  it('never echoes the rejected pattern in the wildcard error', () => {
+    for (const needle of ['Qzx%wvy', 'Qzx_wvy']) {
+      expect(() => lowerMatch(needle), needle).toThrow(/cannot honor/)
+      expect(() => lowerMatch(needle), needle).not.toThrow(/Qzx|wvy/)
+    }
+  })
+
   it('rejects a needle that is empty after stripping with the matchNeedleError reason', () => {
     expect(() => lowerMatch('%%')).toThrow(EncryptionOperatorError)
     expect(() => lowerMatch('%%')).toThrow(

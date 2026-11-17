@@ -509,6 +509,14 @@ const { data, error } = await es
 
 `select()` also accepts an optional second parameter: `select(columns, { head?: boolean, count?: 'exact' | 'planned' | 'estimated' })`.
 
+Tables with no encrypted columns (an `audit_log`, a lookup table) go through the
+same `es.from()`. Their rows are returned as stored, with no call to the
+encryption client. One limit: an embedded relation to an encrypted table, such
+as `es.from("audit_log").select("id, users(email)")`, is not decrypted. The
+wrapper returns an error naming the column rather than hand you ciphertext, so
+query the encrypted table directly. In declared mode, the same error means a
+table declared with `{}` has an `eql_v3_*` column you have not declared.
+
 ## Query Filters
 
 All filter values for encrypted columns are automatically encrypted before

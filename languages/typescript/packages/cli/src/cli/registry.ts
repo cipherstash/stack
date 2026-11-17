@@ -634,7 +634,8 @@ export const registry: CommandGroup[] = [
           {
             name: '--migrations-dir',
             value: '<path>',
-            description: 'Directory to write the drop migration into.',
+            description:
+              'Directory to write the drop migration into (Drizzle projects: drizzle.config.ts `out` wins; this is the fallback).',
           },
         ],
       },
@@ -773,7 +774,8 @@ export const registry: CommandGroup[] = [
           {
             name: '--migrations-dir',
             value: '<path>',
-            description: 'Directory to write the drop migration into.',
+            description:
+              'Directory to write the drop migration into (Drizzle projects: drizzle.config.ts `out` wins; this is the fallback).',
           },
           {
             name: '--uninstall-eql',

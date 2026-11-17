@@ -21,7 +21,7 @@ AS $$ SELECT eql_v3_internal.hmac_256(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a public.eql_v3_text_eq, b public.eql_v3_text_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.=) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_eq.
 --! @param a public.eql_v3_text_eq
@@ -29,7 +29,7 @@ AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a public.eql_v3_text_eq, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b::public.eql_v3_text_eq) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.=) eql_v3.eq_term(b::public.eql_v3_text_eq) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_eq.
 --! @param a jsonb
@@ -37,7 +37,7 @@ AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b::public.eql_v3_text_eq) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a jsonb, b public.eql_v3_text_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_eq) = eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_eq) OPERATOR(pg_catalog.=) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_eq.
 --! @param a public.eql_v3_text_eq
@@ -45,7 +45,7 @@ AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_eq) = eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a public.eql_v3_text_eq, b public.eql_v3_text_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_eq.
 --! @param a public.eql_v3_text_eq
@@ -53,7 +53,7 @@ AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a public.eql_v3_text_eq, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b::public.eql_v3_text_eq) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b::public.eql_v3_text_eq) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_eq.
 --! @param a jsonb
@@ -61,7 +61,7 @@ AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b::public.eql_v3_text_eq) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a jsonb, b public.eql_v3_text_eq)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_eq) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_eq) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b) $$;
 
 --! @brief Unsupported operator blocker for public.eql_v3_text_eq.
 --!

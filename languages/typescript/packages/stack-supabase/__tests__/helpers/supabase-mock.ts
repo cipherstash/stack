@@ -73,6 +73,19 @@ export function operation<T>(data: T) {
   return op
 }
 
+/** A chainable operation resolving to `{ failure }`, like a real failed one. */
+export function failingOperation(failure: { type: string; message: string }) {
+  const op = {
+    withLockContext: () => op,
+    audit: () => op,
+    then: (
+      onfulfilled?: ((value: { failure: typeof failure }) => unknown) | null,
+      onrejected?: ((reason: unknown) => unknown) | null,
+    ) => Promise.resolve({ failure }).then(onfulfilled, onrejected),
+  }
+  return op
+}
+
 type SchemaLike = {
   build(): { columns: Record<string, unknown> }
   buildColumnKeyMap?(): Record<string, string>
