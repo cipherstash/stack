@@ -129,6 +129,9 @@ func NewClient(tb testing.TB, opts ...ClientOption) *encrypt.Client {
 	}
 	client, ok := built.(*encrypt.Client)
 	if !ok {
+		if closer, ok := built.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
 		tb.Fatalf("encrypttest: the constructor returned %T, not *encrypt.Client", built)
 	}
 	tb.Cleanup(func() {

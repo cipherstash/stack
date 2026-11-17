@@ -123,3 +123,7 @@ languages/golang/auth/wasm/*.sha256
 # Package encrypttest embeds them; the release commits them on the tag.
 languages/golang/encrypt/encrypttest/wasm/*.wasm
 languages/golang/encrypt/encrypttest/wasm/*.sha256
+# Where those builds went before they moved to encrypttest/wasm. A checkout
+# that built them there still has them, and they must not show as untracked.
+languages/golang/encrypt/testdata/*.wasm
+languages/golang/encrypt/testdata/*.sha256

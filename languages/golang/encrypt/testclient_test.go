@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/eqlguest"
 )
 
 // The constructor package encrypttest reaches is harmless over the guests
@@ -37,5 +39,25 @@ func TestAProductionGuestRefusesASeed(t *testing.T) {
 				t.Fatalf("%v, want ErrEncoding", err)
 			}
 		})
+	}
+}
+
+// When package eql is linked, a client runs the build with the EQL types and
+// only that build. Its absence is an error, never the plain build in its
+// place: every encrypt_into call would fail there. This test binary links
+// eql, as the external tests' generated types name EQL types.
+func TestSelectBuildNeverFallsBackFromTheEQLBuild(t *testing.T) {
+	if !eqlguest.Linked() {
+		t.Fatal("this test binary should link package eql")
+	}
+	plain := func() ([]byte, error) { return []byte("plain"), nil }
+	absent := func() ([]byte, error) { return nil, ErrEQLGuestNotBuilt }
+	wasm, err := selectBuild(plain, absent)
+	if !errors.Is(err, ErrEQLGuestNotBuilt) || wasm != nil {
+		t.Fatalf("selectBuild = %q, %v; want ErrEQLGuestNotBuilt and no build", wasm, err)
+	}
+	withEQL := func() ([]byte, error) { return []byte("eql"), nil }
+	if wasm, err := selectBuild(plain, withEQL); err != nil || string(wasm) != "eql" {
+		t.Fatalf("selectBuild = %q, %v; want the EQL build", wasm, err)
 	}
 }

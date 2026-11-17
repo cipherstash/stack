@@ -209,12 +209,16 @@ func TestAnotherSeedDoesNotOpenTheValues(t *testing.T) {
 
 func TestTheClientIsClosedWhenTheTestEnds(t *testing.T) {
 	var client *encrypt.Client
-	t.Run("uses the client", func(t *testing.T) {
+	// A subtest that fails leaves client nil: stop here, on its failure,
+	// rather than on a nil client below.
+	if !t.Run("uses the client", func(t *testing.T) {
 		client = encrypttest.NewClient(t)
 		if _, err := testusers.Encrypt(t.Context(), client.DefaultKeyset(), people); err != nil {
 			t.Fatal(err)
 		}
-	})
+	}) {
+		t.FailNow()
+	}
 	_, err := testusers.Encrypt(context.Background(), client.DefaultKeyset(), people)
 	if !errors.Is(err, encrypt.ErrState) {
 		t.Fatalf("after the test that made it ended: %v, want ErrState", err)

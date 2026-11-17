@@ -324,3 +324,79 @@ describe.skipIf(!BASH_HAS_MAPFILE)(
     )
   },
 )
+
+/**
+ * Every stack-encrypt build writes the same cargo output and differs only in
+ * where its mise task copies it. "Build the test guests" hashes the
+ * production guests before the two test builds run and checks them after, so
+ * a task that copied a seeded build over a production guest stops the
+ * release instead of being hashed and tagged as production.
+ */
+const BUILD_STEPS = WORKFLOW.jobs.build.steps
+const TEST_BUILDS_STEP = BUILD_STEPS.find(
+  (step) => step.name === 'Build the test guests',
+)
+
+/** Run the step with a `mise` that copies each test build to `target`. */
+function runTestBuilds(target) {
+  const bin = mkdtempSync(join(tmpdir(), 'go-release-mise-'))
+  try {
+    writeFileSync(
+      join(bin, 'mise'),
+      `#!/bin/sh\nmkdir -p "$(dirname "${target}")"\necho "seeded build of $2" > "${target}"\n`,
+    )
+    chmodSync(join(bin, 'mise'), 0o755)
+    for (const guest of GUESTS) {
+      mkdirSync(dirname(join(repo, guest)), { recursive: true })
+      writeFileSync(join(repo, guest), `guest ${guest}\n`)
+    }
+    return spawnSync('bash', ['-c', String(TEST_BUILDS_STEP.run)], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: {
+        PATH: `${bin}:${SHIMS}:${process.env.PATH}`,
+        GUESTS: WORKFLOW.env.GUESTS,
+        RUNNER_TEMP: bin,
+      },
+    })
+  } finally {
+    rmSync(bin, { recursive: true, force: true })
+  }
+}
+
+describe('release-golang.yml build: Build the test guests', () => {
+  it('runs after the production guests are built and before they are hashed', () => {
+    const at = BUILD_STEPS.indexOf(TEST_BUILDS_STEP)
+    expect(at).toBeGreaterThan(
+      BUILD_STEPS.findIndex((step) => step.name === 'Build the guests'),
+    )
+    expect(at).toBeLessThan(
+      BUILD_STEPS.findIndex((step) => step.name === 'Hash the guests'),
+    )
+  })
+
+  it.skipIf(!GNU_COREUTILS)(
+    'passes test builds that land where they belong',
+    () => {
+      const result = runTestBuilds(
+        'languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm',
+      )
+      expect(result.status, result.stderr + result.stdout).toBe(0)
+    },
+    // Spawns bash, sha256sum and a stub mise: slow on a loaded runner.
+    30_000,
+  )
+
+  it.skipIf(!GNU_COREUTILS)(
+    'stops the release when a test build overwrites a production guest',
+    () => {
+      const result = runTestBuilds(
+        'languages/golang/encrypt/wasm/stack_encrypt_guest.wasm',
+      )
+      expect(result.status).not.toBe(0)
+      expect(result.stdout + result.stderr).toContain('FAILED')
+    },
+    // Spawns bash, sha256sum and a stub mise: slow on a loaded runner.
+    30_000,
+  )
+})
