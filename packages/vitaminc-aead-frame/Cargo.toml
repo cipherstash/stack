@@ -44,13 +44,12 @@ quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
 serde_json = { workspace = true }
 # Path-only, so publish order does not matter: the conformance test builds
-# each vector's scalar independently through the chrono and rust_decimal
-# conversions, and the fixture test opens a pre-ADR-0001 ciphertext with
-# real AES-256-GCM.
-vitaminc-aead = { path = "../aead", features = ["chrono", "rust_decimal"] }
+# each vector's scalar independently through the rust_decimal conversions,
+# and the fixture test opens a pre-ADR-0001 ciphertext with real
+# AES-256-GCM.
+vitaminc-aead = { path = "../aead", features = ["rust_decimal"] }
 vitaminc-encrypt = { path = "../encrypt" }
 vitaminc-protected = { path = "../protected" }
-chrono = { version = "0.4.44", default-features = false, features = ["std"] }
 rust_decimal = { version = "1.41", default-features = false, features = ["std"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 # Formats the bench compares the storage profile with.

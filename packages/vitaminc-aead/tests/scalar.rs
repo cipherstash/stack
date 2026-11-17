@@ -129,19 +129,18 @@ fn protected_forms_of_a_scalar_are_scalars() {
     one_leaf(bytes.as_protected_ref());
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
 #[test]
-fn chrono_types_are_scalars() {
-    use chrono::{DateTime, NaiveDate, Utc};
+fn jiff_types_are_scalars() {
     use vitaminc_aead::Timestamp;
 
-    let date = NaiveDate::from_ymd_opt(2024, 2, 29).expect("valid");
+    let date = jiff::civil::Date::constant(2024, 2, 29);
     one_leaf(date);
     one_leaf(&date);
-    let instant = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).expect("valid");
+    let instant = jiff::Timestamp::new(1_700_000_000, 0).expect("valid");
     one_leaf(instant);
     one_leaf(&instant);
-    let stamp = Timestamp::new(instant).expect("not a leap second");
+    let stamp = Timestamp::new(instant);
     one_leaf(&stamp);
     one_leaf(stamp);
 }

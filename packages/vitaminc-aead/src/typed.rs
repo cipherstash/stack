@@ -439,14 +439,16 @@ impl<const N: usize> FromScalar for [u8; N] {
     }
 }
 
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
-mod chrono_targets {
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
+mod jiff_targets {
     use super::*;
-    use crate::plaintext::kinds::chrono as conv;
-    use ::chrono::{DateTime, NaiveDate, Utc};
+    use crate::plaintext::kinds::jiff as conv;
+    use ::jiff::{civil::Date, Timestamp};
 
-    impl FromScalar for NaiveDate {
+    /// Years -9999 to 9999. A date the wire admits past those has no
+    /// `Date`, so it is refused as the wrong shape.
+    impl FromScalar for Date {
         const EXPECTED: &'static str = "date";
         fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
             match (ty, v) {
@@ -457,8 +459,8 @@ mod chrono_targets {
     }
 
     /// Any unit: a JavaScript `Date` in milliseconds decodes as well as a
-    /// Rust timestamp in nanoseconds.
-    impl FromScalar for DateTime<Utc> {
+    /// Rust timestamp in nanoseconds. Years -9999 to 9999, as for [`Date`].
+    impl FromScalar for Timestamp {
         const EXPECTED: &'static str = "timestamp";
         fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
             match (ty, v) {
@@ -1873,25 +1875,42 @@ mod tests {
         assert!(core::error::Error::source(&source).is_some());
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
-    fn chrono_targets_accept_any_unit() {
+    fn jiff_targets_accept_any_unit() {
         use crate::plaintext::TimeUnit;
-        use ::chrono::{DateTime, NaiveDate};
-        let date = NaiveDate::from_ymd_opt(2024, 2, 29).expect("date");
-        assert_eq!(round_trip::<NaiveDate>(date).expect("date"), date);
-        let ts = DateTime::from_timestamp(1_700_000_000, 123_456_789).expect("ts");
-        assert_eq!(round_trip::<DateTime<_>>(ts).expect("ts"), ts);
+        use ::jiff::{civil::Date, Timestamp};
+        let date = Date::constant(2024, 2, 29);
+        assert_eq!(round_trip::<Date>(date).expect("date"), date);
+        let ts = Timestamp::new(1_700_000_000, 123_456_789).expect("ts");
+        assert_eq!(round_trip::<Timestamp>(ts).expect("ts"), ts);
         // A JavaScript `Date` is milliseconds.
         let js = Raw(
             Some(Logical::Timestamp(TimeUnit::Millis)),
             Physical::Int(Int::I64(1_700_000_000_123)),
         );
         assert_eq!(
-            round_trip::<DateTime<_>>(js).expect("ms"),
-            DateTime::from_timestamp(1_700_000_000, 123_000_000).expect("ts")
+            round_trip::<Timestamp>(js).expect("ms"),
+            Timestamp::new(1_700_000_000, 123_000_000).expect("ts")
         );
-        assert_eq!(expected(round_trip::<NaiveDate>(0i32)), "date");
+        assert_eq!(expected(round_trip::<Date>(0i32)), "date");
+    }
+
+    /// The wire admits years -262143 to 262142; jiff stops at ±9999. A
+    /// value between opens, but is refused by a jiff target.
+    #[cfg(feature = "jiff")]
+    #[test]
+    fn jiff_targets_refuse_a_value_past_their_range() {
+        use crate::plaintext::kinds::{MAX_DATE_DAYS, MAX_TIMESTAMP_NANOS};
+        use crate::plaintext::TimeUnit;
+        use ::jiff::{civil::Date, Timestamp};
+        let date = Raw(Some(Logical::Date), Physical::Int(Int::I32(MAX_DATE_DAYS)));
+        assert_eq!(expected(round_trip::<Date>(date)), "date");
+        let ts = Raw(
+            Some(Logical::Timestamp(TimeUnit::Nanos)),
+            Physical::Int(Int::I128(MAX_TIMESTAMP_NANOS)),
+        );
+        assert_eq!(expected(round_trip::<Timestamp>(ts)), "timestamp");
     }
 
     #[cfg(feature = "rust_decimal")]
@@ -1940,21 +1959,21 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
-    fn chrono_targets_refuse_the_other_logical_types() {
+    fn jiff_targets_refuse_the_other_logical_types() {
         use crate::plaintext::TimeUnit;
-        use ::chrono::{DateTime, NaiveDate, Utc};
-        let date = NaiveDate::from_ymd_opt(2024, 2, 29).expect("date");
-        let ts = DateTime::from_timestamp(1_700_000_000, 0).expect("ts");
-        assert_eq!(expected(round_trip::<DateTime<Utc>>(date)), "timestamp");
+        use ::jiff::{civil::Date, Timestamp};
+        let date = Date::constant(2024, 2, 29);
+        let ts = Timestamp::new(1_700_000_000, 0).expect("ts");
+        assert_eq!(expected(round_trip::<Timestamp>(date)), "timestamp");
         assert_eq!(
-            expected(round_trip::<DateTime<Utc>>(1_700_000_000i64)),
+            expected(round_trip::<Timestamp>(1_700_000_000i64)),
             "timestamp"
         );
-        assert_eq!(expected(round_trip::<NaiveDate>(ts)), "date");
+        assert_eq!(expected(round_trip::<Date>(ts)), "date");
 
-        let instant = DateTime::from_timestamp(2, 0).expect("timestamp");
+        let instant = Timestamp::new(2, 0).expect("timestamp");
         for (unit, count) in [
             (TimeUnit::Seconds, 2),
             (TimeUnit::Millis, 2_000),
@@ -1965,7 +1984,7 @@ mod tests {
                 Some(Logical::Timestamp(unit)),
                 Physical::Int(Int::I64(count)),
             );
-            assert_eq!(round_trip::<DateTime<Utc>>(raw).expect("unit"), instant);
+            assert_eq!(round_trip::<Timestamp>(raw).expect("unit"), instant);
         }
     }
 

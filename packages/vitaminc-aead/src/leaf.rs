@@ -18,15 +18,16 @@
 //! here take the [`Form`] so the transport frame and the leaf share one
 //! codec and cannot drift.
 //!
-//! The codec has no dependency on chrono or `rust_decimal`: the `DATE`,
+//! The codec has no dependency on jiff or `rust_decimal`: the `DATE`,
 //! `TIMESTAMP` and `DECIMAL` payloads are written from, and read into, the
 //! int they are logical types over.
 //!
 //! Two encodings accepted by `vitaminc-aead-value` 0.5 have no
 //! physical-plus-logical form, so this codec does not round-trip them:
 //!
-//! - A `TIMESTAMP` with nanoseconds of 1,000,000,000 or more is chrono's
-//!   leap second. It has no count in any unit and is refused.
+//! - A `TIMESTAMP` with nanoseconds of 1,000,000,000 or more is a leap
+//!   second, as chrono wrote one. It has no count in any unit and is
+//!   refused.
 //! - A `DECIMAL` with the sign bit set on a zero mantissa reads as zero,
 //!   and zero is always written without the sign.
 //!
@@ -72,7 +73,8 @@ pub enum ScalarError {
     Malformed,
 }
 
-/// Days from 0001-01-01 (day 1, chrono's "days from CE") to 1970-01-01.
+/// Days from 0001-01-01 (counted as day 1, the "days from CE" of the
+/// proleptic Gregorian calendar) to 1970-01-01.
 const EPOCH_DAYS_FROM_CE: i32 = 719_163;
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 /// rust_decimal's flag word: the sign bit and the scale byte are the only
@@ -225,7 +227,8 @@ pub fn write<O: ByteSink>(
 /// # Examples
 ///
 /// A date, 11,017 days after 1970-01-01, under today's `DATE` tag. The
-/// payload is chrono's day count from the common era, little-endian.
+/// payload is the day count from the common era (0001-01-01 is day 1),
+/// little-endian.
 ///
 /// The plaintext goes into a `Vec` sized with [`max_len`], so it never
 /// grows and leaves a copy behind, held in a `Protected` so it is wiped
@@ -947,7 +950,7 @@ mod tests {
             read_leaf(&[0xF3, 5, 0, 0x0B, 1, 2, 3]),
             Err(ScalarError::Invalid)
         );
-        // A DATE payload past chrono's range.
+        // A DATE payload past the wire's range.
         assert_eq!(
             read_leaf(&[0x12, 0xFF, 0xFF, 0xFF, 0x7F]),
             Err(ScalarError::Invalid)
@@ -1146,27 +1149,32 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "chrono", feature = "rust_decimal"))]
+    /// The `DATE` and `TIMESTAMP` payloads, pinned to the bytes chrono's
+    /// `num_days_from_ce`, `timestamp` and `timestamp_subsec_nanos` wrote
+    /// before the move to jiff, so values sealed then still open.
+    #[cfg(all(feature = "jiff", feature = "rust_decimal"))]
     #[test]
-    fn shorthand_payloads_match_the_chrono_and_rust_decimal_layouts() {
-        use crate::plaintext::kinds::{chrono as conv, decimal as dec};
-        use chrono::{DateTime, Datelike, NaiveDate};
+    fn shorthand_payloads_match_the_date_timestamp_and_rust_decimal_layouts() {
+        use crate::plaintext::kinds::{decimal as dec, jiff as conv};
         use rust_decimal::Decimal;
 
-        let date = NaiveDate::from_ymd_opt(1899, 12, 31).expect("date");
+        let date = jiff::civil::Date::constant(1899, 12, 31);
         let bytes = leaf(
             Some(Logical::Date),
             Physical::Int(Int::I32(conv::date_days(date))),
         );
-        assert_eq!(bytes[1..], date.num_days_from_ce().to_le_bytes());
+        assert_eq!(bytes[1..], 693_595i32.to_le_bytes());
 
-        let ts = DateTime::from_timestamp(-7, 123_456_789).expect("timestamp");
+        // Seven seconds before the epoch, plus 123,456,789 nanoseconds:
+        // the seconds round towards negative infinity, and the
+        // nanoseconds are what is past them.
+        let ts = jiff::Timestamp::from_nanosecond(-7_000_000_000 + 123_456_789).expect("timestamp");
         let bytes = leaf(
             Some(Logical::Timestamp(TimeUnit::Nanos)),
-            Physical::Int(Int::I128(conv::timestamp_nanos(ts).expect("count"))),
+            Physical::Int(Int::I128(conv::timestamp_nanos(ts))),
         );
-        assert_eq!(bytes[1..9], ts.timestamp().to_le_bytes());
-        assert_eq!(bytes[9..], ts.timestamp_subsec_nanos().to_le_bytes());
+        assert_eq!(bytes[1..9], (-7i64).to_le_bytes());
+        assert_eq!(bytes[9..], 123_456_789u32.to_le_bytes());
 
         for s in [
             "0",
@@ -1235,10 +1243,10 @@ mod tests {
     #[quickcheck]
     fn generated_logical_values_round_trip_and_refuse_every_prefix(n: i64, scale: u8) -> bool {
         let cases = [
-            // Within chrono's date range either way.
+            // Within the wire's date range either way.
             (Logical::Date, Int::I64(n % i64::from(MAX_DATE_DAYS))),
             (Logical::Timestamp(TimeUnit::Nanos), Int::I64(n)),
-            // Within chrono's range in milliseconds, through the envelope.
+            // Within the wire's range in milliseconds, through the envelope.
             (
                 Logical::Timestamp(TimeUnit::Millis),
                 Int::I64(n % 8_000_000_000_000_000),

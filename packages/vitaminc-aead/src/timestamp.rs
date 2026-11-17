@@ -1,6 +1,5 @@
-//! [`Timestamp`]: a UTC instant that always encrypts.
+//! [`Timestamp`]: a UTC instant that is handled as plaintext.
 
-use ::chrono::{DateTime, Utc};
 use vitaminc_protected::{OpaqueDebug, TimingSafeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -9,109 +8,91 @@ use crate::plaintext::{
 };
 use crate::typed::FromScalar;
 
-/// A UTC instant that is never a leap second, so it can always be encrypted.
+/// A UTC instant that is wiped when dropped.
 ///
-/// chrono represents a leap second as a `DateTime` whose nanoseconds run past
-/// 999,999,999. That is a real instant with no count of seconds or
-/// nanoseconds since the epoch, so it has no encoding, and encrypting a
-/// `DateTime<Utc>` that holds one fails at runtime. A `Timestamp` refuses
-/// the leap second when it is built instead, so a field of this type is
-/// never refused when its struct is encrypted. Both encrypt to the same
-/// leaf, so a `DateTime<Utc>` field can become a `Timestamp` without
-/// changing its ciphertext.
+/// A `jiff::Timestamp` is `Copy` and its fields are private, so it cannot
+/// be wiped, and it compares and hashes in variable time. A `Timestamp`
+/// holds the same instant as a count of seconds and of nanoseconds, which
+/// it wipes when dropped. Both encrypt to the same leaf, so a
+/// `jiff::Timestamp` field can become a `Timestamp` without changing its
+/// ciphertext.
 ///
 /// ```
-/// use chrono::{DateTime, NaiveDate};
-/// use vitaminc_aead::{LeapSecond, Timestamp};
+/// use vitaminc_aead::Timestamp;
 ///
-/// let instant = DateTime::from_timestamp(1_700_000_000, 0).expect("in range");
-/// let ts = Timestamp::new(instant)?;
-/// assert_eq!(ts.to_datetime(), instant);
-///
-/// let leap = NaiveDate::from_ymd_opt(2016, 12, 31)
-///     .and_then(|d| d.and_hms_nano_opt(23, 59, 59, 1_500_000_000))
-///     .expect("a leap second")
-///     .and_utc();
-/// assert!(Timestamp::new(leap).is_err());
-/// # Ok::<(), LeapSecond>(())
+/// let instant = jiff::Timestamp::new(1_700_000_000, 0)?;
+/// let ts = Timestamp::new(instant);
+/// assert_eq!(ts.to_jiff(), instant);
+/// # Ok::<(), jiff::Error>(())
 /// ```
 ///
 /// A `Timestamp` is plaintext, so it is handled as the data model's other
-/// scalars are. It holds the instant as a count of seconds and of
-/// nanoseconds, which it wipes when dropped; a `DateTime<Utc>` cannot be
-/// wiped, because its fields are private. Equality is constant time (see
-/// [`TimingSafeEq`]). It is not `Copy`
-/// or `Clone`, so it is not copied without a trace, and it has no
-/// ordering or hash, which would compare plaintext in variable time.
+/// scalars are. Equality is constant time (see [`TimingSafeEq`]). It is
+/// not `Copy` or `Clone`, so it is not copied without a trace, and it has
+/// no ordering or hash, which would compare plaintext in variable time.
 /// `Debug` is redacted. `Default` is the Unix epoch, as for
-/// `DateTime<Utc>`, so a `#[aead(skip)]` or `#[aead(take)]` field can
+/// `jiff::Timestamp`, so a `#[aead(skip)]` or `#[aead(take)]` field can
 /// change from one to the other.
 #[derive(Default, OpaqueDebug, TimingSafeEq, Zeroize, ZeroizeOnDrop)]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 pub struct Timestamp {
-    /// Whole seconds since the Unix epoch.
+    /// Whole seconds since the Unix epoch, rounded towards negative
+    /// infinity.
     secs: i64,
     /// Nanoseconds past `secs`, below one second.
     nanos: u32,
 }
 
-/// A leap second, which a [`Timestamp`] cannot hold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("a leap second has no encoding")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
-pub struct LeapSecond;
-
 impl Timestamp {
-    /// The instant, unless it is a leap second.
-    ///
-    /// # Errors
-    ///
-    /// [`LeapSecond`] if `instant` is a leap second.
-    pub fn new(instant: DateTime<Utc>) -> Result<Self, LeapSecond> {
-        let nanos = instant.timestamp_subsec_nanos();
-        if nanos >= NANOS_PER_SECOND {
-            return Err(LeapSecond);
+    /// The instant.
+    pub fn new(instant: jiff::Timestamp) -> Self {
+        let (secs, nanos) = (instant.as_second(), instant.subsec_nanosecond());
+        // jiff gives the nanoseconds the sign of the seconds. Store them
+        // as the nanoseconds past the second before instead. jiff's
+        // seconds are far from `i64::MIN`, so the subtraction cannot
+        // overflow.
+        let (secs, nanos) = if nanos < 0 {
+            (secs - 1, nanos + NANOS_PER_SECOND)
+        } else {
+            (secs, nanos)
+        };
+        Self {
+            secs,
+            nanos: nanos.unsigned_abs(),
         }
-        Ok(Self {
-            secs: instant.timestamp(),
-            nanos,
-        })
     }
 
-    /// The instant, as a `DateTime<Utc>`. The copy is the caller's to
+    /// The instant, as a `jiff::Timestamp`. The copy is the caller's to
     /// look after: it cannot be wiped.
-    pub fn to_datetime(&self) -> DateTime<Utc> {
-        // A `Timestamp` is only built from a `DateTime<Utc>` that is not a
-        // leap second, whose seconds and nanoseconds always make one again,
-        // so the fallback is never taken. It is there so this cannot panic.
-        DateTime::from_timestamp(self.secs, self.nanos).unwrap_or_default()
+    pub fn to_jiff(&self) -> jiff::Timestamp {
+        // A `Timestamp` is only built from a `jiff::Timestamp`, whose count
+        // always makes one again, so the fallback is never taken. It is
+        // there so this cannot panic.
+        jiff::Timestamp::from_nanosecond(self.count()).unwrap_or_default()
     }
 
-    /// Nanoseconds since the epoch: the leaf a `DateTime<Utc>` encrypts to.
+    /// Nanoseconds since the epoch: the leaf a `jiff::Timestamp` encrypts
+    /// to.
     fn count(&self) -> i128 {
         i128::from(self.secs) * i128::from(NANOS_PER_SECOND) + i128::from(self.nanos)
     }
 }
 
-const NANOS_PER_SECOND: u32 = 1_000_000_000;
+const NANOS_PER_SECOND: i32 = 1_000_000_000;
 
-impl TryFrom<DateTime<Utc>> for Timestamp {
-    type Error = LeapSecond;
-
-    fn try_from(instant: DateTime<Utc>) -> Result<Self, LeapSecond> {
+impl From<jiff::Timestamp> for Timestamp {
+    fn from(instant: jiff::Timestamp) -> Self {
         Self::new(instant)
     }
 }
 
-impl From<Timestamp> for DateTime<Utc> {
+impl From<Timestamp> for jiff::Timestamp {
     fn from(ts: Timestamp) -> Self {
-        ts.to_datetime()
+        ts.to_jiff()
     }
 }
 
-/// The same leaf as `DateTime<Utc>`: a timestamp in nanoseconds. A
-/// `Timestamp` is never a leap second, so this never fails for its own
-/// sake.
+/// The same leaf as `jiff::Timestamp`: a timestamp in nanoseconds.
 impl Encrypt for Timestamp {
     const DEPTH: Option<usize> = depth::SCALAR;
     const FIXED: Option<FixedType> = <&Timestamp as Encrypt>::FIXED;
@@ -136,98 +117,79 @@ impl Scalar for Timestamp {}
 impl Scalar for &Timestamp {}
 const _: () = assert!(depth::is_scalar(<Timestamp as Encrypt>::DEPTH));
 
-/// Any unit, as for `DateTime<Utc>`. A decoded count is never a leap second.
+/// Any unit, as for `jiff::Timestamp`, and the same range: years -9999
+/// to 9999.
 impl FromScalar for Timestamp {
     const EXPECTED: &'static str = "timestamp";
     fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self> {
-        DateTime::<Utc>::from_scalar(ty, value).and_then(|instant| Self::new(instant).ok())
+        jiff::Timestamp::from_scalar(ty, value).map(Self::new)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ::chrono::NaiveDate;
-
     use super::*;
-    use crate::{plan, to_frame, EncryptError};
+    use crate::to_frame;
     use vitaminc_protected::Controlled;
 
     fn frame<P: Encrypt>(value: P) -> Vec<u8> {
         to_frame(value).expect("frames").risky_ref().to_vec()
     }
 
-    fn leap() -> DateTime<Utc> {
-        NaiveDate::from_ymd_opt(2016, 12, 31)
-            .and_then(|d| d.and_hms_nano_opt(23, 59, 59, 1_000_000_000))
-            .expect("a leap second")
-            .and_utc()
+    fn at(secs: i64, nanos: i32) -> jiff::Timestamp {
+        jiff::Timestamp::new(secs, nanos).expect("instant")
     }
 
-    #[test]
-    fn a_leap_second_is_refused_when_built() {
-        assert_eq!(Timestamp::new(leap()).err(), Some(LeapSecond));
-        assert_eq!(Timestamp::try_from(leap()).err(), Some(LeapSecond));
-        assert_eq!(LeapSecond.to_string(), "a leap second has no encoding");
-
-        let last = NaiveDate::from_ymd_opt(2016, 12, 31)
-            .and_then(|d| d.and_hms_nano_opt(23, 59, 59, 999_999_999))
-            .expect("ok")
-            .and_utc();
-        let ts = Timestamp::new(last).expect("not a leap second");
-        assert_eq!(ts.to_datetime(), last);
-        assert_eq!(DateTime::<Utc>::from(ts), last);
-    }
-
-    /// Every instant a `Timestamp` can be built from comes back unchanged,
-    /// so the fallback in `to_datetime` is never taken.
+    /// Every instant comes back unchanged, so the fallback in `to_jiff` is
+    /// never taken.
     #[test]
     fn every_instant_comes_back_as_it_went_in() {
         for instant in [
-            DateTime::<Utc>::MIN_UTC,
-            DateTime::<Utc>::MAX_UTC,
-            DateTime::<Utc>::UNIX_EPOCH,
-            DateTime::from_timestamp(-1, 999_999_999).expect("ok"),
-            DateTime::from_timestamp(1_700_000_000, 123_456_789).expect("ok"),
+            jiff::Timestamp::MIN,
+            jiff::Timestamp::MAX,
+            jiff::Timestamp::UNIX_EPOCH,
+            at(-1, -1),
+            at(0, -1),
+            at(-1, 0),
+            at(1_700_000_000, 123_456_789),
         ] {
-            let ts = Timestamp::new(instant).expect("not a leap second");
-            assert_eq!(ts.to_datetime(), instant, "{instant}");
+            let ts = Timestamp::new(instant);
+            assert_eq!(ts.to_jiff(), instant, "{instant}");
+            assert_eq!(jiff::Timestamp::from(Timestamp::from(instant)), instant);
+            assert!(ts.nanos < 1_000_000_000, "{instant}");
         }
-        assert_eq!(
-            Timestamp::default().to_datetime(),
-            DateTime::<Utc>::UNIX_EPOCH
-        );
+        assert_eq!(Timestamp::default().to_jiff(), jiff::Timestamp::UNIX_EPOCH);
     }
 
     /// Plaintext handling: constant-time equality, wiped by `zeroize`, and
     /// a redacted `Debug`.
     #[test]
     fn it_compares_in_constant_time_wipes_and_redacts() {
-        let at = |secs, nanos| {
-            Timestamp::new(DateTime::from_timestamp(secs, nanos).expect("ok")).expect("ok")
-        };
-        assert!(bool::from(at(5, 1).ts_eq(&at(5, 1))));
-        assert!(at(5, 1) == at(5, 1));
-        assert!(at(5, 1) != at(5, 2));
-        assert!(at(5, 1) != at(6, 1));
-        let mut ts = at(1_700_000_000, 7);
-        ts.zeroize();
-        assert!(ts == Timestamp::default());
-        let shown = format!("{:?}", at(1_700_000_000, 7));
+        let ts = |secs, nanos| Timestamp::new(at(secs, nanos));
+        assert!(bool::from(ts(5, 1).ts_eq(&ts(5, 1))));
+        assert!(ts(5, 1) == ts(5, 1));
+        assert!(ts(5, 1) != ts(5, 2));
+        assert!(ts(5, 1) != ts(6, 1));
+        // The same instant, however jiff was given it.
+        assert!(Timestamp::new(at(-1, -500_000_000)) == Timestamp::new(at(-2, 500_000_000)));
+        let mut wiped = ts(1_700_000_000, 7);
+        wiped.zeroize();
+        assert!(wiped == Timestamp::default());
+        let shown = format!("{:?}", ts(1_700_000_000, 7));
         assert!(!shown.contains("1700000000"), "{shown}");
     }
 
-    /// A `Timestamp` gives the same leaf as the `DateTime` it was built
-    /// from, owned or borrowed; the `DateTime` walk is what refuses a leap
-    /// second, which is why the newtype exists.
+    /// A `Timestamp` gives the same leaf as the `jiff::Timestamp` it was
+    /// built from, owned or borrowed.
     #[test]
-    fn it_walks_as_the_datetime_it_holds() {
+    fn it_walks_as_the_instant_it_holds() {
         for instant in [
-            DateTime::from_timestamp(1, 5).expect("ok"),
-            DateTime::from_timestamp(-1, 999_999_999).expect("ok"),
-            DateTime::<Utc>::MIN_UTC,
-            DateTime::<Utc>::MAX_UTC,
+            at(1, 5),
+            at(-1, -1),
+            jiff::Timestamp::MIN,
+            jiff::Timestamp::MAX,
         ] {
-            let ts = Timestamp::new(instant).expect("ok");
+            let ts = Timestamp::new(instant);
             assert_eq!(frame(&ts), frame(instant), "{instant}");
             assert_eq!(frame(ts), frame(instant), "{instant}");
         }
@@ -239,15 +201,7 @@ mod tests {
             Physical::Int(Int::I128(1_000_000_005)),
         )
         .expect("a timestamp");
-        assert_eq!(
-            decoded.to_datetime(),
-            DateTime::from_timestamp(1, 5).expect("ok")
-        );
+        assert_eq!(decoded.to_jiff(), at(1, 5));
         assert!(Timestamp::from_scalar(None, Physical::Int(Int::I128(1))).is_none());
-
-        assert!(matches!(
-            plan::<_, (), _>(leap(), "aad"),
-            Err(EncryptError::Source(_))
-        ));
     }
 }

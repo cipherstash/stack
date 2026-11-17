@@ -98,20 +98,20 @@ fn a_variable_width_none_is_the_plain_null() {
     assert_eq!(sealed(None::<Vec<u8>>), [tags::NULL]);
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
 #[test]
-fn chrono_types_and_timestamp_hide_absence() {
-    use chrono::{DateTime, NaiveDate, Utc};
-    hides_absence(NaiveDate::from_ymd_opt(1999, 12, 31).expect("date"));
-    hides_absence(DateTime::<Utc>::from_timestamp(1_700_000_000, 5).expect("instant"));
-    hides_absence(
-        vitaminc_aead::Timestamp::new(DateTime::<Utc>::from_timestamp(7, 0).expect("instant"))
-            .expect("not a leap second"),
-    );
-    // A `Timestamp` and a `DateTime<Utc>` are the one leaf, absent or not.
+fn jiff_types_and_timestamp_hide_absence() {
+    use jiff::{civil::Date, Timestamp};
+    hides_absence(Date::constant(1999, 12, 31));
+    hides_absence(Timestamp::new(1_700_000_000, 5).expect("instant"));
+    hides_absence(vitaminc_aead::Timestamp::new(
+        Timestamp::new(7, 0).expect("instant"),
+    ));
+    // A `vitaminc_aead::Timestamp` and a `jiff::Timestamp` are the one
+    // leaf, absent or not.
     assert_eq!(
         sealed(None::<vitaminc_aead::Timestamp>),
-        sealed(None::<DateTime<Utc>>)
+        sealed(None::<Timestamp>)
     );
 }
 

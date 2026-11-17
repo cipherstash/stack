@@ -620,18 +620,17 @@ where
     }
 }
 
-// The chrono and rust_decimal types are logical types over an int. Each
+// The jiff and rust_decimal types are logical types over an int. Each
 // source says which, and the int it stands for.
 
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
-mod chrono_sources {
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
+mod jiff_sources {
     use super::*;
-    use crate::plaintext::kinds::{chrono as conv, Int, TimeUnit};
-    use crate::plaintext::{Error, SourceError};
-    use ::chrono::{DateTime, NaiveDate, Utc};
+    use crate::plaintext::kinds::{jiff as conv, Int, TimeUnit};
+    use ::jiff::{civil::Date, Timestamp};
 
-    impl Encrypt for NaiveDate {
+    impl Encrypt for Date {
         const DEPTH: Option<usize> = depth::SCALAR;
         const FIXED: Option<FixedType> = FixedType::new(Some(Logical::Date), Width::I32);
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
@@ -642,43 +641,37 @@ mod chrono_sources {
         }
     }
 
-    /// Stored as nanoseconds, the unit of the `TIMESTAMP` tag. A leap second
-    /// has no count and stops the walk; a [`Timestamp`](crate::Timestamp)
-    /// field refuses it when the value is built instead.
-    impl Encrypt for DateTime<Utc> {
+    /// Stored as nanoseconds, the unit of the `TIMESTAMP` tag. jiff has no
+    /// leap seconds, so every instant encrypts.
+    impl Encrypt for Timestamp {
         const DEPTH: Option<usize> = depth::SCALAR;
         const FIXED: Option<FixedType> =
             FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128);
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-            let nanos = conv::timestamp_nanos(self).ok_or_else(|| {
-                S::Error::source(SourceError::msg(
-                    "a leap second has no count of nanoseconds",
-                ))
-            })?;
             sink.scalar(
                 Some(Logical::Timestamp(TimeUnit::Nanos)),
-                Physical::Int(Int::I128(nanos)),
+                Physical::Int(Int::I128(conv::timestamp_nanos(self))),
             )
         }
     }
 
-    impl Encrypt for &NaiveDate {
+    impl Encrypt for &Date {
         const DEPTH: Option<usize> = depth::SCALAR;
-        const FIXED: Option<FixedType> = NaiveDate::FIXED;
+        const FIXED: Option<FixedType> = Date::FIXED;
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             (*self).visit(sink)
         }
     }
 
-    impl Encrypt for &DateTime<Utc> {
+    impl Encrypt for &Timestamp {
         const DEPTH: Option<usize> = depth::SCALAR;
-        const FIXED: Option<FixedType> = <DateTime<Utc> as Encrypt>::FIXED;
+        const FIXED: Option<FixedType> = <Timestamp as Encrypt>::FIXED;
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             (*self).visit(sink)
         }
     }
 
-    scalar!(NaiveDate, &NaiveDate, DateTime<Utc>, &DateTime<Utc>);
+    scalar!(Date, &Date, Timestamp, &Timestamp);
 }
 
 #[cfg(feature = "rust_decimal")]
@@ -1328,12 +1321,12 @@ mod tests {
         assert_eq!(err.0, "getter threw");
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
-    fn chrono_types_are_logical_types_over_an_int() {
+    fn jiff_types_are_logical_types_over_an_int() {
         use crate::plaintext::kinds::TimeUnit;
-        use ::chrono::{DateTime, NaiveDate};
-        let date = NaiveDate::from_ymd_opt(2000, 3, 1).expect("ok");
+        use ::jiff::{civil::Date, Timestamp};
+        let date = Date::constant(2000, 3, 1);
         assert_eq!(
             record(date).expect("ok"),
             [Event::Scalar(
@@ -1341,7 +1334,7 @@ mod tests {
                 Owned::Int(Int::I32(11_017))
             )]
         );
-        let ts = DateTime::from_timestamp(1, 5).expect("ok");
+        let ts = Timestamp::new(1, 5).expect("ok");
         assert_eq!(
             record(ts).expect("ok"),
             [Event::Scalar(
@@ -1349,25 +1342,16 @@ mod tests {
                 Owned::Int(Int::I128(1_000_000_005))
             )]
         );
-        let leap = NaiveDate::from_ymd_opt(2016, 12, 31)
-            .expect("ok")
-            .and_hms_nano_opt(23, 59, 59, 1_500_000_000)
-            .expect("ok")
-            .and_utc();
-        assert_eq!(
-            record(leap).expect_err("should fail").0,
-            "a leap second has no count of nanoseconds"
-        );
     }
 
     // The borrows are the point: each one picks the reference impl.
     #[allow(clippy::needless_borrows_for_generic_args)]
-    #[cfg(all(feature = "chrono", feature = "rust_decimal", feature = "uuid"))]
+    #[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
     #[test]
     fn borrowed_logical_sources_walk_as_the_owned_ones() {
-        let date = ::chrono::NaiveDate::from_ymd_opt(2000, 3, 1).expect("ok");
+        let date = ::jiff::civil::Date::constant(2000, 3, 1);
         assert_eq!(record(&date).expect("ok"), record(date).expect("ok"));
-        let ts = ::chrono::DateTime::from_timestamp(1, 5).expect("ok");
+        let ts = ::jiff::Timestamp::new(1, 5).expect("ok");
         assert_eq!(record(&ts).expect("ok"), record(ts).expect("ok"));
         let d: rust_decimal::Decimal = "-1.50".parse().expect("ok");
         assert_eq!(record(&d).expect("ok"), record(d).expect("ok"));
