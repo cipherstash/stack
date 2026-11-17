@@ -129,6 +129,18 @@
       "transport": "1293feffff"
     },
     {
+      "name": "date-min",
+      "kind": "date",
+      "value": "-009999-01-01",
+      "transport": "12b844c8ff"
+    },
+    {
+      "name": "date-max",
+      "kind": "date",
+      "value": "9999-12-31",
+      "transport": "12dbb93700"
+    },
+    {
       "name": "timestamp",
       "kind": "timestamp",
       "value": "1970-01-01T00:00:00.123Z",
@@ -144,17 +156,25 @@
       "js_date": false
     },
     {
-      "name": "timestamp-expanded-year",
+      "name": "timestamp-negative-year",
       "kind": "timestamp",
-      "value": "+12000-01-01T00:00:00.000000001Z",
-      "transport": "130001d6b14900000001000000",
+      "value": "-000005-03-01T12:00:00.000000001Z",
+      "transport": "1340a2727df1ffffff01000000",
       "js_date": false
     },
     {
-      "name": "timestamp-negative-year",
+      "name": "timestamp-min",
       "kind": "timestamp",
-      "value": "-0005-03-01T12:00:00.000000001Z",
-      "transport": "1340a2727df1ffffff01000000",
+      "value": "-009999-01-02T01:59:59Z",
+      "transport": "131fb9060fa8ffffff00000000",
+      "js_date": true,
+      "js_reencode": "f3030105182143b27aa8feff"
+    },
+    {
+      "name": "timestamp-max",
+      "kind": "timestamp",
+      "value": "9999-12-30T22:00:00.999999999Z",
+      "transport": "13e0d3f2ff3a000000ffc99a3b",
       "js_date": false
     },
     {
@@ -263,6 +283,31 @@
     {
       "name": "invalid-timestamp-range",
       "transport": "13ffffffffffffff7f00000000"
+    },
+    {
+      "name": "date-before-min",
+      "transport": "12b744c8ff",
+      "rule": "The wire's range is jiff's (vitaminc#626): dates -009999-01-01 to 9999-12-31, instants -009999-01-02T01:59:59Z to 9999-12-30T22:00:00.999999999Z, and a count outside it is refused"
+    },
+    {
+      "name": "date-past-max",
+      "transport": "12dcb93700",
+      "rule": "The wire's range is jiff's (vitaminc#626): dates -009999-01-01 to 9999-12-31, instants -009999-01-02T01:59:59Z to 9999-12-30T22:00:00.999999999Z, and a count outside it is refused"
+    },
+    {
+      "name": "timestamp-before-min",
+      "transport": "131eb9060fa8ffffffffc99a3b",
+      "rule": "The wire's range is jiff's (vitaminc#626): dates -009999-01-01 to 9999-12-31, instants -009999-01-02T01:59:59Z to 9999-12-30T22:00:00.999999999Z, and a count outside it is refused"
+    },
+    {
+      "name": "timestamp-past-max",
+      "transport": "13e1d3f2ff3a00000000000000",
+      "rule": "The wire's range is jiff's (vitaminc#626): dates -009999-01-01 to 9999-12-31, instants -009999-01-02T01:59:59Z to 9999-12-30T22:00:00.999999999Z, and a count outside it is refused"
+    },
+    {
+      "name": "timestamp-expanded-year",
+      "transport": "130001d6b14900000001000000",
+      "rule": "The wire's range is jiff's (vitaminc#626): dates -009999-01-01 to 9999-12-31, instants -009999-01-02T01:59:59Z to 9999-12-30T22:00:00.999999999Z, and a count outside it is refused; this instant in year 12000 opened before the move from chrono"
     },
     {
       "name": "decimal-reserved-bits",
@@ -427,7 +472,7 @@
     {
       "name": "envelope-timestamp-out-of-range",
       "transport": "f30300100000000000000000000000000000ff7f",
-      "rule": "ADR 0001 section 3: a timestamp count outside the representable range (here an i128 of seconds far past year 262143) is refused"
+      "rule": "ADR 0001 section 3: a timestamp count outside the representable range (here an i128 of seconds far past year 9999) is refused"
     },
     {
       "name": "envelope-uuid-over-text",

@@ -33,9 +33,10 @@ decimal values are strings to avoid JSON number rounding. Bytes are
 hexadecimal. A timestamp row may carry a `unit` (`seconds`, `millis`,
 `micros`; nanoseconds is the shorthand tag); `js_date` selects a native
 JavaScript Date, and other timestamps keep their nanoseconds in a wrapper,
-spelled RFC 3339 for years 0000-9999 and with an ISO 8601 expanded year
-(`+12000-…`) otherwise. An `unknown` kind carries `{id, param, kind, value}`
-for the envelope's physical scalar.
+spelled RFC 3339. Dates and timestamps cover jiff's range, years -9999 to
+9999, in every binding, and a negative year is a sign and six digits
+(`-000005-03-01`), as jiff and JavaScript write it. An `unknown` kind
+carries `{id, param, kind, value}` for the envelope's physical scalar.
 
 `normalized`: as `vectors`, plus `reencode` (the canonical bytes every
 language writes back) and `reencode_value` (the host value it reads as).

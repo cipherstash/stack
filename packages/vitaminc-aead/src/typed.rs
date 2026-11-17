@@ -446,8 +446,7 @@ mod jiff_targets {
     use crate::plaintext::kinds::jiff as conv;
     use ::jiff::{civil::Date, Timestamp};
 
-    /// Years -9999 to 9999. A date the wire admits past those has no
-    /// `Date`, so it is refused as the wrong shape.
+    /// Every date the wire admits: its range is jiff's.
     impl FromScalar for Date {
         const EXPECTED: &'static str = "date";
         fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
@@ -459,7 +458,8 @@ mod jiff_targets {
     }
 
     /// Any unit: a JavaScript `Date` in milliseconds decodes as well as a
-    /// Rust timestamp in nanoseconds. Years -9999 to 9999, as for [`Date`].
+    /// Rust timestamp in nanoseconds. Every instant the wire admits: its
+    /// range is jiff's.
     impl FromScalar for Timestamp {
         const EXPECTED: &'static str = "timestamp";
         fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
@@ -1896,21 +1896,30 @@ mod tests {
         assert_eq!(expected(round_trip::<Date>(0i32)), "date");
     }
 
-    /// The wire admits years -262143 to 262142; jiff stops at ±9999. A
-    /// value between opens, but is refused by a jiff target.
+    /// The wire's range is jiff's, so a jiff target opens the values at
+    /// both ends of it.
     #[cfg(feature = "jiff")]
     #[test]
-    fn jiff_targets_refuse_a_value_past_their_range() {
-        use crate::plaintext::kinds::{MAX_DATE_DAYS, MAX_TIMESTAMP_NANOS};
+    fn jiff_targets_open_both_ends_of_the_wire_range() {
+        use crate::plaintext::kinds::{
+            MAX_DATE_DAYS, MAX_TIMESTAMP_NANOS, MIN_DATE_DAYS, MIN_TIMESTAMP_NANOS,
+        };
         use crate::plaintext::TimeUnit;
         use ::jiff::{civil::Date, Timestamp};
-        let date = Raw(Some(Logical::Date), Physical::Int(Int::I32(MAX_DATE_DAYS)));
-        assert_eq!(expected(round_trip::<Date>(date)), "date");
-        let ts = Raw(
-            Some(Logical::Timestamp(TimeUnit::Nanos)),
-            Physical::Int(Int::I128(MAX_TIMESTAMP_NANOS)),
-        );
-        assert_eq!(expected(round_trip::<Timestamp>(ts)), "timestamp");
+        for (days, date) in [(MIN_DATE_DAYS, Date::MIN), (MAX_DATE_DAYS, Date::MAX)] {
+            let raw = Raw(Some(Logical::Date), Physical::Int(Int::I32(days)));
+            assert_eq!(round_trip::<Date>(raw).expect("date"), date);
+        }
+        for (nanos, instant) in [
+            (MIN_TIMESTAMP_NANOS, Timestamp::MIN),
+            (MAX_TIMESTAMP_NANOS, Timestamp::MAX),
+        ] {
+            let raw = Raw(
+                Some(Logical::Timestamp(TimeUnit::Nanos)),
+                Physical::Int(Int::I128(nanos)),
+            );
+            assert_eq!(round_trip::<Timestamp>(raw).expect("timestamp"), instant);
+        }
     }
 
     #[cfg(feature = "rust_decimal")]

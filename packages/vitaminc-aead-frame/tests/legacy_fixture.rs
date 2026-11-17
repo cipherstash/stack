@@ -15,7 +15,8 @@
 //!   (empty containers below the top, passthrough beside sealed values in
 //!   an array, empty and non-ASCII keys, every numeric width, date,
 //!   timestamp, decimal, undefined), each sealed on the `Value` path with
-//!   the frame it must open to.
+//!   the frame it must open to. One, a timestamp in year 12000, is past
+//!   the wire's range since vitaminc#626 and must be refused instead.
 //!
 //! Each ciphertext is decoded with this crate's codec, opened through
 //! `decrypt_to_frame`, and must come out as its frame byte for byte. That
@@ -167,8 +168,21 @@ fn open(fixture: &Fixture, vector: &Vector, aad: &[u8]) -> Opened {
     .map(|frame| frame.risky_ref().to_vec())
 }
 
+/// Vectors whose values are past the wire's range, which is jiff's since
+/// vitaminc#626. They authenticate, but their leaf is refused as malformed.
+const PAST_THE_RANGE: &[&str] = &["timestamp-expanded-year"];
+
 fn opens_into_its_frame(fixture: &Fixture) {
     for vector in &fixture.vectors {
+        if PAST_THE_RANGE.contains(&vector.name.as_str()) {
+            let opened = open(fixture, vector, &fixture.aad);
+            assert!(
+                matches!(opened, Err(DecryptError::Malformed)),
+                "{}: {opened:?}",
+                vector.name
+            );
+            continue;
+        }
         let opened = open(fixture, vector, &fixture.aad)
             .unwrap_or_else(|e| panic!("{} opens: {e:?}", vector.name));
         assert_eq!(opened, vector.frame, "{}", vector.name);
@@ -200,7 +214,10 @@ fn every_corpus_vector_sealed_on_the_value_path_opens_into_its_frame() {
         "the corpus and the edge documents"
     );
     let names: Vec<&str> = fixture.vectors.iter().map(|v| v.name.as_str()).collect();
-    for expected in ["nested-sample", "nested-edges", "top-level-passthrough"] {
+    for expected in ["nested-sample", "nested-edges", "top-level-passthrough"]
+        .into_iter()
+        .chain(PAST_THE_RANGE.iter().copied())
+    {
         assert!(names.contains(&expected), "{expected} is in the fixture");
     }
     opens_into_its_frame(&fixture);

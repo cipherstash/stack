@@ -44,10 +44,11 @@ quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
 serde_json = { workspace = true }
 # Path-only, so publish order does not matter: the conformance test builds
-# each vector's scalar independently through the rust_decimal conversions,
-# and the fixture test opens a pre-ADR-0001 ciphertext with real
-# AES-256-GCM.
-vitaminc-aead = { path = "../aead", features = ["rust_decimal"] }
+# each vector's scalar independently through the jiff and rust_decimal
+# conversions, and the fixture test opens a pre-ADR-0001 ciphertext with
+# real AES-256-GCM.
+vitaminc-aead = { path = "../aead", features = ["jiff", "rust_decimal"] }
+jiff = { version = "1.0.0", default-features = false }
 vitaminc-encrypt = { path = "../encrypt" }
 vitaminc-protected = { path = "../protected" }
 rust_decimal = { version = "1.41", default-features = false, features = ["std"] }

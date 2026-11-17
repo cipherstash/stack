@@ -1,10 +1,10 @@
 //! The shared binding corpus against the frame and the ciphertext codec:
 //! every vector parses as one frame and writes back byte for byte, from its
-//! own walk and from a scalar built independently with std, rust_decimal
-//! and a civil-calendar parser of its own (the corpus has a timestamp in
-//! year 12000, past jiff's range), so a bug that reads and writes
-//! symmetrically wrong cannot
-//! pass. Every malformed vector is refused, every normalized vector reads
+//! own walk and from a scalar built independently with std, jiff and
+//! rust_decimal, so a bug that reads and writes symmetrically wrong cannot
+//! pass. Building each date and timestamp with jiff also shows that every
+//! value another binding seals opens as a jiff value in Rust. Every
+//! malformed vector is refused, every normalized vector reads
 //! and writes back as its canonical bytes, every malformed ciphertext is
 //! refused by the ciphertext codec, and every leaf-type AAD vector has the
 //! context bytes it pins.
@@ -16,6 +16,7 @@
 
 use std::collections::BTreeMap;
 
+use vitaminc_aead::plaintext::kinds::jiff as conv;
 use vitaminc_aead::{
     Encrypt, Float, Int, IntoAad, Kind, KnownLogical, LeafTypeAad, Logical, Physical, Raw,
     TimeUnit, UnknownLogicalId,
@@ -38,68 +39,6 @@ fn framed<P: Encrypt>(p: P) -> Vec<u8> {
 
 fn scalar(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {
     framed(Raw(ty, v))
-}
-
-/// Days from 1970-01-01 to a proleptic Gregorian date, by Howard Hinnant's
-/// `days_from_civil`.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    assert!((1..=12).contains(&month) && (1..=31).contains(&day));
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
-/// An ISO 8601 date, `[+-]YYYY-MM-DD`, as days since 1970-01-01.
-fn parse_date(text: &str) -> i64 {
-    let (sign, rest) = match text.as_bytes()[0] {
-        b'+' => (1, &text[1..]),
-        b'-' => (-1, &text[1..]),
-        _ => (1, text),
-    };
-    let mut parts = rest.splitn(3, '-');
-    let mut next = || -> i64 { parts.next().expect("date part").parse().expect("digits") };
-    let (year, month, day) = (sign * next(), next(), next());
-    days_from_civil(year, month, day)
-}
-
-/// An RFC 3339 UTC instant, `<date>THH:MM:SS[.fraction]Z`, as nanoseconds
-/// since the epoch.
-fn parse_timestamp(text: &str) -> i128 {
-    let (date, time) = text.split_once('T').expect("date and time");
-    let time = time.strip_suffix('Z').expect("UTC");
-    let (hms, fraction) = time.split_once('.').unwrap_or((time, ""));
-    let mut hms = hms
-        .splitn(3, ':')
-        .map(|p| p.parse::<i128>().expect("digits"));
-    let (h, m, s) = (
-        hms.next().expect("hour"),
-        hms.next().expect("minute"),
-        hms.next().expect("second"),
-    );
-    assert!(h < 24 && m < 60 && s < 60, "{text}");
-    assert!(fraction.len() <= 9, "{text}");
-    let nanos = if fraction.is_empty() {
-        0
-    } else {
-        fraction.parse::<i128>().expect("digits") * 10i128.pow(9 - fraction.len() as u32)
-    };
-    let seconds = i128::from(parse_date(date)) * 86_400 + h * 3_600 + m * 60 + s;
-    seconds * 1_000_000_000 + nanos
-}
-
-#[test]
-fn the_civil_parser_agrees_with_known_dates() {
-    assert_eq!(parse_date("1970-01-01"), 0);
-    assert_eq!(parse_date("1969-12-31"), -1);
-    assert_eq!(parse_date("2000-03-01"), 11_017);
-    assert_eq!(parse_date("2024-02-29"), 19_782);
-    assert_eq!(parse_date("0000-01-01"), -719_528);
-    assert_eq!(parse_timestamp("1969-12-31T23:59:59.999999999Z"), -1);
-    assert_eq!(parse_timestamp("1970-01-01T00:00:10Z"), 10_000_000_000);
-    assert_eq!(parse_timestamp("1970-01-01T00:00:00.123Z"), 123_000_000);
 }
 
 fn int<T: std::str::FromStr>(value: &serde_json::Value) -> T {
@@ -150,11 +89,15 @@ fn expected(row: &serde_json::Value) -> Vec<u8> {
     match kind {
         "undefined" => scalar(Some(Logical::Undefined), Physical::Null),
         "date" => {
-            let days = i32::try_from(parse_date(text())).expect("in range");
-            scalar(Some(Logical::Date), Physical::Int(Int::I32(days)))
+            let date: jiff::civil::Date = text().parse().expect("valid date");
+            scalar(
+                Some(Logical::Date),
+                Physical::Int(Int::I32(conv::date_days(date))),
+            )
         }
         "timestamp" => {
-            let nanos = parse_timestamp(text());
+            let instant: jiff::Timestamp = text().parse().expect("valid timestamp");
+            let nanos = conv::timestamp_nanos(instant).expect("in range");
             let unit = match row["unit"].as_str() {
                 None | Some("nanos") => TimeUnit::Nanos,
                 Some("micros") => TimeUnit::Micros,
@@ -162,8 +105,7 @@ fn expected(row: &serde_json::Value) -> Vec<u8> {
                 Some("seconds") => TimeUnit::Seconds,
                 Some(other) => panic!("unknown unit {other}"),
             };
-            assert_eq!(nanos % unit.nanos(), 0, "exact in its unit");
-            let count = nanos / unit.nanos();
+            let count = conv::timestamp_count(unit, nanos).expect("exact in its unit");
             // The narrowest int the count fits, as a host would write it.
             let count = match i64::try_from(count) {
                 Ok(v) => Int::I64(v),

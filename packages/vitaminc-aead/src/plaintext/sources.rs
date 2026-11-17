@@ -643,8 +643,8 @@ mod jiff_sources {
     }
 
     /// Stored as nanoseconds, the unit of the `TIMESTAMP` tag. An instant
-    /// jiff cannot rebuild from its count (see
-    /// [`timestamp_nanos`](conv::timestamp_nanos)) stops the walk; a
+    /// outside the wire's range, which jiff 1.0.0 can make (see
+    /// [`timestamp_nanos`](conv::timestamp_nanos)), stops the walk; a
     /// [`Timestamp`](crate::Timestamp) field refuses it when the value is
     /// built instead.
     impl Encrypt for Timestamp {

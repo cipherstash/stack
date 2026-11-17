@@ -435,7 +435,7 @@ No optional features are enabled by default.
 
 | Feature | Effect |
 | --- | --- |
-| `jiff` | Adds `jiff::civil::Date` and `jiff::Timestamp` as sources and decrypt targets, and `Timestamp`, a UTC instant that is wiped when dropped. jiff covers years -9999 to 9999; a value sealed past those still opens, but not into a jiff type. |
+| `jiff` | Adds `jiff::civil::Date` and `jiff::Timestamp` as sources and decrypt targets, and `Timestamp`, a UTC instant that is wiped when dropped. The wire's range for dates and timestamps is jiff's, years -9999 to 9999, in every binding, so every value opens into a jiff type. |
 | `rust_decimal` | Adds `rust_decimal::Decimal` encoding and decoding. |
 | `uuid` | Adds `uuid::Uuid` encoding and decoding. |
 | `hlist` | Exposes the static heterogeneous-list API in `hlist`. |

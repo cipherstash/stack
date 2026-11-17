@@ -1249,7 +1249,7 @@ mod tests {
             // Within the wire's range in milliseconds, through the envelope.
             (
                 Logical::Timestamp(TimeUnit::Millis),
-                Int::I64(n % 8_000_000_000_000_000),
+                Int::I64(n % 253_402_207_200_000),
             ),
             (Logical::Decimal { scale: scale % 29 }, Int::I64(n)),
         ];

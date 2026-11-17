@@ -490,16 +490,16 @@ impl PartialEq for Int {
 pub enum Logical {
     /// JavaScript's `undefined`. Over null.
     Undefined,
-    /// Days since 1970-01-01, years -262143 to 262142. Over int.
+    /// Days since 1970-01-01, years -9999 to 9999 (see
+    /// [`MIN_DATE_DAYS`]). Over int.
     Date,
     /// A count of `TimeUnit`s since the Unix epoch, UTC, with no leap
-    /// seconds, years -262143 to 262142. Over int.
+    /// seconds, within jiff's range (see [`MIN_TIMESTAMP_NANOS`]). Over
+    /// int.
     ///
-    /// The range is chrono's, which these types were first decoded with,
-    /// and it is kept so that every value already sealed still opens. It
-    /// is narrower than a JavaScript `Date`'s (about ±275,000 years), and a
-    /// host refuses a `Date` outside it. jiff's types cover only years
-    /// -9999 to 9999, so a value past those opens but has no jiff value.
+    /// The range is jiff's in every language, so every value opens as a
+    /// jiff value. It is narrower than a JavaScript `Date`'s (about
+    /// ±275,000 years), and a host refuses a `Date` outside it.
     Timestamp(TimeUnit),
     /// `int × 10^-scale`, scale at most 28 and `|int| < 2^96`. Over int.
     Decimal {
@@ -575,19 +575,25 @@ pub const MAX_DECIMAL_SCALE: u8 = 28;
 /// Decimal mantissas are 96-bit: `|mantissa| < 2^96`.
 const DECIMAL_MANTISSA_LIMIT: i128 = 1 << 96;
 
-/// Earliest supported date as days since 1970-01-01, in year -262143.
-/// chrono's minimum date, kept so that every value already sealed opens.
-pub const MIN_DATE_DAYS: i32 = -96_465_292;
-/// Latest supported date as days since 1970-01-01, in year 262142.
-pub const MAX_DATE_DAYS: i32 = 95_026_236;
+/// Earliest supported date as days since 1970-01-01: -9999-01-01.
+///
+/// The wire's dates and timestamps cover jiff's range, years -9999 to
+/// 9999, in every language, so a value one binding seals every binding
+/// opens. A count outside it is refused when it is sealed and when it is
+/// opened.
+pub const MIN_DATE_DAYS: i32 = -4_371_587;
+/// Latest supported date as days since 1970-01-01: 9999-12-31.
+pub const MAX_DATE_DAYS: i32 = 2_932_896;
 
 /// Earliest supported UTC instant in nanoseconds since the Unix epoch,
-/// inclusive: midnight on the first day of [`MIN_DATE_DAYS`].
-pub const MIN_TIMESTAMP_NANOS: i128 = MIN_DATE_DAYS as i128 * NANOS_PER_DAY;
-/// Latest supported UTC instant in nanoseconds since the Unix epoch, inclusive.
-pub const MAX_TIMESTAMP_NANOS: i128 = (MAX_DATE_DAYS as i128 + 1) * NANOS_PER_DAY - 1;
-
-const NANOS_PER_DAY: i128 = 86_400 * 1_000_000_000;
+/// inclusive: -9999-01-02T01:59:59Z, jiff's `Timestamp::MIN`.
+///
+/// jiff's instants stop short of its dates' ends, so that any of them
+/// can be shown at any UTC offset as a date in range.
+pub const MIN_TIMESTAMP_NANOS: i128 = -377_705_023_201_000_000_000;
+/// Latest supported UTC instant in nanoseconds since the Unix epoch,
+/// inclusive: 9999-12-30T22:00:00.999999999Z, jiff's `Timestamp::MAX`.
+pub const MAX_TIMESTAMP_NANOS: i128 = 253_402_207_200_999_999_999;
 
 /// The wire ids of the logical types. These are the cross-language
 /// commitment for the logical envelope and must never change; a new type
@@ -771,9 +777,10 @@ fn decimal_in_range(scale: u8, mantissa: Int) -> bool {
 
 /// Conversions between the jiff types and the ints they are stored as.
 ///
-/// jiff covers years -9999 to 9999, a narrower range than the wire's (see
-/// [`MIN_DATE_DAYS`]). A count outside jiff's range
-/// still opens as an int, but has no jiff value, so these return `None`.
+/// The wire's range is jiff's (see [`MIN_DATE_DAYS`]), so every count the
+/// wire admits has a jiff value, and every jiff value has a count, except
+/// for the instant jiff 1.0.0 can make before its own minimum (see
+/// [`timestamp_nanos`](jiff::timestamp_nanos)).
 #[cfg(feature = "jiff")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 pub mod jiff {
@@ -783,7 +790,7 @@ pub mod jiff {
     const EPOCH: Date = Date::constant(1970, 1, 1);
     const SECONDS_PER_DAY: i64 = 86_400;
 
-    /// The date for a day count, if it is one jiff can represent.
+    /// The date for a day count, if it is in range.
     pub fn date(days: Int) -> Option<Date> {
         let days = i64::try_from(days.to_i128()?).ok()?;
         let since = SignedDuration::from_secs(days.checked_mul(SECONDS_PER_DAY)?);
@@ -793,27 +800,28 @@ pub mod jiff {
     /// A date's day count since 1970-01-01.
     pub fn date_days(date: Date) -> i32 {
         // A civil day is always 86,400 seconds, so the division is exact,
-        // and jiff's dates lie within -4,371,587 to 2,932,896 days of the
-        // epoch (pinned by a test below), so the cast cannot truncate.
+        // and jiff's dates lie within MIN_DATE_DAYS to MAX_DATE_DAYS of
+        // the epoch (pinned by a test below), so the cast cannot truncate.
         (date.duration_since(EPOCH).as_secs() / SECONDS_PER_DAY) as i32
     }
 
-    /// The instant for a count of `unit`s, if it is one jiff can represent.
+    /// The instant for a count of `unit`s, if it is in range.
     pub fn timestamp(unit: TimeUnit, count: Int) -> Option<Timestamp> {
         Timestamp::from_nanosecond(super::timestamp_nanos(unit, count)?).ok()
     }
 
-    /// An instant as nanoseconds since the epoch, if jiff can rebuild it.
+    /// An instant as nanoseconds since the epoch, if it is in range.
     ///
     /// jiff has no leap seconds, so every valid instant has a count. But
     /// jiff 1.0.0's `Offset::to_timestamp` (reached by parsing text with a
     /// UTC offset) can return a `Timestamp` up to a second before
-    /// `Timestamp::MIN`, which jiff cannot rebuild from its count. Such a
-    /// value would seal and then fail to decrypt as a `Timestamp`, so it
-    /// has no count here and is refused before it is sealed.
+    /// `Timestamp::MIN` (BurntSushi/jiff#714), outside the wire's range.
+    /// Such a value has no count here and is refused before it is sealed.
     pub fn timestamp_nanos(ts: Timestamp) -> Option<i128> {
         let nanos = ts.as_nanosecond();
-        Timestamp::from_nanosecond(nanos).is_ok().then_some(nanos)
+        (super::MIN_TIMESTAMP_NANOS..=super::MAX_TIMESTAMP_NANOS)
+            .contains(&nanos)
+            .then_some(nanos)
     }
 
     /// Reduce a nanosecond count to `unit`, if it is exact.
@@ -828,16 +836,15 @@ pub mod jiff {
         };
         use super::*;
 
-        /// jiff's range sits inside the wire's, so every jiff value has a
-        /// count the wire admits.
+        /// The wire's range is jiff's, exactly.
         #[test]
-        fn jiffs_range_is_inside_the_wire_range() {
-            assert_eq!(date_days(Date::MIN), -4_371_587);
-            assert_eq!(date_days(Date::MAX), 2_932_896);
-            assert!(MIN_DATE_DAYS < date_days(Date::MIN));
-            assert!(date_days(Date::MAX) < MAX_DATE_DAYS);
-            assert!(Some(MIN_TIMESTAMP_NANOS) < timestamp_nanos(Timestamp::MIN));
-            assert!(timestamp_nanos(Timestamp::MAX) < Some(MAX_TIMESTAMP_NANOS));
+        fn the_wire_range_is_jiffs() {
+            assert_eq!(date_days(Date::MIN), MIN_DATE_DAYS);
+            assert_eq!(date_days(Date::MAX), MAX_DATE_DAYS);
+            assert_eq!(timestamp_nanos(Timestamp::MIN), Some(MIN_TIMESTAMP_NANOS));
+            assert_eq!(timestamp_nanos(Timestamp::MAX), Some(MAX_TIMESTAMP_NANOS));
+            assert_eq!(Timestamp::MIN.to_string(), "-009999-01-02T01:59:59Z");
+            assert_eq!(Timestamp::MAX.to_string(), "9999-12-30T22:00:00.999999999Z");
             assert_eq!(date_days(EPOCH), 0);
             assert_eq!(date(Int::I32(0)), Some(EPOCH));
         }
@@ -858,23 +865,22 @@ pub mod jiff {
         }
 
         #[test]
-        fn counts_jiff_cannot_represent_have_no_jiff_value() {
-            assert!(date(Int::I32(date_days(Date::MIN) - 1)).is_none());
-            assert!(date(Int::I32(date_days(Date::MAX) + 1)).is_none());
-            // Admitted by the wire, but past jiff.
-            assert!(date(Int::I32(MIN_DATE_DAYS)).is_none());
-            assert!(date(Int::I32(MAX_DATE_DAYS)).is_none());
+        fn counts_out_of_range_have_no_jiff_value() {
+            assert_eq!(date(Int::I32(MIN_DATE_DAYS)), Some(Date::MIN));
+            assert_eq!(date(Int::I32(MAX_DATE_DAYS)), Some(Date::MAX));
+            assert!(date(Int::I32(MIN_DATE_DAYS - 1)).is_none());
+            assert!(date(Int::I32(MAX_DATE_DAYS + 1)).is_none());
             assert!(date(Int::I64(i64::MAX)).is_none());
             assert!(date(Int::U128(u128::MAX)).is_none());
-            assert!(timestamp(TimeUnit::Nanos, Int::I128(MAX_TIMESTAMP_NANOS)).is_none());
+            for (nanos, instant) in [
+                (MIN_TIMESTAMP_NANOS, Timestamp::MIN),
+                (MAX_TIMESTAMP_NANOS, Timestamp::MAX),
+            ] {
+                assert_eq!(timestamp(TimeUnit::Nanos, Int::I128(nanos)), Some(instant));
+            }
+            assert!(timestamp(TimeUnit::Nanos, Int::I128(MIN_TIMESTAMP_NANOS - 1)).is_none());
             assert!(timestamp(TimeUnit::Nanos, Int::I128(MAX_TIMESTAMP_NANOS + 1)).is_none());
             assert!(timestamp(TimeUnit::Seconds, Int::I64(i64::MAX)).is_none());
-            let max = timestamp_nanos(Timestamp::MAX).expect("count");
-            assert_eq!(
-                timestamp(TimeUnit::Nanos, Int::I128(max)),
-                Some(Timestamp::MAX)
-            );
-            assert!(timestamp(TimeUnit::Nanos, Int::I128(max + 1)).is_none());
         }
 
         #[test]
@@ -1289,7 +1295,10 @@ mod tests {
         // `new Date(8.64e15)`: valid in JavaScript, past the wire's range.
         let millis = Logical::Timestamp(TimeUnit::Millis);
         assert!(!millis.admits(&Physical::Int(Int::I64(8_640_000_000_000_000))));
-        assert!(millis.admits(&Physical::Int(Int::I64(8_000_000_000_000_000))));
+        // The last millisecond of the range, 9999-12-30T22:00:00.999Z, and
+        // the one after it.
+        assert!(millis.admits(&Physical::Int(Int::I64(253_402_207_200_999))));
+        assert!(!millis.admits(&Physical::Int(Int::I64(253_402_207_201_000))));
     }
 
     #[test]

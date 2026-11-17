@@ -48,20 +48,20 @@ pub struct Timestamp {
     nanos: u32,
 }
 
-/// A `jiff::Timestamp` that jiff cannot rebuild from its count, which a
-/// [`Timestamp`] cannot hold.
+/// A `jiff::Timestamp` outside the wire's range, which a [`Timestamp`]
+/// cannot hold.
 ///
-/// jiff 1.0.0's `Offset::to_timestamp`, which parsing text with a UTC
-/// offset goes through, can return an instant up to a second before
-/// `jiff::Timestamp::MIN` (in year -9999). Such a value would seal and
-/// then fail to decrypt as a timestamp, so it is refused before.
+/// The wire's range is jiff's. But jiff 1.0.0's `Offset::to_timestamp`,
+/// which parsing text with a UTC offset goes through, can return an instant
+/// up to a second before `jiff::Timestamp::MIN` (in year -9999;
+/// BurntSushi/jiff#714). Such a value has no encoding, so it is refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("a timestamp outside jiff's range has no encoding")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 pub struct OutOfRange;
 
 impl Timestamp {
-    /// The instant, unless jiff cannot rebuild it.
+    /// The instant, unless it is outside the wire's range.
     ///
     /// # Errors
     ///
@@ -89,8 +89,8 @@ impl Timestamp {
     /// The instant, as a `jiff::Timestamp`. The copy is the caller's to
     /// look after: it cannot be wiped.
     pub fn to_jiff(&self) -> jiff::Timestamp {
-        // A `Timestamp` is only built from a `jiff::Timestamp` whose count
-        // jiff can rebuild, so the fallback is never taken. It is there so
+        // A `Timestamp` is only built from an instant in the wire's range,
+        // which is jiff's, so the fallback is never taken. It is there so
         // this cannot panic.
         jiff::Timestamp::from_nanosecond(self.count()).unwrap_or_default()
     }
@@ -144,8 +144,7 @@ impl Scalar for Timestamp {}
 impl Scalar for &Timestamp {}
 const _: () = assert!(depth::is_scalar(<Timestamp as Encrypt>::DEPTH));
 
-/// Any unit, as for `jiff::Timestamp`, and the same range: years -9999
-/// to 9999.
+/// Any unit, as for `jiff::Timestamp`, and the same range: the wire's.
 impl FromScalar for Timestamp {
     const EXPECTED: &'static str = "timestamp";
     fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self> {
@@ -234,8 +233,9 @@ mod tests {
     }
 
     /// jiff 1.0.0 parses this to an instant half a second before its own
-    /// minimum (a debug assertion in jiff stops it in debug builds). A
-    /// `Timestamp` refuses it, and so does the `jiff::Timestamp` walk.
+    /// minimum, outside the wire's range (a debug assertion in jiff stops
+    /// it in debug builds). A `Timestamp` refuses it, and so does the
+    /// `jiff::Timestamp` walk.
     #[cfg(not(debug_assertions))]
     #[test]
     fn an_instant_jiff_cannot_rebuild_is_refused() {
