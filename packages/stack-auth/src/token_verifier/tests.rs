@@ -670,10 +670,15 @@ mod given_the_keys_cannot_be_fetched {
 
         // Within the retry interval: no fetch, and no key. That is the keys
         // being unavailable, not the token being signed by an unknown key.
-        let err = verifier
-            .verify(token(KEY_A.jwt(claims())))
-            .await
-            .unwrap_err();
+        // Bounded, so a second fetch to the hanging CTS fails the test
+        // rather than hanging it.
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            verifier.verify(token(KEY_A.jwt(claims()))),
+        )
+        .await
+        .expect("no second fetch within the retry interval")
+        .unwrap_err();
         assert!(matches!(err, AuthError::Request(_)), "got {err:?}");
     }
 
