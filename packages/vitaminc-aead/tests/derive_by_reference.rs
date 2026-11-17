@@ -149,3 +149,44 @@ fn a_lent_field_walks_as_what_it_lends() {
     assert_eq!(frame(Borrowing { name: name.lend() }), owning);
     assert_eq!(lent(&Borrowing { name: name.lend() }), owning);
 }
+
+/// `Timestamp` cannot be `Clone`, so generic code reaches it only through a
+/// borrow. Lending it must walk the same bytes as the borrow does.
+#[cfg(feature = "jiff")]
+#[test]
+fn a_lent_timestamp_walks_as_its_borrow() {
+    use vitaminc_aead::Timestamp;
+
+    let instant: jiff::Timestamp = "2026-11-17T10:43:34Z".parse().expect("a valid instant");
+    let ts = Timestamp::try_from(instant).expect("in jiff's range");
+    assert_eq!(lent(&ts), frame(&ts), "lent and borrowed walks agree");
+    assert_eq!(
+        lent(&ts),
+        frame(instant),
+        "the walk is the same as the jiff Timestamp it came from"
+    );
+}
+
+/// A parsed `Frame` is a view over its bytes. Lending it must walk the same
+/// bytes as the borrow does, and both must re-frame to the original bytes.
+#[test]
+fn a_lent_frame_walks_as_its_borrow_and_reframes_to_its_bytes() {
+    use vitaminc_aead::Frame;
+
+    let original = frame(Bag {
+        items: vec![1u32, 2],
+        maybe: Some(3),
+        named: BTreeMap::from([("a".to_string(), 4u32)]),
+    });
+    let parsed = Frame::parse(&original).expect("parses");
+    assert_eq!(
+        lent(&parsed),
+        frame::<&Frame<'_>>(&parsed),
+        "lent and borrowed walks agree"
+    );
+    assert_eq!(
+        lent(&parsed),
+        original,
+        "a lent frame re-frames to its bytes"
+    );
+}
