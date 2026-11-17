@@ -104,5 +104,13 @@ inside isolation. The hidden Reference Migration is never mounted into an actor.
 
 `--stack` also accepts `tree` or a `.tgz` path. Tree mode requires Stack build
 outputs and packs them with pnpm. Exact versions and tarball SHA-256 digests are
-recorded in the manifest. Set `HARNESS_LIVE=1` and the four `CS_*` credentials
+recorded in the manifest. After installing a tarball, the host compares the
+installed Stack package's files and directories with the trusted tarball, in
+addition to checking npm's lockfile integrity. Changed, missing or added files,
+symlinks and special files fail installation. This checks Stack's own artifact;
+npm's unbundled transitive dependencies may occupy a separate `node_modules`
+directory within Stack and are outside this comparison, as are hoisted
+dependencies. It does not attest the complete dependency graph.
+
+Set `HARNESS_LIVE=1` and the four `CS_*` credentials
 to run the credentialed self-test matrix; CI runs it without model calls.

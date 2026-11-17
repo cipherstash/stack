@@ -465,8 +465,17 @@ async function stackTarball(directory: string, marker: string) {
   await execute('tar', ['-czf', tarball, '-C', source, 'package'])
   return tarball
 }
-/** Record the lock entry npm writes for a local tarball install. */
+/** Materialize the package and lock entry npm writes for a tarball install. */
 async function npmRecords(workspace: string, tarball: string) {
+  const installed = join(workspace, 'node_modules/@cipherstash/stack')
+  await mkdir(installed, { recursive: true })
+  await execute('tar', [
+    '-xf',
+    tarball,
+    '-C',
+    installed,
+    '--strip-components=1',
+  ])
   const integrity = `sha512-${createHash('sha512')
     .update(await readFile(tarball))
     .digest('base64')}`
