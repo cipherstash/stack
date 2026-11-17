@@ -100,34 +100,54 @@ impl AutoStrategy {
         Self::builder().detect()
     }
 
-    /// The workspace CRN credentials are detected for, without building a
-    /// strategy.
+    /// The workspace CRN that [`detect`](Self::detect) resolves, without
+    /// building a strategy.
     ///
     /// A strategy constructed by hand takes a CRN —
     /// [`OidcFederationStrategy::new(crn, provider)`](crate::OidcFederationStrategy::new),
     /// [`AccessKeyStrategy::new(crn, key)`](crate::AccessKeyStrategy::new) —
-    /// and this is the one [`detect`](Self::detect) would use:
+    /// and this finds the one configured for the process, in the order
+    /// `detect` looks:
     ///
-    /// 1. `CS_WORKSPACE_CRN`, if it is set;
-    /// 2. otherwise the workspace of the session `npx stash auth login` saved
-    ///    in the CLI's current workspace (`auth.json` in the profile
-    ///    directory, `~/.cipherstash` unless `CS_CONFIG_PATH` names another).
-    ///    The session records the workspace and its region.
+    /// 1. `CS_WORKSPACE_CRN`, if it is set. The CRN is returned as written,
+    ///    region included.
+    /// 2. Otherwise, if `CS_CLIENT_ACCESS_KEY` is set, nothing: `detect`
+    ///    refuses an access key without a CRN, and so does this. Only the
+    ///    variable's presence is checked.
+    /// 3. Otherwise the session `npx stash auth login` saved for the CLI's
+    ///    current workspace (`auth.json` in the profile directory,
+    ///    `~/.cipherstash` unless `CS_CONFIG_PATH` names another). The CRN
+    ///    is that session's region and workspace.
     ///
-    /// No access key is needed, and none is read. The profile is never
-    /// consulted when `CS_WORKSPACE_CRN` is set, and nothing falls back to a
-    /// default workspace. On wasm32 there is no profile, so the variable is
-    /// the only source.
+    /// Nothing falls back to a default workspace, and the profile directory
+    /// is not looked at when either variable is set. On wasm32 there is no
+    /// profile, so `CS_WORKSPACE_CRN` is the only source.
+    ///
+    /// When `CS_WORKSPACE_CRN` is set and `detect` finds a CLI session rather
+    /// than an access key, the strategy `detect` builds checks only the
+    /// workspace id of its tokens against the variable, and sends its
+    /// requests to the region the session records. The two agree whenever
+    /// the variable names the region the session was created in; this
+    /// function cannot tell when they do not, since it returns the variable
+    /// unchanged.
     ///
     /// # Errors
     ///
     /// - [`AuthError::InvalidCrn`] if `CS_WORKSPACE_CRN` is set but is not a
     ///   CRN. The profile is not tried in its place.
-    /// - [`AuthError::NotAuthenticated`] if `CS_WORKSPACE_CRN` is unset and
-    ///   the CLI's current workspace has no saved session (or there is no
-    ///   profile directory, or no current workspace). Set
-    ///   `CS_WORKSPACE_CRN`, or log in with `npx stash auth login`.
-    /// - [`AuthError::Store`] if the saved session exists but cannot be read.
+    /// - [`AuthError::MissingWorkspaceCrn`] if `CS_CLIENT_ACCESS_KEY` is set
+    ///   and `CS_WORKSPACE_CRN` is not.
+    /// - [`AuthError::NotAuthenticated`] if neither variable is set and the
+    ///   CLI's current workspace has no saved session (or there is no
+    ///   profile directory, or no current workspace), or the saved session
+    ///   records no region. Set `CS_WORKSPACE_CRN`, or log in with
+    ///   `npx stash auth login`.
+    /// - [`AuthError::Store`] if the saved session exists but cannot be read
+    ///   or parsed.
+    /// - [`AuthError::InvalidToken`] if the saved session's token is not a
+    ///   JWT with a `workspace` claim.
+    /// - [`AuthError::Server`] if the region the saved session records is not
+    ///   one this crate knows.
     ///
     /// # Example
     ///
@@ -146,34 +166,36 @@ impl AutoStrategy {
     /// ```
     pub fn detect_workspace_crn() -> Result<Crn, AuthError> {
         let env_crn = std::env::var("CS_WORKSPACE_CRN").ok();
-        // As in `detect`: a profile directory that cannot be resolved only
-        // means there is no session to read the CRN from.
+        // Presence only. Read through the same wrapper `detect` uses, so the
+        // copy read is wiped when it is dropped.
+        let has_access_key = access_key_from_env(std::env::var("CS_CLIENT_ACCESS_KEY")).is_some();
         #[cfg(not(target_arch = "wasm32"))]
-        let store = match ProfileStore::resolve(None) {
-            Ok(s) => Some(s),
-            Err(e) => {
-                tracing::info!(error = %e, "could not resolve profile store; continuing without it");
-                None
-            }
-        };
+        let store = resolve_profile_store;
         // wasm32 has no profile directory: the variable is the only source.
         #[cfg(target_arch = "wasm32")]
-        let store = None;
-        Self::workspace_crn_inner(env_crn.as_deref(), store)
+        let store = || None;
+        Self::workspace_crn_inner(env_crn.as_deref(), has_access_key, store)
     }
 
     /// Core of [`detect_workspace_crn`](Self::detect_workspace_crn), over
-    /// pre-resolved inputs.
+    /// pre-read variables. `store` is called only when neither variable
+    /// decides the answer.
     fn workspace_crn_inner(
         env_crn: Option<&str>,
-        store: Option<ProfileStore>,
+        has_access_key: bool,
+        store: impl FnOnce() -> Option<ProfileStore>,
     ) -> Result<Crn, AuthError> {
         if let Some(crn) = env_crn {
             return crn.parse::<Crn>().map_err(AuthError::from);
         }
+        if has_access_key {
+            return Err(AuthError::MissingWorkspaceCrn(
+                crate::error::MissingWorkspaceCrn,
+            ));
+        }
         // The same session `detect` would build a `DeviceSessionStrategy`
         // from: the current workspace's, and only if it has a token.
-        let session = store
+        let session = store()
             .and_then(|store| store.current_workspace_store().ok())
             .filter(|ws| ws.exists_profile::<Token>())
             .ok_or(AuthError::NotAuthenticated(crate::error::NotAuthenticated))?;
@@ -318,16 +340,7 @@ impl AutoStrategyBuilder {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // Resolve errors (e.g. missing profile directory) are intentionally
-            // swallowed here so that env-var-only setups don't need a profile dir.
-            // If no credentials are found at all, NotAuthenticated is returned.
-            let store = match ProfileStore::resolve(None) {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    tracing::info!(error = %e, "could not resolve profile store; continuing without it");
-                    None
-                }
-            };
+            let store = resolve_profile_store();
             AutoStrategy::detect_inner(
                 access_key.as_ref().map(SecretToken::as_str),
                 crn,
@@ -351,6 +364,22 @@ impl AuthStrategy for &AutoStrategy {
         match self {
             AutoStrategy::AccessKey(inner) => inner.get_token().await,
             AutoStrategy::DeviceSession(inner) => inner.get_token().await,
+        }
+    }
+}
+
+/// The CLI's profile directory, if one can be resolved.
+///
+/// A resolve error (no home directory, say) is not an error for detection:
+/// env-var-only setups have no profile directory. If no credentials are
+/// found at all, the caller reports that instead.
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_profile_store() -> Option<ProfileStore> {
+    match ProfileStore::resolve(None) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            tracing::info!(error = %e, "could not resolve profile store; continuing without it");
+            None
         }
     }
 }
@@ -599,29 +628,40 @@ mod tests {
 
         const OTHER_CRN: &str = "crn:us-east-1.aws:AAAAAAAAAAAAAAAA";
 
+        /// A profile source for a case that must not reach the profile.
+        fn unreachable_store() -> Option<ProfileStore> {
+            panic!("the profile directory must not be resolved")
+        }
+
         mod given_cs_workspace_crn {
             use super::*;
 
             #[test]
-            fn returns_it_without_reading_the_profile() {
-                let dir = tempfile::tempdir().unwrap();
-                let store = write_token_store(dir.path());
+            fn returns_it_without_resolving_the_profile() {
+                let crn =
+                    AutoStrategy::workspace_crn_inner(Some(OTHER_CRN), false, unreachable_store)
+                        .unwrap();
 
-                let crn = AutoStrategy::workspace_crn_inner(Some(OTHER_CRN), Some(store)).unwrap();
+                assert_eq!(crn.to_string(), OTHER_CRN, "the variable's CRN is returned");
+            }
+
+            #[test]
+            fn returns_it_with_an_access_key_too() {
+                let crn =
+                    AutoStrategy::workspace_crn_inner(Some(OTHER_CRN), true, unreachable_store)
+                        .unwrap();
 
                 assert_eq!(
                     crn.to_string(),
                     OTHER_CRN,
-                    "the variable must win over the profile's session"
+                    "an access key with a CRN is the CRN"
                 );
             }
 
             #[test]
             fn that_is_not_a_crn_is_invalid_crn_not_the_profiles() {
-                let dir = tempfile::tempdir().unwrap();
-                let store = write_token_store(dir.path());
-
-                let result = AutoStrategy::workspace_crn_inner(Some("not-a-crn"), Some(store));
+                let result =
+                    AutoStrategy::workspace_crn_inner(Some("not-a-crn"), false, unreachable_store);
 
                 assert!(
                     matches!(result, Err(AuthError::InvalidCrn(_))),
@@ -630,7 +670,21 @@ mod tests {
             }
         }
 
-        mod given_no_cs_workspace_crn {
+        mod given_an_access_key_and_no_cs_workspace_crn {
+            use super::*;
+
+            #[test]
+            fn is_missing_workspace_crn_as_detect_is() {
+                let result = AutoStrategy::workspace_crn_inner(None, true, unreachable_store);
+
+                assert!(
+                    matches!(result, Err(AuthError::MissingWorkspaceCrn(_))),
+                    "an access key without a CRN must not fall back to the profile, got: {result:?}"
+                );
+            }
+        }
+
+        mod given_neither_variable {
             use super::*;
 
             #[test]
@@ -638,7 +692,7 @@ mod tests {
                 let dir = tempfile::tempdir().unwrap();
                 let store = write_token_store(dir.path());
 
-                let crn = AutoStrategy::workspace_crn_inner(None, Some(store)).unwrap();
+                let crn = AutoStrategy::workspace_crn_inner(None, false, || Some(store)).unwrap();
 
                 assert_eq!(
                     crn,
@@ -654,7 +708,7 @@ mod tests {
                 // The CLI user switches to another workspace with no session.
                 store.init_workspace("AAAAAAAAAAAAAAAA").unwrap();
 
-                let result = AutoStrategy::workspace_crn_inner(None, Some(store));
+                let result = AutoStrategy::workspace_crn_inner(None, false, || Some(store));
 
                 assert!(
                     matches!(result, Err(AuthError::NotAuthenticated(_))),
@@ -667,7 +721,7 @@ mod tests {
                 let dir = tempfile::tempdir().unwrap();
                 let store = ProfileStore::new(dir.path());
 
-                let result = AutoStrategy::workspace_crn_inner(None, Some(store));
+                let result = AutoStrategy::workspace_crn_inner(None, false, || Some(store));
 
                 assert!(
                     matches!(result, Err(AuthError::NotAuthenticated(_))),
@@ -677,7 +731,7 @@ mod tests {
 
             #[test]
             fn no_profile_is_not_authenticated() {
-                let result = AutoStrategy::workspace_crn_inner(None, None);
+                let result = AutoStrategy::workspace_crn_inner(None, false, || None);
 
                 assert!(
                     matches!(result, Err(AuthError::NotAuthenticated(_))),
@@ -696,11 +750,13 @@ mod tests {
 
         fn detect_with(
             workspace_crn: Option<&str>,
+            access_key: Option<&str>,
             profile: &std::path::Path,
         ) -> Result<Crn, AuthError> {
             temp_env::with_vars(
                 [
                     ("CS_WORKSPACE_CRN", workspace_crn),
+                    ("CS_CLIENT_ACCESS_KEY", access_key),
                     ("CS_CONFIG_PATH", profile.to_str()),
                 ],
                 AutoStrategy::detect_workspace_crn,
@@ -712,7 +768,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let crn = "crn:us-east-1.aws:AAAAAAAAAAAAAAAA";
 
-            let result = detect_with(Some(crn), dir.path()).unwrap();
+            let result = detect_with(Some(crn), None, dir.path()).unwrap();
 
             assert_eq!(result.to_string(), crn, "the variable's CRN is returned");
         }
@@ -722,16 +778,30 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             write_token_store(dir.path());
 
-            let result = detect_with(None, dir.path()).unwrap();
+            let result = detect_with(None, None, dir.path()).unwrap();
 
             assert_eq!(result, valid_crn(), "the profile session's CRN is returned");
+        }
+
+        #[test]
+        fn reads_cs_client_access_key_and_refuses_it_without_a_crn() {
+            let dir = tempfile::tempdir().unwrap();
+            // A session that would answer, were the access key ignored.
+            write_token_store(dir.path());
+
+            let result = detect_with(None, Some("CSAKtestKeyId.testKeySecret"), dir.path());
+
+            assert!(
+                matches!(result, Err(AuthError::MissingWorkspaceCrn(_))),
+                "expected MissingWorkspaceCrn, got: {result:?}"
+            );
         }
 
         #[test]
         fn with_neither_is_not_authenticated() {
             let dir = tempfile::tempdir().unwrap();
 
-            let result = detect_with(None, dir.path());
+            let result = detect_with(None, None, dir.path());
 
             assert!(
                 matches!(result, Err(AuthError::NotAuthenticated(_))),

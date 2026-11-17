@@ -22,6 +22,10 @@
   `ErrorPayload`.
 - `tls::client_config`, the rustls client configuration the crate's HTTP
   clients use.
+- `AutoStrategy::detect_workspace_crn`, the workspace CRN `detect` resolves,
+  without building a strategy: `CS_WORKSPACE_CRN`, else `MissingWorkspaceCrn`
+  when `CS_CLIENT_ACCESS_KEY` is set, else the CLI session's workspace, else
+  `NotAuthenticated`. For a caller that builds its own strategy from a CRN.
 
 ### Fixes
 
