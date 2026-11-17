@@ -30,9 +30,7 @@ serde_json = { workspace = true }
 serde_urlencoded = "0.7"
 # `OidcFederationStrategy` keys its per-user token cache on the SHA-256 of
 # the provider JWT, and stamps that digest on the tokens it persists.
-# `oid` lets the wasm32 RS256 backend name SHA-256 to `rsa`'s PKCS#1 v1.5
-# verifier (see `token_verifier`).
-sha2 = { version = "0.10", features = ["oid"] }
+sha2 = "0.10"
 stack-profile = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
@@ -62,13 +60,13 @@ zeroize = { workspace = true }
 open = "5.3.2"
 jsonwebtoken = { workspace = true }
 tokio = { workspace = true }
-# The bundled clients' TLS configuration (`tls`): the platform verifier with
-# a compiled-in SPKI blocklist around it. Native only, since on wasm32 reqwest
-# uses the runtime's `fetch`, and only with `http`.
 # RS256 verification of CTS access tokens (`token_verifier`). Already in the
 # native graph through `jsonwebtoken` and rustls; named directly so the
 # verifier does not depend on either.
 aws-lc-rs = "1.18"
+# The bundled clients' TLS configuration (`tls`): the platform verifier with
+# a compiled-in SPKI blocklist around it. Native only, since on wasm32 reqwest
+# uses the runtime's `fetch`, and only with `http`.
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 # Its library is named `webpki`.
@@ -78,9 +76,8 @@ rustls-webpki = { workspace = true, optional = true }
 tokio = { version = "1.47.1", default-features = false, features = ["sync"] }
 # RS256 verification of CTS access tokens on wasm32, where aws-lc-rs does not
 # build (and is kept out of the WASI guest by `mise run wasm:wasi-check`).
-# Public-key operations only: RUSTSEC-2023-0071 (Marvin) is a timing attack
-# on private-key decryption and signing, which this crate never does.
-rsa = { version = "0.9", default-features = false, features = ["std"] }
+# 0.10, which fixes RUSTSEC-2023-0071; this crate only verifies anyway.
+rsa = { version = "0.10", default-features = false, features = ["std", "pkcs1v15"] }
 
 [features]
 default = ["http"]
@@ -122,7 +119,7 @@ required-features = ["http", "test-utils"]
 axum = "0.8"
 # The wasm32 RS256 backend is compiled and tested on the host too, against the
 # same vectors as the native one (`token_verifier::rs256`).
-rsa = { version = "0.9", default-features = false, features = ["std"] }
+rsa = { version = "0.10", default-features = false, features = ["std", "pkcs1v15"] }
 cts-common = { workspace = true }
 mocktail = "0.3.0"
 # Version matches the existing use in `vitur-server-core`.

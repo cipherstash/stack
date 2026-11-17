@@ -372,6 +372,69 @@ mod given_an_expected_audience {
 
 mod given_the_key_cache {
     use super::*;
+    use crate::error::RequestError;
+    use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A CTS that serves its keys once, then never answers again.
+    struct AnswersOnce {
+        cts: Arc<StubCts>,
+        answered: AtomicBool,
+    }
+
+    impl HttpTransport for AnswersOnce {
+        async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+            if self.answered.swap(true, Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+            self.cts.send(request).await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_slow_refresh_does_not_hold_up_callers_with_a_stale_key() {
+        let clock = TestClock::new(NOW);
+        let verifier = TokenVerifier::new(
+            ISSUER.parse().unwrap(),
+            None,
+            transport::share(AnswersOnce {
+                cts: StubCts::serving(jwks(&[&KEY_A])),
+                answered: AtomicBool::new(false),
+            }),
+            clock.shared(),
+        )
+        .unwrap();
+        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+        clock.advance(KEYS_TTL_SECS);
+
+        // This caller starts the refresh, which never finishes.
+        let refreshing = verifier.verify(token(another_token()));
+        tokio::pin!(refreshing);
+        tokio::select! {
+            _ = &mut refreshing => panic!("the refresh should still be running"),
+            () = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+        }
+
+        let third = KEY_A.jwt(with(claims(), "iat", (NOW - 1).into()));
+        let verified =
+            tokio::time::timeout(std::time::Duration::from_secs(5), verdict(&verifier, third))
+                .await
+                .expect("a caller with a stale key must not wait for the refresh");
+        assert_eq!(verified, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn concurrent_callers_without_a_key_share_one_fetch() {
+        let (cts, verifier) = serving_key_a();
+
+        let (first, second) = tokio::join!(
+            verdict(&verifier, KEY_A.jwt(claims())),
+            verdict(&verifier, another_token()),
+        );
+
+        assert_eq!((first, second), (Ok(()), Ok(())));
+        assert_eq!(cts.requests().len(), 1);
+    }
 
     #[tokio::test]
     async fn the_jwks_is_fetched_once_while_fresh() {
@@ -416,7 +479,11 @@ mod given_the_key_cache {
         clock.advance(59 * 60);
         verdict(&verifier, another_token()).await.unwrap();
 
-        assert_eq!(cts.requests().len(), 1, "a 59-minute-old JWKS is still fresh");
+        assert_eq!(
+            cts.requests().len(),
+            1,
+            "a 59-minute-old JWKS is still fresh"
+        );
     }
 
     #[tokio::test]

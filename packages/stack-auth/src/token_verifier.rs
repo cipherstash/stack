@@ -30,10 +30,11 @@
 //! and only its expiry is checked again. A new token is verified in full.
 //!
 //! The JWKS is cached for [`KEYS_TTL_SECS`]. A token signed by a key the
-//! cache does not hold triggers an early refetch, so a rotated key works
-//! immediately. Fetches, successful or failed, are at most one every
-//! [`MIN_REFETCH_SECS`], so neither a run of forged `kid`s nor a CTS outage
-//! turns every call into a request to CTS.
+//! cache does not hold triggers an early refetch, so a rotated key works as
+//! soon as one is allowed. Fetches, successful or failed, are at most one
+//! every [`MIN_REFETCH_SECS`], so neither a run of forged `kid`s nor a CTS
+//! outage turns every call into a request to CTS; a token signed by a key
+//! published within that interval of the last fetch is refused.
 
 use std::fmt;
 
@@ -115,7 +116,9 @@ pub(crate) struct TokenVerifier {
     audience: Option<String>,
     transport: SharedTransport,
     clock: SharedClock,
-    keys: tokio::sync::Mutex<KeyCache>,
+    keys: std::sync::Mutex<KeyCache>,
+    /// Held while the JWKS is fetched, so only one fetch runs at a time.
+    fetching: tokio::sync::Mutex<()>,
     /// The last token to verify. The same bytes need only their expiry
     /// checked again.
     last_verified: std::sync::Mutex<Option<Verified>>,
@@ -126,6 +129,15 @@ pub(crate) struct TokenVerifier {
 struct Verified {
     digest: [u8; 32],
     exp: u64,
+}
+
+/// What [`TokenVerifier::cached_key`] found.
+enum Lookup {
+    /// The answer, with no fetch due.
+    Done(Result<Option<SigningKey>, AuthError>),
+    /// A fetch is due. Holds the cached key for the `kid`, which is stale,
+    /// if there is one.
+    Fetch(Option<SigningKey>),
 }
 
 #[derive(Default)]
@@ -161,7 +173,8 @@ impl TokenVerifier {
             audience,
             transport,
             clock,
-            keys: tokio::sync::Mutex::new(KeyCache::default()),
+            keys: std::sync::Mutex::new(KeyCache::default()),
+            fetching: tokio::sync::Mutex::new(()),
             last_verified: std::sync::Mutex::new(None),
         })
     }
@@ -262,36 +275,38 @@ impl TokenVerifier {
     /// used, even past [`KEYS_TTL_SECS`]: the keys are public, and a short
     /// outage of CTS's JWKS should not refuse tokens they verify.
     ///
-    /// The lock is held across the fetch, so concurrent callers wait for one
-    /// request rather than each sending their own.
+    /// One fetch runs at a time, and the cache is not locked while it runs.
+    /// A caller that needs a key the cache does not hold waits for that
+    /// fetch; a caller whose key is only stale uses it straight away, so a
+    /// slow JWKS endpoint holds up at most the one caller fetching.
     async fn key_for(&self, kid: Option<&str>) -> Result<Option<SigningKey>, AuthError> {
-        let mut cache = self.keys.lock().await;
+        let stale = match self.cached_key(kid) {
+            Lookup::Done(result) => return result,
+            Lookup::Fetch(stale) => stale,
+        };
+        let _fetching = match stale {
+            Some(key) => match self.fetching.try_lock() {
+                Ok(fetching) => fetching,
+                Err(_) => return Ok(Some(key)),
+            },
+            None => self.fetching.lock().await,
+        };
+        // The fetch this caller waited for may already have answered.
+        let stale = match self.cached_key(kid) {
+            Lookup::Done(result) => return result,
+            Lookup::Fetch(stale) => stale,
+        };
         let now = self.clock.now_unix_secs();
-        let fresh = cache
-            .fetched_at
-            .is_some_and(|at| now.saturating_sub(at) < KEYS_TTL_SECS);
-        let cached = cache.find(kid);
-        if fresh && cached.is_some() {
-            return Ok(cached);
-        }
-        let tried_recently = cache
-            .attempted_at
-            .is_some_and(|at| now.saturating_sub(at) < MIN_REFETCH_SECS);
-        if tried_recently {
-            return match cached {
-                Some(key) => Ok(Some(key)),
-                None if cache.attempted_at != cache.fetched_at => Err(keys_unavailable()),
-                None => Ok(None),
-            };
-        }
-        cache.attempted_at = Some(now);
-        match self.fetch_keys().await {
+        self.cache().attempted_at = Some(now);
+        let fetched = self.fetch_keys().await;
+        let mut cache = self.cache();
+        match fetched {
             Ok(keys) => {
                 cache.keys = keys;
                 cache.fetched_at = Some(now);
                 Ok(cache.find(kid))
             }
-            Err(err) => match cached {
+            Err(err) => match stale {
                 Some(key) => {
                     tracing::warn!(
                         url = %self.jwks_url,
@@ -303,6 +318,36 @@ impl TokenVerifier {
                 None => Err(err),
             },
         }
+    }
+
+    /// What the cache can answer without a fetch.
+    fn cached_key(&self, kid: Option<&str>) -> Lookup {
+        let cache = self.cache();
+        let now = self.clock.now_unix_secs();
+        let fresh = cache
+            .fetched_at
+            .is_some_and(|at| now.saturating_sub(at) < KEYS_TTL_SECS);
+        let cached = cache.find(kid);
+        if fresh && cached.is_some() {
+            return Lookup::Done(Ok(cached));
+        }
+        let tried_recently = cache
+            .attempted_at
+            .is_some_and(|at| now.saturating_sub(at) < MIN_REFETCH_SECS);
+        if tried_recently {
+            return Lookup::Done(match cached {
+                Some(key) => Ok(Some(key)),
+                None if cache.attempted_at != cache.fetched_at => Err(keys_unavailable()),
+                None => Ok(None),
+            });
+        }
+        Lookup::Fetch(cached)
+    }
+
+    fn cache(&self) -> std::sync::MutexGuard<'_, KeyCache> {
+        self.keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     async fn fetch_keys(&self) -> Result<Vec<SigningKey>, AuthError> {
@@ -529,23 +574,24 @@ mod rs256 {
     pub(super) mod rust_crypto {
         use super::SigningKey;
         use rsa::pkcs1v15::{Signature, VerifyingKey};
+        use rsa::sha2::Sha256;
         use rsa::signature::Verifier;
-        use rsa::{BigUint, RsaPublicKey};
+        use rsa::{BoxedUint, PublicKey};
 
         const MIN_MODULUS_BITS: usize = 2048;
 
         pub(in super::super) fn verify(key: &SigningKey, message: &[u8], signature: &[u8]) -> bool {
-            let n = BigUint::from_bytes_be(&key.n);
-            if n.bits() < MIN_MODULUS_BITS {
+            let n = BoxedUint::from_be_slice_vartime(&key.n);
+            if (n.bit_width() as usize) < MIN_MODULUS_BITS {
                 return false;
             }
-            let Ok(public) = RsaPublicKey::new(n, BigUint::from_bytes_be(&key.e)) else {
+            let Ok(public) = PublicKey::new(n, BoxedUint::from_be_slice_vartime(&key.e)) else {
                 return false;
             };
             let Ok(signature) = Signature::try_from(signature) else {
                 return false;
             };
-            VerifyingKey::<sha2::Sha256>::new(public)
+            VerifyingKey::<Sha256>::new(public)
                 .verify(message, &signature)
                 .is_ok()
         }
