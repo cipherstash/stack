@@ -173,24 +173,34 @@ const (
 )
 
 // versionSkew is sameVersion over this program's build info, or nil when
-// the program carries none.
-func versionSkew() error {
+// the program carries none. The answer is fixed for the process, so it is
+// worked out once.
+var versionSkew = sync.OnceValue(func() error {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return nil
 	}
 	return sameVersion(info)
-}
+})
 
 // sameVersion refuses a build in which this module and the SDK module are
-// at different versions. A version it cannot know, such as a module
-// replaced by a local directory or one built from a checkout, is not
-// compared.
+// at different versions. A module replaced by another version is compared
+// at the version that replaced it, the one the program runs. A version it
+// cannot know, such as a module replaced by a local directory or one built
+// from a checkout, is not compared.
 func sameVersion(info *debug.BuildInfo) error {
 	versions := map[string]string{}
 	record := func(m *debug.Module) {
-		if m != nil && m.Replace == nil && m.Version != "" && m.Version != "(devel)" {
-			versions[m.Path] = m.Version
+		if m == nil {
+			return
+		}
+		version := m.Version
+		if m.Replace != nil {
+			// A directory replacement has no version.
+			version = m.Replace.Version
+		}
+		if version != "" && version != "(devel)" {
+			versions[m.Path] = version
 		}
 	}
 	record(&info.Main)

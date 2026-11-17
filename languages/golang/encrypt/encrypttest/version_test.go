@@ -12,6 +12,11 @@ func TestTheTwoModulesMustBeAtOneVersion(t *testing.T) {
 	}
 	replaced := module(sdkModule, "v0.1.0")
 	replaced.Replace = module("../..", "")
+	byVersion := func(path, required, runs string) *debug.Module {
+		m := module(path, required)
+		m.Replace = module(path, runs)
+		return m
+	}
 	for _, c := range []struct {
 		name string
 		deps []*debug.Module
@@ -21,6 +26,8 @@ func TestTheTwoModulesMustBeAtOneVersion(t *testing.T) {
 		{"different versions", []*debug.Module{module(sdkModule, "v0.2.0"), module(thisModule, "v0.1.0")}, false},
 		{"a pseudo-version of this module", []*debug.Module{module(sdkModule, "v0.1.0"), module(thisModule, "v0.1.1-0.20261117000000-abcdef012345")}, false},
 		{"the SDK replaced by a directory", []*debug.Module{replaced, module(thisModule, "v0.1.0")}, true},
+		{"the SDK replaced by another version", []*debug.Module{byVersion(sdkModule, "v0.2.0", "v0.1.0"), module(thisModule, "v0.2.0")}, false},
+		{"the SDK replaced by this module's version", []*debug.Module{byVersion(sdkModule, "v0.1.0", "v0.2.0"), module(thisModule, "v0.2.0")}, true},
 		{"this module is the one being built", []*debug.Module{module(sdkModule, "v0.1.0")}, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
