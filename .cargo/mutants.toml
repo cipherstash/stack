@@ -66,7 +66,7 @@ exclude_re = [
   # The wasm32 RS256 dispatch (`rs256::verify` over RustCrypto). The native
   # one shares its name, so this anchors on the line. The RustCrypto backend
   # it calls is compiled into the host tests and pinned there.
-  'stack-auth/src/token_verifier\.rs:558:9: replace rs256::verify -> bool with (true|false)$',
+  'stack-auth/src/token_verifier\.rs:599:9: replace rs256::verify -> bool with (true|false)$',
   'stack-auth/src/token_store\.rs:(261|269):9: replace <impl TokenStore for TokenStoreFn<L, S>>::(load|save)',
   # stack-auth — equivalent.
   'stack-auth/src/(access_key|oidc)_refresher\.rs:\d+:\d+: replace <impl Refresher for \w+(<P>)?>::try_credential -> Option<Self::Credential> with Some\(Default::default\(\)\)$',

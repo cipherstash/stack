@@ -16,7 +16,8 @@
 //! 1. the header names `RS256` (what CTS signs with) — nothing else,
 //!    `none` and the HMAC algorithms in particular, is accepted;
 //! 2. `iss` is the trusted issuer;
-//! 3. `exp` has not passed (with [`LEEWAY_SECS`] of clock skew allowed);
+//! 3. `exp` has not passed and `nbf`, when present, has (with
+//!    [`LEEWAY_SECS`] of clock skew allowed on each);
 //! 4. `aud` contains the expected audience, when the strategy requested one;
 //! 5. the signature verifies under a key from the trusted issuer's JWKS
 //!    (`<issuer>/.well-known/jwks.json`), never from a URL the token names.
@@ -26,8 +27,9 @@
 //! nothing from the token itself is.
 //!
 //! A strategy hands out the same cached token on every call until it is
-//! refreshed, so the last token to verify is remembered (as a SHA-256 digest)
-//! and only its expiry is checked again. A new token is verified in full.
+//! refreshed, so the last token to verify is remembered (as a protected
+//! SHA-256 digest, compared in constant time) and only its `exp` and `nbf`
+//! are checked again. A new token is verified in full.
 //!
 //! The JWKS is cached for [`KEYS_TTL_SECS`]. A token signed by a key the
 //! cache does not hold triggers an early refetch, so a rotated key works as
@@ -40,8 +42,8 @@ use std::fmt;
 
 use cts_common::claims::Audience;
 use cts_common::{CtsServiceDiscovery, Region, ServiceDiscovery};
-use sha2::Digest;
 use url::Url;
+use vitaminc_protected::{Equatable, Protected, ProtectedDigest};
 
 use crate::auto_refresh::AutoRefresh;
 use crate::clock::{system_clock, SharedClock};
@@ -49,7 +51,7 @@ use crate::error::{InvalidToken, ServerError};
 use crate::transport::{self, SharedTransport};
 use crate::{AuthError, ServiceToken};
 
-/// Clock skew allowed on `exp`, matching what ZeroKMS allows.
+/// Clock skew allowed on `exp` and `nbf`, matching what ZeroKMS allows.
 pub(crate) const LEEWAY_SECS: u64 = 60;
 
 /// How long a fetched JWKS is used before it is fetched again.
@@ -119,16 +121,34 @@ pub(crate) struct TokenVerifier {
     keys: std::sync::Mutex<KeyCache>,
     /// Held while the JWKS is fetched, so only one fetch runs at a time.
     fetching: tokio::sync::Mutex<()>,
-    /// The last token to verify. The same bytes need only their expiry
+    /// The last token to verify. The same bytes need only their times
     /// checked again.
     last_verified: std::sync::Mutex<Option<Verified>>,
 }
 
 /// A token that verified: a SHA-256 digest of it, not the token itself, and
-/// its `exp`.
+/// its times. The digest is wiped when it is replaced or dropped.
 struct Verified {
-    digest: [u8; 32],
+    digest: TokenDigest,
+    times: Times,
+}
+
+/// The SHA-256 of a bearer token, compared only in constant time.
+type TokenDigest = Equatable<Protected<[u8; 32]>>;
+
+fn digest(token: &ServiceToken) -> TokenDigest {
+    let mut digest: ProtectedDigest<sha2_v011::Sha256> = ProtectedDigest::new();
+    digest.update(&Protected::new(token.as_str().as_bytes().to_vec()));
+    let mut out = Protected::new([0u8; 32]);
+    digest.finalize_into(&mut out);
+    out.into()
+}
+
+/// When a token is valid: until `exp`, and from `nbf` when it has one.
+#[derive(Clone, Copy)]
+struct Times {
     exp: u64,
+    nbf: Option<u64>,
 }
 
 /// What [`TokenVerifier::cached_key`] found.
@@ -185,11 +205,11 @@ impl TokenVerifier {
     /// server's error ([`AuthError::Request`] or [`AuthError::Server`]), not
     /// the token's: it says nothing about whether the token is genuine.
     pub(crate) async fn verify(&self, token: ServiceToken) -> Result<ServiceToken, AuthError> {
-        let digest: [u8; 32] = sha2::Sha256::digest(token.as_str()).into();
-        let result = match self.verified_exp(&digest) {
-            Some(exp) => self.check_expiry(exp),
-            None => self.check(token.as_str()).await.map(|exp| {
-                self.remember(Verified { digest, exp });
+        let digest = digest(&token);
+        let result = match self.verified_times(&digest) {
+            Some(times) => self.check_times(times),
+            None => self.check(token.as_str()).await.map(|times| {
+                self.remember(Verified { digest, times });
             }),
         };
         match result {
@@ -206,20 +226,20 @@ impl TokenVerifier {
         }
     }
 
-    /// The `exp` of the last token to verify, if `digest` is that token's.
-    fn verified_exp(&self, digest: &[u8; 32]) -> Option<u64> {
+    /// The times of the last token to verify, if `digest` is that token's.
+    fn verified_times(&self, digest: &TokenDigest) -> Option<Times> {
         let last = self.last_verified.lock().unwrap_or_else(|e| e.into_inner());
         last.as_ref()
-            .filter(|verified| &verified.digest == digest)
-            .map(|verified| verified.exp)
+            .filter(|verified| verified.digest.constant_time_eq(digest))
+            .map(|verified| verified.times)
     }
 
     fn remember(&self, verified: Verified) {
         *self.last_verified.lock().unwrap_or_else(|e| e.into_inner()) = Some(verified);
     }
 
-    /// Every check, returning the token's `exp` when they all pass.
-    async fn check(&self, token: &str) -> Result<u64, Failure> {
+    /// Every check, returning the token's times when they all pass.
+    async fn check(&self, token: &str) -> Result<Times, Failure> {
         let parts = Parts::split(token)?;
         self.check_claims(&parts)?;
         let key = self
@@ -227,16 +247,24 @@ impl TokenVerifier {
             .await?
             .ok_or(Rejection::UnknownKey)?;
         // Fetching the keys can take long enough for the token to expire.
-        self.check_expiry(parts.claims.exp)?;
+        let times = parts.claims.times();
+        self.check_times(times)?;
         if !rs256::verify(&key, parts.signed.as_bytes(), &parts.signature) {
             return Err(Rejection::Signature.into());
         }
-        Ok(parts.claims.exp)
+        Ok(times)
     }
 
-    fn check_expiry(&self, exp: u64) -> Result<(), Failure> {
-        if exp.saturating_add(LEEWAY_SECS) <= self.clock.now_unix_secs() {
+    fn check_times(&self, times: Times) -> Result<(), Failure> {
+        let now = self.clock.now_unix_secs();
+        if times.exp.saturating_add(LEEWAY_SECS) <= now {
             return Err(Rejection::Expired.into());
+        }
+        if times
+            .nbf
+            .is_some_and(|nbf| nbf > now.saturating_add(LEEWAY_SECS))
+        {
+            return Err(Rejection::NotYetValid.into());
         }
         Ok(())
     }
@@ -252,7 +280,7 @@ impl TokenVerifier {
         if issuer != self.issuer {
             return Err(Rejection::Issuer.into());
         }
-        self.check_expiry(claims.exp)?;
+        self.check_times(claims.times())?;
         if let Some(expected) = &self.audience {
             if !claims
                 .aud
@@ -423,6 +451,7 @@ enum Rejection {
     Algorithm,
     Issuer,
     Expired,
+    NotYetValid,
     Audience,
     UnknownKey,
     Signature,
@@ -435,6 +464,7 @@ impl fmt::Display for Rejection {
             Rejection::Algorithm => f.write_str("the token is not signed with RS256"),
             Rejection::Issuer => f.write_str("the token's issuer is not the trusted issuer"),
             Rejection::Expired => f.write_str("the token has expired"),
+            Rejection::NotYetValid => f.write_str("the token is not valid yet"),
             Rejection::Audience => f.write_str("the token is not for the expected audience"),
             Rejection::UnknownKey => {
                 f.write_str("the token's signing key is not one the trusted issuer publishes")
@@ -469,7 +499,18 @@ struct UnverifiedClaims {
     iss: String,
     exp: u64,
     #[serde(default)]
+    nbf: Option<u64>,
+    #[serde(default)]
     aud: Option<Audience>,
+}
+
+impl UnverifiedClaims {
+    fn times(&self) -> Times {
+        Times {
+            exp: self.exp,
+            nbf: self.nbf,
+        }
+    }
 }
 
 impl<'a> Parts<'a> {

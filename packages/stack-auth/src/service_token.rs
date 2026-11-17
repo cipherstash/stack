@@ -61,6 +61,10 @@ impl ServiceToken {
         self.secret.as_str()
     }
 
+    pub(crate) fn secret(&self) -> &SecretToken {
+        &self.secret
+    }
+
     /// Return the `sub` (subject) claim from the JWT.
     ///
     /// In CipherStash tokens the subject encodes the principal identity,

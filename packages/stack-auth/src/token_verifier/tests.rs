@@ -328,6 +328,62 @@ mod given_the_tokens_expiry {
     }
 }
 
+mod given_a_not_before_time {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_token_not_yet_valid_is_refused() {
+        let (_, verifier) = serving_key_a();
+
+        let jwt = KEY_A.jwt(with(claims(), "nbf", (NOW + 600).into()));
+
+        assert!(verdict(&verifier, jwt).await.is_err());
+    }
+
+    /// The same clock skew is allowed as for `exp`.
+    #[tokio::test]
+    async fn a_token_valid_within_the_leeway_is_accepted() {
+        let (_, verifier) = serving_key_a();
+
+        let jwt = KEY_A.jwt(with(claims(), "nbf", (NOW + LEEWAY_SECS).into()));
+
+        assert_eq!(verdict(&verifier, jwt).await, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn a_token_valid_just_past_the_leeway_is_refused() {
+        let (_, verifier) = serving_key_a();
+
+        let jwt = KEY_A.jwt(with(claims(), "nbf", (NOW + LEEWAY_SECS + 1).into()));
+
+        assert!(verdict(&verifier, jwt).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_token_already_valid_is_accepted() {
+        let (_, verifier) = serving_key_a();
+
+        let jwt = KEY_A.jwt(with(claims(), "nbf", (NOW - 10).into()));
+
+        assert_eq!(verdict(&verifier, jwt).await, Ok(()));
+    }
+
+    /// A token that verified is checked again on its times alone, so a clock
+    /// that steps back before its `nbf` refuses it.
+    #[tokio::test]
+    async fn a_verified_token_is_refused_after_the_clock_steps_back() {
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
+        let verifier = verifier(&cts, &clock);
+        let jwt = KEY_A.jwt(with(claims(), "nbf", NOW.into()));
+        verdict(&verifier, jwt.clone()).await.unwrap();
+
+        clock.set(NOW - LEEWAY_SECS - 1);
+
+        assert!(verdict(&verifier, jwt).await.is_err());
+    }
+}
+
 mod given_an_expected_audience {
     use super::*;
 

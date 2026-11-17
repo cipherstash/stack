@@ -75,7 +75,6 @@ impl TestClock {
     /// Set the clock to an arbitrary value, including one earlier than the
     /// current reading — used to simulate the wall clock jumping backwards
     /// (NTP step, VM snapshot restore, manual clock change).
-    #[cfg(feature = "http")]
     pub(crate) fn set(&self, now: u64) {
         self.0.store(now, std::sync::atomic::Ordering::SeqCst);
     }

@@ -31,6 +31,10 @@ serde_urlencoded = "0.7"
 # `OidcFederationStrategy` keys its per-user token cache on the SHA-256 of
 # the provider JWT, and stamps that digest on the tokens it persists.
 sha2 = "0.10"
+# The SHA-256 `token_verifier` remembers a verified token by, computed with
+# vitaminc's `ProtectedDigest`, which takes a digest 0.11 hasher. `zeroize`
+# wipes the hasher's state on drop.
+sha2_v011 = { package = "sha2", version = "0.11", default-features = false, features = ["zeroize"] }
 stack-profile = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

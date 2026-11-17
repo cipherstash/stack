@@ -2138,6 +2138,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sha2 0.10.9",
+ "sha2 0.11.0",
  "stack-profile",
  "thiserror 1.0.69",
  "tokio",

@@ -386,6 +386,12 @@ impl SecretToken {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Whether `other` is the same token, compared in constant time (for
+    /// tokens of the same length).
+    pub(crate) fn constant_time_eq(&self, other: &SecretToken) -> bool {
+        vitaminc_protected::ConstantTimeEq::constant_time_eq(self.0.as_str(), other.0.as_str())
+    }
 }
 
 /// Read the `CS_CTS_HOST` environment variable and parse it as a URL.

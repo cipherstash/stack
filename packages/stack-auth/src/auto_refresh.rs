@@ -288,7 +288,7 @@ impl<R, S> AutoRefresh<R, S> {
         if let Some(token) = state
             .token
             .as_mut()
-            .filter(|token| token.access_token().as_str() == refused.as_str())
+            .filter(|token| token.access_token().constant_time_eq(refused.secret()))
         {
             token.expires_at = 0;
         }
@@ -749,6 +749,42 @@ mod tests {
             crate::transport::default_transport(),
         );
         AutoRefresh::with_token(refresher, token)
+    }
+
+    mod given_a_refused_token {
+        use super::*;
+        use crate::ServiceToken;
+
+        async fn cached_expiry(engine: &AutoRefresh<DeviceSessionRefresher>) -> u64 {
+            let state = engine.shared.state.lock().await;
+            state.token.as_ref().map(|token| token.expires_at).unwrap()
+        }
+
+        #[tokio::test]
+        async fn the_cached_token_is_expired_if_it_is_the_one_refused() {
+            let server = start_server(MockSet::new()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let engine = auto_refresh_with_token(&dir, &server, make_token("refused", 3600, true));
+
+            engine
+                .expire(&ServiceToken::new(SecretToken::new("refused")))
+                .await;
+
+            assert_eq!(cached_expiry(&engine).await, 0);
+        }
+
+        #[tokio::test]
+        async fn a_token_installed_since_is_left_alone() {
+            let server = start_server(MockSet::new()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let engine = auto_refresh_with_token(&dir, &server, make_token("current", 3600, true));
+
+            engine
+                .expire(&ServiceToken::new(SecretToken::new("refused")))
+                .await;
+
+            assert_ne!(cached_expiry(&engine).await, 0);
+        }
     }
 
     mod given_no_cached_token {
