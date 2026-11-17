@@ -404,6 +404,21 @@ mod given_the_key_cache {
         }
     }
 
+    /// Written in minutes rather than with `KEYS_TTL_SECS`, so it pins the
+    /// lifetime itself.
+    #[tokio::test]
+    async fn the_jwks_is_reused_for_an_hour() {
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
+        let verifier = verifier(&cts, &clock);
+
+        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+        clock.advance(59 * 60);
+        verdict(&verifier, another_token()).await.unwrap();
+
+        assert_eq!(cts.requests().len(), 1, "a 59-minute-old JWKS is still fresh");
+    }
+
     #[tokio::test]
     async fn the_jwks_is_fetched_again_once_stale() {
         let cts = StubCts::serving(jwks(&[&KEY_A]));
