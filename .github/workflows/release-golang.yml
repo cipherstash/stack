@@ -171,16 +171,33 @@ jobs:
           grep -qF "'go-$VERSION'" release/cipherstash-encrypt-v4.sql \
             || { echo "::error::the v4 bundle is not stamped go-$VERSION"; exit 1; }
 
-      # The test builds ship too: package encrypttest embeds them. They are
-      # built here, before the hash, so the hash covers them as it covers the
-      # production guests.
       - name: Build the guests
         run: |
           mise run wasm:guest:build
           mise run wasm:guest:build:eql
           mise run wasm:auth-guest:build
+
+      # The test builds ship too: package encrypttest embeds them. Every
+      # stack-encrypt build writes the same cargo output and differs only in
+      # where its task copies it, so the production guests are hashed before
+      # the test builds run and checked after: a task that copied a seeded
+      # build over a production guest stops the release here, rather than
+      # being hashed and tagged as production.
+      - name: Build the test guests
+        run: |
+          set -euo pipefail
+          read -ra guests <<< "$GUESTS"
+          production=()
+          for guest in "${guests[@]}"; do
+            case "$guest" in
+              */encrypttest/wasm/*) ;;
+              *) production+=("$guest") ;;
+            esac
+          done
+          sha256sum "${production[@]}" > "$RUNNER_TEMP/production.sha256"
           mise run wasm:guest:build:deterministic
           mise run wasm:guest:build:eql:deterministic
+          sha256sum -c "$RUNNER_TEMP/production.sha256"
 
       # Hashed before the tests run, and checked again after them below, so
       # the guests committed are the ones tested.

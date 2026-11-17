@@ -12,10 +12,15 @@ import (
 // Package encrypttest builds its clients through this constructor. It is
 // registered with internal/testclient, which only packages under encrypt can
 // import, so no public function builds a client over a guest the caller
-// chooses. It does nothing without a deterministic-kms build: the guest
-// embedded for production refuses a bare seed as its config.
+// chooses. It does nothing without a deterministic-kms build: the guests
+// embedded for production refuse a bare seed as their config. It picks
+// between the two test builds by selectBuild, the rule embeddedGuest uses.
 func init() {
-	testclient.Register(func(ctx context.Context, wasm []byte, seed [32]byte) (any, error) {
+	testclient.Register(func(ctx context.Context, plain, withEQL func() ([]byte, error), seed [32]byte) (any, error) {
+		wasm, err := selectBuild(plain, withEQL)
+		if err != nil {
+			return nil, err
+		}
 		return seededClient(ctx, wasm, seed)
 	})
 }

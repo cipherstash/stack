@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"embed"
+	"sync"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
-	"github.com/cipherstash/stack/languages/golang/encrypt/internal/eqlguest"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testclient"
 )
 
@@ -37,9 +37,13 @@ type clientOptions struct {
 }
 
 // WithSeed derives every data key from seed in place of the default seed.
-// Use it to keep one test's values apart from another's. A value sealed
-// under one seed does not open under another, and fails with
+// A value sealed under one seed does not open under another, and fails with
 // [encrypt.ErrForbidden].
+//
+// A seed does not keep one test's rows apart from another's in a shared
+// table. Search terms depend on the keyset alone, so a query under one seed
+// matches rows another seed wrote under the same keyset. Give each test its
+// own keyset name for that: every name is a separate keyset.
 func WithSeed(seed [32]byte) ClientOption {
 	return func(o *clientOptions) { o.seed = seed }
 }
@@ -89,7 +93,8 @@ func WithSeed(seed [32]byte) ClientOption {
 // reads them share keys with no setup. The default seed never changes.
 // [WithSeed] chooses another. A seed changes the data keys only: search
 // terms depend on the keyset alone, so two seeds give a value the same
-// terms.
+// terms. To keep tests apart in a shared table, give each its own keyset
+// name.
 //
 // # Not for production
 //
@@ -118,11 +123,7 @@ func NewClient(tb testing.TB, opts ...ClientOption) *encrypt.Client {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	wasm, err := testGuest()
-	if err != nil {
-		tb.Fatal(err)
-	}
-	built, err := testclient.New(context.Background(), wasm, o.seed)
+	built, err := testclient.New(context.Background(), plainTestBuild, eqlTestBuild, o.seed)
 	if err != nil {
 		tb.Fatalf("encrypttest: %v", err)
 	}
@@ -138,14 +139,19 @@ func NewClient(tb testing.TB, opts ...ClientOption) *encrypt.Client {
 	return client
 }
 
-// testGuest is the test build matching the build a production client in
-// this program runs: the one with the EQL types when package eql is linked,
-// else the one without.
-func testGuest() ([]byte, error) {
-	path, task := guestPath, "wasm:guest:build:deterministic"
-	if eqlguest.Linked() {
-		path, task = eqlGuestPath, "wasm:guest:build:eql:deterministic"
-	}
+// The test builds, each read once: embed.FS copies a file on every read,
+// and a suite may call NewClient in every test. Package encrypt picks
+// between them by the rule it picks its production build by.
+var (
+	plainTestBuild = sync.OnceValues(func() ([]byte, error) {
+		return readTestBuild(guestPath, "wasm:guest:build:deterministic")
+	})
+	eqlTestBuild = sync.OnceValues(func() ([]byte, error) {
+		return readTestBuild(eqlGuestPath, "wasm:guest:build:eql:deterministic")
+	})
+)
+
+func readTestBuild(path, task string) ([]byte, error) {
 	wasm, err := guestFS.ReadFile(path)
 	if err != nil {
 		return nil, notBuiltError{task: task}
@@ -158,5 +164,5 @@ func testGuest() ([]byte, error) {
 type notBuiltError struct{ task string }
 
 func (e notBuiltError) Error() string {
-	return "encrypttest: the test build of the engine is not in this module; in a checkout of the repository, run `mise run " + e.task + "`"
+	return "the test build of the engine is not in this module; in a checkout of the repository, run `mise run " + e.task + "`"
 }

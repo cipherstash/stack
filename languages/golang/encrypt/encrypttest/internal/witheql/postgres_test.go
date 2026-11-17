@@ -1,4 +1,4 @@
-package encrypttest_test
+package witheql_test
 
 import (
 	"context"

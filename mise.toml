@@ -366,7 +366,7 @@ mise x --env test -- cargo nextest run
 """
 
 [tasks."go:test"]
-description = "Format check, vet and test the Go module (languages/golang: encrypt, auth and the internal packages) against the embedded guests; needs `wasm:guest:build` and `wasm:auth-guest:build` first"
+description = "Format check, vet and test the Go module (languages/golang: encrypt, auth and the internal packages) against the embedded guests; needs `wasm:guest:build`, `wasm:guest:build:eql`, `wasm:auth-guest:build`, `wasm:guest:build:deterministic` and `wasm:guest:build:eql:deterministic` first"
 # The body lives in scripts/go-binding-test.sh so the macOS and Windows CI
 # jobs (which have Go but not mise) run exactly the same checks. One module
 # at languages/golang holds every Go package (ADR-0005 §4); the guest it
@@ -399,7 +399,7 @@ pattern="^($(IFS='|'; echo "${TESTS[*]}"))$"
 # The tests skip without DATABASE_URL and without their guest builds; -v and
 # the grep turn either skip into a failure here, where both are provided.
 DATABASE_URL="$EQL_TEST_DATABASE_URL" CGO_ENABLED=0 go test -count=1 -v \
-  -run "$pattern" ./encrypt ./encrypt/encrypttest \
+  -run "$pattern" ./encrypt ./encrypt/encrypttest/internal/witheql \
   | tee "${TMPDIR:-/tmp}/go-test-postgres.log"
 if grep -q -- '--- SKIP' "${TMPDIR:-/tmp}/go-test-postgres.log"; then
   echo "error: a PostgreSQL test skipped; build the deterministic guests first" >&2

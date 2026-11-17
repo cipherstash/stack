@@ -32,8 +32,7 @@ func users() gensupport.Declaration {
 
 func skipWithoutGuest(t *testing.T) {
 	t.Helper()
-	_, err := encrypttest.Contexts(context.Background(), users())
-	if errors.Is(err, encrypt.ErrGuestNotBuilt) || errors.Is(err, encrypt.ErrEQLGuestNotBuilt) {
+	if _, err := encrypttest.Contexts(context.Background(), users()); errors.Is(err, encrypt.ErrGuestNotBuilt) {
 		t.Skip(err)
 	}
 }

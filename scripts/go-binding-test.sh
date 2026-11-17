@@ -10,19 +10,22 @@
 #
 # Usage: go-binding-test.sh <module dir> [<guest path, relative to it>...]
 # With no guest paths, every guest the module embeds is expected: the
-# stack-encrypt guest, its build with the EQL types, and the credential guest.
+# stack-encrypt guest, its build with the EQL types, the credential guest,
+# and the two deterministic test builds package encrypttest embeds. Its
+# tests fail, rather than skip, without them, so they are checked here first.
 set -euo pipefail
 
 dir=${1:?usage: go-binding-test.sh <module dir> [<guest path>...]}
 shift || true
 if [ $# -eq 0 ]; then
-  set -- encrypt/wasm/stack_encrypt_guest.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm auth/wasm/stack_auth_guest.wasm
+  set -- encrypt/wasm/stack_encrypt_guest.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm auth/wasm/stack_auth_guest.wasm \
+    encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm
 fi
 
 cd "$dir"
 for guest in "$@"; do
   if [ ! -f "$guest" ]; then
-    echo "guest module not built at $dir/$guest — run: mise run wasm:guest:build wasm:guest:build:eql wasm:auth-guest:build" >&2
+    echo "guest module not built at $dir/$guest — run: mise run wasm:guest:build wasm:guest:build:eql wasm:auth-guest:build wasm:guest:build:deterministic wasm:guest:build:eql:deterministic" >&2
     exit 1
   fi
 done

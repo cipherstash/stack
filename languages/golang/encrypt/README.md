@@ -835,7 +835,9 @@ Every keyset exists, so a test selects any name or id with nothing to
 create. A test therefore never sees `ErrNotFound` for a missing keyset.
 
 Every client with the default seed opens what another sealed, in any test
-process. `encrypttest.WithSeed` chooses another seed.
+process. `encrypttest.WithSeed` chooses another seed. A seed changes the
+data keys, not the search terms. To keep tests apart in a shared table, give
+each test its own keyset name.
 
 Never seal real data with it: anyone with the seed derives every key. Import
 `encrypttest` only from `_test.go` files, so it stays out of production

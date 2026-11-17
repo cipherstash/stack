@@ -1,4 +1,4 @@
-package encrypttest_test
+package witheql_test
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 // These tests use the client as an application's tests would: through
 // generated code, with no credentials and no network. testusers names an
 // EQL type, so this binary links package eql and gets the test build with
-// the EQL types. internal/withouteql covers the other build.
+// the EQL types. ../withouteql covers the other build.
 
 var people = []testusers.User{
 	{ID: 1, Age: 34, Email: "alice@example.com", Notes: "likes cats"},
