@@ -201,11 +201,13 @@ field beside it. That coupling is precisely what `passthrough` exists to avoid.
 
 ### Requirements
 
-A passthrough field's type is lent on the way in, never copied: it
-implements `Encrypt` for a reference to it (`EncryptRef`), as every built-in
-source and derived struct does, and need not be `Clone`. A sink that is
-really several sinks lends each the same subtree. On the way out it
-implements `Decrypt`.
+A passthrough field's type is lent on the way in, never copied or moved,
+even when the struct itself is walked by value: it implements `Encrypt` for
+a reference to it (`EncryptRef`), as every built-in source and derived
+struct does, and need be neither `Clone` nor a source by value. A type
+parameter that only passthrough fields name is bounded on `EncryptRef`
+alone. A sink that is really several sinks lends each the same subtree. On
+the way out it implements `Decrypt`.
 
 Two shapes are rejected at compile time:
 
