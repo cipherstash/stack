@@ -59,7 +59,6 @@ aggregate eql_v3.min(public.eql_v3_text_search_ore)
 aggregate eql_v3.min(public.eql_v3_timestamp_ord)
 aggregate eql_v3.min(public.eql_v3_timestamp_ord_ope)
 aggregate eql_v3.min(public.eql_v3_timestamp_ord_ore)
-cast public.eql_v3_json_search -> eql_v3.query_json
 function eql_v3.->(e public.eql_v3_json_search, selector integer)
 function eql_v3.->(e public.eql_v3_json_search, selector text)
 function eql_v3.->>(e public.eql_v3_json_search, selector integer)

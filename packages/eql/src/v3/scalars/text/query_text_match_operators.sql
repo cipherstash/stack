@@ -17,3 +17,23 @@ CREATE OPERATOR @@ (
   LEFTARG = eql_v3.query_text_match, RIGHTARG = public.eql_v3_text_match,
   RESTRICT = contsel, JOIN = contjoinsel
 );
+
+CREATE OPERATOR @@ (
+  FUNCTION = eql_v3_internal."@@",
+  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_match
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = eql_v3_internal."@@",
+  LEFTARG = eql_v3.query_text_match, RIGHTARG = public.eql_v3_text_search_ore
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = eql_v3_internal."@@",
+  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_match
+);
+
+CREATE OPERATOR @@ (
+  FUNCTION = eql_v3_internal."@@",
+  LEFTARG = eql_v3.query_text_match, RIGHTARG = public.eql_v3_text_search
+);

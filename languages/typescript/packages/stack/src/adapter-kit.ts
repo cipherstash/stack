@@ -18,9 +18,13 @@
  * The full member list is small on purpose; every addition is an audit decision.
  */
 
-// Model → encrypted-PG-composite helpers used by the v2 Supabase mutation path.
+// Model → encrypted-PG-composite helpers used by the v2 Supabase mutation path,
+// and `isEncryptedPayload`, the predicate model decryption uses to find
+// ciphertext in a row — for adapters that must refuse a row they pass through
+// undecrypted.
 export {
   bulkModelsToEncryptedPgComposites,
+  isEncryptedPayload,
   modelToEncryptedPgComposites,
 } from './encryption/helpers/index.js'
 
@@ -65,7 +69,10 @@ export {
   unsupportedLeafReason,
 } from './eql/v3/selector-path.js'
 // Shared match-index guard (short-needle rejection), reused by both adapters.
-export { matchNeedleError } from './schema/match-defaults.js'
+export {
+  likeWildcardError,
+  matchNeedleError,
+} from './schema/match-defaults.js'
 // The canonical EQL v2/v3 table discriminator. Added because the adapters must
 // make the same routing decision core does, and that function's own doctrine is
 // that every site routes through it — "a second hand-written spelling of the
@@ -74,5 +81,8 @@ export { matchNeedleError } from './schema/match-defaults.js'
 // `./types`: deciding which wire version a table targets is adapter plumbing,
 // not something an end user should be reaching for.
 export { hasBuildColumnKeyMap } from './types.js'
+// Log-safe failure description: adapters log an error's kind, never its
+// message, which may quote a plaintext value.
+export { describeFailure } from './utils/logger/describe-failure.js'
 // Shared structured logger (adapters log rejections through the same instance).
 export { logger } from './utils/logger/index.js'
