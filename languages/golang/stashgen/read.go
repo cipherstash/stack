@@ -980,11 +980,11 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 const vcvaluePath = "github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 
 // valueKind is the kind of a value type the generator knows by name:
-// time.Time, and encrypt's Date, Int128, Uint128 and Decimal, whether the
-// field names the alias in encrypt or the vcvalue type it stands for. A type
-// defined over one of them is not one: the codec writes these by their exact
-// type, so it is classified by its underlying type and refused as a struct
-// or array.
+// time.Time, json.RawMessage, and encrypt's Date, Int128, Uint128 and
+// Decimal, whether the field names the alias in encrypt or the vcvalue type
+// it stands for, or an alias of any of them. A type defined over one of
+// them is not one: the codec writes these by their exact type, so it is
+// classified by its underlying type and refused as a struct or array.
 func valueKind(t types.Type) (Kind, bool) {
 	named := func(t types.Type) (string, string, bool) {
 		switch t := t.(type) {
@@ -999,7 +999,7 @@ func valueKind(t types.Type) (Kind, bool) {
 		}
 		return "", "", false
 	}
-	for _, candidate := range []types.Type{t, types.Unalias(t)} {
+	for _, candidate := range aliasChain(t) {
 		path, name, ok := named(candidate)
 		if !ok {
 			continue
@@ -1025,6 +1025,36 @@ func valueKind(t types.Type) (Kind, bool) {
 		}
 	}
 	return KindOther, false
+}
+
+// aliasChain is t and every type its alias chain names, ending with the type
+// t stands for. With GOEXPERIMENT=jsonv2, the default from Go 1.27,
+// json.RawMessage is itself an alias of jsontext.Value, so an alias of
+// json.RawMessage names it only partway along the chain.
+func aliasChain(t types.Type) []types.Type {
+	chain := []types.Type{t}
+	for a, ok := t.(*types.Alias); ok; a, ok = a.Rhs().(*types.Alias) {
+		chain = append(chain, a.Rhs())
+	}
+	return chain
+}
+
+// rawMessage is the step of t's alias chain that is encoding/json's
+// RawMessage, or nil: an alias under jsonv2, a defined type otherwise.
+func rawMessage(t types.Type) types.Type {
+	for _, step := range aliasChain(t) {
+		var obj *types.TypeName
+		switch s := step.(type) {
+		case *types.Alias:
+			obj = s.Obj()
+		case *types.Named:
+			obj = s.Obj()
+		}
+		if obj != nil && obj.Pkg() != nil && obj.Pkg().Path() == "encoding/json" && obj.Name() == "RawMessage" {
+			return step
+		}
+	}
+	return nil
 }
 
 // checkDirectives stops when another go:generate line in the package would
@@ -1244,6 +1274,9 @@ func (r *reader) eqlType(name string) *EQLType {
 func notDocument(t types.Type) (string, bool) {
 	if _, ok := valueKind(t); ok {
 		return "is one value, not a document", false
+	}
+	if named, ok := types.Unalias(t).(*types.Named); ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "encoding/json/jsontext" && named.Obj().Name() == "Value" {
+		return "is taken as a json document only when spelled json.RawMessage", false
 	}
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
@@ -1532,6 +1565,14 @@ func (r *reader) memberTypeExpr(doc types.Type, path string) string {
 	t, ok := memberGoType(doc, path)
 	if !ok || !r.writable(t) {
 		return "any"
+	}
+	// json.RawMessage by that name, not jsontext.Value, which it aliases
+	// under jsonv2: the generated file then builds on every toolchain.
+	if raw := rawMessage(t); raw != nil {
+		if other, taken := r.imports.paths["json"]; taken && other != "encoding/json" {
+			return "any"
+		}
+		return r.typeExpr(raw)
 	}
 	return r.typeExpr(types.Unalias(t))
 }
