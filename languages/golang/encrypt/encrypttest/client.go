@@ -118,8 +118,16 @@ func WithSeed(seed [32]byte) ClientOption {
 //
 // Require it at the same version as
 // github.com/cipherstash/stack/languages/golang. Its test builds match the
-// engine host code of that version only, so NewClient fails the test when
-// the two versions differ.
+// engine host code of that version only, so NewClient, [Contexts] and
+// [AssertContexts] fail when the two versions differ. A difference large
+// enough to change the SDK's internal packages, which this one imports, fails
+// earlier: the test does not compile, with an error that names an internal
+// package of the SDK. The fix is the same: require both at one version.
+//
+// Only a tagged version of this module can be fetched. Between releases its
+// go.mod requires the SDK at a placeholder version, replaced by the
+// directory in a checkout of the repository; the release commit names the
+// version it tags.
 //
 // # Engine builds
 //
@@ -133,10 +141,8 @@ func NewClient(tb testing.TB, opts ...ClientOption) *encrypt.Client {
 	if !testing.Testing() {
 		tb.Fatal("encrypttest: NewClient runs only in a test binary, because its keys are not secret")
 	}
-	if info, ok := debug.ReadBuildInfo(); ok {
-		if err := sameVersion(info); err != nil {
-			tb.Fatal(err)
-		}
+	if err := versionSkew(); err != nil {
+		tb.Fatal(err)
 	}
 	o := clientOptions{seed: defaultSeed}
 	for _, opt := range opts {
@@ -165,6 +171,16 @@ const (
 	sdkModule  = "github.com/cipherstash/stack/languages/golang"
 	thisModule = sdkModule + "/encrypt/encrypttest"
 )
+
+// versionSkew is sameVersion over this program's build info, or nil when
+// the program carries none.
+func versionSkew() error {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return nil
+	}
+	return sameVersion(info)
+}
 
 // sameVersion refuses a build in which this module and the SDK module are
 // at different versions. A version it cannot know, such as a module

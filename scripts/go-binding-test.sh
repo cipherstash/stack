@@ -16,6 +16,9 @@
 # tests fail, rather than skip, without them, so they are checked here first.
 set -euo pipefail
 
+# Before the cd below, which a relative $0 would not survive.
+scripts=$(cd "$(dirname "$0")" && pwd)
+
 dir=${1:?usage: go-binding-test.sh <module dir> [<guest path>...]}
 shift || true
 if [ $# -eq 0 ]; then
@@ -64,12 +67,10 @@ else
 fi
 
 # Nested modules (encrypt/encrypttest, encrypt/example): `./...` stops at a
-# directory with its own go.mod, so each is vetted and tested in turn. They
-# are found rather than listed, so a new one is covered the day it lands;
-# the stashgen fixtures under testdata are not modules of this repository's.
-# gofmt above already walked their files.
-find . -name go.mod -not -path ./go.mod -not -path '*/testdata/*' | sort | while IFS= read -r mod; do
-  nested=$(dirname "$mod")
+# directory with its own go.mod, so each is vetted and tested in turn.
+# go-nested-modules.sh lists them for every tool that needs to. gofmt above
+# already walked their files.
+"$scripts/go-nested-modules.sh" | while IFS= read -r nested; do
   echo "nested module $nested"
   (
     cd "$nested"

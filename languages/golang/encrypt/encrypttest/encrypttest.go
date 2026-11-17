@@ -35,6 +35,9 @@ import (
 // and no network. [AssertContexts] reads this text; a test that wants the
 // text itself, to print or to compare whole, calls this.
 func Contexts(ctx context.Context, d gensupport.Declaration) (string, error) {
+	if err := versionSkew(); err != nil {
+		return "", err
+	}
 	checker, err := encrypt.NewChecker(ctx)
 	if err != nil {
 		return "", err
@@ -120,6 +123,9 @@ func FromPlaintext(name, typ string) Placeholder {
 //	)
 func AssertContexts(tb testing.TB, d gensupport.Declaration, want ...FieldContext) {
 	tb.Helper()
+	if err := versionSkew(); err != nil {
+		tb.Fatal(err)
+	}
 	got, err := Contexts(tb.Context(), d)
 	if err != nil {
 		tb.Fatalf("encrypttest: the engine refused the declaration: %v", err)

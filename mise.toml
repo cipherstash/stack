@@ -425,12 +425,12 @@ dir = "languages/golang"
 shell = "bash -c"
 # `./...` stops at a nested module (encrypt/encrypttest, encrypt/example),
 # so each is linted from its own directory; golangci-lint finds the config
-# by walking up. Found, as scripts/go-binding-test.sh finds them.
+# by walking up. scripts/go-nested-modules.sh lists them.
 run = """
 set -euo pipefail
 golangci-lint run ./...
-find . -name go.mod -not -path ./go.mod -not -path '*/testdata/*' | sort | while IFS= read -r mod; do
-  (cd "$(dirname "$mod")" && golangci-lint run ./...)
+../../scripts/go-nested-modules.sh | while IFS= read -r nested; do
+  (cd "$nested" && golangci-lint run ./...)
 done
 """
 

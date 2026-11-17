@@ -2,6 +2,11 @@ module github.com/cipherstash/stack/languages/golang/encrypt/encrypttest
 
 go 1.26.10
 
+// The SDK at a placeholder version, replaced below by the SDK in this
+// checkout, so the two always build together at one commit. A consumer
+// ignores the replace, so only a tagged version of this module can be
+// fetched: the release commit names the version it tags in place of the
+// placeholder (scripts/go-release-pin-encrypttest.sh).
 require (
 	github.com/cipherstash/stack/languages/golang v0.0.0-00010101000000-000000000000
 	github.com/jackc/pgx/v5 v5.11.0

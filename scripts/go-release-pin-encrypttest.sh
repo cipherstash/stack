@@ -22,21 +22,26 @@ version=${1:?usage: go-release-pin-encrypttest.sh <version> [<go.mod>]}
 gomod=${2:-languages/golang/encrypt/encrypttest/go.mod}
 sdk=github.com/cipherstash/stack/languages/golang
 placeholder=v0.0.0-00010101000000-000000000000
+# The path and the versions go into regexes, where a `.` matches any
+# character: escaped, so only the SDK's own requirement is counted.
+sdk_re=${sdk//./\\.}
+placeholder_re=${placeholder//./\\.}
+version_re=${version//./\\.}
 
 # Exactly one requirement of the SDK, at the placeholder. Anything else means
 # the tree was edited in a way this script does not know, and guessing would
 # tag a module that requires the wrong SDK.
-count=$(grep -cE "^[[:space:]]*(require[[:space:]]+)?${sdk}[[:space:]]+${placeholder}[[:space:]]*$" "$gomod" || true)
+count=$(grep -cE "^[[:space:]]*(require[[:space:]]+)?${sdk_re}[[:space:]]+${placeholder_re}[[:space:]]*$" "$gomod" || true)
 if [ "$count" != "1" ]; then
   echo "error: $gomod must require $sdk at $placeholder exactly once, and does $count times" >&2
   exit 1
 fi
 
 tmp="$gomod.tmp"
-sed -E "s#^([[:space:]]*(require[[:space:]]+)?${sdk}[[:space:]]+)${placeholder}[[:space:]]*\$#\\1v${version}#" "$gomod" > "$tmp"
+sed -E "s#^([[:space:]]*(require[[:space:]]+)?${sdk_re}[[:space:]]+)${placeholder_re}[[:space:]]*\$#\\1v${version}#" "$gomod" > "$tmp"
 mv "$tmp" "$gomod"
 
-if ! grep -qE "^[[:space:]]*(require[[:space:]]+)?${sdk}[[:space:]]+v${version//./\\.}$" "$gomod"; then
+if ! grep -qE "^[[:space:]]*(require[[:space:]]+)?${sdk_re}[[:space:]]+v${version_re}$" "$gomod"; then
   echo "error: $gomod does not require $sdk v$version after the rewrite" >&2
   exit 1
 fi

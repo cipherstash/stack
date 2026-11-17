@@ -58,6 +58,7 @@ on:
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
+      - scripts/go-nested-modules.sh
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
       - scripts/stack-eql-conformance.mjs
@@ -101,6 +102,7 @@ on:
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
+      - scripts/go-nested-modules.sh
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
       - scripts/stack-eql-conformance.mjs
@@ -353,8 +355,8 @@ jobs:
           CGO_ENABLED=0 go generate ./...
           # The nested modules (encrypt/example holds generated code) are
           # outside `./...`, so each runs its own go generate.
-          find . -name go.mod -not -path ./go.mod -not -path '*/testdata/*' | sort | while IFS= read -r mod; do
-            (cd "$(dirname "$mod")" && CGO_ENABLED=0 go generate ./...)
+          ../../scripts/go-nested-modules.sh | while IFS= read -r nested; do
+            (cd "$nested" && CGO_ENABLED=0 go generate ./...)
           done
           git diff --exit-code -- .
           untracked="$(git status --porcelain -- .)"
@@ -613,9 +615,17 @@ jobs:
 
       # The whole package, not a `-run` filter: live tests are the ones that
       # call `liveClient`, and not all of them are named `TestLive*`.
+      # ./encrypt/... stops at the nested modules (encrypt/encrypttest,
+      # encrypt/example), so each runs too: a live test added to one of them
+      # would otherwise never run here.
       - name: Go live tests
         working-directory: languages/golang
-        run: CGO_ENABLED=0 go test -v ./encrypt/...
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go test -v ./encrypt/...
+          ../../scripts/go-nested-modules.sh | while IFS= read -r nested; do
+            (cd "$nested" && CGO_ENABLED=0 go test -v ./...)
+          done
 
       - name: stack-encrypt examples
         run: |

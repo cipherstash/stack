@@ -134,12 +134,21 @@ jobs:
       # Here and not in `publish`, so a re-run of `publish` that finds its own
       # earlier tag is not refused.
       - name: Refuse a version the Go proxy already lists
+        # A module the proxy has never fetched, such as encrypttest before its
+        # first release, answers 404 (or 410): it has no versions, so nothing
+        # is listed. Any other failure fails closed.
         run: |
           set -euo pipefail
+          body=$(mktemp)
           for dir in $MODULES; do
             module="github.com/cipherstash/stack/$dir"
-            list=$(curl -fsS --retry 3 "https://proxy.golang.org/$module/@v/list") \
+            code=$(curl -sS --retry 3 -o "$body" -w '%{http_code}' "https://proxy.golang.org/$module/@v/list") \
               || { echo "::error::could not read the Go proxy's version list for $module"; exit 1; }
+            case "$code" in
+              200) list=$(cat "$body") ;;
+              404 | 410) list="" ;;
+              *) echo "::error::could not read the Go proxy's version list for $module (HTTP $code)"; exit 1 ;;
+            esac
             if grep -qxF "v$VERSION" <<< "$list"; then
               echo "::error::the Go proxy already lists $module v$VERSION; its contents are fixed even though the tag is gone. Release a new version."
               exit 1
@@ -271,6 +280,17 @@ jobs:
           (cd "$fetched" && sha256sum -c "$GITHUB_WORKSPACE/release-out/guests.sha256")
           (cd "$fetched/languages/golang" && GOWORK=off GOFLAGS=-mod=readonly go build ./...)
           (cd "$fetched/languages/golang/encrypt/encrypttest" && GOWORK=off GOFLAGS=-mod=readonly go build ./...)
+          # That build runs under the replace, which a consumer ignores, so it
+          # cannot show what the pinned requirement says. Go's own parser
+          # reads it back: the SDK at exactly this version. Whether that
+          # version resolves cannot be asked before the tag exists; verify
+          # downloads both modules after the push.
+          pinned=$(cd "$fetched/languages/golang/encrypt/encrypttest" && go mod edit -json \
+            | jq -r '.Require[] | select(.Path == "github.com/cipherstash/stack/languages/golang") | .Version')
+          if [ "$pinned" != "v$VERSION" ]; then
+            echo "::error::the encrypttest module on the release commit requires the SDK at '$pinned', not v$VERSION"
+            exit 1
+          fi
 
           echo "tree=$tree" >> "$GITHUB_OUTPUT"
           echo "release tree $tree"
@@ -479,27 +499,14 @@ jobs:
           set -euo pipefail
           manifest="$PWD/release-out/guests.sha256"
           cd "$(mktemp -d)"
+          pick="$GITHUB_WORKSPACE/scripts/go-release-module-guests.sh"
           for module_dir in $MODULES; do
             module="github.com/cipherstash/stack/$module_dir"
-            # guests.sha256 names paths from the repository root. A guest
-            # belongs to the module with the longest directory above it, and
-            # that module's zip starts at its directory.
-            : > "$RUNNER_TEMP/module.sha256"
-            while read -r sum path; do
-              owner=""
-              for candidate in $MODULES; do
-                case "$path" in
-                  "$candidate"/*) if [ "${#candidate}" -gt "${#owner}" ]; then owner=$candidate; fi ;;
-                esac
-              done
-              if [ "$owner" = "$module_dir" ]; then
-                echo "$sum  ${path#"$module_dir"/}" >> "$RUNNER_TEMP/module.sha256"
-              fi
-            done < "$manifest"
-            if [ ! -s "$RUNNER_TEMP/module.sha256" ]; then
-              echo "::error::no guest belongs to $module"
-              exit 1
-            fi
+            # guests.sha256 names paths from the repository root; each
+            # module's zip starts at its directory, and holds only its own.
+            # shellcheck disable=SC2086 # MODULES is a word list.
+            "$pick" "$manifest" "$module_dir" $MODULES > "$RUNNER_TEMP/module.sha256" \
+              || { echo "::error::no guest belongs to $module"; exit 1; }
             resolved=""
             for attempt in 1 2 3 4 5 6; do
               if dir=$(go mod download -json "$module@v$VERSION" | jq -er .Dir); then

@@ -2,6 +2,9 @@ module github.com/cipherstash/stack/languages/golang/encrypt/example
 
 go 1.26.10
 
+// Never released. The SDK and encrypttest at a placeholder version, replaced
+// below by the directories in this checkout: the example builds against the
+// tree, as an application builds against a released version.
 require (
 	github.com/cipherstash/stack/languages/golang v0.0.0-00010101000000-000000000000
 	github.com/cipherstash/stack/languages/golang/encrypt/encrypttest v0.0.0-00010101000000-000000000000

@@ -85,6 +85,18 @@ describe('go-release-pin-encrypttest.sh', () => {
     expect(readFileSync(gomod, 'utf8')).toContain(`require ${SDK} v0.2.0\n`)
   })
 
+  it('counts only the SDK path, with its dots taken literally', () => {
+    const gomod = join(dir, 'go.mod')
+    const lookalike = SDK.replaceAll('.', 'X')
+    writeFileSync(
+      gomod,
+      `module ${SDK}/encrypt/encrypttest\n\nrequire ${lookalike} ${PLACEHOLDER}\n`,
+    )
+    const result = pin('0.2.0', gomod)
+    expect(result.status).not.toBe(0)
+    expect(readFileSync(gomod, 'utf8')).toContain(`${lookalike} ${PLACEHOLDER}`)
+  })
+
   it('refuses a go.mod with no placeholder to rewrite, such as one pinned already', () => {
     const gomod = join(dir, 'go.mod')
     copyFileSync(join(REPO_ROOT, GO_MOD), gomod)

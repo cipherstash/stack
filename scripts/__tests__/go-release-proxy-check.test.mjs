@@ -36,17 +36,29 @@ afterEach(() => {
 })
 
 /**
- * Run the step with a `curl` that answers `list`, or fails when null. Each
- * URL the step asks for is appended to `asked`.
+ * Run the step with a `curl` that answers `list` with HTTP `status`, as
+ * `curl -o <file> -w '%{http_code}'` does, or fails to connect when `list`
+ * is null. Each URL the step asks for is appended to `asked`.
  */
-function runWithProxyList(version, list) {
+function runWithProxyList(version, list, status = 200) {
   const curl = join(bin, 'curl')
   const asked = join(bin, 'asked')
   writeFileSync(
     curl,
     list === null
-      ? '#!/bin/sh\necho "curl: (22) 503" >&2\nexit 22\n'
-      : `#!/bin/sh\nfor a in "$@"; do last=$a; done\necho "$last" >> '${asked}'\nprintf '%s' '${list}'\n`,
+      ? '#!/bin/sh\necho "curl: (7) Failed to connect" >&2\nexit 7\n'
+      : `#!/bin/sh
+out=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift ;;
+    http*) echo "$1" >> '${asked}' ;;
+  esac
+  shift
+done
+printf '%s' '${list}' > "$out"
+printf '%s' '${status}'
+`,
   )
   chmodSync(curl, 0o755)
   const result = spawnSync('bash', ['-c', String(PROXY_STEP.run)], {
@@ -125,6 +137,19 @@ describe('release-golang.yml: the Go proxy check', () => {
     )
     expect(result.status).toBe(1)
     expect(result.stdout).toContain('::error::the Go proxy already lists')
+  })
+
+  it('passes a module the proxy has never fetched, which it answers 404', () => {
+    const result = runWithProxyList('0.1.0-alpha.1', 'not found', 404)
+    expect(result.stdout).not.toContain('::error::')
+    expect(result.status).toBe(0)
+  })
+
+  it('fails closed on any other HTTP status', () => {
+    const result = runWithProxyList('0.1.0-alpha.1', 'oops', 500)
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain('::error::could not read')
+    expect(result.stdout).toContain('HTTP 500')
   })
 
   it('fails closed when the proxy cannot be read', () => {
