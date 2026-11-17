@@ -793,10 +793,9 @@ pub mod jiff {
     /// A date's day count since 1970-01-01.
     pub fn date_days(date: Date) -> i32 {
         // A civil day is always 86,400 seconds, so the division is exact,
-        // and jiff's dates lie within about ±3.7 million days of the
-        // epoch, so the count always fits an i32.
-        let days = date.duration_since(EPOCH).as_secs() / SECONDS_PER_DAY;
-        i32::try_from(days).unwrap_or(if days < 0 { i32::MIN } else { i32::MAX })
+        // and jiff's dates lie within -4,371,587 to 2,932,896 days of the
+        // epoch (pinned by a test below), so the cast cannot truncate.
+        (date.duration_since(EPOCH).as_secs() / SECONDS_PER_DAY) as i32
     }
 
     /// The instant for a count of `unit`s, if it is one jiff can represent.
