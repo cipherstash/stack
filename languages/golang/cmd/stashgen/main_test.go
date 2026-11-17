@@ -761,6 +761,49 @@ func TestRunTypesTheElementMatch(t *testing.T) {
 	}
 }
 
+// With GOEXPERIMENT=jsonv2, the default from Go 1.27, json.RawMessage is an
+// alias of jsontext.Value. The generated file still names a member of that
+// type json.RawMessage, so it builds whichever toolchain reads it, and a
+// field spelled jsontext.Value is refused with a reason that names the
+// spelling the generator takes. The experiment is set for the package load,
+// so the test runs the jsonv2 shape on every toolchain.
+func TestRunNamesRawMessageUnderJSONv2(t *testing.T) {
+	checker, err := encrypt.NewChecker(context.Background())
+	if err != nil {
+		t.Skip(err)
+	}
+	_ = checker.Close()
+	t.Setenv("GOEXPERIMENT", "jsonv2")
+	generate := func(imports, fields string) (string, string, int) {
+		model := "package users\n\nimport (\n" + imports + ")\n\ntype DocAlias = json.RawMessage\n\ntype Visit struct {\n\tAt int64 `json:\"at\"`\n\tRaw json.RawMessage `json:\"raw\"`\n\tAliased *DocAlias `json:\"aliased\"`\n}\n\ntype Profile struct {\n\tVisits []Visit `json:\"visits\"`\n}\n\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
+		dir := writeModule(t, map[string]string{"model.go": model})
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"-type", "Customer"}, dir, &stdout, &stderr, stashgen.GuestEngine)
+		written, _ := os.ReadFile(filepath.Join(dir, "customer_stash.go"))
+		return string(written), stderr.String(), code
+	}
+	written, stderr, code := generate("\t\"encoding/json\"\n", "\tProfile Profile `stash:\"profile,encrypt_into=JsonSearch(ordered=$.visits[*].at;$.visits[*].raw;$.visits[*].aliased)\"`")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	words := strings.Join(strings.Fields(written), " ")
+	for _, want := range []string{
+		"Raw encrypt.Path[ProfileFieldElementsVisits, json.RawMessage] // $.visits[*].raw",
+		"Aliased encrypt.Path[ProfileFieldElementsVisits, json.RawMessage] // $.visits[*].aliased",
+	} {
+		if !strings.Contains(words, want) {
+			t.Errorf("the generated file lacks %q", want)
+		}
+	}
+	if strings.Contains(written, "jsontext") {
+		t.Errorf("the generated file names jsontext:\n%s", written)
+	}
+	_, stderr, code = generate("\t\"encoding/json\"\n\t\"encoding/json/jsontext\"\n", "\tProfile jsontext.Value `stash:\"profile,encrypt_into=JsonSearch\"`")
+	if want := "Customer.Profile: JsonSearch seals a json document, and jsontext.Value is taken as a json document only when spelled json.RawMessage"; code != 1 || !strings.Contains(stderr, want) {
+		t.Errorf("a jsontext.Value field: exit %d, want 1 and %q\n%s", code, want, stderr)
+	}
+}
+
 // withoutOperator is the embedded engine with op removed from every field's
 // answer: an engine that disagrees with the generator.
 func withoutOperator(op string) func(context.Context) (stashgen.Engine, error) {

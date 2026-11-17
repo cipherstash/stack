@@ -21,6 +21,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   along the chain. A field declared as `json.RawMessage` itself was not
   affected.
 
+- **`stashgen` writes the same file on Go 1.26 and Go 1.27 for a
+  `json.RawMessage` member of an ordered path's array element.** Under
+  `GOEXPERIMENT=jsonv2` the member's `encrypt.Path` was written with
+  `jsontext.Value`, and the file then did not build on Go 1.26. It now
+  names `json.RawMessage`. A field declared as `jsontext.Value` is still
+  refused, now with a reason that asks for `json.RawMessage` in place of
+  calling it a base64 string.
+
 ## [0.1.0-rc.5] - 2026-11-16
 
 ### Upgrading from rc.4
