@@ -125,12 +125,37 @@ workspace id verifies every token issued.
 An access key is not the only way to authenticate, and often not the one a
 service wants. A `stack_auth::OidcFederationStrategy` federates a
 third-party OIDC JWT (Clerk, Supabase, Auth0) into a CipherStash token, so
-the deployment holds no long-lived CipherStash credential of its own. What
-`AutoStrategy` detects is only the two above — access key, then profile — so
-any other strategy is named explicitly, and that is what
-[`kms`](StackCipherBuilder::kms) is for: build the
-[`StackKms`](crate::kms::StackKms) over the strategy you want and hand it to
-the builder.
+the deployment holds no long-lived CipherStash credential of its own, and
+ZeroKMS sees each request as the end user's. What `AutoStrategy` detects is
+only the two above — access key, then profile — so any other strategy is
+named explicitly, with [`auth_strategy`](StackCipherBuilder::auth_strategy).
+The client key is still found as above.
+
+```no_run
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+use stack_auth::{AuthError, AutoStrategy, OidcFederationStrategy, OidcProviderFn, SecretToken};
+use stack_encrypt::StackCipher;
+
+// The workspace `AutoStrategy` would use: `CS_WORKSPACE_CRN`, else the
+// workspace of the CLI's session. The client key lookup resolves the same
+// one, so the token and the client key agree.
+let crn = AutoStrategy::detect_workspace_crn()?;
+let provider = OidcProviderFn::new(|| async {
+    // The JWT of the user behind the current request.
+    Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
+});
+
+let cipher = StackCipher::builder()
+    .auth_strategy(OidcFederationStrategy::new(crn, provider)?)
+    .init()
+    .await?;
+# Ok(())
+# }
+```
+
+To choose the client key as well, or to set the transport, build the
+[`StackKms`](crate::kms::StackKms) yourself and hand it to
+[`kms`](StackCipherBuilder::kms):
 
 ```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -165,8 +190,8 @@ let cipher = StackCipher::builder().kms(kms).init().await?;
 
 The built-in strategies are constructed from a workspace CRN
 (`stack_auth::Crn`) rather than read from the environment —
-`OidcFederationStrategy::new(crn, provider)` — and otherwise reach the
-builder through the same `kms` seam.
+`OidcFederationStrategy::new(crn, provider)`.
+`stack_auth::AutoStrategy::detect_workspace_crn` returns the configured one.
 
 `examples/zerokms_auth.rs` runs this end to end against a live ZeroKMS,
 alongside the default path and the errors each half fails with. The
@@ -603,6 +628,8 @@ pub mod target;
 pub mod testing;
 pub mod value;
 
+#[cfg(feature = "http")]
+pub use cipher::WithAuthStrategy;
 pub use cipher::{
     Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,
     StackCipherBuilder, StackCipherText,

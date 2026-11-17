@@ -819,6 +819,14 @@ async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetSta
 /// the environment (and, on native targets, the CLI's profile directory).
 pub struct FromEnv;
 
+/// The state of a [`StackCipherBuilder`] given an auth strategy by
+/// [`auth_strategy`](StackCipherBuilder::auth_strategy):
+/// [`init`](StackCipherBuilder::init) will build a ZeroKMS client that
+/// fetches its tokens from that strategy and finds its client key as
+/// [`StackCipher::new`] does.
+#[cfg(feature = "http")]
+pub struct WithAuthStrategy<C>(C);
+
 /// The client key, looked up the way [`stack_auth::AutoStrategy`] looks up the
 /// access token: `CS_CLIENT_ID` / `CS_CLIENT_KEY` first, then `secretkey.json`
 /// in the profile directory — of the workspace `CS_WORKSPACE_CRN` names if it
@@ -966,18 +974,78 @@ impl StackCipherBuilder<FromEnv> {
     /// Use an explicit data-key source rather than building a ZeroKMS client
     /// from the environment.
     ///
-    /// This is the seam for a custom authentication strategy: build a
+    /// This is the seam for a client built entirely by the caller: build a
     /// [`kms::StackKms`](crate::kms::StackKms) — with `stack_encrypt::kms::StackKmsBuilder`,
-    /// or over the host's own transport — and hand it over. It is also how
-    /// tests inject `stack_encrypt::kms::FakeDataKeySource`.
+    /// or over the host's own transport — with the auth strategy and client
+    /// key of your choice, and hand it over. To change only the auth
+    /// strategy, use `auth_strategy` (with the `http` feature). It is also
+    /// how tests inject `stack_encrypt::kms::FakeDataKeySource`.
     pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
-        StackCipherBuilder {
-            kms,
-            cache_size: self.cache_size,
-            name_ttl: self.name_ttl,
-            #[cfg(feature = "test-support")]
-            json_seed: self.json_seed,
-        }
+        self.replace_source(kms).0
+    }
+
+    /// Fetch ZeroKMS tokens from `strategy`, and find the client key as
+    /// [`StackCipher::new`] does.
+    ///
+    /// The default [`init`](Self::init) detects an access key or a CLI
+    /// session ([`stack_auth::AutoStrategy`]). Any other way of
+    /// authenticating goes here: an
+    /// [`OidcFederationStrategy`](stack_auth::OidcFederationStrategy), which
+    /// makes every ZeroKMS request as the end user whose JWT it exchanges,
+    /// an `AccessKeyStrategy` built from a key the program holds, or an
+    /// `AuthStrategyFn` of your own. [`init`](StackCipherBuilder::init) then
+    /// builds the ZeroKMS client over it.
+    ///
+    /// Only the token comes from `strategy`. The client key is looked up as
+    /// it is for the default `init`: `CS_CLIENT_ID` + `CS_CLIENT_KEY`, then
+    /// `secretkey.json` in the CLI's profile directory (native targets only)
+    /// — of the workspace `CS_WORKSPACE_CRN` names if it is set, otherwise of
+    /// the current one. An auth strategy does not say which workspace it is
+    /// bound to, so the lookup cannot follow the strategy. Build the strategy
+    /// from [`AutoStrategy::detect_workspace_crn`](stack_auth::AutoStrategy::detect_workspace_crn),
+    /// which resolves the same workspace, and the token and the client key
+    /// come from one workspace. A token for one workspace and a client key
+    /// for another are refused by ZeroKMS.
+    ///
+    /// For the transport settings (timeouts, batch size, an alternate
+    /// ZeroKMS endpoint) or a client key from elsewhere, build the
+    /// [`StackKms`] yourself and pass it to
+    /// [`kms`](Self::kms).
+    ///
+    /// # Example
+    ///
+    /// Decrypt as the user signed in to your application, with
+    /// [OIDC federation](stack_auth::OidcFederationStrategy): the user's JWT
+    /// from your identity provider is exchanged for a CipherStash token, so
+    /// ZeroKMS sees the request as that user's.
+    ///
+    /// ```no_run
+    /// use stack_auth::{AuthError, AutoStrategy, OidcFederationStrategy, OidcProviderFn, SecretToken};
+    /// use stack_encrypt::StackCipher;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // `CS_WORKSPACE_CRN`, or the workspace of the CLI's session.
+    /// let crn = AutoStrategy::detect_workspace_crn()?;
+    /// let provider = OidcProviderFn::new(|| async {
+    ///     // The JWT of the user behind the current request, from your
+    ///     // identity provider's SDK or the request itself.
+    ///     Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
+    /// });
+    ///
+    /// let cipher = StackCipher::builder()
+    ///     .auth_strategy(OidcFederationStrategy::new(crn, provider)?)
+    ///     .init()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "http")]
+    pub fn auth_strategy<C>(self, strategy: C) -> StackCipherBuilder<WithAuthStrategy<C>>
+    where
+        C: stack_auth::AuthStrategyBounds,
+        for<'a> &'a C: stack_auth::AuthStrategy,
+    {
+        self.replace_source(WithAuthStrategy(strategy)).0
     }
 
     /// Build a ZeroKMS client from the environment, then resolve the keyset
@@ -993,18 +1061,58 @@ impl StackCipherBuilder<FromEnv> {
     ///    names if it is set (for both files), otherwise the current one.
     ///
     /// So on a developer machine, logging in with the CLI is sufficient; in
-    /// CI, the four variables are.
+    /// CI, the four variables are. To authenticate some other way, give the
+    /// builder an [`auth_strategy`](Self::auth_strategy).
     #[cfg(feature = "http")]
     pub async fn init(self) -> Result<StackCipher<StackKms<stack_auth::AutoStrategy>>, Error> {
-        let kms = StackKmsBuilder::auto()?
+        let strategy =
+            stack_auth::AutoStrategy::detect().map_err(stack_kms::StackKmsBuilderError::from)?;
+        self.auth_strategy(strategy).init().await
+    }
+}
+
+#[cfg(feature = "http")]
+impl<C> StackCipherBuilder<WithAuthStrategy<C>>
+where
+    C: stack_auth::AuthStrategyBounds,
+    for<'a> &'a C: stack_auth::AuthStrategy,
+{
+    /// Build a ZeroKMS client over the [auth strategy](StackCipherBuilder::auth_strategy)
+    /// and the client key [`StackCipher::new`] would find, then resolve the
+    /// keyset and load its index key.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Config`] if no client key is configured, the one found
+    /// cannot be read, or `CS_ZEROKMS_HOST` is set to an unusable URL. The
+    /// strategy has not been asked for a token at that point. Otherwise the
+    /// errors of [`init`](StackCipherBuilder::init) over a
+    /// [`StackKms`]: a token the strategy cannot
+    /// supply is [`Error::Kms`].
+    pub async fn init(self) -> Result<StackCipher<StackKms<C>>, Error> {
+        let (builder, WithAuthStrategy(strategy)) = self.replace_source(());
+        let kms = StackKmsBuilder::new(strategy)
             .with_key_provider(client_key_provider())
             .build()
             .await?;
-        self.kms(kms).init().await
+        builder.replace_source(kms).0.init().await
     }
 }
 
 impl<K> StackCipherBuilder<K> {
+    /// These settings over the data-key source `kms`, and the source they
+    /// had.
+    fn replace_source<S>(self, kms: S) -> (StackCipherBuilder<S>, K) {
+        let builder = StackCipherBuilder {
+            kms,
+            cache_size: self.cache_size,
+            name_ttl: self.name_ttl,
+            #[cfg(feature = "test-support")]
+            json_seed: self.json_seed,
+        };
+        (builder, self.kms)
+    }
+
     /// The randomness the cipher's JSON index draws from: the seeded stream
     /// under `test-support` when one was given, entropy otherwise.
     fn json_randomness(&self) -> crate::json::Randomness {
@@ -1879,6 +1987,253 @@ mod profile_client_key_tests {
             !matches!(err, KeyProviderError::NotConfigured(_)),
             "the current workspace's key should have been found, got {err:?}"
         );
+    }
+}
+
+/// `auth_strategy(..).init()` and the default `init`, up to the first
+/// request: nothing here reaches the network. Every test sets the `CS_*`
+/// variables it depends on through `temp_env`, which holds a lock and
+/// restores them afterwards, and points `CS_CONFIG_PATH` at a temporary
+/// directory, so the developer's own profile is never read.
+#[cfg(test)]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+mod auth_strategy_tests {
+    use super::*;
+    use stack_auth::{AuthError, AuthStrategyFn, ServiceToken};
+    use std::future::Future;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const CURRENT: &str = "ZVATKW3VHMFG27DY";
+    const PINNED: &str = "AAAAAAAAAAAAAAAA";
+    const PINNED_CRN: &str = "crn:ap-southeast-2.aws:AAAAAAAAAAAAAAAA";
+
+    /// A temporary profile directory, removed when dropped.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("stack-encrypt-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn store(&self) -> ProfileStore {
+            ProfileStore::new(&self.0)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// What the environment holds for one test.
+    struct Env<'a> {
+        /// `CS_CLIENT_ID` and `CS_CLIENT_KEY`, set to a well-formed key.
+        client_key: bool,
+        workspace_crn: Option<&'a str>,
+        profile: &'a TempDir,
+    }
+
+    impl Env<'_> {
+        /// Run `future` to completion with these variables set, and every
+        /// other variable the credential lookup reads unset.
+        fn run<F: Future>(&self, future: impl FnOnce() -> F) -> F::Output {
+            let client_id = Uuid::new_v4().to_string();
+            let client_key = random_client_key_hex();
+            temp_env::with_vars(
+                [
+                    (
+                        "CS_CLIENT_ID",
+                        self.client_key.then_some(client_id.as_str()),
+                    ),
+                    (
+                        "CS_CLIENT_KEY",
+                        self.client_key.then_some(client_key.as_str()),
+                    ),
+                    ("CS_WORKSPACE_CRN", self.workspace_crn),
+                    ("CS_CONFIG_PATH", self.profile.0.to_str()),
+                    ("CS_CLIENT_ACCESS_KEY", None),
+                    ("CS_ZEROKMS_HOST", None),
+                    ("CS_VITUR_HOST", None),
+                ],
+                || {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap()
+                        .block_on(future())
+                },
+            )
+        }
+    }
+
+    /// Fresh client key material, hex-encoded as `CS_CLIENT_KEY` holds it.
+    fn random_client_key_hex() -> String {
+        use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+        let a = EncryptionKeySet::generate().unwrap();
+        let b = EncryptionKeySet::generate().unwrap();
+        stack_kms::ClientKey::new_v1(Uuid::new_v4(), ProxyKeySet::generate(&a, &b))
+            .to_hex_v1()
+            .unwrap()
+    }
+
+    type CountingStrategy = AuthStrategyFn<
+        Box<dyn Fn() -> std::future::Ready<Result<ServiceToken, AuthError>> + Send + Sync>,
+    >;
+
+    /// A strategy that counts how often it is asked for a token and never
+    /// has one, so a cipher built over it stops at its first request.
+    fn counting_strategy() -> (Arc<AtomicUsize>, CountingStrategy) {
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&asked);
+        let strategy = AuthStrategyFn::new(Box::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(Err(AuthError::NotAuthenticated(
+                stack_auth::NotAuthenticated,
+            )))
+        }) as Box<dyn Fn() -> _ + Send + Sync>);
+        (asked, strategy)
+    }
+
+    /// The builder error inside an [`Error::Config`].
+    fn builder_error(error: &Error) -> &stack_kms::StackKmsBuilderError {
+        match error {
+            Error::Config(source) => source
+                .downcast_ref::<stack_kms::StackKmsBuilderError>()
+                .unwrap_or_else(|| panic!("expected a StackKmsBuilderError, got: {source:?}")),
+            other => panic!("expected Error::Config, got: {other:?}"),
+        }
+    }
+
+    mod given_a_client_key_in_the_environment {
+        use super::*;
+
+        #[test]
+        fn init_asks_the_given_strategy_for_the_token() {
+            let profile = TempDir::new();
+            let (asked, strategy) = counting_strategy();
+            let env = Env {
+                client_key: true,
+                workspace_crn: None,
+                profile: &profile,
+            };
+
+            let result = env.run(|| StackCipher::builder().auth_strategy(strategy).init());
+
+            assert!(
+                matches!(&result, Err(Error::Kms(_))),
+                "the strategy's refusal must surface from the first request, got: {:?}",
+                result.as_ref().map(|_| ())
+            );
+            assert_eq!(
+                asked.load(Ordering::SeqCst),
+                1,
+                "the token must come from the given strategy"
+            );
+        }
+    }
+
+    mod given_no_client_key {
+        use super::*;
+
+        #[test]
+        fn init_fails_before_the_strategy_is_asked() {
+            let profile = TempDir::new();
+            let (asked, strategy) = counting_strategy();
+            let env = Env {
+                client_key: false,
+                workspace_crn: None,
+                profile: &profile,
+            };
+
+            let error = env
+                .run(|| StackCipher::builder().auth_strategy(strategy).init())
+                .map(|_| ())
+                .unwrap_err();
+
+            assert!(
+                matches!(
+                    builder_error(&error),
+                    stack_kms::StackKmsBuilderError::KeyProvider(KeyProviderError::NotConfigured(
+                        _
+                    ))
+                ),
+                "expected a missing client key, got: {error:?}"
+            );
+            assert_eq!(
+                asked.load(Ordering::SeqCst),
+                0,
+                "no token is asked for without a client key"
+            );
+        }
+    }
+
+    mod given_cs_workspace_crn_and_a_key_only_in_the_current_workspace {
+        use super::*;
+
+        #[test]
+        fn init_does_not_borrow_the_current_workspaces_key() {
+            let profile = TempDir::new();
+            let store = profile.store();
+            store.init_workspace(PINNED).unwrap();
+            store.init_workspace(CURRENT).unwrap(); // now current
+            let key = stack_kms::SecretKey::from_hex(Uuid::new_v4().to_string(), "00".repeat(32))
+                .unwrap();
+            store
+                .current_workspace_store()
+                .unwrap()
+                .save_profile(&key)
+                .unwrap();
+            let (_asked, strategy) = counting_strategy();
+            let env = Env {
+                client_key: false,
+                workspace_crn: Some(PINNED_CRN),
+                profile: &profile,
+            };
+
+            let error = env
+                .run(|| StackCipher::builder().auth_strategy(strategy).init())
+                .map(|_| ())
+                .unwrap_err();
+
+            assert!(
+                matches!(
+                    builder_error(&error),
+                    stack_kms::StackKmsBuilderError::KeyProvider(KeyProviderError::NotConfigured(message))
+                        if message.contains(PINNED)
+                ),
+                "the lookup must be pinned to the workspace CS_WORKSPACE_CRN names, got: {error:?}"
+            );
+        }
+    }
+
+    mod default_init {
+        use super::*;
+
+        #[test]
+        fn given_no_credentials_is_not_authenticated() {
+            let profile = TempDir::new();
+            let env = Env {
+                client_key: true,
+                workspace_crn: None,
+                profile: &profile,
+            };
+
+            let error = env
+                .run(|| StackCipher::builder().init())
+                .map(|_| ())
+                .unwrap_err();
+
+            assert!(
+                matches!(
+                    builder_error(&error),
+                    stack_kms::StackKmsBuilderError::Auth(AuthError::NotAuthenticated(_))
+                ),
+                "the default init detects no access key and no session, got: {error:?}"
+            );
+        }
     }
 }
 
