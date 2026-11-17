@@ -32,7 +32,7 @@ func TestValueKindFindsRawMessageAlongAnAliasChain(t *testing.T) {
 		{"alias of an alias of jsonv2 RawMessage", aliasOf("Outer", aliasOf("DocAlias", v2Raw)), true},
 		{"alias of v1 RawMessage", aliasOf("DocAlias", v1Raw), true},
 		{"jsontext.Value", value, false},
-		{"a type defined over RawMessage", types.NewNamed(types.NewTypeName(0, users, "Doc", nil), bytes, nil), false},
+		{"a type defined over RawMessage", types.NewNamed(types.NewTypeName(0, users, "Doc", nil), v1Raw.Underlying(), nil), false},
 	} {
 		kind, ok := valueKind(c.t)
 		if got := ok && kind == KindJSON; got != c.want {
