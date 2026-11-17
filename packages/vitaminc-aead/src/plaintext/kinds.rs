@@ -804,10 +804,17 @@ pub mod jiff {
         Timestamp::from_nanosecond(super::timestamp_nanos(unit, count)?).ok()
     }
 
-    /// An instant as nanoseconds since the epoch. jiff has no leap seconds,
-    /// so every instant has a count.
-    pub fn timestamp_nanos(ts: Timestamp) -> i128 {
-        ts.as_nanosecond()
+    /// An instant as nanoseconds since the epoch, if jiff can rebuild it.
+    ///
+    /// jiff has no leap seconds, so every valid instant has a count. But
+    /// jiff 1.0.0's `Offset::to_timestamp` (reached by parsing text with a
+    /// UTC offset) can return a `Timestamp` up to a second before
+    /// `Timestamp::MIN`, which jiff cannot rebuild from its count. Such a
+    /// value would seal and then fail to decrypt as a `Timestamp`, so it
+    /// has no count here and is refused before it is sealed.
+    pub fn timestamp_nanos(ts: Timestamp) -> Option<i128> {
+        let nanos = ts.as_nanosecond();
+        Timestamp::from_nanosecond(nanos).is_ok().then_some(nanos)
     }
 
     /// Reduce a nanosecond count to `unit`, if it is exact.
@@ -830,8 +837,8 @@ pub mod jiff {
             assert_eq!(date_days(Date::MAX), 2_932_896);
             assert!(MIN_DATE_DAYS < date_days(Date::MIN));
             assert!(date_days(Date::MAX) < MAX_DATE_DAYS);
-            assert!(MIN_TIMESTAMP_NANOS < timestamp_nanos(Timestamp::MIN));
-            assert!(timestamp_nanos(Timestamp::MAX) < MAX_TIMESTAMP_NANOS);
+            assert!(Some(MIN_TIMESTAMP_NANOS) < timestamp_nanos(Timestamp::MIN));
+            assert!(timestamp_nanos(Timestamp::MAX) < Some(MAX_TIMESTAMP_NANOS));
             assert_eq!(date_days(EPOCH), 0);
             assert_eq!(date(Int::I32(0)), Some(EPOCH));
         }
@@ -863,7 +870,7 @@ pub mod jiff {
             assert!(timestamp(TimeUnit::Nanos, Int::I128(MAX_TIMESTAMP_NANOS)).is_none());
             assert!(timestamp(TimeUnit::Nanos, Int::I128(MAX_TIMESTAMP_NANOS + 1)).is_none());
             assert!(timestamp(TimeUnit::Seconds, Int::I64(i64::MAX)).is_none());
-            let max = timestamp_nanos(Timestamp::MAX);
+            let max = timestamp_nanos(Timestamp::MAX).expect("count");
             assert_eq!(
                 timestamp(TimeUnit::Nanos, Int::I128(max)),
                 Some(Timestamp::MAX)
@@ -878,11 +885,21 @@ pub mod jiff {
                 one_ns_before,
                 Timestamp::new(-1, 999_999_999).expect("instant")
             );
-            assert_eq!(timestamp_nanos(one_ns_before), -1);
+            assert_eq!(timestamp_nanos(one_ns_before), Some(-1));
 
             let ms = timestamp(TimeUnit::Millis, Int::I64(-1_500)).expect("instant");
             assert_eq!(ms, Timestamp::new(-2, 500_000_000).expect("instant"));
-            assert_eq!(timestamp_nanos(ms), -1_500_000_000);
+            assert_eq!(timestamp_nanos(ms), Some(-1_500_000_000));
+        }
+
+        /// jiff 1.0.0 parses this to a `Timestamp` half a second before its
+        /// own minimum (a debug assertion in jiff stops it in debug builds).
+        #[cfg(not(debug_assertions))]
+        #[test]
+        fn an_instant_jiff_cannot_rebuild_has_no_count() {
+            let below: Timestamp = "-009999-01-02T01:59:58.5Z".parse().expect("jiff parses it");
+            assert!(below < Timestamp::MIN);
+            assert_eq!(timestamp_nanos(below), None);
         }
 
         #[test]

@@ -628,6 +628,7 @@ where
 mod jiff_sources {
     use super::*;
     use crate::plaintext::kinds::{jiff as conv, Int, TimeUnit};
+    use crate::plaintext::{Error, SourceError};
     use ::jiff::{civil::Date, Timestamp};
 
     impl Encrypt for Date {
@@ -641,16 +642,22 @@ mod jiff_sources {
         }
     }
 
-    /// Stored as nanoseconds, the unit of the `TIMESTAMP` tag. jiff has no
-    /// leap seconds, so every instant encrypts.
+    /// Stored as nanoseconds, the unit of the `TIMESTAMP` tag. An instant
+    /// jiff cannot rebuild from its count (see
+    /// [`timestamp_nanos`](conv::timestamp_nanos)) stops the walk; a
+    /// [`Timestamp`](crate::Timestamp) field refuses it when the value is
+    /// built instead.
     impl Encrypt for Timestamp {
         const DEPTH: Option<usize> = depth::SCALAR;
         const FIXED: Option<FixedType> =
             FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128);
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let nanos = conv::timestamp_nanos(self).ok_or_else(|| {
+                S::Error::source(SourceError::msg("a timestamp outside jiff's range"))
+            })?;
             sink.scalar(
                 Some(Logical::Timestamp(TimeUnit::Nanos)),
-                Physical::Int(Int::I128(conv::timestamp_nanos(self))),
+                Physical::Int(Int::I128(nanos)),
             )
         }
     }

@@ -1171,7 +1171,7 @@ mod tests {
         let ts = jiff::Timestamp::from_nanosecond(-7_000_000_000 + 123_456_789).expect("timestamp");
         let bytes = leaf(
             Some(Logical::Timestamp(TimeUnit::Nanos)),
-            Physical::Int(Int::I128(conv::timestamp_nanos(ts))),
+            Physical::Int(Int::I128(conv::timestamp_nanos(ts).expect("count"))),
         );
         assert_eq!(bytes[1..9], (-7i64).to_le_bytes());
         assert_eq!(bytes[9..], 123_456_789u32.to_le_bytes());

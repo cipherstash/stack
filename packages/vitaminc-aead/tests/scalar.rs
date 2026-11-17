@@ -140,7 +140,7 @@ fn jiff_types_are_scalars() {
     let instant = jiff::Timestamp::new(1_700_000_000, 0).expect("valid");
     one_leaf(instant);
     one_leaf(&instant);
-    let stamp = Timestamp::new(instant);
+    let stamp = Timestamp::new(instant).expect("in range");
     one_leaf(&stamp);
     one_leaf(stamp);
 }

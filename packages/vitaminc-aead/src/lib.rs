@@ -76,11 +76,11 @@ pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, Decrypt
 // The frame: a value as transport bytes, and back.
 #[doc(inline)]
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
-// A UTC instant that is wiped when dropped.
+// A UTC instant that is wiped when dropped, and always encrypts.
 #[cfg(feature = "jiff")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[doc(inline)]
-pub use timestamp::Timestamp;
+pub use timestamp::{OutOfRange, Timestamp};
 
 #[doc(inline)]
 #[allow(deprecated)]

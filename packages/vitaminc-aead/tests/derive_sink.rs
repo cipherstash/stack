@@ -992,8 +992,8 @@ fn a_const_generic_of_a_non_usize_type_round_trips() {
     );
 }
 
-// A `Timestamp` field is wiped when dropped, and it is stored as the same
-// leaf a `jiff::Timestamp` field is.
+// A `Timestamp` field is wiped when dropped and always encrypts, and it is
+// stored as the same leaf a `jiff::Timestamp` field is.
 
 #[cfg(feature = "jiff")]
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]
@@ -1012,7 +1012,7 @@ struct EventAsJiff {
 fn a_timestamp_field_round_trips_and_reads_as_a_jiff_timestamp() {
     let instant = jiff::Timestamp::new(1_700_000_000, 123_456_789).expect("ok");
     let event = || Stamped {
-        at: vitaminc_aead::Timestamp::new(instant),
+        at: vitaminc_aead::Timestamp::new(instant).expect("in range"),
     };
     assert_eq!(round_trip::<Stamped>(event()).expect("decodes"), event());
     assert_eq!(

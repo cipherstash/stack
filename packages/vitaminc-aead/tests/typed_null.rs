@@ -104,9 +104,9 @@ fn jiff_types_and_timestamp_hide_absence() {
     use jiff::{civil::Date, Timestamp};
     hides_absence(Date::constant(1999, 12, 31));
     hides_absence(Timestamp::new(1_700_000_000, 5).expect("instant"));
-    hides_absence(vitaminc_aead::Timestamp::new(
-        Timestamp::new(7, 0).expect("instant"),
-    ));
+    hides_absence(
+        vitaminc_aead::Timestamp::new(Timestamp::new(7, 0).expect("instant")).expect("in range"),
+    );
     // A `vitaminc_aead::Timestamp` and a `jiff::Timestamp` are the one
     // leaf, absent or not.
     assert_eq!(
