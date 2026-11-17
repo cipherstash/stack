@@ -586,16 +586,26 @@ const INV5: u128 = 0xCCCC_CCCC_CCCC_CCCC_CCCC_CCCC_CCCC_CCCD;
 const MAX_DIV_5: u128 = u128::MAX / 5;
 
 /// Divide by ten while the trailing digit is zero: the stripped value and
-/// how many zeros were removed. Zero strips to `(0, 0)`. Constant time for
-/// every mantissa below `10^29`, which every 96-bit one is: the decimal
-/// encoder and the wipeable `Decimal`'s equality both rest on it.
+/// how many zeros were removed. Zero strips to `(0, 0)`. The decimal
+/// encoder in vitaminc-normalize and the wipeable `Decimal`'s equality both
+/// rest on it; it is public only so that vitaminc-normalize can share it.
 ///
-/// A fixed `DECIMAL_DIGITS` iterations, each selecting by mask. Division by
-/// ten, valid only when exact, is a halving and a multiply by `INV5`;
-/// divisibility by ten is divisibility by two (the low bit) and by five
-/// (the `MAX_DIV_5` test), with the comparison done by `overflowing_sub`
-/// so it lowers to a borrow rather than a branch.
+/// The mantissa must be below `10^29`, as every 96-bit decimal mantissa
+/// is. The function strips at most 29 zeros, so a larger mantissa can come
+/// back with zeros left on it: `10^30` gives `(10, 29)`, not `(1, 30)`.
+/// Debug builds panic on a mantissa out of range.
+///
+/// It runs in constant time: a fixed `DECIMAL_DIGITS` iterations, each
+/// selecting by mask. Division by ten, valid only when exact, is a halving
+/// and a multiply by `INV5`; divisibility by ten is divisibility by two
+/// (the low bit) and by five (the `MAX_DIV_5` test), with the comparison
+/// done by `overflowing_sub` so it lowers to a borrow rather than a branch.
+#[doc(hidden)]
 pub fn strip_trailing_zeros(mut mantissa: u128) -> (u128, i32) {
+    debug_assert!(
+        mantissa < 10u128.pow(DECIMAL_DIGITS),
+        "a decimal mantissa is below 10^29"
+    );
     let mut exponent: i32 = 0;
     for _ in 0..DECIMAL_DIGITS {
         let div = (mantissa >> 1).wrapping_mul(INV5);
@@ -1052,6 +1062,18 @@ mod tests {
         assert_eq!(strip_trailing_zeros(12_340_000), (1234, 4));
         assert_eq!(strip_trailing_zeros(50), (5, 1));
         assert_eq!(strip_trailing_zeros(100_500), (1005, 2));
+        assert_eq!(strip_trailing_zeros(9 * 10u128.pow(28)), (9, 28));
+        let largest = 10u128.pow(29) - 1;
+        assert_eq!(strip_trailing_zeros(largest), (largest, 0));
+    }
+
+    /// Above the limit the result would be incomplete, so a debug build
+    /// refuses the input rather than return it.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a decimal mantissa is below 10^29")]
+    fn strip_trailing_zeros_refuses_a_mantissa_of_10_to_the_29_in_debug() {
+        strip_trailing_zeros(10u128.pow(29));
     }
 
     use super::*;
