@@ -1097,3 +1097,75 @@ fn wipeable_scalar_fields_round_trip_and_read_as_their_foreign_types() {
     assert_eq!(foreign.price.scale(), 2, "the scale is kept");
     assert_eq!(round_trip::<Wiped>(foreign).expect("decodes"), wiped());
 }
+
+// A present value of each wipeable scalar in an `Option` field reads back,
+// as the wrapper and as the type it wraps.
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
+struct MaybeWiped {
+    day: Option<vitaminc_aead::Date>,
+    price: Option<vitaminc_aead::Decimal>,
+    id: Option<vitaminc_aead::Uuid>,
+}
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
+struct MaybeForeign {
+    day: Option<jiff::civil::Date>,
+    price: Option<rust_decimal::Decimal>,
+    id: Option<uuid::Uuid>,
+}
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[test]
+fn a_present_wipeable_scalar_in_an_option_field_round_trips() {
+    let day = jiff::civil::date(2026, 11, 14);
+    let price = rust_decimal::Decimal::new(150, 2);
+    let id = uuid::Uuid::from_u128(7);
+    let wiped = || MaybeWiped {
+        day: Some(vitaminc_aead::Date::new(day)),
+        price: Some(vitaminc_aead::Decimal::new(price)),
+        id: Some(vitaminc_aead::Uuid::new(id)),
+    };
+    assert_eq!(round_trip::<MaybeWiped>(wiped()).expect("decodes"), wiped());
+    assert_eq!(
+        round_trip::<MaybeForeign>(wiped()).expect("decodes"),
+        MaybeForeign {
+            day: Some(day),
+            price: Some(price),
+            id: Some(id),
+        }
+    );
+}
+
+// A leaf of another type is refused by the wrapper's own name, so a decrypt
+// error says which type it wanted.
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[test]
+fn a_wipeable_scalar_refuses_a_leaf_of_another_type_by_its_name() {
+    let day = jiff::civil::date(2026, 11, 14);
+    let price = rust_decimal::Decimal::new(150, 2);
+    assert!(
+        matches!(
+            refusal(round_trip::<vitaminc_aead::Decimal>(day)),
+            DecodeError::Expected("decimal")
+        ),
+        "a date is not a decimal"
+    );
+    assert!(
+        matches!(
+            refusal(round_trip::<vitaminc_aead::Date>(price)),
+            DecodeError::Expected("date")
+        ),
+        "a decimal is not a date"
+    );
+    assert!(
+        matches!(
+            refusal(round_trip::<vitaminc_aead::Uuid>(day)),
+            DecodeError::Expected("uuid")
+        ),
+        "a date is not a uuid"
+    );
+}
