@@ -460,6 +460,41 @@ fn stevec_document_round_trips_and_enforces_envelope() {
 }
 
 #[test]
+fn stevec_array_root_flag_matches_sql_contract() {
+    use eql_bindings::v3::json::{SteVecDocument, SteVecEntry};
+    // The SQL root validator allows root `a`, and the array accessors require
+    // it, so an array document the database accepts must parse and round-trip
+    // here — including an empty one.
+    let wire = json!({
+        "v": 3, "k": "sv", "i": { "t": "users", "c": "tags" },
+        "h": "kh", "a": true, "sv": []
+    });
+    let parsed: SteVecDocument = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(parsed.a, Some(true));
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), wire);
+    // Absent `a` stays absent on re-serialization.
+    let mut no_a = wire.clone();
+    no_a.as_object_mut().unwrap().remove("a");
+    let parsed: SteVecDocument = serde_json::from_value(no_a.clone()).unwrap();
+    assert_eq!(parsed.a, None);
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), no_a);
+    // SQL rejects a non-boolean `a` (null included) at root and entry level.
+    for bad in [json!(null), json!("true"), json!(1)] {
+        let mut w = wire.clone();
+        w["a"] = bad.clone();
+        assert!(
+            serde_json::from_value::<SteVecDocument>(w).is_err(),
+            "root a = {bad} must fail"
+        );
+        assert!(
+            serde_json::from_value::<SteVecEntry>(json!({ "s": "sel", "c": "ct", "a": bad }))
+                .is_err(),
+            "entry a = {bad} must fail"
+        );
+    }
+}
+
+#[test]
 fn stevec_entry_term_is_optional_and_op_only() {
     use eql_bindings::v3::json::SteVecEntry;
     // Term-less entries — value entries and non-orderable path entries — are
@@ -524,6 +559,7 @@ fn stevec_document_and_query_schemas_are_strict() {
         },
         h: "kh".to_string().into(),
         sv: vec![],
+        a: None,
     };
     let sdoc = serde_json::to_value(doc.schema()).unwrap();
     assert_eq!(sdoc.pointer("/additionalProperties"), Some(&json!(false)));
@@ -541,6 +577,26 @@ fn stevec_document_and_query_schemas_are_strict() {
         Some(&json!("#/$defs/SteVecForm"))
     );
     assert_eq!(sdoc.pointer("/$defs/SteVecForm/const"), Some(&json!("sv")));
+    // Root `a` is optional (not required) and non-nullable, matching the SQL
+    // CHECKs (`jsonb_typeof(val->'a') = 'boolean'`); same for the entry's `a`.
+    assert_eq!(
+        sdoc.pointer("/properties/a/type"),
+        Some(&json!("boolean")),
+        "root a must be a plain boolean, not nullable"
+    );
+    assert!(
+        !sdoc["required"].as_array().unwrap().contains(&json!("a")),
+        "root a must not be required"
+    );
+    let entry: eql_bindings::v3::json::SteVecEntry =
+        serde_json::from_value(json!({ "s": "sel", "c": "ct" })).unwrap();
+    let sentry = serde_json::to_value(entry.schema()).unwrap();
+    assert_eq!(
+        sentry.pointer("/properties/a/type"),
+        Some(&json!("boolean")),
+        "entry a must be a plain boolean, not nullable"
+    );
+    assert!(!sentry["required"].as_array().unwrap().contains(&json!("a")));
     let q = SteVecQuery { sv: vec![] };
     let sq = serde_json::to_value(q.schema()).unwrap();
     assert_eq!(sq.pointer("/additionalProperties"), Some(&json!(false)));
@@ -592,15 +648,15 @@ fn stevec_ts_exports_have_expected_shape() {
     };
 
     // SteVecEntry: direct fields s/c, optional op and extracted metadata, and
-    // the OPTIONAL nullable array marker `a`. `a?: boolean | null` (not `a: boolean |
-    // null`) pins ts-rs optionality so the TS binding agrees with the JSON Schema,
+    // the OPTIONAL, non-nullable array marker `a`. `a?: boolean` (not `a: boolean`)
+    // pins ts-rs optionality so the TS binding agrees with the JSON Schema,
     // which excludes `a` from `required` — the drift a bare `Option<bool>` without
-    // `#[ts(optional = nullable)]` silently reintroduces.
+    // `#[ts(optional)]` silently reintroduces.
     let entry = export_body("SteVecEntry.ts", "SteVecEntry");
     for needle in [
         "s: Selector",
         "c: EntryCiphertext",
-        "a?: boolean | null",
+        "a?: boolean",
         "op?: OpeCllw",
         "i?: Identifier",
         "v?: SchemaVersion",
@@ -617,14 +673,14 @@ fn stevec_ts_exports_have_expected_shape() {
     // in `json.rs` (which changes the wire/consumer contract) fails here rather
     // than escaping to a manual diff.
     assert!(
-        entry.contains("{ s: Selector, c: EntryCiphertext, a?: boolean | null, op?: OpeCllw, i?: Identifier, v?: SchemaVersion, h?: KeyHeader, }"),
+        entry.contains("{ s: Selector, c: EntryCiphertext, a?: boolean, op?: OpeCllw, i?: Identifier, v?: SchemaVersion, h?: KeyHeader, }"),
         "SteVecEntry.ts field order must be s, c, a, op, i, v, h; got: {entry}"
     );
     let document = export_body("SteVecDocument.ts", "SteVecDocument");
     assert!(
         document.contains(
-            "{ v: SchemaVersion, k: SteVecForm, i: Identifier, h: KeyHeader, sv: Array<SteVecEntry>, }"
+            "{ v: SchemaVersion, k: SteVecForm, i: Identifier, h: KeyHeader, sv: Array<SteVecEntry>, a?: boolean, }"
         ),
-        "SteVecDocument.ts field order must be v, k, i, h, sv, got: {document}"
+        "SteVecDocument.ts field order must be v, k, i, h, sv, a, got: {document}"
     );
 }

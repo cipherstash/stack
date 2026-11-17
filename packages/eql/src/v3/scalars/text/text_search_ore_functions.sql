@@ -40,7 +40,7 @@ AS $$ SELECT eql_v3_internal.bloom_filter(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a public.eql_v3_text_search_ore, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.=) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -48,7 +48,7 @@ AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a public.eql_v3_text_search_ore, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b::public.eql_v3_text_search_ore) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.=) eql_v3.eq_term(b::public.eql_v3_text_search_ore) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a jsonb
@@ -56,7 +56,7 @@ AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b::public.eql_v3_text_search_ore
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a jsonb, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_search_ore) = eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_search_ore) OPERATOR(pg_catalog.=) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -64,7 +64,7 @@ AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_search_ore) = eql_v3.eq_term(b
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a public.eql_v3_text_search_ore, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -72,7 +72,7 @@ AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a public.eql_v3_text_search_ore, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b::public.eql_v3_text_search_ore) $$;
+AS $$ SELECT eql_v3.eq_term(a) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b::public.eql_v3_text_search_ore) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a jsonb
@@ -80,7 +80,7 @@ AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b::public.eql_v3_text_search_or
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a jsonb, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_search_ore) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_search_ore) OPERATOR(pg_catalog.<>) eql_v3.eq_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -88,7 +88,7 @@ AS $$ SELECT eql_v3.eq_term(a::public.eql_v3_text_search_ore) <> eql_v3.eq_term(
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a public.eql_v3_text_search_ore, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) < eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -96,7 +96,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) < eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a public.eql_v3_text_search_ore, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) < eql_v3.ord_term_ore(b::public.eql_v3_text_search_ore) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<) eql_v3.ord_term_ore(b::public.eql_v3_text_search_ore) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a jsonb
@@ -104,7 +104,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) < eql_v3.ord_term_ore(b::public.eql_v3_text_
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a jsonb, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) < eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) OPERATOR(public.<) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -112,7 +112,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) < eql_v3.ord_
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a public.eql_v3_text_search_ore, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) <= eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -120,7 +120,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) <= eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a public.eql_v3_text_search_ore, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) <= eql_v3.ord_term_ore(b::public.eql_v3_text_search_ore) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.<=) eql_v3.ord_term_ore(b::public.eql_v3_text_search_ore) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a jsonb
@@ -128,7 +128,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) <= eql_v3.ord_term_ore(b::public.eql_v3_text
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a jsonb, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) <= eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) OPERATOR(public.<=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -136,7 +136,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) <= eql_v3.ord
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a public.eql_v3_text_search_ore, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) > eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -144,7 +144,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) > eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a public.eql_v3_text_search_ore, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) > eql_v3.ord_term_ore(b::public.eql_v3_text_search_ore) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>) eql_v3.ord_term_ore(b::public.eql_v3_text_search_ore) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a jsonb
@@ -152,7 +152,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) > eql_v3.ord_term_ore(b::public.eql_v3_text_
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a jsonb, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) > eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) OPERATOR(public.>) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -160,7 +160,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) > eql_v3.ord_
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a public.eql_v3_text_search_ore, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) >= eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -168,7 +168,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) >= eql_v3.ord_term_ore(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a public.eql_v3_text_search_ore, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a) >= eql_v3.ord_term_ore(b::public.eql_v3_text_search_ore) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a) OPERATOR(public.>=) eql_v3.ord_term_ore(b::public.eql_v3_text_search_ore) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a jsonb
@@ -176,7 +176,7 @@ AS $$ SELECT eql_v3.ord_term_ore(a) >= eql_v3.ord_term_ore(b::public.eql_v3_text
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a jsonb, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) >= eql_v3.ord_term_ore(b) $$;
+AS $$ SELECT eql_v3.ord_term_ore(a::public.eql_v3_text_search_ore) OPERATOR(public.>=) eql_v3.ord_term_ore(b) $$;
 
 --! @brief Unsupported operator blocker for public.eql_v3_text_search_ore.
 --!
@@ -408,7 +408,7 @@ LANGUAGE plpgsql;
 --! @return boolean
 CREATE FUNCTION eql_v3.matches(a public.eql_v3_text_search_ore, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v3.match_term(b)) > 0 OR cardinality(eql_v3.match_term(a)) = 0) $$;
+AS $$ SELECT eql_v3.match_term(a) OPERATOR(pg_catalog.@>) eql_v3.match_term(b) AND (pg_catalog.cardinality(eql_v3.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality(eql_v3.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a public.eql_v3_text_search_ore
@@ -416,7 +416,7 @@ AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v
 --! @return boolean
 CREATE FUNCTION eql_v3.matches(a public.eql_v3_text_search_ore, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b::public.eql_v3_text_search_ore) AND (cardinality(eql_v3.match_term(b::public.eql_v3_text_search_ore)) > 0 OR cardinality(eql_v3.match_term(a)) = 0) $$;
+AS $$ SELECT eql_v3.match_term(a) OPERATOR(pg_catalog.@>) eql_v3.match_term(b::public.eql_v3_text_search_ore) AND (pg_catalog.cardinality(eql_v3.match_term(b::public.eql_v3_text_search_ore)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality(eql_v3.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Operator wrapper for public.eql_v3_text_search_ore.
 --! @param a jsonb
@@ -424,7 +424,7 @@ AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b::public.eql_v3_text_sea
 --! @return boolean
 CREATE FUNCTION eql_v3.matches(a jsonb, b public.eql_v3_text_search_ore)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a::public.eql_v3_text_search_ore) @> eql_v3.match_term(b) AND (cardinality(eql_v3.match_term(b)) > 0 OR cardinality(eql_v3.match_term(a::public.eql_v3_text_search_ore)) = 0) $$;
+AS $$ SELECT eql_v3.match_term(a::public.eql_v3_text_search_ore) OPERATOR(pg_catalog.@>) eql_v3.match_term(b) AND (pg_catalog.cardinality(eql_v3.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality(eql_v3.match_term(a::public.eql_v3_text_search_ore)) OPERATOR(pg_catalog.=) 0) $$;
 
 --! @brief Unsupported operator blocker for public.eql_v3_text_search_ore.
 --!

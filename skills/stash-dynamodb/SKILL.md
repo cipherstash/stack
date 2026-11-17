@@ -192,12 +192,16 @@ const decrypted = await dynamo.decryptModel(
 const dynamo = encryptedDynamoDB({
   encryptionClient,
   options: {
+    // Receives a log-safe copy of the error: its message names the failure's
+    // kind and code, never the original message.
     logger: {
       error: (message, error) => console.error(`[DynamoDB] ${message}`, error),
     },
+    // Receives the full error. Its message can quote a plaintext value, so
+    // log `error.code`, not `error.message`.
     errorHandler: (error) => {
       // Send to monitoring, etc.
-      console.error(`[${error.code}] ${error.message}`)
+      console.error(`[DynamoDB] ${error.code}`)
     },
   },
 })
