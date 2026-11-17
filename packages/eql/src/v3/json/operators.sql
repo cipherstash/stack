@@ -277,7 +277,7 @@ CREATE FUNCTION eql_v3.lt(a public.eql_v3_json_entry, b public.eql_v3_json_entry
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b)
+  SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<) eql_v3.ord_term(b)
 $$;
 
 CREATE OPERATOR < (
@@ -298,7 +298,7 @@ CREATE FUNCTION eql_v3.lte(a public.eql_v3_json_entry, b public.eql_v3_json_entr
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b)
+  SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<=) eql_v3.ord_term(b)
 $$;
 
 CREATE OPERATOR <= (
@@ -319,7 +319,7 @@ CREATE FUNCTION eql_v3.gt(a public.eql_v3_json_entry, b public.eql_v3_json_entry
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b)
+  SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>) eql_v3.ord_term(b)
 $$;
 
 CREATE OPERATOR > (
@@ -340,7 +340,7 @@ CREATE FUNCTION eql_v3.gte(a public.eql_v3_json_entry, b public.eql_v3_json_entr
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b)
+  SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b)
 $$;
 
 CREATE OPERATOR >= (

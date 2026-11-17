@@ -643,6 +643,8 @@ Runs from the `backfilled` phase and drops the original plaintext `<col>`. It ve
 
 Flags: `--table`, `--column`, `--migrations-dir <path>`.
 
+On Drizzle projects the migration is journaled by `drizzle-kit generate --custom`, so it lands in the `out` directory of `drizzle.config.ts` (the path drizzle-kit reports). `--migrations-dir` is only a fallback there, and the command warns when drizzle-kit wrote elsewhere.
+
 ### Decrypt
 
 The reverse lifecycle: moving encrypted columns back to plaintext, for leaving CipherStash or un-encrypting a column. It mirrors `encrypt` step for step, on the same `@cipherstash/migrate` engine, and records its own events in `cipherstash.cs_migrations` — keyed by the **encrypted** column, so they never mix with the forward history kept under the plaintext name. Decryption is never charged.
@@ -719,6 +721,8 @@ Generating records `encrypted-dropped`, which stops a second drop being generate
 `--uninstall-eql` appends the EQL v3 uninstall (`@cipherstash/eql`'s script: `DROP SCHEMA eql_v3, eql_v3_internal … CASCADE`) to the same block, plus the `public.eql_v3_*` column domains that script deliberately leaves behind (they live outside the disposable schemas so upgrades never touch encrypted columns). Only when this is the **last** EQL v3 column in the whole database — checked now and again at apply time, because the cascade would delete any other encrypted column. `cipherstash.cs_migrations` is kept.
 
 Flags: `--table`, `--column`, `--plaintext-column`, `--migrations-dir <path>`, `--uninstall-eql`.
+
+On Drizzle projects the migration is journaled by `drizzle-kit generate --custom`, so it lands in the `out` directory of `drizzle.config.ts` (the path drizzle-kit reports). `--migrations-dir` is only a fallback there, and the command warns when drizzle-kit wrote elsewhere.
 
 ### Deployment
 

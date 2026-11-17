@@ -21,7 +21,7 @@ AS $$ SELECT eql_v3_internal.ope_cllw(a::jsonb) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a public.eql_v3_date_ord_ope, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) = eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.=) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -29,7 +29,7 @@ AS $$ SELECT eql_v3.ord_term(a) = eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a public.eql_v3_date_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) = eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.=) eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a jsonb
@@ -37,7 +37,7 @@ AS $$ SELECT eql_v3.ord_term(a) = eql_v3.ord_term(b::public.eql_v3_date_ord_ope)
 --! @return boolean
 CREATE FUNCTION eql_v3.eq(a jsonb, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) = eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) OPERATOR(pg_catalog.=) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -45,7 +45,7 @@ AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) = eql_v3.ord_term(b)
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a public.eql_v3_date_ord_ope, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) <> eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<>) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -53,7 +53,7 @@ AS $$ SELECT eql_v3.ord_term(a) <> eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a public.eql_v3_date_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) <> eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<>) eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a jsonb
@@ -61,7 +61,7 @@ AS $$ SELECT eql_v3.ord_term(a) <> eql_v3.ord_term(b::public.eql_v3_date_ord_ope
 --! @return boolean
 CREATE FUNCTION eql_v3.neq(a jsonb, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) <> eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) OPERATOR(pg_catalog.<>) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -69,7 +69,7 @@ AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) <> eql_v3.ord_term(b
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a public.eql_v3_date_ord_ope, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -77,7 +77,7 @@ AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a public.eql_v3_date_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<) eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a jsonb
@@ -85,7 +85,7 @@ AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b::public.eql_v3_date_ord_ope)
 --! @return boolean
 CREATE FUNCTION eql_v3.lt(a jsonb, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) < eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) OPERATOR(pg_catalog.<) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -93,7 +93,7 @@ AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) < eql_v3.ord_term(b)
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a public.eql_v3_date_ord_ope, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<=) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -101,7 +101,7 @@ AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a public.eql_v3_date_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<=) eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a jsonb
@@ -109,7 +109,7 @@ AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b::public.eql_v3_date_ord_ope
 --! @return boolean
 CREATE FUNCTION eql_v3.lte(a jsonb, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) <= eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) OPERATOR(pg_catalog.<=) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -117,7 +117,7 @@ AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) <= eql_v3.ord_term(b
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a public.eql_v3_date_ord_ope, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -125,7 +125,7 @@ AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a public.eql_v3_date_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>) eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a jsonb
@@ -133,7 +133,7 @@ AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b::public.eql_v3_date_ord_ope)
 --! @return boolean
 CREATE FUNCTION eql_v3.gt(a jsonb, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) > eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) OPERATOR(pg_catalog.>) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -141,7 +141,7 @@ AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) > eql_v3.ord_term(b)
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a public.eql_v3_date_ord_ope, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a public.eql_v3_date_ord_ope
@@ -149,7 +149,7 @@ AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b) $$;
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a public.eql_v3_date_ord_ope, b jsonb)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
+AS $$ SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b::public.eql_v3_date_ord_ope) $$;
 
 --! @brief Operator wrapper for public.eql_v3_date_ord_ope.
 --! @param a jsonb
@@ -157,7 +157,7 @@ AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b::public.eql_v3_date_ord_ope
 --! @return boolean
 CREATE FUNCTION eql_v3.gte(a jsonb, b public.eql_v3_date_ord_ope)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) >= eql_v3.ord_term(b) $$;
+AS $$ SELECT eql_v3.ord_term(a::public.eql_v3_date_ord_ope) OPERATOR(pg_catalog.>=) eql_v3.ord_term(b) $$;
 
 --! @brief Unsupported operator blocker for public.eql_v3_date_ord_ope.
 --!
