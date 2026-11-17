@@ -444,7 +444,7 @@ mod given_the_key_cache {
 
         verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
         clock.advance(KEYS_TTL_SECS - 1);
-        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+        verdict(&verifier, another_token()).await.unwrap();
 
         assert_eq!(cts.requests().len(), 1);
     }
