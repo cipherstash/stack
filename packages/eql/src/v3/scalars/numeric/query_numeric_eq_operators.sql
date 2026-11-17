@@ -29,3 +29,63 @@ CREATE OPERATOR <> (
   LEFTARG = eql_v3.query_numeric_eq, RIGHTARG = public.eql_v3_numeric_eq,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = public.eql_v3_numeric_ord_ore, RIGHTARG = eql_v3.query_numeric_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = eql_v3.query_numeric_eq, RIGHTARG = public.eql_v3_numeric_ord_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = public.eql_v3_numeric_ord_ore, RIGHTARG = eql_v3.query_numeric_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = eql_v3.query_numeric_eq, RIGHTARG = public.eql_v3_numeric_ord_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = public.eql_v3_numeric_ord, RIGHTARG = eql_v3.query_numeric_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = eql_v3.query_numeric_eq, RIGHTARG = public.eql_v3_numeric_ord
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = public.eql_v3_numeric_ord, RIGHTARG = eql_v3.query_numeric_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = eql_v3.query_numeric_eq, RIGHTARG = public.eql_v3_numeric_ord
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = public.eql_v3_numeric_ord_ope, RIGHTARG = eql_v3.query_numeric_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = eql_v3.query_numeric_eq, RIGHTARG = public.eql_v3_numeric_ord_ope
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = public.eql_v3_numeric_ord_ope, RIGHTARG = eql_v3.query_numeric_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = eql_v3.query_numeric_eq, RIGHTARG = public.eql_v3_numeric_ord_ope
+);

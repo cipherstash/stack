@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 )
@@ -89,10 +89,11 @@ func (t *transport) send(ctx context.Context, m api.Module,
 	// The response carries wrapped key material; once it is in guest memory
 	// the host copy is wiped.
 	defer wipe(respBody)
-	if !place(ctx, m, respHeadersPtrOut, respHeadersLenOut, respHeaders) ||
-		!place(ctx, m, respBodyPtrOut, respBodyLenOut, respBody) {
-		// The guest reclaims whatever was placed and refuses an unplaced
-		// slot as an unregistered buffer; nothing more this side can do.
+	if !guest.Place(ctx, m, respHeadersPtrOut, respHeadersLenOut, respHeaders) ||
+		!guest.Place(ctx, m, respBodyPtrOut, respBodyLenOut, respBody) {
+		// The guest reclaims whatever was placed. An unplaced slot reads as
+		// (null, 0), which the guest takes as an empty buffer, so the
+		// failure rides on the status; nothing more this side can do.
 		return transportFailed
 	}
 	return status
@@ -225,7 +226,7 @@ func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tok
 	// the source's own string is the source's.
 	tok := []byte(token)
 	defer wipe(tok)
-	if !place(ctx, m, tokenPtrOut, tokenLenOut, tok) {
+	if !guest.Place(ctx, m, tokenPtrOut, tokenLenOut, tok) {
 		// The source did its part; the guest could not take the token (no
 		// allocator, a refused allocation, an out-of-range slot). Say so,
 		// or the failure reads as the source's.
@@ -233,33 +234,6 @@ func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tok
 		return hostFailed
 	}
 	return 0
-}
-
-// place allocates a guest buffer through the module's own se_alloc, writes
-// data into it, and stores its (ptr, len) into the out-slots. The guest
-// reclaims the buffer through its registry. Re-entering the guest through
-// se_alloc during a host import is the one re-entry the ABI permits.
-func place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte) bool {
-	alloc := m.ExportedFunction("se_alloc")
-	if alloc == nil {
-		return false
-	}
-	if uint64(len(data)) > math.MaxUint32 {
-		return false
-	}
-	res, err := alloc.Call(ctx, uint64(len(data)))
-	if err != nil {
-		return false
-	}
-	ptr := api.DecodeU32(res[0])
-	if ptr == 0 {
-		return false
-	}
-	mem := m.Memory()
-	if len(data) > 0 && !mem.Write(ptr, data) {
-		return false
-	}
-	return mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, uint32(len(data))) //nolint:gosec // bounded above
 }
 
 // parseHeaders decodes the guest's `name: value` line format. Malformed
