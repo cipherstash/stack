@@ -436,6 +436,52 @@ mod given_the_key_cache {
         assert_eq!(cts.requests().len(), 1);
     }
 
+    /// A CTS that serves its keys only once `open` is notified.
+    struct Gated {
+        cts: Arc<StubCts>,
+        open: Arc<tokio::sync::Notify>,
+    }
+
+    impl HttpTransport for Gated {
+        async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+            self.open.notified().await;
+            self.cts.send(request).await
+        }
+    }
+
+    /// The second caller arrives after the first has started fetching, so
+    /// it finds a fetch attempted moments ago and no key yet. That is a
+    /// fetch still running, not one that failed.
+    #[tokio::test]
+    async fn a_caller_without_a_key_waits_for_a_fetch_already_running() {
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let open = Arc::new(tokio::sync::Notify::new());
+        let verifier = TokenVerifier::new(
+            ISSUER.parse().unwrap(),
+            None,
+            transport::share(Gated {
+                cts: cts.clone(),
+                open: open.clone(),
+            }),
+            TestClock::new(NOW).shared(),
+        )
+        .unwrap();
+
+        let (first, second, ()) = tokio::join!(
+            verdict(&verifier, KEY_A.jwt(claims())),
+            verdict(&verifier, another_token()),
+            async {
+                for _ in 0..10 {
+                    tokio::task::yield_now().await;
+                }
+                open.notify_one();
+            },
+        );
+
+        assert_eq!((first, second), (Ok(()), Ok(())));
+        assert_eq!(cts.requests().len(), 1);
+    }
+
     #[tokio::test]
     async fn the_jwks_is_fetched_once_while_fresh() {
         let cts = StubCts::serving(jwks(&[&KEY_A]));

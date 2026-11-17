@@ -281,7 +281,10 @@ impl TokenVerifier {
     /// slow JWKS endpoint holds up at most the one caller fetching.
     async fn key_for(&self, kid: Option<&str>) -> Result<Option<SigningKey>, AuthError> {
         let stale = match self.cached_key(kid) {
-            Lookup::Done(result) => return result,
+            Lookup::Done(Ok(Some(key))) => return Ok(Some(key)),
+            // No key, perhaps because a fetch is still running: wait for it
+            // below, then look again.
+            Lookup::Done(_) => None,
             Lookup::Fetch(stale) => stale,
         };
         let _fetching = match stale {
