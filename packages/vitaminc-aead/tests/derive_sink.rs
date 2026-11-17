@@ -515,6 +515,35 @@ fn take_lets_a_drop_type_derive() {
     assert_eq!(back.0, "t0k3n");
 }
 
+/// A passthrough field is lent to the sink in place, so a `Drop` type needs
+/// no `take` on it, and its type needs no `Default`.
+#[derive(Encrypt, Decrypt, ZeroizeOnDrop, Debug, PartialEq)]
+struct TenantSecret {
+    #[aead(passthrough)]
+    tenant: NoDefault,
+    #[aead(take)]
+    token: String,
+}
+
+/// A passthrough column type with no `Default`, which `take` would need.
+#[derive(Encrypt, Decrypt, Debug, PartialEq, zeroize::Zeroize)]
+struct NoDefault(u32);
+
+#[test]
+fn a_drop_type_lends_a_passthrough_field_without_take() {
+    let secret = TenantSecret {
+        tenant: NoDefault(7),
+        token: "t0k3n".into(),
+    };
+    let back: TenantSecret = round_trip(secret).expect("decodes");
+    assert_eq!(
+        back.tenant,
+        NoDefault(7),
+        "the passthrough field reads back"
+    );
+    assert_eq!(back.token, "t0k3n", "the taken field reads back");
+}
+
 // Newtypes, tuple structs, empty structs and enums.
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq)]

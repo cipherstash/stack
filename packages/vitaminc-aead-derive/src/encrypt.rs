@@ -331,10 +331,12 @@ impl Usage {
     }
 }
 
+/// Whether the by-value walk takes any field out of `self`. A passthrough
+/// field is only lent, so it never does.
 fn shape_takes(shape: &Shape) -> bool {
     match shape {
         Shape::Newtype(field) => field.take,
-        Shape::Map(fields) => fields.iter().any(|field| field.take),
+        Shape::Map(fields) => fields.iter().any(|field| field.take && !field.passthrough),
         Shape::Empty | Shape::Enum(_) => false,
     }
 }
@@ -390,16 +392,18 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
     let open = discard_from(0);
     let entries = stored.iter().enumerate().map(|(index, field)| {
         let key = &field.key;
-        let value = value(field);
         let on_entry_failure = discard_from(index);
         let on_visit_failure = discard_from(index + 1);
         let visit = if field.passthrough {
             // Stored in the clear and bound to nothing — not the value, not
             // even its key. That is what lets the entry be an ordinary
             // database column other queries read and write independently of
-            // the encrypted ones.
-            quote!(#krate::Sink::passthrough(__entry, &#value))
+            // the encrypted ones. It is lent in place, so it needs neither a
+            // move nor `take`, even on a type that implements `Drop`.
+            let member = &field.member;
+            quote!(#krate::Sink::passthrough(__entry, &self.#member))
         } else {
+            let value = value(field);
             quote!(#krate::Encrypt::visit(#value, __entry))
         };
         quote! {
@@ -659,6 +663,26 @@ mod tests {
             &out,
             quote!(::vitaminc_aead::Encrypt::visit(self.ssn, __entry)),
         );
+    }
+
+    /// A passthrough field is lent in place in the by-value walk too, so a
+    /// `Drop` type needs no `take` on it and the receiver stays immutable.
+    #[test]
+    fn a_passthrough_field_is_lent_without_taking_it() {
+        let out = expand(parse_quote! {
+            struct Row {
+                #[aead(passthrough)]
+                tenant: String,
+                ssn: String,
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::Sink::passthrough(__entry, &self.tenant)),
+        );
+        assert_lacks(&out, quote!(::core::mem::take));
+        assert_lacks(&out, quote!(mut self));
     }
 
     /// A skipped field contributes nothing: no entry, and it is not counted
