@@ -361,11 +361,13 @@ impl<E, O: Slot> Sink for EncryptSink<E, O> {
     }
 
     /// Passthrough is non-sensitive by design: it is framed, not sealed.
+    /// The frame's buffer becomes the `PassthroughFrame` as it is, rather
+    /// than being copied out and the original wiped.
     fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<O::Ok, Self::Error> {
         let frame =
             shape::frame_passthrough(value.lend(), self.depth, &self.out, EncryptError::Shape)?;
         Ok(self.out.put(CipherText::Passthrough(PassthroughFrame(
-            frame.risky_ref().to_vec(),
+            frame.risky_unwrap(),
         ))))
     }
 }
