@@ -1019,6 +1019,13 @@ admits chrono's range (years -262143 to 262142), which is narrower than a
 decoder is chrono-bound: a wider timestamp could be sealed but not read
 back there. The binding refuses a `Date` outside it.
 
+> **Amended by #627** (vitaminc#626): chrono is replaced by jiff, and the
+> range of `Date` and `Timestamp` narrows to jiff's in every binding:
+> dates -009999-01-01 to 9999-12-31, instants -009999-01-02T01:59:59Z to
+> 9999-12-30T22:00:00.999999999Z. A value one binding seals, every binding
+> opens into its native type. A leaf sealed past those years under the old
+> range now authenticates and is refused as malformed.
+
 JavaScript has no type of its own for a calendar date, a timestamp finer
 than a millisecond, a decimal or a uuid. The binding represents each as an
 instance of a wrapper class, `VcDate`, `VcTimestamp`, `VcDecimal` or
