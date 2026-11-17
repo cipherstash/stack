@@ -14,7 +14,6 @@
 //! anywhere, and CI builds it either way.
 
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
-use stack_encrypt::kms::{EnvKeyProvider, StackKmsBuilder};
 use stack_encrypt::StackCipher;
 
 #[tokio::main(flavor = "current_thread")]
@@ -80,15 +79,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- A custom authentication strategy -----------------------------------
     //
-    // When the built-in strategies do not fit — tokens from your own broker, a
-    // sidecar, a test double — build the `StackKms` yourself and hand it to
-    // the builder. Any `AuthStrategy` works; `AuthStrategyFn` wraps a closure.
+    // When the built-in detection does not fit — tokens from your own broker,
+    // a sidecar, an OIDC federation strategy acting for your signed-in user —
+    // hand the strategy to the builder with `auth_strategy`. Any
+    // `AuthStrategy` works: `AccessKeyStrategy`, `OidcFederationStrategy`,
+    // `DeviceSessionStrategy`, or, as here, `AuthStrategyFn` over a closure.
     //
-    // The same seam takes `AccessKeyStrategy`, `DeviceSessionStrategy`, or an
-    // OIDC federation strategy when you want to name one explicitly rather
-    // than let `auto()` detect it.
-    // This section needs a real token: building the cipher resolves the keyset
-    // and loads its index key, which is a round-trip that must authenticate.
+    // Only the token changes. The client key is CS_CLIENT_ID + CS_CLIENT_KEY
+    // if they are set, otherwise the profile's `secretkey.json` for the
+    // workspace the strategy's token is for: `init` asks the strategy for a
+    // token to find out which. To choose the client key yourself, or set the
+    // transport, build a `stack_encrypt::kms::StackKms` and use `.kms(..)`.
+    //
+    // This section needs a real token: `init` asks the strategy for one, then
+    // resolves the keyset and loads its index key, a round trip that must
+    // authenticate.
     //
     // Note what the token is held in: `SecretToken` wraps it the moment it is
     // read, and that wrapper — not a bare `String` — is what the closure
@@ -106,12 +111,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         async move { Ok::<_, AuthError>(ServiceToken::new(token)) }
     });
 
-    let kms = StackKmsBuilder::new(strategy)
-        .with_key_provider(EnvKeyProvider)
-        .build()
+    let _cipher = StackCipher::builder()
+        .auth_strategy(strategy)
+        .init()
         .await?;
-
-    let _cipher = StackCipher::builder().kms(kms).init().await?;
     println!("built a second cipher over a custom auth strategy");
 
     Ok(())

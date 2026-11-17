@@ -126,25 +126,32 @@ An access key is not the only way to authenticate, and often not the one a
 service wants. A `stack_auth::OidcFederationStrategy` federates a
 third-party OIDC JWT (Clerk, Supabase, Auth0) into a CipherStash token, so
 the deployment holds no long-lived CipherStash credential of its own, and
-ZeroKMS sees each request as the end user's. What `AutoStrategy` detects is
-only the two above — access key, then profile — so any other strategy is
-named explicitly, with [`auth_strategy`](StackCipherBuilder::auth_strategy).
-The client key is still found as above.
+data keys are requested as the user whose JWT it is. What `AutoStrategy`
+detects is only the two above — access key, then profile — so any other
+strategy is named explicitly, with
+[`auth_strategy`](StackCipherBuilder::auth_strategy). The client key is then
+`CS_CLIENT_ID` + `CS_CLIENT_KEY`, or the profile's key for the workspace the
+strategy's tokens are for.
+
+`init` asks the strategy for a token and loads the default keyset's index
+key, so it runs where the strategy can answer: with a provider that returns
+the current request's JWT, inside a request. Data keys are requested as
+whoever the strategy answers for at the time; the default keyset's index key
+is loaded once, by whoever initialised the cipher.
 
 ```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 use stack_auth::{AuthError, AutoStrategy, OidcFederationStrategy, OidcProviderFn, SecretToken};
 use stack_encrypt::StackCipher;
 
-// The workspace `AutoStrategy` would use: `CS_WORKSPACE_CRN`, else the
-// workspace of the CLI's session. The client key lookup resolves the same
-// one, so the token and the client key agree.
+// `CS_WORKSPACE_CRN`, else the workspace of the CLI's session.
 let crn = AutoStrategy::detect_workspace_crn()?;
 let provider = OidcProviderFn::new(|| async {
     // The JWT of the user behind the current request.
     Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
 });
 
+// While handling a request, so the provider has a user to answer for.
 let cipher = StackCipher::builder()
     .auth_strategy(OidcFederationStrategy::new(crn, provider)?)
     .init()

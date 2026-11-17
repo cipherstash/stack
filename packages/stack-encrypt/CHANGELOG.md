@@ -9,19 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`StackCipherBuilder::auth_strategy`, any auth strategy with the default
-  client key** (#1700). `StackCipher::builder().auth_strategy(strategy).init()`
-  builds the ZeroKMS client over the given strategy (an
-  `OidcFederationStrategy`, an `AccessKeyStrategy`, an `AuthStrategyFn`) and
-  finds the client key exactly as `StackCipher::new()` does: `CS_CLIENT_ID` and
-  `CS_CLIENT_KEY`, then `secretkey.json` in the CLI's profile for the workspace
-  `CS_WORKSPACE_CRN` names, else the current one. Only the token changes.
-  `init` is unchanged; it is now this path with the detected `AutoStrategy`.
-  The builder state is `WithAuthStrategy<C>`, behind `http`.
-  - The strategy cannot say which workspace it is for, so the client key
-    lookup does not follow it. Build the strategy from stack-auth's
-    `AutoStrategy::detect_workspace_crn()`, which resolves the same workspace,
-    and the token and the client key come from one workspace.
+- **`StackCipherBuilder::auth_strategy`, a cipher over any auth strategy**
+  (#1700). `StackCipher::builder().auth_strategy(strategy).init()` builds the
+  ZeroKMS client over the given strategy (an `OidcFederationStrategy`, an
+  `AccessKeyStrategy`, an `AuthStrategyFn`). The builder state is
+  `WithAuthStrategy<C>`, behind `http`. `init` and `kms(..)` are unchanged.
+  - The client key is `CS_CLIENT_ID` and `CS_CLIENT_KEY` if they are set,
+    otherwise `secretkey.json` in the CLI's profile for the workspace the
+    strategy's token is for, so the token and the key come from one workspace.
+    `CS_WORKSPACE_CRN` and the CLI's current workspace do not choose the key
+    on this path.
+  - `init` asks the strategy for a token and loads the default keyset's
+    index key, so it must run where the strategy can produce a token (for a
+    per-request OIDC provider, inside a request). Data keys are then
+    requested as whoever the strategy answers for at the time; the default
+    keyset's index key is loaded once, by whoever initialised the cipher.
+  - Needs stack-auth 0.44.0, which adds `AutoStrategy::detect_workspace_crn`
+    for building a strategy from the configured workspace.
 - **`json::JsonPlaintext`, a JSON document as one ciphertext** (#1636).
   `JsonPlaintext` holds a `serde_json::Value` and wipes it when it is
   dropped. Build one with `JsonPlaintext::from(value)` or
