@@ -798,6 +798,49 @@ gives an example and a workaround for each:
 A filter with more than one condition reads each array to
 `JSONReadOptions.WildcardBound` elements, as the element match does.
 
+## Testing your application
+
+Package `encrypttest` gives a test a client that needs no network and no
+CipherStash credentials. Use it in CI that has no route to ZeroKMS.
+
+1. Create the client in the test. It closes when the test ends.
+
+   ```go
+   import "github.com/cipherstash/stack/languages/golang/encrypt/encrypttest"
+
+   func TestSaveUser(t *testing.T) {
+   	client := encrypttest.NewClient(t)
+   	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+   ```
+
+2. Call your code with it, as you would call it with a production client.
+
+   ```go
+   	encrypted, err := users.Encrypt(t.Context(), cipher, people)
+   	if err != nil {
+   		t.Fatal(err)
+   	}
+   	// Insert, query with users.Fields.Email.Eq, then read back:
+   	opened, err := users.Decrypt(t.Context(), client, encrypted)
+   ```
+
+The client runs the same engine and generated code as a production client.
+Only the key source differs: each data key derives from a seed, not from
+ZeroKMS. An EQL v4 column accepts its values, and its query terms match them.
+
+It fails as a production client fails. A cipher refuses another keyset's
+value with `ErrForeignKeyset`. A wrong context fails with `ErrForbidden`.
+
+Every keyset exists, so a test selects any name or id with nothing to
+create. A test therefore never sees `ErrNotFound` for a missing keyset.
+
+Every client with the default seed opens what another sealed, in any test
+process. `encrypttest.WithSeed` chooses another seed.
+
+Never seal real data with it: anyone with the seed derives every key. Import
+`encrypttest` only from `_test.go` files, so it stays out of production
+binaries. `NewClient` fails the test outside a test binary.
+
 ## Building
 
 The package embeds `wasm/stack_encrypt_guest.wasm`, a build artefact of the
@@ -813,9 +856,12 @@ tag, fetches a tree without the builds; it compiles, and `NewClient` returns
 In a checkout of this repository the builds are not committed: run
 `mise run wasm:guest:build` (and `mise run wasm:auth-guest:build` for the
 credential guest) before `go test`, and
-`mise run wasm:guest:build:deterministic` for the test build the hermetic
-round-trip and fixture tests use. Without the builds `NewClient` returns
-`ErrGuestNotBuilt` and the tests skip.
+`mise run wasm:guest:build:deterministic` and
+`mise run wasm:guest:build:eql:deterministic` for the test builds that
+package `encrypttest` embeds. The hermetic round-trip and fixture tests use
+them too. Without the builds `NewClient` returns `ErrGuestNotBuilt` and the
+tests skip; `encrypttest.NewClient` fails its test. A tagged version carries
+the test builds too.
 
 ## Licence
 

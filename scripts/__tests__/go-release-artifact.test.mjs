@@ -118,7 +118,7 @@ function writeManifest(lines) {
   )
 }
 
-/** The tree the release commit should have: HEAD plus the three guests. */
+/** The tree the release commit should have: HEAD plus the guests. */
 function expectedTree() {
   const index = join(repo, '.git', 'expected-index')
   const env = { ...process.env, GIT_INDEX_FILE: index }
@@ -162,12 +162,13 @@ describe.skipIf(!BASH_HAS_MAPFILE)(
   () => {
     it('exists, and the publish job takes its paths from GUESTS', () => {
       expect(COMMIT_STEP).toBeDefined()
-      expect(GUESTS).toHaveLength(3)
+      // Three production guests and the two test builds encrypttest embeds.
+      expect(GUESTS).toHaveLength(5)
       expect(String(COMMIT_STEP.run)).toContain('"$GUESTS"')
     })
 
     it.skipIf(!GNU_COREUTILS)(
-      'commits the three guests from an honest artifact',
+      'commits the five guests from an honest artifact',
       () => {
         writeManifest(honestManifest())
         const tree = expectedTree()

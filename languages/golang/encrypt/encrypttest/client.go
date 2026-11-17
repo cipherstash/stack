@@ -1,0 +1,162 @@
+package encrypttest
+
+import (
+	"context"
+	"crypto/sha256"
+	"embed"
+	"testing"
+
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/eqlguest"
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testclient"
+)
+
+// The deterministic-kms test builds of the guest, copied here by `mise run
+// wasm:guest:build:deterministic` and `mise run
+// wasm:guest:build:eql:deterministic`. They are not committed on main; the
+// release workflow commits them on the tag. The directory is embedded so the
+// package compiles without them; NewClient reports their absence.
+//
+//go:embed wasm
+var guestFS embed.FS
+
+const (
+	guestPath    = "wasm/stack_encrypt_guest_deterministic.wasm"
+	eqlGuestPath = "wasm/stack_encrypt_guest_eql_deterministic.wasm"
+)
+
+// defaultSeed is the seed NewClient uses without WithSeed. It never
+// changes, so values sealed under it in one test process open in another.
+var defaultSeed = sha256.Sum256([]byte("github.com/cipherstash/stack/languages/golang/encrypt/encrypttest default seed"))
+
+// A ClientOption configures [NewClient].
+type ClientOption func(*clientOptions)
+
+type clientOptions struct {
+	seed [32]byte
+}
+
+// WithSeed derives every data key from seed in place of the default seed.
+// Use it to keep one test's values apart from another's. A value sealed
+// under one seed does not open under another, and fails with
+// [encrypt.ErrForbidden].
+func WithSeed(seed [32]byte) ClientOption {
+	return func(o *clientOptions) { o.seed = seed }
+}
+
+// NewClient returns a client for a test that needs no network and no
+// CipherStash credentials. It closes the client when the test and its
+// subtests finish. It fails the test, and never skips it, when the client
+// cannot start.
+//
+//	func TestSaveUser(t *testing.T) {
+//		client := encrypttest.NewClient(t)
+//		cipher := client.Keyset(encrypt.KeysetName("tenant-a"))
+//
+//		rows, err := users.Encrypt(t.Context(), cipher, []users.User{{Email: "ada@example.com"}})
+//		if err != nil {
+//			t.Fatal(err)
+//		}
+//		// Store rows in PostgreSQL, query them, then read them back:
+//		back, err := users.Decrypt(t.Context(), client, rows)
+//	}
+//
+// The client runs the same engine and generated code as a production
+// client. Only the key source differs: each data key derives from a seed and
+// from the context the value is sealed under, so the client never calls
+// ZeroKMS. An EQL column accepts the values it writes, and its query terms
+// match them.
+//
+// It fails as a production client fails:
+//
+//   - A cipher bound to one keyset refuses a value sealed under another
+//     keyset with [encrypt.ErrForeignKeyset].
+//   - A decrypt under a context other than the value's fails with
+//     [encrypt.ErrForbidden], as ZeroKMS refuses it.
+//   - A row whose context field is not the cipher's context fails with
+//     [encrypt.ErrContextMismatch].
+//
+// Every keyset exists. A keyset selected by a name or an id needs nothing
+// created first, and [encrypt.KeysetName]("default") selects the default
+// keyset. So a test cannot see [encrypt.ErrNotFound] for a missing keyset,
+// or [encrypt.ErrForbidden] for a keyset the client has no grant for. The
+// client has no token, so it never returns [encrypt.ErrUnauthorized].
+//
+// # Seeds
+//
+// Every client with the default seed opens what any other client with it
+// sealed, in any process. So a test that loads fixtures and a test that
+// reads them share keys with no setup. The default seed never changes.
+// [WithSeed] chooses another. A seed changes the data keys only: search
+// terms depend on the keyset alone, so two seeds give a value the same
+// terms.
+//
+// # Not for production
+//
+// The keys are not secret: anyone with the seed derives every key, and the
+// default seed is in this package's source. Never seal real data with this
+// client. Nothing it seals opens under a production client, and nothing a
+// production client seals opens under it.
+//
+// Import this package only from _test.go files. Go then links the test
+// builds of the engine it embeds into test binaries only. NewClient also
+// fails the test outside a test binary, as [testing.Testing] reports.
+//
+// # Engine builds
+//
+// A program whose generated code names an EQL type links package
+// [github.com/cipherstash/stack/languages/golang/encrypt/eql]. A production
+// client in that program runs the engine build with the EQL types, and a
+// client from NewClient runs the test build with them. Otherwise both run
+// the build without them.
+func NewClient(tb testing.TB, opts ...ClientOption) *encrypt.Client {
+	tb.Helper()
+	if !testing.Testing() {
+		tb.Fatal("encrypttest: NewClient runs only in a test binary, because its keys are not secret")
+	}
+	o := clientOptions{seed: defaultSeed}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	wasm, err := testGuest()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	built, err := testclient.New(context.Background(), wasm, o.seed)
+	if err != nil {
+		tb.Fatalf("encrypttest: %v", err)
+	}
+	client, ok := built.(*encrypt.Client)
+	if !ok {
+		tb.Fatalf("encrypttest: the constructor returned %T, not *encrypt.Client", built)
+	}
+	tb.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			tb.Errorf("encrypttest: closing the client: %v", err)
+		}
+	})
+	return client
+}
+
+// testGuest is the test build matching the build a production client in
+// this program runs: the one with the EQL types when package eql is linked,
+// else the one without.
+func testGuest() ([]byte, error) {
+	path, task := guestPath, "wasm:guest:build:deterministic"
+	if eqlguest.Linked() {
+		path, task = eqlGuestPath, "wasm:guest:build:eql:deterministic"
+	}
+	wasm, err := guestFS.ReadFile(path)
+	if err != nil {
+		return nil, notBuiltError{task: task}
+	}
+	return wasm, nil
+}
+
+// notBuiltError is a test build missing from the module. A released module
+// carries both; a checkout of the repository needs the build task run.
+type notBuiltError struct{ task string }
+
+func (e notBuiltError) Error() string {
+	return "encrypttest: the test build of the engine is not in this module; in a checkout of the repository, run `mise run " + e.task + "`"
+}

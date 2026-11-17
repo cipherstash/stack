@@ -38,6 +38,11 @@ from the stack-* crates), released by `.github/workflows/release-golang.yml`
 as `languages/golang/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
+The Go module's `encrypt/encrypttest` package ships test builds of the
+engine whose keys derive from a published seed. Those keys are not secret by
+design: the package is for tests only. A way for a production client to load
+a test build, or for a test build to reach ZeroKMS, is in scope.
+
 The five stack-* crates are licensed under the PolyForm Internal Use License
 1.0.0 (each crate's `LICENSE`), not the repository's MIT licence: they may be
 used for internal business operations only, and not redistributed. That

@@ -174,7 +174,7 @@ describe('required lifecycle evidence', () => {
     )
     expect(go.lock_sha256).toBe('sha256:Cargo.lock')
     expect(Object.keys(go.guests).sort()).toEqual([
-      'encrypt/testdata/stack_encrypt_guest_deterministic.wasm',
+      'encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm',
       'encrypt/wasm/stack_encrypt_guest.wasm',
     ])
     const rust = selections(index, 'fast', 'rust')

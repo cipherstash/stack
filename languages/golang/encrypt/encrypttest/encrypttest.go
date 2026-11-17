@@ -1,5 +1,12 @@
-// Package encrypttest holds assertions for tests of code that uses package
-// encrypt and its generated records.
+// Package encrypttest helps test code that uses package encrypt and its
+// generated records. Import it only from _test.go files.
+//
+// [NewClient] gives a test a client that needs no network and no
+// CipherStash credentials. It runs the same engine and generated code as a
+// production client, with keys derived from a seed in place of ZeroKMS:
+//
+//	client := encrypttest.NewClient(t)
+//	rows, err := users.Encrypt(t.Context(), client.DefaultKeyset(), people)
 //
 // A wrong context loses data silently. A query under the wrong context
 // matches nothing, and gives no error. [AssertContexts] pins the contexts

@@ -2,10 +2,14 @@ name: Release (Go)
 
 # Tags a release of the Go module (languages/golang) that `go get` can use.
 #
-# The module embeds three WASI guests built from Rust (encrypt/wasm,
-# encrypt/eql/wasm, auth/wasm). They are gitignored on main, and Go fetches a
-# module version as the files committed at its tag, so a tag on a main commit
-# would build and then fail at `NewClient` with ErrGuestNotBuilt. This
+# The module embeds five WASI guests built from Rust: the three production
+# guests (encrypt/wasm, encrypt/eql/wasm, auth/wasm) and the two
+# deterministic-kms test builds that package encrypttest embeds
+# (encrypt/encrypttest/wasm), which give an application's tests a client with
+# no ZeroKMS. They are gitignored on main, and Go fetches a module version as
+# the files committed at its tag, so a tag on a main commit would build and
+# then fail at `NewClient` with ErrGuestNotBuilt, and at
+# `encrypttest.NewClient` with its own not-built error. This
 # workflow builds the guests at the commit it runs on, commits them on a
 # release-only commit that no branch points at, tags that commit
 # `languages/golang/v<version>` (the prefix Go requires for a module in a
@@ -64,6 +68,8 @@ env:
     languages/golang/encrypt/wasm/stack_encrypt_guest.wasm
     languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm
     languages/golang/auth/wasm/stack_auth_guest.wasm
+    languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm
+    languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm
 
 concurrency:
   group: release-golang
@@ -165,14 +171,19 @@ jobs:
           grep -qF "'go-$VERSION'" release/cipherstash-encrypt-v4.sql \
             || { echo "::error::the v4 bundle is not stamped go-$VERSION"; exit 1; }
 
+      # The test builds ship too: package encrypttest embeds them. They are
+      # built here, before the hash, so the hash covers them as it covers the
+      # production guests.
       - name: Build the guests
         run: |
           mise run wasm:guest:build
           mise run wasm:guest:build:eql
           mise run wasm:auth-guest:build
+          mise run wasm:guest:build:deterministic
+          mise run wasm:guest:build:eql:deterministic
 
-      # Hashed before the test builds and the tests run, and checked again
-      # after them below, so the guests committed are the ones tested.
+      # Hashed before the tests run, and checked again after them below, so
+      # the guests committed are the ones tested.
       - name: Hash the guests
         run: |
           set -euo pipefail
@@ -180,12 +191,6 @@ jobs:
           read -ra guests <<< "$GUESTS"
           sha256sum "${guests[@]}" > release-out/guests.sha256
           cat release-out/guests.sha256
-
-      # The deterministic test builds the hermetic Go tests load.
-      - name: Build the test guests
-        run: |
-          mise run wasm:guest:build:deterministic
-          mise run wasm:guest:build:eql:deterministic
 
       - name: Go tests against the guests being released
         run: mise run go:test

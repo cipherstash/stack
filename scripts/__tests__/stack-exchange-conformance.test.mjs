@@ -142,8 +142,8 @@ describe('fresh cross-language artifact exchange', () => {
     writeFileSync(empty, 'not empty')
     expect(() => requireGuests(base, ['empty.wasm'])).not.toThrow()
     expect(GUESTS).toEqual([
-      'encrypt/testdata/stack_encrypt_guest_deterministic.wasm',
-      'encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm',
+      'encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm',
+      'encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm',
     ])
   })
 
