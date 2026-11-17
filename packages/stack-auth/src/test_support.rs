@@ -208,7 +208,7 @@ pub(crate) mod signing {
     /// [`set_status`](Self::set_status), whatever the host. It records each
     /// `(method, url)` it is sent.
     pub(crate) struct StubCts {
-        token: String,
+        token: Mutex<String>,
         jwks: Mutex<String>,
         status: AtomicU16,
         unreachable: bool,
@@ -218,7 +218,7 @@ pub(crate) mod signing {
     impl StubCts {
         pub(crate) fn new(token: String, jwks: String) -> Self {
             Self {
-                token,
+                token: Mutex::new(token),
                 jwks: Mutex::new(jwks),
                 status: AtomicU16::new(200),
                 unreachable: false,
@@ -237,6 +237,11 @@ pub(crate) mod signing {
                 unreachable: true,
                 ..Self::new(String::new(), String::new())
             })
+        }
+
+        /// Issue `token` from now on.
+        pub(crate) fn set_token(&self, token: String) {
+            *self.token.lock().unwrap() = token;
         }
 
         /// Publish `jwks` from now on.
@@ -284,7 +289,7 @@ pub(crate) mod signing {
                 ("POST", path) if path.ends_with("/api/authorise") => (
                     200,
                     serde_json::json!({
-                        "accessToken": self.token,
+                        "accessToken": *self.token.lock().unwrap(),
                         "expiry": u64::from(u32::MAX),
                     })
                     .to_string(),

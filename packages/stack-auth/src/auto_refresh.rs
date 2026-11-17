@@ -279,6 +279,20 @@ impl<R, S> AutoRefresh<R, S> {
     pub(crate) fn refresher(&self) -> &R {
         &self.shared.refresher
     }
+
+    /// Treat the cached token as expired if it is still `refused`, so the
+    /// next `get_token` replaces it instead of handing it out again. Its
+    /// refresh credential is kept, and a token installed since is left alone.
+    pub(crate) async fn expire(&self, refused: &ServiceToken) {
+        let mut state = self.shared.state.lock().await;
+        if let Some(token) = state
+            .token
+            .as_mut()
+            .filter(|token| token.access_token().as_str() == refused.as_str())
+        {
+            token.expires_at = 0;
+        }
+    }
 }
 
 impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {

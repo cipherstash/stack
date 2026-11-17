@@ -906,6 +906,24 @@ mod given_a_strategy_that_verifies_tokens {
         assert!(matches!(err, AuthError::InvalidToken(_)), "got {err:?}");
     }
 
+    /// Once CTS issues good tokens again, the next call gets one: a refused
+    /// token is not cached until it expires.
+    #[tokio::test]
+    async fn the_access_key_strategy_replaces_a_refused_token_on_the_next_call() {
+        let cts = cts(forged());
+        let strategy = AccessKeyStrategy::builder(crn(), key())
+            .base_url(AUTH_URL.parse().unwrap())
+            .transport(Arc::clone(&cts))
+            .verify_tokens()
+            .build()
+            .unwrap();
+        assert!(strategy.get_token().await.is_err());
+
+        cts.set_token(genuine());
+
+        assert!(strategy.get_token().await.is_ok());
+    }
+
     #[tokio::test]
     async fn without_verification_no_keys_are_fetched() {
         let cts = cts(forged());
@@ -940,6 +958,23 @@ mod given_a_strategy_that_verifies_tokens {
     async fn the_oidc_federation_strategy_refuses_a_forged_token() {
         let err = oidc(&cts(forged())).await.unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn the_oidc_federation_strategy_replaces_a_refused_token_on_the_next_call() {
+        let cts = cts(forged());
+        let provider = OidcProviderFn::new(|| async { Ok(SecretToken::new("provider.jwt.value")) });
+        let strategy = OidcFederationStrategy::builder(crn(), provider)
+            .base_url(AUTH_URL.parse().unwrap())
+            .transport(Arc::clone(&cts))
+            .verify_tokens()
+            .build()
+            .unwrap();
+        assert!(strategy.get_token().await.is_err());
+
+        cts.set_token(genuine());
+
+        assert!(strategy.get_token().await.is_ok());
     }
 
     async fn device_session(cts: &Arc<StubCts>, jwt: &str) -> Result<ServiceToken, AuthError> {

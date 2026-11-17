@@ -42,6 +42,7 @@ use cts_common::{CtsServiceDiscovery, Region, ServiceDiscovery};
 use sha2::Digest;
 use url::Url;
 
+use crate::auto_refresh::AutoRefresh;
 use crate::clock::{system_clock, SharedClock};
 use crate::error::{InvalidToken, ServerError};
 use crate::transport::{self, SharedTransport};
@@ -84,14 +85,25 @@ pub(crate) fn resolve(
     TokenVerifier::new(issuer, audience, transport.clone(), system_clock()).map(Some)
 }
 
-/// `token`, verified by `verifier` when there is one.
-pub(crate) async fn verify_if(
+/// `token`, which `engine` handed out, verified by `verifier` when there is
+/// one.
+///
+/// A refused token is expired in `engine`'s cache, so the next call fetches
+/// a new one rather than refusing the same token until it expires.
+pub(crate) async fn verify_cached<R, S>(
     verifier: Option<&TokenVerifier>,
+    engine: &AutoRefresh<R, S>,
     token: ServiceToken,
 ) -> Result<ServiceToken, AuthError> {
-    match verifier {
-        Some(verifier) => verifier.verify(token).await,
-        None => Ok(token),
+    let Some(verifier) = verifier else {
+        return Ok(token);
+    };
+    match verifier.verify(token.clone()).await {
+        Err(err @ AuthError::InvalidToken(_)) => {
+            engine.expire(&token).await;
+            Err(err)
+        }
+        result => result,
     }
 }
 

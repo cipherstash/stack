@@ -107,7 +107,8 @@ impl DeviceSessionStrategy {
 impl AuthStrategy for &DeviceSessionStrategy {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
         let token = self.inner.get_token().await?;
-        let token = token_verifier::verify_if(self.verifier.as_ref(), token).await?;
+        let token =
+            token_verifier::verify_cached(self.verifier.as_ref(), &self.inner, token).await?;
         match self.expected_workspace {
             Some(expected) => token.verify_workspace(expected),
             None => Ok(token),

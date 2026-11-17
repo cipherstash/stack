@@ -385,7 +385,7 @@ impl<P, S: TokenStore> OidcFederationStrategy<P, S> {
                 return Err(err);
             }
         };
-        token_verifier::verify_if(self.verifier.as_ref(), token)
+        token_verifier::verify_cached(self.verifier.as_ref(), &engine, token)
             .await?
             .verify_workspace(self.expected_workspace)
     }
