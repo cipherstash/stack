@@ -112,9 +112,7 @@ describe('release-golang.yml pins the module in both jobs, before committing', (
       expect(pinAt, `${job} has no "${PIN}" step`).toBeGreaterThanOrEqual(0)
       expect(commitAt).toBeGreaterThan(pinAt)
       const run = String(steps[pinAt].run)
-      expect(run).toContain(
-        'scripts/go-release-pin-encrypttest.sh "$VERSION"',
-      )
+      expect(run).toContain('scripts/go-release-pin-encrypttest.sh "$VERSION"')
       expect(run).toContain(`git add ${GO_MOD}`)
     })
   }
