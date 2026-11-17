@@ -10,6 +10,17 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`stashgen` accepts an alias of `json.RawMessage` on Go 1.27.**
+  Go 1.27 turns on `GOEXPERIMENT=jsonv2` by default, and under it
+  `json.RawMessage` is itself an alias of `jsontext.Value`. A field declared
+  with an alias of it, such as `type Doc = json.RawMessage`, was refused as
+  a base64 byte slice: the generator looked only at the field's own type and
+  at the type the whole alias chain stands for. It now looks at every type
+  along the chain. A field declared as `json.RawMessage` itself was not
+  affected.
+
 ## [0.1.0-rc.5] - 2026-11-16
 
 ### Upgrading from rc.4

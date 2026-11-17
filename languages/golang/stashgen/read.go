@@ -980,11 +980,11 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 const vcvaluePath = "github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 
 // valueKind is the kind of a value type the generator knows by name:
-// time.Time, and encrypt's Date, Int128, Uint128 and Decimal, whether the
-// field names the alias in encrypt or the vcvalue type it stands for. A type
-// defined over one of them is not one: the codec writes these by their exact
-// type, so it is classified by its underlying type and refused as a struct
-// or array.
+// time.Time, json.RawMessage, and encrypt's Date, Int128, Uint128 and
+// Decimal, whether the field names the alias in encrypt or the vcvalue type
+// it stands for, or an alias of any of them. A type defined over one of
+// them is not one: the codec writes these by their exact type, so it is
+// classified by its underlying type and refused as a struct or array.
 func valueKind(t types.Type) (Kind, bool) {
 	named := func(t types.Type) (string, string, bool) {
 		switch t := t.(type) {
@@ -999,7 +999,16 @@ func valueKind(t types.Type) (Kind, bool) {
 		}
 		return "", "", false
 	}
-	for _, candidate := range []types.Type{t, types.Unalias(t)} {
+	// Every type an alias chain names, then the type it stands for: with
+	// GOEXPERIMENT=jsonv2, the default from Go 1.27, json.RawMessage is
+	// itself an alias of jsontext.Value, so an alias of json.RawMessage
+	// names it only partway along the chain.
+	candidates := []types.Type{t}
+	for a, ok := t.(*types.Alias); ok; a, ok = a.Rhs().(*types.Alias) {
+		candidates = append(candidates, a.Rhs())
+	}
+	candidates = append(candidates, types.Unalias(t))
+	for _, candidate := range candidates {
 		path, name, ok := named(candidate)
 		if !ok {
 			continue
