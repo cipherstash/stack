@@ -15,7 +15,11 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { legacy } from '../run/behaviour.mjs'
-import { dynamoColumns } from '../run/legacy-columns.mjs'
+import {
+  dynamoColumns,
+  hasHmac,
+  postgresColumns,
+} from '../run/legacy-columns.mjs'
 import { migrationChecks, noRewriteCheck } from '../run/migration-checks.mjs'
 import { createRealDriver } from '../run/real-driver.mjs'
 import { run } from '../run/run.mjs'
@@ -32,7 +36,7 @@ const observed = vi.hoisted(() => ({
           ...Object.fromEntries(
             dynamoColumns.flatMap((key) => [
               [`${key}__source`, { S: 'original' }],
-              [`${key}__hmac`, { S: 'term' }],
+              ...(hasHmac(key) ? [[`${key}__hmac`, { S: 'term' }]] : []),
             ]),
           ),
         },
@@ -40,9 +44,12 @@ const observed = vi.hoisted(() => ({
       postgres: [
         {
           pk: 'legacy',
-          email: { c: 'original', hm: 'term' },
-          age: { c: 'original', hm: 'term' },
-          notes: { c: 'original' },
+          ...Object.fromEntries(
+            postgresColumns.map((column) => [
+              column,
+              { c: 'original', ...(hasHmac(column) ? { hm: 'term' } : {}) },
+            ]),
+          ),
         },
       ],
     }),
@@ -472,8 +479,17 @@ async function stackTarball(directory: string, marker: string) {
   await execute('tar', ['-czf', tarball, '-C', source, 'package'])
   return tarball
 }
-/** Record the lock entry npm writes for a local tarball install. */
+/** Materialize the package and lock entry npm writes for a tarball install. */
 async function npmRecords(workspace: string, tarball: string) {
+  const installed = join(workspace, 'node_modules/@cipherstash/stack')
+  await mkdir(installed, { recursive: true })
+  await execute('tar', [
+    '-xf',
+    tarball,
+    '-C',
+    installed,
+    '--strip-components=1',
+  ])
   const integrity = `sha512-${createHash('sha512')
     .update(await readFile(tarball))
     .digest('base64')}`
