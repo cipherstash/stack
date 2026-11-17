@@ -57,12 +57,10 @@ pub(crate) fn system_clock() -> SharedClock {
 /// A [`Clock`] whose value is set explicitly by the test, so token expiry can be
 /// driven deterministically rather than racing the wall clock.
 #[cfg(test)]
-#[cfg(feature = "http")]
 #[derive(Clone)]
 pub(crate) struct TestClock(Arc<std::sync::atomic::AtomicU64>);
 
 #[cfg(test)]
-#[cfg(feature = "http")]
 impl TestClock {
     /// Create a clock reading `now` seconds.
     pub(crate) fn new(now: u64) -> Self {
@@ -94,7 +92,6 @@ impl TestClock {
 }
 
 #[cfg(test)]
-#[cfg(feature = "http")]
 impl Clock for TestClock {
     fn now_unix_secs(&self) -> u64 {
         self.now()

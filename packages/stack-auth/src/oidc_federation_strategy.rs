@@ -9,7 +9,7 @@ use crate::auto_refresh::{AutoRefresh, StickyDenial};
 use crate::clock::{system_clock, SharedClock};
 use crate::oidc_refresher::{JwtDigest, JwtRefresher, OidcFederation, OidcProvider};
 use crate::token_store::{NoStore, TokenStore};
-use crate::token_verifier::{self, TokenVerifier, Verification};
+use crate::token_verifier::{self, TokenVerifier};
 use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken, Token};
@@ -200,7 +200,7 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
             transport: None,
             cache_capacity: DEFAULT_CACHE_CAPACITY,
             clock: system_clock(),
-            verification: Verification::Off,
+            verify_tokens: false,
         }
     }
 }
@@ -411,7 +411,7 @@ pub struct OidcFederationStrategyBuilder<P, S = NoStore> {
     transport: Option<SharedTransport>,
     cache_capacity: usize,
     clock: SharedClock,
-    verification: Verification,
+    verify_tokens: bool,
 }
 
 impl<P, S> OidcFederationStrategyBuilder<P, S> {
@@ -444,18 +444,7 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
     /// tokens are requested does not change which tokens are accepted. A token
     /// that fails is refused with [`AuthError::InvalidToken`].
     pub fn verify_tokens(mut self) -> Self {
-        self.verification = self.verification.enable();
-        self
-    }
-
-    /// Verify every CTS token against `issuer` instead of the region's CTS.
-    ///
-    /// Implies [`verify_tokens`](Self::verify_tokens). For a staging CTS or a
-    /// local one: unlike [`base_url`](Self::base_url) and `CS_CTS_HOST`,
-    /// which only change where tokens are requested, this changes which
-    /// issuer is trusted, so set it only from configuration you control.
-    pub fn trusted_issuer(mut self, issuer: url::Url) -> Self {
-        self.verification = Verification::Issuer(issuer);
+        self.verify_tokens = true;
         self
     }
 
@@ -533,7 +522,7 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
             transport: self.transport,
             cache_capacity: self.cache_capacity,
             clock: self.clock,
-            verification: self.verification,
+            verify_tokens: self.verify_tokens,
         }
     }
 }
@@ -556,9 +545,10 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
             }
         };
         let transport = transport::resolve(self.transport)?;
-        // The trusted issuer comes from the region (or an explicit
-        // `trusted_issuer`), never from `base_url`: see `token_verifier`.
-        let verifier = self.verification.resolve(|| Ok(region), None, &transport)?;
+        // The trusted issuer comes from the region, never from `base_url`:
+        // see `token_verifier`.
+        let verifier =
+            token_verifier::resolve(self.verify_tokens, || Ok(region), None, &transport)?;
         let federation = OidcFederation::new(
             expected_workspace,
             ensure_trailing_slash(base_url),

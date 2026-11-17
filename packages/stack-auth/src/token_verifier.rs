@@ -8,9 +8,8 @@
 //! requests where that token says.
 //!
 //! A [`TokenVerifier`] checks every token against a **trusted issuer that is
-//! pinned separately from the auth URL**: by default the CTS host that
-//! service discovery names for the workspace's region, or one set
-//! explicitly with a builder's `trusted_issuer`. The base URL override and
+//! pinned separately from the auth URL**: the CTS host that service
+//! discovery names for the workspace's region. The base URL override and
 //! `CS_CTS_HOST` change where tokens are *requested*; they never change which
 //! issuer is *trusted*. For each token it checks, in this order:
 //!
@@ -26,6 +25,10 @@
 //! [`AuthError::InvalidToken`]; which check failed is logged at `warn`, and
 //! nothing from the token itself is.
 //!
+//! A strategy hands out the same cached token on every call until it is
+//! refreshed, so the last token to verify is remembered (as a SHA-256 digest)
+//! and only its expiry is checked again. A new token is verified in full.
+//!
 //! The JWKS is cached for [`KEYS_TTL_SECS`]. A token signed by a key the
 //! cache does not hold triggers an early refetch, so a rotated key works
 //! immediately. Fetches, successful or failed, are at most one every
@@ -36,6 +39,7 @@ use std::fmt;
 
 use cts_common::claims::Audience;
 use cts_common::{CtsServiceDiscovery, Region, ServiceDiscovery};
+use sha2::Digest;
 use url::Url;
 
 use crate::clock::{system_clock, SharedClock};
@@ -61,47 +65,23 @@ const ALGORITHM: &str = "RS256";
 const REFUSED: &str =
     "the access token could not be verified against the trusted CTS issuer's signing keys";
 
-/// What a strategy builder was asked to do about verification.
+/// The verifier a strategy builder asks for at `build`: one trusting the
+/// CTS that service discovery names for `region`, or `None` when the builder
+/// was not asked to [`verify_tokens`](crate::AccessKeyStrategyBuilder::verify_tokens).
 ///
-/// Resolved into a [`TokenVerifier`] at `build`, once the builder knows the
-/// region and the transport.
-#[derive(Clone, Debug, Default)]
-pub(crate) enum Verification {
-    /// Tokens are not verified (the default, for now).
-    #[default]
-    Off,
-    /// Verify against the CTS that service discovery names for the region.
-    RegionIssuer,
-    /// Verify against this issuer.
-    Issuer(Url),
-}
-
-impl Verification {
-    /// Verify against the region's CTS, unless an issuer is already pinned.
-    pub(crate) fn enable(self) -> Self {
-        match self {
-            Verification::Off => Verification::RegionIssuer,
-            pinned => pinned,
-        }
+/// `region` is asked for only when verifying, so a strategy with
+/// verification off fails in no new way.
+pub(crate) fn resolve(
+    verify_tokens: bool,
+    region: impl FnOnce() -> Result<Region, AuthError>,
+    audience: Option<String>,
+    transport: &SharedTransport,
+) -> Result<Option<TokenVerifier>, AuthError> {
+    if !verify_tokens {
+        return Ok(None);
     }
-
-    /// The verifier this setting asks for, or `None` when it is off.
-    ///
-    /// `region` is asked for only when the issuer comes from it, so a
-    /// strategy with verification off fails in no new way.
-    pub(crate) fn resolve(
-        self,
-        region: impl FnOnce() -> Result<Region, AuthError>,
-        audience: Option<String>,
-        transport: &SharedTransport,
-    ) -> Result<Option<TokenVerifier>, AuthError> {
-        let issuer = match self {
-            Verification::Off => return Ok(None),
-            Verification::RegionIssuer => CtsServiceDiscovery::endpoint(region()?)?,
-            Verification::Issuer(issuer) => issuer,
-        };
-        TokenVerifier::new(issuer, audience, transport.clone(), system_clock()).map(Some)
-    }
+    let issuer = CtsServiceDiscovery::endpoint(region()?)?;
+    TokenVerifier::new(issuer, audience, transport.clone(), system_clock()).map(Some)
 }
 
 /// `token`, verified by `verifier` when there is one.
@@ -124,6 +104,16 @@ pub(crate) struct TokenVerifier {
     transport: SharedTransport,
     clock: SharedClock,
     keys: tokio::sync::Mutex<KeyCache>,
+    /// The last token to verify. The same bytes need only their expiry
+    /// checked again.
+    last_verified: std::sync::Mutex<Option<Verified>>,
+}
+
+/// A token that verified: a SHA-256 digest of it, not the token itself, and
+/// its `exp`.
+struct Verified {
+    digest: [u8; 32],
+    exp: u64,
 }
 
 #[derive(Default)]
@@ -131,10 +121,9 @@ struct KeyCache {
     keys: Vec<SigningKey>,
     /// When the keys were last fetched; `None` before the first fetch.
     fetched_at: Option<u64>,
-    /// When a fetch was last attempted, successful or not.
+    /// When a fetch was last attempted, successful or not. The attempt
+    /// failed when this is not also when the keys were last fetched.
     attempted_at: Option<u64>,
-    /// Whether that attempt failed.
-    attempt_failed: bool,
 }
 
 /// One RSA public key from the JWKS, as big-endian modulus and exponent.
@@ -161,6 +150,7 @@ impl TokenVerifier {
             transport,
             clock,
             keys: tokio::sync::Mutex::new(KeyCache::default()),
+            last_verified: std::sync::Mutex::new(None),
         })
     }
 
@@ -170,9 +160,17 @@ impl TokenVerifier {
     /// server's error ([`AuthError::Request`] or [`AuthError::Server`]), not
     /// the token's: it says nothing about whether the token is genuine.
     pub(crate) async fn verify(&self, token: ServiceToken) -> Result<ServiceToken, AuthError> {
-        match self.check(token.as_str()).await? {
+        let digest: [u8; 32] = sha2::Sha256::digest(token.as_str()).into();
+        let result = match self.verified_exp(&digest) {
+            Some(exp) => self.check_expiry(exp),
+            None => self.check(token.as_str()).await.map(|exp| {
+                self.remember(Verified { digest, exp });
+            }),
+        };
+        match result {
             Ok(()) => Ok(token),
-            Err(rejection) => {
+            Err(Failure::Keys(err)) => Err(err),
+            Err(Failure::Rejected(rejection)) => {
                 tracing::warn!(
                     issuer = %self.issuer,
                     %rejection,
@@ -183,47 +181,58 @@ impl TokenVerifier {
         }
     }
 
-    /// The outer `Result` is a failure to fetch the keys; the inner one is
-    /// the verdict on the token.
-    async fn check(&self, token: &str) -> Result<Result<(), Rejection>, AuthError> {
-        let parts = match Parts::split(token) {
-            Ok(parts) => parts,
-            Err(rejection) => return Ok(Err(rejection)),
-        };
-        if let Err(rejection) = self.check_claims(&parts) {
-            return Ok(Err(rejection));
-        }
-        let Some(key) = self.key_for(parts.header.kid.as_deref()).await? else {
-            return Ok(Err(Rejection::UnknownKey));
-        };
-        if rs256::verify(&key, parts.signed.as_bytes(), &parts.signature) {
-            Ok(Ok(()))
-        } else {
-            Ok(Err(Rejection::Signature))
-        }
+    /// The `exp` of the last token to verify, if `digest` is that token's.
+    fn verified_exp(&self, digest: &[u8; 32]) -> Option<u64> {
+        let last = self.last_verified.lock().unwrap_or_else(|e| e.into_inner());
+        last.as_ref()
+            .filter(|verified| &verified.digest == digest)
+            .map(|verified| verified.exp)
     }
 
-    fn check_claims(&self, parts: &Parts<'_>) -> Result<(), Rejection> {
+    fn remember(&self, verified: Verified) {
+        *self.last_verified.lock().unwrap_or_else(|e| e.into_inner()) = Some(verified);
+    }
+
+    /// Every check, returning the token's `exp` when they all pass.
+    async fn check(&self, token: &str) -> Result<u64, Failure> {
+        let parts = Parts::split(token)?;
+        self.check_claims(&parts)?;
+        let key = self
+            .key_for(parts.header.kid.as_deref())
+            .await?
+            .ok_or(Rejection::UnknownKey)?;
+        if !rs256::verify(&key, parts.signed.as_bytes(), &parts.signature) {
+            return Err(Rejection::Signature.into());
+        }
+        Ok(parts.claims.exp)
+    }
+
+    fn check_expiry(&self, exp: u64) -> Result<(), Failure> {
+        if exp.saturating_add(LEEWAY_SECS) <= self.clock.now_unix_secs() {
+            return Err(Rejection::Expired.into());
+        }
+        Ok(())
+    }
+
+    fn check_claims(&self, parts: &Parts<'_>) -> Result<(), Failure> {
         if parts.header.alg != ALGORITHM {
-            return Err(Rejection::Algorithm);
+            return Err(Rejection::Algorithm.into());
         }
         let claims = &parts.claims;
         let issuer = Url::parse(&claims.iss)
             .map(crate::ensure_trailing_slash)
             .map_err(|_| Rejection::Issuer)?;
         if issuer != self.issuer {
-            return Err(Rejection::Issuer);
+            return Err(Rejection::Issuer.into());
         }
-        if claims.exp.saturating_add(LEEWAY_SECS) <= self.clock.now_unix_secs() {
-            return Err(Rejection::Expired);
-        }
+        self.check_expiry(claims.exp)?;
         if let Some(expected) = &self.audience {
             if !claims
                 .aud
                 .as_ref()
                 .is_some_and(|aud| aud.contains(expected))
             {
-                return Err(Rejection::Audience);
+                return Err(Rejection::Audience.into());
             }
         }
         Ok(())
@@ -257,7 +266,7 @@ impl TokenVerifier {
         if tried_recently {
             return match cached {
                 Some(key) => Ok(Some(key)),
-                None if cache.attempt_failed => Err(keys_unavailable()),
+                None if cache.attempted_at != cache.fetched_at => Err(keys_unavailable()),
                 None => Ok(None),
             };
         }
@@ -266,23 +275,19 @@ impl TokenVerifier {
             Ok(keys) => {
                 cache.keys = keys;
                 cache.fetched_at = Some(now);
-                cache.attempt_failed = false;
                 Ok(cache.find(kid))
             }
-            Err(err) => {
-                cache.attempt_failed = true;
-                match cached {
-                    Some(key) => {
-                        tracing::warn!(
-                            url = %self.jwks_url,
-                            error = %err,
-                            "could not refresh CTS's signing keys; using the cached ones"
-                        );
-                        Ok(Some(key))
-                    }
-                    None => Err(err),
+            Err(err) => match cached {
+                Some(key) => {
+                    tracing::warn!(
+                        url = %self.jwks_url,
+                        error = %err,
+                        "could not refresh CTS's signing keys; using the cached ones"
+                    );
+                    Ok(Some(key))
                 }
-            }
+                None => Err(err),
+            },
         }
     }
 
@@ -326,6 +331,27 @@ fn keys_unavailable() -> AuthError {
     AuthError::Request(crate::error::RequestError(Box::new(std::io::Error::other(
         "CTS's signing keys could not be fetched; retrying at most once a minute",
     ))))
+}
+
+/// Why [`TokenVerifier::check`] did not pass a token.
+enum Failure {
+    /// The signing keys could not be fetched. This says nothing about the
+    /// token, and is returned as it is.
+    Keys(AuthError),
+    /// The token was refused.
+    Rejected(Rejection),
+}
+
+impl From<AuthError> for Failure {
+    fn from(err: AuthError) -> Self {
+        Failure::Keys(err)
+    }
+}
+
+impl From<Rejection> for Failure {
+    fn from(rejection: Rejection) -> Self {
+        Failure::Rejected(rejection)
+    }
 }
 
 /// Why a token was refused. Logged, never returned.
@@ -389,8 +415,8 @@ impl<'a> Parts<'a> {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
 
-        let (signed, signature) = token.rsplit_once('.').ok_or(Rejection::Malformed)?;
-        let (header, claims) = signed.split_once('.').ok_or(Rejection::Malformed)?;
+        let [header, claims, signature] = crate::jwt_segments(token).ok_or(Rejection::Malformed)?;
+        let signed = &token[..header.len() + 1 + claims.len()];
         let decode = |segment: &str| {
             URL_SAFE_NO_PAD
                 .decode(segment)

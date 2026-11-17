@@ -190,8 +190,7 @@ audience). A token that fails is refused with [`AuthError::InvalidToken`].
 The trusted issuer is the CTS that serves the workspace's region. It is
 pinned separately from the auth URL: `base_url()` and `CS_CTS_HOST` change
 where tokens are requested, never which issuer is trusted, so a redirected
-auth URL cannot hand the client a token naming its own ZeroKMS endpoint. Use
-`trusted_issuer(url)` to trust a different CTS, such as a staging one.
+auth URL cannot hand the client a token naming its own ZeroKMS endpoint.
 
 ```rust,no_run
 use stack_auth::{AccessKey, AccessKeyStrategy};

@@ -1,14 +1,11 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 
 use super::*;
-use crate::clock::Clock;
-use crate::error::RequestError;
-use crate::test_support::signing::{TestKey, KEY_A, KEY_B};
-use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
+use crate::clock::TestClock;
+use crate::test_support::signing::{jwks, StubCts, TestKey, KEY_A, KEY_B};
 use crate::SecretToken;
 
 const ISSUER: &str = "https://ap-southeast-2.aws.cts.cipherstashmanaged.net/";
@@ -36,6 +33,13 @@ fn claims() -> serde_json::Value {
     })
 }
 
+/// A second genuine token, so a test can tell a token the verifier has
+/// already passed from a new one. (RS256 signatures are deterministic, so
+/// `KEY_A.jwt(claims())` twice is the same token.)
+fn another_token() -> String {
+    KEY_A.jwt(with(claims(), "iat", (NOW - 5).into()))
+}
+
 fn with(mut claims: serde_json::Value, key: &str, value: serde_json::Value) -> serde_json::Value {
     claims[key] = value;
     claims
@@ -45,96 +49,25 @@ fn token(jwt: String) -> ServiceToken {
     ServiceToken::new(SecretToken::new(jwt))
 }
 
-fn jwks(keys: &[&TestKey]) -> String {
-    crate::test_support::signing::jwks(keys)
-}
-
-/// A CTS that serves a JWKS and records each URL it is asked for.
-struct FakeCts {
-    status: AtomicU64,
-    jwks: Mutex<String>,
-    fail: bool,
-    requests: Mutex<Vec<(String, String)>>,
-}
-
-impl FakeCts {
-    fn serving(jwks: String) -> Arc<Self> {
-        Arc::new(Self {
-            status: AtomicU64::new(200),
-            jwks: Mutex::new(jwks),
-            fail: false,
-            requests: Mutex::new(Vec::new()),
-        })
-    }
-
-    fn unreachable() -> Arc<Self> {
-        Arc::new(Self {
-            status: AtomicU64::new(200),
-            jwks: Mutex::new(String::new()),
-            fail: true,
-            requests: Mutex::new(Vec::new()),
-        })
-    }
-
-    fn rotate_to(&self, jwks: String) {
-        *self.jwks.lock().unwrap() = jwks;
-    }
-
-    fn requests(&self) -> Vec<(String, String)> {
-        self.requests.lock().unwrap().clone()
-    }
-}
-
-impl HttpTransport for FakeCts {
-    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
-        self.requests
-            .lock()
-            .unwrap()
-            .push((request.method().to_string(), request.url().to_string()));
-        if self.fail {
-            return Err(RequestError(Box::new(std::io::Error::other("unreachable"))));
-        }
-        let status = self.status.load(Ordering::SeqCst) as u16;
-        let body = self.jwks.lock().unwrap().clone().into_bytes();
-        Ok(HttpResponse::new(status, Vec::new(), body))
-    }
-}
-
-/// A clock the test moves by hand.
-struct ManualClock(AtomicU64);
-
-impl ManualClock {
-    fn at(now: u64) -> Arc<Self> {
-        Arc::new(Self(AtomicU64::new(now)))
-    }
-
-    fn advance(&self, secs: u64) {
-        let _ = self.0.fetch_add(secs, Ordering::SeqCst);
-    }
-}
-
-impl Clock for ManualClock {
-    fn now_unix_secs(&self) -> u64 {
-        self.0.load(Ordering::SeqCst)
-    }
-}
-
-fn verifier(cts: &Arc<FakeCts>, clock: &Arc<ManualClock>) -> TokenVerifier {
+fn verifier(cts: &Arc<StubCts>, clock: &TestClock) -> TokenVerifier {
     verifier_for(cts, clock, None)
 }
 
-fn verifier_for(
-    cts: &Arc<FakeCts>,
-    clock: &Arc<ManualClock>,
-    audience: Option<&str>,
-) -> TokenVerifier {
+fn verifier_for(cts: &Arc<StubCts>, clock: &TestClock, audience: Option<&str>) -> TokenVerifier {
     TokenVerifier::new(
         ISSUER.parse().unwrap(),
         audience.map(str::to_string),
         transport::share(Arc::clone(cts)),
-        clock.clone(),
+        clock.shared(),
     )
     .unwrap()
+}
+
+/// A verifier for [`ISSUER`] at [`NOW`], whose CTS publishes key-a.
+fn serving_key_a() -> (Arc<StubCts>, TokenVerifier) {
+    let cts = StubCts::serving(jwks(&[&KEY_A]));
+    let verifier = verifier(&cts, &TestClock::new(NOW));
+    (cts, verifier)
 }
 
 /// The verdict: `Ok` with the token back, or the refusal's message.
@@ -160,16 +93,14 @@ mod given_a_token_signed_by_the_trusted_issuer {
 
     #[tokio::test]
     async fn it_is_accepted() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
 
         assert_eq!(verdict(&verifier, KEY_A.jwt(claims())).await, Ok(()));
     }
 
     #[tokio::test]
     async fn the_keys_come_from_the_pinned_issuers_jwks() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (cts, verifier) = serving_key_a();
 
         verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
 
@@ -181,8 +112,7 @@ mod given_a_token_signed_by_the_trusted_issuer {
 
     #[tokio::test]
     async fn an_issuer_differing_only_by_a_trailing_slash_is_the_same_issuer() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         let iss = ISSUER.trim_end_matches('/');
 
         let accepted = verdict(&verifier, KEY_A.jwt(with(claims(), "iss", iss.into()))).await;
@@ -192,8 +122,7 @@ mod given_a_token_signed_by_the_trusted_issuer {
 
     #[tokio::test]
     async fn a_header_carrying_non_string_fields_is_accepted() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         let header = serde_json::json!({"alg": "RS256", "kid": "key-a", "srf": true});
 
         let accepted = verdict(&verifier, KEY_A.jwt_with_header(header, claims())).await;
@@ -203,8 +132,7 @@ mod given_a_token_signed_by_the_trusted_issuer {
 
     #[tokio::test]
     async fn a_token_without_a_kid_uses_the_only_key() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         let header = serde_json::json!({"alg": "RS256"});
 
         let accepted = verdict(&verifier, KEY_A.jwt_with_header(header, claims())).await;
@@ -214,8 +142,8 @@ mod given_a_token_signed_by_the_trusted_issuer {
 
     #[tokio::test]
     async fn a_token_without_a_kid_is_refused_when_the_jwks_holds_several_keys() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A, &KEY_B]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let cts = StubCts::serving(jwks(&[&KEY_A, &KEY_B]));
+        let verifier = verifier(&cts, &TestClock::new(NOW));
         let header = serde_json::json!({"alg": "RS256"});
 
         let refused = verdict(&verifier, KEY_A.jwt_with_header(header, claims())).await;
@@ -229,8 +157,7 @@ mod given_a_forged_or_altered_token {
 
     #[tokio::test]
     async fn altered_claims_are_refused() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         let genuine = KEY_A.jwt(claims());
         let mut segments: Vec<&str> = genuine.split('.').collect();
         let forged_claims = URL_SAFE_NO_PAD.encode(
@@ -253,8 +180,7 @@ mod given_a_forged_or_altered_token {
 
     #[tokio::test]
     async fn a_token_signed_by_a_key_the_issuer_does_not_publish_is_refused() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         // Claims to be key-a, but is signed by key-b.
         let header = serde_json::json!({"alg": "RS256", "kid": "key-a"});
 
@@ -266,8 +192,7 @@ mod given_a_forged_or_altered_token {
     #[tokio::test]
     async fn an_hmac_token_is_refused_before_any_key_is_fetched() {
         use jsonwebtoken::{encode, EncodingKey, Header};
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (cts, verifier) = serving_key_a();
         let hs256 = encode(
             &Header::default(),
             &claims(),
@@ -286,8 +211,7 @@ mod given_a_forged_or_altered_token {
 
     #[tokio::test]
     async fn an_unsigned_token_is_refused() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         let unsigned = format!(
             "{}.{}.",
             URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#),
@@ -299,8 +223,7 @@ mod given_a_forged_or_altered_token {
 
     #[tokio::test]
     async fn a_token_that_is_not_a_jwt_is_refused() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
 
         assert!(verdict(&verifier, "not-a-jwt".to_string()).await.is_err());
     }
@@ -314,8 +237,7 @@ mod given_a_token_from_another_issuer {
         // A rogue auth server signing with its own key and publishing its
         // own JWKS: the token is internally consistent, but not the trusted
         // issuer's.
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (cts, verifier) = serving_key_a();
         let rogue = with(claims(), "iss", "https://rogue.example/".into());
 
         let refused = verdict(&verifier, KEY_A.jwt(rogue)).await;
@@ -329,8 +251,7 @@ mod given_a_token_from_another_issuer {
 
     #[tokio::test]
     async fn an_issuer_that_only_shares_a_prefix_is_refused() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         let lookalike = format!("{}evil/", ISSUER);
 
         let refused = verdict(
@@ -348,8 +269,7 @@ mod given_the_tokens_expiry {
 
     #[tokio::test]
     async fn a_token_past_its_expiry_and_the_leeway_is_refused() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         let expired = with(claims(), "exp", (NOW - LEEWAY_SECS).into());
 
         assert!(verdict(&verifier, KEY_A.jwt(expired)).await.is_err());
@@ -357,8 +277,7 @@ mod given_the_tokens_expiry {
 
     #[tokio::test]
     async fn a_token_expired_within_the_leeway_is_accepted() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         let skewed = with(claims(), "exp", (NOW - LEEWAY_SECS + 1).into());
 
         assert_eq!(verdict(&verifier, KEY_A.jwt(skewed)).await, Ok(()));
@@ -366,8 +285,7 @@ mod given_the_tokens_expiry {
 
     #[tokio::test]
     async fn a_token_without_an_expiry_is_refused() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let (_, verifier) = serving_key_a();
         let mut claims = claims();
         let _ = claims.as_object_mut().unwrap().remove("exp");
 
@@ -382,16 +300,16 @@ mod given_an_expected_audience {
 
     #[tokio::test]
     async fn a_token_for_that_audience_is_accepted() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier_for(&cts, &ManualClock::at(NOW), Some(AUDIENCE));
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let verifier = verifier_for(&cts, &TestClock::new(NOW), Some(AUDIENCE));
 
         assert_eq!(verdict(&verifier, KEY_A.jwt(claims())).await, Ok(()));
     }
 
     #[tokio::test]
     async fn an_audience_list_containing_it_is_accepted() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier_for(&cts, &ManualClock::at(NOW), Some(AUDIENCE));
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let verifier = verifier_for(&cts, &TestClock::new(NOW), Some(AUDIENCE));
         let listed = with(claims(), "aud", serde_json::json!(["other", AUDIENCE]));
 
         assert_eq!(verdict(&verifier, KEY_A.jwt(listed)).await, Ok(()));
@@ -399,8 +317,8 @@ mod given_an_expected_audience {
 
     #[tokio::test]
     async fn a_token_for_another_audience_is_refused() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier_for(&cts, &ManualClock::at(NOW), Some(AUDIENCE));
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let verifier = verifier_for(&cts, &TestClock::new(NOW), Some(AUDIENCE));
         let other = with(claims(), "aud", "us-east-1.aws.viturhosted.net".into());
 
         assert!(verdict(&verifier, KEY_A.jwt(other)).await.is_err());
@@ -408,8 +326,8 @@ mod given_an_expected_audience {
 
     #[tokio::test]
     async fn a_token_without_an_audience_is_refused() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let verifier = verifier_for(&cts, &ManualClock::at(NOW), Some(AUDIENCE));
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let verifier = verifier_for(&cts, &TestClock::new(NOW), Some(AUDIENCE));
         let mut claims = claims();
         let _ = claims.as_object_mut().unwrap().remove("aud");
 
@@ -422,8 +340,8 @@ mod given_the_key_cache {
 
     #[tokio::test]
     async fn the_jwks_is_fetched_once_while_fresh() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let clock = ManualClock::at(NOW);
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
         let verifier = verifier(&cts, &clock);
 
         verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
@@ -441,8 +359,8 @@ mod given_the_key_cache {
             let mut key = KEY_B.jwk();
             key[field] = value.into();
             let jwks = serde_json::json!({"keys": [KEY_A.jwk(), key]}).to_string();
-            let cts = FakeCts::serving(jwks);
-            let verifier = verifier(&cts, &ManualClock::at(NOW));
+            let cts = StubCts::serving(jwks);
+            let verifier = verifier(&cts, &TestClock::new(NOW));
 
             assert!(
                 verdict(&verifier, KEY_B.jwt(claims())).await.is_err(),
@@ -452,35 +370,22 @@ mod given_the_key_cache {
     }
 
     #[tokio::test]
-    async fn the_jwks_is_reused_for_an_hour() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let clock = ManualClock::at(NOW);
-        let verifier = verifier(&cts, &clock);
-
-        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
-        clock.advance(59 * 60);
-        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
-
-        assert_eq!(cts.requests().len(), 1, "an hour-old JWKS is still fresh");
-    }
-
-    #[tokio::test]
     async fn the_jwks_is_fetched_again_once_stale() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let clock = ManualClock::at(NOW);
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
         let verifier = verifier(&cts, &clock);
 
         verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
         clock.advance(KEYS_TTL_SECS);
-        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+        verdict(&verifier, another_token()).await.unwrap();
 
         assert_eq!(cts.requests().len(), 2);
     }
 
     #[tokio::test]
     async fn a_rotated_key_is_fetched_as_soon_as_the_rate_limit_allows() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let clock = ManualClock::at(NOW);
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
         let verifier = verifier(&cts, &clock);
         verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
 
@@ -493,8 +398,8 @@ mod given_the_key_cache {
 
     #[tokio::test]
     async fn unknown_keys_do_not_refetch_more_than_once_per_interval() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let clock = ManualClock::at(NOW);
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
         let verifier = verifier(&cts, &clock);
         verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
 
@@ -520,8 +425,8 @@ mod given_the_key_cache {
             KEY_A.jwk(),
         ]})
         .to_string();
-        let cts = FakeCts::serving(jwks);
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let cts = StubCts::serving(jwks);
+        let verifier = verifier(&cts, &TestClock::new(NOW));
 
         assert_eq!(verdict(&verifier, KEY_A.jwt(claims())).await, Ok(()));
         assert!(
@@ -531,13 +436,52 @@ mod given_the_key_cache {
     }
 }
 
+mod given_a_token_that_has_already_verified {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_not_checked_against_the_keys_again() {
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
+        let verifier = verifier(&cts, &clock);
+        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+
+        // The keys are stale and CTS is down: a full check would fetch them.
+        cts.set_status(503);
+        clock.advance(KEYS_TTL_SECS);
+
+        assert_eq!(verdict(&verifier, KEY_A.jwt(claims())).await, Ok(()));
+        assert_eq!(cts.requests().len(), 1, "the keys were not fetched again");
+    }
+
+    #[tokio::test]
+    async fn it_is_refused_once_it_expires() {
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
+        let verifier = verifier(&cts, &clock);
+        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+
+        clock.advance(3600 + LEEWAY_SECS);
+
+        assert!(verdict(&verifier, KEY_A.jwt(claims())).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_different_token_is_checked_in_full() {
+        let (_, verifier) = serving_key_a();
+        verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
+
+        assert!(verdict(&verifier, KEY_B.jwt(claims())).await.is_err());
+    }
+}
+
 mod given_the_keys_cannot_be_fetched {
     use super::*;
 
     #[tokio::test]
     async fn an_unreachable_cts_is_a_request_error() {
-        let cts = FakeCts::unreachable();
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let cts = StubCts::unreachable();
+        let verifier = verifier(&cts, &TestClock::new(NOW));
 
         let err = verifier
             .verify(token(KEY_A.jwt(claims())))
@@ -549,8 +493,8 @@ mod given_the_keys_cannot_be_fetched {
 
     #[tokio::test]
     async fn a_failed_fetch_is_not_retried_more_than_once_per_interval() {
-        let cts = FakeCts::unreachable();
-        let clock = ManualClock::at(NOW);
+        let cts = StubCts::unreachable();
+        let clock = TestClock::new(NOW);
         let verifier = verifier(&cts, &clock);
 
         for _ in 0..3 {
@@ -577,9 +521,9 @@ mod given_the_keys_cannot_be_fetched {
 
     #[tokio::test]
     async fn an_error_status_is_a_server_error() {
-        let cts = FakeCts::serving("{}".to_string());
-        cts.status.store(503, Ordering::SeqCst);
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let cts = StubCts::serving("{}".to_string());
+        cts.set_status(503);
+        let verifier = verifier(&cts, &TestClock::new(NOW));
 
         let err = verifier
             .verify(token(KEY_A.jwt(claims())))
@@ -591,8 +535,8 @@ mod given_the_keys_cannot_be_fetched {
 
     #[tokio::test]
     async fn an_unreadable_jwks_is_a_request_error_not_the_tokens() {
-        let cts = FakeCts::serving("<html>".to_string());
-        let verifier = verifier(&cts, &ManualClock::at(NOW));
+        let cts = StubCts::serving("<html>".to_string());
+        let verifier = verifier(&cts, &TestClock::new(NOW));
 
         let err = verifier
             .verify(token(KEY_A.jwt(claims())))
@@ -604,16 +548,16 @@ mod given_the_keys_cannot_be_fetched {
 
     #[tokio::test]
     async fn cached_keys_still_verify_when_a_refresh_fails() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let clock = ManualClock::at(NOW);
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
         let verifier = verifier(&cts, &clock);
         verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
 
-        cts.status.store(503, Ordering::SeqCst);
+        cts.set_status(503);
         clock.advance(KEYS_TTL_SECS);
 
         assert_eq!(
-            verdict(&verifier, KEY_A.jwt(claims())).await,
+            verdict(&verifier, another_token()).await,
             Ok(()),
             "a JWKS outage must not refuse a token the cached keys verify"
         );
@@ -622,12 +566,12 @@ mod given_the_keys_cannot_be_fetched {
 
     #[tokio::test]
     async fn an_unknown_key_during_an_outage_is_not_accepted() {
-        let cts = FakeCts::serving(jwks(&[&KEY_A]));
-        let clock = ManualClock::at(NOW);
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
         let verifier = verifier(&cts, &clock);
         verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
 
-        cts.status.store(503, Ordering::SeqCst);
+        cts.set_status(503);
         clock.advance(MIN_REFETCH_SECS);
 
         let err = verifier
@@ -647,18 +591,15 @@ mod given_the_verification_setting {
 
     #[test]
     fn off_builds_no_verifier() {
-        let cts = transport::share(FakeCts::serving(String::new()));
-        let resolved = Verification::Off
-            .resolve(|| Ok(region()), None, &cts)
-            .unwrap();
+        let cts = transport::share(StubCts::serving(String::new()));
+        let resolved = resolve(false, || panic!("region asked for"), None, &cts).unwrap();
         assert!(resolved.is_none());
     }
 
     #[test]
-    fn the_region_issuer_is_the_regions_cts() {
-        let cts = transport::share(FakeCts::serving(String::new()));
-        let verifier = Verification::RegionIssuer
-            .resolve(|| Ok(region()), None, &cts)
+    fn the_issuer_is_the_regions_cts() {
+        let cts = transport::share(StubCts::serving(String::new()));
+        let verifier = resolve(true, || Ok(region()), None, &cts)
             .unwrap()
             .expect("a verifier");
         assert_eq!(verifier.issuer.as_str(), ISSUER);
@@ -669,12 +610,14 @@ mod given_the_verification_setting {
     }
 
     #[test]
-    fn an_explicit_issuer_keeps_its_path() {
-        let cts = transport::share(FakeCts::serving(String::new()));
-        let verifier = Verification::Issuer("https://cts.example.com/staging".parse().unwrap())
-            .resolve(|| Ok(region()), None, &cts)
-            .unwrap()
-            .expect("a verifier");
+    fn an_issuer_with_a_path_keeps_it() {
+        let verifier = TokenVerifier::new(
+            "https://cts.example.com/staging".parse().unwrap(),
+            None,
+            transport::share(StubCts::serving(String::new())),
+            system_clock(),
+        )
+        .unwrap();
         assert_eq!(verifier.issuer.as_str(), "https://cts.example.com/staging/");
         assert_eq!(
             verifier.jwks_url.as_str(),
@@ -787,7 +730,7 @@ mod given_each_rs256_backend {
     }
 }
 
-/// Each strategy builder's `verify_tokens` / `trusted_issuer`, end to end
+/// Each strategy builder's `verify_tokens`, end to end
 /// through a stub CTS.
 mod given_a_strategy_that_verifies_tokens {
     use super::*;
@@ -826,28 +769,27 @@ mod given_a_strategy_that_verifies_tokens {
         Arc::new(StubCts::new(token, jwks(&[&KEY_A])))
     }
 
-    async fn access_key(cts: &Arc<StubCts>, pin: bool) -> Result<ServiceToken, AuthError> {
-        let builder = AccessKeyStrategy::builder(crn(), key())
+    async fn access_key(cts: &Arc<StubCts>) -> Result<ServiceToken, AuthError> {
+        AccessKeyStrategy::builder(crn(), key())
             .base_url(AUTH_URL.parse().unwrap())
-            .transport(Arc::clone(cts));
-        let builder = if pin {
-            builder.trusted_issuer(ISSUER.parse().unwrap())
-        } else {
-            builder.verify_tokens()
-        };
-        builder.build().unwrap().get_token().await
+            .transport(Arc::clone(cts))
+            .verify_tokens()
+            .build()
+            .unwrap()
+            .get_token()
+            .await
     }
 
     #[tokio::test]
     async fn the_access_key_strategy_returns_a_genuine_token() {
         let cts = cts(genuine());
-        assert!(access_key(&cts, true).await.is_ok());
+        assert!(access_key(&cts).await.is_ok());
     }
 
     #[tokio::test]
     async fn the_access_key_strategy_refuses_a_forged_token() {
         let cts = cts(forged());
-        let err = access_key(&cts, true).await.unwrap_err();
+        let err = access_key(&cts).await.unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken(_)), "got {err:?}");
     }
 
@@ -859,7 +801,7 @@ mod given_a_strategy_that_verifies_tokens {
         // so it verifies.
         let cts = cts(genuine());
 
-        assert!(access_key(&cts, false).await.is_ok());
+        assert!(access_key(&cts).await.is_ok());
         assert_eq!(
             cts.jwks_requests(),
             vec![format!("{ISSUER}.well-known/jwks.json")]
@@ -870,7 +812,7 @@ mod given_a_strategy_that_verifies_tokens {
     async fn verify_tokens_refuses_a_token_from_the_overridden_auth_url() {
         let cts = cts(KEY_A.jwt(cts_claims(AUTH_URL, WORKSPACE)));
 
-        let err = access_key(&cts, false).await.unwrap_err();
+        let err = access_key(&cts).await.unwrap_err();
 
         assert!(matches!(err, AuthError::InvalidToken(_)), "got {err:?}");
         assert!(cts.jwks_requests().is_empty());
@@ -1003,7 +945,7 @@ mod given_a_strategy_that_verifies_tokens {
             .with_access_key("CSAKkeyId.keySecret")
             .with_workspace_crn(crn())
             .transport(Arc::clone(&cts))
-            .trusted_issuer(ISSUER.parse().unwrap())
+            .verify_tokens()
             .detect()
             .unwrap();
 

@@ -5,7 +5,6 @@ use crate::device_session_strategy::DeviceSessionStrategy;
 #[cfg(not(target_arch = "wasm32"))]
 use stack_profile::ProfileStore;
 
-use crate::token_verifier::Verification;
 use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
 #[cfg(not(target_arch = "wasm32"))]
@@ -87,7 +86,7 @@ impl AutoStrategy {
             access_key: None,
             crn: None,
             transport: None,
-            verification: Verification::Off,
+            verify_tokens: false,
         }
     }
 
@@ -115,7 +114,7 @@ impl AutoStrategy {
         crn: Option<Crn>,
         store: Option<ProfileStore>,
         transport: Option<SharedTransport>,
-        verification: Verification,
+        verify_tokens: bool,
     ) -> Result<Self, AuthError> {
         // 1. Access key from environment
         if let Some(access_key) = access_key {
@@ -125,7 +124,7 @@ impl AutoStrategy {
             let key: crate::AccessKey = access_key.parse()?;
             let strategy = AccessKeyStrategy::builder(workspace_crn, key)
                 .maybe_transport(transport)
-                .verification(verification)
+                .verify_tokens_if(verify_tokens)
                 .build()?;
             return Ok(Self::AccessKey(strategy));
         }
@@ -147,7 +146,7 @@ impl AutoStrategy {
                 }
                 let strategy = builder
                     .maybe_transport(transport)
-                    .verification(verification)
+                    .verify_tokens_if(verify_tokens)
                     .build()?;
                 return Ok(Self::DeviceSession(strategy));
             }
@@ -162,7 +161,7 @@ impl AutoStrategy {
         access_key: Option<&str>,
         crn: Option<Crn>,
         transport: Option<SharedTransport>,
-        verification: Verification,
+        verify_tokens: bool,
     ) -> Result<Self, AuthError> {
         if let Some(access_key) = access_key {
             let workspace_crn = crn.ok_or(AuthError::MissingWorkspaceCrn(
@@ -171,7 +170,7 @@ impl AutoStrategy {
             let key: crate::AccessKey = access_key.parse()?;
             let strategy = AccessKeyStrategy::builder(workspace_crn, key)
                 .maybe_transport(transport)
-                .verification(verification)
+                .verify_tokens_if(verify_tokens)
                 .build()?;
             return Ok(Self::AccessKey(strategy));
         }
@@ -202,7 +201,7 @@ pub struct AutoStrategyBuilder {
     access_key: Option<SecretToken>,
     crn: Option<Crn>,
     transport: Option<SharedTransport>,
-    verification: Verification,
+    verify_tokens: bool,
 }
 
 impl AutoStrategyBuilder {
@@ -218,15 +217,7 @@ impl AutoStrategyBuilder {
     /// [`AccessKeyStrategyBuilder::verify_tokens`](crate::AccessKeyStrategyBuilder::verify_tokens)
     /// and [`DeviceSessionStrategyBuilder::verify_tokens`](crate::DeviceSessionStrategyBuilder::verify_tokens).
     pub fn verify_tokens(mut self) -> Self {
-        self.verification = self.verification.enable();
-        self
-    }
-
-    /// Verify every token against `issuer` instead of the region's CTS.
-    /// Implies [`verify_tokens`](Self::verify_tokens); set it only from
-    /// configuration you control.
-    pub fn trusted_issuer(mut self, issuer: url::Url) -> Self {
-        self.verification = Verification::Issuer(issuer);
+        self.verify_tokens = true;
         self
     }
 
@@ -282,7 +273,7 @@ impl AutoStrategyBuilder {
                 crn,
                 store,
                 self.transport,
-                self.verification,
+                self.verify_tokens,
             )
         }
         #[cfg(target_arch = "wasm32")]
@@ -291,7 +282,7 @@ impl AutoStrategyBuilder {
                 access_key.as_ref().map(SecretToken::as_str),
                 crn,
                 self.transport,
-                self.verification,
+                self.verify_tokens,
             )
         }
     }
@@ -392,7 +383,7 @@ mod tests {
                 Some(valid_crn()),
                 None,
                 None,
-                Verification::Off,
+                false,
             );
 
             assert!(result.is_ok());
@@ -406,7 +397,7 @@ mod tests {
                 None,
                 None,
                 None,
-                Verification::Off,
+                false,
             );
 
             assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn(_))));
@@ -419,7 +410,7 @@ mod tests {
                 Some(valid_crn()),
                 None,
                 None,
-                Verification::Off,
+                false,
             );
 
             assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
@@ -431,8 +422,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let store = write_token_store(dir.path());
 
-            let result =
-                AutoStrategy::detect_inner(None, None, Some(store), None, Verification::Off);
+            let result = AutoStrategy::detect_inner(None, None, Some(store), None, false);
 
             assert!(result.is_ok());
             assert!(matches!(result.unwrap(), AutoStrategy::DeviceSession(_)));
@@ -446,13 +436,8 @@ mod tests {
             // The CLI user switches to another workspace with no session.
             store.init_workspace("AAAAAAAAAAAAAAAA").unwrap();
 
-            let result = AutoStrategy::detect_inner(
-                None,
-                Some(valid_crn()),
-                Some(store),
-                None,
-                Verification::Off,
-            );
+            let result =
+                AutoStrategy::detect_inner(None, Some(valid_crn()), Some(store), None, false);
 
             assert!(matches!(result, Ok(AutoStrategy::DeviceSession(_))));
         }
@@ -463,13 +448,8 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let store = write_token_store(dir.path());
 
-            let result = AutoStrategy::detect_inner(
-                None,
-                Some(valid_crn()),
-                Some(store),
-                None,
-                Verification::Off,
-            );
+            let result =
+                AutoStrategy::detect_inner(None, Some(valid_crn()), Some(store), None, false);
 
             assert!(matches!(result, Ok(AutoStrategy::DeviceSession(_))));
         }
@@ -482,8 +462,7 @@ mod tests {
             let store = write_token_store(dir.path());
             let crn: Crn = "crn:ap-southeast-2.aws:AAAAAAAAAAAAAAAA".parse().unwrap();
 
-            let result =
-                AutoStrategy::detect_inner(None, Some(crn), Some(store), None, Verification::Off);
+            let result = AutoStrategy::detect_inner(None, Some(crn), Some(store), None, false);
 
             assert!(matches!(result, Err(AuthError::NotAuthenticated(_))));
         }
@@ -493,15 +472,14 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let store = ProfileStore::new(dir.path());
 
-            let result =
-                AutoStrategy::detect_inner(None, None, Some(store), None, Verification::Off);
+            let result = AutoStrategy::detect_inner(None, None, Some(store), None, false);
 
             assert!(matches!(result, Err(AuthError::NotAuthenticated(_))));
         }
 
         #[test]
         fn no_credentials_returns_not_authenticated() {
-            let result = AutoStrategy::detect_inner(None, None, None, None, Verification::Off);
+            let result = AutoStrategy::detect_inner(None, None, None, None, false);
 
             assert!(matches!(result, Err(AuthError::NotAuthenticated(_))));
         }
@@ -517,7 +495,7 @@ mod tests {
                 Some(valid_crn()),
                 Some(store),
                 None,
-                Verification::Off,
+                false,
             );
 
             assert!(result.is_ok());

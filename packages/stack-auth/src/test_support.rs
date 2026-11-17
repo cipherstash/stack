@@ -112,7 +112,8 @@ pub(crate) fn jwt_for_principal(workspace: &str, sub: &str) -> String {
 /// verification (`token_verifier`) without a real CTS.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod signing {
-    use std::sync::{LazyLock, Mutex};
+    use std::sync::atomic::{AtomicU16, Ordering};
+    use std::sync::{Arc, LazyLock, Mutex};
 
     use aws_lc_rs::rand::SystemRandom;
     use aws_lc_rs::rsa::{KeyPair, KeySize, PublicKeyComponents};
@@ -203,11 +204,14 @@ pub(crate) mod signing {
     }
 
     /// A stub CTS: `POST .../api/authorise` returns `token`, and
-    /// `GET .../.well-known/jwks.json` returns `jwks`, whatever the host. It
-    /// records each `(method, url)` it is sent.
+    /// `GET .../.well-known/jwks.json` returns `jwks` with the status set by
+    /// [`set_status`](Self::set_status), whatever the host. It records each
+    /// `(method, url)` it is sent.
     pub(crate) struct StubCts {
         token: String,
-        jwks: String,
+        jwks: Mutex<String>,
+        status: AtomicU16,
+        unreachable: bool,
         seen: Mutex<Vec<(String, String)>>,
     }
 
@@ -215,9 +219,39 @@ pub(crate) mod signing {
         pub(crate) fn new(token: String, jwks: String) -> Self {
             Self {
                 token,
-                jwks,
+                jwks: Mutex::new(jwks),
+                status: AtomicU16::new(200),
+                unreachable: false,
                 seen: Mutex::new(Vec::new()),
             }
+        }
+
+        /// A CTS that only serves `jwks`.
+        pub(crate) fn serving(jwks: String) -> Arc<Self> {
+            Arc::new(Self::new(String::new(), jwks))
+        }
+
+        /// A CTS every request to fails.
+        pub(crate) fn unreachable() -> Arc<Self> {
+            Arc::new(Self {
+                unreachable: true,
+                ..Self::new(String::new(), String::new())
+            })
+        }
+
+        /// Publish `jwks` from now on.
+        pub(crate) fn rotate_to(&self, jwks: String) {
+            *self.jwks.lock().unwrap() = jwks;
+        }
+
+        /// Answer JWKS requests with `status` from now on.
+        pub(crate) fn set_status(&self, status: u16) {
+            self.status.store(status, Ordering::SeqCst);
+        }
+
+        /// Every `(method, url)` the stub has been sent.
+        pub(crate) fn requests(&self) -> Vec<(String, String)> {
+            self.seen.lock().unwrap().clone()
         }
 
         /// The URLs of the JWKS requests the stub has seen.
@@ -239,16 +273,25 @@ pub(crate) mod signing {
                 .lock()
                 .unwrap()
                 .push((request.method().to_string(), url.to_string()));
-            let body = match (request.method(), url.path()) {
-                ("GET", path) if path.ends_with("/.well-known/jwks.json") => self.jwks.clone(),
-                ("POST", path) if path.ends_with("/api/authorise") => serde_json::json!({
-                    "accessToken": self.token,
-                    "expiry": u64::from(u32::MAX),
-                })
-                .to_string(),
+            if self.unreachable {
+                return Err(RequestError(Box::new(std::io::Error::other("unreachable"))));
+            }
+            let (status, body) = match (request.method(), url.path()) {
+                ("GET", path) if path.ends_with("/.well-known/jwks.json") => (
+                    self.status.load(Ordering::SeqCst),
+                    self.jwks.lock().unwrap().clone(),
+                ),
+                ("POST", path) if path.ends_with("/api/authorise") => (
+                    200,
+                    serde_json::json!({
+                        "accessToken": self.token,
+                        "expiry": u64::from(u32::MAX),
+                    })
+                    .to_string(),
+                ),
                 _ => return Ok(HttpResponse::new(404, Vec::new(), Vec::new())),
             };
-            Ok(HttpResponse::new(200, Vec::new(), body.into_bytes()))
+            Ok(HttpResponse::new(status, Vec::new(), body.into_bytes()))
         }
     }
 

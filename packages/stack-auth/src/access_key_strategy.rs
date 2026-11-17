@@ -4,7 +4,7 @@ use crate::access_key::AccessKey;
 use crate::access_key_refresher::AccessKeyRefresher;
 use crate::auto_refresh::AutoRefresh;
 use crate::token_store::{NoStore, TokenStore};
-use crate::token_verifier::{self, TokenVerifier, Verification};
+use crate::token_verifier::{self, TokenVerifier};
 use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken};
@@ -92,7 +92,7 @@ impl AccessKeyStrategy {
             base_url_override: None,
             token_store: NoStore,
             transport: None,
-            verification: Verification::Off,
+            verify_tokens: false,
         }
     }
 }
@@ -116,7 +116,7 @@ pub struct AccessKeyStrategyBuilder<S = NoStore> {
     base_url_override: Option<url::Url>,
     token_store: S,
     transport: Option<SharedTransport>,
-    verification: Verification,
+    verify_tokens: bool,
 }
 
 impl<S> AccessKeyStrategyBuilder<S> {
@@ -139,9 +139,10 @@ impl<S> AccessKeyStrategyBuilder<S> {
         self
     }
 
-    /// The auto strategy's verification setting, handed through.
-    pub(crate) fn verification(mut self, verification: Verification) -> Self {
-        self.verification = verification;
+    /// The auto strategy's [`verify_tokens`](Self::verify_tokens) setting,
+    /// handed through.
+    pub(crate) fn verify_tokens_if(mut self, verify_tokens: bool) -> Self {
+        self.verify_tokens = verify_tokens;
         self
     }
 
@@ -162,18 +163,7 @@ impl<S> AccessKeyStrategyBuilder<S> {
     /// tokens are requested does not change which tokens are accepted. A token
     /// that fails is refused with [`AuthError::InvalidToken`].
     pub fn verify_tokens(mut self) -> Self {
-        self.verification = self.verification.enable();
-        self
-    }
-
-    /// Verify every token against `issuer` instead of the region's CTS.
-    ///
-    /// Implies [`verify_tokens`](Self::verify_tokens). For a staging CTS or a
-    /// local one: unlike [`base_url`](Self::base_url) and `CS_CTS_HOST`,
-    /// which only change where tokens are requested, this changes which
-    /// issuer is trusted, so set it only from configuration you control.
-    pub fn trusted_issuer(mut self, issuer: url::Url) -> Self {
-        self.verification = Verification::Issuer(issuer);
+        self.verify_tokens = true;
         self
     }
 
@@ -211,7 +201,7 @@ impl<S> AccessKeyStrategyBuilder<S> {
             base_url_override: self.base_url_override,
             token_store: store,
             transport: self.transport,
-            verification: self.verification,
+            verify_tokens: self.verify_tokens,
         }
     }
 }
@@ -234,11 +224,14 @@ impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
             }
         };
         let transport = transport::resolve(self.transport)?;
-        // The trusted issuer comes from the region (or an explicit
-        // `trusted_issuer`), never from `base_url`: see `token_verifier`.
-        let verifier =
-            self.verification
-                .resolve(|| Ok(region), self.audience.clone(), &transport)?;
+        // The trusted issuer comes from the region, never from `base_url`:
+        // see `token_verifier`.
+        let verifier = token_verifier::resolve(
+            self.verify_tokens,
+            || Ok(region),
+            self.audience.clone(),
+            &transport,
+        )?;
         let refresher = AccessKeyRefresher::new(
             self.access_key,
             ensure_trailing_slash(base_url),
