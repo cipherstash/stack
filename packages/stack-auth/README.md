@@ -190,9 +190,13 @@ in for this one, and with an `audience` the token must be for that audience.
 A token that fails is refused with [`AuthError::InvalidToken`]. As without
 verification, a token for another workspace is refused with
 [`AuthError::WorkspaceMismatch`]; with verification on, that check is on a
-`workspace` claim the issuer signed.
+`workspace` claim the issuer signed. A device session given no workspace CRN
+is held to the workspace of the session it starts from, so a refresh cannot
+move it to another workspace.
 
-The trusted issuer is the CTS that serves the workspace's region. It is
+The trusted issuer is the CTS that serves the workspace's region: the CRN's
+region when the strategy has one, and for a saved device session with no CRN,
+the region saved with the session. It is
 pinned separately from the auth URL: `base_url()` and `CS_CTS_HOST` change
 where tokens are requested, never which issuer is trusted, so a redirected
 auth URL cannot hand the client a token naming its own ZeroKMS endpoint.

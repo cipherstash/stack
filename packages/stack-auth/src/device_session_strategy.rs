@@ -61,6 +61,7 @@ impl DeviceSessionStrategy {
             base_url_override: None,
             transport: None,
             expected_workspace: None,
+            expected_region: None,
             verify_tokens: false,
         }
     }
@@ -79,6 +80,7 @@ impl DeviceSessionStrategy {
             base_url_override: None,
             transport: None,
             expected_workspace: None,
+            expected_region: None,
             verify_tokens: false,
         }
     }
@@ -94,6 +96,7 @@ impl DeviceSessionStrategy {
             base_url_override: None,
             transport: None,
             expected_workspace: None,
+            expected_region: None,
             verify_tokens: false,
         }
     }
@@ -137,6 +140,9 @@ pub struct DeviceSessionStrategyBuilder {
     base_url_override: Option<url::Url>,
     transport: Option<SharedTransport>,
     expected_workspace: Option<WorkspaceId>,
+    /// The region of the CRN passed to
+    /// [`workspace_crn`](DeviceSessionStrategyBuilder::workspace_crn), if any.
+    expected_region: Option<Region>,
     verify_tokens: bool,
 }
 
@@ -145,13 +151,26 @@ impl DeviceSessionStrategyBuilder {
     /// returns it, against the CTS that serves the session's region.
     ///
     /// The token must be signed with RS256 by a key that issuer publishes at
-    /// `<issuer>/.well-known/jwks.json`, name that issuer as `iss`, and not
-    /// have expired. The issuer is pinned from the region (the one passed to
-    /// [`with_token`](DeviceSessionStrategy::with_token), or the one saved
-    /// with the session), not from [`base_url`](Self::base_url),
-    /// `CS_CTS_HOST` or the saved token's own `iss`, so redirecting where
-    /// tokens are requested does not change which tokens are accepted. A token
-    /// that fails is refused with [`AuthError::InvalidToken`].
+    /// `<issuer>/.well-known/jwks.json`, name that issuer as `iss`, and be
+    /// within its `exp` and, when it has one, its `nbf` (60 seconds of clock
+    /// skew allowed on each). A token that fails is refused with
+    /// [`AuthError::InvalidToken`].
+    ///
+    /// Every token must also be for the expected workspace, checked on the
+    /// `workspace` claim the issuer signed, or it is refused with
+    /// [`AuthError::WorkspaceMismatch`]. The expected workspace is the one
+    /// named by [`workspace_crn`](Self::workspace_crn) or, without one, the
+    /// workspace of the session the strategy starts from, so a refresh cannot
+    /// move the strategy to another workspace. A session whose workspace
+    /// cannot be read fails [`build`](Self::build).
+    ///
+    /// The issuer is the CTS for the region of the CRN given to
+    /// [`workspace_crn`](Self::workspace_crn) when there is one (for
+    /// [`with_token`](DeviceSessionStrategy::with_token), the region passed
+    /// to it), otherwise the region saved with the session. It is never taken
+    /// from [`base_url`](Self::base_url), `CS_CTS_HOST` or the saved token's
+    /// own `iss`, so redirecting where tokens are requested does not change
+    /// which tokens are accepted.
     pub fn verify_tokens(mut self) -> Self {
         self.verify_tokens = true;
         self
@@ -170,7 +189,10 @@ impl DeviceSessionStrategyBuilder {
     /// Every token returned by `get_token` is checked against the CRN's
     /// workspace, failing with [`AuthError::WorkspaceMismatch`] if it belongs
     /// to another one — as [`AccessKeyStrategy`](crate::AccessKeyStrategy)
-    /// does. Only the workspace ID is compared, not the region.
+    /// does. Only the workspace ID is compared, not the region. With
+    /// [`verify_tokens`](Self::verify_tokens), a saved session is verified
+    /// against the CTS for the CRN's region rather than the region saved
+    /// with it.
     ///
     /// For a strategy built with [`with_profile`](DeviceSessionStrategy::with_profile),
     /// the token is also loaded from that workspace's directory rather than
@@ -179,6 +201,7 @@ impl DeviceSessionStrategyBuilder {
     /// sources are already a specific workspace's, so the pin only verifies.
     pub fn workspace_crn(mut self, crn: &Crn) -> Self {
         self.expected_workspace = Some(crn.workspace_id);
+        self.expected_region = Some(crn.region);
         self
     }
 
@@ -228,6 +251,7 @@ impl DeviceSessionStrategyBuilder {
             base_url_override,
             transport,
             expected_workspace,
+            expected_region,
             verify_tokens,
         } = self;
         let transport = transport::resolve(transport)?;
@@ -255,6 +279,7 @@ impl DeviceSessionStrategyBuilder {
                     base_url_override,
                     transport,
                     expected_workspace,
+                    expected_region,
                     verify_tokens,
                 )
             }
@@ -263,6 +288,7 @@ impl DeviceSessionStrategyBuilder {
                 base_url_override,
                 transport,
                 expected_workspace,
+                expected_region,
                 verify_tokens,
             ),
         }
@@ -297,6 +323,7 @@ impl DeviceSessionStrategyBuilder {
             })
             .ok();
         ensure_workspace(&token, expected_workspace)?;
+        let expected_workspace = session_pin(&token, expected_workspace, verify_tokens)?;
         let region_id = region.identifier();
         let device_instance_id = token.device_instance_id().map(String::from);
         token.set_region(&region_id);
@@ -324,12 +351,14 @@ impl DeviceSessionStrategyBuilder {
         base_url_override: Option<url::Url>,
         transport: SharedTransport,
         expected_workspace: Option<WorkspaceId>,
+        expected_region: Option<Region>,
         verify_tokens: bool,
     ) -> Result<DeviceSessionStrategy, AuthError> {
         let token: Token = ws_store.load_profile()?;
         // Before `AutoRefresh` can see it: refreshing another workspace's
         // session would consume that session's refresh credential.
         ensure_workspace(&token, expected_workspace)?;
+        let expected_workspace = session_pin(&token, expected_workspace, verify_tokens)?;
 
         let region_str = token
             .region()
@@ -347,11 +376,16 @@ impl DeviceSessionStrategyBuilder {
             })
             .ok();
         let device_instance_id = token.device_instance_id().map(String::from);
-        // The region saved with the session, not the token's `iss`: the
-        // issuer a saved token names is exactly what is being checked.
+        // The CRN's region when the caller gave one, else the region saved
+        // with the session; never the token's `iss`, which is exactly what is
+        // being checked. A store the caller does not control cannot then
+        // choose the issuer when a CRN pins the workspace.
         let verifier = token_verifier::resolve(
             verify_tokens,
-            || Ok(Region::new(&region_str)?),
+            || match expected_region {
+                Some(region) => Ok(region),
+                None => Ok(Region::new(&region_str)?),
+            },
             None,
             &transport,
         )?;
@@ -376,6 +410,29 @@ impl DeviceSessionStrategyBuilder {
             verifier,
             inner: AutoRefresh::with_token(refresher, token),
         })
+    }
+}
+
+/// The workspace every token must be for: `expected` when the caller pinned
+/// one, else — with verification on — the workspace of the session the
+/// strategy starts from, so a refresh cannot move it to another workspace.
+///
+/// The pin comes from the session's own `workspace` claim, so it holds the
+/// strategy to the workspace it started in; it cannot tell a genuine session
+/// from one written into the store by someone else (pin a CRN with
+/// [`workspace_crn`](DeviceSessionStrategyBuilder::workspace_crn) for that).
+/// A session whose workspace cannot be read is refused here rather than left
+/// unpinned. Without verification the session is not pinned unless the
+/// caller asked.
+fn session_pin(
+    token: &Token,
+    expected: Option<WorkspaceId>,
+    verify_tokens: bool,
+) -> Result<Option<WorkspaceId>, AuthError> {
+    match expected {
+        Some(workspace) => Ok(Some(workspace)),
+        None if verify_tokens => token.workspace_id().map(Some),
+        None => Ok(None),
     }
 }
 
@@ -473,5 +530,143 @@ mod tests {
             .get_token()
             .await
             .expect("matching workspace should pass");
+    }
+
+    /// Saved sessions built with `verify_tokens()`, refreshed or verified
+    /// through a stub CTS.
+    #[cfg(not(target_arch = "wasm32"))]
+    mod given_a_verified_saved_session {
+        use std::sync::Arc;
+
+        use super::*;
+        use crate::error::RequestError;
+        use crate::test_support::signing::{claims, jwks, StubCts, KEY_A};
+        use crate::transport::{HttpRequest, HttpResponse};
+
+        const ISSUER: &str = "https://ap-southeast-2.aws.cts.cipherstashmanaged.net/";
+        const WORKSPACE: &str = "ZVATKW3VHMFG27DY";
+        const OTHER_WORKSPACE: &str = "AAAAAAAAAAAAAAAA";
+
+        /// The real CTS's keys behind `jwks`, plus an `/oauth/token` that
+        /// answers every refresh with `refreshed`.
+        struct RefreshingCts {
+            keys: Arc<StubCts>,
+            refreshed: String,
+        }
+
+        impl HttpTransport for RefreshingCts {
+            async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+                if request.method() == "POST" && request.url().path().ends_with("/oauth/token") {
+                    let body = serde_json::json!({
+                        "access_token": self.refreshed,
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                        "refresh_token": "rotated-refresh-token",
+                    });
+                    return Ok(HttpResponse::new(
+                        200,
+                        Vec::new(),
+                        body.to_string().into_bytes(),
+                    ));
+                }
+                self.keys.send(request).await
+            }
+        }
+
+        /// A session for `WORKSPACE` issued by `iss`, saved with `region` in
+        /// a fresh store, `expired` or not. Returns the store's directory
+        /// (to keep it alive) and the profile store.
+        fn saved_session(
+            iss: &str,
+            region: &str,
+            expired: bool,
+        ) -> (tempfile::TempDir, ProfileStore) {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let store = ProfileStore::new(dir.path());
+            let ws_store = store.workspace_store(WORKSPACE).expect("workspace store");
+            let mut saved = crate::test_support::raw_token(&KEY_A.jwt(claims(iss, WORKSPACE)));
+            if expired {
+                saved.expires_at = 0;
+            }
+            saved.set_region(region);
+            saved.set_client_id("client-id");
+            ws_store.save_profile(&saved).expect("save session");
+            (dir, store)
+        }
+
+        /// The expired saved session refreshed into a token for `workspace`,
+        /// genuinely signed by the trusted CTS.
+        async fn refreshed_into(workspace: &str) -> Result<ServiceToken, AuthError> {
+            let (_dir, store) = saved_session(ISSUER, "ap-southeast-2.aws", true);
+            let ws_store = store.workspace_store(WORKSPACE).expect("workspace store");
+            let cts = RefreshingCts {
+                keys: StubCts::serving(jwks(&[&KEY_A])),
+                refreshed: KEY_A.jwt(claims(ISSUER, workspace)),
+            };
+            let strategy = DeviceSessionStrategy::with_workspace_store(ws_store)
+                .base_url("https://auth.example.com/".parse().expect("valid url"))
+                .transport(cts)
+                .verify_tokens()
+                .build()
+                .expect("build should succeed for a session of this workspace");
+            (&strategy).get_token().await
+        }
+
+        #[tokio::test]
+        async fn get_token_refuses_a_refreshed_token_for_another_workspace() {
+            let result = refreshed_into(OTHER_WORKSPACE).await;
+
+            assert!(
+                matches!(result, Err(AuthError::WorkspaceMismatch(_))),
+                "a refreshed token for another workspace must be refused, got {:?}",
+                result.map(|_| "a token")
+            );
+        }
+
+        #[tokio::test]
+        async fn get_token_accepts_a_refreshed_token_for_the_same_workspace() {
+            let result = refreshed_into(WORKSPACE).await;
+
+            assert!(
+                result.is_ok(),
+                "a refreshed token for the session's own workspace must be accepted, got {:?}",
+                result.err()
+            );
+        }
+
+        /// The store says the session is Virginia's, and the token is
+        /// genuinely Virginia's; the CRN says Sydney. The CRN wins.
+        #[tokio::test]
+        async fn get_token_verifies_against_the_crns_region_not_the_saved_one() {
+            let virginia = Region::new("us-east-1.aws").expect("valid region");
+            let virginia_issuer = CtsServiceDiscovery::endpoint(virginia)
+                .expect("virginia CTS")
+                .to_string();
+            let (_dir, store) = saved_session(&virginia_issuer, "us-east-1.aws", false);
+            let sydney: Crn = format!("crn:ap-southeast-2.aws:{WORKSPACE}")
+                .parse()
+                .expect("valid crn");
+            let cts = StubCts::serving(jwks(&[&KEY_A]));
+
+            let strategy = DeviceSessionStrategy::with_profile(store)
+                .base_url("https://auth.example.com/".parse().expect("valid url"))
+                .transport(Arc::clone(&cts))
+                .workspace_crn(&sydney)
+                .verify_tokens()
+                .build()
+                .expect("build should succeed for a session of the CRN's workspace");
+            let result = (&strategy).get_token().await;
+
+            assert!(
+                matches!(result, Err(AuthError::InvalidToken(_))),
+                "a token from the saved region's CTS must be refused, got {:?}",
+                result.map(|_| "a token")
+            );
+            assert!(
+                cts.jwks_requests().is_empty(),
+                "the issuer check refuses the token before any keys are fetched, got {:?}",
+                cts.jwks_requests()
+            );
+        }
     }
 }

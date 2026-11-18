@@ -438,11 +438,16 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
     /// serves the CRN's region.
     ///
     /// The token must be signed with RS256 by a key that issuer publishes at
-    /// `<issuer>/.well-known/jwks.json`, name that issuer as `iss`, and not
-    /// have expired. The issuer is pinned from the CRN's region, not from
+    /// `<issuer>/.well-known/jwks.json`, name that issuer as `iss`, and be
+    /// within its `exp` and, when it has one, its `nbf` (60 seconds of clock
+    /// skew allowed on each). A token that fails is refused with
+    /// [`AuthError::InvalidToken`]. A token for another workspace is refused
+    /// with [`AuthError::WorkspaceMismatch`], as without verification, but the
+    /// check is then on a `workspace` claim the issuer signed.
+    ///
+    /// The issuer is pinned from the CRN's region, not from
     /// [`base_url`](Self::base_url) or `CS_CTS_HOST`, so redirecting where
-    /// tokens are requested does not change which tokens are accepted. A token
-    /// that fails is refused with [`AuthError::InvalidToken`].
+    /// tokens are requested does not change which tokens are accepted.
     pub fn verify_tokens(mut self) -> Self {
         self.verify_tokens = true;
         self
