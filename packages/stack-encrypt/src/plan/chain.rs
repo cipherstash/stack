@@ -368,10 +368,14 @@ impl<K: 'static> StackCipher<K> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::{AuditMetadata, Equality, Plan, StackCipher};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let email_plan = Plan::context("users/email").with(Equality).build()?;
     /// let email = String::from("bob@example.com");
     /// let stored = cipher.encrypt(&email).using(&email_plan).await?;
@@ -1224,10 +1228,14 @@ impl<K, T> All<'_, K, T> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::{AuditMetadata, Equality, Plan, StackCipher};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let email_plan = Plan::context("users/email").with(Equality).build()?;
     /// let (alice, bob) = (String::from("alice@example.com"), String::from("bob@example.com"));
     ///
@@ -1248,10 +1256,14 @@ impl<K, T> All<'_, K, T> {
     ///
     /// ```compile_fail
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::{AuditMetadata, Equality, Plan, StackCipher};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let email_plan = Plan::context("users/email").with(Equality).build()?;
     /// let (alice, bob) = (String::from("alice@example.com"), String::from("bob@example.com"));
     ///

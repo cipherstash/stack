@@ -1095,11 +1095,15 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// as its purpose or a request id.
     ///
     /// ```
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::{AuditMetadata, StackCipher};
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let keyset = cipher.default_keyset();
     /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
     ///
@@ -1194,11 +1198,15 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// as its purpose or a request id.
     ///
     /// ```
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::{AuditMetadata, StackCipher};
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let keyset = cipher.default_keyset();
     /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
     ///

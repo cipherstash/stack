@@ -1498,12 +1498,16 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// as its purpose or a request id.
     ///
     /// ```
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::target::AeadContext;
     /// use stack_encrypt::{nonempty, AuditMetadata, StackCipher, StackCipherText};
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let keyset = cipher.default_keyset();
     /// let context = || AeadContext::from(nonempty!("users/email"));
     /// let stored: StackCipherText = keyset
@@ -1556,12 +1560,16 @@ impl<K: 'static> StackCipher<K> {
     /// as its purpose or a request id.
     ///
     /// ```
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::target::AeadContext;
     /// use stack_encrypt::{nonempty, AuditMetadata, StackCipher, StackCipherText};
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let keyset = cipher.default_keyset();
     /// let context = || AeadContext::from(nonempty!("users/email"));
     /// let stored: StackCipherText = keyset
