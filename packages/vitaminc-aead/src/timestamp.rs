@@ -67,22 +67,13 @@ impl Timestamp {
     ///
     /// [`OutOfRange`] if `instant` lies before `jiff::Timestamp::MIN`.
     pub fn new(instant: jiff::Timestamp) -> Result<Self, OutOfRange> {
-        if crate::plaintext::kinds::jiff::timestamp_nanos(instant).is_none() {
-            return Err(OutOfRange);
-        }
-        let (secs, nanos) = (instant.as_second(), instant.subsec_nanosecond());
-        // jiff gives the nanoseconds the sign of the seconds. Store them
-        // as the nanoseconds past the second before instead. jiff's
-        // seconds are far from `i64::MIN`, so the subtraction cannot
-        // overflow.
-        let (secs, nanos) = if nanos < 0 {
-            (secs - 1, nanos + NANOS_PER_SECOND)
-        } else {
-            (secs, nanos)
-        };
+        let count = crate::plaintext::kinds::jiff::timestamp_nanos(instant).ok_or(OutOfRange)?;
+        let per_second = i128::from(NANOS_PER_SECOND);
+        // The count is in the wire's range, so the seconds fit an `i64`,
+        // and the remainder is the nanoseconds past them, below one second.
         Ok(Self {
-            secs,
-            nanos: nanos.unsigned_abs(),
+            secs: count.div_euclid(per_second) as i64,
+            nanos: count.rem_euclid(per_second) as u32,
         })
     }
 
