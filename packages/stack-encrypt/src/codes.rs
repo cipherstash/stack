@@ -11,7 +11,7 @@ mod tests {
     use crate::diagnostic::is_code_of;
     use crate::sem::{MatchOptions, TermBytesError, TermError};
     use crate::target::IndexSpec;
-    use crate::{AuditError, BlobError, Descriptor, Error, LabelError, LeafBytesError, PlanError};
+    use crate::{BlobError, Descriptor, Error, LabelError, LeafBytesError, PlanError};
 
     /// One row per variant of an enum, written `pattern => value`. The
     /// patterns are the arms of a match with no wildcard, so a variant with
@@ -86,12 +86,6 @@ mod tests {
             Error::NotOpened => Error::NotOpened,
             Error::Plan(_) => Error::Plan(PlanError::NoContext),
             Error::Blob(_) => Error::Blob(BlobError::NotABlob),
-            Error::Audit(_) => Error::Audit(AuditError::Mismatch),
-        ]));
-        errors.extend(boxed(variants![
-            AuditError::NotAnObject => AuditError::NotAnObject,
-            AuditError::NumberOutOfRange { .. } => AuditError::NumberOutOfRange { key: field() },
-            AuditError::Mismatch => AuditError::Mismatch,
         ]));
         errors.extend(boxed(variants![
             BlobError::Unwritable(_) => BlobError::Unwritable(storage_error(b"VCS\x01\x0a\x01\x00\x00\x00")),
@@ -460,14 +454,6 @@ mod tests {
                 json!({ "len": 70_000 }),
             ),
             (Box::new(LeafBytesError::Truncated), json!({})),
-            (
-                Box::new(Error::Audit(AuditError::NumberOutOfRange {
-                    key: "request_id".into(),
-                })),
-                json!({ "key": "request_id" }),
-            ),
-            (Box::new(AuditError::NotAnObject), json!({})),
-            (Box::new(AuditError::Mismatch), json!({})),
             (
                 Box::new(TermError::Bytes(TermBytesError::OddMatchTermsLength(3))),
                 json!({ "len": 3 }),

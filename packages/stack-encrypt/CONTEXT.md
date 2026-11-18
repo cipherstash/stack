@@ -352,16 +352,17 @@ and whose ZeroKMS key requests are queued but not sent. Pendings compose
 _Avoid_: future, promise
 
 **Audit metadata**:
-Facts about one call, such as its purpose or a request id, that ZeroKMS
-writes to its audit log beside the identity that made the request
-(`AuditMetadata`, attached with `Pending::audit`). Optional and per call:
-every key request the call makes carries the same map, and merged calls
-must agree on it. ZeroKMS does not verify it and no key depends on it, so
-it may differ between encrypt and decrypt, and nothing may rely on it for
-access control. On the wire it is the request's *unverified context*.
-_Avoid_: context, unverified context (in the API: "context" here is what a
-value is sealed under), label (that is a `Label`, and the labels ZeroKMS
-checks on decrypt), lock context (that is bound into the key)
+Facts about one call, such as its purpose or a request id
+(`AuditMetadata`). ZeroKMS writes the facts to its audit log, beside the
+identity that made the request. Audit metadata is optional. A call sends
+one map, with every key request that it makes. Attach the map last, with
+`.audit(..)`: the result (`Audited`) can only be awaited.
+
+ZeroKMS does not verify the facts. No key depends on them, so nothing may
+rely on them for access control. A decrypt can send different facts from
+the encrypt. The ZeroKMS protocol calls audit metadata the request's
+*unverified context*.
+_Avoid_: context, unverified context, label, lock context
 
 **Keyset**:
 The ZeroKMS key domain a data key is minted under and an index key belongs

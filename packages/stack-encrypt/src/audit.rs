@@ -1,35 +1,265 @@
 //! Audit metadata: facts about a call that ZeroKMS writes to its audit log.
 //!
 //! Every encrypt and decrypt asks ZeroKMS for data keys. ZeroKMS logs each
-//! request with the identity that made it. [`AuditMetadata`] adds the facts
-//! only the application knows, such as why it needs the key, so the log
-//! can say what a request was for as well as who made it.
+//! request with the identity that made it. [`AuditMetadata`] adds facts
+//! that only the application knows, such as why it needs the key.
 //!
-//! Attach it to one call with [`Pending::audit`](crate::Pending::audit) or
-//! to a plan chain with its `.audit(..)` method. It is optional: a call
-//! without it sends no audit metadata, as it always has.
+//! To send it, call `.audit(..)` on a call before you await it. Each
+//! decrypt method shows how, with an example:
 //!
-//! On the wire this is the key request's *unverified context*. It is a
-//! different thing from the contexts elsewhere in this crate, which are
-//! bound into the ciphertext and needed again to decrypt.
+//! - [`KeysetCipher::decrypt`](crate::KeysetCipher::decrypt) and
+//!   [`decrypt_with_context`](crate::KeysetCipher::decrypt_with_context),
+//!   for one value;
+//! - [`KeysetCipher::decrypt_tree`](crate::KeysetCipher::decrypt_tree) and
+//!   [`StackCipher::decrypt`](crate::StackCipher::decrypt), for a tree of
+//!   values;
+//! - [`KeysetCipher::decrypt_as`](crate::KeysetCipher::decrypt_as), for a
+//!   derived record;
+//! - [`StackCipher::open`](crate::StackCipher::open), for a record that a
+//!   plan wrote.
+//!
+//! An encrypt call takes `.audit(..)` in the same way. Audit metadata is
+//! optional: a call without it sends none.
+//!
+//! In the ZeroKMS protocol, audit metadata is the key request's
+//! *unverified context*. Audit metadata is not one of the contexts
+//! described elsewhere in this crate. Those contexts are bound into the
+//! ciphertext. The same context is needed to decrypt.
 
 use std::fmt;
 use std::sync::Arc;
 
-use serde_json::{Map, Value};
+use zerokms_protocol::UnverifiedContextValue;
 
 use crate::kms::UnverifiedContext;
-use crate::Error;
 
 /// Audit metadata in the form ZeroKMS takes, ready to send, or `None` for
-/// none. Shared, so merging calls compares and keeps it without a copy.
+/// none. Shared, so a call that makes several key requests sends it with
+/// each one without a copy.
 pub(crate) type Unverified = Option<Arc<UnverifiedContext>>;
 
-/// Facts about one call, sent to ZeroKMS with its key requests and written
-/// to the ZeroKMS audit log.
+/// Facts about one call that ZeroKMS writes to its audit log.
 ///
-/// Typical facts are the purpose of the call, a request or trace id, and
-/// the end user the call acts for.
+/// Typical facts are the purpose of the call, a request id, a trace id,
+/// and the end user that the call acts for. Add each fact with
+/// [`with`](Self::with), then pass the metadata to `.audit(..)` on the
+/// call. The decrypt methods show this with examples, starting at
+/// [`KeysetCipher::decrypt`](crate::KeysetCipher::decrypt).
+///
+/// ```
+/// use stack_encrypt::AuditMetadata;
+///
+/// let metadata = AuditMetadata::new()
+///     .with("purpose", "list issues")
+///     .with("request_id", "req_01J9Z3");
+/// assert_eq!(metadata.len(), 2);
+/// ```
+///
+/// # Rules
+///
+/// - **ZeroKMS does not verify the facts.** The application states them
+///   and ZeroKMS records them as given. No key depends on them, so do not
+///   use them for access control.
+/// - **A decrypt does not need them.** A decrypt can send different facts
+///   from the encrypt, or none.
+/// - **Do not send plaintext or secrets.** ZeroKMS writes the facts to its
+///   logs. Do not send anything derived from plaintext either. An IP
+///   address or a user agent is personal data. This crate sends only what
+///   you pass, and adds nothing.
+/// - **A call sends one map.** A call can make more than one key request:
+///   one to generate keys, and one to retrieve keys for each keyset it
+///   decrypts values from. Each request is sent with the same facts. A call
+///   that requests no data key sends none.
+///
+/// # Values
+///
+/// A value is anything ZeroKMS can record exactly: see [`AuditValue`].
+/// Metadata contains only those values, so attaching it to a call cannot
+/// fail.
+#[derive(Clone, Default, PartialEq)]
+pub struct AuditMetadata {
+    fields: UnverifiedContext,
+}
+
+impl AuditMetadata {
+    /// Metadata with no facts. A call given empty metadata sends none.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add the fact `key`. A fact already under that key is replaced.
+    ///
+    /// ```
+    /// use stack_encrypt::AuditMetadata;
+    ///
+    /// let metadata = AuditMetadata::new()
+    ///     .with("purpose", "export")
+    ///     .with("rows", 250)
+    ///     .with("tables", vec!["users", "orders"])
+    ///     .with("filters", AuditMetadata::new().with("team", "platform"));
+    /// assert_eq!(metadata.len(), 4);
+    /// ```
+    pub fn with(mut self, key: impl Into<String>, value: impl Into<AuditValue>) -> Self {
+        // A fact already under this key is replaced, as documented.
+        let _replaced = self.fields.0.insert(key.into(), value.into().0);
+        self
+    }
+
+    /// The number of facts.
+    pub fn len(&self) -> usize {
+        self.fields.0.len()
+    }
+
+    /// Whether there are no facts. A call given empty metadata sends none.
+    pub fn is_empty(&self) -> bool {
+        self.fields.0.is_empty()
+    }
+
+    /// The metadata as ZeroKMS takes it, or `None` when there is nothing to
+    /// send.
+    pub(crate) fn into_unverified(self) -> Unverified {
+        if self.fields.0.is_empty() {
+            None
+        } else {
+            Some(Arc::new(self.fields))
+        }
+    }
+}
+
+/// Shows the keys and not the values. The values are the caller's facts.
+/// A debug log is not the audit log.
+impl fmt::Debug for AuditMetadata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut keys = self.fields.0.keys().collect::<Vec<_>>();
+        keys.sort();
+        f.debug_struct("AuditMetadata")
+            .field("keys", &keys)
+            .finish()
+    }
+}
+
+/// One value in [`AuditMetadata`]: something ZeroKMS can record exactly.
+///
+/// You do not name this type. [`AuditMetadata::with`] converts to it from:
+///
+/// - a `bool`;
+/// - text: `&str` or `String`;
+/// - a float: `f32` or `f64`;
+/// - an integer of type `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, or `u32`;
+/// - `None`, sent as JSON `null`;
+/// - `Some` of any of these;
+/// - a `Vec` of any of these;
+/// - another [`AuditMetadata`], for a nested map.
+///
+/// # Numbers
+///
+/// ZeroKMS reads a number as a signed 64-bit integer or a 64-bit float.
+/// A `u64` above `i64::MAX` fits neither exactly, so there is no conversion
+/// from `u64`. Convert the number with `i64::try_from`, or send it as text.
+///
+/// ```
+/// use stack_encrypt::AuditMetadata;
+///
+/// let rows: u64 = 250;
+/// let metadata = AuditMetadata::new()
+///     .with("rows", i64::try_from(rows).ok())
+///     .with("cursor", u64::MAX.to_string());
+/// assert_eq!(metadata.len(), 2);
+/// ```
+///
+/// JSON has no form for a float that is not finite: `NaN` or an infinity.
+/// That float is sent as `null`.
+#[derive(Clone, PartialEq)]
+pub struct AuditValue(Option<UnverifiedContextValue>);
+
+/// Shows nothing of the value. The value is the caller's fact. A debug log
+/// is not the audit log.
+impl fmt::Debug for AuditValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuditValue").finish_non_exhaustive()
+    }
+}
+
+impl From<bool> for AuditValue {
+    fn from(value: bool) -> Self {
+        Self(Some(UnverifiedContextValue::Bool(value)))
+    }
+}
+
+/// The integer types that always fit a signed 64-bit integer.
+macro_rules! from_integer {
+    ($($integer:ty),+) => {$(
+        impl From<$integer> for AuditValue {
+            fn from(value: $integer) -> Self {
+                Self(Some(UnverifiedContextValue::I64(i64::from(value))))
+            }
+        }
+    )+};
+}
+from_integer!(i8, i16, i32, i64, u8, u16, u32);
+
+impl From<f64> for AuditValue {
+    fn from(value: f64) -> Self {
+        Self(
+            value
+                .is_finite()
+                .then_some(UnverifiedContextValue::F64(value)),
+        )
+    }
+}
+
+impl From<f32> for AuditValue {
+    fn from(value: f32) -> Self {
+        Self::from(f64::from(value))
+    }
+}
+
+impl From<String> for AuditValue {
+    fn from(value: String) -> Self {
+        Self(Some(UnverifiedContextValue::String(value)))
+    }
+}
+
+impl From<&str> for AuditValue {
+    fn from(value: &str) -> Self {
+        Self::from(value.to_owned())
+    }
+}
+
+/// `None` is sent as JSON `null`.
+impl<T: Into<AuditValue>> From<Option<T>> for AuditValue {
+    fn from(value: Option<T>) -> Self {
+        Self(value.and_then(|value| value.into().0))
+    }
+}
+
+impl<T: Into<AuditValue>> From<Vec<T>> for AuditValue {
+    fn from(values: Vec<T>) -> Self {
+        Self(Some(UnverifiedContextValue::List(
+            values.into_iter().map(|value| value.into().0).collect(),
+        )))
+    }
+}
+
+/// A nested map of facts.
+impl From<AuditMetadata> for AuditValue {
+    fn from(metadata: AuditMetadata) -> Self {
+        Self(Some(UnverifiedContextValue::Map(metadata.fields.0)))
+    }
+}
+
+/// A call with [audit metadata](AuditMetadata) attached. `.audit(..)`
+/// returns this type on a [`Pending`](crate::Pending), on a plan chain,
+/// and on a batch of chains ([`All`](crate::plan::All)).
+///
+/// You can only await it. Awaiting runs the call, and sends the metadata
+/// with every key request that the call makes.
+///
+/// An audited call has no `.audit(..)` and no `zip`. A batch does not take
+/// an audited call. So you attach the metadata once, last, to the whole
+/// call. A call cannot be given two different maps.
+///
+/// Merge the calls first, then attach the metadata:
 ///
 /// ```
 /// use stack_encrypt::kms::FakeDataKeySource;
@@ -38,244 +268,79 @@ pub(crate) type Unverified = Option<Arc<UnverifiedContext>>;
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 /// let keyset = cipher.default_keyset();
-/// let stored: Ciphertext = keyset.encrypt(String::from("sk_live_1234")).await?;
+/// let purpose = AuditMetadata::new().with("purpose", "import");
 ///
-/// let api_key: String = keyset
-///     .decrypt(stored)
-///     .audit(
-///         AuditMetadata::new()
-///             .with("purpose", "list issues")
-///             .with("request_id", "req_01J9Z3"),
-///     )
+/// let (first, second): (Ciphertext, Ciphertext) = keyset
+///     .encrypt(1i64)
+///     .zip(keyset.encrypt(2i64))
+///     .audit(purpose)
 ///     .await?;
-/// assert_eq!(api_key, "sk_live_1234");
+/// # let _ = (first, second);
 /// # Ok::<(), stack_encrypt::Error>(())
 /// # }).unwrap();
 /// ```
 ///
-/// # What ZeroKMS does with it
+/// An audited call does not merge. The following code does not compile:
 ///
-/// - **ZeroKMS does not verify it.** The client asserts these facts and
-///   ZeroKMS records them as given. No key depends on them, so nothing may
-///   rely on them for access control.
-/// - **It is not needed to decrypt.** The metadata on a decrypt may differ
-///   from the metadata on the encrypt, or be absent.
-/// - **It is one map per request.** Every key request a call makes carries
-///   the same metadata. A batch makes one request, so it carries one map.
+/// ```compile_fail
+/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::{AuditMetadata, Ciphertext, StackCipher};
 ///
-/// # What it must not hold
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// let keyset = cipher.default_keyset();
+/// let purpose = AuditMetadata::new().with("purpose", "import");
 ///
-/// The metadata lands in ZeroKMS logs. It must not hold plaintext,
-/// anything derived from plaintext, or secrets. Values such as IP
-/// addresses and user agents are personal data: this crate sends only what
-/// the application passes, and adds nothing of its own.
-///
-/// # Values
-///
-/// A value is any JSON value. A number must fit a signed 64-bit integer or
-/// a 64-bit float, as ZeroKMS reads it: an unsigned integer above
-/// `i64::MAX` is refused with [`AuditError::NumberOutOfRange`] when the
-/// metadata is attached, before any request, rather than sent as a float
-/// that has lost digits.
-#[derive(Clone, Default, PartialEq)]
-pub struct AuditMetadata {
-    fields: Map<String, Value>,
+/// let (first, second): (Ciphertext, Ciphertext) = keyset
+///     .encrypt(1i64)
+///     .audit(purpose)
+///     .zip(keyset.encrypt(2i64))
+///     .await?;
+/// # Ok::<(), stack_encrypt::Error>(())
+/// # }).unwrap();
+/// ```
+#[must_use = "an audited call does nothing until it is awaited"]
+pub struct Audited<C> {
+    call: C,
+    audit: Unverified,
 }
 
-impl AuditMetadata {
-    /// Metadata with no facts. Attaching it sends no audit metadata.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add the fact `key`, replacing a fact already under that key.
-    ///
-    /// ```
-    /// use stack_encrypt::AuditMetadata;
-    /// use serde_json::json;
-    ///
-    /// let metadata = AuditMetadata::new()
-    ///     .with("purpose", "export")
-    ///     .with("rows", 250)
-    ///     .with("filters", json!({ "team": "platform" }));
-    /// assert_eq!(metadata.len(), 3);
-    /// ```
-    pub fn with(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
-        // A fact already under this key is replaced, as documented.
-        let _replaced = self.fields.insert(key.into(), value.into());
-        self
-    }
-
-    /// The number of facts.
-    pub fn len(&self) -> usize {
-        self.fields.len()
-    }
-
-    /// Whether there are no facts. Attaching empty metadata sends none.
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-    }
-
-    /// The metadata as ZeroKMS takes it, or `None` when there is nothing to
-    /// send.
-    ///
-    /// # Errors
-    ///
-    /// [`AuditError::NumberOutOfRange`] for a number ZeroKMS cannot hold
-    /// exactly.
-    pub(crate) fn to_unverified(&self) -> Result<Unverified, Error> {
-        if self.fields.is_empty() {
-            return Ok(None);
+impl<C> Audited<C> {
+    /// Wrap `call`, so that its key requests are sent with `metadata`.
+    pub(crate) fn new(call: C, metadata: AuditMetadata) -> Self {
+        Self {
+            call,
+            audit: metadata.into_unverified(),
         }
-        for (key, value) in &self.fields {
-            if !fits(value) {
-                return Err(AuditError::NumberOutOfRange { key: key.clone() }.into());
-            }
-        }
-        // Every number was checked above, so this conversion cannot change
-        // one, and every other JSON shape has a ZeroKMS form. So a failure
-        // here is a bug, not the caller's input: it is reported as one,
-        // never as a refusal of the metadata, and never as a panic.
-        serde_json::from_value(Value::Object(self.fields.clone()))
-            .map(|unverified| Some(Arc::new(unverified)))
-            .map_err(|_| {
-                Error::Other(
-                    "audit metadata that passed every check did not convert to ZeroKMS's form"
-                        .into(),
-                )
-            })
+    }
+
+    /// The call, and the metadata to send with its key requests.
+    pub(crate) fn into_parts(self) -> (C, Unverified) {
+        (self.call, self.audit)
     }
 }
 
-/// [`AuditMetadata::to_unverified`] for metadata that may be absent.
-///
-/// # Errors
-///
-/// As [`AuditMetadata::to_unverified`].
-pub(crate) fn unverified(metadata: Option<&AuditMetadata>) -> Result<Unverified, Error> {
-    metadata.map_or(Ok(None), AuditMetadata::to_unverified)
-}
-
-/// The metadata two merged calls share: either's when the other has none,
-/// [`AuditError::Mismatch`] when both have some and it differs. Merged
-/// calls make one key request, and a request carries one map.
-///
-/// # Errors
-///
-/// [`AuditError::Mismatch`], as above.
-pub(crate) fn merge(left: Unverified, right: Unverified) -> Result<Unverified, Error> {
-    match (left, right) {
-        (Some(left), Some(right)) if left != right => Err(AuditError::Mismatch.into()),
-        (Some(audit), _) | (_, Some(audit)) => Ok(Some(audit)),
-        (None, None) => Ok(None),
-    }
-}
-
-/// Whether every number in `value` has an exact ZeroKMS form: a signed
-/// 64-bit integer or a 64-bit float.
-fn fits(value: &Value) -> bool {
-    match value {
-        Value::Number(number) => number.is_i64() || number.is_f64(),
-        Value::Array(items) => items.iter().all(fits),
-        Value::Object(fields) => fields.values().all(fits),
-        Value::Null | Value::Bool(_) | Value::String(_) => true,
-    }
-}
-
-/// Shows the keys and not the values: the values are the caller's facts,
-/// and a debug log is not the audit log.
-impl fmt::Debug for AuditMetadata {
+/// Shows the call and nothing of the metadata.
+impl<C: fmt::Debug> fmt::Debug for Audited<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AuditMetadata")
-            .field("keys", &self.fields.keys().collect::<Vec<_>>())
-            .finish()
-    }
-}
-
-/// Metadata from a JSON object, such as one built with `serde_json::json!`.
-///
-/// ```
-/// use stack_encrypt::AuditMetadata;
-/// use serde_json::json;
-///
-/// let metadata = AuditMetadata::try_from(json!({
-///     "purpose": "list issues",
-///     "request_id": "req_01J9Z3",
-/// }))?;
-/// assert_eq!(metadata.len(), 2);
-///
-/// assert!(AuditMetadata::try_from(json!(["not", "an", "object"])).is_err());
-/// # Ok::<(), stack_encrypt::AuditError>(())
-/// ```
-impl TryFrom<Value> for AuditMetadata {
-    type Error = AuditError;
-
-    /// # Errors
-    ///
-    /// [`AuditError::NotAnObject`] for any JSON value but an object.
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        match value {
-            Value::Object(fields) => Ok(Self::from(fields)),
-            _ => Err(AuditError::NotAnObject),
-        }
-    }
-}
-
-impl From<Map<String, Value>> for AuditMetadata {
-    fn from(fields: Map<String, Value>) -> Self {
-        Self { fields }
-    }
-}
-
-/// Audit metadata that could not be sent as given.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
-#[non_exhaustive]
-pub enum AuditError {
-    /// The JSON value given as metadata was not an object. ZeroKMS takes a
-    /// map of facts.
-    #[error("audit metadata must be a JSON object")]
-    #[diagnostic(
-        code(stack_encrypt::audit_not_an_object),
-        help("Pass a JSON object, such as `json!({{ \"purpose\": \"list issues\" }})`.")
-    )]
-    NotAnObject,
-    /// A number in the metadata does not fit a signed 64-bit integer or a
-    /// 64-bit float, so ZeroKMS would log a different number. `key` is the
-    /// top-level key it was found under.
-    #[error("audit metadata `{key}` holds a number ZeroKMS cannot record exactly")]
-    #[diagnostic(
-        code(stack_encrypt::audit_number_out_of_range),
-        help("Send an integer above `i64::MAX` as a string.")
-    )]
-    NumberOutOfRange { key: String },
-    /// Two calls carrying different audit metadata were merged into one
-    /// batch (`zip`, `all`). A batch makes one key request, which carries
-    /// one map. Refused before any request.
-    #[error("merged calls carry different audit metadata")]
-    #[diagnostic(
-        code(stack_encrypt::audit_mismatch),
-        help(
-            "Attach the metadata once, to the merged call, or give every part the same metadata."
-        )
-    )]
-    Mismatch,
-}
-
-impl crate::ErrorPayload for AuditError {
-    fn payload(&self) -> Map<String, Value> {
-        use crate::diagnostic::payload;
-        match self {
-            Self::NumberOutOfRange { key } => payload([("key", key.clone().into())]),
-            Self::NotAnObject | Self::Mismatch => Map::new(),
-        }
+        f.debug_struct("Audited")
+            .field("call", &self.call)
+            .finish_non_exhaustive()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::*;
+
+    /// What `metadata` sends, as JSON: `None` when it sends nothing.
+    fn sent(metadata: AuditMetadata) -> Option<Value> {
+        metadata
+            .into_unverified()
+            .map(|unverified| serde_json::to_value(&*unverified).unwrap())
+    }
 
     #[test]
     fn len_counts_distinct_keys() {
@@ -289,30 +354,64 @@ mod tests {
 
     #[test]
     fn empty_metadata_sends_nothing() {
-        assert!(matches!(AuditMetadata::new().to_unverified(), Ok(None)));
-        assert!(matches!(unverified(None), Ok(None)));
+        assert_eq!(sent(AuditMetadata::new()), None);
+        assert_eq!(
+            sent(AuditMetadata::new().with("purpose", "export")),
+            Some(json!({ "purpose": "export" }))
+        );
     }
 
     #[test]
-    fn metadata_converts_to_the_same_json() {
-        let metadata = AuditMetadata::try_from(json!({
-            "purpose": "list issues",
-            "attempt": 2,
-            "ratio": 0.5,
-            "flags": [true, null],
-            "nested": { "team": "platform" },
-        }))
-        .unwrap();
-        let unverified = metadata.to_unverified().unwrap().unwrap();
+    fn every_kind_of_value_is_sent_as_given() {
+        let metadata = AuditMetadata::new()
+            .with("flag", true)
+            .with("text", "list issues")
+            .with("owned", String::from("req_01J9Z3"))
+            .with("i8", i8::MIN)
+            .with("i16", i16::MIN)
+            .with("i32", i32::MIN)
+            .with("i64", i64::MAX)
+            .with("u8", u8::MAX)
+            .with("u16", u16::MAX)
+            .with("u32", u32::MAX)
+            .with("f32", 0.5f32)
+            .with("f64", 0.25)
+            .with("null", None::<bool>)
+            .with("some", Some(7))
+            .with("list", vec![Some(1), None])
+            .with("nested", AuditMetadata::new().with("team", "platform"));
         assert_eq!(
-            serde_json::to_value(&*unverified).unwrap(),
-            json!({
-                "purpose": "list issues",
-                "attempt": 2,
-                "ratio": 0.5,
-                "flags": [true, null],
+            sent(metadata),
+            Some(json!({
+                "flag": true,
+                "text": "list issues",
+                "owned": "req_01J9Z3",
+                "i8": i8::MIN,
+                "i16": i16::MIN,
+                "i32": i32::MIN,
+                "i64": i64::MAX,
+                "u8": u8::MAX,
+                "u16": u16::MAX,
+                "u32": u32::MAX,
+                "f32": 0.5,
+                "f64": 0.25,
+                "null": null,
+                "some": 7,
+                "list": [1, null],
                 "nested": { "team": "platform" },
-            })
+            }))
+        );
+    }
+
+    #[test]
+    fn a_float_that_is_not_finite_is_sent_as_null() {
+        let metadata = AuditMetadata::new()
+            .with("nan", f64::NAN)
+            .with("infinity", f32::INFINITY)
+            .with("finite", f64::MAX);
+        assert_eq!(
+            sent(metadata),
+            Some(json!({ "nan": null, "infinity": null, "finite": f64::MAX }))
         );
     }
 
@@ -325,50 +424,19 @@ mod tests {
     }
 
     #[test]
-    fn an_unsigned_integer_above_i64_max_is_refused() {
-        let metadata = AuditMetadata::new().with("nested", json!({ "big": u64::MAX }));
-        assert!(matches!(
-            unverified(Some(&metadata)),
-            Err(Error::Audit(AuditError::NumberOutOfRange { ref key })) if key == "nested"
-        ));
-        let fits = AuditMetadata::new().with("max", i64::MAX);
-        assert!(fits.to_unverified().unwrap().is_some());
-    }
-
-    #[test]
-    fn merging_keeps_either_side_and_refuses_a_difference() {
-        let a = AuditMetadata::new()
-            .with("purpose", "a")
-            .to_unverified()
-            .unwrap();
-        let b = AuditMetadata::new()
-            .with("purpose", "b")
-            .to_unverified()
-            .unwrap();
-        assert!(matches!(merge(None, None), Ok(None)));
-        assert_eq!(merge(a.clone(), None).unwrap(), a);
-        assert_eq!(merge(None, a.clone()).unwrap(), a);
-        assert_eq!(merge(a.clone(), a.clone()).unwrap(), a);
-        assert!(matches!(
-            merge(a, b),
-            Err(Error::Audit(AuditError::Mismatch))
-        ));
-    }
-
-    #[test]
-    fn only_an_object_converts() {
-        for value in [json!(null), json!(1), json!("purpose"), json!([])] {
-            assert_eq!(AuditMetadata::try_from(value), Err(AuditError::NotAnObject));
-        }
-    }
-
-    #[test]
     fn debug_shows_keys_not_values() {
-        let shown = format!(
-            "{:?}",
-            AuditMetadata::new().with("user", "alice@example.com")
+        let metadata = AuditMetadata::new()
+            .with("user", "alice@example.com")
+            .with("purpose", "export");
+        assert_eq!(
+            format!("{metadata:?}"),
+            r#"AuditMetadata { keys: ["purpose", "user"] }"#
         );
-        assert!(shown.contains("user"));
-        assert!(!shown.contains("alice"));
+        assert_eq!(
+            format!("{:?}", AuditValue::from("alice@example.com")),
+            "AuditValue { .. }"
+        );
+        let audited = format!("{:?}", Audited::new("the call", metadata));
+        assert_eq!(audited, r#"Audited { call: "the call", .. }"#);
     }
 }

@@ -586,7 +586,7 @@ pub mod blob;
 pub mod cipher;
 pub mod contexts;
 mod scalar;
-pub use audit::{AuditError, AuditMetadata};
+pub use audit::{AuditMetadata, AuditValue, Audited};
 pub use blob::{BlobError, OpaqueBlob};
 pub use scalar::{Ciphertext, OpaqueDecode, OpaqueEncode};
 #[cfg(test)]

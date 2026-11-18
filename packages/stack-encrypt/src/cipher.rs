@@ -411,12 +411,6 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Blob(#[from] crate::BlobError),
-    /// [Audit metadata](crate::AuditMetadata) could not be sent as given.
-    /// Transparent: the message, code and help are the
-    /// [`AuditError`](crate::AuditError)'s. Raised before any key request.
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Audit(#[from] crate::AuditError),
 }
 
 /// How many separator-delimited parts a descriptor has: what an error about
@@ -433,7 +427,6 @@ impl crate::ErrorPayload for Error {
             Self::Term(error) => error.payload(),
             Self::Plan(error) => error.payload(),
             Self::Blob(error) => error.payload(),
-            Self::Audit(error) => error.payload(),
             Self::KeyCountMismatch { expected, received } => payload([
                 ("expected", (*expected).into()),
                 ("received", (*received).into()),
@@ -1093,8 +1086,36 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// under any other is [`Error::ForeignKeyset`], refused before any key
     /// is retrieved.
     ///
-    /// Returns a [`Pending`](crate::Pending): await it, or first attach
-    /// [audit metadata](crate::Pending::audit) for the key requests.
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// also log why this decrypt happened, call `.audit(..)` before you
+    /// await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::{AuditMetadata, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
+    ///
+    /// let name: String = keyset
+    ///     .decrypt_tree(stored, "users/name")
+    ///     .audit(AuditMetadata::new().with("purpose", "profile page"))
+    ///     .await?;
+    /// assert_eq!(name, "alice");
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
     pub fn decrypt_tree<'s, 'a, T, A>(
         &'s self,
         ciphertext: StackCipherText,
@@ -1164,8 +1185,39 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// [`KeysetCipher::decrypt_tree`], which is one round trip at most and refuses
     /// a foreign leaf before any.
     ///
-    /// Returns a [`Pending`](crate::Pending): await it, or first attach
-    /// [audit metadata](crate::Pending::audit) for the key requests.
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// also log why this decrypt happened, call `.audit(..)` before you
+    /// await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::{AuditMetadata, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
+    ///
+    /// let name: String = cipher
+    ///     .decrypt(stored, "users/name")
+    ///     .audit(AuditMetadata::new().with("purpose", "profile page"))
+    ///     .await?;
+    /// assert_eq!(name, "alice");
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
+    ///
+    /// This call makes one key request for each keyset the leaves were sealed
+    /// under. Each request is sent with the same facts.
     pub fn decrypt<'s, 'a, T, A>(
         &'s self,
         ciphertext: StackCipherText,
@@ -1570,10 +1622,11 @@ impl PendingStackCipherText {
         count(&self.0)
     }
 
-    /// Seal the whole tree: a [`Pending`](crate::target::Pending) that, when
-    /// awaited, generates one data key per keyed leaf (one batched ZeroKMS
-    /// call — none for a passthrough-only tree), every key under the
-    /// [`Descriptor`] of `context`, and seals every leaf.
+    /// Seal the whole tree. The result is a
+    /// [`Pending`](crate::target::Pending). Awaiting it generates one data
+    /// key for each keyed leaf, then seals every leaf. All the keys come
+    /// from one batched ZeroKMS call, under the [`Descriptor`] of `context`.
+    /// A tree that has only passthrough leaves makes no call.
     ///
     /// `context` is the context the tree was planned under — the value passed to
     /// [`plan`](Self::plan), in the same shape (see the
@@ -1582,18 +1635,19 @@ impl PendingStackCipherText {
     /// check that the two agree, which is why [`KeysetCipher::encrypt_tree`], which
     /// does both steps from one value, is the form to prefer.
     ///
-    /// Await the result, or first attach
-    /// [audit metadata](crate::Pending::audit) for the key request. A caller
-    /// holding *several* independently planned trees (one per record field
-    /// in a language binding, say) can merge them with
-    /// [`Pending::zip`](crate::target::Pending::zip) /
-    /// [`Pending::all`](crate::target::Pending::all) so the whole assembly
-    /// seals in **one** batched `generate_keys` call.
+    /// Await the result. To send audit metadata with the key request, call
+    /// [`.audit(..)`](crate::Pending::audit) on the result first.
     ///
-    /// Settles through the target layer's request carrier
-    /// ([`seal_pending`](crate::target)), so this and
-    /// `encrypt_into_with_context` into a `StackCipherText` share one
-    /// definition of how a tree is sealed and one path to ZeroKMS.
+    /// A caller can have *several* trees that were planned independently,
+    /// such as one for each record field in a language binding. Merge them
+    /// with [`Pending::zip`](crate::target::Pending::zip) or
+    /// [`Pending::all`](crate::target::Pending::all). The whole assembly
+    /// then seals in **one** batched `generate_keys` call.
+    ///
+    /// This method settles through [`seal_pending`](crate::target), the
+    /// request carrier of the target layer. `encrypt_into_with_context`
+    /// into a `StackCipherText` settles through it too. So a tree is sealed
+    /// in one way, through one path to ZeroKMS.
     ///
     /// **Context contract.** The cipher-directed path deliberately accepts
     /// *any* AAD, including none at all (`()`) — it mirrors

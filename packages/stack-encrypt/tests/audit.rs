@@ -1,12 +1,11 @@
 //! Audit metadata reaches ZeroKMS as the key requests' unverified context:
-//! on encrypt and decrypt, through every public way to make a call, once
-//! per request in a batch, and not at all when the caller gives none.
+//! on encrypt and decrypt, through every public way to make a call, on
+//! every request a call makes, and not at all when the caller gives none.
 //!
 //! Every test runs against a fake key source that records the context each
 //! request carried, so none needs the network.
 
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
@@ -18,8 +17,8 @@ use stack_encrypt::plan::{Field, Fields};
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    all, nonempty, AuditError, AuditMetadata, Ciphertext, DecryptInto, EncryptFrom, Equality,
-    Error, Pending, Plan, StackCipher, StackCipherText,
+    all, nonempty, AuditMetadata, Ciphertext, DecryptInto, EncryptFrom, Equality, Error, Pending,
+    Plan, StackCipher, StackCipherText,
 };
 use uuid::Uuid;
 
@@ -34,13 +33,11 @@ enum Call {
 /// metadata it carried as JSON (`None` when it carried none).
 type Sent = (Call, Option<Value>);
 
-/// A fake key source that records the audit metadata of every key request,
-/// and counts keyset loads.
+/// A fake key source that records the audit metadata of every key request.
 #[derive(Clone)]
 struct RecordingSource {
     inner: Arc<FakeDataKeySource>,
     sent: Arc<Mutex<Vec<Sent>>>,
-    loads: Arc<AtomicUsize>,
 }
 
 impl RecordingSource {
@@ -48,18 +45,12 @@ impl RecordingSource {
         Self {
             inner: Arc::new(FakeDataKeySource::new()),
             sent: Arc::default(),
-            loads: Arc::default(),
         }
     }
 
     fn record(&self, call: Call, unverified: Option<&UnverifiedContext>) {
         let metadata = unverified.map(|unverified| serde_json::to_value(unverified).unwrap());
         self.sent.lock().unwrap().push((call, metadata));
-    }
-
-    /// The keyset loads made so far.
-    fn loads(&self) -> usize {
-        self.loads.load(Ordering::SeqCst)
     }
 
     /// The requests made so far, cleared.
@@ -99,7 +90,6 @@ impl IndexKeySource for RecordingSource {
         &self,
         keyset_id: Option<IdentifiedBy>,
     ) -> Result<(Uuid, IndexKey), stack_encrypt::kms::Error> {
-        let _ = self.loads.fetch_add(1, Ordering::SeqCst);
         self.inner.load_index_key(keyset_id).await
     }
 }
@@ -240,75 +230,15 @@ async fn a_batch_sends_its_metadata_on_its_one_request() {
     );
 }
 
-/// Parts that carry the same metadata, or none, merge. The batch keeps it.
+/// Calls are merged first, and the merged call takes the metadata: its one
+/// request carries the one map.
 #[tokio::test]
-async fn parts_with_the_same_metadata_or_none_merge() {
-    let (cipher, source) = cipher().await;
-    let keyset = cipher.default_keyset();
-
-    let (_, _): (Ciphertext, Ciphertext) = keyset
-        .encrypt(1i64)
-        .audit(list_issues())
-        .zip(keyset.encrypt(2i64).audit(list_issues()))
-        .await
-        .unwrap();
-    let (_, _): (Ciphertext, Ciphertext) = keyset
-        .encrypt(1i64)
-        .zip(keyset.encrypt(2i64).audit(list_issues()))
-        .await
-        .unwrap();
-    assert_eq!(
-        source.take(),
-        vec![
-            (Call::Generate, Some(list_issues_json())),
-            (Call::Generate, Some(list_issues_json())),
-        ]
-    );
-}
-
-/// One request carries one map, so merging parts with different metadata
-/// is refused before any request.
-#[tokio::test]
-async fn parts_with_different_metadata_do_not_merge() {
-    let (cipher, source) = cipher().await;
-    let keyset = cipher.default_keyset();
-
-    let zipped = keyset
-        .encrypt(1i64)
-        .audit(AuditMetadata::new().with("purpose", "a"))
-        .zip(
-            keyset
-                .encrypt(2i64)
-                .audit(AuditMetadata::new().with("purpose", "b")),
-        )
-        .await;
-    assert!(matches!(zipped, Err(Error::Audit(AuditError::Mismatch))));
-
-    let collected = Pending::all(
-        &keyset,
-        vec![
-            keyset
-                .encrypt(1i64)
-                .audit(AuditMetadata::new().with("purpose", "a")),
-            keyset
-                .encrypt(2i64)
-                .audit(AuditMetadata::new().with("purpose", "b")),
-        ],
-    )
-    .await;
-    assert!(matches!(collected, Err(Error::Audit(AuditError::Mismatch))));
-    assert_eq!(source.take(), vec![]);
-}
-
-/// Attaching metadata to the merged call replaces what its parts carried.
-#[tokio::test]
-async fn metadata_on_the_merged_call_replaces_the_parts() {
+async fn a_zipped_call_sends_its_metadata_on_its_one_request() {
     let (cipher, source) = cipher().await;
     let keyset = cipher.default_keyset();
 
     let _: (Ciphertext, Ciphertext) = keyset
         .encrypt(1i64)
-        .audit(AuditMetadata::new().with("purpose", "a"))
         .zip(keyset.encrypt(2i64))
         .audit(list_issues())
         .await
@@ -319,32 +249,15 @@ async fn metadata_on_the_merged_call_replaces_the_parts() {
     );
 }
 
-/// A number ZeroKMS cannot record exactly is refused before any request.
+/// A pending that already failed gives its error when its audited form is
+/// awaited, and makes no request.
 #[tokio::test]
-async fn an_unrepresentable_number_is_refused_before_any_request() {
+async fn an_audited_call_that_failed_gives_its_error() {
     let (cipher, source) = cipher().await;
-    let keyset = cipher.default_keyset();
-
-    let refused = keyset
-        .encrypt(1i64)
-        .audit(AuditMetadata::new().with("rows", u64::MAX))
-        .await;
-    assert!(matches!(
-        refused,
-        Err(Error::Audit(AuditError::NumberOutOfRange { ref key })) if key == "rows"
-    ));
-    assert_eq!(source.take(), vec![]);
-}
-
-/// A pending that already failed keeps its own error.
-#[tokio::test]
-async fn a_failed_call_keeps_its_own_error() {
-    let (cipher, _source) = cipher().await;
     let failed: Pending<'_, i64, _> = Pending::failed(&cipher, Error::NoKeyset);
-    let result = failed
-        .audit(AuditMetadata::new().with("rows", u64::MAX))
-        .await;
+    let result = failed.audit(list_issues()).await;
     assert!(matches!(result, Err(Error::NoKeyset)));
+    assert_eq!(source.take(), vec![]);
 }
 
 /// The tree entry points return a `Pending` too, so they take metadata.
@@ -462,22 +375,14 @@ async fn a_batch_of_chains_sends_its_metadata() {
         vec![(Call::Generate, Some(list_issues_json()))]
     );
 
-    let mismatched = all((
-        cipher
-            .encrypt(&alice)
-            .using(&email_plan)
-            .audit(AuditMetadata::new().with("purpose", "a")),
-        cipher
-            .encrypt(&bob)
-            .using(&email_plan)
-            .audit(AuditMetadata::new().with("purpose", "b")),
+    // With none on the batch, its request carries none.
+    let _ = all((
+        cipher.encrypt(&alice).using(&email_plan),
+        cipher.encrypt(&bob).using(&email_plan),
     ))
-    .await;
-    assert!(matches!(
-        mismatched,
-        Err(Error::Audit(AuditError::Mismatch))
-    ));
-    assert_eq!(source.take(), vec![]);
+    .await
+    .unwrap();
+    assert_eq!(source.take(), vec![(Call::Generate, None)]);
 }
 
 /// A record with one encrypted field, for the `.fields()` chain.
@@ -562,72 +467,43 @@ async fn a_batch_of_encrypt_and_open_chains_sends_one_map_on_every_request() {
     );
 }
 
-/// The chains in a batch must agree on their metadata wherever their
-/// requests land, and a disagreement fails the batch before any request.
+/// A batch that fails its check gives that error when its audited form is
+/// awaited, and makes no request.
 #[tokio::test]
-async fn chains_that_disagree_fail_the_whole_batch_before_any_request() {
+async fn an_audited_batch_that_fails_its_check_makes_no_request() {
     let (cipher, source) = cipher().await;
     let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
     let email = String::from("bob@example.com");
-    let a = || AuditMetadata::new().with("purpose", "a");
-    let b = || AuditMetadata::new().with("purpose", "b");
-    let stored = || async { cipher.encrypt(&email).using(&email_plan).await.unwrap() };
-    let (first, second, third) = (stored().await, stored().await, stored().await);
-    let _ = source.take();
 
-    // An encrypt chain and an open chain: the batch request and the open
-    // request.
-    let split = all((
-        cipher.encrypt(&email).using(&email_plan).audit(a()),
-        cipher.open(third).using(&email_plan).audit(b()),
+    let refused = all((
+        cipher.encrypt(&email).using(&email_plan),
+        cipher.encrypt(&email).context("not a label//"),
     ))
     .audit(list_issues())
     .await;
-    assert!(matches!(split, Err(Error::Audit(AuditError::Mismatch))));
-
-    // Two open chains that disagree beside an encrypt chain: refused before
-    // the encrypt chain's key is generated.
-    let opens = all((
-        cipher.encrypt(&email).using(&email_plan),
-        cipher.open(first).using(&email_plan).audit(a()),
-        cipher.open(second).using(&email_plan).audit(b()),
-    ))
-    .await;
-    assert!(matches!(opens, Err(Error::Audit(AuditError::Mismatch))));
+    assert!(matches!(refused, Err(Error::Plan(_))));
     assert_eq!(source.take(), vec![]);
 }
 
-/// Metadata that cannot be sent is refused before any request, the lookup
-/// of a keyset the chain names included.
+/// A chain that names a keyset still sends its metadata: the keyset is
+/// loaded, then the one request carries the map.
 #[tokio::test]
-async fn a_chain_refuses_unsendable_metadata_before_loading_a_keyset() {
+async fn a_chain_that_names_a_keyset_sends_its_metadata() {
     let (cipher, source) = cipher().await;
     let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
     let email = String::from("bob@example.com");
-    let loads = source.loads();
 
-    let refused = cipher
+    let _ = cipher
         .encrypt(&email)
         .using(&email_plan)
         .keyset("tenant-b")
-        .audit(AuditMetadata::new().with("rows", u64::MAX))
-        .await;
-    assert!(matches!(
-        refused,
-        Err(Error::Audit(AuditError::NumberOutOfRange { .. }))
-    ));
-    let refused = all((
-        cipher.encrypt(&email).using(&email_plan).keyset("tenant-b"),
-        cipher.encrypt(&email).using(&email_plan),
-    ))
-    .audit(AuditMetadata::new().with("rows", u64::MAX))
-    .await;
-    assert!(matches!(
-        refused,
-        Err(Error::Audit(AuditError::NumberOutOfRange { .. }))
-    ));
-    assert_eq!(source.loads(), loads, "no keyset was loaded");
-    assert_eq!(source.take(), vec![]);
+        .audit(list_issues())
+        .await
+        .unwrap();
+    assert_eq!(
+        source.take(),
+        vec![(Call::Generate, Some(list_issues_json()))]
+    );
 }
 
 /// A derived record's fields settle as one `Pending`, which takes the

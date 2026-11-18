@@ -11,7 +11,7 @@ use super::build::{FieldPlan, FieldsBuilder, IntoLabel, Opens, PlanContext, Runs
 use super::field_ref::FieldRef;
 use super::value::{Indexed, Laid, Typed, ValueLayout, ValuePlan, ValueShape};
 use super::PlanError;
-use crate::audit;
+use crate::audit::{Audited, Unverified};
 use crate::op::{Answers, DefaultIndex, Input, LabelledTarget, Operator, QueryToken, Supports};
 use crate::target::{
     ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
@@ -96,15 +96,13 @@ impl<K> From<&String> for KeysetChoice<'_, K> {
 }
 
 /// What every chain carries besides its value: the cipher, the keyset it
-/// names, the context it names for a plan built without one, the caller's
-/// extension of the plan's contexts, and the audit metadata for its key
-/// requests.
+/// names, the context it names for a plan built without one, and the
+/// caller's extension of the plan's contexts.
 struct Common<'a, K> {
     cipher: &'a StackCipher<K>,
     keyset: Option<KeysetChoice<'a, K>>,
     context: Option<Result<Label, LabelError>>,
     extend: DeclaredContext,
-    audit: Option<AuditMetadata>,
 }
 
 impl<'a, K> Common<'a, K> {
@@ -114,7 +112,6 @@ impl<'a, K> Common<'a, K> {
             keyset: None,
             context: None,
             extend: DeclaredContext::default(),
-            audit: None,
         }
     }
 
@@ -152,6 +149,11 @@ mod sealed {
 /// Awaiting a chain checks it before it loads a keyset it names, so a plan
 /// that does not hold up is refused before any request to ZeroKMS, the
 /// keyset lookup included.
+///
+/// A chain contains no audit metadata. `.audit(..)` wraps the chain in an
+/// [`Audited`]. An `Audited` is not an `Operation`. You can only await
+/// it. If you call [`prepare`](Self::prepare) yourself, attach the
+/// metadata to the [`Pending`] that it returns.
 pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
     /// What the chain produces.
     type Output: MaybeSend + 'static;
@@ -159,11 +161,6 @@ pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
     fn cipher(&self) -> &'a StackCipher<K>;
     /// The keyset the chain names, if any, taken out of it.
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>>;
-    /// The audit metadata the chain carries, if any, taken out of it. A
-    /// query chain requests no data key, so it carries none.
-    fn take_audit(&mut self) -> Option<AuditMetadata> {
-        None
-    }
     /// The chain's plan, and the value or record it runs over, checked
     /// with no I/O and no keyset: the [`Error::Plan`] refusals
     /// [`prepare`](Self::prepare) would raise. A query chain also prepares
@@ -216,58 +213,51 @@ async fn resolve<'a, K: PlanKms>(
     })
 }
 
-/// Await one chain: resolve its keyset, prepare it, settle it.
-fn settle<'a, K, O>(mut operation: O) -> PendingFuture<'a, O::Output>
+/// Await one chain: check it, resolve its keyset, prepare it, and settle
+/// it with `audit` on every key request.
+fn settle<'a, K, O>(mut operation: O, audit: Unverified) -> PendingFuture<'a, O::Output>
 where
     K: PlanKms,
     O: Operation<'a, K> + MaybeSend + 'a,
 {
     Box::pin(async move {
         operation.check()?;
-        // Converted before the keyset is resolved, so metadata that cannot
-        // be sent is refused before any request, the keyset lookup included.
-        let audit = audit::unverified(operation.take_audit().as_ref())?;
         let choice = operation.take_keyset();
         let (keyset, scoped) = resolve(operation.cipher(), vec![choice]).await?;
-        operation
-            .prepare(&keyset, scoped)
-            .with_unverified(audit)
-            .settle()
-            .await
+        operation.prepare(&keyset, scoped).settle_with(audit).await
     })
 }
 
-/// The audit metadata a batch of chains sends: the chains' own, merged
-/// across the whole batch by [`audit::merge`]'s rule, then replaced by the
-/// batch's if it names any. Converted with no I/O, so a chain that cannot
-/// be sent, or two that disagree, fail the batch before any request.
-fn batch_audit(
-    chains: impl IntoIterator<Item = Option<AuditMetadata>>,
-    batch: Option<&AuditMetadata>,
-) -> Result<audit::Unverified, Error> {
-    let mut merged = None;
-    for chain in chains {
-        merged = audit::merge(merged, audit::unverified(chain.as_ref())?)?;
-    }
-    match batch {
-        Some(batch) => batch.to_unverified(),
-        None => Ok(merged),
-    }
-}
-
-/// `.audit(..)`, on every chain that requests data keys: the encrypt and
-/// open chains. A query chain derives terms and requests no data key, so
-/// it has nothing to attach audit metadata to.
-macro_rules! audit_option {
-    ($([$($generics:tt)*] $chain:ty $(where [$($bounds:tt)*])?;)+) => {$(
-        impl<$($generics)*> $chain $(where $($bounds)*)? {
+/// `.audit(..)`, and `.await` on what it returns, for every finished chain
+/// that requests data keys: the encrypt and open chains. A query chain
+/// derives terms and requests no data key, so it has nothing to attach
+/// audit metadata to.
+macro_rules! audits {
+    ($([$($generics:tt)*] $chain:ty;)+) => {$(
+        impl<$($generics)*> $chain {
             /// Send `metadata` with this chain's key requests, for the
-            /// ZeroKMS audit log. Optional. Calling it again replaces the
-            /// metadata. See [`Pending::audit`] for what ZeroKMS does with
-            /// it and what it must not hold.
-            pub fn audit(mut self, metadata: AuditMetadata) -> Self {
-                self.common.audit = Some(metadata);
-                self
+            /// ZeroKMS audit log. Audit metadata is optional. For what
+            /// ZeroKMS does with it, and what you must not send, see
+            /// [`AuditMetadata`].
+            ///
+            /// Make this the last call of the chain. The result is an
+            /// [`Audited`] chain. You can only await it. A batch does not
+            /// take an audited chain: attach the metadata to the batch,
+            /// with [`All::audit`].
+            pub fn audit(self, metadata: AuditMetadata) -> Audited<Self> {
+                Audited::new(self, metadata)
+            }
+        }
+        impl<$($generics)*> IntoFuture for Audited<$chain>
+        where
+            $chain: Operation<'a, K> + MaybeSend + 'a,
+            K: PlanKms,
+        {
+            type Output = Result<<$chain as Operation<'a, K>>::Output, Error>;
+            type IntoFuture = PendingFuture<'a, <$chain as Operation<'a, K>>::Output>;
+            fn into_future(self) -> Self::IntoFuture {
+                let (chain, audit) = self.into_parts();
+                settle(chain, audit)
             }
         }
     )+};
@@ -311,7 +301,7 @@ macro_rules! settles {
             type Output = Result<<Self as Operation<'a, K>>::Output, Error>;
             type IntoFuture = PendingFuture<'a, <Self as Operation<'a, K>>::Output>;
             fn into_future(self) -> Self::IntoFuture {
-                settle(self)
+                settle(self, None)
             }
         }
     )+};
@@ -367,6 +357,43 @@ impl<K: 'static> StackCipher<K> {
     ///
     /// Named `open` rather than `decrypt`: [`StackCipher::decrypt`] is the
     /// cipher-directed decrypt and keeps its two-argument form.
+    ///
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// also log why this decrypt happened, make `.audit(..)` the last call
+    /// of the chain, before you await it. `.audit(..)` takes an
+    /// [`AuditMetadata`]: facts about the call, such as its purpose or a
+    /// request id.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::{AuditMetadata, Equality, Plan, StackCipher};
+    ///
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let email_plan = Plan::context("users/email").with(Equality).build()?;
+    /// let email = String::from("bob@example.com");
+    /// let stored = cipher.encrypt(&email).using(&email_plan).await?;
+    ///
+    /// let opened: String = cipher
+    ///     .open(stored)
+    ///     .using(&email_plan)
+    ///     .audit(AuditMetadata::new().with("purpose", "send receipt"))
+    ///     .await?;
+    /// assert_eq!(opened, email);
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
+    ///
+    /// To decrypt several records with one map of facts, put the chains in
+    /// [`all`] and call [`All::audit`] on the batch.
     pub fn open<'a, R>(&'a self, record: R) -> OpenBuilder<'a, R, K> {
         OpenBuilder {
             common: Common::new(self),
@@ -473,9 +500,6 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn take_audit(&mut self) -> Option<AuditMetadata> {
-        self.common.audit.take()
-    }
     fn check(&mut self) -> Result<(), Error> {
         match &self.context {
             Ok(_) => Ok(()),
@@ -516,9 +540,6 @@ where
     }
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
-    }
-    fn take_audit(&mut self) -> Option<AuditMetadata> {
-        self.common.audit.take()
     }
     fn check(&mut self) -> Result<(), Error> {
         self.plan.check()
@@ -610,9 +631,6 @@ impl<'a, S: 'static, K: 'static> Operation<'a, K> for EncryptFields<'a, S, K> {
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn take_audit(&mut self) -> Option<AuditMetadata> {
-        self.common.audit.take()
-    }
     fn check(&mut self) -> Result<(), Error> {
         self.plan.check(self.source)
     }
@@ -644,9 +662,6 @@ where
     }
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
-    }
-    fn take_audit(&mut self) -> Option<AuditMetadata> {
-        self.common.audit.take()
     }
     fn check(&mut self) -> Result<(), Error> {
         self.plan.check(self.source, self.common.peek_context()?)
@@ -1109,9 +1124,6 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn take_audit(&mut self) -> Option<AuditMetadata> {
-        self.common.audit.take()
-    }
     fn check(&mut self) -> Result<(), Error> {
         self.plan.check(&self.record, self.common.peek_context()?)
     }
@@ -1150,13 +1162,11 @@ chain_options! {
     ['a, R, P, K: 'static] OpenUsing<'a, R, P, K>;
 }
 
-audit_option! {
-    ['a, S: ?Sized, K: 'static] EncryptBuilder<'a, S, K>;
+audits! {
     ['a, S: ?Sized, K: 'static] EncryptWithContext<'a, S, K>;
     ['a, S, X, K: 'static] EncryptIndexed<'a, S, X, K>;
     ['a, S: 'static, K: 'static] EncryptFields<'a, S, K>;
     ['a, S: ?Sized, P, K: 'static] EncryptUsing<'a, S, P, K>;
-    ['a, R, K: 'static] OpenBuilder<'a, R, K>;
     ['a, R, P, K: 'static] OpenUsing<'a, R, P, K>;
 }
 
@@ -1197,23 +1207,67 @@ opaque_debug! {
 /// for all of them, under one keyset. Built by [`all`].
 pub struct All<'a, K, T> {
     operations: T,
-    audit: Option<AuditMetadata>,
     scope: PhantomData<Scope<'a, K>>,
 }
 
 impl<K, T> All<'_, K, T> {
-    /// Send `metadata` with every key request the batch makes, for the
-    /// ZeroKMS audit log. Optional. See [`Pending::audit`] for what ZeroKMS
-    /// does with it and what it must not hold.
+    /// Send `metadata` with every key request that the batch makes, for
+    /// the ZeroKMS audit log. Audit metadata is optional. For what ZeroKMS
+    /// does with it, and what you must not send, see [`AuditMetadata`].
     ///
-    /// A batch sends one map on all its requests. The chains' own metadata
-    /// is merged first: chains that carry different metadata fail the
-    /// batch with [`AuditError::Mismatch`](crate::AuditError::Mismatch)
-    /// before any request. When they agree, `metadata` is sent in place of
-    /// theirs.
-    pub fn audit(mut self, metadata: AuditMetadata) -> Self {
-        self.audit = Some(metadata);
-        self
+    /// A batch sends one map, and this method is the only way to give it
+    /// one. A batch can make more than one key request (see [`all`]). Each
+    /// request is sent with that map.
+    ///
+    /// Make this the last call on the batch. The result is an [`Audited`]
+    /// batch. You can only await it.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::{AuditMetadata, Equality, Plan, StackCipher};
+    ///
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let email_plan = Plan::context("users/email").with(Equality).build()?;
+    /// let (alice, bob) = (String::from("alice@example.com"), String::from("bob@example.com"));
+    ///
+    /// let (first, second) = stack_encrypt::all((
+    ///     cipher.encrypt(&alice).using(&email_plan),
+    ///     cipher.encrypt(&bob).using(&email_plan),
+    /// ))
+    /// .audit(AuditMetadata::new().with("purpose", "import"))
+    /// .await?;
+    /// # let _ = (first, second);
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+    /// ```
+    ///
+    /// A batch does not take an audited chain. The following code does not
+    /// compile:
+    ///
+    /// ```compile_fail
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::{AuditMetadata, Equality, Plan, StackCipher};
+    ///
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let email_plan = Plan::context("users/email").with(Equality).build()?;
+    /// let (alice, bob) = (String::from("alice@example.com"), String::from("bob@example.com"));
+    ///
+    /// let (first, second) = stack_encrypt::all((
+    ///     cipher
+    ///         .encrypt(&alice)
+    ///         .using(&email_plan)
+    ///         .audit(AuditMetadata::new().with("purpose", "import")),
+    ///     cipher.encrypt(&bob).using(&email_plan),
+    /// ))
+    /// .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn audit(self, metadata: AuditMetadata) -> Audited<Self> {
+        Audited::new(self, metadata)
     }
 }
 
@@ -1267,7 +1321,6 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 pub fn all<'a, K: 'static, T: Batch<'a, K>>(operations: T) -> All<'a, K, T> {
     All {
         operations,
-        audit: None,
         scope: PhantomData,
     }
 }
@@ -1312,6 +1365,47 @@ macro_rules! all_of {
             for ($first, $($rest),+)
         {
         }
+        impl<'a, K: PlanKms, $first, $($rest),+> All<'a, K, ($first, $($rest),+)>
+        where
+            $first: Operation<'a, K> + MaybeSend + 'a,
+            $($rest: Operation<'a, K> + MaybeSend + 'a,)+
+        {
+            /// Settle the batch, with `audit` on every key request it
+            /// makes.
+            fn settle_with(
+                self,
+                audit: Unverified,
+            ) -> PendingFuture<'a, ($first::Output, $($rest::Output),+)> {
+                let (mut $fop, $(mut $rop),+) = self.operations;
+                Box::pin(async move {
+                    $fop.check()?;
+                    $($rop.check()?;)+
+                    let cipher = $fop.cipher();
+                    if $(!std::ptr::eq($rop.cipher(), cipher))||+ {
+                        return Err(PlanError::MixedCiphers.into());
+                    }
+                    let ($fnamed, $($rnamed),+) = ($fop.take_keyset(), $($rop.take_keyset()),+);
+                    let named = ($fnamed.is_some(), $($rnamed.is_some()),+);
+                    let (keyset, _) = resolve(cipher, vec![$fnamed, $($rnamed),+]).await?;
+                    let ($fnamed, $($rnamed),+) = named;
+                    let ($fbatch, $fany) = route(cipher, $fop.prepare(&keyset, $fnamed));
+                    $(let ($rbatch, $rany) = route(cipher, $rop.prepare(&keyset, $rnamed));)+
+                    // The batch and the openings that read from any keyset
+                    // settle as two requests, and both carry the one map.
+                    let ($fbatch, $($rbatch),+) = $fbatch
+                        $(.zip($rbatch))+
+                        .map(|$batch| ($fbatch, $($rbatch),+))
+                        .settle_with(audit.clone())
+                        .await?;
+                    let ($fany, $($rany),+) = $fany
+                        $(.zip($rany))+
+                        .map(|$any| ($fany, $($rany),+))
+                        .settle_with(audit)
+                        .await?;
+                    Ok((placed($fbatch, $fany)?, $(placed($rbatch, $rany)?),+))
+                })
+            }
+        }
         impl<'a, K: PlanKms, $first, $($rest),+> IntoFuture for All<'a, K, ($first, $($rest),+)>
         where
             $first: Operation<'a, K> + MaybeSend + 'a,
@@ -1320,39 +1414,20 @@ macro_rules! all_of {
             type Output = Result<($first::Output, $($rest::Output),+), Error>;
             type IntoFuture = PendingFuture<'a, ($first::Output, $($rest::Output),+)>;
             fn into_future(self) -> Self::IntoFuture {
-                let (mut $fop, $(mut $rop),+) = self.operations;
-                let audit = self.audit;
-                Box::pin(async move {
-                    $fop.check()?;
-                    $($rop.check()?;)+
-                    let cipher = $fop.cipher();
-                    if $(!std::ptr::eq($rop.cipher(), cipher))||+ {
-                        return Err(PlanError::MixedCiphers.into());
-                    }
-                    let audit = batch_audit(
-                        [$fop.take_audit(), $($rop.take_audit()),+],
-                        audit.as_ref(),
-                    )?;
-                    let ($fnamed, $($rnamed),+) = ($fop.take_keyset(), $($rop.take_keyset()),+);
-                    let named = ($fnamed.is_some(), $($rnamed.is_some()),+);
-                    let (keyset, _) = resolve(cipher, vec![$fnamed, $($rnamed),+]).await?;
-                    let ($fnamed, $($rnamed),+) = named;
-                    let ($fbatch, $fany) = route(cipher, $fop.prepare(&keyset, $fnamed));
-                    $(let ($rbatch, $rany) = route(cipher, $rop.prepare(&keyset, $rnamed));)+
-                    let ($fbatch, $($rbatch),+) = $fbatch
-                        $(.zip($rbatch))+
-                        .map(|$batch| ($fbatch, $($rbatch),+))
-                        .with_unverified(audit.clone())
-                        .settle()
-                        .await?;
-                    let ($fany, $($rany),+) = $fany
-                        $(.zip($rany))+
-                        .map(|$any| ($fany, $($rany),+))
-                        .with_unverified(audit)
-                        .settle()
-                        .await?;
-                    Ok((placed($fbatch, $fany)?, $(placed($rbatch, $rany)?),+))
-                })
+                self.settle_with(None)
+            }
+        }
+        impl<'a, K: PlanKms, $first, $($rest),+> IntoFuture
+            for Audited<All<'a, K, ($first, $($rest),+)>>
+        where
+            $first: Operation<'a, K> + MaybeSend + 'a,
+            $($rest: Operation<'a, K> + MaybeSend + 'a,)+
+        {
+            type Output = Result<($first::Output, $($rest::Output),+), Error>;
+            type IntoFuture = PendingFuture<'a, ($first::Output, $($rest::Output),+)>;
+            fn into_future(self) -> Self::IntoFuture {
+                let (batch, audit) = self.into_parts();
+                batch.settle_with(audit)
             }
         }
     )+};

@@ -2146,6 +2146,7 @@ dependencies = [
  "vitaminc-prf",
  "vitaminc-protected 0.9.1",
  "zeroize",
+ "zerokms-protocol",
 ]
 
 [[package]]

@@ -9,32 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Audit metadata for ZeroKMS key requests** (#1705). `Pending::audit`
-  attaches an `AuditMetadata`, a map of facts about one call such as its
-  purpose or a request id, to every key request the call makes. ZeroKMS
-  receives it as the request's unverified context and writes it to its
-  audit log, so the log can say why a key was requested as well as who
-  requested it. It is optional: a call without it sends no metadata, so
-  the request is unchanged.
-  - Build it with `AuditMetadata::new().with(key, value)`, or from a
-    `serde_json` object with `AuditMetadata::try_from(json!({ .. }))`.
-  - It covers every way to encrypt and decrypt: scalars, trees, targets,
-    records and `dynamic::record`, all of which return a `Pending`. The
-    encrypt and open plan chains and `all(..)` take `.audit(..)` too.
-    A query requests no data key, so the query chains have no `.audit`.
-  - A batch is one key request, so it carries one map. Merging calls that
-    carry different metadata fails with `AuditError::Mismatch` before any
-    request. Attach the metadata to the merged call instead. The chains in
-    one `all(..)` must agree too, including an open chain that is settled
-    in a request of its own.
-  - ZeroKMS does not verify the metadata and it is not needed to decrypt.
-    It lands in ZeroKMS logs, so it must not hold plaintext, anything
-    derived from plaintext, or secrets.
-  - New errors: `Error::Audit(AuditError)`, with the codes
-    `stack_encrypt::audit_not_an_object`,
-    `stack_encrypt::audit_number_out_of_range` (an integer above
-    `i64::MAX`, which ZeroKMS cannot record exactly) and
-    `stack_encrypt::audit_mismatch`.
+- **Audit metadata for ZeroKMS key requests** (#1705). ZeroKMS logs every
+  key request with the identity that made it. An `AuditMetadata` adds
+  facts about the call to that log, such as its purpose or a request id.
+  To send it, call `.audit(metadata)` on a call before you await it. A
+  call without it sends none, and its request is unchanged.
+  - Build the metadata with `AuditMetadata::new().with(key, value)`. A
+    value is text, a `bool`, a float, or an integer that fits an `i64`.
+    A value can also be an `Option` or a `Vec` of these, or another
+    `AuditMetadata`. There is no conversion from `u64`, because ZeroKMS
+    cannot record a value above `i64::MAX` exactly.
+  - Every `Pending` has `.audit(..)`. So it works for scalars, trees,
+    targets, records, and `dynamic::record`. The encrypt and open plan
+    chains have it too. So does `all(..)`. A query requests no data key,
+    so the query chains do not have it.
+  - `.audit(..)` returns an `Audited` call. You can only await an
+    `Audited` call. So attach the metadata last, to the whole call:
+    `a.zip(b).audit(m)`, or `all((a, b)).audit(m)`. Neither
+    `a.audit(m).zip(b)` nor `all((a.audit(m), b))` compiles. A call
+    therefore sends one map, with every key request that it makes.
+  - ZeroKMS does not verify the metadata. A decrypt does not need it.
+    ZeroKMS writes the metadata to its logs. Do not send plaintext,
+    anything derived from plaintext, or secrets.
+  - Each decrypt method documents this with an example that runs.
 
 - **`json::JsonPlaintext`, a JSON document as one ciphertext** (#1636).
   `JsonPlaintext` holds a `serde_json::Value` and wipes it when it is
@@ -145,7 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The tree entry points return a `Pending`** (#1705), so they can take
   audit metadata like every other call. `KeysetCipher::encrypt_tree`,
-  `KeysetCipher::decrypt_tree` and `StackCipher::decrypt` were
+  `KeysetCipher::decrypt_tree`, and `StackCipher::decrypt` were
   `async fn`s. `.await` on them works as before. To migrate:
   - Code that used the result as a `Future` (`tokio::spawn`,
     `futures::join!`) calls `.into_future()` on it first.
@@ -155,11 +152,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The decrypt entry points now also need `T: Send` on native targets
     (`MaybeSend`).
 
-- **`PendingStackCipherText::seal` is removed** (#1705). Once it returned
-  a `Pending` it was the same function as `into_pending`. Call
-  `into_pending(cipher, context)` instead, with the same arguments, and
-  await it as before; or use `KeysetCipher::encrypt_tree`, which plans
-  and seals in one call.
+- **`PendingStackCipherText::seal` is removed** (#1705). Once `seal`
+  returned a `Pending`, it was the same function as `into_pending`. Call
+  `into_pending(cipher, context)` instead, with the same arguments. Await
+  the result as before. `KeysetCipher::encrypt_tree` plans and seals in
+  one call.
 
 - **`target::ExpectedContext` is no longer part of the API** (#1488). It
   is the check that a `#[stash(context_field)]` record runs on decrypt:

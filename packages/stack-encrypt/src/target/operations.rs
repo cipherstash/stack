@@ -1488,6 +1488,41 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// Recover `P` from `source`, as its declaration describes. A leaf sealed
     /// under another keyset is refused ([`Error::ForeignKeyset`]) before any
     /// key is retrieved.
+    ///
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// also log why this decrypt happened, call `.audit(..)` before you
+    /// await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::AeadContext;
+    /// use stack_encrypt::{nonempty, AuditMetadata, StackCipher, StackCipherText};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let context = || AeadContext::from(nonempty!("users/email"));
+    /// let stored: StackCipherText = keyset
+    ///     .encrypt_as(&String::from("bob@example.com"), context())
+    ///     .await?;
+    ///
+    /// let email: String = keyset
+    ///     .decrypt_as(stored, context())
+    ///     .audit(AuditMetadata::new().with("purpose", "send receipt"))
+    ///     .await?;
+    /// assert_eq!(email, "bob@example.com");
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
     pub fn decrypt_as<'a, P: 'static, T>(
         &'a self,
         source: T,
@@ -1511,6 +1546,44 @@ impl<K: 'static> StackCipher<K> {
     }
     /// Recover `P` from `source`, as its declaration describes. Leaves from
     /// any of the client's keysets open here.
+    ///
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// also log why this decrypt happened, call `.audit(..)` before you
+    /// await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::AeadContext;
+    /// use stack_encrypt::{nonempty, AuditMetadata, StackCipher, StackCipherText};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let context = || AeadContext::from(nonempty!("users/email"));
+    /// let stored: StackCipherText = keyset
+    ///     .encrypt_as(&String::from("bob@example.com"), context())
+    ///     .await?;
+    ///
+    /// let email: String = cipher
+    ///     .decrypt_as(stored, context())
+    ///     .audit(AuditMetadata::new().with("purpose", "send receipt"))
+    ///     .await?;
+    /// assert_eq!(email, "bob@example.com");
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
+    ///
+    /// This call makes one key request for each keyset the leaves were sealed
+    /// under. Each request is sent with the same facts.
     pub fn decrypt_as<'a, P: 'static, T>(
         &'a self,
         source: T,

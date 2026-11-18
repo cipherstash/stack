@@ -23,7 +23,7 @@ use stack_kms::{
 use uuid::Uuid;
 
 use super::request::{tally, KeysetAnswer, Request, RequestKind, Responses};
-use crate::audit::{self, AuditMetadata, Unverified};
+use crate::audit::{AuditMetadata, Audited, Unverified};
 use crate::contexts::CallContexts;
 use crate::keyset::KeysetState;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
@@ -86,10 +86,6 @@ pub struct Pending<'a, T, K> {
     /// [`context`](Self::context) shows. A failed pending carries none, as
     /// it carries no requests.
     contexts: Vec<(ContextPiece<'static>, ContextPiece<'static>)>,
-    /// The caller's [audit metadata](AuditMetadata), already in the form
-    /// ZeroKMS takes, sent with every key request this pending makes. `None`
-    /// sends none.
-    audit: Unverified,
     fulfil: FulfilBox<'a, T>,
 }
 
@@ -223,7 +219,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 requests: Vec::new(),
                 failed: None,
                 contexts: Vec::new(),
-                audit: None,
                 fulfil: Box::new(move |_| Ok(value)),
             },
             Err(error) => Self::failed(scope, error),
@@ -252,7 +247,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests: Vec::new(),
             failed: Some(error),
             contexts: Vec::new(),
-            audit: None,
             // Unreachable: `settle` returns the stored error before any
             // fulfilment runs. Kept honest rather than panicking.
             fulfil: Box::new(|_| {
@@ -293,7 +287,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             contexts: Vec::new(),
-            audit: None,
             fulfil: Box::new(move |responses| {
                 let mut own = responses.split_front(generated, retrieved, keysets)?;
                 let value = fulfil(&mut own)?;
@@ -317,7 +310,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests: self.requests,
             failed: self.failed,
             contexts: self.contexts,
-            audit: self.audit,
             fulfil: Box::new(move |responses| fulfil(responses).map(f)),
         }
     }
@@ -334,24 +326,13 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests: self.requests,
             failed: self.failed,
             contexts: self.contexts,
-            audit: self.audit,
             fulfil: Box::new(move |responses| fulfil(responses).and_then(f)),
         }
     }
 
-    /// Send `metadata` with every key request this call makes, for the
-    /// ZeroKMS audit log. Optional: a call without it sends no audit
-    /// metadata. A call that requests no data key, such as a query term or
-    /// a record of passthrough fields only, sends none either, because no
-    /// request carries it.
-    ///
-    /// The metadata is per call. One call can make several key requests
-    /// (one `generate_keys`, and one `retrieve_keys` per keyset it opens
-    /// leaves from), and each carries the same metadata. Calling `audit`
-    /// again replaces the metadata, and empty metadata removes it.
-    ///
-    /// ZeroKMS does not verify the metadata, it is not needed to decrypt,
-    /// and it must not hold plaintext or secrets: see [`AuditMetadata`].
+    /// Send `metadata` with every key request that this call makes, for
+    /// the ZeroKMS audit log. Audit metadata is optional: a call without it
+    /// sends none.
     ///
     /// ```
     /// use stack_encrypt::kms::FakeDataKeySource;
@@ -371,44 +352,28 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// # }).unwrap();
     /// ```
     ///
-    /// # Merging
+    /// ZeroKMS does not verify the metadata. A decrypt does not need it.
+    /// ZeroKMS writes the metadata to its logs, so do not send plaintext or
+    /// secrets. See [`AuditMetadata`] for the full rules.
     ///
-    /// Merged calls ([`zip`](Self::zip), [`all`](Self::all), a record's
-    /// fields) make one batch, so they share one map. A merged pending keeps
-    /// the metadata of whichever side has some. If both sides carry
-    /// different metadata, the merge fails with
-    /// [`AuditError::Mismatch`](crate::AuditError::Mismatch) before any
-    /// request. So attach the metadata to the merged call, after merging.
+    /// # One map for each call
     ///
-    /// # Errors
+    /// A call can make several key requests: one `generate_keys`, and one
+    /// `retrieve_keys` for each keyset it decrypts leaves from. Each
+    /// request is sent with the same metadata.
     ///
-    /// Awaiting fails with
-    /// [`AuditError::NumberOutOfRange`](crate::AuditError::NumberOutOfRange)
-    /// before any request if a number in `metadata` has no exact ZeroKMS
-    /// form. A pending that has already failed keeps its own error.
-    pub fn audit(self, metadata: AuditMetadata) -> Self {
-        match metadata.to_unverified() {
-            Ok(audit) => self.with_unverified(audit),
-            Err(_) if self.failed.is_some() => self,
-            Err(error) => Pending::failed(
-                CipherRef {
-                    cipher: self.cipher,
-                    keyset: self.keyset,
-                },
-                error,
-            ),
-        }
-    }
-
-    /// Replace the audit metadata with `audit`, already converted: what
-    /// [`audit`](Self::audit) does, and what a plan chain does with the
-    /// metadata it converted before any request. A failed pending is left
-    /// as it is.
-    pub(crate) fn with_unverified(mut self, audit: Unverified) -> Self {
-        if self.failed.is_none() {
-            self.audit = audit;
-        }
-        self
+    /// Some calls request no data key, such as a query term, or a record
+    /// that has only passthrough fields. Those calls send no metadata,
+    /// because they make no request to send it with. Empty metadata sends
+    /// none either.
+    ///
+    /// # Attach it last
+    ///
+    /// The result is an [`Audited`] call. You can only await it. So call
+    /// [`zip`](Self::zip), [`all`](Self::all), and [`map`](Self::map)
+    /// first. Then attach the metadata to the whole call.
+    pub fn audit(self, metadata: AuditMetadata) -> Audited<Self> {
+        Audited::new(self, metadata)
     }
 
     /// The contexts this call will use, with the caller's values filled in.
@@ -527,10 +492,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         if let Some(error) = self.failed.or(other.failed) {
             return Pending::failed(self.cipher, error);
         }
-        let audit = match audit::merge(self.audit, other.audit) {
-            Ok(audit) => audit,
-            Err(error) => return Pending::failed(self.cipher, error),
-        };
         let mut requests = self.requests;
         requests.extend(other.requests);
         if let Err(error) = check_scope(keyset, &requests) {
@@ -546,7 +507,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             contexts,
-            audit,
             fulfil: Box::new(move |responses| {
                 // The left side's output is held in a guard. So if the right
                 // side fails or panics, the guard releases the left side's
@@ -620,7 +580,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         let mut keyset = scope.keyset_id();
         let mut requests = Vec::new();
         let mut contexts = Vec::new();
-        let mut audit = None;
         let mut fulfils = Vec::with_capacity(items.size_hint().0);
         for item in items {
             keyset = match merge_scopes(keyset, item.keyset) {
@@ -630,10 +589,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             if let Some(error) = item.failed {
                 return Pending::failed(cipher, error);
             }
-            audit = match audit::merge(audit, item.audit) {
-                Ok(audit) => audit,
-                Err(error) => return Pending::failed(cipher, error),
-            };
             requests.extend(item.requests);
             contexts.extend(item.contexts);
             fulfils.push(item.fulfil);
@@ -647,7 +602,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             contexts,
-            audit,
             fulfil: Box::new(move |responses| {
                 // Held in a guard so that an item whose fulfilment panics
                 // releases the prefix during the unwind, as an error does.
@@ -729,16 +683,17 @@ where
     /// Unboxed, so it carries no `Send`/`Sync` demands beyond the backend's
     /// own; the public [`IntoFuture`] impl boxes it.
     pub(crate) async fn settle(self) -> Result<T, Error> {
+        self.settle_with(None).await
+    }
+
+    /// Settle as [`settle`](Self::settle) does, and send `audit` with
+    /// every key request. An [`Audited`] call settles through this method.
+    pub(crate) async fn settle_with(self, audit: Unverified) -> Result<T, Error> {
         if let Some(error) = self.failed {
             return Err(error);
         }
-        let mut responses = dispatch(
-            self.cipher,
-            self.keyset,
-            self.requests,
-            self.audit.as_deref(),
-        )
-        .await?;
+        let mut responses =
+            dispatch(self.cipher, self.keyset, self.requests, audit.as_deref()).await?;
         (self.fulfil)(&mut responses)
     }
 }
@@ -801,6 +756,38 @@ where
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.settle())
+    }
+}
+
+/// Awaiting an audited `Pending` settles it, as awaiting the `Pending`
+/// does, with the audit metadata on every key request.
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a, T: 'a, K> IntoFuture for Audited<Pending<'a, T, K>>
+where
+    K: DataKeySource + IndexKeySource + Sync,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (pending, audit) = self.into_parts();
+        Box::pin(pending.settle_with(audit))
+    }
+}
+
+/// See the native impl above. This one is the same, without the `Sync`
+/// bound.
+#[cfg(target_arch = "wasm32")]
+impl<'a, T: 'a, K> IntoFuture for Audited<Pending<'a, T, K>>
+where
+    K: DataKeySource + IndexKeySource,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (pending, audit) = self.into_parts();
+        Box::pin(pending.settle_with(audit))
     }
 }
 
