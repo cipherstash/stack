@@ -3520,6 +3520,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "stack-kms-aws"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64ct",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "stack-encrypt",
+ "stack-kms",
+ "stack-kms-vendor",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "uuid",
+ "vitaminc 0.9.0",
+ "web-time",
+ "zeroize",
+]
+
+[[package]]
 name = "stack-kms-vendor"
 version = "0.1.0"
 dependencies = [
