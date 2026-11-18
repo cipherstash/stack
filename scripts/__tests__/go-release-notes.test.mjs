@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest'
 import {
   absoluteLinks,
   changelogSection,
+  MAX_NOTES_BYTES,
   releaseNotes,
   releaseTag,
   unwrap,
@@ -78,6 +79,36 @@ describe('changelogSection', () => {
       changelogSection('## [1.0.0]\n\n\n## [0.9.0]\n\nx\n', '1.0.0'),
     ).toThrow(/is empty/)
   })
+
+  it('does not end the section at a `## ` line inside a fenced code block', () => {
+    const changelog =
+      '## [1.0.0]\n\n```sh\n## a shell comment\ngo get x\n```\n\n### Breaking\n\n- y\n\n## [0.9.0]\n\nz\n'
+    expect(changelogSection(changelog, '1.0.0')).toBe(
+      '```sh\n## a shell comment\ngo get x\n```\n\n### Breaking\n\n- y',
+    )
+  })
+})
+
+describe('releaseNotes', () => {
+  it('refuses notes too large for the environment variable that carries them to publish', () => {
+    const big = `## [1.0.0]\n\n${'word '.repeat(MAX_NOTES_BYTES / 5 + 1)}\n`
+    expect(() => releaseNotes(big, '1.0.0')).toThrow(/bytes; the limit is/)
+  })
+
+  it('refuses a reference-style link definition, which it would leave relative', () => {
+    expect(() =>
+      releaseNotes(
+        '## [1.0.0]\n\nSee [the guide][g].\n\n[g]: ../../README.md\n',
+        '1.0.0',
+      ),
+    ).toThrow(/reference-style link definition/)
+  })
+
+  it('allows a line shaped like a definition inside a fenced code block', () => {
+    expect(releaseNotes('## [1.0.0]\n\n```toml\n[a]: b\n```\n', '1.0.0')).toBe(
+      '```toml\n[a]: b\n```',
+    )
+  })
 })
 
 describe('absoluteLinks', () => {
@@ -111,6 +142,37 @@ describe('absoluteLinks', () => {
       /outside the repository/,
     )
   })
+
+  it('leaves a fenced code block and a code span alone', () => {
+    const fenced = '```go\nx := fns[0](y)\n// [x](../../../README.md)\n```'
+    expect(absoluteLinks(fenced, ref)).toBe(fenced)
+    const span =
+      'Call `fns[0](y)` or `[x](../../../README.md)`, then [a](b.md).'
+    expect(absoluteLinks(span, ref)).toBe(
+      `Call \`fns[0](y)\` or \`[x](../../../README.md)\`, then [a](${blob}/languages/golang/b.md).`,
+    )
+  })
+
+  it('points an image at the raw file, not the page that shows it', () => {
+    expect(absoluteLinks('![flow](docs/flow.png)', ref)).toBe(
+      `![flow](https://github.com/cipherstash/stack/raw/${ref}/languages/golang/docs/flow.png)`,
+    )
+  })
+
+  it('rewrites a link with a title, and one with an angle-bracket target', () => {
+    expect(absoluteLinks('[t](../x.md "The title")', ref)).toBe(
+      `[t](${blob}/languages/x.md "The title")`,
+    )
+    expect(absoluteLinks('[a](<doc file.md>)', ref)).toBe(
+      `[a](${blob}/languages/golang/doc%20file.md)`,
+    )
+  })
+
+  it('refuses an inline link it cannot rewrite, rather than leave it relative', () => {
+    expect(() => absoluteLinks('[x]( spaced.md )', ref)).toThrow(
+      /cannot rewrite/,
+    )
+  })
 })
 
 describe('unwrap', () => {
@@ -139,6 +201,21 @@ describe('unwrap', () => {
     const text = 'Run:\n\n```sh\ngo get a\ngo install b\n```\nafter\nthis'
     expect(unwrap(text)).toBe(
       'Run:\n\n```sh\ngo get a\ngo install b\n```\nafter this',
+    )
+  })
+
+  it('keeps a hard line break, written as two trailing spaces or a backslash', () => {
+    expect(unwrap('one  \ntwo\nthree\\\nfour\nfive')).toBe(
+      'one  \ntwo three\\\nfour five',
+    )
+  })
+
+  it('leaves an indented code block as it is, but joins an indented paragraph in a list item', () => {
+    expect(
+      unwrap('Run:\n\n    go get x\n    go generate ./...\n\nafter\nthis'),
+    ).toBe('Run:\n\n    go get x\n    go generate ./...\n\nafter this')
+    expect(unwrap('- item\n\n    more of the\n    item\n\nafter')).toBe(
+      '- item\n\n    more of the item\n\nafter',
     )
   })
 })
@@ -187,6 +264,43 @@ describe('release-golang.yml', () => {
     expect(notesStep.run).toContain(
       'node scripts/go-release-notes.mjs "$VERSION"',
     )
+  })
+
+  it('checks the version before taking the notes, so a malformed version is not reported as a missing section', () => {
+    const check = notes.steps.findIndex(
+      (step) =>
+        step.run ===
+        'node scripts/go-release-version.mjs "$VERSION" "$GITHUB_REF"',
+    )
+    expect(check).toBeGreaterThan(-1)
+    expect(check).toBeLessThan(notes.steps.indexOf(notesStep))
+  })
+
+  it('checks out only the files the notes job reads', () => {
+    const checkout = notes.steps.find((step) => step.uses)
+    const paths = String(checkout.with['sparse-checkout'])
+      .split('\n')
+      .filter(Boolean)
+    expect(paths.sort()).toEqual(
+      [
+        'languages/golang/CHANGELOG.md',
+        'languages/golang/go.mod',
+        'scripts/go-release-notes.mjs',
+        'scripts/go-release-version.mjs',
+      ].sort(),
+    )
+    expect(checkout.with['sparse-checkout-cone-mode']).toBe(false)
+    const source = (file) => readFileSync(join(REPO_ROOT, file), 'utf8')
+    for (const script of [
+      'scripts/go-release-notes.mjs',
+      'scripts/go-release-version.mjs',
+    ]) {
+      for (const [, spec] of source(script).matchAll(
+        /^import .* from '([^']+)'/gm,
+      )) {
+        expect(spec, `${script} imports ${spec}`).toMatch(/^node:/)
+      }
+    }
   })
 
   it('stops the release before the build when the notes fail', () => {

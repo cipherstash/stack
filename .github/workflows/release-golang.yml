@@ -109,9 +109,23 @@ jobs:
     outputs:
       notes: ${{ steps.notes.outputs.notes }}
     steps:
+      # Only the files this job reads: the two scripts (Node built-ins only),
+      # the CHANGELOG, and the go.mod the version check reads.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/go-release-notes.mjs
+            scripts/go-release-version.mjs
+            languages/golang/CHANGELOG.md
+            languages/golang/go.mod
+
+      # First, so a malformed version (`v0.1.0`, say) is refused as one, not
+      # reported as a CHANGELOG with no section for it. `build` checks it
+      # again, since that is the job that builds the version.
+      - name: Check the version and the ref
+        run: node scripts/go-release-version.mjs "$VERSION" "$GITHUB_REF"
 
       # A multi-line output needs a delimiter no line of the notes can be,
       # so it is random. Empty notes are refused here too, whatever the
