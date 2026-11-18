@@ -12,6 +12,7 @@ includes = [
   "packages/stack-kms/tasks.toml",
   "packages/stack-kms-vendor/tasks.toml",
   "packages/stack-kms-aws/tasks.toml",
+  "packages/stack-kms-vault/tasks.toml",
   "packages/stack-profile/tasks.toml",
   "packages/stack-encrypt/tasks.toml",
   "packages/stack-guest-abi/tasks.toml",
@@ -129,6 +130,9 @@ check stack-kms-vendor --features http
 # The AWS KMS key vendor backend, default features on: its native transport
 # and workload identity credential sources are gated off on wasm32.
 check stack-kms-aws
+# The Vault Transit key vendor backend, default features on: its native
+# transport and Kubernetes auth are gated off on wasm32.
+check stack-kms-vault
 # The Go binding's credential guest (ADR-0005) compiles stack-profile for
 # WASI: the hostname and the process id are native-only there.
 check stack-profile
