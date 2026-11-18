@@ -11,6 +11,7 @@ use super::build::{FieldPlan, FieldsBuilder, IntoLabel, Opens, PlanContext, Runs
 use super::field_ref::FieldRef;
 use super::value::{Indexed, Laid, Typed, ValueLayout, ValuePlan, ValueShape};
 use super::PlanError;
+use crate::audit;
 use crate::op::{Answers, DefaultIndex, Input, LabelledTarget, Operator, QueryToken, Supports};
 use crate::target::{
     ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
@@ -158,8 +159,11 @@ pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
     fn cipher(&self) -> &'a StackCipher<K>;
     /// The keyset the chain names, if any, taken out of it.
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>>;
-    /// The audit metadata the chain carries, if any, taken out of it.
-    fn take_audit(&mut self) -> Option<AuditMetadata>;
+    /// The audit metadata the chain carries, if any, taken out of it. A
+    /// query chain requests no data key, so it carries none.
+    fn take_audit(&mut self) -> Option<AuditMetadata> {
+        None
+    }
     /// The chain's plan, and the value or record it runs over, checked
     /// with no I/O and no keyset: the [`Error::Plan`] refusals
     /// [`prepare`](Self::prepare) would raise. A query chain also prepares
@@ -220,29 +224,34 @@ where
 {
     Box::pin(async move {
         operation.check()?;
+        // Converted before the keyset is resolved, so metadata that cannot
+        // be sent is refused before any request, the keyset lookup included.
+        let audit = audit::unverified(operation.take_audit().as_ref())?;
         let choice = operation.take_keyset();
         let (keyset, scoped) = resolve(operation.cipher(), vec![choice]).await?;
-        prepared(operation, &keyset, scoped).settle().await
+        operation
+            .prepare(&keyset, scoped)
+            .with_unverified(audit)
+            .settle()
+            .await
     })
 }
 
-/// [`Operation::prepare`], with the chain's audit metadata attached to the
-/// pending it yields.
-fn prepared<'a, 'p, K, O>(
-    mut operation: O,
-    keyset: &'p KeysetCipher<'a, K>,
-    scoped: bool,
-) -> Pending<'p, O::Output, K>
-where
-    'a: 'p,
-    K: 'static,
-    O: Operation<'a, K>,
-{
-    let audit = operation.take_audit();
-    let pending = operation.prepare(keyset, scoped);
-    match audit {
-        Some(audit) => pending.audit(audit),
-        None => pending,
+/// The audit metadata a batch of chains sends: the chains' own, merged
+/// across the whole batch by [`audit::merge`]'s rule, then replaced by the
+/// batch's if it names any. Converted with no I/O, so a chain that cannot
+/// be sent, or two that disagree, fail the batch before any request.
+fn batch_audit(
+    chains: impl IntoIterator<Item = Option<AuditMetadata>>,
+    batch: Option<&AuditMetadata>,
+) -> Result<audit::Unverified, Error> {
+    let mut merged = None;
+    for chain in chains {
+        merged = audit::merge(merged, audit::unverified(chain.as_ref())?)?;
+    }
+    match batch {
+        Some(batch) => batch.to_unverified(),
+        None => Ok(merged),
     }
 }
 
@@ -1002,9 +1011,6 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
-    fn take_audit(&mut self) -> Option<AuditMetadata> {
-        self.common.audit.take()
-    }
     fn check(&mut self) -> Result<(), Error> {
         if self.common.extend.has_bindings() {
             return Err(PlanError::BindInQuery.into());
@@ -1197,11 +1203,14 @@ pub struct All<'a, K, T> {
 
 impl<K, T> All<'_, K, T> {
     /// Send `metadata` with every key request the batch makes, for the
-    /// ZeroKMS audit log. Optional. It replaces any metadata the chains in
-    /// the batch carry; chains that carry different metadata of their own
-    /// fail the batch with [`AuditError::Mismatch`](crate::AuditError::Mismatch)
-    /// before any request. See [`Pending::audit`] for what ZeroKMS does
-    /// with it and what it must not hold.
+    /// ZeroKMS audit log. Optional. See [`Pending::audit`] for what ZeroKMS
+    /// does with it and what it must not hold.
+    ///
+    /// A batch sends one map on all its requests. The chains' own metadata
+    /// is merged first: chains that carry different metadata fail the
+    /// batch with [`AuditError::Mismatch`](crate::AuditError::Mismatch)
+    /// before any request. When they agree, `metadata` is sent in place of
+    /// theirs.
     pub fn audit(mut self, metadata: AuditMetadata) -> Self {
         self.audit = Some(metadata);
         self
@@ -1320,24 +1329,28 @@ macro_rules! all_of {
                     if $(!std::ptr::eq($rop.cipher(), cipher))||+ {
                         return Err(PlanError::MixedCiphers.into());
                     }
+                    let audit = batch_audit(
+                        [$fop.take_audit(), $($rop.take_audit()),+],
+                        audit.as_ref(),
+                    )?;
                     let ($fnamed, $($rnamed),+) = ($fop.take_keyset(), $($rop.take_keyset()),+);
                     let named = ($fnamed.is_some(), $($rnamed.is_some()),+);
                     let (keyset, _) = resolve(cipher, vec![$fnamed, $($rnamed),+]).await?;
                     let ($fnamed, $($rnamed),+) = named;
-                    let ($fbatch, $fany) = route(cipher, prepared($fop, &keyset, $fnamed));
-                    $(let ($rbatch, $rany) = route(cipher, prepared($rop, &keyset, $rnamed));)+
-                    let batch = $fbatch
+                    let ($fbatch, $fany) = route(cipher, $fop.prepare(&keyset, $fnamed));
+                    $(let ($rbatch, $rany) = route(cipher, $rop.prepare(&keyset, $rnamed));)+
+                    let ($fbatch, $($rbatch),+) = $fbatch
                         $(.zip($rbatch))+
-                        .map(|$batch| ($fbatch, $($rbatch),+));
-                    let any = $fany
+                        .map(|$batch| ($fbatch, $($rbatch),+))
+                        .with_unverified(audit.clone())
+                        .settle()
+                        .await?;
+                    let ($fany, $($rany),+) = $fany
                         $(.zip($rany))+
-                        .map(|$any| ($fany, $($rany),+));
-                    let (batch, any) = match audit {
-                        Some(audit) => (batch.audit(audit.clone()), any.audit(audit)),
-                        None => (batch, any),
-                    };
-                    let ($fbatch, $($rbatch),+) = batch.settle().await?;
-                    let ($fany, $($rany),+) = any.settle().await?;
+                        .map(|$any| ($fany, $($rany),+))
+                        .with_unverified(audit)
+                        .settle()
+                        .await?;
                     Ok((placed($fbatch, $fany)?, $(placed($rbatch, $rany)?),+))
                 })
             }

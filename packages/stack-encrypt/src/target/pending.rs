@@ -23,7 +23,7 @@ use stack_kms::{
 use uuid::Uuid;
 
 use super::request::{tally, KeysetAnswer, Request, RequestKind, Responses};
-use crate::audit::{AuditError, AuditMetadata};
+use crate::audit::{self, AuditMetadata, Unverified};
 use crate::contexts::CallContexts;
 use crate::keyset::KeysetState;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
@@ -88,8 +88,8 @@ pub struct Pending<'a, T, K> {
     contexts: Vec<(ContextPiece<'static>, ContextPiece<'static>)>,
     /// The caller's [audit metadata](AuditMetadata), already in the form
     /// ZeroKMS takes, sent with every key request this pending makes. `None`
-    /// sends none. Shared, so merging compares and keeps it without a copy.
-    audit: Option<Arc<UnverifiedContext>>,
+    /// sends none.
+    audit: Unverified,
     fulfil: FulfilBox<'a, T>,
 }
 
@@ -341,7 +341,9 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
 
     /// Send `metadata` with every key request this call makes, for the
     /// ZeroKMS audit log. Optional: a call without it sends no audit
-    /// metadata.
+    /// metadata. A call that requests no data key, such as a query term or
+    /// a record of passthrough fields only, sends none either, because no
+    /// request carries it.
     ///
     /// The metadata is per call. One call can make several key requests
     /// (one `generate_keys`, and one `retrieve_keys` per keyset it opens
@@ -374,32 +376,39 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// Merged calls ([`zip`](Self::zip), [`all`](Self::all), a record's
     /// fields) make one batch, so they share one map. A merged pending keeps
     /// the metadata of whichever side has some. If both sides carry
-    /// different metadata, the merge fails with [`AuditError::Mismatch`]
-    /// before any request. So attach the metadata to the merged call, after
-    /// merging.
+    /// different metadata, the merge fails with
+    /// [`AuditError::Mismatch`](crate::AuditError::Mismatch) before any
+    /// request. So attach the metadata to the merged call, after merging.
     ///
     /// # Errors
     ///
-    /// Awaiting fails with [`AuditError::NumberOutOfRange`] before any
-    /// request if a number in `metadata` has no exact ZeroKMS form. A
-    /// pending that has already failed keeps its own error.
-    pub fn audit(mut self, metadata: AuditMetadata) -> Self {
-        if self.failed.is_some() {
-            return self;
-        }
+    /// Awaiting fails with
+    /// [`AuditError::NumberOutOfRange`](crate::AuditError::NumberOutOfRange)
+    /// before any request if a number in `metadata` has no exact ZeroKMS
+    /// form. A pending that has already failed keeps its own error.
+    pub fn audit(self, metadata: AuditMetadata) -> Self {
         match metadata.to_unverified() {
-            Ok(audit) => {
-                self.audit = audit.map(Arc::new);
-                self
-            }
+            Ok(audit) => self.with_unverified(audit),
+            Err(_) if self.failed.is_some() => self,
             Err(error) => Pending::failed(
                 CipherRef {
                     cipher: self.cipher,
                     keyset: self.keyset,
                 },
-                error.into(),
+                error,
             ),
         }
+    }
+
+    /// Replace the audit metadata with `audit`, already converted: what
+    /// [`audit`](Self::audit) does, and what a plan chain does with the
+    /// metadata it converted before any request. A failed pending is left
+    /// as it is.
+    pub(crate) fn with_unverified(mut self, audit: Unverified) -> Self {
+        if self.failed.is_none() {
+            self.audit = audit;
+        }
+        self
     }
 
     /// The contexts this call will use, with the caller's values filled in.
@@ -518,7 +527,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         if let Some(error) = self.failed.or(other.failed) {
             return Pending::failed(self.cipher, error);
         }
-        let audit = match merge_audits(self.audit, other.audit) {
+        let audit = match audit::merge(self.audit, other.audit) {
             Ok(audit) => audit,
             Err(error) => return Pending::failed(self.cipher, error),
         };
@@ -621,7 +630,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             if let Some(error) = item.failed {
                 return Pending::failed(cipher, error);
             }
-            audit = match merge_audits(audit, item.audit) {
+            audit = match audit::merge(audit, item.audit) {
                 Ok(audit) => audit,
                 Err(error) => return Pending::failed(cipher, error),
             };
@@ -740,20 +749,6 @@ fn merge_scopes(left: Option<Uuid>, right: Option<Uuid>) -> Result<Option<Uuid>,
     match (left, right) {
         (Some(left), Some(right)) if left != right => Err(Error::KeysetMismatch { left, right }),
         (Some(keyset), _) | (_, Some(keyset)) => Ok(Some(keyset)),
-        (None, None) => Ok(None),
-    }
-}
-
-/// The audit metadata two merged pendings share: either's when the other
-/// has none, [`AuditError::Mismatch`] when both have some and it differs.
-/// One batch is one key request, and a request carries one map.
-fn merge_audits(
-    left: Option<Arc<UnverifiedContext>>,
-    right: Option<Arc<UnverifiedContext>>,
-) -> Result<Option<Arc<UnverifiedContext>>, Error> {
-    match (left, right) {
-        (Some(left), Some(right)) if left != right => Err(AuditError::Mismatch.into()),
-        (Some(audit), _) | (_, Some(audit)) => Ok(Some(audit)),
         (None, None) => Ok(None),
     }
 }

@@ -24,7 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     A query requests no data key, so the query chains have no `.audit`.
   - A batch is one key request, so it carries one map. Merging calls that
     carry different metadata fails with `AuditError::Mismatch` before any
-    request. Attach the metadata to the merged call instead.
+    request. Attach the metadata to the merged call instead. The chains in
+    one `all(..)` must agree too, including an open chain that is settled
+    in a request of its own.
   - ZeroKMS does not verify the metadata and it is not needed to decrypt.
     It lands in ZeroKMS logs, so it must not hold plaintext, anything
     derived from plaintext, or secrets.

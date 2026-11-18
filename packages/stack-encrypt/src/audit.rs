@@ -14,10 +14,16 @@
 //! bound into the ciphertext and needed again to decrypt.
 
 use std::fmt;
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
 use crate::kms::UnverifiedContext;
+use crate::Error;
+
+/// Audit metadata in the form ZeroKMS takes, ready to send, or `None` for
+/// none. Shared, so merging calls compares and keeps it without a copy.
+pub(crate) type Unverified = Option<Arc<UnverifiedContext>>;
 
 /// Facts about one call, sent to ZeroKMS with its key requests and written
 /// to the ZeroKMS audit log.
@@ -117,22 +123,51 @@ impl AuditMetadata {
     ///
     /// [`AuditError::NumberOutOfRange`] for a number ZeroKMS cannot hold
     /// exactly.
-    pub(crate) fn to_unverified(&self) -> Result<Option<UnverifiedContext>, AuditError> {
+    pub(crate) fn to_unverified(&self) -> Result<Unverified, Error> {
         if self.fields.is_empty() {
             return Ok(None);
         }
         for (key, value) in &self.fields {
             if !fits(value) {
-                return Err(AuditError::NumberOutOfRange { key: key.clone() });
+                return Err(AuditError::NumberOutOfRange { key: key.clone() }.into());
             }
         }
         // Every number was checked above, so this conversion cannot change
-        // one, and every other JSON shape has a ZeroKMS form. A failure here
-        // would be a ZeroKMS type that no longer reads JSON; it is reported,
-        // never a panic.
+        // one, and every other JSON shape has a ZeroKMS form. So a failure
+        // here is a bug, not the caller's input: it is reported as one,
+        // never as a refusal of the metadata, and never as a panic.
         serde_json::from_value(Value::Object(self.fields.clone()))
-            .map(Some)
-            .map_err(|_| AuditError::NotAnObject)
+            .map(|unverified| Some(Arc::new(unverified)))
+            .map_err(|_| {
+                Error::Other(
+                    "audit metadata that passed every check did not convert to ZeroKMS's form"
+                        .into(),
+                )
+            })
+    }
+}
+
+/// [`AuditMetadata::to_unverified`] for metadata that may be absent.
+///
+/// # Errors
+///
+/// As [`AuditMetadata::to_unverified`].
+pub(crate) fn unverified(metadata: Option<&AuditMetadata>) -> Result<Unverified, Error> {
+    metadata.map_or(Ok(None), AuditMetadata::to_unverified)
+}
+
+/// The metadata two merged calls share: either's when the other has none,
+/// [`AuditError::Mismatch`] when both have some and it differs. Merged
+/// calls make one key request, and a request carries one map.
+///
+/// # Errors
+///
+/// [`AuditError::Mismatch`], as above.
+pub(crate) fn merge(left: Unverified, right: Unverified) -> Result<Unverified, Error> {
+    match (left, right) {
+        (Some(left), Some(right)) if left != right => Err(AuditError::Mismatch.into()),
+        (Some(audit), _) | (_, Some(audit)) => Ok(Some(audit)),
+        (None, None) => Ok(None),
     }
 }
 
@@ -254,7 +289,8 @@ mod tests {
 
     #[test]
     fn empty_metadata_sends_nothing() {
-        assert_eq!(AuditMetadata::new().to_unverified(), Ok(None));
+        assert!(matches!(AuditMetadata::new().to_unverified(), Ok(None)));
+        assert!(matches!(unverified(None), Ok(None)));
     }
 
     #[test]
@@ -269,7 +305,7 @@ mod tests {
         .unwrap();
         let unverified = metadata.to_unverified().unwrap().unwrap();
         assert_eq!(
-            serde_json::to_value(&unverified).unwrap(),
+            serde_json::to_value(&*unverified).unwrap(),
             json!({
                 "purpose": "list issues",
                 "attempt": 2,
@@ -291,14 +327,32 @@ mod tests {
     #[test]
     fn an_unsigned_integer_above_i64_max_is_refused() {
         let metadata = AuditMetadata::new().with("nested", json!({ "big": u64::MAX }));
-        assert_eq!(
-            metadata.to_unverified(),
-            Err(AuditError::NumberOutOfRange {
-                key: "nested".into()
-            })
-        );
+        assert!(matches!(
+            unverified(Some(&metadata)),
+            Err(Error::Audit(AuditError::NumberOutOfRange { ref key })) if key == "nested"
+        ));
         let fits = AuditMetadata::new().with("max", i64::MAX);
         assert!(fits.to_unverified().unwrap().is_some());
+    }
+
+    #[test]
+    fn merging_keeps_either_side_and_refuses_a_difference() {
+        let a = AuditMetadata::new()
+            .with("purpose", "a")
+            .to_unverified()
+            .unwrap();
+        let b = AuditMetadata::new()
+            .with("purpose", "b")
+            .to_unverified()
+            .unwrap();
+        assert!(matches!(merge(None, None), Ok(None)));
+        assert_eq!(merge(a.clone(), None).unwrap(), a);
+        assert_eq!(merge(None, a.clone()).unwrap(), a);
+        assert_eq!(merge(a.clone(), a.clone()).unwrap(), a);
+        assert!(matches!(
+            merge(a, b),
+            Err(Error::Audit(AuditError::Mismatch))
+        ));
     }
 
     #[test]

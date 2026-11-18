@@ -6,6 +6,7 @@
 //! request carried, so none needs the network.
 
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
@@ -13,8 +14,12 @@ use stack_encrypt::kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
     IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
 };
+use stack_encrypt::plan::{Field, Fields};
+use stack_encrypt::sem::EqualityTerm;
+use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    all, AuditError, AuditMetadata, Ciphertext, Equality, Error, Pending, Plan, StackCipher,
+    all, nonempty, AuditError, AuditMetadata, Ciphertext, DecryptInto, EncryptFrom, Equality,
+    Error, Pending, Plan, StackCipher, StackCipherText,
 };
 use uuid::Uuid;
 
@@ -25,16 +30,17 @@ enum Call {
     Retrieve,
 }
 
-/// One key request as the key source received it: the call, and its
-/// unverified context as JSON (`None` when the request carried none).
+/// One key request as the key source received it: the call, and the audit
+/// metadata it carried as JSON (`None` when it carried none).
 type Sent = (Call, Option<Value>);
 
-/// A fake key source that records the unverified context of every key
-/// request.
+/// A fake key source that records the audit metadata of every key request,
+/// and counts keyset loads.
 #[derive(Clone)]
 struct RecordingSource {
     inner: Arc<FakeDataKeySource>,
     sent: Arc<Mutex<Vec<Sent>>>,
+    loads: Arc<AtomicUsize>,
 }
 
 impl RecordingSource {
@@ -42,12 +48,18 @@ impl RecordingSource {
         Self {
             inner: Arc::new(FakeDataKeySource::new()),
             sent: Arc::default(),
+            loads: Arc::default(),
         }
     }
 
-    fn record(&self, call: Call, context: Option<&UnverifiedContext>) {
-        let context = context.map(|context| serde_json::to_value(context).unwrap());
-        self.sent.lock().unwrap().push((call, context));
+    fn record(&self, call: Call, unverified: Option<&UnverifiedContext>) {
+        let metadata = unverified.map(|unverified| serde_json::to_value(unverified).unwrap());
+        self.sent.lock().unwrap().push((call, metadata));
+    }
+
+    /// The keyset loads made so far.
+    fn loads(&self) -> usize {
+        self.loads.load(Ordering::SeqCst)
     }
 
     /// The requests made so far, cleared.
@@ -87,6 +99,7 @@ impl IndexKeySource for RecordingSource {
         &self,
         keyset_id: Option<IdentifiedBy>,
     ) -> Result<(Uuid, IndexKey), stack_encrypt::kms::Error> {
+        let _ = self.loads.fetch_add(1, Ordering::SeqCst);
         self.inner.load_index_key(keyset_id).await
     }
 }
@@ -137,7 +150,7 @@ async fn a_scalar_encrypt_and_decrypt_send_their_metadata() {
 /// With no metadata the key source receives `None`, as it did before audit
 /// metadata existed, and empty metadata is the same as none.
 #[tokio::test]
-async fn no_metadata_sends_no_context() {
+async fn no_metadata_sends_none() {
     let (cipher, source) = cipher().await;
     let keyset = cipher.default_keyset();
 
@@ -465,4 +478,188 @@ async fn a_batch_of_chains_sends_its_metadata() {
         Err(Error::Audit(AuditError::Mismatch))
     ));
     assert_eq!(source.take(), vec![]);
+}
+
+/// A record with one encrypted field, for the `.fields()` chain.
+struct Account {
+    email: String,
+}
+impl Fields for Account {
+    fn field_names(&self) -> Vec<&str> {
+        vec!["email"]
+    }
+}
+impl Field<String> for Account {
+    fn field(&self, name: &str) -> Option<&String> {
+        (name == "email").then_some(&self.email)
+    }
+}
+
+/// Every encrypt chain that can be awaited takes `.audit(..)`: a context
+/// alone, a context with indexes, and fields.
+#[tokio::test]
+async fn every_encrypt_chain_sends_its_metadata() {
+    let (cipher, source) = cipher().await;
+    let email = String::from("bob@example.com");
+
+    let _ = cipher
+        .encrypt(&email)
+        .context("users/email")
+        .audit(list_issues())
+        .await
+        .unwrap();
+    let _ = cipher
+        .encrypt(&email)
+        .context("users/email")
+        .with(Equality)
+        .audit(list_issues())
+        .await
+        .unwrap();
+    let account = Account {
+        email: email.clone(),
+    };
+    let _ = cipher
+        .encrypt(&account)
+        .context("accounts")
+        .fields()
+        .encrypt::<String>("email")
+        .audit(list_issues())
+        .await
+        .unwrap();
+    assert_eq!(
+        source.take(),
+        vec![(Call::Generate, Some(list_issues_json())); 3]
+    );
+}
+
+/// `all(..)` settles chains that open leaves from any keyset in a request
+/// of their own, beside the batch. Both requests carry the batch's one map.
+#[tokio::test]
+async fn a_batch_of_encrypt_and_open_chains_sends_one_map_on_every_request() {
+    let (cipher, source) = cipher().await;
+    let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
+    let (alice, bob) = (
+        String::from("alice@example.com"),
+        String::from("bob@example.com"),
+    );
+    let stored = cipher.encrypt(&alice).using(&email_plan).await.unwrap();
+    let _ = source.take();
+
+    let (_, opened): (_, String) = all((
+        cipher.encrypt(&bob).using(&email_plan),
+        cipher.open(stored).using(&email_plan),
+    ))
+    .audit(list_issues())
+    .await
+    .unwrap();
+    assert_eq!(opened, alice);
+    assert_eq!(
+        source.take(),
+        vec![
+            (Call::Generate, Some(list_issues_json())),
+            (Call::Retrieve, Some(list_issues_json())),
+        ]
+    );
+}
+
+/// The chains in a batch must agree on their metadata wherever their
+/// requests land, and a disagreement fails the batch before any request.
+#[tokio::test]
+async fn chains_that_disagree_fail_the_whole_batch_before_any_request() {
+    let (cipher, source) = cipher().await;
+    let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
+    let email = String::from("bob@example.com");
+    let a = || AuditMetadata::new().with("purpose", "a");
+    let b = || AuditMetadata::new().with("purpose", "b");
+    let stored = || async { cipher.encrypt(&email).using(&email_plan).await.unwrap() };
+    let (first, second, third) = (stored().await, stored().await, stored().await);
+    let _ = source.take();
+
+    // An encrypt chain and an open chain: the batch request and the open
+    // request.
+    let split = all((
+        cipher.encrypt(&email).using(&email_plan).audit(a()),
+        cipher.open(third).using(&email_plan).audit(b()),
+    ))
+    .audit(list_issues())
+    .await;
+    assert!(matches!(split, Err(Error::Audit(AuditError::Mismatch))));
+
+    // Two open chains that disagree beside an encrypt chain: refused before
+    // the encrypt chain's key is generated.
+    let opens = all((
+        cipher.encrypt(&email).using(&email_plan),
+        cipher.open(first).using(&email_plan).audit(a()),
+        cipher.open(second).using(&email_plan).audit(b()),
+    ))
+    .await;
+    assert!(matches!(opens, Err(Error::Audit(AuditError::Mismatch))));
+    assert_eq!(source.take(), vec![]);
+}
+
+/// Metadata that cannot be sent is refused before any request, the lookup
+/// of a keyset the chain names included.
+#[tokio::test]
+async fn a_chain_refuses_unsendable_metadata_before_loading_a_keyset() {
+    let (cipher, source) = cipher().await;
+    let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
+    let email = String::from("bob@example.com");
+    let loads = source.loads();
+
+    let refused = cipher
+        .encrypt(&email)
+        .using(&email_plan)
+        .keyset("tenant-b")
+        .audit(AuditMetadata::new().with("rows", u64::MAX))
+        .await;
+    assert!(matches!(
+        refused,
+        Err(Error::Audit(AuditError::NumberOutOfRange { .. }))
+    ));
+    let refused = all((
+        cipher.encrypt(&email).using(&email_plan).keyset("tenant-b"),
+        cipher.encrypt(&email).using(&email_plan),
+    ))
+    .audit(AuditMetadata::new().with("rows", u64::MAX))
+    .await;
+    assert!(matches!(
+        refused,
+        Err(Error::Audit(AuditError::NumberOutOfRange { .. }))
+    ));
+    assert_eq!(source.loads(), loads, "no keyset was loaded");
+    assert_eq!(source.take(), vec![]);
+}
+
+/// A derived record's fields settle as one `Pending`, which takes the
+/// metadata like any other.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = String)]
+struct EncryptedEmail {
+    c: StackCipherText,
+    hm: EqualityTerm,
+}
+
+#[tokio::test]
+async fn a_derived_record_sends_its_metadata() {
+    let (cipher, source) = cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let record: EncryptedEmail = String::from("bob@example.com")
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+        .audit(list_issues())
+        .await
+        .unwrap();
+    let email: String = record
+        .decrypt_into(&cipher, nonempty!("users/email"))
+        .audit(list_issues())
+        .await
+        .unwrap();
+    assert_eq!(email, "bob@example.com");
+    assert_eq!(
+        source.take(),
+        vec![
+            (Call::Generate, Some(list_issues_json())),
+            (Call::Retrieve, Some(list_issues_json())),
+        ]
+    );
 }
