@@ -16,7 +16,7 @@ import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
  * EQL import, and `integrationSuiteCi.test.ts` for protect-ffi's before it.
  * This file is the same guard for this set, in two halves:
  *
- *   1. Every mise task the set defines — the five crate `tasks.toml` files the
+ *   1. Every mise task the set defines — the six crate `tasks.toml` files the
  *      root `mise.toml` includes, and the root tasks — is reached from a root
  *      workflow, or named as exempt with a reason. The scan is a smaller copy
  *      of `eql-suite-ci.test.mjs`'s: the same `invokes` rule for "a command,
@@ -193,15 +193,37 @@ function expandMatrix(run, job) {
 
 const jobSteps = (job) => (Array.isArray(job?.steps) ? job.steps : [])
 
+/**
+ * The `run:` bodies of a job. A job that calls a reusable workflow in this
+ * repository (`uses: ./.github/workflows/_x.yml`) runs that workflow's steps,
+ * with each `${{ inputs.<key> }}` set to the caller's `with.<key>`. Those
+ * bodies count for the CALLER: `_test-kms-live.yml` runs
+ * `mise run test:live:${{ inputs.crate }}`, which names no task until a
+ * caller says which crate, and deleting a caller must orphan its task.
+ */
+function jobBodies(job) {
+  const uses = String(job?.uses ?? '')
+  if (uses.startsWith(`./${WORKFLOW_DIR}/`)) {
+    const callee = readWorkflow(uses.slice(2))
+    const inputs = job?.with ?? {}
+    return Object.values(callee?.jobs ?? {}).flatMap((calleeJob) =>
+      jobBodies(calleeJob).map((body) =>
+        body.replace(/\$\{\{\s*inputs\.([\w-]+)\s*\}\}/g, (whole, key) =>
+          key in inputs ? String(inputs[key]) : whole,
+        ),
+      ),
+    )
+  }
+  return jobSteps(job)
+    .filter((step) => typeof step?.run === 'string')
+    .flatMap((step) => expandMatrix(step.run, job))
+}
+
 /** Every root workflow, with the `run:` bodies of all its jobs' steps. */
 const ROOT_WORKFLOWS = workflowFiles().map((relPath) => {
   const wf = readWorkflow(relPath)
   const body = Object.values(wf?.jobs ?? {})
-    .flatMap((job) =>
-      jobSteps(job)
-        .filter((step) => typeof step?.run === 'string')
-        .flatMap((step) => expandMatrix(step.run, job)),
-    )
+    .flatMap(jobBodies)
     .join('\n')
   return { relPath, wf, body }
 })
@@ -259,13 +281,14 @@ const CI_EXEMPT_TASKS = new Map([
 ])
 
 describe('the scan sees every task mise sees', () => {
-  it('reads the five crate task files from the root mise.toml', () => {
+  it('reads the six crate task files from the root mise.toml', () => {
     expect(INCLUDES.sort()).toEqual(
       [
         'packages/stack-auth/tasks.toml',
         'packages/stack-encrypt/tasks.toml',
         'packages/stack-guest-abi/tasks.toml',
         'packages/stack-kms/tasks.toml',
+        'packages/stack-kms-vendor/tasks.toml',
         'packages/stack-profile/tasks.toml',
       ].sort(),
     )
@@ -315,6 +338,7 @@ describe('the scan sees every task mise sees', () => {
         'doc:stack-encrypt',
         'doc:stack-guest-abi',
         'doc:stack-kms',
+        'doc:stack-kms-vendor',
         'doc:stack-profile',
       ].sort(),
     )

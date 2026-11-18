@@ -1,0 +1,76 @@
+[package]
+name = "stack-kms-vendor"
+description = "Key vendor backends for Stack Encrypt: keyset records, derived data keys, and the static key backend"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Publishable, in the `stack-kms-vendor` version group with every vendor crate
+# (stack-kms-aws, ...). release-plz.toml keeps `release = false` until the
+# first version is on crates.io: crates.io Trusted Publishing needs an
+# existing crate, so the first version is published by hand (see
+# docs/plans/2026-11-05-key-vendor-backends-decisions.md, CIP-5307).
+
+[features]
+# `stack_kms_vendor::contract` (the shared contract suite every key vendor
+# backend runs), `FakeVendor` (an in-memory key vendor backend) and
+# `stack_kms_vendor::replay` (the recorded-fixture harness every vendor
+# crate's tests use). The contract suite drives a real `StackCipher`, so this
+# pulls stack-encrypt in; the fixtures are serde types, so it pulls serde in.
+test-support = ["dep:stack-encrypt", "dep:serde", "stack-kms/test-support"]
+# `HttpVendorTransport`: the native `VendorTransport`, over the reqwest client
+# and the TLS configuration stack-kms uses for ZeroKMS. Native only: on wasm32
+# the dependencies are not in the graph and the type does not exist, because
+# the WASI guest sends through its `transport_send` host import instead.
+http = ["dep:reqwest", "dep:stack-auth", "dep:tokio"]
+
+[dependencies]
+stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false }
+# The contract suite only: it seals and opens values through a cipher.
+stack-encrypt = { path = "../stack-encrypt", version = "0.3.0", default-features = false, optional = true }
+
+vitaminc = { workspace = true, features = ["protected", "random"] }
+aes-gcm = { version = "0.10.3", features = ["zeroize"] }
+base64ct = { version = "1.7", features = ["alloc"] }
+futures = "0.3.25"
+hkdf = "0.13"
+sha2 = "0.11"
+subtle = "2.6"
+miette = { workspace = true }
+# The fixture types of `replay` only.
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+web-time = { workspace = true }
+zeroize = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true, optional = true }
+# Only for `stack_auth::tls::client_config`: the platform verifier with the
+# compromised-CA blocklist that every bundled reqwest client in the stack
+# crates uses.
+stack-auth = { workspace = true, optional = true, features = ["http"] }
+# The backoff timer of `HttpVendorTransport::sleep`. reqwest already runs on
+# tokio, so this adds no runtime.
+tokio = { version = "1.47.1", optional = true, default-features = false, features = ["time"] }
+
+[dev-dependencies]
+stack-kms = { path = "../stack-kms", default-features = false, features = ["test-support"] }
+stack-encrypt = { path = "../stack-encrypt", default-features = false }
+tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util"] }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[[test]]
+name = "contract"
+required-features = ["test-support"]
+
+[[test]]
+name = "router"
+required-features = ["test-support"]

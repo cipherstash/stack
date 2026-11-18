@@ -19,6 +19,16 @@
 #   feature), so a crates.io release of `eql-bindings` needs the matching
 #   `stack-encrypt` published first.
 #
+# One more crate is publishable but STAGED: `stack-kms-vendor`, the `stack-kms-vendor` version group (the key vendor seam
+# and every vendor crate that implements it: a change to the seam moves every
+# vendor). crates.io Trusted Publishing can only be configured on a crate that
+# exists, so each crate's first version is published by hand, after the
+# stack-kms and stack-encrypt it depends on are on crates.io. Until then they
+# carry `release = false` and `publish = false` here; the PR that arms them
+# deletes those two lines from each and adds each to release-plz.yml's
+# preflight loop. Their Cargo.toml files are already publishable, so
+# tests-crates.yml's `cargo publish --dry-run` packages them on every PR.
+#
 # Every other workspace member is `publish = false` in its Cargo.toml and is
 # also listed below with `release = false`, so `release-plz update` does not
 # bump its version or write its changelog either. Each also repeats
@@ -74,5 +84,12 @@ publish = false
 
 [[package]]
 name = "stack-auth-wasm"
+release = false
+publish = false
+
+# Staged: see the header.
+[[package]]
+name = "stack-kms-vendor"
+version_group = "stack-kms-vendor"
 release = false
 publish = false
