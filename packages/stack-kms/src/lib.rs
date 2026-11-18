@@ -15,6 +15,14 @@
 //! Encryption/decryption, keyset and client management, and config save/load
 //! all remain in `cipherstash-client` for now.
 //!
+//! # Key backends
+//!
+//! ZeroKMS is one key backend. The `stack-kms-vendor` crate adds the key
+//! vendor backends (AWS KMS, Google Cloud KMS, Azure Managed HSM, HashiCorp
+//! Vault Transit and a static key) on the [`DataKeySource`] and
+//! [`IndexKeySource`] traits of this crate. Its crate documentation has a
+//! capability matrix that compares each of them with ZeroKMS.
+//!
 //! # Quick start
 //!
 // The quick start goes through `StackKmsBuilder`, which configures the default
@@ -76,6 +84,7 @@ assert_eq!(keys.len(), 1);
 #![cfg_attr(test, allow(clippy::panic))]
 #![cfg_attr(test, allow(unused_results))]
 
+mod backend;
 #[cfg(feature = "http")]
 mod builder;
 mod client;
@@ -120,7 +129,8 @@ pub use maybe_send::MaybeSend;
 
 // Errors
 pub use errors::{
-    Error, GenerateKeyError, InvalidKeyMaterialError, LoadKeysetError, RetrieveKeyError,
+    BackendErrorKind, Error, GenerateKeyError, InvalidKeyMaterialError, LoadKeysetError,
+    RetrieveKeyError,
 };
 /// The trait every error from this crate implements to hand over its
 /// structured fields, with the rule for what an error may contain, and the
@@ -131,12 +141,15 @@ pub use stack_auth::{diagnostic, ErrorPayload};
 // Key material
 pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
 
+// Key backends and key modes (the bytes a keyset record stores)
+pub use backend::{KeyBackend, KeyMode, KeyVendor};
+
 // Key source abstractions (production = `StackKms`; tests = `FakeDataKeySource`)
 #[cfg(feature = "test-support")]
 pub use key_source::DeterministicSource;
 #[cfg(feature = "test-support")]
 pub use key_source::FakeDataKeySource;
-pub use key_source::{DataKeySource, IndexKeySource};
+pub use key_source::{DataKeySource, IndexKeySource, ZeroKmsKeySource};
 
 // Key providers
 pub use key_provider::{
@@ -149,7 +162,10 @@ pub use secret_key::SecretKey;
 pub use stack_profile::ProfileStore;
 
 // Operation payloads
-pub use payload::{GenerateKeyPayload, RetrieveKeyPayload};
+pub use payload::{
+    refuse_zerokms_extensions, GenerateKeyPayload, RetrieveKeyPayload, ZeroKmsExtensions,
+    ZeroKmsFeature,
+};
 
 // Commonly needed re-exports from the protocol / crypto layers
 pub use recipher::key::{GenRandom, Iv};
