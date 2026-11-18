@@ -8,7 +8,7 @@ go 1.26.10
 // fetched: the release commit names the version it tags in place of the
 // placeholder (scripts/go-release-pin-encrypttest.sh).
 require (
-	github.com/cipherstash/stack/languages/golang v0.0.0-00010101000000-000000000000
+	github.com/cipherstash/stack/languages/golang v0.1.0-rc.6
 	github.com/jackc/pgx/v5 v5.11.0
 )
 
