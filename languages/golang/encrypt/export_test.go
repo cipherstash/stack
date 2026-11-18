@@ -10,7 +10,6 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -67,10 +66,10 @@ func GuestMemory(t *testing.T, c *Client) []byte {
 }
 
 // deterministicGuestPath is the deterministic-kms test build, which `mise
-// run wasm:guest:build:deterministic` writes under testdata: a directory
-// `go build` and the package's `//go:embed wasm` ignore, so the test build
-// is read from disk here and embedded in no binary.
-const deterministicGuestPath = "testdata/stack_encrypt_guest_deterministic.wasm"
+// run wasm:guest:build:deterministic` writes where package encrypttest embeds
+// it. This package's tests read it from disk: encrypttest imports encrypt,
+// so they cannot import encrypttest.
+const deterministicGuestPath = "encrypttest/wasm/stack_encrypt_guest_deterministic.wasm"
 
 // ErrDeterministicGuestNotBuilt says the test build is absent.
 var ErrDeterministicGuestNotBuilt = errors.New("encrypt: deterministic guest not built; run `mise run wasm:guest:build:deterministic`")
@@ -87,7 +86,7 @@ func NewDeterministicClient(ctx context.Context, seed [32]byte) (*Client, error)
 	if err != nil {
 		return nil, err
 	}
-	return deterministicClient(ctx, wasm, seed)
+	return seededClient(ctx, wasm, seed)
 }
 
 // ErrDeterministicEQLGuestNotBuilt says the test build with the EQL types
@@ -95,8 +94,8 @@ func NewDeterministicClient(ctx context.Context, seed [32]byte) (*Client, error)
 var ErrDeterministicEQLGuestNotBuilt = errors.New("encrypt: deterministic eql guest not built; run `mise run wasm:guest:build:eql:deterministic`")
 
 // deterministicEQLGuestPath is the test build WITH the EQL types, which
-// `mise run wasm:guest:build:eql:deterministic` writes under testdata too.
-const deterministicEQLGuestPath = "testdata/stack_encrypt_guest_eql_deterministic.wasm"
+// `mise run wasm:guest:build:eql:deterministic` writes beside the other.
+const deterministicEQLGuestPath = "encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm"
 
 // NewDeterministicEQLClient is NewDeterministicClient over the test build
 // WITH the EQL types.
@@ -105,34 +104,7 @@ func NewDeterministicEQLClient(ctx context.Context, seed [32]byte) (*Client, err
 	if err != nil {
 		return nil, ErrDeterministicEQLGuestNotBuilt
 	}
-	return deterministicClient(ctx, wasm, seed)
-}
-
-func deterministicClient(ctx context.Context, wasm []byte, seed [32]byte) (*Client, error) {
-	tr := &transport{rt: refusingTransport{}, token: noToken{}}
-	inst, err := newInstance(ctx, wasm, tr, guest.BestEffort)
-	if err != nil {
-		return nil, err
-	}
-	c := newClient(inst, tr)
-	encoded, err := vcffi.Marshal(seed[:])
-	if err != nil {
-		_ = c.Close()
-		return nil, err
-	}
-	out, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
-		return inst.call(ctx, inst.cipherInit, buf(encoded))
-	})
-	if err != nil {
-		_ = c.Close()
-		return nil, fmt.Errorf("encrypt: deterministic cipher init: %w", err)
-	}
-	if len(out) != len(KeysetID{}) {
-		_ = c.Close()
-		return nil, fmt.Errorf("%w: cipher init returned %d bytes for the keyset id", ErrInternal, len(out))
-	}
-	copy(c.def[:], out)
-	return c, nil
+	return seededClient(ctx, wasm, seed)
 }
 
 // RawClient is a guest that was never given a client key: every well-formed

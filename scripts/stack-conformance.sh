@@ -10,7 +10,7 @@ fi
 unset STACK_CONFORMANCE_INPUT STACK_CONFORMANCE_OUTPUT
 export STACK_CONFORMANCE_REQUIRED=1
 
-if [[ ! -s languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm ]]; then
+if [[ ! -s languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm ]]; then
   echo 'Build the test guest first: mise run wasm:guest:build:deterministic' >&2
   exit 1
 fi

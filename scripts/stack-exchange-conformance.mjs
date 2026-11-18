@@ -33,8 +33,8 @@ export const CORPUS =
 
 /** The guests the Go runner needs, relative to the Go module. */
 export const GUESTS = [
-  'encrypt/testdata/stack_encrypt_guest_deterministic.wasm',
-  'encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm',
+  'encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm',
+  'encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm',
 ]
 
 /** The language runners this profile enrolls today. */

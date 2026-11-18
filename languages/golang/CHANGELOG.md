@@ -10,6 +10,30 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+### Added
+
+- **`encrypttest.NewClient`: a client for your application's tests that
+  needs no network and no CipherStash credentials** (#1696). It returns a
+  real `*encrypt.Client` over a test build of the engine. Each data key
+  derives from a seed in place of ZeroKMS. Your generated code runs
+  unchanged, and EQL v4 columns accept the values it writes. Every keyset
+  exists, selected by name or id. A cipher still refuses another keyset's
+  value with `ErrForeignKeyset`, and a wrong context fails with
+  `ErrForbidden`. `encrypttest.WithSeed` chooses the seed. The keys are not
+  secret, so import `encrypttest` only from `_test.go` files.
+  The release ships the two test builds of the engine in the `encrypttest`
+  module, so a program that does not import it does not download them.
+
+### Breaking
+
+- **`encrypttest` is a module of its own:
+  `github.com/cipherstash/stack/languages/golang/encrypt/encrypttest`.** Its
+  import path is unchanged. A program that imports it, for
+  `encrypttest.AssertContexts` for example, stops building with "no required
+  module provides package" until you add the module at the SDK's version:
+  `go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@<version>`.
+  `encrypttest.NewClient` fails the test when the two versions differ.
+
 ### Fixed
 
 - **`stashgen` accepts an alias of `json.RawMessage` on Go 1.27.**

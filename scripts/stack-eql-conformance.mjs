@@ -80,7 +80,7 @@ export function main(args = process.argv.slice(2)) {
         'stack_encrypt_guest_eql_deterministic.wasm',
       ].map((name) => [
         name,
-        hash(`languages/golang/encrypt/testdata/${name}`),
+        hash(`languages/golang/encrypt/encrypttest/wasm/${name}`),
       ]),
     )
   }

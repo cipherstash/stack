@@ -314,8 +314,18 @@ updates:
           - version-update:semver-major
 
   # ── Go (languages/golang) ──────────────────────────────────────
+  # One entry for the three modules, grouped by dependency name, so one PR
+  # moves a dependency in all of them. The nested modules replace the SDK
+  # with ../.. and build against its dependencies, so a bump to the SDK's
+  # go.sum alone would break their builds.
   - package-ecosystem: gomod
-    directory: /languages/golang
+    directories:
+      - /languages/golang
+      - /languages/golang/encrypt/encrypttest
+      - /languages/golang/encrypt/example
+    groups:
+      go-modules:
+        group-by: dependency-name
     schedule:
       interval: monthly
     cooldown:
@@ -332,6 +342,13 @@ updates:
       - dependency-name: "*"
         update-types:
           - version-update:semver-major
+      # The nested modules require the SDK, and the example requires
+      # encrypttest, at the zero pseudo-version, replaced by the directory in
+      # this checkout. The release pins that placeholder to the version it
+      # tags (scripts/go-release-pin-encrypttest.sh) and refuses a go.mod
+      # without it, so a bump to a tagged version would stop every release.
+      - dependency-name: "github.com/cipherstash/stack/languages/golang"
+      - dependency-name: "github.com/cipherstash/stack/languages/golang/encrypt/encrypttest"
 
   # ── pip (.github/impact-gate — the advisory ImpactGate toolchain) ──
   # impact.yml installs this hashed requirements.txt with `--require-hashes

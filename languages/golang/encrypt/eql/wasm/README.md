@@ -11,4 +11,5 @@ absent, and the package's tests skip.
 The same build with the `deterministic-kms` feature too — a TEST build whose
 keys derive from a seed, so the tests seal and open a `TextEq` field with no
 ZeroKMS — is written by `mise run wasm:guest:build:eql:deterministic` under
-`encrypt/testdata/`, not here: nothing test-only is embedded.
+`encrypt/encrypttest/wasm/`, not here: package `encrypttest` embeds it, so
+only a binary that imports `encrypttest` carries it.
