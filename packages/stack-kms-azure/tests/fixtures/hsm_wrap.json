@@ -1,0 +1,78 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://cipherstash-fixture.managedhsm.azure.net/keys/fixture-oct-key?api-version=7.4",
+      "headers": [
+        [
+          "authorization",
+          "Bearer fixture-access-token"
+        ]
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=utf-8"
+        ]
+      ],
+      "body": {
+        "key": {
+          "kid": "https://cipherstash-fixture.managedhsm.azure.net/keys/fixture-oct-key/5c6d7e8f90a1b2c3d4e5f60718293a4b",
+          "kty": "oct-HSM",
+          "key_ops": [
+            "wrapKey",
+            "unwrapKey",
+            "encrypt",
+            "decrypt"
+          ]
+        },
+        "attributes": {
+          "enabled": true,
+          "created": 1793793600,
+          "updated": 1793793600,
+          "recoveryLevel": "Recoverable+Purgeable",
+          "recoverableDays": 90,
+          "exportable": false
+        },
+        "release_policy": null
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://cipherstash-fixture.managedhsm.azure.net/keys/fixture-oct-key/5c6d7e8f90a1b2c3d4e5f60718293a4b/wrapkey?api-version=7.4",
+      "headers": [
+        [
+          "authorization",
+          "Bearer fixture-access-token"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "alg": "A256KW",
+        "value": "AQptRY4y1W5Fu7bK_g_ouGE_DxuPhM6S0DRTtUI2Ygc1REREREREREREREREREREREREREREREREREREREREREQAAAAAAAAA"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=utf-8"
+        ]
+      ],
+      "body": {
+        "kid": "https://cipherstash-fixture.managedhsm.azure.net/keys/fixture-oct-key/5c6d7e8f90a1b2c3d4e5f60718293a4b",
+        "value": "s5wOZ2cIlWb7bUVAE7HwqbCTTboLbpomSx3_UeMOCvRTzt73MnR26WfnuBScdWW3KVvUYk34vxVccv1JdV6jSu1nN6eGxLYI75FEuhac3Ys"
+      }
+    }
+  }
+]

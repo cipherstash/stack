@@ -14,6 +14,7 @@ includes = [
   "packages/stack-kms-aws/tasks.toml",
   "packages/stack-kms-vault/tasks.toml",
   "packages/stack-kms-gcp/tasks.toml",
+  "packages/stack-kms-azure/tasks.toml",
   "packages/stack-profile/tasks.toml",
   "packages/stack-encrypt/tasks.toml",
   "packages/stack-guest-abi/tasks.toml",
@@ -140,6 +141,9 @@ check stack-kms-vault
 check stack-kms-gcp
 # Without `service-account`, the form a build with no RSA uses.
 check stack-kms-gcp --no-default-features
+# The Azure Managed HSM key vendor backend, default features on: its native
+# transport, workload identity and managed identity are gated off on wasm32.
+check stack-kms-azure
 # The Go binding's credential guest (ADR-0005) compiles stack-profile for
 # WASI: the hostname and the process id are native-only there.
 check stack-profile

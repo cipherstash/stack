@@ -48,6 +48,7 @@ const STAGED = {
   'stack-kms-aws': 'stack-kms-vendor',
   'stack-kms-vault': 'stack-kms-vendor',
   'stack-kms-gcp': 'stack-kms-vendor',
+  'stack-kms-azure': 'stack-kms-vendor',
 }
 const PUBLISHABLE = [...PUBLISHED, ...Object.keys(STAGED)].sort()
 
