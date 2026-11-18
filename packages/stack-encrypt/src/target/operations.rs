@@ -509,7 +509,6 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// use stack_encrypt::sem::EqualityTerm;
     /// use stack_encrypt::target::{EncryptTarget, Encryption, NoCallerContext};
     /// use stack_encrypt::{EncryptInto, NonEmpty, StackCipher};
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use zeroize::Zeroize;
     ///
     /// /// A value and the column it belongs to.
@@ -546,7 +545,12 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// }
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let keyset = cipher.default_keyset();
     /// let placed = Placed { column: "users/email".into(), value: "ada@example.com".into() };
     /// // No context argument: the context comes from `placed.column`.
@@ -1141,12 +1145,16 @@ pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
 /// use serde_json::json;
 /// use stack_encrypt::json::{JsonDocument, JsonOptions};
-/// use stack_encrypt::kms::FakeDataKeySource;
 /// use stack_encrypt::sem::TermError;
 /// use stack_encrypt::target::Json;
 /// use stack_encrypt::{op, Error, Plan, StackCipher};
 ///
-/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
 /// let profile = json!({"name": "Bob", "age": 34});
 ///
 /// // By value: the JSON index with `$.age` ordered.
@@ -1412,12 +1420,16 @@ impl<K: 'static> KeysetCipher<'_, K> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::target::{self, AeadContext, Owned};
     /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
     /// use vitaminc_protected::Protected;
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let keyset = cipher.default_keyset();
     /// // `Protected<String>` is deliberately not `Clone`: it is moved in, and
     /// // the one copy is wiped once it is sealed.
@@ -1464,11 +1476,15 @@ impl<K: 'static> KeysetCipher<'_, K> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::target::{self, AeadContext, Decryption};
     /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let keyset = cipher.default_keyset();
     /// let context = || AeadContext::from(nonempty!("users/email"));
     /// let sealed: StackCipherText = keyset.encrypt_as(&"bob@example.com".to_string(), context()).await?;

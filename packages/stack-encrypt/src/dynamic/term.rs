@@ -415,11 +415,12 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// use stack_encrypt::dynamic::{context, term};
 /// use stack_encrypt::target::IndexSpec;
 /// use stack_encrypt::{AsProtectedRef, StackCipher};
-/// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
 /// let cipher = StackCipher::builder()
-///     .kms(FakeDataKeySource::new())
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
 ///     .init()
 ///     .await?;
 /// let keyset = cipher.default_keyset();

@@ -585,10 +585,14 @@ impl fmt::Display for Contexts {
 ///
 /// ```
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-/// use stack_encrypt::kms::FakeDataKeySource;
 /// use stack_encrypt::{nonempty, EncryptInto, StackCipher, StackCipherText};
 ///
-/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
 /// let keyset = cipher.default_keyset();
 ///
 /// let call = String::from("ada@example.com")
