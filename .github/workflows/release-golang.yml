@@ -31,7 +31,7 @@ name: Release (Go)
 # a final version is cut from main only, and not while go.mod pins vitaminc's
 # Go bindings at a pseudo-version (scripts/go-release-version.mjs).
 #
-# Three jobs, split by what they may touch:
+# Three jobs do the release, split by what they may touch:
 #
 # - `build` holds no write token. It is the only job that runs third-party
 #   code (the toolchain installs, cargo build scripts and proc macros, the Go
@@ -43,6 +43,10 @@ name: Release (Go)
 # - `verify` is read-only again: it asks the Go proxy for each module at the
 #   version, which fetches it, and checks the guests in each module zip are
 #   the ones built.
+#
+# A fourth job, `notify-terraform-provider`, runs beside `verify` and holds no
+# GITHUB_TOKEN scope: it sends terraform-provider-cipherstash a
+# repository_dispatch, and cannot fail the release.
 #
 # A version is immutable once the proxy has fetched it, so a tag is never
 # moved or deleted. If `publish` or `verify` fails after the tag is pushed,
@@ -458,6 +462,44 @@ jobs:
           if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
           gh release create "$tag" --verify-tag "${prerelease[@]}" \
             --title "Go v$VERSION" --notes-file notes.md "${assets[@]}"
+
+  # terraform-provider-cipherstash vendors each release's EQL v4 SQL, and a
+  # release here cannot trigger a workflow there, so this tells it a release
+  # exists. After `publish`, because the receiver downloads the assets at once;
+  # pre-releases too. The provider also polls on a schedule, so this job is
+  # continue-on-error: a failed dispatch delays the provider and never fails
+  # the release. Its only credential is an installation token of the
+  # release-plz GitHub App, whose secrets live in the `release` environment,
+  # scoped here to that one repository and to contents: write, the permission
+  # repository_dispatch requires. That environment deploys from main only, so
+  # a pre-release dispatched from another branch is refused here and the
+  # provider picks it up on its next poll.
+  notify-terraform-provider:
+    name: Tell terraform-provider-cipherstash about the release
+    needs: publish
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    continue-on-error: true
+    environment: release
+    permissions: {}
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          repositories: terraform-provider-cipherstash
+          permission-contents: write
+
+      - name: Send the eql-v4-release event
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api --method POST repos/cipherstash/terraform-provider-cipherstash/dispatches \
+            -f event_type=eql-v4-release \
+            -f "client_payload[tag]=languages/golang/v$VERSION"
 
   verify:
     name: Check that Go resolves the version

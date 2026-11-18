@@ -192,6 +192,15 @@ const AUDITED_ACTIONS = new Map([
   // Read at 2eb1d8bc — all three download binaries, none touches the cache.
   ['release-plz/action', { cacheInput: null }],
 
+  // ---- The Go release line ---------------------------------------------
+  //
+  // Mints the installation token release-golang.yml's
+  // notify-terraform-provider job dispatches with. Read at the pinned v3.4.0
+  // (f418cff3): a node24 action whose main step calls the GitHub API through
+  // @octokit/auth-app and whose post step revokes the token; no cache, no
+  // cache input.
+  ['actions/create-github-app-token', { cacheInput: null }],
+
   // ---- Docker, for the postgres-eql image ------------------------------
   //
   // The plan called all three "registry-backed rather than
