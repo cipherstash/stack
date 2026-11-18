@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Lists the Go modules nested under a module directory, one relative path per
-# line, sorted: encrypt/encrypttest and encrypt/example under languages/golang.
+# line, sorted: cmd/sqlc-gen-stash, encrypt/encrypttest and encrypt/example
+# under languages/golang.
 #
 # `./...` stops at a directory with its own go.mod, so every tool that walks
 # the module (go vet and go test in go-binding-test.sh, golangci-lint in the

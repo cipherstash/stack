@@ -321,6 +321,7 @@ updates:
   - package-ecosystem: gomod
     directories:
       - /languages/golang
+      - /languages/golang/cmd/sqlc-gen-stash
       - /languages/golang/encrypt/encrypttest
       - /languages/golang/encrypt/example
     groups:

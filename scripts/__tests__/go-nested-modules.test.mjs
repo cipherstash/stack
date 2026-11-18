@@ -29,6 +29,7 @@ function list(dir) {
 describe('go-nested-modules.sh', () => {
   it('lists the modules nested in languages/golang', () => {
     expect(list(join(REPO_ROOT, 'languages/golang'))).toEqual([
+      'cmd/sqlc-gen-stash',
       'encrypt/encrypttest',
       'encrypt/example',
     ])

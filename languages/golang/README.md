@@ -10,7 +10,9 @@ generation and PostgreSQL storage. The [stashgen reference](cmd/stashgen/README.
 explains tags, supported field types and generated methods. The
 [typed JSON document example](encrypt/example/json/README.md) walks through
 an EQL v4 table, queries and partial reads. The [credential guide](auth/README.md)
-covers profile, access key and federation strategies. See the
+covers profile, access key and federation strategies. The
+[sqlc plugin](cmd/sqlc-gen-stash/README.md) generates the same encryption code
+for the EQL v4 columns of a sqlc package. See the
 [Go changelog](CHANGELOG.md) for release and compatibility notes.
 
 ## Using a released module
