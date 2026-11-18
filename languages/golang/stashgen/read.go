@@ -1569,9 +1569,6 @@ func (r *reader) memberTypeExpr(doc types.Type, path string) string {
 	// json.RawMessage by that name, not jsontext.Value, which it aliases
 	// under jsonv2: the generated file then builds on every toolchain.
 	if raw := rawMessage(t); raw != nil {
-		if other, taken := r.imports.paths["json"]; taken && other != "encoding/json" {
-			return "any"
-		}
 		return r.typeExpr(raw)
 	}
 	return r.typeExpr(types.Unalias(t))
@@ -1682,6 +1679,13 @@ func derefAll(t types.Type) types.Type {
 // of basic types and of named types that are exported or in the file's
 // own package, whose package names clash with no other import of the file.
 func (r *reader) writable(t types.Type) bool {
+	// The file writes json.RawMessage by that name, so it is the name json
+	// that must be free, not jsontext, the package of the type it aliases
+	// under jsonv2.
+	if rawMessage(t) != nil {
+		other, taken := r.imports.paths["json"]
+		return !taken || other == "encoding/json"
+	}
 	switch u := types.Unalias(t).(type) {
 	case *types.Basic:
 		return u.Kind() != types.UnsafePointer && u.Info()&types.IsUntyped == 0

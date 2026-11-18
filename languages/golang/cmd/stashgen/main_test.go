@@ -31,7 +31,11 @@ func writeModule(t *testing.T, files map[string]string) string {
 		t.Fatal(err)
 	}
 	for name, src := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o600); err != nil {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -774,13 +778,16 @@ func TestRunNamesRawMessageUnderJSONv2(t *testing.T) {
 	}
 	_ = checker.Close()
 	t.Setenv("GOEXPERIMENT", "jsonv2")
-	generate := func(imports, fields string) (string, string, int) {
-		model := "package users\n\nimport (\n" + imports + ")\n\ntype DocAlias = json.RawMessage\n\ntype Visit struct {\n\tAt int64 `json:\"at\"`\n\tRaw json.RawMessage `json:\"raw\"`\n\tAliased *DocAlias `json:\"aliased\"`\n}\n\ntype Profile struct {\n\tVisits []Visit `json:\"visits\"`\n}\n\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
-		dir := writeModule(t, map[string]string{"model.go": model})
+	generateIn := func(files map[string]string, imports, visit, fields string) (string, string, int) {
+		files["model.go"] = "package users\n\nimport (\n" + imports + ")\n\ntype DocAlias = json.RawMessage\n\ntype Visit struct {\n\tAt int64 `json:\"at\"`\n" + visit + "}\n\ntype Profile struct {\n\tVisits []Visit `json:\"visits\"`\n}\n\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
+		dir := writeModule(t, files)
 		var stdout, stderr bytes.Buffer
 		code := run([]string{"-type", "Customer"}, dir, &stdout, &stderr, stashgen.GuestEngine)
 		written, _ := os.ReadFile(filepath.Join(dir, "customer_stash.go"))
 		return string(written), stderr.String(), code
+	}
+	generate := func(imports, fields string) (string, string, int) {
+		return generateIn(map[string]string{}, imports, "\tRaw json.RawMessage `json:\"raw\"`\n\tAliased *DocAlias `json:\"aliased\"`\n", fields)
 	}
 	written, stderr, code := generate("\t\"encoding/json\"\n", "\tProfile Profile `stash:\"profile,encrypt_into=JsonSearch(ordered=$.visits[*].at;$.visits[*].raw;$.visits[*].aliased)\"`")
 	if code != 0 {
@@ -801,6 +808,21 @@ func TestRunNamesRawMessageUnderJSONv2(t *testing.T) {
 	_, stderr, code = generate("\t\"encoding/json\"\n\t\"encoding/json/jsontext\"\n", "\tProfile jsontext.Value `stash:\"profile,encrypt_into=JsonSearch\"`")
 	if want := "Customer.Profile: JsonSearch seals a json document, and jsontext.Value is taken as a json document only when spelled json.RawMessage"; code != 1 || !strings.Contains(stderr, want) {
 		t.Errorf("a jsontext.Value field: exit %d, want 1 and %q\n%s", code, want, stderr)
+	}
+	// Another package named jsontext leaves the name json free, so the
+	// member is still written json.RawMessage.
+	written, stderr, code = generateIn(map[string]string{"other/jsontext/thing.go": "package jsontext\n\ntype Thing string\n"},
+		"\t\"encoding/json\"\n\tother \"example.com/app/other/jsontext\"\n", "\tRaw json.RawMessage `json:\"raw\"`\n",
+		"\tOther other.Thing `stash:\"other,encrypt_into=TextEq\"`\n\tProfile Profile `stash:\"profile,encrypt_into=JsonSearch(ordered=$.visits[*].at;$.visits[*].raw)\"`")
+	if want := "Raw encrypt.Path[ProfileFieldElementsVisits, json.RawMessage] // $.visits[*].raw"; code != 0 || !strings.Contains(strings.Join(strings.Fields(written), " "), want) {
+		t.Errorf("another package named jsontext: exit %d, want 0 and %q\n%s", code, want, stderr)
+	}
+	// Another package named json takes the name, so the member is any.
+	written, stderr, code = generateIn(map[string]string{"other/json/thing.go": "package json\n\ntype Thing string\n"},
+		"\t\"encoding/json\"\n\tother \"example.com/app/other/json\"\n", "\tAliased *DocAlias `json:\"aliased\"`\n",
+		"\tOther other.Thing `stash:\"other,encrypt_into=TextEq\"`\n\tProfile Profile `stash:\"profile,encrypt_into=JsonSearch(ordered=$.visits[*].at;$.visits[*].aliased)\"`")
+	if want := "Aliased encrypt.Path[ProfileFieldElementsVisits, any] // $.visits[*].aliased"; code != 0 || !strings.Contains(strings.Join(strings.Fields(written), " "), want) {
+		t.Errorf("another package named json: exit %d, want 0 and %q\n%s", code, want, stderr)
 	}
 }
 
