@@ -97,7 +97,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, IdentifiedBy, IndexKeySource, MaybeSend};
+use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, IdentifiedBy, IndexKeySource};
 #[cfg(feature = "http")]
 use stack_kms::{EnvKeyProvider, StackKms, StackKmsBuilder};
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
@@ -1126,7 +1126,7 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
         context: A,
     ) -> crate::target::Pending<'s, T, K>
     where
-        T: Decrypt + MaybeSend + 's,
+        T: Decrypt + 's,
         A: IntoContext<'a>,
     {
         decrypt_through(self.into(), ciphertext, context)
@@ -1150,7 +1150,7 @@ fn decrypt_through<'s, 'a, T, K: 's>(
     aad: impl IntoContext<'a>,
 ) -> crate::target::Pending<'s, T, K>
 where
-    T: Decrypt + MaybeSend + 's,
+    T: Decrypt + 's,
 {
     let context = aad.into_context().into_owned();
     crate::target::bind_pending(scope, ciphertext, Descriptor::of(context.clone()))
@@ -1232,7 +1232,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
         context: A,
     ) -> crate::target::Pending<'s, T, K>
     where
-        T: Decrypt + MaybeSend + 's,
+        T: Decrypt + 's,
         A: IntoContext<'a>,
     {
         decrypt_through(self.into(), ciphertext, context)

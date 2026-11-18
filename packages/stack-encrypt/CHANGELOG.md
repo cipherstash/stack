@@ -149,8 +149,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Awaiting a `Pending` on a native target needs the key source to be
     `Sync`, as the scalar and plan entry points already did. Generic code
     over the key source adds `K: Sync`.
-  - The decrypt entry points now also need `T: Send` on native targets
-    (`MaybeSend`).
 
 - **`PendingStackCipherText::seal` is removed** (#1705). Once `seal`
   returned a `Pending`, it was the same function as `into_pending`. Call

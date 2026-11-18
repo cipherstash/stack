@@ -17,8 +17,8 @@ use stack_encrypt::plan::{Field, Fields};
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    all, nonempty, AuditMetadata, Ciphertext, DecryptInto, EncryptFrom, Equality, Error, Pending,
-    Plan, StackCipher, StackCipherText,
+    all, nonempty, AuditMetadata, Ciphertext, Decrypt, DecryptInto, EncryptFrom, Equality, Error,
+    Pending, Plan, StackCipher, StackCipherText,
 };
 use uuid::Uuid;
 
@@ -320,6 +320,34 @@ async fn trees_send_their_metadata_on_every_request() {
             (Call::Retrieve, Some(list_issues_json())),
         ]
     );
+}
+
+/// Open one tree through the keyset, and another through the client, into
+/// any target. `T` has no `Send` bound here, so this compiles only while
+/// the tree decrypts ask for none.
+async fn open_trees<T: Decrypt>(
+    cipher: &StackCipher<RecordingSource>,
+    first: StackCipherText,
+    second: StackCipherText,
+) -> (T, T) {
+    let keyset = cipher.default_keyset();
+    (
+        keyset.decrypt_tree(first, "users/name").await.unwrap(),
+        cipher.decrypt(second, "users/name").await.unwrap(),
+    )
+}
+
+/// The tree decrypts were `async fn`s whose target did not have to be
+/// `Send`. Returning a `Pending` did not add that requirement.
+#[tokio::test]
+async fn a_tree_decrypt_takes_a_target_that_need_not_be_send() {
+    let (cipher, _source) = cipher().await;
+    let keyset = cipher.default_keyset();
+    let seal = |name: &str| keyset.encrypt_tree(name.to_owned(), "users/name");
+    let (first, second) = (seal("alice").await.unwrap(), seal("bob").await.unwrap());
+
+    let (alice, bob): (String, String) = open_trees(&cipher, first, second).await;
+    assert_eq!((alice.as_str(), bob.as_str()), ("alice", "bob"));
 }
 
 #[tokio::test]
