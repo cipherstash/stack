@@ -9,23 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`StackCipherBuilder::auth_strategy`, a cipher over any auth strategy**
-  (#1700). `StackCipher::builder().auth_strategy(strategy).init()` builds the
-  ZeroKMS client over the given strategy (an `OidcFederationStrategy`, an
-  `AccessKeyStrategy`, an `AuthStrategyFn`). The builder state is
-  `WithAuthStrategy<C>`, behind `http`. `init` and `kms(..)` are unchanged.
-  - The client key is `CS_CLIENT_ID` and `CS_CLIENT_KEY` if they are set,
-    otherwise `secretkey.json` in the CLI's profile for the workspace the
-    strategy's token is for, so the token and the key come from one workspace.
-    `CS_WORKSPACE_CRN` and the CLI's current workspace do not choose the key
-    on this path.
-  - `init` asks the strategy for a token and loads the default keyset's
-    index key, so it must run where the strategy can produce a token (for a
-    per-request OIDC provider, inside a request). Data keys are then
-    requested as whoever the strategy answers for at the time; the default
-    keyset's index key is loaded once, by whoever initialised the cipher.
-  - Needs stack-auth 0.44.0, which adds `AutoStrategy::detect_workspace_crn`
-    for building a strategy from the configured workspace.
+- **`StackCipherBuilder::auth_strategy` and `key_provider`** (#1700).
+  `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init()`
+  builds the ZeroKMS client from an auth strategy and a client key provider
+  that you choose. Before, a caller who wanted another auth strategy had to
+  build the `StackKms` by hand. `init()` and `kms(..)` are unchanged.
+  - `auth_strategy` takes any strategy `StackKmsBuilder::new` takes: an
+    `OidcFederationStrategy`, an `AccessKeyStrategy`, or an `AuthStrategyFn`.
+  - `key_provider` is required after `auth_strategy`. The builder then reads
+    the client key only from that provider. For example, `EnvKeyProvider`
+    reads `CS_CLIENT_ID` and `CS_CLIENT_KEY`, and `ProfileKeyProvider` reads
+    the key the CLI saved.
+  - `init` loads the default keyset's index key, so call `init` where the
+    strategy can return a token. With an OIDC provider that returns the
+    current request's JWT, that is while your program handles a request.
+  - The builder state is `WithAuthStrategy<C, P>`, behind the `http`
+    feature.
+  - Needs stack-auth 0.44.0 and stack-kms 0.2.0.
 - **`json::JsonPlaintext`, a JSON document as one ciphertext** (#1636).
   `JsonPlaintext` holds a `serde_json::Value` and wipes it when it is
   dropped. Build one with `JsonPlaintext::from(value)` or

@@ -48,12 +48,14 @@ exclude_globs = ["packages/stack-encrypt-derive/**"]
 # The regexes match the name `--list` prints, `path:line:col: replace …`.
 # Anchor on the replacement text, so an entry cannot swallow a reachable
 # sibling with the same function name. The wasm32 `TokenStoreFn` and
-# `Pending::into_future` entries also anchor on the line because their names
-# are identical to the native impl's. If those lines move, a full sweep
-# reports them again and the line numbers here need moving with them.
-# The wasm32 `AutoStrategy::detect_inner` entry does not: its native twin's
-# only mutant, the same replacement, does not compile (`AutoStrategy` has no
-# `Default`), so matching both excludes nothing a test could kill.
+# `Pending::into_future` entries also match on the line number, because
+# their names are identical to the native impl's. If those lines move, a
+# full sweep reports them again. Then change the line numbers here.
+#
+# The wasm32 `AutoStrategy::detect_inner` entry matches any line. The native
+# function of the same name has one mutant, with the same replacement. That
+# mutant does not compile, because `AutoStrategy` has no `Default`. So the
+# entry excludes no mutant that a test could catch.
 exclude_re = [
   # stack-auth — unreachable under the native test build.
   'stack-auth/src/transport\.rs:\d+:\d+: replace <impl std::fmt::Display for NoTransport>::fmt ',

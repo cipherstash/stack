@@ -22,10 +22,12 @@
   `ErrorPayload`.
 - `tls::client_config`, the rustls client configuration the crate's HTTP
   clients use.
-- `AutoStrategy::detect_workspace_crn`, the workspace CRN `detect` resolves,
-  without building a strategy: `CS_WORKSPACE_CRN`, else `MissingWorkspaceCrn`
-  when `CS_CLIENT_ACCESS_KEY` is set, else the CLI session's workspace, else
-  `NotAuthenticated`. For a caller that builds its own strategy from a CRN.
+- `OidcFederationStrategy::with_detected_workspace(provider)` builds the
+  strategy without a CRN from the caller. The workspace is `CS_WORKSPACE_CRN`
+  if that variable is set. Otherwise the workspace is the CLI's current
+  workspace, read from its saved session. With neither, the result is
+  `NotAuthenticated`. `OidcFederationStrategy::new(crn, provider)` is
+  unchanged.
 
 ### Fixes
 

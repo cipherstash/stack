@@ -122,83 +122,93 @@ needs a workspace CRN (`CS_WORKSPACE_CRN`) alongside it: the profile is what
 supplies that otherwise, and its region drives service discovery while its
 workspace id verifies every token issued.
 
-An access key is not the only way to authenticate, and often not the one a
-service wants. A `stack_auth::OidcFederationStrategy` federates a
-third-party OIDC JWT (Clerk, Supabase, Auth0) into a CipherStash token, so
-the deployment holds no long-lived CipherStash credential of its own, and
-data keys are requested as the user whose JWT it is. What `AutoStrategy`
-detects is only the two above — access key, then profile — so any other
-strategy is named explicitly, with
-[`auth_strategy`](StackCipherBuilder::auth_strategy). The client key is then
-`CS_CLIENT_ID` + `CS_CLIENT_KEY`, or the profile's key for the workspace the
-strategy's tokens are for.
+`AutoStrategy` detects an access key or a CLI login, and nothing else. To
+authenticate any other way, pass the strategy to
+[`auth_strategy`](StackCipherBuilder::auth_strategy). Then name the source of
+the client key with [`key_provider`](StackCipherBuilder::key_provider). After
+`auth_strategy`, the builder only reads a client key from the provider you
+name.
 
-`init` asks the strategy for a token and loads the default keyset's index
-key, so it runs where the strategy can answer: with a provider that returns
-the current request's JWT, inside a request. Data keys are requested as
-whoever the strategy answers for at the time; the default keyset's index key
-is loaded once, by whoever initialised the cipher.
+For example, a `stack_auth::OidcFederationStrategy` exchanges a JWT from your
+identity provider (Clerk, Supabase, Auth0) for a CipherStash token. Your
+deployment then needs no long-lived CipherStash credential of its own.
+ZeroKMS receives each request as the user that the JWT names.
+
+`init` loads the index key of the default keyset, with one request to
+ZeroKMS. Call `init` where the strategy can return a token. If the provider
+returns the JWT of the current request's user, call `init` while your program
+handles a request.
+
+After `init`, ZeroKMS receives each data key request as the user that the
+strategy returns a token for. The cipher loads the default keyset's index key
+once, in `init`, and uses that key for every user.
 
 ```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-use stack_auth::{AuthError, AutoStrategy, OidcFederationStrategy, OidcProviderFn, SecretToken};
+use stack_auth::{AuthError, OidcFederationStrategy, OidcProviderFn, SecretToken};
 use stack_encrypt::StackCipher;
+use stack_encrypt::kms::EnvKeyProvider;
 
-// `CS_WORKSPACE_CRN`, else the workspace of the CLI's session.
-let crn = AutoStrategy::detect_workspace_crn()?;
+// `OidcProviderFn` wraps a closure. Any type that implements
+// `stack_auth::OidcProvider` works in its place.
 let provider = OidcProviderFn::new(|| async {
-    // The JWT of the user behind the current request.
+    // Return the JWT of the user who made the current request.
     Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
 });
+// The workspace is `CS_WORKSPACE_CRN`, or the CLI's current workspace.
+let strategy = OidcFederationStrategy::with_detected_workspace(provider)?;
 
-// While handling a request, so the provider has a user to answer for.
+// Run this while your program handles a request.
 let cipher = StackCipher::builder()
-    .auth_strategy(OidcFederationStrategy::new(crn, provider)?)
+    .auth_strategy(strategy)
+    // `EnvKeyProvider` reads `CS_CLIENT_ID` and `CS_CLIENT_KEY`.
+    .key_provider(EnvKeyProvider)
     .init()
     .await?;
 # Ok(())
 # }
 ```
 
-To choose the client key as well, or to set the transport, build the
-[`StackKms`](crate::kms::StackKms) yourself and hand it to
-[`kms`](StackCipherBuilder::kms):
+To name the workspace yourself, build the strategy with
+`OidcFederationStrategy::new(crn, provider)`. `crn` is a `stack_auth::Crn`.
+
+Any other `AuthStrategy` goes to the builder the same way: an
+`AccessKeyStrategy`, a `DeviceSessionStrategy`, or an `AuthStrategyFn` that
+calls a function of your own.
 
 ```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
 use stack_encrypt::StackCipher;
-use stack_encrypt::kms::{EnvKeyProvider, StackKmsBuilder};
+use stack_encrypt::kms::EnvKeyProvider;
 
-// Any `AuthStrategy` goes in this slot — `AccessKeyStrategy`,
-// `OidcFederationStrategy`, `DeviceSessionStrategy`, or, as here,
-// `AuthStrategyFn` over a closure of your own. The closure is called
-// whenever ZeroKMS needs a fresh token, so refresh belongs inside it. Note
-// what holds the token: `SecretToken` is zeroized on drop and prints as
-// `***`, so a long-lived credential neither lingers in freed memory nor
-// lands in a log line.
+// The cipher calls the closure whenever a ZeroKMS request needs a token, so
+// refresh the token inside the closure. `SecretToken` wipes the token when
+// it is dropped and prints as `***`. The token therefore stays out of freed
+// memory and out of logs.
 let token = SecretToken::new(std::env::var("MY_SERVICE_TOKEN")?);
 let strategy = AuthStrategyFn::new(move || {
     let token = token.clone();
     async move { Ok::<_, AuthError>(ServiceToken::new(token)) }
 });
 
-// The client key is the other half, and has its own provider: `EnvKeyProvider`
-// reads CS_CLIENT_ID / CS_CLIENT_KEY, or supply a `KeyProvider` of your own.
-let kms = StackKmsBuilder::new(strategy)
-    .with_key_provider(EnvKeyProvider)
-    .build()
+let cipher = StackCipher::builder()
+    .auth_strategy(strategy)
+    .key_provider(EnvKeyProvider)
+    .init()
     .await?;
-
-let cipher = StackCipher::builder().kms(kms).init().await?;
 # Ok(())
 # }
 ```
 
-The built-in strategies are constructed from a workspace CRN
-(`stack_auth::Crn`) rather than read from the environment —
-`OidcFederationStrategy::new(crn, provider)`.
-`stack_auth::AutoStrategy::detect_workspace_crn` returns the configured one.
+The key providers are in [`kms`]. `EnvKeyProvider` reads `CS_CLIENT_ID` and
+`CS_CLIENT_KEY`. On native targets, `ProfileKeyProvider` reads the key that
+`npx stash auth login` saved. `FallbackKeyProvider` tries one provider, then
+another. You can also implement `KeyProvider` yourself.
+
+To choose the transport settings as well, build a
+[`StackKms`](crate::kms::StackKms) with `StackKmsBuilder` and pass it to
+[`kms`](StackCipherBuilder::kms).
 
 `examples/zerokms_auth.rs` runs this end to end against a live ZeroKMS,
 alongside the default path and the errors each half fails with. The

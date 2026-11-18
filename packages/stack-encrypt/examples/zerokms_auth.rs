@@ -14,6 +14,7 @@
 //! anywhere, and CI builds it either way.
 
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
+use stack_encrypt::kms::EnvKeyProvider;
 use stack_encrypt::StackCipher;
 
 #[tokio::main(flavor = "current_thread")]
@@ -79,21 +80,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- A custom authentication strategy -----------------------------------
     //
-    // When the built-in detection does not fit — tokens from your own broker,
-    // a sidecar, an OIDC federation strategy acting for your signed-in user —
-    // hand the strategy to the builder with `auth_strategy`. Any
+    // Use `auth_strategy` when the detected credentials do not fit. For
+    // example, your tokens come from your own broker or from a sidecar. Any
     // `AuthStrategy` works: `AccessKeyStrategy`, `OidcFederationStrategy`,
-    // `DeviceSessionStrategy`, or, as here, `AuthStrategyFn` over a closure.
+    // `DeviceSessionStrategy`, or `AuthStrategyFn`. This example uses
+    // `AuthStrategyFn`, with a closure.
     //
-    // Only the token changes. The client key is CS_CLIENT_ID + CS_CLIENT_KEY
-    // if they are set, otherwise the profile's `secretkey.json` for the
-    // workspace the strategy's token is for: `init` asks the strategy for a
-    // token to find out which. To choose the client key yourself, or set the
-    // transport, build a `stack_encrypt::kms::StackKms` and use `.kms(..)`.
+    // The strategy does not choose the client key. Name the source of the
+    // client key with `key_provider`. `EnvKeyProvider` reads `CS_CLIENT_ID`
+    // and `CS_CLIENT_KEY`.
     //
-    // This section needs a real token: `init` asks the strategy for one, then
-    // resolves the keyset and loads its index key, a round trip that must
-    // authenticate.
+    // This section needs a real token. `init` loads the index key of the
+    // default keyset, and ZeroKMS must accept the token on that request.
     //
     // Note what the token is held in: `SecretToken` wraps it the moment it is
     // read, and that wrapper — not a bare `String` — is what the closure
@@ -113,6 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _cipher = StackCipher::builder()
         .auth_strategy(strategy)
+        .key_provider(EnvKeyProvider)
         .init()
         .await?;
     println!("built a second cipher over a custom auth strategy");

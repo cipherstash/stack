@@ -231,6 +231,30 @@ impl IndexKey {
     }
 }
 
+#[cfg(feature = "test-support")]
+impl ClientKey {
+    /// Generates a random client key for a test.
+    ///
+    /// The key is well formed, so the builders and key providers accept it.
+    /// ZeroKMS has never seen the key, so a request made with it is refused.
+    /// The function is only compiled with the `test-support` feature.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the system random number generator fails.
+    #[allow(clippy::expect_used)]
+    pub fn generate_for_test() -> Self {
+        use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+
+        let generate =
+            || EncryptionKeySet::generate().expect("the system random number generator failed");
+        Self::new_v1(
+            Uuid::new_v4(),
+            ProxyKeySet::generate(&generate(), &generate()),
+        )
+    }
+}
+
 /// Test-support only: mint an [`IndexKey`] from raw bytes, bypassing the
 /// keyset-root derivation. Kept off the public API so production callers can
 /// only obtain an index key through

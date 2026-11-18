@@ -1,4 +1,5 @@
 mod cache;
+mod workspace;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -186,6 +187,59 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
     /// load-bearing for this strategy.
     pub fn new(workspace_crn: Crn, oidc_provider: P) -> Result<Self, AuthError> {
         Self::builder(workspace_crn, oidc_provider).build()
+    }
+
+    /// Create an `OidcFederationStrategy` for the workspace this process is
+    /// configured for.
+    ///
+    /// Use this constructor when the workspace comes from the environment or
+    /// from a CLI login. Use [`new`](Self::new) to name the workspace
+    /// yourself.
+    ///
+    /// The workspace is `CS_WORKSPACE_CRN` if that variable is set.
+    /// Otherwise the workspace is the CLI's current workspace. That
+    /// workspace must have a session saved by `npx stash auth login`.
+    ///
+    /// The constructor reads the session from `auth.json` in the profile
+    /// directory. The profile directory is `~/.cipherstash`, unless
+    /// `CS_CONFIG_PATH` names another. On wasm32 there is no profile
+    /// directory, so the variable is the only source.
+    ///
+    /// Only the workspace is read from the saved session. The strategy
+    /// still gets every token by exchanging the JWT that `oidc_provider`
+    /// returns.
+    ///
+    /// # Errors
+    ///
+    /// - [`AuthError::InvalidCrn`] if `CS_WORKSPACE_CRN` is set to a value
+    ///   that is not a CRN. The profile is not read in that case.
+    /// - [`AuthError::NotAuthenticated`] if the variable is not set and the
+    ///   CLI's current workspace has no saved session, or the saved session
+    ///   records no region. Set `CS_WORKSPACE_CRN`, or log in with
+    ///   `npx stash auth login`.
+    /// - [`AuthError::Store`] if the saved session cannot be read or parsed.
+    /// - [`AuthError::InvalidToken`] if the saved session's token is not a
+    ///   JWT with a `workspace` claim.
+    /// - [`AuthError::Server`] if the saved session records a region this
+    ///   crate does not know.
+    /// - Any error [`new`](Self::new) returns.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use stack_auth::{AuthError, OidcFederationStrategy, OidcProviderFn, SecretToken};
+    ///
+    /// # fn run() -> Result<(), AuthError> {
+    /// let provider = OidcProviderFn::new(|| async {
+    ///     // Return the JWT of the user who made the current request.
+    ///     Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
+    /// });
+    /// let strategy = OidcFederationStrategy::with_detected_workspace(provider)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_detected_workspace(oidc_provider: P) -> Result<Self, AuthError> {
+        Self::new(workspace::detect_crn()?, oidc_provider)
     }
 
     /// Return a builder for configuring an `OidcFederationStrategy` before construction.

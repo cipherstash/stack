@@ -144,14 +144,11 @@ stack-kms = { path = "../stack-kms", default-features = false, features = ["test
 # the no-HTTP graph through stack-kms; it has no features of its own.
 zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
-# Sets and restores the `CS_*` variables in the tests of
-# `StackCipherBuilder::auth_strategy`, holding a lock while it does, as
-# stack-auth's tests do: plain `cargo test` runs tests as threads of one
+# Sets and restores the `CS_*` variables in the tests of the credentials each
+# `init` uses. `temp_env` runs those tests one at a time, as it does in
+# stack-auth's tests, because plain `cargo test` runs every test in one
 # process.
 temp-env = { workspace = true }
-# A well-formed client key for those tests to put in `CS_CLIENT_KEY`.
-# Already in the graph through stack-kms, at the version it pins.
-recipher = { workspace = true }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
 # Property tests of the JSON index's derivations and reads

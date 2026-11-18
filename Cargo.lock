@@ -3420,7 +3420,6 @@ dependencies = [
  "ore-rs",
  "proptest",
  "rand 0.10.1",
- "recipher",
  "rmp-serde",
  "rust_decimal",
  "serde",
