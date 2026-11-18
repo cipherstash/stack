@@ -2,13 +2,41 @@
 
 Changes to the Go module `github.com/cipherstash/stack/languages/golang`:
 the SDK (`encrypt`), the generator (`stashgen`, `cmd/stashgen`) and the
-credential package (`auth`).
+credential package (`auth`). From rc.6 it also covers the module
+`github.com/cipherstash/stack/languages/golang/encrypt/encrypttest`, which
+is released at the same version.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 The module is pre-1.0, so a minor version may break the API; every break is
-listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
+listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`,
+and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
+
+## [0.1.0-rc.6] - 2026-11-18
+
+### Upgrading from rc.5
+
+Update the SDK:
+
+```sh
+go get github.com/cipherstash/stack/languages/golang@v0.1.0-rc.6
+```
+
+If your program imports `encrypttest`, add its module at the same version.
+Without it, the program does not build. The Breaking section explains why.
+
+```sh
+go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@v0.1.0-rc.6
+```
+
+The EQL SQL has not changed since rc.5. The `eql-v4-install.sql` attached
+to this release differs from rc.5's only in its version stamp. If you
+installed rc.5's bundle, you do not need to run it again.
+
+Run `go generate ./...` again only if you generate code under Go 1.27 and
+a struct has a `json.RawMessage` field. The Fixed section describes the
+change.
 
 ### Added
 
