@@ -18,10 +18,12 @@ use std::sync::Arc;
 
 use stack_kms::{
     DataKey, DataKeySource, GenerateKeyPayload, IndexKeySource, Iv, MaybeSend, RetrieveKeyPayload,
+    UnverifiedContext,
 };
 use uuid::Uuid;
 
 use super::request::{tally, KeysetAnswer, Request, RequestKind, Responses};
+use crate::audit::{AuditError, AuditMetadata};
 use crate::contexts::CallContexts;
 use crate::keyset::KeysetState;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
@@ -84,6 +86,10 @@ pub struct Pending<'a, T, K> {
     /// [`context`](Self::context) shows. A failed pending carries none, as
     /// it carries no requests.
     contexts: Vec<(ContextPiece<'static>, ContextPiece<'static>)>,
+    /// The caller's [audit metadata](AuditMetadata), already in the form
+    /// ZeroKMS takes, sent with every key request this pending makes. `None`
+    /// sends none. Shared, so merging compares and keeps it without a copy.
+    audit: Option<Arc<UnverifiedContext>>,
     fulfil: FulfilBox<'a, T>,
 }
 
@@ -217,6 +223,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 requests: Vec::new(),
                 failed: None,
                 contexts: Vec::new(),
+                audit: None,
                 fulfil: Box::new(move |_| Ok(value)),
             },
             Err(error) => Self::failed(scope, error),
@@ -245,6 +252,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests: Vec::new(),
             failed: Some(error),
             contexts: Vec::new(),
+            audit: None,
             // Unreachable: `settle` returns the stored error before any
             // fulfilment runs. Kept honest rather than panicking.
             fulfil: Box::new(|_| {
@@ -285,6 +293,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             contexts: Vec::new(),
+            audit: None,
             fulfil: Box::new(move |responses| {
                 let mut own = responses.split_front(generated, retrieved, keysets)?;
                 let value = fulfil(&mut own)?;
@@ -308,6 +317,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests: self.requests,
             failed: self.failed,
             contexts: self.contexts,
+            audit: self.audit,
             fulfil: Box::new(move |responses| fulfil(responses).map(f)),
         }
     }
@@ -324,7 +334,71 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests: self.requests,
             failed: self.failed,
             contexts: self.contexts,
+            audit: self.audit,
             fulfil: Box::new(move |responses| fulfil(responses).and_then(f)),
+        }
+    }
+
+    /// Send `metadata` with every key request this call makes, for the
+    /// ZeroKMS audit log. Optional: a call without it sends no audit
+    /// metadata.
+    ///
+    /// The metadata is per call. One call can make several key requests
+    /// (one `generate_keys`, and one `retrieve_keys` per keyset it opens
+    /// leaves from), and each carries the same metadata. Calling `audit`
+    /// again replaces the metadata, and empty metadata removes it.
+    ///
+    /// ZeroKMS does not verify the metadata, it is not needed to decrypt,
+    /// and it must not hold plaintext or secrets: see [`AuditMetadata`].
+    ///
+    /// ```
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::{AuditMetadata, Ciphertext, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let purpose = AuditMetadata::new().with("purpose", "store api key");
+    ///
+    /// let stored: Ciphertext = keyset
+    ///     .encrypt(String::from("sk_live_1234"))
+    ///     .audit(purpose)
+    ///     .await?;
+    /// # let _ = stored;
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// # Merging
+    ///
+    /// Merged calls ([`zip`](Self::zip), [`all`](Self::all), a record's
+    /// fields) make one batch, so they share one map. A merged pending keeps
+    /// the metadata of whichever side has some. If both sides carry
+    /// different metadata, the merge fails with [`AuditError::Mismatch`]
+    /// before any request. So attach the metadata to the merged call, after
+    /// merging.
+    ///
+    /// # Errors
+    ///
+    /// Awaiting fails with [`AuditError::NumberOutOfRange`] before any
+    /// request if a number in `metadata` has no exact ZeroKMS form. A
+    /// pending that has already failed keeps its own error.
+    pub fn audit(mut self, metadata: AuditMetadata) -> Self {
+        if self.failed.is_some() {
+            return self;
+        }
+        match metadata.to_unverified() {
+            Ok(audit) => {
+                self.audit = audit.map(Arc::new);
+                self
+            }
+            Err(error) => Pending::failed(
+                CipherRef {
+                    cipher: self.cipher,
+                    keyset: self.keyset,
+                },
+                error.into(),
+            ),
         }
     }
 
@@ -444,6 +518,10 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         if let Some(error) = self.failed.or(other.failed) {
             return Pending::failed(self.cipher, error);
         }
+        let audit = match merge_audits(self.audit, other.audit) {
+            Ok(audit) => audit,
+            Err(error) => return Pending::failed(self.cipher, error),
+        };
         let mut requests = self.requests;
         requests.extend(other.requests);
         if let Err(error) = check_scope(keyset, &requests) {
@@ -459,6 +537,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             contexts,
+            audit,
             fulfil: Box::new(move |responses| {
                 // The left side's output is held in a guard. So if the right
                 // side fails or panics, the guard releases the left side's
@@ -532,6 +611,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         let mut keyset = scope.keyset_id();
         let mut requests = Vec::new();
         let mut contexts = Vec::new();
+        let mut audit = None;
         let mut fulfils = Vec::with_capacity(items.size_hint().0);
         for item in items {
             keyset = match merge_scopes(keyset, item.keyset) {
@@ -541,6 +621,10 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             if let Some(error) = item.failed {
                 return Pending::failed(cipher, error);
             }
+            audit = match merge_audits(audit, item.audit) {
+                Ok(audit) => audit,
+                Err(error) => return Pending::failed(cipher, error),
+            };
             requests.extend(item.requests);
             contexts.extend(item.contexts);
             fulfils.push(item.fulfil);
@@ -554,6 +638,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             contexts,
+            audit,
             fulfil: Box::new(move |responses| {
                 // Held in a guard so that an item whose fulfilment panics
                 // releases the prefix during the unwind, as an error does.
@@ -638,7 +723,13 @@ where
         if let Some(error) = self.failed {
             return Err(error);
         }
-        let mut responses = dispatch(self.cipher, self.keyset, self.requests).await?;
+        let mut responses = dispatch(
+            self.cipher,
+            self.keyset,
+            self.requests,
+            self.audit.as_deref(),
+        )
+        .await?;
         (self.fulfil)(&mut responses)
     }
 }
@@ -649,6 +740,20 @@ fn merge_scopes(left: Option<Uuid>, right: Option<Uuid>) -> Result<Option<Uuid>,
     match (left, right) {
         (Some(left), Some(right)) if left != right => Err(Error::KeysetMismatch { left, right }),
         (Some(keyset), _) | (_, Some(keyset)) => Ok(Some(keyset)),
+        (None, None) => Ok(None),
+    }
+}
+
+/// The audit metadata two merged pendings share: either's when the other
+/// has none, [`AuditError::Mismatch`] when both have some and it differs.
+/// One batch is one key request, and a request carries one map.
+fn merge_audits(
+    left: Option<Arc<UnverifiedContext>>,
+    right: Option<Arc<UnverifiedContext>>,
+) -> Result<Option<Arc<UnverifiedContext>>, Error> {
+    match (left, right) {
+        (Some(left), Some(right)) if left != right => Err(AuditError::Mismatch.into()),
+        (Some(audit), _) | (_, Some(audit)) => Ok(Some(audit)),
         (None, None) => Ok(None),
     }
 }
@@ -725,6 +830,7 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
     cipher: &StackCipher<K>,
     keyset: Option<Uuid>,
     requests: Vec<Request>,
+    audit: Option<&UnverifiedContext>,
 ) -> Result<Responses, Error> {
     let mut generates: Vec<Descriptor> = Vec::new();
     let mut retrieves: Vec<Retrieve> = Vec::new();
@@ -767,7 +873,7 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
     // early and boxed is a pointer wide at both moments, and its output is
     // kept narrow too (an error travels boxed, a keyset's outcome shared).
     // `tests/heap_hygiene.rs` is what notices.
-    let retrieving = retrieve_data_keys(cipher, &retrieves);
+    let retrieving = retrieve_data_keys(cipher, &retrieves, audit);
     let retrieve_keys = Box::pin(async move { retrieving.await.map_err(Box::new) });
     let load_keysets = Box::pin(load_keysets(cipher, &loads));
 
@@ -787,7 +893,7 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
         let expected = payloads.len();
         let keys = cipher
             .kms()
-            .generate_keys(payloads, Some(keyset), None)
+            .generate_keys(payloads, Some(keyset), audit.map(Cow::Borrowed))
             .await?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
@@ -810,6 +916,7 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
 async fn retrieve_data_keys<K: DataKeySource>(
     cipher: &StackCipher<K>,
     retrieves: &[Retrieve],
+    audit: Option<&UnverifiedContext>,
 ) -> Result<Vec<DataKey>, Error> {
     let mut groups: Vec<(Uuid, Vec<usize>)> = Vec::new();
     let mut group_of: HashMap<Uuid, usize> = HashMap::new();
@@ -834,7 +941,7 @@ async fn retrieve_data_keys<K: DataKeySource>(
         let expected = payloads.len();
         let keys = cipher
             .kms()
-            .retrieve_keys(payloads, Some(keyset_id), None)
+            .retrieve_keys(payloads, Some(keyset_id), audit)
             .await?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
@@ -1631,7 +1738,7 @@ mod tests {
             Request::generate_under(Descriptor::of("users/email")),
             Request::generate_under(long.clone()),
         ];
-        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests).await else {
+        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests, None).await else {
             panic!("an over-long descriptor must be refused");
         };
         assert!(
@@ -1647,7 +1754,7 @@ mod tests {
         let mut pairs = generating_pairs(&keyset, 1).await.unwrap();
         let (iv, tag) = pairs.remove(0);
         let requests = vec![Request::retrieve_under(iv, tag, long, keyset.keyset_id())];
-        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests).await else {
+        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests, None).await else {
             panic!("an over-long descriptor must be refused");
         };
         assert!(matches!(err, Error::DescriptorTooLong { .. }), "{err}");
@@ -1664,7 +1771,7 @@ mod tests {
             "a".repeat(Descriptor::MAX_LEN),
         ))];
         assert!(
-            dispatch(&cipher, Some(keyset.keyset_id()), requests)
+            dispatch(&cipher, Some(keyset.keyset_id()), requests, None)
                 .await
                 .is_ok(),
             "at the limit"

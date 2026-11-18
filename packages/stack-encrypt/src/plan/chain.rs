@@ -16,7 +16,9 @@ use crate::target::{
     ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
     Index, Indexes, Layout, Pending, PendingFuture, Select, Whole,
 };
-use crate::{Error, KeysetCipher, Label, LabelError, NonEmpty, StackCipher, StackCipherText};
+use crate::{
+    AuditMetadata, Error, KeysetCipher, Label, LabelError, NonEmpty, StackCipher, StackCipherText,
+};
 
 /// What a cipher's data-key source must offer for a chain to run: data keys
 /// to seal and open, index keys to load a keyset named in the chain, and,
@@ -93,13 +95,15 @@ impl<K> From<&String> for KeysetChoice<'_, K> {
 }
 
 /// What every chain carries besides its value: the cipher, the keyset it
-/// names, the context it names for a plan built without one, and the
-/// caller's extension of the plan's contexts.
+/// names, the context it names for a plan built without one, the caller's
+/// extension of the plan's contexts, and the audit metadata for its key
+/// requests.
 struct Common<'a, K> {
     cipher: &'a StackCipher<K>,
     keyset: Option<KeysetChoice<'a, K>>,
     context: Option<Result<Label, LabelError>>,
     extend: DeclaredContext,
+    audit: Option<AuditMetadata>,
 }
 
 impl<'a, K> Common<'a, K> {
@@ -109,6 +113,7 @@ impl<'a, K> Common<'a, K> {
             keyset: None,
             context: None,
             extend: DeclaredContext::default(),
+            audit: None,
         }
     }
 
@@ -153,6 +158,8 @@ pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
     fn cipher(&self) -> &'a StackCipher<K>;
     /// The keyset the chain names, if any, taken out of it.
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>>;
+    /// The audit metadata the chain carries, if any, taken out of it.
+    fn take_audit(&mut self) -> Option<AuditMetadata>;
     /// The chain's plan, and the value or record it runs over, checked
     /// with no I/O and no keyset: the [`Error::Plan`] refusals
     /// [`prepare`](Self::prepare) would raise. A query chain also prepares
@@ -215,8 +222,46 @@ where
         operation.check()?;
         let choice = operation.take_keyset();
         let (keyset, scoped) = resolve(operation.cipher(), vec![choice]).await?;
-        operation.prepare(&keyset, scoped).settle().await
+        prepared(operation, &keyset, scoped).settle().await
     })
+}
+
+/// [`Operation::prepare`], with the chain's audit metadata attached to the
+/// pending it yields.
+fn prepared<'a, 'p, K, O>(
+    mut operation: O,
+    keyset: &'p KeysetCipher<'a, K>,
+    scoped: bool,
+) -> Pending<'p, O::Output, K>
+where
+    'a: 'p,
+    K: 'static,
+    O: Operation<'a, K>,
+{
+    let audit = operation.take_audit();
+    let pending = operation.prepare(keyset, scoped);
+    match audit {
+        Some(audit) => pending.audit(audit),
+        None => pending,
+    }
+}
+
+/// `.audit(..)`, on every chain that requests data keys: the encrypt and
+/// open chains. A query chain derives terms and requests no data key, so
+/// it has nothing to attach audit metadata to.
+macro_rules! audit_option {
+    ($([$($generics:tt)*] $chain:ty $(where [$($bounds:tt)*])?;)+) => {$(
+        impl<$($generics)*> $chain $(where $($bounds)*)? {
+            /// Send `metadata` with this chain's key requests, for the
+            /// ZeroKMS audit log. Optional. Calling it again replaces the
+            /// metadata. See [`Pending::audit`] for what ZeroKMS does with
+            /// it and what it must not hold.
+            pub fn audit(mut self, metadata: AuditMetadata) -> Self {
+                self.common.audit = Some(metadata);
+                self
+            }
+        }
+    )+};
 }
 
 /// `.keyset(..)` and `.extend(..)`, on every chain.
@@ -419,6 +464,9 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
+    fn take_audit(&mut self) -> Option<AuditMetadata> {
+        self.common.audit.take()
+    }
     fn check(&mut self) -> Result<(), Error> {
         match &self.context {
             Ok(_) => Ok(()),
@@ -459,6 +507,9 @@ where
     }
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
+    }
+    fn take_audit(&mut self) -> Option<AuditMetadata> {
+        self.common.audit.take()
     }
     fn check(&mut self) -> Result<(), Error> {
         self.plan.check()
@@ -550,6 +601,9 @@ impl<'a, S: 'static, K: 'static> Operation<'a, K> for EncryptFields<'a, S, K> {
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
+    fn take_audit(&mut self) -> Option<AuditMetadata> {
+        self.common.audit.take()
+    }
     fn check(&mut self) -> Result<(), Error> {
         self.plan.check(self.source)
     }
@@ -581,6 +635,9 @@ where
     }
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
+    }
+    fn take_audit(&mut self) -> Option<AuditMetadata> {
+        self.common.audit.take()
     }
     fn check(&mut self) -> Result<(), Error> {
         self.plan.check(self.source, self.common.peek_context()?)
@@ -945,6 +1002,9 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
+    fn take_audit(&mut self) -> Option<AuditMetadata> {
+        self.common.audit.take()
+    }
     fn check(&mut self) -> Result<(), Error> {
         if self.common.extend.has_bindings() {
             return Err(PlanError::BindInQuery.into());
@@ -1043,6 +1103,9 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
+    fn take_audit(&mut self) -> Option<AuditMetadata> {
+        self.common.audit.take()
+    }
     fn check(&mut self) -> Result<(), Error> {
         self.plan.check(&self.record, self.common.peek_context()?)
     }
@@ -1077,6 +1140,16 @@ chain_options! {
     ['a, Op, F, K: 'static] QueryBuilder<'a, Op, F, K>;
     ['a, Op, F, I, K: 'static] QueryVia<'a, Op, F, I, K>;
     ['a, F, Op, I, K: 'static] QueryOp<'a, F, Op, I, K> where [Op: Operator, F: Input<Op::Arity>, I: Supports<Op, F>];
+    ['a, R, K: 'static] OpenBuilder<'a, R, K>;
+    ['a, R, P, K: 'static] OpenUsing<'a, R, P, K>;
+}
+
+audit_option! {
+    ['a, S: ?Sized, K: 'static] EncryptBuilder<'a, S, K>;
+    ['a, S: ?Sized, K: 'static] EncryptWithContext<'a, S, K>;
+    ['a, S, X, K: 'static] EncryptIndexed<'a, S, X, K>;
+    ['a, S: 'static, K: 'static] EncryptFields<'a, S, K>;
+    ['a, S: ?Sized, P, K: 'static] EncryptUsing<'a, S, P, K>;
     ['a, R, K: 'static] OpenBuilder<'a, R, K>;
     ['a, R, P, K: 'static] OpenUsing<'a, R, P, K>;
 }
@@ -1118,7 +1191,21 @@ opaque_debug! {
 /// for all of them, under one keyset. Built by [`all`].
 pub struct All<'a, K, T> {
     operations: T,
+    audit: Option<AuditMetadata>,
     scope: PhantomData<Scope<'a, K>>,
+}
+
+impl<K, T> All<'_, K, T> {
+    /// Send `metadata` with every key request the batch makes, for the
+    /// ZeroKMS audit log. Optional. It replaces any metadata the chains in
+    /// the batch carry; chains that carry different metadata of their own
+    /// fail the batch with [`AuditError::Mismatch`](crate::AuditError::Mismatch)
+    /// before any request. See [`Pending::audit`] for what ZeroKMS does
+    /// with it and what it must not hold.
+    pub fn audit(mut self, metadata: AuditMetadata) -> Self {
+        self.audit = Some(metadata);
+        self
+    }
 }
 
 /// The lifetime and data-key source a batch runs under, carried only in
@@ -1171,6 +1258,7 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 pub fn all<'a, K: 'static, T: Batch<'a, K>>(operations: T) -> All<'a, K, T> {
     All {
         operations,
+        audit: None,
         scope: PhantomData,
     }
 }
@@ -1224,6 +1312,7 @@ macro_rules! all_of {
             type IntoFuture = PendingFuture<'a, ($first::Output, $($rest::Output),+)>;
             fn into_future(self) -> Self::IntoFuture {
                 let (mut $fop, $(mut $rop),+) = self.operations;
+                let audit = self.audit;
                 Box::pin(async move {
                     $fop.check()?;
                     $($rop.check()?;)+
@@ -1235,18 +1324,20 @@ macro_rules! all_of {
                     let named = ($fnamed.is_some(), $($rnamed.is_some()),+);
                     let (keyset, _) = resolve(cipher, vec![$fnamed, $($rnamed),+]).await?;
                     let ($fnamed, $($rnamed),+) = named;
-                    let ($fbatch, $fany) = route(cipher, $fop.prepare(&keyset, $fnamed));
-                    $(let ($rbatch, $rany) = route(cipher, $rop.prepare(&keyset, $rnamed));)+
-                    let ($fbatch, $($rbatch),+) = $fbatch
+                    let ($fbatch, $fany) = route(cipher, prepared($fop, &keyset, $fnamed));
+                    $(let ($rbatch, $rany) = route(cipher, prepared($rop, &keyset, $rnamed));)+
+                    let batch = $fbatch
                         $(.zip($rbatch))+
-                        .map(|$batch| ($fbatch, $($rbatch),+))
-                        .settle()
-                        .await?;
-                    let ($fany, $($rany),+) = $fany
+                        .map(|$batch| ($fbatch, $($rbatch),+));
+                    let any = $fany
                         $(.zip($rany))+
-                        .map(|$any| ($fany, $($rany),+))
-                        .settle()
-                        .await?;
+                        .map(|$any| ($fany, $($rany),+));
+                    let (batch, any) = match audit {
+                        Some(audit) => (batch.audit(audit.clone()), any.audit(audit)),
+                        None => (batch, any),
+                    };
+                    let ($fbatch, $($rbatch),+) = batch.settle().await?;
+                    let ($fany, $($rany),+) = any.settle().await?;
                     Ok((placed($fbatch, $fany)?, $(placed($rbatch, $rany)?),+))
                 })
             }

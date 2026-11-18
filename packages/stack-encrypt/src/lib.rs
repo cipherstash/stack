@@ -581,10 +581,12 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 /// makes its requests.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod audit;
 pub mod blob;
 pub mod cipher;
 pub mod contexts;
 mod scalar;
+pub use audit::{AuditError, AuditMetadata};
 pub use blob::{BlobError, OpaqueBlob};
 pub use scalar::{Ciphertext, OpaqueDecode, OpaqueEncode};
 #[cfg(test)]
