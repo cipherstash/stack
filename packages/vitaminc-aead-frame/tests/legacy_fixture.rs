@@ -34,7 +34,10 @@
 //! (len(name) ++ name ++ len(ct) ++ ct ++ len(frame) ++ frame)*`.
 
 use vitaminc_aead::frame::{FrameWriteError, ARRAY, OBJECT, PASSTHROUGH};
-use vitaminc_aead::{decrypt_to_frame, Context, DecryptError, Frame, Node, Unspecified};
+use vitaminc_aead::seal::open_all;
+use vitaminc_aead::{
+    decrypt_to_frame, walk_legacy_range, Context, Decrypt, DecryptError, Frame, Node, Unspecified,
+};
 use vitaminc_aead_frame::decode_ciphertext;
 use vitaminc_encrypt::{Aes256Cipher, Key, LocalCipherText};
 use vitaminc_protected::Controlled;
@@ -168,6 +171,22 @@ fn open(fixture: &Fixture, vector: &Vector, aad: &[u8]) -> Opened {
     .map(|frame| frame.risky_ref().to_vec())
 }
 
+/// +12000-01-01T00:00:00.000000001Z, the one vector past the range, as
+/// nanoseconds since the epoch.
+const LEGACY_YEAR_12000_NANOS: i128 = 316_516_204_800_000_000_001;
+
+/// Open a vector with `walk_legacy_range`, into its count.
+fn open_legacy_range(fixture: &Fixture, vector: &Vector) -> i128 {
+    let cipher = Aes256Cipher::new(&Key::from(fixture.key)).expect("cipher");
+    let opened = open_all(
+        &cipher.opening_version_1(),
+        node(vector),
+        &Context::from_encoded(&fixture.aad),
+    )
+    .expect("authenticates");
+    walk_legacy_range(opened, <i128 as Decrypt>::sink()).expect("reads its count")
+}
+
 /// Vectors whose values are past the wire's range, which is jiff's since
 /// vitaminc#626. They authenticate, but their leaf is refused as malformed.
 const PAST_THE_RANGE: &[&str] = &["timestamp-expanded-year"];
@@ -179,6 +198,14 @@ fn opens_into_its_frame(fixture: &Fixture) {
             assert!(
                 matches!(opened, Err(DecryptError::Malformed)),
                 "{}: {opened:?}",
+                vector.name
+            );
+            // The legacy walk still reads it, as its count of nanoseconds,
+            // so a stored value can be migrated.
+            assert_eq!(
+                open_legacy_range(fixture, vector),
+                LEGACY_YEAR_12000_NANOS,
+                "{}",
                 vector.name
             );
             continue;
