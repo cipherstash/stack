@@ -29,17 +29,22 @@
 //! nothing from the token itself is.
 //!
 //! A strategy hands out the same cached token on every call until it is
-//! refreshed, so the last token to verify is remembered (as a protected
-//! SHA-256 digest, compared in constant time) and only its `exp` and `nbf`
-//! are checked again. A new token is verified in full.
+//! refreshed, so the last [`REMEMBERED_TOKENS`] tokens to verify are
+//! remembered (as protected SHA-256 digests, compared in constant time) and
+//! only their `exp` and `nbf` are checked again. More than one, because an
+//! OIDC federation strategy shares one verifier across every user's cached
+//! token. A new token is verified in full.
 //!
 //! The JWKS is cached for [`KEYS_TTL_SECS`]. A token signed by a key the
 //! cache does not hold triggers an early refetch, so a rotated key works as
 //! soon as one is allowed. Fetches, successful or failed, are at most one
 //! every [`MIN_REFETCH_SECS`], so neither a run of forged `kid`s nor a CTS
 //! outage turns every call into a request to CTS; a token signed by a key
-//! published within that interval of the last fetch is refused.
+//! published within that interval of the last fetch is refused. A fetch
+//! abandoned part way (its caller timed out or was dropped) is not a failed
+//! one: it is forgotten, and the next caller fetches again.
 
+use std::collections::VecDeque;
 use std::fmt;
 
 use cts_common::claims::Audience;
@@ -59,8 +64,13 @@ pub(crate) const LEEWAY_SECS: u64 = 60;
 /// How long a fetched JWKS is used before it is fetched again.
 pub(crate) const KEYS_TTL_SECS: u64 = 60 * 60;
 
-/// The shortest interval between two fetches of the JWKS.
+/// The shortest interval between two fetches of the JWKS. Also how often a
+/// strategy replaces a token that keeps being refused (see
+/// [`AutoRefresh::expire`]).
 pub(crate) const MIN_REFETCH_SECS: u64 = 60;
+
+/// How many verified tokens are remembered.
+pub(crate) const REMEMBERED_TOKENS: usize = 16;
 
 /// The only signing algorithm accepted: CTS signs with RSASSA-PKCS1-v1_5 and
 /// SHA-256.
@@ -93,8 +103,10 @@ pub(crate) fn resolve(
 /// `token`, which `engine` handed out, verified by `verifier` when there is
 /// one.
 ///
-/// A refused token is expired in `engine`'s cache, so the next call fetches
-/// a new one rather than refusing the same token until it expires.
+/// A refused token is expired in `engine`'s cache, so a later call fetches
+/// a new one rather than refusing the same token until it expires. A refusal
+/// that keeps happening is retried at most once every [`MIN_REFETCH_SECS`]
+/// (see [`AutoRefresh::expire`]).
 pub(crate) async fn verify_cached<R, S>(
     verifier: Option<&TokenVerifier>,
     engine: &AutoRefresh<R, S>,
@@ -125,13 +137,13 @@ pub(crate) struct TokenVerifier {
     keys: std::sync::Mutex<KeyCache>,
     /// Held while the JWKS is fetched, so only one fetch runs at a time.
     fetching: tokio::sync::Mutex<()>,
-    /// The last token to verify. The same bytes need only their times
-    /// checked again.
-    last_verified: std::sync::Mutex<Option<Verified>>,
+    /// The last [`REMEMBERED_TOKENS`] tokens to verify, oldest first. The
+    /// same bytes need only their times checked again.
+    verified: std::sync::Mutex<VecDeque<Verified>>,
 }
 
 /// A token that verified: a SHA-256 digest of it, not the token itself, and
-/// its times. The digest is wiped when it is replaced or dropped.
+/// its times. The digest is wiped when it is evicted or dropped.
 struct Verified {
     digest: TokenDigest,
     times: Times,
@@ -200,7 +212,7 @@ impl TokenVerifier {
             clock,
             keys: std::sync::Mutex::new(KeyCache::default()),
             fetching: tokio::sync::Mutex::new(()),
-            last_verified: std::sync::Mutex::new(None),
+            verified: std::sync::Mutex::new(VecDeque::with_capacity(REMEMBERED_TOKENS)),
         })
     }
 
@@ -237,16 +249,22 @@ impl TokenVerifier {
         }
     }
 
-    /// The times of the last token to verify, if `digest` is that token's.
+    /// The times of a remembered token, if `digest` is one's.
     fn verified_times(&self, digest: &TokenDigest) -> Option<Times> {
-        let last = self.last_verified.lock().unwrap_or_else(|e| e.into_inner());
-        last.as_ref()
-            .filter(|verified| verified.digest.constant_time_eq(digest))
+        let remembered = self.verified.lock().unwrap_or_else(|e| e.into_inner());
+        remembered
+            .iter()
+            .find(|verified| verified.digest.constant_time_eq(digest))
             .map(|verified| verified.times)
     }
 
+    /// Remember `verified`, forgetting the oldest token when full.
     fn remember(&self, verified: Verified) {
-        *self.last_verified.lock().unwrap_or_else(|e| e.into_inner()) = Some(verified);
+        let mut remembered = self.verified.lock().unwrap_or_else(|e| e.into_inner());
+        if remembered.len() >= REMEMBERED_TOKENS {
+            drop(remembered.pop_front());
+        }
+        remembered.push_back(verified);
     }
 
     /// Every check, returning the token's times when they all pass.
@@ -319,6 +337,12 @@ impl TokenVerifier {
     /// used, even past [`KEYS_TTL_SECS`]: the keys are public, and a short
     /// outage of CTS's JWKS should not refuse tokens they verify.
     ///
+    /// A fetch whose caller gives up part way (a timeout, a dropped request)
+    /// is forgotten: the attempt it recorded is put back as it was, so the
+    /// next caller fetches again rather than being told the keys are
+    /// unavailable, and no caller is refused for a key the abandoned fetch
+    /// never got to look for.
+    ///
     /// One fetch runs at a time, and the cache is not locked while it runs.
     /// A caller that needs a key the cache does not hold waits for that
     /// fetch; a caller whose key is only stale uses it straight away, so a
@@ -344,8 +368,15 @@ impl TokenVerifier {
             Lookup::Fetch(stale) => stale,
         };
         let now = self.clock.now_unix_secs();
-        self.cache().attempted_at = Some(now);
+        let previous = self.cache().attempted_at.replace(now);
+        // Declared after `_fetching`, so it is dropped first: an abandoned
+        // fetch is forgotten before the next one can start.
+        let abandoned = ForgetAbandoned {
+            verifier: self,
+            previous: Some(previous),
+        };
         let fetched = self.fetch_keys().await;
+        abandoned.finished();
         let mut cache = self.cache();
         match fetched {
             Ok(keys) => {
@@ -410,6 +441,28 @@ impl TokenVerifier {
         // An unreadable JWKS is the server's fault, not the token's.
         let jwks: Jwks = response.json()?;
         Ok(jwks.keys.into_iter().filter_map(Jwk::into_key).collect())
+    }
+}
+
+/// Puts back the attempt a fetch recorded if the fetch is dropped before it
+/// finishes, so an abandoned fetch does not count as a failed one.
+struct ForgetAbandoned<'a> {
+    verifier: &'a TokenVerifier,
+    /// `attempted_at` before the fetch; `None` once it has finished.
+    previous: Option<Option<u64>>,
+}
+
+impl ForgetAbandoned<'_> {
+    fn finished(mut self) {
+        self.previous = None;
+    }
+}
+
+impl Drop for ForgetAbandoned<'_> {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            self.verifier.cache().attempted_at = previous;
+        }
     }
 }
 
@@ -642,14 +695,13 @@ mod rs256 {
         use rsa::signature::Verifier;
         use rsa::{BoxedUint, PublicKey};
 
-        const MIN_MODULUS_BITS: usize = 2048;
-
         pub(in super::super) fn verify(key: &SigningKey, message: &[u8], signature: &[u8]) -> bool {
-            let n = BoxedUint::from_be_slice_vartime(&key.n);
-            if (n.bit_width() as usize) < MIN_MODULUS_BITS {
-                return false;
-            }
-            let Ok(public) = PublicKey::new(n, BoxedUint::from_be_slice_vartime(&key.e)) else {
+            // The sizes aws-lc's `RSA_PKCS1_2048_8192_SHA256` accepts.
+            let Ok(public) = PublicKey::new_with_size_limits(
+                BoxedUint::from_be_slice_vartime(&key.n),
+                BoxedUint::from_be_slice_vartime(&key.e),
+                2048..=8192,
+            ) else {
                 return false;
             };
             let Ok(signature) = Signature::try_from(signature) else {

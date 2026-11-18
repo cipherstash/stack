@@ -93,6 +93,10 @@ struct State {
     /// was waiting on, instead of a generic `Expired` that discards why the
     /// wait ended in failure.
     last_refresh_error: Option<(&'static str, String)>,
+    /// When [`expire`](AutoRefresh::expire) last expired a refused token, so
+    /// a refusal that keeps happening is retried at most once every
+    /// [`MIN_REFETCH_SECS`](crate::token_verifier::MIN_REFETCH_SECS).
+    refused_expired_at: Option<u64>,
 }
 
 /// A non-retryable refusal, held in a form that can be handed to more than one
@@ -182,6 +186,7 @@ impl State {
             token,
             denial: None,
             last_refresh_error: None,
+            refused_expired_at: None,
         }
     }
 
@@ -283,14 +288,33 @@ impl<R, S> AutoRefresh<R, S> {
     /// Treat the cached token as expired if it is still `refused`, so the
     /// next `get_token` replaces it instead of handing it out again. Its
     /// refresh credential is kept, and a token installed since is left alone.
+    ///
+    /// The first refusal expires the token at once. After that a refused
+    /// token is not expired again until
+    /// [`MIN_REFETCH_SECS`](crate::token_verifier::MIN_REFETCH_SECS) have
+    /// passed since the last time, so a refusal that keeps happening (a
+    /// setting CTS's tokens never satisfy, or a key rotated too recently for
+    /// the verifier to fetch) costs at most one token request a minute rather
+    /// than one per call. In between, the cached token is handed out and
+    /// refused again. The interval matches the verifier's, so a retry comes
+    /// no sooner than the verifier can fetch a newly published key.
     pub(crate) async fn expire(&self, refused: &ServiceToken) {
+        let now = self.shared.clock.now_unix_secs();
         let mut state = self.shared.state.lock().await;
+        let held = state.refused_expired_at.is_some_and(|at| {
+            // A clock that steps back does not hold the retry off.
+            now >= at && now - at < crate::token_verifier::MIN_REFETCH_SECS
+        });
+        if held {
+            return;
+        }
         if let Some(token) = state
             .token
             .as_mut()
             .filter(|token| token.access_token().constant_time_eq(refused.secret()))
         {
             token.expires_at = 0;
+            state.refused_expired_at = Some(now);
         }
     }
 }
@@ -736,6 +760,15 @@ mod tests {
         server: &MockServer,
         token: Token,
     ) -> AutoRefresh<DeviceSessionRefresher> {
+        auto_refresh_with_token_and_clock(dir, server, token, system_clock())
+    }
+
+    fn auto_refresh_with_token_and_clock(
+        dir: &tempfile::TempDir,
+        server: &MockServer,
+        token: Token,
+        clock: SharedClock,
+    ) -> AutoRefresh<DeviceSessionRefresher> {
         let store = ProfileStore::new(dir.path());
         store.init_workspace("ZVATKW3VHMFG27DY").unwrap();
         let ws_store = store.current_workspace_store().unwrap();
@@ -748,11 +781,12 @@ mod tests {
             None,
             crate::transport::default_transport(),
         );
-        AutoRefresh::with_token(refresher, token)
+        AutoRefresh::with_token_and_clock(refresher, token, clock)
     }
 
     mod given_a_refused_token {
         use super::*;
+        use crate::clock::TestClock;
         use crate::ServiceToken;
 
         async fn cached_expiry(engine: &AutoRefresh<DeviceSessionRefresher>) -> u64 {
@@ -770,7 +804,69 @@ mod tests {
                 .expire(&ServiceToken::new(SecretToken::new("refused")))
                 .await;
 
-            assert_eq!(cached_expiry(&engine).await, 0);
+            assert_eq!(
+                cached_expiry(&engine).await,
+                0,
+                "the refused token should be expired"
+            );
+        }
+
+        fn refused() -> ServiceToken {
+            ServiceToken::new(SecretToken::new("refused"))
+        }
+
+        /// The refused token again, as the next refresh would install it.
+        async fn reinstall(engine: &AutoRefresh<DeviceSessionRefresher>) {
+            engine.shared.state.lock().await.token = Some(make_token("refused", 3600, true));
+        }
+
+        #[tokio::test]
+        async fn a_second_refusal_within_the_interval_is_not_expired() {
+            let server = start_server(MockSet::new()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let clock = TestClock::new(1_000_000);
+            let engine = auto_refresh_with_token_and_clock(
+                &dir,
+                &server,
+                make_token("refused", 3600, true),
+                clock.shared(),
+            );
+            engine.expire(&refused()).await;
+            reinstall(&engine).await;
+
+            clock.advance(crate::token_verifier::MIN_REFETCH_SECS - 1);
+            engine.expire(&refused()).await;
+
+            assert_ne!(
+                cached_expiry(&engine).await,
+                0,
+                "a refusal that keeps happening must not refresh on every call"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_refused_token_is_expired_again_once_the_interval_has_passed() {
+            let server = start_server(MockSet::new()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let clock = TestClock::new(1_000_000);
+            let engine = auto_refresh_with_token_and_clock(
+                &dir,
+                &server,
+                make_token("refused", 3600, true),
+                clock.shared(),
+            );
+            engine.expire(&refused()).await;
+            reinstall(&engine).await;
+            engine.expire(&refused()).await;
+
+            clock.advance(crate::token_verifier::MIN_REFETCH_SECS);
+            engine.expire(&refused()).await;
+
+            assert_eq!(
+                cached_expiry(&engine).await,
+                0,
+                "the refused token should be replaced once the interval has passed"
+            );
         }
 
         #[tokio::test]
@@ -783,7 +879,11 @@ mod tests {
                 .expire(&ServiceToken::new(SecretToken::new("refused")))
                 .await;
 
-            assert_ne!(cached_expiry(&engine).await, 0);
+            assert_ne!(
+                cached_expiry(&engine).await,
+                0,
+                "a token that was not refused should not be expired"
+            );
         }
     }
 

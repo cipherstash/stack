@@ -115,14 +115,23 @@ mod tests {
         let key = SecretToken::new("CSAKT4ZMT2AUPXI7TCD2.ZAQRW2BWXP3Z6SHR4YG2");
         assert_eq!(
             token_subject(&key).as_deref(),
-            Some("CS|CSAKT4ZMT2AUPXI7TCD2")
+            Some("CS|CSAKT4ZMT2AUPXI7TCD2"),
+            "the subject should name the key ID and not the secret"
         );
     }
 
     #[test]
     fn a_string_that_is_not_an_access_key_has_no_token_subject() {
-        assert_eq!(token_subject(&SecretToken::new("not-a-key")), None);
-        assert_eq!(token_subject(&SecretToken::new("CSAKno-dot")), None);
+        assert_eq!(
+            token_subject(&SecretToken::new("not-a-key")),
+            None,
+            "a string that is not an access key should have no subject"
+        );
+        assert_eq!(
+            token_subject(&SecretToken::new("CSAKno-dot")),
+            None,
+            "an access key without a secret should have no subject"
+        );
     }
 
     #[test]

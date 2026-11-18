@@ -95,7 +95,11 @@ mod given_a_token_signed_by_the_trusted_issuer {
     async fn it_is_accepted() {
         let (_, verifier) = serving_key_a();
 
-        assert_eq!(verdict(&verifier, KEY_A.jwt(claims())).await, Ok(()));
+        assert_eq!(
+            verdict(&verifier, KEY_A.jwt(claims())).await,
+            Ok(()),
+            "a token the trusted issuer signed should be accepted"
+        );
     }
 
     #[tokio::test]
@@ -107,6 +111,7 @@ mod given_a_token_signed_by_the_trusted_issuer {
         assert_eq!(
             cts.requests(),
             vec![("GET".to_string(), format!("{ISSUER}.well-known/jwks.json"))],
+            "the keys should be fetched once, from the pinned issuer's JWKS",
         );
     }
 
@@ -117,7 +122,11 @@ mod given_a_token_signed_by_the_trusted_issuer {
 
         let accepted = verdict(&verifier, KEY_A.jwt(with(claims(), "iss", iss.into()))).await;
 
-        assert_eq!(accepted, Ok(()));
+        assert_eq!(
+            accepted,
+            Ok(()),
+            "a trailing slash should not change the issuer"
+        );
     }
 
     #[tokio::test]
@@ -127,7 +136,11 @@ mod given_a_token_signed_by_the_trusted_issuer {
 
         let accepted = verdict(&verifier, KEY_A.jwt_with_header(header, claims())).await;
 
-        assert_eq!(accepted, Ok(()));
+        assert_eq!(
+            accepted,
+            Ok(()),
+            "a header field that is not a string should not refuse the token"
+        );
     }
 
     #[tokio::test]
@@ -137,7 +150,11 @@ mod given_a_token_signed_by_the_trusted_issuer {
 
         let accepted = verdict(&verifier, KEY_A.jwt_with_header(header, claims())).await;
 
-        assert_eq!(accepted, Ok(()));
+        assert_eq!(
+            accepted,
+            Ok(()),
+            "a token without a kid should use the JWKS's only key"
+        );
     }
 
     #[tokio::test]
@@ -186,7 +203,10 @@ mod given_a_forged_or_altered_token {
 
         let refused = verdict(&verifier, KEY_B.jwt_with_header(header, claims())).await;
 
-        assert!(refused.is_err());
+        assert!(
+            refused.is_err(),
+            "a key the issuer does not publish should not verify, got {refused:?}"
+        );
     }
 
     #[tokio::test]
@@ -202,7 +222,10 @@ mod given_a_forged_or_altered_token {
 
         let refused = verdict(&verifier, hs256).await;
 
-        assert!(refused.is_err());
+        assert!(
+            refused.is_err(),
+            "an HMAC token should be refused, got {refused:?}"
+        );
         assert!(
             cts.requests().is_empty(),
             "no key fetch for a token that cannot pass"
@@ -218,14 +241,20 @@ mod given_a_forged_or_altered_token {
             URL_SAFE_NO_PAD.encode(claims().to_string()),
         );
 
-        assert!(verdict(&verifier, unsigned).await.is_err());
+        assert!(
+            verdict(&verifier, unsigned).await.is_err(),
+            "an unsigned token should be refused"
+        );
     }
 
     #[tokio::test]
     async fn a_token_that_is_not_a_jwt_is_refused() {
         let (_, verifier) = serving_key_a();
 
-        assert!(verdict(&verifier, "not-a-jwt".to_string()).await.is_err());
+        assert!(
+            verdict(&verifier, "not-a-jwt".to_string()).await.is_err(),
+            "a string that is not a JWT should be refused"
+        );
     }
 }
 
@@ -242,7 +271,10 @@ mod given_a_token_from_another_issuer {
 
         let refused = verdict(&verifier, KEY_A.jwt(rogue)).await;
 
-        assert!(refused.is_err());
+        assert!(
+            refused.is_err(),
+            "a token from another issuer should be refused, got {refused:?}"
+        );
         assert!(
             cts.requests().is_empty(),
             "the rogue issuer's JWKS is never asked for"
@@ -260,7 +292,10 @@ mod given_a_token_from_another_issuer {
         )
         .await;
 
-        assert!(refused.is_err());
+        assert!(
+            refused.is_err(),
+            "an issuer that only shares a prefix should be refused, got {refused:?}"
+        );
     }
 }
 
@@ -299,7 +334,10 @@ mod given_the_tokens_expiry {
         )
         .unwrap();
 
-        assert!(verdict(&verifier, KEY_A.jwt(claims())).await.is_err());
+        assert!(
+            verdict(&verifier, KEY_A.jwt(claims())).await.is_err(),
+            "a token that expired during the key fetch should be refused"
+        );
     }
 
     #[tokio::test]
@@ -307,7 +345,10 @@ mod given_the_tokens_expiry {
         let (_, verifier) = serving_key_a();
         let expired = with(claims(), "exp", (NOW - LEEWAY_SECS).into());
 
-        assert!(verdict(&verifier, KEY_A.jwt(expired)).await.is_err());
+        assert!(
+            verdict(&verifier, KEY_A.jwt(expired)).await.is_err(),
+            "a token past its expiry and the leeway should be refused"
+        );
     }
 
     #[tokio::test]
@@ -315,7 +356,11 @@ mod given_the_tokens_expiry {
         let (_, verifier) = serving_key_a();
         let skewed = with(claims(), "exp", (NOW - LEEWAY_SECS + 1).into());
 
-        assert_eq!(verdict(&verifier, KEY_A.jwt(skewed)).await, Ok(()));
+        assert_eq!(
+            verdict(&verifier, KEY_A.jwt(skewed)).await,
+            Ok(()),
+            "a token expired within the leeway should be accepted"
+        );
     }
 
     #[tokio::test]
@@ -324,7 +369,10 @@ mod given_the_tokens_expiry {
         let mut claims = claims();
         let _ = claims.as_object_mut().unwrap().remove("exp");
 
-        assert!(verdict(&verifier, KEY_A.jwt(claims)).await.is_err());
+        assert!(
+            verdict(&verifier, KEY_A.jwt(claims)).await.is_err(),
+            "a token without exp should be refused"
+        );
     }
 }
 
@@ -337,7 +385,10 @@ mod given_a_not_before_time {
 
         let jwt = KEY_A.jwt(with(claims(), "nbf", (NOW + 600).into()));
 
-        assert!(verdict(&verifier, jwt).await.is_err());
+        assert!(
+            verdict(&verifier, jwt).await.is_err(),
+            "a token whose nbf is in the future should be refused"
+        );
     }
 
     /// The same clock skew is allowed as for `exp`.
@@ -347,7 +398,11 @@ mod given_a_not_before_time {
 
         let jwt = KEY_A.jwt(with(claims(), "nbf", (NOW + LEEWAY_SECS).into()));
 
-        assert_eq!(verdict(&verifier, jwt).await, Ok(()));
+        assert_eq!(
+            verdict(&verifier, jwt).await,
+            Ok(()),
+            "a token whose nbf is within the leeway should be accepted"
+        );
     }
 
     #[tokio::test]
@@ -356,7 +411,10 @@ mod given_a_not_before_time {
 
         let jwt = KEY_A.jwt(with(claims(), "nbf", (NOW + LEEWAY_SECS + 1).into()));
 
-        assert!(verdict(&verifier, jwt).await.is_err());
+        assert!(
+            verdict(&verifier, jwt).await.is_err(),
+            "a token whose nbf is just past the leeway should be refused"
+        );
     }
 
     #[tokio::test]
@@ -365,7 +423,11 @@ mod given_a_not_before_time {
 
         let jwt = KEY_A.jwt(with(claims(), "nbf", (NOW - 10).into()));
 
-        assert_eq!(verdict(&verifier, jwt).await, Ok(()));
+        assert_eq!(
+            verdict(&verifier, jwt).await,
+            Ok(()),
+            "a token whose nbf has passed should be accepted"
+        );
     }
 
     /// A token that verified is checked again on its times alone, so a clock
@@ -380,7 +442,10 @@ mod given_a_not_before_time {
 
         clock.set(NOW - LEEWAY_SECS - 1);
 
-        assert!(verdict(&verifier, jwt).await.is_err());
+        assert!(
+            verdict(&verifier, jwt).await.is_err(),
+            "a remembered token should be refused once the clock is before its nbf"
+        );
     }
 }
 
@@ -397,14 +462,21 @@ mod given_an_expected_subject {
     async fn a_token_for_that_subject_is_accepted() {
         let jwt = KEY_A.jwt(with(claims(), "sub", SUBJECT.into()));
 
-        assert_eq!(verdict(&verifier(), jwt).await, Ok(()));
+        assert_eq!(
+            verdict(&verifier(), jwt).await,
+            Ok(()),
+            "a token for the expected subject should be accepted"
+        );
     }
 
     #[tokio::test]
     async fn a_token_for_another_subject_is_refused() {
         let jwt = KEY_A.jwt(with(claims(), "sub", "CS|CSAKanotherKeyId".into()));
 
-        assert!(verdict(&verifier(), jwt).await.is_err());
+        assert!(
+            verdict(&verifier(), jwt).await.is_err(),
+            "a token for another subject should be refused"
+        );
     }
 
     #[tokio::test]
@@ -412,7 +484,10 @@ mod given_an_expected_subject {
         let mut claims = claims();
         claims.as_object_mut().unwrap().remove("sub");
 
-        assert!(verdict(&verifier(), KEY_A.jwt(claims)).await.is_err());
+        assert!(
+            verdict(&verifier(), KEY_A.jwt(claims)).await.is_err(),
+            "a token without sub should be refused"
+        );
     }
 }
 
@@ -426,7 +501,11 @@ mod given_an_expected_audience {
         let cts = StubCts::serving(jwks(&[&KEY_A]));
         let verifier = verifier_for(&cts, &TestClock::new(NOW), Some(AUDIENCE));
 
-        assert_eq!(verdict(&verifier, KEY_A.jwt(claims())).await, Ok(()));
+        assert_eq!(
+            verdict(&verifier, KEY_A.jwt(claims())).await,
+            Ok(()),
+            "a token for the expected audience should be accepted"
+        );
     }
 
     #[tokio::test]
@@ -435,7 +514,11 @@ mod given_an_expected_audience {
         let verifier = verifier_for(&cts, &TestClock::new(NOW), Some(AUDIENCE));
         let listed = with(claims(), "aud", serde_json::json!(["other", AUDIENCE]));
 
-        assert_eq!(verdict(&verifier, KEY_A.jwt(listed)).await, Ok(()));
+        assert_eq!(
+            verdict(&verifier, KEY_A.jwt(listed)).await,
+            Ok(()),
+            "an audience list containing the expected audience should be accepted"
+        );
     }
 
     #[tokio::test]
@@ -444,7 +527,10 @@ mod given_an_expected_audience {
         let verifier = verifier_for(&cts, &TestClock::new(NOW), Some(AUDIENCE));
         let other = with(claims(), "aud", "us-east-1.aws.viturhosted.net".into());
 
-        assert!(verdict(&verifier, KEY_A.jwt(other)).await.is_err());
+        assert!(
+            verdict(&verifier, KEY_A.jwt(other)).await.is_err(),
+            "a token for another audience should be refused"
+        );
     }
 
     #[tokio::test]
@@ -454,7 +540,10 @@ mod given_an_expected_audience {
         let mut claims = claims();
         let _ = claims.as_object_mut().unwrap().remove("aud");
 
-        assert!(verdict(&verifier, KEY_A.jwt(claims)).await.is_err());
+        assert!(
+            verdict(&verifier, KEY_A.jwt(claims)).await.is_err(),
+            "a token without aud should be refused"
+        );
     }
 }
 
@@ -508,7 +597,11 @@ mod given_the_key_cache {
             tokio::time::timeout(std::time::Duration::from_secs(5), verdict(&verifier, third))
                 .await
                 .expect("a caller with a stale key must not wait for the refresh");
-        assert_eq!(verified, Ok(()));
+        assert_eq!(
+            verified,
+            Ok(()),
+            "a caller with a stale key should verify while the refresh runs"
+        );
     }
 
     #[tokio::test]
@@ -520,8 +613,16 @@ mod given_the_key_cache {
             verdict(&verifier, another_token()),
         );
 
-        assert_eq!((first, second), (Ok(()), Ok(())));
-        assert_eq!(cts.requests().len(), 1);
+        assert_eq!(
+            (first, second),
+            (Ok(()), Ok(())),
+            "both concurrent callers should be accepted"
+        );
+        assert_eq!(
+            cts.requests().len(),
+            1,
+            "concurrent callers should share one fetch"
+        );
     }
 
     /// A CTS that serves its keys only once `open` is notified.
@@ -566,8 +667,16 @@ mod given_the_key_cache {
             },
         );
 
-        assert_eq!((first, second), (Ok(()), Ok(())));
-        assert_eq!(cts.requests().len(), 1);
+        assert_eq!(
+            (first, second),
+            (Ok(()), Ok(())),
+            "both callers should be accepted"
+        );
+        assert_eq!(
+            cts.requests().len(),
+            1,
+            "the second caller should wait for the running fetch, not start another"
+        );
     }
 
     #[tokio::test]
@@ -580,7 +689,11 @@ mod given_the_key_cache {
         clock.advance(KEYS_TTL_SECS - 1);
         verdict(&verifier, another_token()).await.unwrap();
 
-        assert_eq!(cts.requests().len(), 1);
+        assert_eq!(
+            cts.requests().len(),
+            1,
+            "a fresh JWKS should not be fetched again"
+        );
     }
 
     /// Each filter on its own: the key carries key-b's RSA modulus and
@@ -630,7 +743,11 @@ mod given_the_key_cache {
         clock.advance(KEYS_TTL_SECS);
         verdict(&verifier, another_token()).await.unwrap();
 
-        assert_eq!(cts.requests().len(), 2);
+        assert_eq!(
+            cts.requests().len(),
+            2,
+            "a stale JWKS should be fetched again"
+        );
     }
 
     #[tokio::test]
@@ -643,8 +760,16 @@ mod given_the_key_cache {
         cts.rotate_to(jwks(&[&KEY_A, &KEY_B]));
         clock.advance(MIN_REFETCH_SECS);
 
-        assert_eq!(verdict(&verifier, KEY_B.jwt(claims())).await, Ok(()));
-        assert_eq!(cts.requests().len(), 2);
+        assert_eq!(
+            verdict(&verifier, KEY_B.jwt(claims())).await,
+            Ok(()),
+            "a rotated-in key should verify once a refetch is allowed"
+        );
+        assert_eq!(
+            cts.requests().len(),
+            2,
+            "the rotated key should cost one refetch"
+        );
     }
 
     #[tokio::test]
@@ -656,7 +781,10 @@ mod given_the_key_cache {
 
         clock.advance(MIN_REFETCH_SECS - 1);
         for _ in 0..3 {
-            assert!(verdict(&verifier, KEY_B.jwt(claims())).await.is_err());
+            assert!(
+                verdict(&verifier, KEY_B.jwt(claims())).await.is_err(),
+                "a key not in the JWKS should be refused"
+            );
         }
 
         assert_eq!(
@@ -679,7 +807,11 @@ mod given_the_key_cache {
         let cts = StubCts::serving(jwks);
         let verifier = verifier(&cts, &TestClock::new(NOW));
 
-        assert_eq!(verdict(&verifier, KEY_A.jwt(claims())).await, Ok(()));
+        assert_eq!(
+            verdict(&verifier, KEY_A.jwt(claims())).await,
+            Ok(()),
+            "a key in the JWKS should verify alongside keys that are ignored"
+        );
         assert!(
             verdict(&verifier, KEY_B.jwt(claims())).await.is_err(),
             "a key published for encryption must not verify a signature"
@@ -701,7 +833,11 @@ mod given_a_token_that_has_already_verified {
         cts.set_status(503);
         clock.advance(KEYS_TTL_SECS);
 
-        assert_eq!(verdict(&verifier, KEY_A.jwt(claims())).await, Ok(()));
+        assert_eq!(
+            verdict(&verifier, KEY_A.jwt(claims())).await,
+            Ok(()),
+            "a remembered token should verify without the keys"
+        );
         assert_eq!(cts.requests().len(), 1, "the keys were not fetched again");
     }
 
@@ -714,7 +850,10 @@ mod given_a_token_that_has_already_verified {
 
         clock.advance(3600 + LEEWAY_SECS);
 
-        assert!(verdict(&verifier, KEY_A.jwt(claims())).await.is_err());
+        assert!(
+            verdict(&verifier, KEY_A.jwt(claims())).await.is_err(),
+            "a remembered token should be refused once it expires"
+        );
     }
 
     #[tokio::test]
@@ -722,7 +861,34 @@ mod given_a_token_that_has_already_verified {
         let (_, verifier) = serving_key_a();
         verdict(&verifier, KEY_A.jwt(claims())).await.unwrap();
 
-        assert!(verdict(&verifier, KEY_B.jwt(claims())).await.is_err());
+        assert!(
+            verdict(&verifier, KEY_B.jwt(claims())).await.is_err(),
+            "a token not remembered should be checked in full and refused"
+        );
+    }
+
+    /// An OIDC federation strategy shares one verifier across its users'
+    /// engines, so two users' cached tokens alternate. Each should be
+    /// remembered, not only the last one to verify.
+    #[tokio::test]
+    async fn two_alternating_tokens_are_not_checked_against_the_keys_again() {
+        let cts = StubCts::serving(jwks(&[&KEY_A]));
+        let clock = TestClock::new(NOW);
+        let verifier = verifier(&cts, &clock);
+        let (first, second) = (KEY_A.jwt(claims()), another_token());
+        verdict(&verifier, first.clone()).await.unwrap();
+        verdict(&verifier, second.clone()).await.unwrap();
+
+        // The keys are stale: a full check would fetch them.
+        clock.advance(KEYS_TTL_SECS);
+        verdict(&verifier, first).await.unwrap();
+        verdict(&verifier, second).await.unwrap();
+
+        assert_eq!(
+            cts.requests().len(),
+            1,
+            "both tokens had verified, so neither should be checked in full again"
+        );
     }
 }
 
@@ -740,8 +906,11 @@ mod given_the_keys_cannot_be_fetched {
         }
     }
 
+    /// An abandoned fetch is forgotten, not counted as a failure: the next
+    /// keyless caller is neither told the keys are unavailable nor refused
+    /// as signed by an unknown key. It fetches again.
     #[tokio::test]
-    async fn a_fetch_abandoned_part_way_counts_as_failed() {
+    async fn a_fetch_abandoned_part_way_is_not_counted_as_failed() {
         let verifier = TokenVerifier::new(
             ISSUER.parse().unwrap(),
             None,
@@ -756,18 +925,71 @@ mod given_the_keys_cannot_be_fetched {
         .await;
         assert!(abandoned.is_err(), "the fetch should still be pending");
 
-        // Within the retry interval: no fetch, and no key. That is the keys
-        // being unavailable, not the token being signed by an unknown key.
-        // Bounded, so a second fetch to the hanging CTS fails the test
-        // rather than hanging it.
-        let err = tokio::time::timeout(
+        // The hanging CTS never answers, so a caller that fetches again is
+        // still waiting. One answered from the cache would not be.
+        let next = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            verifier.verify(token(KEY_A.jwt(claims()))),
+        )
+        .await;
+        assert!(
+            next.is_err(),
+            "the next caller should fetch again, got an answer: {next:?}"
+        );
+    }
+
+    /// A CTS that hangs on the first fetch and answers every later one.
+    struct HangsFirst {
+        cts: Arc<StubCts>,
+        hung: std::sync::atomic::AtomicBool,
+    }
+
+    impl HttpTransport for HangsFirst {
+        async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+            if !self.hung.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+            self.cts.send(request).await
+        }
+    }
+
+    /// A caller that gives up on its fetch (a timeout, a dropped request)
+    /// has not seen the keys fail: the next caller fetches them, rather than
+    /// every keyless caller being told the keys are unavailable for
+    /// `MIN_REFETCH_SECS`.
+    #[tokio::test]
+    async fn a_fetch_abandoned_part_way_does_not_hold_off_the_next_fetch() {
+        let verifier = TokenVerifier::new(
+            ISSUER.parse().unwrap(),
+            None,
+            transport::share(HangsFirst {
+                cts: StubCts::serving(jwks(&[&KEY_A])),
+                hung: std::sync::atomic::AtomicBool::new(false),
+            }),
+            TestClock::new(NOW).shared(),
+        )
+        .unwrap();
+        let abandoned = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            verifier.verify(token(KEY_A.jwt(claims()))),
+        )
+        .await;
+        assert!(
+            abandoned.is_err(),
+            "the first fetch should still be pending"
+        );
+
+        let verified = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             verifier.verify(token(KEY_A.jwt(claims()))),
         )
         .await
-        .expect("no second fetch within the retry interval")
-        .unwrap_err();
-        assert!(matches!(err, AuthError::Request(_)), "got {err:?}");
+        .expect("the second fetch is answered");
+
+        assert!(
+            verified.is_ok(),
+            "an abandoned fetch is not a failed one, got: {verified:?}"
+        );
     }
 
     #[tokio::test]
@@ -885,7 +1107,10 @@ mod given_the_verification_setting {
     fn off_builds_no_verifier() {
         let cts = transport::share(StubCts::serving(String::new()));
         let resolved = resolve(false, || panic!("region asked for"), None, &cts).unwrap();
-        assert!(resolved.is_none());
+        assert!(
+            resolved.is_none(),
+            "verification off should build no verifier"
+        );
     }
 
     #[test]
@@ -894,10 +1119,15 @@ mod given_the_verification_setting {
         let verifier = resolve(true, || Ok(region()), None, &cts)
             .unwrap()
             .expect("a verifier");
-        assert_eq!(verifier.issuer.as_str(), ISSUER);
+        assert_eq!(
+            verifier.issuer.as_str(),
+            ISSUER,
+            "the issuer should be the region's CTS"
+        );
         assert_eq!(
             verifier.jwks_url.as_str(),
-            format!("{ISSUER}.well-known/jwks.json")
+            format!("{ISSUER}.well-known/jwks.json"),
+            "the JWKS should be the issuer's"
         );
     }
 
@@ -910,10 +1140,15 @@ mod given_the_verification_setting {
             system_clock(),
         )
         .unwrap();
-        assert_eq!(verifier.issuer.as_str(), "https://cts.example.com/staging/");
+        assert_eq!(
+            verifier.issuer.as_str(),
+            "https://cts.example.com/staging/",
+            "an issuer's path should be kept"
+        );
         assert_eq!(
             verifier.jwks_url.as_str(),
-            "https://cts.example.com/staging/.well-known/jwks.json"
+            "https://cts.example.com/staging/.well-known/jwks.json",
+            "the JWKS should be under the issuer's path"
         );
     }
 }
@@ -1083,7 +1318,10 @@ mod given_a_strategy_that_verifies_tokens {
     #[tokio::test]
     async fn the_access_key_strategy_returns_a_genuine_token() {
         let cts = cts(genuine());
-        assert!(access_key(&cts).await.is_ok());
+        assert!(
+            access_key(&cts).await.is_ok(),
+            "the access key strategy should return a genuine token"
+        );
     }
 
     #[tokio::test]
@@ -1101,10 +1339,14 @@ mod given_a_strategy_that_verifies_tokens {
         // so it verifies.
         let cts = cts(genuine());
 
-        assert!(access_key(&cts).await.is_ok());
+        assert!(
+            access_key(&cts).await.is_ok(),
+            "a genuine token should verify despite the overridden auth URL"
+        );
         assert_eq!(
             cts.jwks_requests(),
-            vec![format!("{ISSUER}.well-known/jwks.json")]
+            vec![format!("{ISSUER}.well-known/jwks.json")],
+            "the keys should come from the region's CTS, not the auth URL"
         );
     }
 
@@ -1115,7 +1357,10 @@ mod given_a_strategy_that_verifies_tokens {
         let err = access_key(&cts).await.unwrap_err();
 
         assert!(matches!(err, AuthError::InvalidToken(_)), "got {err:?}");
-        assert!(cts.jwks_requests().is_empty());
+        assert!(
+            cts.jwks_requests().is_empty(),
+            "a token naming the auth URL as issuer should be refused before any key fetch"
+        );
     }
 
     /// A real token CTS issued to another access key in the workspace, which
@@ -1173,11 +1418,53 @@ mod given_a_strategy_that_verifies_tokens {
             .verify_tokens()
             .build()
             .unwrap();
-        assert!(strategy.get_token().await.is_err());
+        assert!(
+            strategy.get_token().await.is_err(),
+            "the forged token should be refused"
+        );
 
         cts.set_token(genuine());
 
-        assert!(strategy.get_token().await.is_ok());
+        assert!(
+            strategy.get_token().await.is_ok(),
+            "the next call should get the new, genuine token"
+        );
+    }
+
+    /// A token CTS keeps issuing and the verifier keeps refusing (here a
+    /// `sub` that never matches, as a wrong setting would cause) must not
+    /// turn every `get_token` into a token request to CTS.
+    #[tokio::test]
+    async fn a_token_refused_again_and_again_is_not_requested_on_every_call() {
+        let cts = cts(KEY_A.jwt(with(
+            cts_claims(ISSUER, WORKSPACE),
+            "sub",
+            "CS|CSAKanotherKeyId".into(),
+        )));
+        let strategy = AccessKeyStrategy::builder(crn(), key())
+            .base_url(AUTH_URL.parse().unwrap())
+            .transport(Arc::clone(&cts))
+            .verify_tokens()
+            .build()
+            .unwrap();
+
+        for _ in 0..4 {
+            let err = strategy.get_token().await.unwrap_err();
+            assert!(
+                matches!(err, AuthError::InvalidToken(_)),
+                "each call should be refused, got {err:?}"
+            );
+        }
+
+        let token_requests = cts
+            .requests()
+            .into_iter()
+            .filter(|(method, _)| method == "POST")
+            .count();
+        assert!(
+            token_requests <= 2,
+            "a refusal that keeps happening must back off, got {token_requests} token requests"
+        );
     }
 
     #[tokio::test]
@@ -1190,7 +1477,10 @@ mod given_a_strategy_that_verifies_tokens {
             .unwrap();
 
         assert!(strategy.get_token().await.is_ok(), "verification is opt-in");
-        assert!(cts.jwks_requests().is_empty());
+        assert!(
+            cts.jwks_requests().is_empty(),
+            "no keys should be fetched when verification is off"
+        );
     }
 
     async fn oidc(cts: &Arc<StubCts>) -> Result<ServiceToken, AuthError> {
@@ -1207,7 +1497,10 @@ mod given_a_strategy_that_verifies_tokens {
 
     #[tokio::test]
     async fn the_oidc_federation_strategy_returns_a_genuine_token() {
-        assert!(oidc(&cts(genuine())).await.is_ok());
+        assert!(
+            oidc(&cts(genuine())).await.is_ok(),
+            "the OIDC federation strategy should return a genuine token"
+        );
     }
 
     #[tokio::test]
@@ -1226,11 +1519,17 @@ mod given_a_strategy_that_verifies_tokens {
             .verify_tokens()
             .build()
             .unwrap();
-        assert!(strategy.get_token().await.is_err());
+        assert!(
+            strategy.get_token().await.is_err(),
+            "the forged token should be refused"
+        );
 
         cts.set_token(genuine());
 
-        assert!(strategy.get_token().await.is_ok());
+        assert!(
+            strategy.get_token().await.is_ok(),
+            "the next call should get the new, genuine token"
+        );
     }
 
     async fn device_session(cts: &Arc<StubCts>, jwt: &str) -> Result<ServiceToken, AuthError> {
@@ -1248,7 +1547,10 @@ mod given_a_strategy_that_verifies_tokens {
     #[tokio::test]
     async fn the_device_session_strategy_returns_a_genuine_token() {
         let cts = cts(String::new());
-        assert!(device_session(&cts, &genuine()).await.is_ok());
+        assert!(
+            device_session(&cts, &genuine()).await.is_ok(),
+            "the device session strategy should return a genuine token"
+        );
     }
 
     #[tokio::test]
@@ -1286,7 +1588,8 @@ mod given_a_strategy_that_verifies_tokens {
         assert!(result.is_ok(), "got {result:?}");
         assert_eq!(
             cts.jwks_requests(),
-            vec![format!("{ISSUER}.well-known/jwks.json")]
+            vec![format!("{ISSUER}.well-known/jwks.json")],
+            "the keys should come from the saved region's CTS"
         );
     }
 

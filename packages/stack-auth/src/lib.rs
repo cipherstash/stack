@@ -466,8 +466,16 @@ mod tests {
 
     #[test]
     fn a_jwt_has_exactly_three_segments() {
-        assert_eq!(jwt_segments("h.c.s"), Some(["h", "c", "s"]));
-        assert_eq!(jwt_segments("h..s"), Some(["h", "", "s"]));
+        assert_eq!(
+            jwt_segments("h.c.s"),
+            Some(["h", "c", "s"]),
+            "three segments should split"
+        );
+        assert_eq!(
+            jwt_segments("h..s"),
+            Some(["h", "", "s"]),
+            "an empty segment is still a segment"
+        );
         for token in ["", "h", "h.c", "h.c.s.x", "h.c.s."] {
             assert_eq!(jwt_segments(token), None, "{token:?}");
         }
