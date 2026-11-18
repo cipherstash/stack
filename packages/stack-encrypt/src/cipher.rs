@@ -23,7 +23,7 @@
 //!
 //! * **Encrypt** — [`PendingStackCipherText::plan`] walks the value into
 //!   vitaminc's pending tree and does no I/O. A single
-//!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt_tree`]
+//!   [`PendingStackCipherText::into_pending`] (or the [`KeysetCipher::encrypt_tree`]
 //!   convenience) then batches **one** `generate_keys` call for the whole
 //!   tree, under the handle's keyset, and seals every leaf through
 //!   `MintedKeys`, the sealing half of this crate's [`Cipher`], one key per
@@ -1534,8 +1534,8 @@ pub(crate) fn bind_keys(
 
 /// A value planned for sealing: vitaminc's tree of pending leaves, each
 /// holding its tagged plaintext and the AAD its place in the value derives,
-/// with no ZeroKMS I/O done yet. [`seal`](Self::seal) turns it into a
-/// [`StackCipherText`].
+/// with no ZeroKMS I/O done yet. [`into_pending`](Self::into_pending)
+/// turns it into a [`StackCipherText`].
 ///
 /// [`plan`](Self::plan) walks the value once, through vitaminc's
 /// `EncryptSink`, which owns every container rule (element and entry AAD,
@@ -1570,9 +1570,10 @@ impl PendingStackCipherText {
         count(&self.0)
     }
 
-    /// Generate one data key per keyed leaf (one batched ZeroKMS call — none
-    /// for a passthrough-only tree), every key under the [`Descriptor`] of
-    /// `context`, and seal the whole tree.
+    /// Seal the whole tree: a [`Pending`](crate::target::Pending) that, when
+    /// awaited, generates one data key per keyed leaf (one batched ZeroKMS
+    /// call — none for a passthrough-only tree), every key under the
+    /// [`Descriptor`] of `context`, and seals every leaf.
     ///
     /// `context` is the context the tree was planned under — the value passed to
     /// [`plan`](Self::plan), in the same shape (see the
@@ -1581,33 +1582,18 @@ impl PendingStackCipherText {
     /// check that the two agree, which is why [`KeysetCipher::encrypt_tree`], which
     /// does both steps from one value, is the form to prefer.
     ///
-    /// Settles through the target layer's request carrier
-    /// ([`seal_pending`](crate::target)), so this and
-    /// `encrypt_into_with_context` into a `StackCipherText` share one definition of how a tree
-    /// is sealed and one path to ZeroKMS.
-    ///
-    /// Returns a [`Pending`](crate::Pending): await it, or first attach
-    /// [audit metadata](crate::Pending::audit) for the key request. The
-    /// same as [`into_pending`](Self::into_pending).
-    pub fn seal<'c, 'a, K>(
-        self,
-        cipher: &'c KeysetCipher<'_, K>,
-        context: impl IntoContext<'a>,
-    ) -> crate::target::Pending<'c, StackCipherText, K> {
-        self.into_pending(cipher, context)
-    }
-
-    /// Turn this tree into a [`Pending`](crate::target::Pending) request
-    /// carrier without settling it.
-    ///
-    /// [`seal`](Self::seal) is the same function: awaiting either alone
-    /// makes one ZeroKMS call per tree. They also serve callers that hold
-    /// *several* independently planned trees (one per record field in a
-    /// language binding, say) and want them merged with
+    /// Await the result, or first attach
+    /// [audit metadata](crate::Pending::audit) for the key request. A caller
+    /// holding *several* independently planned trees (one per record field
+    /// in a language binding, say) can merge them with
     /// [`Pending::zip`](crate::target::Pending::zip) /
     /// [`Pending::all`](crate::target::Pending::all) so the whole assembly
-    /// seals in **one** batched `generate_keys` call. Same sealing path
-    /// either way.
+    /// seals in **one** batched `generate_keys` call.
+    ///
+    /// Settles through the target layer's request carrier
+    /// ([`seal_pending`](crate::target)), so this and
+    /// `encrypt_into_with_context` into a `StackCipherText` share one
+    /// definition of how a tree is sealed and one path to ZeroKMS.
     ///
     /// **Context contract.** The cipher-directed path deliberately accepts
     /// *any* AAD, including none at all (`()`) — it mirrors
@@ -1743,7 +1729,7 @@ fn open_leaf(keyed: KeyedLeaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, 
 /// in the order vitaminc's [`seal_all`] visits the leaves.
 ///
 /// The batch is fetched before the walk, in one `generate_keys` call per
-/// pending (see [`PendingStackCipherText::seal`]), so the walk itself is
+/// pending (see [`PendingStackCipherText::into_pending`]), so the walk itself is
 /// synchronous. A leaf for which no key is left is refused.
 struct MintedKeys<'k, I> {
     keyset_id: Uuid,

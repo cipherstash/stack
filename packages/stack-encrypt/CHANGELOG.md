@@ -145,9 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The tree entry points return a `Pending`** (#1705), so they can take
   audit metadata like every other call. `KeysetCipher::encrypt_tree`,
-  `KeysetCipher::decrypt_tree`, `StackCipher::decrypt` and
-  `PendingStackCipherText::seal` were `async fn`s. `.await` on them works
-  as before. To migrate:
+  `KeysetCipher::decrypt_tree` and `StackCipher::decrypt` were
+  `async fn`s. `.await` on them works as before. To migrate:
   - Code that used the result as a `Future` (`tokio::spawn`,
     `futures::join!`) calls `.into_future()` on it first.
   - Awaiting a `Pending` on a native target needs the key source to be
@@ -155,6 +154,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     over the key source adds `K: Sync`.
   - The decrypt entry points now also need `T: Send` on native targets
     (`MaybeSend`).
+
+- **`PendingStackCipherText::seal` is removed** (#1705). Once it returned
+  a `Pending` it was the same function as `into_pending`. Call
+  `into_pending(cipher, context)` instead, with the same arguments, and
+  await it as before; or use `KeysetCipher::encrypt_tree`, which plans
+  and seals in one call.
 
 - **`target::ExpectedContext` is no longer part of the API** (#1488). It
   is the check that a `#[stash(context_field)]` record runs on decrypt:

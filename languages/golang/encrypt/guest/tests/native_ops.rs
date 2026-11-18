@@ -690,7 +690,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let sealed = block_on(
         PendingStackCipherText::plan(Tree::UInt32(34), native)
             .expect("plan")
-            .seal(&keyset, native),
+            .into_pending(&keyset, native),
     )
     .expect("seal");
     let CipherText::Single(leaf) = sealed else {
