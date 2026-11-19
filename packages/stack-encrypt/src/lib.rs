@@ -141,7 +141,9 @@ handles a request.
 
 After `init`, ZeroKMS receives each data key request as the user that the
 strategy returns a token for. The cipher loads the default keyset's index key
-once, in `init`, and uses that key for every user.
+once, in `init`, and uses that key for every user. So a user's grant on a
+keyset limits its data keys, not its query terms: see
+[`auth_strategy`](StackCipherBuilder::auth_strategy).
 
 ```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {

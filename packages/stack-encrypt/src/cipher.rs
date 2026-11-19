@@ -694,6 +694,13 @@ impl<K: IndexKeySource> StackCipher<K> {
     /// ([`keyset_name_ttl`](StackCipherBuilder::keyset_name_ttl)) before it
     /// is asked again — ZeroKMS allows renames, and a running process
     /// notices one within that window. Selecting by id never asks twice.
+    ///
+    /// The cache belongs to the cipher, not to the user a token is for.
+    /// With a per-user auth strategy, such as
+    /// `stack_auth::OidcFederationStrategy`, a selection that finds the
+    /// keyset in the cache does not ask ZeroKMS, so ZeroKMS does not check
+    /// that user's grant on the keyset. The user can then make the keyset's
+    /// query terms, but cannot encrypt or decrypt under it.
     pub async fn keyset(
         &self,
         keyset: impl Into<IdentifiedBy>,
@@ -983,6 +990,13 @@ impl StackCipherBuilder<FromEnv> {
     /// that key for every later user. The first user to select another
     /// keyset loads that keyset's index key, and the cipher keeps it. See
     /// [`StackCipher::keyset`].
+    ///
+    /// So ZeroKMS checks a user's grant on a keyset only when it hands out
+    /// that keyset's data keys, not its index key. A user with no grant on
+    /// a keyset cannot encrypt or decrypt under it. But once any user has
+    /// loaded the keyset, every other user of the cipher can make its query
+    /// terms, which match its stored values by equality and order. If grants
+    /// must also limit queries, build one cipher for each user.
     ///
     /// # Example
     ///
