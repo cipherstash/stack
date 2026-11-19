@@ -160,9 +160,23 @@ export async function run({ id, manifest, driver, supervision = null }) {
     'agent-limit',
     async () => {
       report.migratorInvoked = true
-      const result = await driver.migrate()
-      for (const call of result.toolCalls ?? [])
-        evidence('migrator', 'agent-tool', call.id, call)
+      /** @param {{toolCalls?: {id:string, exitCode:number}[]}} source */
+      const recordToolCalls = (source) => {
+        for (const call of source.toolCalls ?? [])
+          evidence('migrator', 'agent-tool', call.id, call)
+      }
+      let result
+      try {
+        result = await driver.migrate()
+      } catch (error) {
+        // A rejected Migrator carries the tool calls it made before failing.
+        if (error && typeof error === 'object' && 'toolCalls' in error)
+          recordToolCalls(
+            /** @type {{toolCalls?: {id:string, exitCode:number}[]}} */ (error),
+          )
+        throw error
+      }
+      recordToolCalls(result)
       if (result.exitCode !== 0 || result.limit)
         throw new Error(result.limit ?? `Migrator exited ${result.exitCode}`)
     },
