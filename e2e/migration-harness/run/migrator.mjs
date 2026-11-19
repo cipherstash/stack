@@ -187,7 +187,15 @@ export async function runMigrator({
         await cancellation
         await queue
         if (failure) {
-          reject(failure)
+          // Attach what the adapter produced before failing, so the caller
+          // can still write a transcript and record agent-tool evidence.
+          reject(
+            Object.assign(failure, {
+              stdout,
+              stderr,
+              toolCalls: [...toolCalls],
+            }),
+          )
           return
         }
         resolve({

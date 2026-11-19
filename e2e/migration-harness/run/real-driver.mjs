@@ -46,6 +46,25 @@ export function createRealDriver({
     if (!stores) throw Error('Run Store Set has not been provisioned')
     return stores
   }
+  /** Snapshot the oracle stores, filing a store failure as infrastructure so a
+   * DynamoDB Local or relay hiccup is not blamed on the guide or the Migrator.
+   * @param {string} [pk]
+   */
+  async function oracleSnapshot(pk) {
+    const stores = assigned(oracleStores)
+    try {
+      return pk === undefined
+        ? await stores.snapshot()
+        : await stores.snapshot(pk)
+    } catch (error) {
+      throw Object.assign(
+        new Error(error instanceof Error ? error.message : String(error), {
+          cause: error,
+        }),
+        { infrastructure: true },
+      )
+    }
+  }
   const serviceNames = new Set(['registry.npmjs.org'])
   for (const key of ['CS_CTS_HOST', 'CS_ZEROKMS_HOST'])
     if (credentials[key]) serviceNames.add(new URL(credentials[key]).hostname)
@@ -182,7 +201,12 @@ export function createRealDriver({
     },
     async installUnmigrated() {
       await execute('migrator', workspace, migratorStores, ['npm', 'install'])
-      await cp(workspace, oracleWorkspace, { recursive: true })
+      // Keep relative symlinks (node_modules/.bin/*) relative: an absolute host
+      // path points nowhere inside the oracle's bind-mounted /workspace.
+      await cp(workspace, oracleWorkspace, {
+        recursive: true,
+        verbatimSymlinks: true,
+      })
     },
     async initializeLegacyData() {
       /** @type {[string,string,StoreSet|null][]} */
@@ -216,30 +240,47 @@ export function createRealDriver({
       )
     },
     async migrate() {
-      const result = await runMigrator({
-        command,
-        timeoutMs: manifest.agents?.limits?.timeMs,
-        maxToolCalls: manifest.agents?.limits?.toolCalls,
-        maxModelTurns: manifest.agents?.limits?.turns,
-        stop: () => isolation.stop({ expected: true }),
-        execute: (argv, timeoutMs) =>
-          isolation.exec({
-            actor: 'migrator',
-            workspace,
-            env: env(migratorStores),
-            command: argv,
-            forwards: forwards(migratorStores),
-            timeoutMs,
-          }),
-      })
-      await writeFile(
-        resolve(output, 'migrator-transcript.log'),
-        `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
-      )
-      manifest.artifacts = {
-        transcript: 'migrator-transcript.log',
-        snapshot: 'legacy-snapshot.json',
+      /** @param {{stdout?:string, stderr?:string}} transcript */
+      const writeTranscript = async (transcript) => {
+        await writeFile(
+          resolve(output, 'migrator-transcript.log'),
+          `${transcript.stdout ?? ''}\n${transcript.stderr ?? ''}`,
+        )
+        manifest.artifacts = {
+          transcript: 'migrator-transcript.log',
+          snapshot: 'legacy-snapshot.json',
+        }
       }
+      /** @type {Awaited<ReturnType<typeof runMigrator>>} */
+      let result
+      try {
+        result = await runMigrator({
+          command,
+          timeoutMs: manifest.agents?.limits?.timeMs,
+          maxToolCalls: manifest.agents?.limits?.toolCalls,
+          maxModelTurns: manifest.agents?.limits?.turns,
+          stop: () => isolation.stop({ expected: true }),
+          execute: (argv, timeoutMs) =>
+            isolation.exec({
+              actor: 'migrator',
+              workspace,
+              env: env(migratorStores),
+              command: argv,
+              forwards: forwards(migratorStores),
+              timeoutMs,
+            }),
+        })
+      } catch (error) {
+        // A rejected Migrator carries its partial transcript; keep it on disk,
+        // since the failed Runs are the ones that most need diagnosing.
+        await writeTranscript(
+          error && typeof error === 'object'
+            ? /** @type {{stdout?:string, stderr?:string}} */ (error)
+            : {},
+        )
+        throw error
+      }
+      await writeTranscript(result)
       // A timed-out broker has stopped its isolated tools and proof relays.
       // Preserve its agent-limit result rather than restarting work for a diff.
       if (result.exitCode !== 0 || result.limit) return result
@@ -336,7 +377,7 @@ export function createRealDriver({
         )
         const comparison = noRewriteCheck(
           legacySnapshot,
-          await assigned(oracleStores).snapshot(),
+          await oracleSnapshot(),
         )
         result.checks.push(comparison)
         // Inspect the stored active field straight after setActive: the copy
@@ -346,9 +387,7 @@ export function createRealDriver({
         let mutationSnapshot
         const checks = await result.mutate({
           afterSetActive: async () => {
-            mutationSnapshot = await assigned(oracleStores).snapshot(
-              mutation.pk,
-            )
+            mutationSnapshot = await oracleSnapshot(mutation.pk)
           },
         })
         checks.push(
