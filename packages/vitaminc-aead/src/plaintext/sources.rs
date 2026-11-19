@@ -389,9 +389,13 @@ impl<'a, T: Zeroize + EncryptRef> Scalar for &'a Protected<T> where &'a T: Scala
 /// consumer of the borrow does with the value it reads.
 ///
 /// `T` may be unsized. `ProtectedRef<'_, str>` is a text leaf and
-/// `ProtectedRef<'_, [u8]>` a byte leaf. A `str` lends either, so
-/// annotate which one you mean: a string sealed as bytes reads back only
-/// as bytes, never as a `String`.
+/// `ProtectedRef<'_, [u8]>` a byte leaf. A `Protected<String>` lends a
+/// `ProtectedRef<String>`, which seals as text, as does the
+/// `ProtectedRef<str>` that [`as_deref`](ProtectedRef::as_deref) narrows
+/// it to. To seal its bytes instead, narrow it with
+/// [`as_ref_of`](ProtectedRef::as_ref_of) to `[u8]`; a string sealed as
+/// bytes reads back only as bytes, never as a `String`. A bare `str` lends
+/// nothing, because nothing wipes it.
 impl<T: ?Sized + EncryptRef> Encrypt for ProtectedRef<'_, T> {
     const DEPTH: Option<usize> = T::REF_DEPTH;
     const FIXED: Option<FixedType> = T::REF_FIXED;
@@ -943,14 +947,14 @@ mod tests {
         same!(vec![vec![1i64], vec![]]);
         same!(vec![Some(1u16), None]);
 
-        // Unsized borrows: a `str` lends itself as text or as bytes, and the
-        // caller has to say which.
-        let text: ProtectedRef<'_, str> = "pw".as_protected_ref();
+        // Unsized borrows: a protected `String` narrows to text or to
+        // bytes, and the caller has to say which.
+        let owner = Protected::new(String::from("pw"));
+        let text: ProtectedRef<'_, str> = owner.as_protected_ref().as_deref();
         assert_eq!(record(text).expect("records"), record("pw").expect("ok"));
-        let cow = std::borrow::Cow::Borrowed("pw");
-        let text: ProtectedRef<'_, str> = cow.as_protected_ref();
+        let text: ProtectedRef<'_, str> = owner.as_protected_ref().as_ref_of();
         assert_eq!(record(text).expect("records"), record("pw").expect("ok"));
-        let bytes: ProtectedRef<'_, [u8]> = "pw".as_protected_ref();
+        let bytes: ProtectedRef<'_, [u8]> = owner.as_protected_ref().as_ref_of();
         assert_eq!(
             record(bytes).expect("records"),
             [scalar(Owned::Bytes(b"pw".to_vec()))]
