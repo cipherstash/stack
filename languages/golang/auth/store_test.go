@@ -247,6 +247,45 @@ func TestWorkspaceStoresAreScopedAndShareTheGuest(t *testing.T) {
 	}
 }
 
+// WorkspaceStoreForCRN is the store of the workspace the CRN names, never
+// the current workspace's in its place, even when the named one has no
+// profile data on this machine.
+func TestWorkspaceStoreForCRNIsTheNamedWorkspace(t *testing.T) {
+	ctx := context.Background()
+	dir, s := profile(t)
+	if err := s.SetCurrentWorkspace(ctx, wsA); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := s.WorkspaceStoreForCRN(ctx, "crn:ap-southeast-2.aws:"+wsB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "workspaces", wsB); ws.Dir() != want {
+		t.Fatalf("Dir = %q, want %q", ws.Dir(), want)
+	}
+	if _, _, err := ws.SecretKey(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SecretKey of the named workspace, which has none: %v, want ErrNotFound", err)
+	}
+	for _, crn := range []string{"", wsB, "crn:nowhere:" + wsB} {
+		if _, err := s.WorkspaceStoreForCRN(ctx, crn); !errors.Is(err, ErrConfig) {
+			t.Errorf("WorkspaceStoreForCRN(%q): %v, want ErrConfig", crn, err)
+		}
+	}
+	// No profile mounted: a CRN is checked first, and a valid one has no
+	// store to name.
+	bare, err := OpenWithoutProfile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bare.Close()
+	if _, err := bare.WorkspaceStoreForCRN(ctx, "crn:ap-southeast-2.aws:"+wsA); !errors.Is(err, ErrNoProfile) {
+		t.Fatalf("WorkspaceStoreForCRN with no profile: %v, want ErrNoProfile", err)
+	}
+	if _, err := bare.WorkspaceStoreForCRN(ctx, wsA); !errors.Is(err, ErrConfig) {
+		t.Fatalf("WorkspaceStoreForCRN of a bad CRN with no profile: %v, want ErrConfig", err)
+	}
+}
+
 func TestTypedReadsReturnTheFilesFields(t *testing.T) {
 	ctx := context.Background()
 	dir, s := profile(t)

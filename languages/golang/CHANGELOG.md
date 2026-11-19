@@ -13,6 +13,44 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- **You choose where `OIDCFederation` gets its client key** (#1723). Call
+  `WithClientKey` on the credentials with a `ClientKeySource`:
+  `ClientKeyFromEnv()` reads `CS_CLIENT_ID` and `CS_CLIENT_KEY`,
+  `ClientKeyFromProfile(crn)` reads the key `stash auth login` saved for the
+  workspace `crn` names, and `ClientKeyFromValues(clientID, key)` takes a key
+  your program loaded. Each source reads only its own place. `NewClient`
+  still owns the federation strategy, and `Client.Close` still releases it.
+
+  ```go
+  creds := encrypt.OIDCFederation(cfg.WorkspaceCRN, provider).
+      WithClientKey(encrypt.ClientKeyFromValues(cfg.ClientID, encrypt.NewClientKey([]byte(cfg.ClientKey))))
+  ```
+
+- **`auth.ProfileStore.WorkspaceStoreForCRN`** returns the store of the
+  workspace a CRN names, whichever workspace is current.
+
+### Changed
+
+- **`OIDCFederation` reads the client key of the workspace its CRN names.**
+  When `CS_CLIENT_ID` and `CS_CLIENT_KEY` are not set, it used to read the
+  key of the CLI's current workspace. If that was a different workspace,
+  ZeroKMS refused every request, because the token and the client key came
+  from different workspaces. It now reads the named workspace's key, or
+  returns `ErrNoCredentials` if this machine has none. If the CLI's current
+  workspace is the one the CRN names, nothing changes. `AutoCredentials` is
+  unchanged.
+
+### Breaking
+
+- **`OIDCFederation` returns `*encrypt.OIDCFederationCredentials`, not
+  `encrypt.Credentials`.** The new type implements `Credentials`, so
+  `encrypt.WithCredentials(encrypt.OIDCFederation(...))` still builds. Code
+  that assigns the result to a variable and later assigns other credentials
+  to that variable stops building. Declare the variable as
+  `encrypt.Credentials`.
+
 ## [0.1.0-rc.6] - 2026-11-18
 
 ### Upgrading from rc.5

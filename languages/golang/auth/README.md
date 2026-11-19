@@ -75,6 +75,12 @@ the cross-process lock a device-session refresh holds with the `stash` CLI
 (the IdP revokes a whole refresh-token chain when one is used twice).
 `workspace.Token(ctx)` still reads the stored token, for inspection.
 
+`profile.WorkspaceStoreForCRN(ctx, crn)` is the store of the workspace a
+CRN names, whichever workspace is current. Read the client key there when
+the tokens are for that workspace, as an OIDC strategy's are. An `encrypt`
+client reads the same key with `encrypt.ClientKeyFromProfile(crn)`, and
+then the client owns the profile and the strategy.
+
 With no profile directory at all (CI, a container, a server authenticating
 by federation), `auth.OpenWithoutProfile(ctx)` runs the guest with
 nothing mounted: the access-key and OIDC strategies work, and every profile
