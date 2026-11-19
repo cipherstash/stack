@@ -143,6 +143,9 @@ fn jiff_types_are_scalars() {
     let stamp = Timestamp::new(instant).expect("in range");
     one_leaf(&stamp);
     one_leaf(stamp);
+    let wiped_date = vitaminc_aead::Date::new(date);
+    one_leaf(&wiped_date);
+    one_leaf(wiped_date);
 }
 
 #[cfg(feature = "rust_decimal")]
@@ -151,6 +154,9 @@ fn a_decimal_is_a_scalar() {
     let value = rust_decimal::Decimal::new(1234, 2);
     one_leaf(value);
     one_leaf(&value);
+    let wiped = vitaminc_aead::Decimal::new(value);
+    one_leaf(&wiped);
+    one_leaf(wiped);
 }
 
 #[cfg(feature = "uuid")]
@@ -159,6 +165,9 @@ fn a_uuid_is_a_scalar() {
     let id = uuid::Uuid::from_bytes([7; 16]);
     one_leaf(id);
     one_leaf(&id);
+    let wiped = vitaminc_aead::Uuid::new(id);
+    one_leaf(&wiped);
+    one_leaf(wiped);
 }
 
 // `trybuild` launches rustc and inspects the filesystem, neither of which can

@@ -219,8 +219,10 @@ fn explicit_discriminant(expr: &syn::Expr) -> Result<u32> {
     ))
 }
 
-/// A skipped field has no entry to pass through, and a passthrough entry
-/// is never taken out of `self`, so these combinations describe nothing.
+/// A skipped field has no entry to pass through, and a passthrough field
+/// is only lent to the sink, never taken out of `self`, so these
+/// combinations describe nothing. They are rejected rather than ignored, so
+/// an author does not keep an attribute that has no effect.
 fn reject_conflicting_attrs(fields: &[FieldInfo], input: &DeriveInput) -> Result<()> {
     for field in fields {
         if field.skip && (field.passthrough || field.take) {
@@ -229,6 +231,16 @@ fn reject_conflicting_attrs(fields: &[FieldInfo], input: &DeriveInput) -> Result
                 format!(
                     "field `{}` is `#[aead(skip)]`, so it has no entry to pass through or \
                      take: remove the other attribute",
+                    field.key
+                ),
+            ));
+        }
+        if field.passthrough && field.take {
+            return Err(syn::Error::new_spanned(
+                &input.ident,
+                format!(
+                    "field `{}` is `#[aead(passthrough)]`, which is lent to the sink and never \
+                     taken out of `self`: remove `take`",
                     field.key
                 ),
             ));
@@ -491,6 +503,25 @@ mod tests {
         };
         let err = Shape::parse(&input).expect_err("nothing-sealed struct should be rejected");
         assert!(err.to_string().contains("no field would be encrypted"));
+    }
+
+    /// A passthrough field is lent in place, so `take` on it would do
+    /// nothing; rejecting it stops an author adding an attribute with no
+    /// effect.
+    #[test]
+    fn passthrough_cannot_be_combined_with_take() {
+        let input: DeriveInput = parse_quote! {
+            struct Row {
+                #[aead(passthrough, take)]
+                a: String,
+                b: String,
+            }
+        };
+        let err = Shape::parse(&input).expect_err("conflict should be rejected");
+        assert!(
+            err.to_string().contains("never taken out of `self`"),
+            "the error says why `take` does nothing: {err}"
+        );
     }
 
     #[test]

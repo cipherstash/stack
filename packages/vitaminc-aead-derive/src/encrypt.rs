@@ -25,24 +25,34 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 
     // Bound every type parameter, serde-style: a field of type `Vec<T>` then
     // picks up `Vec<T>: Encrypt` from the blanket impl in `vitaminc_aead`.
+    // A passthrough field is lent to the sink, never moved, so a parameter
+    // it names is bounded on `EncryptRef`; one named only there is not
+    // bounded on `Encrypt` at all.
     let mut generics = input.generics.clone();
     for param in generics.type_params_mut() {
-        param.bounds.push(parse_quote!(#krate::Encrypt));
+        let usage = Usage::of(&param.ident, &shape);
+        if usage.walked || !usage.lent {
+            param.bounds.push(parse_quote!(#krate::Encrypt));
+        }
+        if usage.lent {
+            param.bounds.push(parse_quote!(#krate::EncryptRef));
+        }
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    // The by-reference impl, for `&'__r Name<..>`: every type parameter is
-    // bound by reference, and every lifetime outlives the borrow.
+    // The by-reference impl, for `&'__r Name<..>`: every type parameter can
+    // be walked by reference (`EncryptRef`), which is what a field of `T`,
+    // `Vec<T>` or `Option<T>` walked by reference needs. No lifetime is
+    // bounded on `'__r`: `&'__r Name<'a>` being well formed already says
+    // `'a: '__r`, and saying it again makes `for<'r> &'r Name<'a>: Encrypt`,
+    // which a container of `Name<'a>` needs, demand `'a: 'static`.
     let mut ref_generics = input.generics.clone();
-    for lifetime in ref_generics.lifetimes_mut() {
-        lifetime.bounds.push(parse_quote!('__r));
-    }
     let ref_predicates: Vec<syn::WherePredicate> = input
         .generics
         .type_params()
         .map(|param| {
             let ident = &param.ident;
-            parse_quote!(&'__r #ident: #krate::Encrypt)
+            parse_quote!(#ident: #krate::EncryptRef)
         })
         .collect();
     ref_generics
@@ -145,25 +155,27 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool)
 
     let depth = quote!(#krate::plaintext::depth);
     let expr = |by_ref: bool| -> TokenStream {
-        let of = |ty: &syn::Type| {
+        let of = |ty: &syn::Type, by_ref: bool| {
             if by_ref {
-                quote!(<&'__r #ty as #krate::Encrypt>::DEPTH)
+                quote!(<#ty as #krate::EncryptRef>::REF_DEPTH)
             } else {
                 quote!(<#ty as #krate::Encrypt>::DEPTH)
             }
         };
         match shape {
-            Shape::Newtype(field) => of(&field.ty),
+            Shape::Newtype(field) => of(&field.ty, by_ref),
             Shape::Map(fields) => {
                 let deepest = fields
                     .iter()
                     .filter(|field| field.stored())
                     .map(|field| {
-                        let child = of(&field.ty);
                         if field.passthrough {
+                            // Lent in both impls, so walked by reference
+                            // in both.
+                            let child = of(&field.ty, true);
                             quote!(#depth::passthrough(#child))
                         } else {
-                            child
+                            of(&field.ty, by_ref)
                         }
                     })
                     .fold(
@@ -238,7 +250,7 @@ fn fixed(
             let ty = &field.ty;
             (
                 decl(quote!(<#ty as #krate::Encrypt>::FIXED)),
-                decl(quote!(<&'__r #ty as #krate::Encrypt>::FIXED)),
+                decl(quote!(<#ty as #krate::EncryptRef>::REF_FIXED)),
             )
         }
         Shape::Enum(_) => {
@@ -254,19 +266,34 @@ fn fixed(
 /// recursion through another type cannot be seen from here; it needs
 /// `#[aead(recursive)]`.
 fn names_itself(name: &syn::Ident, shape: &Shape) -> bool {
-    // The type's name counts only where it does not follow `::`, so a
-    // field of another module's type with the same name (`db::User`) is not
-    // taken for recursion. A self-reference through a full path, such as
-    // `crate::models::Tree`, is then a cycle error, and the attribute docs
-    // send the author to `#[aead(recursive)]`.
-    fn mentions(tokens: TokenStream, name: &syn::Ident) -> bool {
+    stored_fields(shape)
+        .iter()
+        .any(|field| mentions(&field.ty, name, true))
+}
+
+/// The fields the walk reaches: a newtype's one, or a struct's stored ones.
+fn stored_fields(shape: &Shape) -> Vec<&FieldInfo> {
+    match shape {
+        Shape::Newtype(field) => vec![field],
+        Shape::Map(fields) => fields.iter().filter(|field| field.stored()).collect(),
+        Shape::Empty | Shape::Enum(_) => Vec::new(),
+    }
+}
+
+/// Whether `ty` names `name`, or `Self` too if `or_self`. A name counts only
+/// where it does not follow `::`, so a field of another module's type with
+/// the same name (`db::User`) is not taken for it. A self-reference through
+/// a full path, such as `crate::models::Tree`, is then a cycle error, and
+/// the attribute docs send the author to `#[aead(recursive)]`.
+fn mentions(ty: &syn::Type, name: &syn::Ident, or_self: bool) -> bool {
+    fn search(tokens: TokenStream, name: &syn::Ident, or_self: bool) -> bool {
         let mut after_path_sep = false;
         tokens.into_iter().any(|token| {
             let hit = match &token {
                 proc_macro2::TokenTree::Ident(ident) => {
-                    ident == "Self" || (!after_path_sep && ident == name)
+                    (or_self && ident == "Self") || (!after_path_sep && ident == name)
                 }
-                proc_macro2::TokenTree::Group(group) => mentions(group.stream(), name),
+                proc_macro2::TokenTree::Group(group) => search(group.stream(), name, or_self),
                 _ => false,
             };
             after_path_sep =
@@ -274,20 +301,42 @@ fn names_itself(name: &syn::Ident, shape: &Shape) -> bool {
             hit
         })
     }
-    let walked: Vec<&FieldInfo> = match shape {
-        Shape::Newtype(field) => vec![field],
-        Shape::Map(fields) => fields.iter().filter(|field| field.stored()).collect(),
-        Shape::Empty | Shape::Enum(_) => Vec::new(),
-    };
-    walked
-        .iter()
-        .any(|field| mentions(quote::ToTokens::to_token_stream(&field.ty), name))
+    search(quote::ToTokens::to_token_stream(ty), name, or_self)
 }
 
+/// How the by-value walk uses a type parameter: in a field it walks
+/// (`walked`), or in a passthrough field it lends (`lent`). A parameter in
+/// neither, such as one only a skipped field names, counts as neither.
+struct Usage {
+    walked: bool,
+    lent: bool,
+}
+
+impl Usage {
+    fn of(param: &syn::Ident, shape: &Shape) -> Self {
+        let mut usage = Usage {
+            walked: false,
+            lent: false,
+        };
+        for field in stored_fields(shape) {
+            if mentions(&field.ty, param, false) {
+                if field.passthrough {
+                    usage.lent = true;
+                } else {
+                    usage.walked = true;
+                }
+            }
+        }
+        usage
+    }
+}
+
+/// Whether the by-value walk takes any field out of `self`. A passthrough
+/// field is only lent, so it never does.
 fn shape_takes(shape: &Shape) -> bool {
     match shape {
         Shape::Newtype(field) => field.take,
-        Shape::Map(fields) => fields.iter().any(|field| field.take),
+        Shape::Map(fields) => fields.iter().any(|field| field.take && !field.passthrough),
         Shape::Empty | Shape::Enum(_) => false,
     }
 }
@@ -315,7 +364,7 @@ fn newtype_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
 fn newtype_ref_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
     let member = &field.member;
     quote! {
-        #krate::Encrypt::visit(&self.#member, __sink)
+        #krate::EncryptRef::visit_ref(&self.#member, __sink)
     }
 }
 
@@ -326,28 +375,35 @@ fn newtype_ref_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
 fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
     let stored: Vec<&FieldInfo> = fields.iter().filter(|field| field.stored()).collect();
     let len = stored.len();
-    // The fields from `from` on, discarded.
+    // The fields from `from` on, discarded. A passthrough field is
+    // cleartext by contract and is only lent, never walked by value, so it
+    // is left to drop with `self`.
     let discard_from = |from: usize| {
-        let rest = stored[from..].iter().map(|field| {
-            let value = value(field);
-            quote!(#krate::plaintext::__private::discard_one(#value);)
-        });
+        let rest = stored[from..]
+            .iter()
+            .filter(|field| !field.passthrough)
+            .map(|field| {
+                let value = value(field);
+                quote!(#krate::plaintext::__private::discard_one(#value);)
+            });
         quote!(#(#rest)*)
     };
 
     let open = discard_from(0);
     let entries = stored.iter().enumerate().map(|(index, field)| {
         let key = &field.key;
-        let value = value(field);
         let on_entry_failure = discard_from(index);
         let on_visit_failure = discard_from(index + 1);
         let visit = if field.passthrough {
             // Stored in the clear and bound to nothing — not the value, not
             // even its key. That is what lets the entry be an ordinary
             // database column other queries read and write independently of
-            // the encrypted ones.
-            quote!(#krate::Sink::passthrough(__entry, #value))
+            // the encrypted ones. It is lent in place, so it needs neither a
+            // move nor `take`, even on a type that implements `Drop`.
+            let member = &field.member;
+            quote!(#krate::Sink::passthrough(__entry, &self.#member))
         } else {
+            let value = value(field);
             quote!(#krate::Encrypt::visit(#value, __entry))
         };
         quote! {
@@ -394,7 +450,7 @@ fn map_ref_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             }
         } else {
             quote! {
-                #krate::Encrypt::visit(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
+                #krate::EncryptRef::visit_ref(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
             }
         }
     });
@@ -532,7 +588,7 @@ mod tests {
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(
+            quote!(::vitaminc_aead::EncryptRef::visit_ref(
                 &self.name,
                 ::vitaminc_aead::MapSink::entry(&mut __map, "name")?
             )),
@@ -549,7 +605,7 @@ mod tests {
         ));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Encrypt::visit(&self.0, __sink)),
+            quote!(::vitaminc_aead::EncryptRef::visit_ref(&self.0, __sink)),
         );
     }
 
@@ -601,12 +657,32 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Sink::passthrough(__entry, self.tenant)),
+            quote!(::vitaminc_aead::Sink::passthrough(__entry, &self.tenant)),
         );
         assert_contains(
             &out,
             quote!(::vitaminc_aead::Encrypt::visit(self.ssn, __entry)),
         );
+    }
+
+    /// A passthrough field is lent in place in the by-value walk too, so a
+    /// `Drop` type needs no `take` on it and the receiver stays immutable.
+    #[test]
+    fn a_passthrough_field_is_lent_without_taking_it() {
+        let out = expand(parse_quote! {
+            struct Row {
+                #[aead(passthrough)]
+                tenant: String,
+                ssn: String,
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::Sink::passthrough(__entry, &self.tenant)),
+        );
+        assert_lacks(&out, quote!(::core::mem::take));
+        assert_lacks(&out, quote!(mut self));
     }
 
     /// A skipped field contributes nothing: no entry, and it is not counted
@@ -762,7 +838,7 @@ mod tests {
             &out,
             quote!(
                 const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
-                    <&'__r u32 as ::vitaminc_aead::Encrypt>::FIXED;
+                    <u32 as ::vitaminc_aead::EncryptRef>::REF_FIXED;
             ),
         );
 
@@ -820,9 +896,63 @@ mod tests {
 
         assert_contains(&out, quote!(impl<'a, T: ::vitaminc_aead::Encrypt>));
         assert_contains(&out, quote!(for Holder<'a, T>));
-        assert_contains(&out, quote!(impl<'__r, 'a: '__r, T>));
-        assert_contains(&out, quote!(&'__r T: ::vitaminc_aead::Encrypt));
+        assert_contains(&out, quote!(impl<'__r, 'a, T>));
+        assert_contains(&out, quote!(T: ::vitaminc_aead::EncryptRef));
+        assert_lacks(&out, quote!('a: '__r));
         assert_contains(&out, quote!(for &'__r Holder<'a, T>));
+    }
+
+    /// A passthrough field is lent, never walked by value: a parameter only
+    /// it names is bounded on `EncryptRef` alone, one a walked field names
+    /// too on both, and one only a skipped field names keeps `Encrypt`.
+    #[test]
+    fn a_parameter_a_passthrough_field_names_is_bounded_by_reference() {
+        let out = expand(parse_quote! {
+            struct Row<P, B, W, S> {
+                #[aead(passthrough)]
+                tag: Vec<P>,
+                #[aead(passthrough)]
+                both: B,
+                value: Option<B>,
+                walked: W,
+                #[aead(skip)]
+                skipped: S,
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(impl<
+                P: ::vitaminc_aead::EncryptRef,
+                B: ::vitaminc_aead::Encrypt + ::vitaminc_aead::EncryptRef,
+                W: ::vitaminc_aead::Encrypt,
+                S: ::vitaminc_aead::Encrypt
+            > ::vitaminc_aead::Encrypt for Row<P, B, W, S>),
+        );
+    }
+
+    /// A passthrough field is cleartext by contract and was only lent, so a
+    /// failed walk leaves it to drop rather than discarding it by value.
+    #[test]
+    fn a_passthrough_field_is_not_discarded_on_failure() {
+        let out = expand(parse_quote! {
+            struct Row {
+                #[aead(passthrough)]
+                tenant: String,
+                ssn: String,
+            }
+        });
+
+        assert_lacks(
+            &out,
+            quote!(::vitaminc_aead::plaintext::__private::discard_one(
+                self.tenant
+            )),
+        );
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::plaintext::__private::discard_one(self.ssn)),
+        );
     }
 
     /// The `crate` attribute has to redirect *every* generated path, or the
@@ -869,13 +999,13 @@ mod tests {
             quote!(const DEPTH: ::core::option::Option<usize> = #depth::container(
                 #depth::max(
                     #depth::max(#depth::SCALAR, <String as ::vitaminc_aead::Encrypt>::DEPTH),
-                    #depth::passthrough(<Vec<u32> as ::vitaminc_aead::Encrypt>::DEPTH)
+                    #depth::passthrough(<Vec<u32> as ::vitaminc_aead::EncryptRef>::REF_DEPTH)
                 )
             );),
         );
         assert_contains(
             &out,
-            quote!(<&'__r String as ::vitaminc_aead::Encrypt>::DEPTH),
+            quote!(<String as ::vitaminc_aead::EncryptRef>::REF_DEPTH),
         );
         assert_lacks(&out, quote!(Vec<Vec<u32>>));
         assert_contains(

@@ -24,7 +24,7 @@ use __private::SeenKeys;
 
 use crate::leaf::{self, Form, Item, ScalarError};
 use crate::plaintext::{
-    Encrypt, Error, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    Encrypt, EncryptRef, Error, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 
 /// Framing tag for a sequence: `ARRAY`, `u32` count, then the elements.
@@ -319,7 +319,7 @@ fn visit_node<S: Sink>(c: &mut Cursor<'_>, sink: S) -> Result<S::Ok, S::Error> {
         }
         PASSTHROUGH => {
             c.byte().expect(VALIDATED);
-            sink.passthrough(c.node(0).expect(VALIDATED))
+            sink.passthrough(&c.node(0).expect(VALIDATED))
         }
         _ => match c.scalar().expect(VALIDATED) {
             Item::Scalar(ty, v) => sink.scalar(ty, v),
@@ -565,10 +565,10 @@ impl<'o> Sink for FrameWriter<'o> {
         })
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), FrameWriteError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), FrameWriteError> {
         let depth = self.depth;
         let out = self.node(PASSTHROUGH)?;
-        value.visit(FrameWriter {
+        value.visit_ref(FrameWriter {
             out,
             depth: depth + 1,
         })
@@ -693,6 +693,12 @@ mod tests {
     struct DropsAChild {
         map: bool,
     }
+    /// Passthrough lends its value, so a test source walks by reference too.
+    impl Encrypt for &DropsAChild {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            self.clone().visit(sink)
+        }
+    }
 
     impl Encrypt for DropsAChild {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
@@ -725,7 +731,7 @@ mod tests {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut seq = sink.seq(Some(2))?;
                 1u16.visit(seq.element()?)?;
-                seq.element()?.passthrough(DropsAChild { map: false })?;
+                seq.element()?.passthrough(&DropsAChild { map: false })?;
                 seq.end()
             }
         }
@@ -748,7 +754,7 @@ mod tests {
         struct Pass;
         impl Encrypt for Pass {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-                sink.passthrough("public")
+                sink.passthrough(&"public")
             }
         }
         let bytes = frame_of(Pass);
@@ -881,6 +887,12 @@ mod tests {
     /// the innermost value is itself a container at depth `n`.
     #[derive(Clone, Copy)]
     struct Nest(Kind, usize);
+    /// Passthrough lends its value, so a test source walks by reference too.
+    impl Encrypt for &Nest {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            (*self).visit(sink)
+        }
+    }
 
     impl Encrypt for Nest {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
@@ -900,7 +912,7 @@ mod tests {
                     inner.visit(map.entry("k")?)?;
                     map.end()
                 }
-                Kind::Pass => sink.passthrough(inner),
+                Kind::Pass => sink.passthrough(&inner),
             }
         }
     }

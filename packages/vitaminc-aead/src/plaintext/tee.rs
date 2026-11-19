@@ -5,7 +5,7 @@
 //! order. Any sinks with the same error type compose, at any depth.
 
 use super::kinds::{FixedType, Logical, Physical};
-use super::{Encrypt, MapSink, SeqSink, Sink};
+use super::{EncryptRef, MapSink, SeqSink, Sink};
 
 /// A pair of sinks that forwards every call to both and pairs the results.
 ///
@@ -57,11 +57,11 @@ impl<A: Sink, B: Sink<Error = A::Error>> Sink for Tee<A, B> {
         a.map(len).and_then(|a| b.map(len).map(|b| Tee(a, b)))
     }
 
-    /// The one call a tee cannot share: each side walks the subtree for
-    /// itself, so it is cloned. Passthrough is cleartext by contract.
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<Self::Ok, A::Error> {
+    /// Each side walks the subtree for itself, and both are lent the same
+    /// one, so it is never copied.
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<Self::Ok, A::Error> {
         let (a, b) = (self.0, self.1);
-        a.passthrough(value.clone())
+        a.passthrough(value)
             .and_then(|a| b.passthrough(value).map(|b| (a, b)))
     }
 }
@@ -108,6 +108,7 @@ impl<A: MapSink, B: MapSink<Error = A::Error>> MapSink for Tee<A, B> {
 mod tests {
     use super::*;
     use crate::plaintext::record::{record, Record};
+    use crate::plaintext::Encrypt;
     use std::collections::BTreeMap;
 
     #[test]
@@ -208,7 +209,7 @@ mod tests {
 
         let (mut left, mut right) = (Vec::new(), Vec::new());
         Tee(Record(&mut left), Record(&mut right))
-            .passthrough(vec![1u16, 2])
+            .passthrough(&vec![1u16, 2])
             .expect("ok");
 
         assert_eq!(left, right);
@@ -249,7 +250,7 @@ mod tests {
             fn map(self, _: Option<usize>) -> Result<Self, RecordError> {
                 Ok(self)
             }
-            fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), RecordError> {
+            fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), RecordError> {
                 Ok(())
             }
         }

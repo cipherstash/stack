@@ -201,11 +201,16 @@ field beside it. That coupling is precisely what `passthrough` exists to avoid.
 
 ### Requirements
 
-A passthrough field's type implements `Encrypt + Clone` on the way in
-(the subtree is walked into a frame, and a sink that is really several sinks
-gives each a copy) and `Decrypt` on the way out.
+A passthrough field's type is lent on the way in, never copied or moved,
+even when the struct itself is walked by value: it implements `Encrypt` for
+a reference to it (`EncryptRef`), as every built-in source and derived
+struct does, and need be neither `Clone` nor a source by value. A type
+parameter that only passthrough fields name is bounded on `EncryptRef`
+alone. A sink that is really several sinks lends each the same subtree. On
+the way out it implements `Decrypt`. Because the field is only lent, it
+needs no `#[aead(take)]` on a type that implements `Drop`.
 
-Two shapes are rejected at compile time:
+These are rejected at compile time:
 
 - **Nothing sealed.** If every field is `passthrough` or `skip`, nothing would
   be encrypted, so the ciphertext would carry no tag at all — neither the
@@ -214,6 +219,8 @@ Two shapes are rejected at compile time:
 - **`passthrough` on a newtype.** A newtype is transparent and opens no map, so
   there is no entry to store in the clear; honouring the attribute would mean
   the whole value travelled unencrypted.
+- **`passthrough` with `take`.** The field is lent, never taken out of
+  `self`, so `take` would have no effect.
 
 ## `#[aead(skip)]`
 
@@ -278,8 +285,10 @@ struct SecretToken(#[aead(take)] String);
 # assert_eq!(token.0, "example-only");
 ```
 
-The field's type must implement `Default`. Every stored field of a `Drop`
-type that is not `Copy` needs it, passthrough fields included. A
+The field's type must implement `Default`. Every encrypted field of a `Drop`
+type that is not `Copy` needs it. A passthrough field does not: it is lent
+to the sink in place, never moved out of `self`, so `take` on it is a
+compile error. A
 `Protected<T>` field has no `Default` and needs no `take`: it wipes itself,
 so a struct whose secrets are all `Protected` does not need `ZeroizeOnDrop`
 in the first place. `take` only affects how the value leaves `self`; the

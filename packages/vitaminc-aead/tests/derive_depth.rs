@@ -122,7 +122,7 @@ impl Encrypt for PassesThroughDeeper {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let mut map = sink.map(Some(2))?;
         7u32.visit(map.entry("sealed")?)?;
-        map.entry("clear")?.passthrough(self.0)?;
+        map.entry("clear")?.passthrough(&self.0)?;
         map.end()
     }
 }

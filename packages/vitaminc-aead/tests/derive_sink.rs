@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use vitaminc_aead::{
-    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Encrypt, FixedType, Int,
-    IntoAad, Logical, MapSink, Physical, Raw, SeqSink, Sink, SourceError,
+    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Encrypt, EncryptRef,
+    FixedType, Int, IntoAad, Logical, MapSink, Physical, Raw, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::ZeroizeOnDrop;
@@ -73,9 +73,9 @@ impl Sink for Record<'_> {
         Ok(self)
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), RecordError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<(), RecordError> {
         self.0.push(Event::Passthrough);
-        value.visit(Record(self.0))
+        value.visit_ref(Record(self.0))
     }
 }
 
@@ -318,7 +318,7 @@ fn a_missing_option_or_passthrough_field_is_refused() {
     impl Encrypt for NoTenant {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(3))?;
-            map.entry("tags")?.passthrough(vec![1u32])?;
+            map.entry("tags")?.passthrough(&vec![1u32])?;
             "123".visit(map.entry("ssn")?)?;
             "hi".visit(map.entry("n")?)?;
             map.end()
@@ -355,7 +355,7 @@ fn a_struct_target_refuses_a_scalar_a_sequence_and_a_passthrough() {
     struct Clear;
     impl Encrypt for Clear {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-            sink.passthrough(ada())
+            sink.passthrough(&ada())
         }
     }
     assert!(matches!(
@@ -438,8 +438,8 @@ fn a_passthrough_field_refuses_a_sealed_value_and_a_sealed_field_refuses_a_passt
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(4))?;
             "acme".visit(map.entry("tenant")?)?;
-            map.entry("tags")?.passthrough(vec![1u32])?;
-            map.entry("ssn")?.passthrough("123")?;
+            map.entry("tags")?.passthrough(&vec![1u32])?;
+            map.entry("ssn")?.passthrough(&"123")?;
             "hi".visit(map.entry("n")?)?;
             map.end()
         }
@@ -452,9 +452,9 @@ fn a_passthrough_field_refuses_a_sealed_value_and_a_sealed_field_refuses_a_passt
     impl Encrypt for SealedPassthrough {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(4))?;
-            map.entry("tenant")?.passthrough("acme")?;
-            map.entry("tags")?.passthrough(vec![1u32])?;
-            map.entry("ssn")?.passthrough("123")?;
+            map.entry("tenant")?.passthrough(&"acme")?;
+            map.entry("tags")?.passthrough(&vec![1u32])?;
+            map.entry("ssn")?.passthrough(&"123")?;
             "hi".visit(map.entry("n")?)?;
             map.end()
         }
@@ -474,8 +474,8 @@ fn an_entry_under_a_skipped_key_is_refused() {
     impl Encrypt for WithCached {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(5))?;
-            map.entry("tenant")?.passthrough("acme")?;
-            map.entry("tags")?.passthrough(vec![1u32])?;
+            map.entry("tenant")?.passthrough(&"acme")?;
+            map.entry("tags")?.passthrough(&vec![1u32])?;
             "123".visit(map.entry("ssn")?)?;
             9u64.visit(map.entry("cached")?)?;
             "hi".visit(map.entry("n")?)?;
@@ -513,6 +513,35 @@ fn take_lets_a_drop_type_derive() {
     assert_eq!(back.salt, [1, 2, 3]);
     let back: Token = round_trip(Token("t0k3n".into())).expect("decodes");
     assert_eq!(back.0, "t0k3n");
+}
+
+/// A passthrough field is lent to the sink in place, so a `Drop` type needs
+/// no `take` on it, and its type needs no `Default`.
+#[derive(Encrypt, Decrypt, ZeroizeOnDrop, Debug, PartialEq)]
+struct TenantSecret {
+    #[aead(passthrough)]
+    tenant: NoDefault,
+    #[aead(take)]
+    token: String,
+}
+
+/// A passthrough column type with no `Default`, which `take` would need.
+#[derive(Encrypt, Decrypt, Debug, PartialEq, zeroize::Zeroize)]
+struct NoDefault(u32);
+
+#[test]
+fn a_drop_type_lends_a_passthrough_field_without_take() {
+    let secret = TenantSecret {
+        tenant: NoDefault(7),
+        token: "t0k3n".into(),
+    };
+    let back: TenantSecret = round_trip(secret).expect("decodes");
+    assert_eq!(
+        back.tenant,
+        NoDefault(7),
+        "the passthrough field reads back"
+    );
+    assert_eq!(back.token, "t0k3n", "the taken field reads back");
 }
 
 // Newtypes, tuple structs, empty structs and enums.
@@ -675,7 +704,7 @@ fn a_newtype_over_a_container_is_transparent_and_refuses_a_passthrough() {
     struct Clear;
     impl Encrypt for Clear {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-            sink.passthrough(vec![1u16])
+            sink.passthrough(&vec![1u16])
         }
     }
     assert!(matches!(
@@ -852,7 +881,7 @@ impl Sink for StopAt {
         Ok(self)
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), RecordError> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<(), RecordError> {
         Ok(())
     }
 }
@@ -1018,5 +1047,125 @@ fn a_timestamp_field_round_trips_and_reads_as_a_jiff_timestamp() {
     assert_eq!(
         round_trip::<EventAsJiff>(event()).expect("decodes"),
         EventAsJiff { at: instant }
+    );
+}
+
+// A struct of the wipeable scalars round-trips, and reads back as the
+// struct of the types they wrap: each field is the same leaf.
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
+struct Wiped {
+    day: vitaminc_aead::Date,
+    price: vitaminc_aead::Decimal,
+    id: vitaminc_aead::Uuid,
+    maybe: Option<vitaminc_aead::Date>,
+}
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
+struct Foreign {
+    day: jiff::civil::Date,
+    price: rust_decimal::Decimal,
+    id: uuid::Uuid,
+    maybe: Option<jiff::civil::Date>,
+}
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[test]
+fn wipeable_scalar_fields_round_trip_and_read_as_their_foreign_types() {
+    let day = jiff::civil::date(2026, 11, 14);
+    let price = rust_decimal::Decimal::new(150, 2);
+    let id = uuid::Uuid::from_u128(7);
+    let wiped = || Wiped {
+        day: vitaminc_aead::Date::new(day),
+        price: vitaminc_aead::Decimal::new(price),
+        id: vitaminc_aead::Uuid::new(id),
+        maybe: None,
+    };
+    assert_eq!(round_trip::<Wiped>(wiped()).expect("decodes"), wiped());
+    let foreign = round_trip::<Foreign>(wiped()).expect("decodes");
+    assert_eq!(
+        foreign,
+        Foreign {
+            day,
+            price,
+            id,
+            maybe: None
+        }
+    );
+    assert_eq!(foreign.price.scale(), 2, "the scale is kept");
+    assert_eq!(round_trip::<Wiped>(foreign).expect("decodes"), wiped());
+}
+
+// A present value of each wipeable scalar in an `Option` field reads back,
+// as the wrapper and as the type it wraps.
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
+struct MaybeWiped {
+    day: Option<vitaminc_aead::Date>,
+    price: Option<vitaminc_aead::Decimal>,
+    id: Option<vitaminc_aead::Uuid>,
+}
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
+struct MaybeForeign {
+    day: Option<jiff::civil::Date>,
+    price: Option<rust_decimal::Decimal>,
+    id: Option<uuid::Uuid>,
+}
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[test]
+fn a_present_wipeable_scalar_in_an_option_field_round_trips() {
+    let day = jiff::civil::date(2026, 11, 14);
+    let price = rust_decimal::Decimal::new(150, 2);
+    let id = uuid::Uuid::from_u128(7);
+    let wiped = || MaybeWiped {
+        day: Some(vitaminc_aead::Date::new(day)),
+        price: Some(vitaminc_aead::Decimal::new(price)),
+        id: Some(vitaminc_aead::Uuid::new(id)),
+    };
+    assert_eq!(round_trip::<MaybeWiped>(wiped()).expect("decodes"), wiped());
+    assert_eq!(
+        round_trip::<MaybeForeign>(wiped()).expect("decodes"),
+        MaybeForeign {
+            day: Some(day),
+            price: Some(price),
+            id: Some(id),
+        }
+    );
+}
+
+// A leaf of another type is refused by the wrapper's own name, so a decrypt
+// error says which type it wanted.
+
+#[cfg(all(feature = "jiff", feature = "rust_decimal", feature = "uuid"))]
+#[test]
+fn a_wipeable_scalar_refuses_a_leaf_of_another_type_by_its_name() {
+    let day = jiff::civil::date(2026, 11, 14);
+    let price = rust_decimal::Decimal::new(150, 2);
+    assert!(
+        matches!(
+            refusal(round_trip::<vitaminc_aead::Decimal>(day)),
+            DecodeError::Expected("decimal")
+        ),
+        "a date is not a decimal"
+    );
+    assert!(
+        matches!(
+            refusal(round_trip::<vitaminc_aead::Date>(price)),
+            DecodeError::Expected("date")
+        ),
+        "a decimal is not a date"
+    );
+    assert!(
+        matches!(
+            refusal(round_trip::<vitaminc_aead::Uuid>(day)),
+            DecodeError::Expected("uuid")
+        ),
+        "a date is not a uuid"
     );
 }
