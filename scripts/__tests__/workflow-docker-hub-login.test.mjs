@@ -315,7 +315,11 @@ export function jobFindings(where, job, ref) {
 function runsOnJobs() {
   return workflowFiles().flatMap((file) =>
     Object.entries(readWorkflow(file)?.jobs ?? {})
-      .map(([name, job]) => ({ where: `${file} ${name}`, ref: `${file}#${name}`, job }))
+      .map(([name, job]) => ({
+        where: `${file} ${name}`,
+        ref: `${file}#${name}`,
+        job,
+      }))
       .filter(({ job, ref }) => isRunsOnJob(job, ref)),
   )
 }
@@ -339,7 +343,9 @@ export function callerFinding(job) {
 function callerFindings() {
   return workflowFiles().flatMap((file) =>
     Object.entries(readWorkflow(file)?.jobs ?? {})
-      .filter(([, job]) => String(job?.uses ?? '').startsWith('./.github/workflows/'))
+      .filter(([, job]) =>
+        String(job?.uses ?? '').startsWith('./.github/workflows/'),
+      )
       .flatMap(([name, job]) => {
         const called = job.uses.replace(/^\.\//, '').replace(/@.*$/, '')
         const logsIn = Object.entries(readWorkflow(called)?.jobs ?? {}).some(
@@ -427,7 +433,10 @@ describe('Docker Hub login on RunsOn', () => {
     expect(
       callerFinding({
         uses,
-        secrets: { DOCKER_HUB_USERNAME: USERNAME, DOCKER_HUB_PASSWORD: PASSWORD },
+        secrets: {
+          DOCKER_HUB_USERNAME: USERNAME,
+          DOCKER_HUB_PASSWORD: PASSWORD,
+        },
       }),
     ).toBeNull()
     expect(

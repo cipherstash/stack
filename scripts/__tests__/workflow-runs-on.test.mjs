@@ -31,8 +31,7 @@ const jobs = workflowFiles().flatMap((file) =>
   })),
 )
 
-const refsWhere = (predicate) =>
-  jobs.filter(predicate).map(({ ref }) => ref)
+const refsWhere = (predicate) => jobs.filter(predicate).map(({ ref }) => ref)
 
 /** A runner chosen when the job starts, so a guard cannot read it. */
 function isExpressionRunner(job) {
