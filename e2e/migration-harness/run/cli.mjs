@@ -80,7 +80,19 @@ try {
   }
 }
 try {
-  const report = await run({ id, manifest, driver, supervision: isolation })
+  const report = await run({
+    id,
+    manifest,
+    driver,
+    supervision: isolation,
+    // One NDJSON file per stage beside the report, referenced by digest.
+    writeIsolationTrail: async (stage, body) => {
+      const file = `isolation-events/${stage}.ndjson`
+      await mkdir(resolve(output, 'isolation-events'), { recursive: true })
+      await writeFile(resolve(output, file), body)
+      return file
+    },
+  })
   await writeFile(
     resolve(output, 'run-report.json'),
     `${JSON.stringify(report, null, 2)}\n`,

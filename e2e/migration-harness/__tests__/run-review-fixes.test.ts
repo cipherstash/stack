@@ -89,3 +89,100 @@ test('a rejected migrate still records agent-tool evidence for its tool calls', 
     'rejected/agent-tool/2',
   ])
 })
+
+// F16: every supervisor access event used to be inlined into
+// run-report.json, which can mean hundreds of thousands of records. ADR-0001
+// (line 285) still needs the full trail, successful allowed reads included,
+// so the trail moves to one NDJSON file per stage, referenced from the report
+// by digest. Only forbidden or failed events stay inline.
+test('the full isolation trail is written per stage and only forbidden or failed events stay inline', async () => {
+  const { createHash } = await import('node:crypto')
+  const { run } = await import('../run/run.mjs')
+  const { requiredOracleChecks } = await import('../run/migration-checks.mjs')
+  const allowed = {
+    actor: 'migrator',
+    decision: 'allowed',
+    result: 'success',
+    resource: '/workspace/node_modules/pkg/README.md',
+  }
+  const denied = {
+    actor: 'migrator',
+    decision: 'forbidden',
+    result: 'denied',
+    resource: '/canary',
+  }
+  const failed = {
+    actor: 'migrator',
+    decision: 'allowed',
+    result: 'denied',
+    resource: '/workspace/missing',
+  }
+  const written: Record<string, string> = {}
+  let drains = 0
+  const report = await run({
+    id: 'trail',
+    manifest: {
+      stack: '1.2.1',
+      guideHash: 'abc',
+      fixtureRevision: 'revision',
+      agents: {},
+    },
+    driver: {
+      provision: async () => {},
+      installUnmigrated: async () => {},
+      initializeLegacyData: async () => {},
+      snapshot: async () => {},
+      migrate: async () => ({ exitCode: 0 }),
+      friction: async () => [],
+      installAppHost: async () => {},
+      behaviour: async () =>
+        requiredOracleChecks.map((id: string) => ({ id, passed: true })),
+    },
+    supervision: {
+      // Only the migrator stage (the fourth drain) produces events.
+      drain: async () => (++drains === 4 ? [allowed, denied, failed] : []),
+      stop: async () => {},
+    },
+    writeIsolationTrail: async (stage: string, body: string) => {
+      written[stage] = body
+      return `isolation-events/${stage}.ndjson`
+    },
+  })
+  expect(report.outcome).toBe('pass')
+  const body = written.migrator
+  expect(body, 'the migrator stage trail must be written').toBeDefined()
+  expect(
+    body
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+  ).toEqual([allowed, denied, failed])
+  const trails = report.evidence.filter((e) => e.kind === 'isolation-trail')
+  expect(trails.map((e) => [e.stage, e.payload])).toEqual([
+    [
+      'migrator',
+      {
+        file: 'isolation-events/migrator.ndjson',
+        events: 3,
+        sha256: createHash('sha256').update(body).digest('hex'),
+      },
+    ],
+  ])
+  expect(
+    report.evidence
+      .filter((e) => e.kind === 'isolation-event')
+      .map((e) => e.payload),
+  ).toEqual([denied, failed])
+})
+
+test('a supervised Run without a trail writer is refused', async () => {
+  const { run } = await import('../run/run.mjs')
+  await expect(
+    run({
+      id: 'no-writer',
+      manifest: { guideHash: null },
+      driver: {} as never,
+      supervision: { drain: async () => [], stop: async () => {} },
+    }),
+  ).rejects.toThrow(/writeIsolationTrail/)
+})

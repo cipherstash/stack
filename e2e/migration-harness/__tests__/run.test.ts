@@ -233,6 +233,7 @@ test('trusted successful forbidden access stops later calls and excludes Editor'
         later = true
       },
     }),
+    writeIsolationTrail: async (stage: string) => `${stage}.ndjson`,
     supervision: {
       drain: async () => [
         {
@@ -254,6 +255,7 @@ test('caught denied access alone does not fail a Run', async () => {
     id: 'denied',
     manifest,
     driver: driver(),
+    writeIsolationTrail: async (stage: string) => `${stage}.ndjson`,
     supervision: {
       drain: async () => [
         {
@@ -274,6 +276,7 @@ test('a broken trusted event stream is infrastructure even during Migrator', asy
     id: 'stream',
     manifest,
     driver: driver(),
+    writeIsolationTrail: async (stage: string) => `${stage}.ndjson`,
     supervision: {
       drain: async () => {
         if (++count === 4) throw Error('stream disconnected')
@@ -294,6 +297,7 @@ test('successful forbidden access outranks an action error from terminated actor
         throw Error('killed')
       },
     }),
+    writeIsolationTrail: async (stage: string) => `${stage}.ndjson`,
     supervision: {
       drain: async () =>
         ++count === 4
@@ -377,6 +381,7 @@ test('stream failure retains the simultaneous actor failure as secondary evidenc
         throw Error('actor crashed')
       },
     }),
+    writeIsolationTrail: async (stage: string) => `${stage}.ndjson`,
     supervision: {
       drain: async () => {
         if (++count === 4) throw Error('stream lost')

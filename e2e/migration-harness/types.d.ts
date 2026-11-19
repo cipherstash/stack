@@ -39,6 +39,11 @@ export interface Supervision {
   drain(): AccessEvent[] | Promise<AccessEvent[]>
   stop(): Promise<unknown>
 }
+/** Persists one stage's full access trail (NDJSON) and returns its report-relative path. */
+export type IsolationTrailWriter = (
+  stage: string,
+  body: string,
+) => Promise<string>
 export interface Forward {
   host: string
   port: number
