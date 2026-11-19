@@ -6,7 +6,7 @@ name: Lint release tooling
 # pull request that touches any of it.
 #
 # actionlint is introduced here and nowhere else in the repo. It reads
-# `.github/actionlint.yaml` for the Blacksmith runner label, and it runs
+# `.github/actionlint.yaml` for its self-hosted runner labels, and it runs
 # shellcheck over every `run:` block — which is why the workflows it gates
 # avoid `sed`-into-`export` (SC2001, SC2155), `ls | wc -l` (SC2012), and
 # dollar-braces or backticks inside single-quoted `node -e` arguments (SC2016).
@@ -19,7 +19,7 @@ name: Lint release tooling
 on:
   pull_request:
     # Exactly what the job reads: the workflows actionlint is pointed at, the
-    # config it resolves the Blacksmith label from, and the shell scripts the
+    # config it reads runner labels from, and the shell scripts the
     # later steps check and run. The filter also named scripts/release-gate.mjs,
     # scripts/ffi-release-matrix.mjs, scripts/lint-no-workflow-caching.mjs and
     # package.json — none of which this job looks at, since it deliberately does

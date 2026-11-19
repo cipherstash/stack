@@ -21,7 +21,7 @@ jobs:
   # Tightening to fail on warnings is tracked in #625.
   lint:
     name: Lint (Biome)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     steps:
       - name: Checkout Repo
@@ -54,7 +54,7 @@ jobs:
 
   run-tests:
     name: Run Tests (Node ${{ matrix.node-version }})
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 25
     strategy:
       matrix:
@@ -399,7 +399,7 @@ jobs:
 
   e2e-tests:
     name: Run E2E Tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
 
     # Auth-dependent suites in `e2e/` skip themselves unless these env vars
@@ -551,7 +551,7 @@ jobs:
   # a silent fallback to the NAPI module is impossible.
   wasm-e2e-tests:
     name: Run WASM E2E Tests (Deno)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 35
 
     permissions:
@@ -695,7 +695,7 @@ jobs:
 
   run-tests-bun:
     name: Run Tests (Bun)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
     continue-on-error: true
 

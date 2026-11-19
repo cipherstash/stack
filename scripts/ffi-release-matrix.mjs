@@ -46,23 +46,19 @@ const PLATFORMS_DIR = join(
  *
  * Darwin and Windows need GitHub-hosted images for their SDKs; both Darwin
  * platforms share `macos-latest` and cross-compile, which is why `target` is
- * explicit. The gnu builds took just over twice as long on GitHub's standard
- * runner as on Blacksmith 4 vCPU, so they run on RunsOn. A matrix value cannot
- * read `${{ github.run_id }}`, so the run ID that makes the RunsOn label unique
- * is passed in. musl stays on Blacksmith: it could not be timed, because its
- * image pins a `musl-dev` that Alpine no longer serves.
+ * explicit. Every Linux platform builds on a RunsOn machine with 4 vCPUs, its
+ * size on Blacksmith (docs/adr/0004). A matrix value cannot read
+ * `${{ github.run_id }}`, so the run ID that makes the RunsOn label unique is
+ * passed in.
  */
 export function runnerFor(platform, runId = process.env.GITHUB_RUN_ID) {
   if (platform.startsWith('win32')) return 'windows-latest'
   if (platform.startsWith('darwin')) return 'macos-latest'
-  if (platform.startsWith('linux-') && platform.endsWith('-gnu')) {
-    if (!runId)
-      throw new Error(
-        `${platform} builds on RunsOn, whose label needs the run ID; set GITHUB_RUN_ID`,
-      )
-    return `runs-on=${runId}/family=c8a+m8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache`
-  }
-  return 'blacksmith-4vcpu-ubuntu-2404'
+  if (!runId)
+    throw new Error(
+      `${platform} builds on RunsOn, whose label needs the run ID; set GITHUB_RUN_ID`,
+    )
+  return `runs-on=${runId}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache`
 }
 
 /**
