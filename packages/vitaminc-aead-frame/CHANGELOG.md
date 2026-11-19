@@ -1,15 +1,11 @@
 
 ## [0.10.0] - 2026-11-19
 
-### Breaking
+### Wire format
 
-- **Breaking:** take dates and timestamps from jiff, because chrono is unmaintained
-- **Breaking:** narrow dates and timestamps to jiff's range in every binding, so a value one binding seals every binding opens
-- **Breaking:** let generic code bound on a borrowed plaintext without copying it
-
-### Features
-
-- read dates and timestamps sealed in chrono's range with walk_legacy_range, so values such as 9999-12-31T23:59:59Z can be migrated
+- Storage blobs and transport frames are written the same way as in 0.9.1.
+- A blob or frame that contains a date or timestamp outside years -9999 to 9999 is now refused, because `vitaminc-aead` refuses that value.
+  The 0.10.0 changelog for `vitaminc-aead` gives the exact limits.
 
 ## [0.9.1] - 2026-11-06
 

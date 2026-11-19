@@ -8,35 +8,80 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.10.0] - 2026-11-19
 
+### Wire format
+
+- Sealed leaves and frames are written the same way as in 0.9.1.
+  The supported range of dates and timestamps is narrower.
+  The range is now years -9999 to 9999.
+  Version 0.9.1 allowed years -262143 to 262142.
+  The exact limits are the limits of the `jiff` crate:
+
+  - dates from `-009999-01-01` to `9999-12-31`
+  - timestamps from `-009999-01-02T01:59:59Z` to `9999-12-30T22:00:00.999999999Z`
+
+- Version 0.10.0 decrypts every value that version 0.9.1 encrypted, except a date or timestamp outside the new range.
+  A leaf like that still passes authentication.
+  The reader then refuses it as an invalid scalar.
+  Version 0.9.1 decrypts every value that version 0.10.0 encrypts.
+- Encryption now refuses a date or timestamp outside the new range.
+  Every binding uses the same range, so a value that one binding encrypts, every binding can decrypt.
+
 ### Breaking
 
-- **Breaking:** take dates and timestamps from jiff, because chrono is unmaintained
-- **Breaking:** refuse a jiff timestamp jiff cannot rebuild, so it is never sealed and then unreadable
-- **Breaking:** narrow dates and timestamps to jiff's range in every binding, so a value one binding seals every binding opens
-- **Breaking:** let generic code bound on a borrowed plaintext without copying it
-- **Breaking:** walk a derived struct by reference inside containers
-- **Breaking:** lend a passthrough field in place, so it never needs take
-- **Breaking:** stop str, [u8; N] and Cow<str> lending an unwiped ProtectedRef
+- **Breaking:** dates and timestamps now come from the `jiff` crate, not `chrono`.
+  RUSTSEC-2026-0543 marks `chrono` as unmaintained.
+  To upgrade:
 
-### Documentation
+  - Enable the `jiff` feature in place of the `chrono` feature.
+  - Encrypt and decrypt `jiff::civil::Date` in place of `chrono::NaiveDate`.
+  - Encrypt and decrypt `jiff::Timestamp` in place of `chrono::DateTime<Utc>`.
+  - Use the `plaintext::kinds::jiff` module in place of `plaintext::kinds::chrono`.
 
-- list what lends a ProtectedRef, not what does not
+- **Breaking:** `Timestamp::new` now takes a `jiff::Timestamp`, and returns `Result<Timestamp, OutOfRange>`.
+  `Timestamp::to_datetime` is renamed `to_jiff`, and returns a `jiff::Timestamp`.
+  `jiff` has no leap seconds, so the `LeapSecond` error is removed.
+  `OutOfRange` replaces it.
+  `jiff` 1.0.0 can create an instant up to one second before its own minimum, when it parses text with a UTC offset.
+  `Timestamp::new` refuses that instant, so a `Timestamp` still always encrypts.
+  Encrypting a `jiff::Timestamp` directly refuses it as well.
+- **Breaking:** `Sink::passthrough` now takes a reference, `&P`, where `P: ?Sized + EncryptRef`.
+  In 0.9.1, it took `P` by value, where `P: Encrypt + Clone`.
+  If you implement `Sink`, walk the passthrough value with `visit_ref`.
+  If you call `passthrough`, pass a reference.
+  A passthrough type no longer needs to implement `Clone`.
+- **Breaking:** remove the bound `'a: 'r` from any `impl Encrypt for &'r Foo<'a>` that you wrote by hand.
+  With that bound, the compiler cannot encrypt a `Foo` inside a `Vec`, `Option`, or map, unless `'a` is `'static`.
 
 ### Features
 
-- read dates and timestamps sealed in chrono's range with walk_legacy_range, so values such as 9999-12-31T23:59:59Z can be migrated
-- let a borrowed Lent walk as what it lends
-- add wipeable Date, Decimal and Uuid, as Timestamp is
+- The new `EncryptRef` trait lets generic code encrypt a value that it only borrows, without copying the value.
+  Every type whose borrow implements `Encrypt` also implements `EncryptRef`.
+  Bound a type parameter `T` on `EncryptRef` to accept a `&T`.
+  In 0.9.1, the bound `for<'a> &'a T: Encrypt` failed to compile with error E0275, an overflow in the trait solver, when the compiler still had to infer `T`.
+  So a caller that held a borrow had to clone the value.
+- `EncryptRef::lend` returns the new `Lent` type, a borrowed value that you can encrypt.
+  A `Vec`, `Option`, or derived struct of `Lent` values encrypts the same way as the values they borrow.
+- The new `Date`, `Decimal`, and `Uuid` types protect a date, a decimal, and a UUID, as `Timestamp` protects an instant.
+  The `jiff`, `rust_decimal`, and `uuid` features enable them.
+  Each type:
 
-### Fixes
+  - wipes its value when it is dropped
+  - hides its value in `Debug` output
+  - compares in constant time
+  - does not implement `Copy` or `Clone`
 
-- lend a passthrough field in the by-value walk too
-- compare decimals with no division instruction, and pin the wrappers' nulls and fields
-- say strip_trailing_zeros takes a mantissa below 10^29, and hide it from the docs
+  Each type encrypts to the same leaf as the type it wraps.
+  So you can change a field to the new type without changing its ciphertext.
+  Creating one from `jiff::civil::Date`, `rust_decimal::Decimal`, or `uuid::Uuid` cannot fail.
+
+- The new `Decimal` type keeps its scale, so `1.50` stays `1.50`.
+  Two `Decimal` values compare by value, as `rust_decimal` compares them: `1.5` equals `1.50`.
+  The comparison uses no division instruction.
+  On wasm32, and in builds without optimisation, the time a division takes can depend on the values it divides.
 
 ### Performance
 
-- stop copying each passthrough frame a second time
+- Encrypting a passthrough field no longer copies its frame a second time.
 
 ## [0.9.1] - 2026-11-06
 

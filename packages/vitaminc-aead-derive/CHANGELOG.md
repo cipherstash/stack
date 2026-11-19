@@ -3,13 +3,19 @@
 
 ### Breaking
 
-- **Breaking:** let generic code bound on a borrowed plaintext without copying it
-- **Breaking:** walk a derived struct by reference inside containers
-- **Breaking:** lend a passthrough field in place, so it never needs take
+- **Breaking:** `#[aead(passthrough, take)]` is now a compile error.
+  The derived code lends a passthrough field to the sink, and never moves it out of `self`.
+  So `take` has no effect on a passthrough field.
+  Remove `take` from your passthrough fields.
+  A passthrough field of a type that implements `Drop` no longer needs `Default`.
 
 ### Fixes
 
-- lend a passthrough field in the by-value walk too
+- A generic struct with a `Vec<T>` or `Option<T>` field can now be encrypted inside a container.
+  In 0.9.1, the derived code failed to compile with error E0275, an overflow in the trait solver.
+- A struct with a lifetime parameter can now be encrypted inside a container when the lifetime is shorter than `'static`.
+- The type of a passthrough field now needs to implement only `Encrypt` for a reference to it.
+  In 0.9.1, the type also had to implement `Encrypt` by value, and `Clone`.
 
 ## [0.9.1] - 2026-11-06
 
