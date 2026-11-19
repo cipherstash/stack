@@ -468,23 +468,6 @@ jobs:
         id: auth-binding
         uses: ./.github/actions/build-auth-binding
 
-      # Run the standalone `e2e/` workspace via turbo so the `^build`
-      # dep on the `test:e2e` task builds cli + wizard first. CLI's own
-      # E2E (`languages/typescript/packages/cli/tests/e2e/**`) is covered by the `run-tests`
-      # job above; we filter to the new workspace here to avoid duplication.
-      - name: Run E2E tests
-        run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e
-
-      # The step above runs under turbo's strict env mode, which filters out
-      # every env var `turbo.json` does not declare, so the job-level CS_*
-      # never reach vitest there and auth-gated suites skip. The
-      # protect-dynamodb compatibility suite proves a migration claim made to
-      # customers, so the default e2e config leaves it out and it runs here
-      # with `--env-mode=loose`, which lets the credentials through. It fails
-      # rather than skips if they are missing.
-      - name: Run the protect-dynamodb compatibility suite
-        run: pnpm exec turbo run test:protect-compat --filter @cipherstash/e2e --env-mode=loose
-
       # Docker Hub refuses pulls without a login after too many from one
       # address, and RunsOn machines reach that limit. With either secret empty,
       # as on a fork's pull request, this step does nothing and pulls stay
@@ -502,6 +485,23 @@ jobs:
           fi
           printf '%s' "$DOCKER_HUB_PASSWORD" |
             docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
+
+      # Run the standalone `e2e/` workspace via turbo so the `^build`
+      # dep on the `test:e2e` task builds cli + wizard first. CLI's own
+      # E2E (`languages/typescript/packages/cli/tests/e2e/**`) is covered by the `run-tests`
+      # job above; we filter to the new workspace here to avoid duplication.
+      - name: Run E2E tests
+        run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e
+
+      # The step above runs under turbo's strict env mode, which filters out
+      # every env var `turbo.json` does not declare, so the job-level CS_*
+      # never reach vitest there and auth-gated suites skip. The
+      # protect-dynamodb compatibility suite proves a migration claim made to
+      # customers, so the default e2e config leaves it out and it runs here
+      # with `--env-mode=loose`, which lets the credentials through. It fails
+      # rather than skips if they are missing.
+      - name: Run the protect-dynamodb compatibility suite
+        run: pnpm exec turbo run test:protect-compat --filter @cipherstash/e2e --env-mode=loose
 
       # The DynamoDB <-> Postgres cross-store suite moves protect-dynamodb
       # 6.0.1 items into EQL v3 columns and back, so it needs a database.
