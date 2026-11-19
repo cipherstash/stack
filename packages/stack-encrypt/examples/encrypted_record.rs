@@ -98,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The cipher seals each value under its own ZeroKMS data key. `new` also
     // loads the keyset's index key. The index key derives the terms. Data keys
     // and terms always come from the same keyset.
-    let cipher = StackCipher::new().await?;
+    let cipher = StackCipher::with_detected_credentials().await?;
     // The client's default keyset.
     let keyset = cipher.default_keyset();
 
@@ -158,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // A second client. Any process with the same ZeroKMS credentials and
     // keyset can decrypt what this one wrote.
-    let decryptor = StackCipher::new().await?;
+    let decryptor = StackCipher::with_detected_credentials().await?;
 
     // Decrypting the matching rows together makes one batched
     // `retrieve_keys` call, however many rows match. Each field opens under

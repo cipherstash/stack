@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init()`
   builds the ZeroKMS client from an auth strategy and a client key provider
   that you choose. Before, a caller who wanted another auth strategy had to
-  build the `StackKms` by hand. `init()` and `kms(..)` are unchanged.
+  build the `StackKms` by hand. `kms(..)` is unchanged.
   - `auth_strategy` takes any strategy `StackKmsBuilder::new` takes: an
     `OidcFederationStrategy`, an `AccessKeyStrategy`, or an `AuthStrategyFn`.
   - `key_provider` is required after `auth_strategy`. The builder then reads
@@ -133,6 +133,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A cipher no longer reads credentials you did not name** (#1722).
+  `StackCipher::new()` and `init()` on the bare builder read
+  `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`,
+  `CS_WORKSPACE_CRN` and the CLI's profile directory, and nothing in the
+  call said so. Both are removed.
+  - `StackCipher::with_detected_credentials()` replaces `new()`. It reads
+    the same places in the same order, and its name says so. To upgrade,
+    rename the call.
+  - `StackCipher::builder()` has no `init()` until you name a data-key
+    source, with `kms(..)` or with `auth_strategy(..)` and then
+    `key_provider(..)`. For `StackCipher::builder().init()` with builder
+    options such as `keyset_cache_size`, write
+    `.auth_strategy(AutoStrategy::detect()?)` and
+    `.key_provider(FallbackKeyProvider::new(EnvKeyProvider, ProfileKeyProvider::for_detected_workspace()))`
+    before `init()`. That builds the same cipher.
+  - The builder state `FromEnv` is renamed `NoKms`, since the builder no
+    longer reads the environment in it.
 - **`target::ExpectedContext` is no longer part of the API** (#1488). It
   is the check that a `#[stash(context_field)]` record runs on decrypt:
   the stored context must equal the one the caller expects, if the caller
