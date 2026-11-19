@@ -21,9 +21,20 @@ const stages = [
 ]
 
 /** Whole-Run orchestration. Drivers are harness-owned; agent output never supplies verdicts.
- * @param {{id:string, manifest:import('../types.js').Manifest, driver:import('../types.js').RunDriver, supervision?:import('../types.js').Supervision|null}} options
+ * @param {{id:string, manifest:import('../types.js').Manifest, driver:import('../types.js').RunDriver, supervision?:import('../types.js').Supervision|null, writeIsolationTrail?:import('../types.js').IsolationTrailWriter}} options
  */
-export async function run({ id, manifest, driver, supervision = null }) {
+export async function run({
+  id,
+  manifest,
+  driver,
+  supervision = null,
+  writeIsolationTrail,
+}) {
+  // ADR-0001 needs the full access trail, successful allowed reads included,
+  // to attribute documentation access. It is too large to inline in the
+  // report, so a supervised Run must have somewhere to write it.
+  if (supervision && !writeIsolationTrail)
+    throw new TypeError('A supervised Run requires writeIsolationTrail')
   /** @type {import('../types.js').RunReport} */
   const report = {
     id,
@@ -98,7 +109,10 @@ export async function run({ id, manifest, driver, supervision = null }) {
           )
         }
         for (const event of events) {
-          evidence(name, 'isolation-event', event.actor, event, false)
+          // Inline only the events a verdict or a denial record turns on; the
+          // routine allowed-and-successful ones live in the stage trail file.
+          if (event.decision === 'forbidden' || event.result !== 'success')
+            evidence(name, 'isolation-event', event.actor, event, false)
           if (event.result === 'success' && event.decision === 'forbidden') {
             stopped = true
             report.failures.push({
@@ -109,6 +123,33 @@ export async function run({ id, manifest, driver, supervision = null }) {
             })
             await supervision.stop()
           }
+        }
+        if (events.length && writeIsolationTrail) {
+          const body = events
+            .map((event) => `${JSON.stringify(event)}\n`)
+            .join('')
+          let file
+          try {
+            file = await writeIsolationTrail(name, body)
+          } catch (error) {
+            throw Object.assign(
+              new Error(
+                `Could not write isolation trail: ${error instanceof Error ? error.message : String(error)}`,
+              ),
+              { infrastructure: true },
+            )
+          }
+          evidence(
+            name,
+            'isolation-trail',
+            name,
+            {
+              file,
+              events: events.length,
+              sha256: createHash('sha256').update(body).digest('hex'),
+            },
+            false,
+          )
         }
       }
       if (actionError) throw actionError

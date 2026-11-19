@@ -23,6 +23,10 @@ For a real Run, first build workspace dependencies with
 `pnpm --filter @cipherstash/e2e harness:run --migrator 'node /absolute/path/to/adapter.mjs'`.
 The CipherStash credentials described in the repository README are required.
 Reports are written under `.migration-harness-runs/` relative to the package.
+Each stage's full supervisor access trail is written beside the report as
+`isolation-events/<stage>.ndjson`; `run-report.json` keeps only forbidden or
+failed events inline, plus one `isolation-trail` evidence record per stage
+naming that file, its event count and its SHA-256.
 Real application execution is gated on the backend capability proof. The full
 credentialed no-op Migrator acceptance run remains unverified in this PR.
 
