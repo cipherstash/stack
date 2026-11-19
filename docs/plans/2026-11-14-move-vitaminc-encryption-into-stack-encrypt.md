@@ -144,8 +144,8 @@ stack-encrypt against the crates.io versions it uses today.
 
 ### Stage 2: copy the code in, unchanged
 
-Copy the crates into this repository at the versions that stack-encrypt's
-`Cargo.lock` resolves today, keeping their names, as members of the root
+Copy the crates in at the versions stack-encrypt's `Cargo.lock` resolves
+when the stage starts. Keep their names, and make them members of the root
 workspace with `publish = false`. Point stack-encrypt and the other crates at
 them by path. Port their tests, fuzz targets, and benchmarks with them.
 
@@ -206,30 +206,26 @@ The stack repository already runs Miri, fuzzing, mutation testing, and
 `cargo udeps` for its own crates. The work is to add the moved crates to
 them, and to add the checks it lacks.
 
+## Settled since the first draft
+
+vitaminc 0.10.0 was released on 19 November 2026, with vitaminc #616, #617
+and #618 merged. Stage 2 copies 0.10.0 once stack-encrypt depends on it.
+Moving stack-encrypt to 0.10 needs `clww-ore` and `ore-rs` releases on
+vitaminc 0.10 first (ore.rs #144).
+
 ## Open questions
 
-1. **Should the three open vitaminc pull requests be merged in vitaminc first?**
-   The three pull requests are reviewed and green:
-   - #616 encrypts by reference.
-   - #617 keys order schemes from the PRF.
-   - #618 adds `Date`, `Decimal`, and `Uuid`.
-
-   Merging them first means stage 2 copies a version that
-   stack-encrypt does not use yet, so stage 2 is no longer a pure copy.
-   **Recommendation:** copy the released version, then reapply the three
-   pull requests in this repository. Drop the derive commit in #616
-   (`ee9db984`).
-2. **Should ore.rs stay open for `cipherstash-client`?** The legacy client,
+1. **Should ore.rs stay open for `cipherstash-client`?** The legacy client,
    used by protect-ffi and the EQL tests, depends on an older `ore-rs` from
    crates.io. Moving the code does not break the client, because published
    versions stay. But a fix to that line of `ore-rs` would have no
    repository once ore.rs is archived.
-3. **Which licence applies to the moved code?** vitaminc uses the MIT
+2. **Which licence applies to the moved code?** vitaminc uses the MIT
    licence. ore.rs has its own licence file. stack-encrypt has its own
    licence file too. Ask the person responsible for licensing whether the
    moved code keeps its MIT notice, and what licence the moved ore.rs code
    has.
-4. **Does anyone outside CipherStash use the vitaminc crates?** The crates
+3. **Does anyone outside CipherStash use the vitaminc crates?** The crates
    are on crates.io. Nobody has checked who else depends on them.
 
 ## Rules this changes
