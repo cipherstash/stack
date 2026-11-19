@@ -820,6 +820,16 @@ replacement such as `Some(Default::default())` for `Some(())`. Document the
 reason and match the specific replacement so a reachable, behavior-changing
 mutation in the same function stays covered.
 
+### Misuse resistance
+
+Read `.claude/skills/misuse-resistance/SKILL.md` before you design or review
+a public API of the stack-* crates. Read it too before you write a doc
+example for one, or add a warning or an error to one. The skill ranks the
+ways a rule can be enforced, from "impossible to get wrong" down to
+"documented". It gives eleven rules for an API that handles keys, secrets or
+ciphertext. The skill is a copy from `cipherstash/vitaminc`. Its first
+section says which commit it was copied from, and how to update it.
+
 ## Designing a language SDK
 
 Read [`docs/sdk-design-principles.md`](docs/sdk-design-principles.md) before you
