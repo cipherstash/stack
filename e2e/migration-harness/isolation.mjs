@@ -61,6 +61,12 @@ export function createIsolation({
   let retainedEventCount = 0
   /** @type {import('./types.js').AccessEvent[]} */
   const events = []
+  /** The event budget bounds events held, so releasing them releases it. */
+  const clearEvents = () => {
+    retainedEventCount = 0
+    retainedEventBytes = 0
+    return events.splice(0)
+  }
   /** @type {Set<{stop:(options?:{expected?:boolean})=>Promise<unknown>,settled:()=>Promise<unknown>}>} */
   const active = new Set()
   /** @type {string[]} */
@@ -235,16 +241,18 @@ export function createIsolation({
     let onOutput = (_text) => {}
     /** @type {Promise<boolean>|null} */
     let expectedCancellation = null
+    /** A --rm container that exited on its own is already cancelled.
+     * @param {{exitCode:number|null,stderr:string}} result */
+    const cancelled = (result) =>
+      result.exitCode === 0 ||
+      /is not running|no such container/i.test(result.stderr)
     /** @param {{expected?:boolean}} options */
     const stop = ({ expected = false } = {}) => {
       const killed = command(['kill', name])
       if (!expected) return killed.catch(() => {})
-      expectedCancellation = killed.then(
-        (result) => result.exitCode === 0,
-        () => false,
-      )
+      expectedCancellation = killed.then(cancelled, () => false)
       return killed.then((result) => {
-        if (result.exitCode !== 0)
+        if (!cancelled(result))
           throw infrastructure('Could not cancel isolated actor')
       })
     }
@@ -277,6 +285,27 @@ export function createIsolation({
       child.stderr.on('data', (data) => {
         if (!overflowed && retainOutput(data.toString())) stderr += data
       })
+      // supervise.py chunks output without regard for character boundaries.
+      const outputDecoders = {
+        stdout: new StringDecoder('utf8'),
+        stderr: new StringDecoder('utf8'),
+      }
+      /** @param {string} text */
+      function appendStdout(text) {
+        if (text && retainOutput(text)) {
+          stdout += text
+          onOutput(text)
+        }
+      }
+      /** @param {string} text */
+      function appendStderr(text) {
+        if (text && retainOutput(text)) stderr += text
+      }
+      function flushOutput() {
+        if (overflowed) return
+        appendStdout(outputDecoders.stdout.end())
+        appendStderr(outputDecoders.stderr.end())
+      }
       /** @param {string} line */
       function receive(line) {
         if (overflowed) return
@@ -302,14 +331,13 @@ export function createIsolation({
                 if (actorProcess !== running) void actorProcess.stop()
             }
           } else if (frame.kind === 'stdout') {
-            const text = Buffer.from(frame.data, 'base64').toString()
-            if (retainOutput(text)) {
-              stdout += text
-              onOutput(text)
-            }
+            appendStdout(
+              outputDecoders.stdout.write(Buffer.from(frame.data, 'base64')),
+            )
           } else if (frame.kind === 'stderr') {
-            const text = Buffer.from(frame.data, 'base64').toString()
-            if (retainOutput(text)) stderr += text
+            appendStderr(
+              outputDecoders.stderr.write(Buffer.from(frame.data, 'base64')),
+            )
           } else if (frame.kind === 'actor-exit') {
             if (frame.actor !== actor || !Number.isInteger(frame.exitCode))
               throw Error('Invalid actor exit identity')
@@ -358,6 +386,7 @@ export function createIsolation({
       child.on('close', async (code) => {
         clearTimeout(timer)
         active.delete(running)
+        flushOutput()
         await release()
         if (timedOut && !failure) {
           resolve({ exitCode: 124, stdout, stderr, timedOut })
@@ -604,7 +633,7 @@ export function createIsolation({
             'Observer loss was not an infrastructure failure',
           )
         fatal = null
-        events.length = 0
+        clearEvents()
         proven = true
         return {
           backend: backend.id,
@@ -623,6 +652,8 @@ export function createIsolation({
           },
         }
       } finally {
+        // A failed proof must not leave its synthetic breach canary for drain().
+        if (!proven) clearEvents()
         await rm(workspace, { recursive: true, force: true })
       }
     },
@@ -696,7 +727,7 @@ export function createIsolation({
     },
     drain() {
       if (fatal && !events.some(isBreach)) throw fatal
-      return events.splice(0)
+      return clearEvents()
     },
     /** Expected cancellation waits for actor shutdown so the caller can drain all events.
      * @param {{expected?:boolean}} options */

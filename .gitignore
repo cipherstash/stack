@@ -124,3 +124,5 @@ languages/golang/encrypt/testdata/*.wasm
 languages/golang/encrypt/testdata/*.sha256
 # Raw migration harness reports, transcripts, credentials and workspace copies.
 .migration-harness-runs/
+# Capability-probe workspaces, left behind only if a job dies mid-proof.
+e2e/migration-harness/.migration-probe-*
