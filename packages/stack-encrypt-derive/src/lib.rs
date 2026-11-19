@@ -21,7 +21,6 @@
 //! use stack_encrypt::target::{DecryptSource, EncryptTarget};
 //! use stack_encrypt::{nonempty, Controlled, DecryptFrom, EncryptInto, Protected, StackCipher, StackCipherText};
 //! use stack_encrypt::sem::EqualityTerm;
-//! use stack_encrypt::kms::FakeDataKeySource;
 //!
 //! #[derive(EncryptTarget, DecryptSource)]
 //! #[stash(plaintext = String)]
@@ -33,7 +32,12 @@
 //! }
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let value = "alice@example.com".to_owned();
 //! // The output type selects a ciphertext and an equality term. The context
@@ -90,7 +94,6 @@
 //! use stack_encrypt::sem::EqualityTerm;
 //! use stack_encrypt::target::{Bind, DecryptSource, EncryptTarget, Scope};
 //! use stack_encrypt::{DecryptFrom, EncryptInto, Encrypted, StackCipher};
-//! use stack_encrypt::kms::FakeDataKeySource;
 //! use zeroize::Zeroize;
 //!
 //! #[derive(Zeroize)]
@@ -105,7 +108,12 @@
 //! }
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let user = User { tenant: 42, email: "ada@example.com".into() };
 //! // The tenant comes from the plaintext. The row ID comes from the caller.
@@ -227,7 +235,6 @@
 //!     StackCipher, nonempty,
 //! };
 //! use zeroize::Zeroize;
-//! use stack_encrypt::kms::FakeDataKeySource;
 //!
 //! /// A column that stores one sealed leaf as bytes.
 //! struct LeafBytes(Vec<u8>);
@@ -275,7 +282,12 @@
 //! }
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let value = "alice@example.com".to_owned();
 //! let context = nonempty!("users/email");

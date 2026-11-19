@@ -37,7 +37,6 @@
 //! field's index sends for the operator ([`Supports::Query`]).
 //!
 //! ```
-//! use stack_encrypt::kms::FakeDataKeySource;
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
 //! use stack_encrypt::target::{EncryptTarget, Scope};
 //! use stack_encrypt::{EncryptInto, Encrypted, StackCipher};
@@ -57,7 +56,12 @@
 //! }
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let user = User { email: "ada@example.com".into(), age: 36 };
 //! let stored: EncryptedUser = user.encrypt_into_with_context(&keyset, Scope::new(42u64)).await?;

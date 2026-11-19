@@ -569,6 +569,13 @@ different data-key source entirely:"#
 /// # }
 /// ```
 ///
+/// This example passes `FakeDataKeySource`, the in-memory source for tests.
+/// Do not use it for real data.
+#[cfg_attr(
+    feature = "http",
+    doc = "Without `.kms(..)`, [`init`](StackCipherBuilder::init) uses ZeroKMS."
+)]
+///
 /// Construction is async because it resolves the client's default keyset
 /// and loads its index key — one ZeroKMS round-trip, paid once, so a
 /// misconfigured client fails here rather than on first use.
@@ -673,10 +680,12 @@ impl<K: IndexKeySource> StackCipher<K> {
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use stack_encrypt::{nonempty, StackCipher};
-    /// use stack_encrypt::kms::{FakeDataKeySource, IdentifiedBy};
+    /// use stack_encrypt::kms::IdentifiedBy;
     ///
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
     /// let cipher = StackCipher::builder()
-    ///     .kms(FakeDataKeySource::new())
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
     ///     .init()
     ///     .await?;
     /// let tenant = cipher.keyset(IdentifiedBy::Name("acme".to_string().into())).await?;

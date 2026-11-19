@@ -39,11 +39,15 @@ impl Plan<(), ()> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::sem::EqualityTerm;
     /// use stack_encrypt::{op, Equality, Ore, Plan, StackCipher, StackCipherText};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     ///
     /// // With its context and indexes.
     /// let age_plan = Plan::value::<u32>().context("users/age").with((Equality, Ore)).build()?;
@@ -140,11 +144,15 @@ impl<S> ValueStart<S> {
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use serde_json::json;
     /// use stack_encrypt::json::{JsonDocument, JsonOptions};
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::target::Json;
     /// use stack_encrypt::{op, Plan, StackCipher};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     ///
     /// // The JSON index, ordering the leaves at `$.age`.
     /// let options = JsonOptions::default().ordering(["$.age"])?;

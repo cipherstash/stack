@@ -12,10 +12,14 @@
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
-//! use stack_encrypt::kms::FakeDataKeySource;
 //! use stack_encrypt::{op, Equality, Match, Ore, Plan, StackCipher};
 //!
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let email_plan = Plan::context("users/email")
 //!     .with::<String, _>((Equality, Match))
 //!     .build()?;

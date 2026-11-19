@@ -1109,13 +1109,17 @@ impl Plan {
     ///
     /// ```
     /// use stack_encrypt::dynamic::{record, Planned, ValueFrame};
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::target::Scope;
     /// use stack_encrypt::{AsProtectedRef, EncryptInto, Pending, StackCipher, StackCipherText};
     /// use vitaminc_aead_frame::serde::to_vec;
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let keyset = cipher.default_keyset();
     /// let declaration = to_vec(&serde_json::json!({
     ///     "email": { "context": ["users", "email"], "outputs": ["c"], "type": "string" },
@@ -1124,7 +1128,7 @@ impl Plan {
     /// let values = ValueFrame::from_bytes(
     ///     to_vec(&serde_json::json!({"email": "ada@example.com"}))?.as_protected_ref(),
     /// )?;
-    /// let call: Pending<'_, StackCipherText, FakeDataKeySource> =
+    /// let call: Pending<'_, StackCipherText, _> =
     ///     Planned::new(&plan, values).encrypt_into_with_context(&keyset, Scope::new(42u64));
     /// // The field's context is its label, then the scope.
     /// # #[cfg(feature = "testing")]
@@ -1756,11 +1760,12 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// ```
 /// use stack_encrypt::dynamic::{record, ValueFrame};
 /// use stack_encrypt::{AsProtectedRef, StackCipher};
-/// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
 /// let cipher = StackCipher::builder()
-///     .kms(FakeDataKeySource::new())
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
 ///     .init()
 ///     .await?;
 /// let keyset = cipher.default_keyset();
