@@ -122,3 +122,5 @@ languages/golang/auth/wasm/*.sha256
 # wasm:guest:build:deterministic`; under testdata so no binary embeds it.
 languages/golang/encrypt/testdata/*.wasm
 languages/golang/encrypt/testdata/*.sha256
+# Raw migration harness reports, transcripts, credentials and workspace copies.
+.migration-harness-runs/

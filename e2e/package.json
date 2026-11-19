@@ -8,7 +8,12 @@
     "test:e2e": "vitest run",
     "test:protect-compat": "vitest run --config vitest.protect-compat.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test:protect-crossover": "vitest run --config vitest.protect-crossover.config.ts"
+    "test:protect-crossover": "vitest run --config vitest.protect-crossover.config.ts",
+    "harness:run": "node migration-harness/run/cli.mjs",
+    "harness:selftest": "vitest run --config vitest.harness.config.ts",
+    "harness:typecheck": "tsc --noEmit -p migration-harness/tsconfig.json",
+    "harness:isolation-probe": "node migration-harness/isolation/probe.mjs",
+    "harness:store-probe": "node migration-harness/run/store-probe.mjs"
   },
   "dependencies": {
     "@cipherstash/stack": "workspace:*",
