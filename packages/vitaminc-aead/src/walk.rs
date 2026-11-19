@@ -160,90 +160,26 @@ fn sealed_any<'n, L: 'n>(mut nodes: impl Iterator<Item = &'n Node<L>>) -> bool {
 /// [`DecryptError::Sink`] for a refused value. Earlier sink writes are not
 /// rolled back when a later node fails.
 pub fn walk<S: Sink>(node: Node<Opened>, sink: S) -> Result<S::Ok, DecryptError<S::Error>> {
-    walk_with(node, sink, leaf::read_leaf_item)
-}
-
-/// Feed an opened tree to a sink, as [`walk`] does, but read a date or
-/// timestamp sealed by vitaminc 0.9 or earlier outside today's range.
-///
-/// The range of dates and timestamps narrowed to jiff's in vitaminc 0.10:
-/// dates -009999-01-01 to 9999-12-31, and instants
-/// -009999-01-02T01:59:59Z to 9999-12-30T22:00:00.999999999Z. Earlier
-/// versions sealed chrono's wider range, including the common "no end"
-/// value 9999-12-31T23:59:59Z. [`walk`] and every `decrypt` function refuse
-/// such a leaf as [`DecryptError::Malformed`], and with it the whole value
-/// it is in.
-///
-/// This walk gives the sink such a leaf as its plain count instead (see
-/// [`read_leaf_item_legacy_range`](crate::leaf::read_leaf_item_legacy_range)):
-/// days since 1970-01-01 as an `i32`, or nanoseconds since the epoch as an
-/// `i128`, with no logical type. So an `i32` or `i128` target, or a
-/// [`FrameWriter`](crate::frame::FrameWriter), takes it, and a `jiff`
-/// target refuses it. Use it to migrate stored values: open them with
-/// this, choose a value inside the range, and seal that again. Everything
-/// else is checked exactly as [`walk`] checks it.
-///
-/// ```
-/// use vitaminc_aead::seal::{Node, Opened};
-/// use vitaminc_aead::typed::Decrypt;
-/// use vitaminc_aead::{tags, walk, walk_legacy_range, CipherText, DecryptError};
-/// use vitaminc_protected::Protected;
-///
-/// // An opened leaf holding 9999-12-31T23:59:59Z, as vitaminc 0.9 sealed it.
-/// let opened = || {
-///     let mut leaf = vec![tags::TIMESTAMP];
-///     leaf.extend_from_slice(&253_402_300_799i64.to_le_bytes());
-///     leaf.extend_from_slice(&0u32.to_le_bytes());
-///     let node: Node<Opened> = CipherText::Single(Protected::new(leaf));
-///     node
-/// };
-///
-/// assert!(matches!(
-///     walk(opened(), <i128 as Decrypt>::sink()),
-///     Err(DecryptError::Malformed)
-/// ));
-/// let nanos = walk_legacy_range(opened(), <i128 as Decrypt>::sink())?;
-/// assert_eq!(nanos, 253_402_300_799_000_000_000);
-/// # Ok::<(), DecryptError<vitaminc_aead::typed::DecodeError>>(())
-/// ```
-///
-/// # Errors
-///
-/// As [`walk`].
-pub fn walk_legacy_range<S: Sink>(
-    node: Node<Opened>,
-    sink: S,
-) -> Result<S::Ok, DecryptError<S::Error>> {
-    walk_with(node, sink, leaf::read_leaf_item_legacy_range)
-}
-
-/// How a walk reads each opened leaf.
-type ReadLeaf = for<'b> fn(&'b [u8]) -> Result<Item<'b>, leaf::ScalarError>;
-
-fn walk_with<S: Sink>(
-    node: Node<Opened>,
-    sink: S,
-    read: ReadLeaf,
-) -> Result<S::Ok, DecryptError<S::Error>> {
     let empty_marker = |plaintext: Opened| match plaintext.risky_ref().is_empty() {
         true => Ok(()),
         false => Err(DecryptError::Auth),
     };
     match node {
         CipherText::Single(plaintext) => {
-            let item = read(plaintext.risky_ref()).map_err(|_| DecryptError::Malformed)?;
+            let item =
+                leaf::read_leaf_item(plaintext.risky_ref()).map_err(|_| DecryptError::Malformed)?;
             Ok(match item {
                 Item::Scalar(ty, v) => sink.scalar(ty, v)?,
                 Item::TypedNull(ty) => sink.typed_null(ty)?,
             })
             // `plaintext` drops and wipes here.
         }
-        CipherText::Sequence(items) => walk_seq(items, sink, read),
+        CipherText::Sequence(items) => walk_seq(items, sink),
         CipherText::EmptySequence(plaintext) => {
             empty_marker(plaintext)?;
             Ok(sink.seq(Some(0))?.end()?)
         }
-        CipherText::Map(entries) => walk_map(entries, sink, read),
+        CipherText::Map(entries) => walk_map(entries, sink),
         CipherText::EmptyMap(plaintext) => {
             empty_marker(plaintext)?;
             Ok(sink.map(Some(0))?.end()?)
@@ -255,17 +191,13 @@ fn walk_with<S: Sink>(
     }
 }
 
-fn walk_seq<S: Sink>(
-    items: Vec<Node<Opened>>,
-    sink: S,
-    read: ReadLeaf,
-) -> Result<S::Ok, DecryptError<S::Error>> {
+fn walk_seq<S: Sink>(items: Vec<Node<Opened>>, sink: S) -> Result<S::Ok, DecryptError<S::Error>> {
     if !sealed_any(items.iter()) {
         return Err(DecryptError::Malformed);
     }
     let mut seq = sink.seq(Some(items.len()))?;
     for item in items {
-        walk_with(item, seq.element()?, read)?;
+        walk(item, seq.element()?)?;
     }
     Ok(seq.end()?)
 }
@@ -273,7 +205,6 @@ fn walk_seq<S: Sink>(
 fn walk_map<S: Sink>(
     entries: Vec<(String, Node<Opened>)>,
     sink: S,
-    read: ReadLeaf,
 ) -> Result<S::Ok, DecryptError<S::Error>> {
     let mut seen = HashSet::with_capacity(entries.len());
     if !entries.iter().all(|(k, _)| seen.insert(k.as_str()))
@@ -283,7 +214,7 @@ fn walk_map<S: Sink>(
     }
     let mut map = sink.map(Some(entries.len()))?;
     for (key, value) in entries {
-        walk_with(value, map.entry(&key)?, read)?;
+        walk(value, map.entry(&key)?)?;
     }
     Ok(map.end()?)
 }
@@ -480,42 +411,4 @@ mod tests {
     }
 
     use crate::frame::PassthroughFrame;
-
-    /// A value vitaminc 0.9 sealed past today's range fails the whole
-    /// walk, and the legacy walk reads it as its count, beside the value's
-    /// other leaves.
-    #[test]
-    fn the_legacy_walk_reads_a_value_past_the_range() {
-        let leaf = |bytes: Vec<u8>| CipherText::Single(Protected::new(bytes));
-        // 9999-12-31T23:59:59Z, beside an ordinary leaf, in a sequence.
-        let node = || -> Node<Opened> {
-            let mut end_of_time = vec![crate::tags::TIMESTAMP];
-            end_of_time.extend_from_slice(&253_402_300_799i64.to_le_bytes());
-            end_of_time.extend_from_slice(&0u32.to_le_bytes());
-            CipherText::Map(vec![
-                ("valid_to".into(), leaf(end_of_time)),
-                (
-                    "ids".into(),
-                    CipherText::Sequence(vec![leaf(vec![crate::tags::INT8, 7])]),
-                ),
-            ])
-        };
-        assert!(matches!(
-            walk(node(), Record(&mut Vec::new())),
-            Err(DecryptError::Malformed)
-        ));
-        let mut log = Vec::new();
-        walk_legacy_range(node(), Record(&mut log)).expect("reads");
-        for read in [
-            Event::Scalar(None, Owned::Int(Int::I128(253_402_300_799_000_000_000))),
-            Event::Scalar(None, Owned::Int(Int::I8(7))),
-        ] {
-            assert!(log.contains(&read), "{read:?} in {log:?}");
-        }
-        // Everything else is checked as in `walk`.
-        assert!(matches!(
-            walk_legacy_range(leaf(vec![0xFF]), Record(&mut Vec::new())),
-            Err(DecryptError::Malformed)
-        ));
-    }
 }
