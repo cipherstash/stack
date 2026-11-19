@@ -14,7 +14,7 @@
 //! anywhere, and CI builds it either way.
 
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
-use stack_encrypt::kms::{EnvKeyProvider, StackKmsBuilder};
+use stack_encrypt::kms::EnvKeyProvider;
 use stack_encrypt::StackCipher;
 
 #[tokio::main(flavor = "current_thread")]
@@ -80,15 +80,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- A custom authentication strategy -----------------------------------
     //
-    // When the built-in strategies do not fit — tokens from your own broker, a
-    // sidecar, a test double — build the `StackKms` yourself and hand it to
-    // the builder. Any `AuthStrategy` works; `AuthStrategyFn` wraps a closure.
+    // Use `auth_strategy` when the detected credentials do not fit. For
+    // example, your tokens come from your own broker or from a sidecar. Any
+    // `AuthStrategy` works: `AccessKeyStrategy`, `OidcFederationStrategy`,
+    // `DeviceSessionStrategy`, or `AuthStrategyFn`. This example uses
+    // `AuthStrategyFn`, with a closure.
     //
-    // The same seam takes `AccessKeyStrategy`, `DeviceSessionStrategy`, or an
-    // OIDC federation strategy when you want to name one explicitly rather
-    // than let `auto()` detect it.
-    // This section needs a real token: building the cipher resolves the keyset
-    // and loads its index key, which is a round-trip that must authenticate.
+    // The strategy does not choose the client key. Name the source of the
+    // client key with `key_provider`. `EnvKeyProvider` reads `CS_CLIENT_ID`
+    // and `CS_CLIENT_KEY`.
+    //
+    // This section needs a real token. `init` loads the index key of the
+    // default keyset, and ZeroKMS must accept the token on that request.
     //
     // Note what the token is held in: `SecretToken` wraps it the moment it is
     // read, and that wrapper — not a bare `String` — is what the closure
@@ -106,12 +109,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         async move { Ok::<_, AuthError>(ServiceToken::new(token)) }
     });
 
-    let kms = StackKmsBuilder::new(strategy)
-        .with_key_provider(EnvKeyProvider)
-        .build()
+    let _cipher = StackCipher::builder()
+        .auth_strategy(strategy)
+        .key_provider(EnvKeyProvider)
+        .init()
         .await?;
-
-    let _cipher = StackCipher::builder().kms(kms).init().await?;
     println!("built a second cipher over a custom auth strategy");
 
     Ok(())

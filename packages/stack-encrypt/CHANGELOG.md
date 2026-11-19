@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`StackCipherBuilder::auth_strategy` and `key_provider`** (#1700).
+  `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init()`
+  builds the ZeroKMS client from an auth strategy and a client key provider
+  that you choose. Before, a caller who wanted another auth strategy had to
+  build the `StackKms` by hand. `init()` and `kms(..)` are unchanged.
+  - `auth_strategy` takes any strategy `StackKmsBuilder::new` takes: an
+    `OidcFederationStrategy`, an `AccessKeyStrategy`, or an `AuthStrategyFn`.
+  - `key_provider` is required after `auth_strategy`. The builder then reads
+    the client key only from that provider. For example, `EnvKeyProvider`
+    reads `CS_CLIENT_ID` and `CS_CLIENT_KEY`, and `ProfileKeyProvider` reads
+    the key the CLI saved.
+  - `init` loads the default keyset's index key, so call `init` where the
+    strategy can return a token. With an OIDC provider that returns the
+    current request's JWT, that is while your program handles a request.
+  - The builder state is `WithAuthStrategy<C, P>`, behind the `http`
+    feature.
+  - Needs stack-auth 0.44.0 and stack-kms 0.2.0.
 - **`json::JsonPlaintext`, a JSON document as one ciphertext** (#1636).
   `JsonPlaintext` holds a `serde_json::Value` and wipes it when it is
   dropped. Build one with `JsonPlaintext::from(value)` or

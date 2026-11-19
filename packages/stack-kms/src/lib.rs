@@ -139,6 +139,8 @@ pub use key_source::FakeDataKeySource;
 pub use key_source::{DataKeySource, IndexKeySource};
 
 // Key providers
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
+pub use key_provider::ProfileKeyProvider;
 pub use key_provider::{
     EnvKeyProvider, FallbackKeyProvider, KeyProvider, KeyProviderError, StaticKeyProvider,
 };
