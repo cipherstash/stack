@@ -22,6 +22,24 @@ Use the five default triage labels. See `docs/agents/triage-labels.md`.
 Use a multi-context layout rooted at `CONTEXT-MAP.md`, with package-specific
 `CONTEXT.md` files added as needed. See `docs/agents/domain.md`.
 
+### Plain language
+
+`.claude/skills/plain-language` is the plain-language skill from
+https://github.com/auxesis/plain-language-skill, copied at commit `b001fa61`.
+Load it when you write or review prose for a person: a document, a plan, a pull
+request description, a commit message, or a code comment. It is an internal
+skill for agents working on this repository. It lives in `.claude/skills/`, not
+`skills/`, so it does not ship to customers.
+
+The copy holds the upstream `skills/plain-language` folder plus its `LICENSE`
+and `NOTICE`. The upstream hooks that check every reply were not copied. To
+update it, copy the same files from a newer commit and change the commit above.
+The checker runs without any packages beyond Python's standard library:
+
+```bash
+python3 .claude/skills/plain-language/scripts/check.py path/to/file.md
+```
+
 ## Before you finish
 
 Two rules from `AGENTS.md` are the ones most often missed. They are repeated here
