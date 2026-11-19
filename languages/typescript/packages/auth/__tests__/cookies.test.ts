@@ -175,3 +175,119 @@ describe('cookieStore.save', () => {
     expect(setCookie).toContain('Secure')
   })
 })
+
+describe('cookieStore with a jar', () => {
+  function recordingJar(initial: Record<string, string> = {}) {
+    const cookies = { ...initial }
+    const sets: Array<{
+      name: string
+      value: string
+      attributes: Record<string, unknown>
+    }> = []
+    return {
+      sets,
+      jar: {
+        get: (name: string) => cookies[name],
+        set: (
+          name: string,
+          value: string,
+          attributes: Record<string, unknown>,
+        ) => {
+          cookies[name] = value
+          sets.push({ name, value, attributes })
+        },
+      },
+    }
+  }
+
+  it('round-trips through the jar instead of HTTP headers', async () => {
+    const { jar, sets } = recordingJar()
+    const store = cookieStore({ jar })
+    const json = tokenJson()
+
+    await store.save(json)
+    expect(sets).toHaveLength(1)
+    expect(sets[0].name).toBe('cs_token')
+    // The value handed to the jar is already cookie-safe (base64url).
+    expect(sets[0].value).toMatch(/^[A-Za-z0-9_-]+$/)
+    expect(await store.load()).toBe(json)
+  })
+
+  it('hands the jar the same attributes the header path serialises', async () => {
+    const { jar, sets } = recordingJar()
+    const store = cookieStore({
+      jar,
+      name: 'custom',
+      domain: 'example.com',
+      path: '/app',
+      secure: false,
+      sameSite: 'Strict',
+      expirySafetyMarginSeconds: 60,
+    })
+    await store.save(
+      tokenJson({ expires_at: Math.floor(Date.now() / 1000) + 600 }),
+    )
+
+    expect(sets[0].name).toBe('custom')
+    expect(sets[0].attributes).toMatchObject({
+      domain: 'example.com',
+      path: '/app',
+      secure: false,
+      httpOnly: true,
+      sameSite: 'Strict',
+    })
+    const maxAge = sets[0].attributes.maxAge as number
+    expect(maxAge).toBeGreaterThan(530)
+    expect(maxAge).toBeLessThanOrEqual(540)
+  })
+
+  it('leaves out domain and maxAge when there is nothing to set', async () => {
+    const { jar, sets } = recordingJar()
+    await cookieStore({ jar }).save('not-json')
+    expect(sets[0].attributes).toEqual({
+      path: '/',
+      secure: true,
+      httpOnly: true,
+      sameSite: 'Lax',
+    })
+  })
+
+  it('awaits an async jar', async () => {
+    const sets: string[] = []
+    const store = cookieStore({
+      jar: {
+        get: async () => undefined,
+        set: async (name: string) => {
+          await Promise.resolve()
+          sets.push(name)
+        },
+      },
+    })
+    await store.save(tokenJson())
+    expect(sets).toEqual(['cs_token'])
+    expect(await store.load()).toBeNull()
+  })
+
+  it('ignores a corrupt value from the jar (returns null)', async () => {
+    const { jar } = recordingJar({ cs_token: '!!!not-base64url' })
+    expect(await cookieStore({ jar }).load()).toBeNull()
+  })
+
+  it('rejects a jar together with request/responseHeaders, and neither', () => {
+    const { jar } = recordingJar()
+    expect(() =>
+      cookieStore({
+        jar,
+        request: makeRequest(),
+        responseHeaders: new Headers(),
+        // biome-ignore lint/suspicious/noExplicitAny: deliberately off-type
+      } as any),
+    ).toThrow(/not both, and not neither/)
+    // biome-ignore lint/suspicious/noExplicitAny: deliberately off-type
+    expect(() => cookieStore({} as any)).toThrow(/not both, and not neither/)
+    expect(() =>
+      // biome-ignore lint/suspicious/noExplicitAny: deliberately off-type
+      cookieStore({ request: makeRequest() } as any),
+    ).toThrow(/not both, and not neither/)
+  })
+})

@@ -16,6 +16,7 @@
 
 import { decodeBase64Url, encodeBase64Url } from "./base64url.mjs";
 import { cookieStore } from "./cookies.mjs";
+import { warmedStrategy } from "./warmed.mjs";
 import { OidcFederationStrategy } from "./wasm-inline.mjs";
 
 /** Request header carrying the warmed token from middleware to the render. */
@@ -28,8 +29,9 @@ export function csTokenCookieName(workspaceId) {
 
 /**
  * @typedef {object} CsFederateOptions
- * @property {Request} request                              Incoming request (reads the token cookie)
- * @property {Headers} responseHeaders                      Outgoing headers (the refreshed cookie is appended here)
+ * @property {Request} [request]                            Incoming request (reads the token cookie) — with `responseHeaders`
+ * @property {Headers} [responseHeaders]                    Outgoing headers (the refreshed cookie is appended here) — with `request`
+ * @property {import("./cookies.d.ts").CookieJar} [jar]     A framework's own cookie API, instead of `request` / `responseHeaders`
  * @property {string} workspaceCrn                          `crn:<region>:<workspace-id>`
  * @property {() => string | Promise<string>} getJwt        The OIDC JWT of this request's user (Clerk, …); asked on every call
  * @property {string} [baseUrl]                             Pin federation to a CTS host / mock (overrides region discovery)
@@ -50,6 +52,7 @@ export async function csFederate(options) {
   const {
     request,
     responseHeaders,
+    jar,
     workspaceCrn,
     getJwt,
     baseUrl,
@@ -63,9 +66,13 @@ export async function csFederate(options) {
   // back to the cookieStore default (`cs_token`), collapsing every workspace's
   // token into one cookie and causing cross-workspace cache collisions.
   const workspaceId = workspaceCrn.split(":").at(-1);
+  // `jar` and `request`/`responseHeaders` are alternatives. All three go
+  // through as given so `cookieStore` — the one place that knows the rule —
+  // rejects both-or-neither.
   const store = cookieStore({
     request,
     responseHeaders,
+    jar,
     name:
       cookieName ?? (workspaceId ? csTokenCookieName(workspaceId) : undefined),
     secure,
@@ -159,10 +166,7 @@ export function csSanitizeHeaders(source, options) {
  */
 
 /**
- * @typedef {object} WarmedAuthStrategy
- * @property {false} requiresFederation
- * @property {() => Promise<import("./wasm-inline.d.ts").GetTokenResult>} getToken
- * @property {() => void} free
+ * @typedef {import("./warmed.d.ts").WarmedAuthStrategy} WarmedAuthStrategy
  */
 
 /**
@@ -215,15 +219,9 @@ export function csAuthHeader(headers, options) {
   // malformed/spoofed payload must be rejected here rather than surfacing as
   // undefined `subject`/`workspaceId`/`issuer`/`services` fields downstream.
   if (!isTokenResult(warmed)) return null;
-  // Mirror a real strategy's Result-returning `getToken()` so this warmed
-  // strategy stays a drop-in wherever an `OidcFederationStrategy` /
-  // `AccessKeyStrategy` is consumed (e.g. protect-ffi). The warmed token is
-  // already validated, so it's always a `{ data }` success.
-  return {
-    requiresFederation: false,
-    getToken: async () => ({ data: warmed }),
-    free() {},
-  };
+  // The warmed token is validated, so hand it to the shared no-federation
+  // strategy shape (`warmed.mjs`) — the same one the `/start` adapter builds.
+  return warmedStrategy(warmed);
 }
 
 /**

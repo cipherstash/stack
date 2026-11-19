@@ -9,41 +9,23 @@ import {
   decodeTokenHeader,
   encodeTokenHeader,
 } from '../next.mjs'
+import {
+  create,
+  free,
+  getToken,
+  installFakeStrategy,
+  tokenResult,
+  WORKSPACE_CRN,
+  WORKSPACE_ID,
+} from './helpers/fake-federation'
 
-// Mock the wasm strategy so these tests exercise the adapter's OWN wiring
-// (cookie persistence, header encode/decode, warmed-token reads) deterministically
-// and offline. The real federate-or-reuse + cookie round-trip against a CTS
-// server is covered by `oidc-cookie-roundtrip.test.ts`. `vi.hoisted` lets the
-// hoisted `vi.mock` factory reference these fns without a top-level await.
-const { getToken, free, create } = vi.hoisted(() => ({
-  getToken: vi.fn(),
-  free: vi.fn(),
-  create: vi.fn(),
-}))
-
-vi.mock('../wasm-inline.mjs', () => ({
-  OidcFederationStrategy: {
-    create: (
-      crn: string,
-      getJwt: () => unknown,
-      options: { store?: { load(): unknown; save(json: string): unknown } },
-    ) => create(crn, getJwt, options),
-  },
-}))
-
-const WORKSPACE_ID = 'ZVATKW3VHMFG27DY'
-const WORKSPACE_CRN = `crn:ap-southeast-2.aws:${WORKSPACE_ID}`
-
-function tokenResult(overrides: Record<string, unknown> = {}) {
-  return {
-    token: 'header.payload.signature',
-    subject: `CS|${WORKSPACE_ID}`,
-    workspaceId: WORKSPACE_ID,
-    issuer: 'https://cts.example.com',
-    services: { zerokms: 'https://zerokms.example.com' },
-    ...overrides,
-  }
-}
+// The wasm strategy is replaced by the shared fake (see
+// `helpers/fake-federation.ts`), so these tests exercise the adapter's OWN
+// wiring — cookie persistence, header encode/decode, warmed-token reads —
+// deterministically and offline.
+vi.mock('../wasm-inline.mjs', async () =>
+  (await import('./helpers/fake-federation')).wasmInlineMock(),
+)
 
 function requestWith(cookie?: string): Request {
   return new Request('https://example.com/', {
@@ -67,33 +49,7 @@ function requestWithForgedHeader(
   })
 }
 
-beforeEach(() => {
-  getToken.mockReset()
-  free.mockReset()
-  create.mockReset()
-  // Default fake strategy: writes the token to the store (so cookie wiring is
-  // exercised) and returns a Result-wrapped TokenResult. Both `create()` and
-  // `getToken()` return `@byteslice/result` Results (`{ data }` on success),
-  // matching the real wasm surface the adapter unwraps.
-  create.mockImplementation(
-    (
-      _crn: string,
-      _getJwt: () => unknown,
-      options: { store?: { save(json: string): unknown } },
-    ) => {
-      getToken.mockImplementation(async () => {
-        await options.store?.save(
-          JSON.stringify({
-            access_token: 'header.payload.signature',
-            expires_at: Math.floor(Date.now() / 1000) + 3600,
-          }),
-        )
-        return { data: tokenResult() }
-      })
-      return { data: { getToken, free } }
-    },
-  )
-})
+beforeEach(installFakeStrategy)
 
 describe('csTokenCookieName', () => {
   it('is per-workspace', () => {
@@ -217,6 +173,59 @@ describe('csFederate', () => {
       }),
     ).rejects.toThrow('bad crn')
     expect(free).not.toHaveBeenCalled()
+  })
+})
+
+describe('csFederate with a cookie jar', () => {
+  it('reads and writes the token cookie through the jar, with no request or headers', async () => {
+    // A framework that owns the response (TanStack Start, Next's `cookies()`)
+    // is given its own cookie API to write through, so it serialises and
+    // merges the cookie itself.
+    const cookieName = csTokenCookieName(WORKSPACE_ID)
+    const written: Array<{ name: string; value: string; attributes: object }> =
+      []
+    const jar = {
+      get: vi.fn((_name: string) => undefined),
+      set: (name: string, value: string, attributes: object) => {
+        written.push({ name, value, attributes })
+      },
+    }
+
+    const result = await csFederate({
+      jar,
+      workspaceCrn: WORKSPACE_CRN,
+      getJwt: () => 'jwt',
+      secure: false,
+    })
+
+    expect(result.workspaceId).toBe(WORKSPACE_ID)
+    // Same per-workspace default name as the header path.
+    expect(written).toHaveLength(1)
+    expect(written[0].name).toBe(cookieName)
+    expect(written[0].attributes).toMatchObject({
+      path: '/',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax',
+      maxAge: expect.any(Number),
+    })
+    // The strategy's store reads through the same jar.
+    const store = create.mock.calls[0][2].store
+    await store.load()
+    expect(jar.get).toHaveBeenCalledWith(cookieName)
+  })
+
+  it('rejects a jar together with request/responseHeaders (which would be read?)', async () => {
+    await expect(
+      csFederate({
+        jar: { get: () => undefined, set: () => {} },
+        request: requestWith(),
+        responseHeaders: new Headers(),
+        workspaceCrn: WORKSPACE_CRN,
+        getJwt: () => 'jwt',
+        // biome-ignore lint/suspicious/noExplicitAny: deliberately off-type
+      } as any),
+    ).rejects.toThrow(/either `request` and `responseHeaders`, or `jar`/)
   })
 })
 
