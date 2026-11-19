@@ -1023,13 +1023,8 @@ back there. The binding refuses a `Date` outside it.
 > range of `Date` and `Timestamp` narrows to jiff's in every binding:
 > dates -009999-01-01 to 9999-12-31, instants -009999-01-02T01:59:59Z to
 > 9999-12-30T22:00:00.999999999Z. A value one binding seals, every binding
-> opens into its native type. A leaf sealed outside that range under the
-> old one now authenticates and is refused as malformed. That includes
-> the common "no end" value 9999-12-31T23:59:59Z, which is past jiff's
-> last instant. To migrate such values, `walk_legacy_range` reads a date
-> or timestamp in chrono's old range as its plain count (days as an
-> `i32`, nanoseconds as an `i128`), so the caller can choose a value in
-> range and seal it again.
+> opens into its native type. A leaf sealed past those years under the old
+> range now authenticates and is refused as malformed.
 
 JavaScript has no type of its own for a calendar date, a timestamp finer
 than a millisecond, a decimal or a uuid. The binding represents each as an
