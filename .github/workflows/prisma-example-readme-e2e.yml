@@ -82,7 +82,7 @@ on:
 jobs:
   walkthrough:
     name: Run README walkthrough
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
 
     # Skip cleanly on fork PRs where secrets aren't available. The
