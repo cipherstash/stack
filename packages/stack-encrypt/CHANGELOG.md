@@ -176,6 +176,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the result as before. `KeysetCipher::encrypt_tree` plans and seals in
   one call.
 
+- **Stack Encrypt now uses vitaminc 0.10, clww-ore 0.8 and ore-rs 0.12.**
+  The two order scheme releases only move to vitaminc 0.10: no order term
+  changes. vitaminc 0.10 is a breaking release, and three of its changes
+  reach callers of this crate.
+  - **The `chrono` feature is now `jiff`.** vitaminc 0.10 takes dates and
+    timestamps from the `jiff` crate, because `chrono` is marked
+    unmaintained (RUSTSEC-2026-0543). To upgrade:
+    - Enable the `jiff` feature in place of `chrono`.
+    - Convert a `value::Date` to and from `jiff::civil::Date`, in place
+      of `chrono::NaiveDate`. Every jiff date converts.
+    - Convert a `value::Timestamp` to and from `jiff::Timestamp`, in
+      place of `chrono::DateTime<Utc>`. `Timestamp::try_from` refuses one
+      instant: jiff 1.0.0 can make an instant up to one second before its
+      own `Timestamp::MIN` when it parses text with a UTC offset, and that
+      instant has no encoding.
+  - **Dates and timestamps must be in years -9999 to 9999.** The range
+    was years -262143 to 262142. The new range is jiff's, and every
+    language's binding uses it, so a value one binding encrypts, every
+    binding can decrypt. The exact limits:
+    - dates from `-009999-01-01` to `9999-12-31`;
+    - timestamps from `-009999-01-02T01:59:59Z` to
+      `9999-12-30T22:00:00.999999999Z`.
+
+    Encrypting a date or timestamp outside the range is refused, and so is
+    building a `value::Date` or `value::Timestamp` outside it
+    (`RangeError::Date`, `RangeError::Timestamp`). The stored format is
+    unchanged: a value in range has the same ciphertext and the same terms
+    as before. A row stored earlier with a date or timestamp outside the
+    range still passes authentication, but no longer decrypts: its leaf
+    no longer reads, so it is refused as `Error::Aead`, the error a damaged
+    ciphertext gets. A clearer error needs a change in vitaminc, which
+    cipherstash/vitaminc#630 tracks. PostgreSQL's `date` and `timestamptz`
+    allow years after 9999, so check before you upgrade if you might have
+    stored one.
+  - **`RangeError::LeapSecond` is renamed `RangeError::Nanoseconds`.**
+    jiff has no leap seconds, so the error now says only what is wrong:
+    `Timestamp::new` was given nanoseconds of one second or more.
+
 - **`target::ExpectedContext` is no longer part of the API** (#1488). It
   is the check that a `#[stash(context_field)]` record runs on decrypt:
   the stored context must equal the one the caller expects, if the caller

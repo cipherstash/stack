@@ -99,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`v4::plaintext::Date`, `Timestamp`, `Decimal` and `RangeError` are
   Stack Encrypt's** (`stack_encrypt::value`), re-exported at the same
   path: the engine orders them, which it can only do for types of its own.
-  Nothing a caller writes changes. The `chrono` and `rust_decimal`
+  Nothing a caller writes changes. The `jiff` and `rust_decimal`
   features now turn on Stack Encrypt's features of those names, and the
   crate no longer depends on `vitaminc-aead` directly.
 
@@ -172,13 +172,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `v4::plaintext::Date` (an `i32` of days since 1970-01-01),
   `v4::plaintext::Timestamp` (`i64` Unix seconds and `u32` nanoseconds,
   UTC) and `v4::plaintext::Decimal` (an `i128` mantissa and a `u8` scale).
-  Each is built range checked against vitaminc's ranges, refused with a
+  Each is built range checked against vitaminc's ranges (dates and
+  timestamps in years -9999 to 9999), refused with a
   `v4::plaintext::RangeError` that does not show the value, wiped on drop
-  (`Zeroize`, `ZeroizeOnDrop`), and not `Copy`: chrono's and
+  (`Zeroize`, `ZeroizeOnDrop`), and not `Copy`: jiff's and
   rust_decimal's types cannot be wiped, so the by-name dispatch could not
-  hold them. The `chrono` and `rust_decimal` features add conversions to
-  and from `NaiveDate`, `DateTime<Utc>` and rust_decimal's `Decimal`; a
-  leap second is refused. `NumericEq`'s `=` normalises the scale and
+  hold them. The `jiff` and `rust_decimal` features add conversions to
+  and from jiff's `civil::Date` and `Timestamp` and rust_decimal's
+  `Decimal`; an instant before jiff's own minimum is refused. `NumericEq`'s `=` normalises the scale and
   `TimestampEq`'s compares to the microsecond, truncating (never
   rounding) the nanoseconds below it. Their ordered types follow (see
   "The date, timestamp and numeric ordered types are producible").

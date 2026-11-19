@@ -582,7 +582,7 @@ timestamp and numeric types: `NumericEq` normalises the scale, so `1.5` and
 microsecond are equal; each still opens as it was written, a
 decimal with its scale and a `time.Time` with its nanoseconds, in UTC. A
 `time.Time` is sealed as its instant, whatever its location. A zero
-`encrypt.Date`, a date or instant outside years -262143 to 262142 and a
+`encrypt.Date`, a date or instant outside years -9999 to 9999 and a
 decimal with more than 28 digits after the point are refused with
 `ErrEncoding`. Ordered dates compare by day, timestamps by the truncated
 microsecond, and decimals by value (`1.5` ties `1.50`).

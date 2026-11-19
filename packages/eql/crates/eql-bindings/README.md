@@ -136,15 +136,16 @@ plaintext, or, for a date, a timestamp or a decimal, one of
 | `Timestamp`, `TimestampEq` | `v4::plaintext::Timestamp`: `i64` Unix seconds and `u32` nanoseconds, UTC, no leap seconds |
 | `Numeric`, `NumericEq` | `v4::plaintext::Decimal`: an `i128` mantissa (below 2^96) and a `u8` scale (at most 28) |
 
-A date, a timestamp and a decimal have no Rust standard type, and chrono's
+A date, a timestamp and a decimal have no Rust standard type, and jiff's
 and rust_decimal's types cannot be wiped, so these three are this crate's
-own. Each is built range checked (vitaminc's ranges, which are chrono's and
-rust_decimal's), refusing a value outside them with an error that does not
-show it, and wipes its integers when dropped. It is not `Copy`. The `chrono`
-and `rust_decimal` features convert to and from `NaiveDate`,
-`DateTime<Utc>` and rust_decimal's `Decimal`; the value converted to is the
-caller's, and is not wiped. Only a leap second, which a `DateTime<Utc>` can
-hold and a `Timestamp` cannot, is refused in a conversion. On `NumericEq`,
+own. Each is built range checked (vitaminc's ranges, which are jiff's and
+rust_decimal's: dates and timestamps in years -9999 to 9999), refusing a
+value outside them with an error that does not show it, and wipes its
+integers when dropped. It is not `Copy`. The `jiff` and `rust_decimal`
+features convert to and from jiff's `civil::Date` and `Timestamp` and
+rust_decimal's `Decimal`; the value converted to is the caller's, and is not
+wiped. Only an instant before jiff's own `Timestamp::MIN`, which jiff can
+make when it parses text with a UTC offset, is refused in a conversion. On `NumericEq`,
 `1.5 = 1.50` (the scale is normalised); on `TimestampEq`, an instant is truncated to the microsecond (the nanoseconds below it are dropped, not rounded), so two instants in the same microsecond are equal. Each opens as
 it was stored. Their ordered types order a date by its day, a timestamp by
 the microsecond (truncated, as on `TimestampEq`) and a decimal by value.

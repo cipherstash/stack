@@ -12,8 +12,8 @@ require (
 )
 
 require (
-	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261026122913-06568ba93bd9 // indirect
-	github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261026122913-06568ba93bd9 // indirect
+	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261119095843-f1fc9ae74882 // indirect
+	github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261119095843-f1fc9ae74882 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.3 // indirect

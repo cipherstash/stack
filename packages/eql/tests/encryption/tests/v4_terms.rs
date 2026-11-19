@@ -30,7 +30,6 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use chrono::{DateTime, NaiveDate, Utc};
 use eql_bindings::v4::plaintext::{
     Date as DateValue, Decimal as DecimalValue, Timestamp as TimestampValue,
 };
@@ -38,6 +37,7 @@ use eql_bindings::v4::{
     bigint, boolean, date, double, integer, numeric, real, smallint, text, timestamp,
 };
 use eql_bindings::Identifier;
+use jiff::civil::Date as CivilDate;
 use serde_json::Value;
 use stack_encrypt::{EncryptInto, NonEmpty};
 
@@ -46,11 +46,11 @@ fn column() -> NonEmpty<Identifier> {
 }
 
 fn date(text: &str) -> DateValue {
-    DateValue::from(NaiveDate::from_str(text).unwrap())
+    DateValue::from(text.parse::<CivilDate>().unwrap())
 }
 
 fn timestamp(text: &str) -> TimestampValue {
-    let instant: DateTime<Utc> = DateTime::parse_from_rfc3339(text).unwrap().to_utc();
+    let instant: jiff::Timestamp = text.parse().unwrap();
     TimestampValue::try_from(instant).unwrap()
 }
 

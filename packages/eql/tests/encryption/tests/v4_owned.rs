@@ -19,7 +19,6 @@ mod common;
 
 use std::str::FromStr;
 
-use chrono::{DateTime, NaiveDate, Utc};
 use eql_bindings::v4::plaintext::{
     Date as DateValue, Decimal as DecimalValue, Timestamp as TimestampValue,
 };
@@ -27,6 +26,7 @@ use eql_bindings::v4::{
     bigint, boolean, date, double, integer, numeric, real, smallint, text, timestamp,
 };
 use eql_bindings::Identifier;
+use jiff::civil::Date as CivilDate;
 use serde::Serialize;
 use stack_encrypt::sem::OreBlockTerm;
 use stack_encrypt::{DecryptFrom, EncryptInto, NonEmpty};
@@ -75,11 +75,11 @@ fn assert_same_terms<T: Serialize>(owned: &T, structural: &T, name: &str) {
 }
 
 fn date(text: &str) -> DateValue {
-    DateValue::from(NaiveDate::from_str(text).unwrap())
+    DateValue::from(text.parse::<CivilDate>().unwrap())
 }
 
 fn timestamp(text: &str) -> TimestampValue {
-    let instant: DateTime<Utc> = DateTime::parse_from_rfc3339(text).unwrap().to_utc();
+    let instant: jiff::Timestamp = text.parse().unwrap();
     TimestampValue::try_from(instant).unwrap()
 }
 
@@ -89,7 +89,7 @@ fn decimal(text: &str) -> DecimalValue {
 
 /// A plaintext as a value that can be compared. The date, timestamp, and
 /// decimal plaintexts do not implement `PartialEq`. The test compares them as
-/// the chrono and rust_decimal values they convert to.
+/// the jiff and rust_decimal values they convert to.
 trait Seen {
     type View: PartialEq + std::fmt::Debug;
     fn view(&self) -> Self::View;
@@ -112,15 +112,15 @@ impl<T: Seen> Seen for Option<T> {
     }
 }
 impl Seen for DateValue {
-    type View = NaiveDate;
-    fn view(&self) -> NaiveDate {
-        NaiveDate::from(self)
+    type View = CivilDate;
+    fn view(&self) -> CivilDate {
+        CivilDate::from(self)
     }
 }
 impl Seen for TimestampValue {
-    type View = DateTime<Utc>;
-    fn view(&self) -> DateTime<Utc> {
-        DateTime::<Utc>::from(self)
+    type View = jiff::Timestamp;
+    fn view(&self) -> jiff::Timestamp {
+        jiff::Timestamp::from(self)
     }
 }
 impl Seen for DecimalValue {

@@ -7,8 +7,8 @@
 //! their equality and order terms treat a decimal's scale and a
 //! timestamp's nanoseconds.
 //!
-//! With the `chrono` and `rust_decimal` features each converts to and from
-//! chrono's `NaiveDate` and `DateTime<Utc>`, or rust_decimal's `Decimal`.
+//! With the `jiff` and `rust_decimal` features each converts to and from
+//! jiff's `civil::Date` and `Timestamp`, or rust_decimal's `Decimal`.
 //!
 //! The plaintext of the `json` family's storage-only type is
 //! [`JsonPlaintext`]: a JSON document that is wiped when it is dropped, and

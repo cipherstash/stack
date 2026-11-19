@@ -8138,7 +8138,7 @@ mod tests {
                     .expect("a map");
                 map.entry("id")
                     .expect("an entry")
-                    .passthrough(wide)
+                    .passthrough(&wide)
                     .expect("written");
                 map.end().expect("ended");
             }
