@@ -46,16 +46,35 @@ var ErrEQLGuestNotBuilt = errors.New("encrypt: guest module with the EQL types n
 // when package eql is linked (it registers on import, which cannot fail),
 // and only that build; else this package's own.
 func embeddedGuest() ([]byte, error) {
+	return selectBuild(plainGuest, eqlGuest)
+}
+
+// selectBuild is the one rule for which engine build a client runs: the
+// build with the EQL types when package eql is linked, and only that build,
+// else the build without them. embeddedGuest applies it to the production
+// builds and the encrypttest constructor to the test builds, so a test
+// client cannot run a different build from a production client.
+func selectBuild(plain, withEQL func() ([]byte, error)) ([]byte, error) {
 	if eqlguest.Linked() {
-		wasm := eqlguest.Module()
-		if wasm == nil {
-			return nil, ErrEQLGuestNotBuilt
-		}
-		return wasm, nil
+		return withEQL()
 	}
+	return plain()
+}
+
+// plainGuest is this package's own build, the one without the EQL types.
+func plainGuest() ([]byte, error) {
 	wasm, err := guestFS.ReadFile(guestPath)
 	if err != nil {
 		return nil, ErrGuestNotBuilt
+	}
+	return wasm, nil
+}
+
+// eqlGuest is the build with the EQL types that package eql registered.
+func eqlGuest() ([]byte, error) {
+	wasm := eqlguest.Module()
+	if wasm == nil {
+		return nil, ErrEQLGuestNotBuilt
 	}
 	return wasm, nil
 }

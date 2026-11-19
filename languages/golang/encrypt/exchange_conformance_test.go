@@ -294,10 +294,10 @@ func exchangeSDK() (sdk, version string) {
 }
 
 // exchangeGuestEngine identifies the engine as the SHA-256 of the named
-// guest under testdata, the one this runner loaded.
+// guest under encrypttest/wasm, the one this runner loaded.
 func exchangeGuestEngine(t *testing.T, guest string) exchangeEngine {
 	t.Helper()
-	module, err := os.ReadFile(filepath.Join("testdata", guest))
+	module, err := os.ReadFile(filepath.Join("encrypttest", "wasm", guest))
 	if err != nil {
 		t.Fatal(err)
 	}

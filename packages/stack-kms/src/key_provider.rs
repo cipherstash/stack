@@ -11,6 +11,7 @@
 //! | [`EnvKeyProvider`] | `CS_CLIENT_ID` + `CS_CLIENT_KEY` environment variables |
 //! | [`StaticKeyProvider`] | Wraps a [`ClientKey`] directly |
 //! | [`FallbackKeyProvider`] | Tries a primary provider, falls back on [`KeyProviderError::NotConfigured`] |
+//! | `ProfileKeyProvider` | `secretkey.json` in the CLI's profile directory, for one workspace. Native targets with the `profile` feature. |
 //!
 //! # Example
 //!
@@ -280,6 +281,140 @@ impl<P: KeyProvider, F: KeyProvider> KeyProvider for FallbackKeyProvider<P, F> {
     }
 }
 
+/// Loads a [`ClientKey`] from `secretkey.json` in the CLI's profile
+/// directory.
+///
+/// `npx stash auth login` writes one `secretkey.json` for each workspace.
+/// The profile directory is `~/.cipherstash`, unless `CS_CONFIG_PATH` names
+/// another. Choose the workspace with a constructor:
+///
+/// - [`for_workspace`](Self::for_workspace) reads the key of the workspace
+///   you name.
+/// - [`for_detected_workspace`](Self::for_detected_workspace) reads the key
+///   of the workspace this process is configured for.
+///
+/// Read the client key from the same workspace as the auth strategy's
+/// tokens. ZeroKMS refuses a request whose token and client key come from
+/// different workspaces.
+///
+/// A workspace with no `secretkey.json` is
+/// [`KeyProviderError::NotConfigured`], so the provider can be either side
+/// of a [`FallbackKeyProvider`]. The provider never reads the key of another
+/// workspace in its place. Any other error, such as a `CS_WORKSPACE_CRN`
+/// that is not a CRN, stops a `FallbackKeyProvider` without trying the
+/// other provider.
+///
+/// # Example
+///
+/// ```no_run
+/// use stack_kms::{EnvKeyProvider, FallbackKeyProvider, KeyProvider, ProfileKeyProvider};
+///
+/// # async fn example() -> Result<(), stack_kms::KeyProviderError> {
+/// // Use `CS_CLIENT_ID` and `CS_CLIENT_KEY` if they are set. Otherwise use
+/// // the key the CLI saved.
+/// let provider =
+///     FallbackKeyProvider::new(EnvKeyProvider, ProfileKeyProvider::for_detected_workspace());
+/// let client_key = provider.client_key().await?;
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
+pub struct ProfileKeyProvider {
+    /// `None` when the profile directory could not be resolved.
+    store: Option<stack_profile::ProfileStore>,
+    workspace: ProfileWorkspace,
+}
+
+/// The workspace whose `secretkey.json` a [`ProfileKeyProvider`] reads.
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
+enum ProfileWorkspace {
+    /// The workspace with this id.
+    Id(String),
+    /// The CLI's current workspace.
+    Current,
+    /// `CS_WORKSPACE_CRN` is set to a value that is not a CRN. Holds the
+    /// parse error's message.
+    InvalidCrn(String),
+}
+
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
+impl ProfileKeyProvider {
+    /// Reads the client key of the workspace `crn` names.
+    pub fn for_workspace(crn: &stack_auth::Crn) -> Self {
+        Self {
+            store: stack_profile::ProfileStore::resolve(None).ok(),
+            workspace: ProfileWorkspace::Id(crn.workspace_id.to_string()),
+        }
+    }
+
+    /// Reads the client key of the workspace this process is configured
+    /// for.
+    ///
+    /// The workspace is the one `CS_WORKSPACE_CRN` names, if that variable
+    /// is set. Otherwise the workspace is the CLI's current workspace.
+    /// `stack_auth::AutoStrategy::detect` and
+    /// `stack_auth::OidcFederationStrategy::with_detected_workspace` choose
+    /// the workspace the same way, so the key and the tokens come from one
+    /// workspace.
+    ///
+    /// If `CS_WORKSPACE_CRN` is set to a value that is not a CRN,
+    /// [`client_key`](KeyProvider::client_key) returns
+    /// [`KeyProviderError::LoadError`], with the reason the value is not a
+    /// CRN. A [`FallbackKeyProvider`] stops at that error, on either side:
+    /// it does not try the other provider.
+    pub fn for_detected_workspace() -> Self {
+        Self::detected(
+            std::env::var(crate::vars::CS_WORKSPACE_CRN).ok().as_deref(),
+            stack_profile::ProfileStore::resolve(None).ok(),
+        )
+    }
+
+    /// Does the work of [`for_detected_workspace`](Self::for_detected_workspace)
+    /// on a variable and a profile directory that are already read.
+    fn detected(env_crn: Option<&str>, store: Option<stack_profile::ProfileStore>) -> Self {
+        let workspace = match env_crn.map(str::parse::<stack_auth::Crn>) {
+            Some(Ok(crn)) => ProfileWorkspace::Id(crn.workspace_id.to_string()),
+            Some(Err(e)) => ProfileWorkspace::InvalidCrn(e.to_string()),
+            None => ProfileWorkspace::Current,
+        };
+        Self { store, workspace }
+    }
+}
+
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
+impl KeyProvider for ProfileKeyProvider {
+    async fn client_key(&self) -> Result<ClientKey, KeyProviderError> {
+        use crate::SecretKey;
+
+        let Some(store) = &self.store else {
+            return Err(KeyProviderError::NotConfigured(
+                "no profile directory: run `npx stash auth login`".into(),
+            ));
+        };
+        match &self.workspace {
+            ProfileWorkspace::Id(workspace) => {
+                let workspace_store = store
+                    .workspace_store(workspace)
+                    .map_err(|e| KeyProviderError::LoadError(e.to_string()))?;
+                if !workspace_store.exists_profile::<SecretKey>() {
+                    return Err(KeyProviderError::NotConfigured(format!(
+                        "no client key for workspace {workspace}: run `npx stash auth login` for that workspace"
+                    )));
+                }
+                let secret_key: SecretKey = workspace_store
+                    .load_profile()
+                    .map_err(|e| KeyProviderError::LoadError(e.to_string()))?;
+                secret_key.client_key().await
+            }
+            ProfileWorkspace::Current => store.client_key().await,
+            ProfileWorkspace::InvalidCrn(reason) => Err(KeyProviderError::LoadError(format!(
+                "{} is not a workspace CRN: {reason}",
+                crate::vars::CS_WORKSPACE_CRN
+            ))),
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -308,6 +443,135 @@ mod tests {
     impl KeyProvider for InvalidKeyProvider {
         async fn client_key(&self) -> Result<ClientKey, KeyProviderError> {
             Err(KeyProviderError::InvalidKey("bad key".into()))
+        }
+    }
+
+    #[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
+    mod profile_provider {
+        use super::*;
+        use crate::SecretKey;
+        use stack_profile::ProfileStore;
+
+        /// The CLI's current workspace in the profiles below.
+        const CURRENT: &str = "ZVATKW3VHMFG27DY";
+        /// Another workspace in the same profile.
+        const OTHER: &str = "AAAAAAAAAAAAAAAA";
+        const OTHER_CRN: &str = "crn:ap-southeast-2.aws:AAAAAAAAAAAAAAAA";
+
+        /// A profile with the workspaces `OTHER` and `CURRENT`, where only
+        /// `CURRENT` has a client key. Returns that key's client id.
+        fn profile_with_a_key_in_the_current_workspace(
+            dir: &std::path::Path,
+        ) -> (ProfileStore, Uuid) {
+            let store = ProfileStore::new(dir);
+            store.init_workspace(OTHER).unwrap();
+            store.init_workspace(CURRENT).unwrap(); // now current
+            let client_key = random_client_key();
+            let secret_key = SecretKey::from_hex(
+                client_key.key_id.to_string(),
+                client_key.to_hex_v1().unwrap(),
+            )
+            .unwrap();
+            store
+                .current_workspace_store()
+                .unwrap()
+                .save_profile(&secret_key)
+                .unwrap();
+            (store, client_key.key_id)
+        }
+
+        #[tokio::test]
+        async fn a_named_workspace_never_uses_the_current_workspaces_key() {
+            let dir = tempfile::tempdir().unwrap();
+            let (store, _) = profile_with_a_key_in_the_current_workspace(dir.path());
+            let provider = ProfileKeyProvider::detected(Some(OTHER_CRN), Some(store));
+
+            let error = provider.client_key().await.map(|_| ()).unwrap_err();
+
+            assert!(
+                matches!(&error, KeyProviderError::NotConfigured(message) if message.contains(OTHER)),
+                "expected NotConfigured naming the workspace, got {error:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_named_workspace_with_a_key_returns_it() {
+            let dir = tempfile::tempdir().unwrap();
+            let (store, client_id) = profile_with_a_key_in_the_current_workspace(dir.path());
+            let crn = format!("crn:ap-southeast-2.aws:{CURRENT}");
+            let provider = ProfileKeyProvider::detected(Some(&crn), Some(store));
+
+            let key = provider.client_key().await.unwrap();
+
+            assert_eq!(
+                key.key_id, client_id,
+                "the named workspace's key is returned"
+            );
+        }
+
+        #[tokio::test]
+        async fn without_the_variable_the_current_workspaces_key_is_returned() {
+            let dir = tempfile::tempdir().unwrap();
+            let (store, client_id) = profile_with_a_key_in_the_current_workspace(dir.path());
+            let provider = ProfileKeyProvider::detected(None, Some(store));
+
+            let key = provider.client_key().await.unwrap();
+
+            assert_eq!(
+                key.key_id, client_id,
+                "the current workspace's key is returned"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_variable_that_is_not_a_crn_is_a_load_error() {
+            let dir = tempfile::tempdir().unwrap();
+            let (store, _) = profile_with_a_key_in_the_current_workspace(dir.path());
+            let provider = ProfileKeyProvider::detected(Some("not-a-crn"), Some(store));
+
+            let error = provider.client_key().await.map(|_| ()).unwrap_err();
+
+            assert!(
+                matches!(&error, KeyProviderError::LoadError(message) if message.contains("CS_WORKSPACE_CRN")),
+                "the current workspace's key must not be used, got {error:?}"
+            );
+            let reason = "not-a-crn"
+                .parse::<stack_auth::Crn>()
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.to_string().contains(&reason),
+                "the parse error {reason:?} must be kept, got {error}"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_variable_that_is_not_a_crn_stops_a_fallback_chain() {
+            let dir = tempfile::tempdir().unwrap();
+            let (store, _) = profile_with_a_key_in_the_current_workspace(dir.path());
+            let provider = FallbackKeyProvider::new(
+                ProfileKeyProvider::detected(Some("not-a-crn"), Some(store)),
+                StaticKeyProvider::new(random_client_key()),
+            );
+
+            let error = provider.client_key().await.map(|_| ()).unwrap_err();
+
+            assert!(
+                matches!(error, KeyProviderError::LoadError(_)),
+                "the fallback must not be tried, got {error:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn no_profile_directory_is_not_configured() {
+            let provider = ProfileKeyProvider::detected(None, None);
+
+            let error = provider.client_key().await.map(|_| ()).unwrap_err();
+
+            assert!(
+                matches!(error, KeyProviderError::NotConfigured(_)),
+                "expected NotConfigured, got {error:?}"
+            );
         }
     }
 

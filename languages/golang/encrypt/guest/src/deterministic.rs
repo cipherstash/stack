@@ -6,9 +6,10 @@
 //! term bytes, because both run the same code.
 //!
 //! It is a test double. The feature that compiles it is off by default, and
-//! the build it produces goes under languages/golang/encrypt/testdata, which
-//! `go build` and the package's `//go:embed wasm` both ignore, so no Go
-//! binary carries it; the tests read it from disk.
+//! the build it produces goes under languages/golang/encrypt/encrypttest/wasm.
+//! Package `encrypttest` embeds it to give an application's tests an offline
+//! client, so only a Go binary that imports `encrypttest` carries it. The
+//! production guest embedded by `encrypt` never links this source.
 
 pub use stack_kms::DeterministicSource;
 

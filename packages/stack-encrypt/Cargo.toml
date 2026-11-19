@@ -145,6 +145,11 @@ serde_json = { workspace = true, features = ["raw_value"] }
 # need `FakeDataKeySource` (`test-support`).
 stack-kms = { path = "../stack-kms", default-features = false, features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
+# Sets and restores the `CS_*` variables in the tests of the credentials each
+# `init` uses. `temp_env` runs those tests one at a time, as it does in
+# stack-auth's tests, because plain `cargo test` runs every test in one
+# process.
+temp-env = { workspace = true }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
 # Property tests of the JSON index's derivations and reads

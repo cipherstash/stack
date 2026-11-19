@@ -58,6 +58,7 @@ on:
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
+      - scripts/go-nested-modules.sh
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
       - scripts/stack-eql-conformance.mjs
@@ -101,6 +102,7 @@ on:
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
+      - scripts/go-nested-modules.sh
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
       - scripts/stack-eql-conformance.mjs
@@ -212,11 +214,12 @@ jobs:
       - name: stack-encrypt guest release build and import-surface gate
         run: mise run wasm:guest:build
 
-      # The deterministic-kms TEST build, under encrypt/testdata where no
-      # build or embed sees it: the Go tests open the record fixture Rust
-      # sealed through it, and run round trips with no ZeroKMS. The tests
-      # skip when it is absent, so a build that forgets this step would pass
-      # with less coverage, which is why the job builds it unconditionally.
+      # The deterministic-kms TEST build, under encrypt/encrypttest/wasm,
+      # which package encrypttest embeds: the Go tests open the record
+      # fixture Rust sealed through it, and run round trips with no ZeroKMS.
+      # The encrypt package's tests skip when it is absent, so a build that
+      # forgets this step would pass with less coverage, which is why the job
+      # builds it unconditionally. encrypttest's own tests fail without it.
       - name: stack-encrypt guest deterministic test build
         run: mise run wasm:guest:build:deterministic
 
@@ -243,7 +246,7 @@ jobs:
       # same bytes rather than a stale or rebuilt guest.
       - name: Record the guests' checksums
         run: |
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             (cd languages/golang && openssl dgst -sha256 "$guest" | awk '{print $NF}' > "$guest.sha256" && echo "$guest sha256 $(cat "$guest.sha256")")
           done
 
@@ -254,12 +257,12 @@ jobs:
           path: |
             languages/golang/encrypt/wasm/stack_encrypt_guest.wasm
             languages/golang/encrypt/wasm/stack_encrypt_guest.wasm.sha256
-            languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm
-            languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm.sha256
+            languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm
+            languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm.sha256
             languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm
             languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm.sha256
-            languages/golang/encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm
-            languages/golang/encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm.sha256
+            languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm
+            languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm.sha256
             languages/golang/auth/wasm/stack_auth_guest.wasm
             languages/golang/auth/wasm/stack_auth_guest.wasm.sha256
           if-no-files-found: error
@@ -350,6 +353,11 @@ jobs:
         working-directory: languages/golang
         run: |
           CGO_ENABLED=0 go generate ./...
+          # The nested modules (encrypt/example holds generated code) are
+          # outside `./...`, so each runs its own go generate.
+          ../../scripts/go-nested-modules.sh | while IFS= read -r nested; do
+            (cd "$nested" && CGO_ENABLED=0 go generate ./...)
+          done
           git diff --exit-code -- .
           untracked="$(git status --porcelain -- .)"
           if [ -n "$untracked" ]; then
@@ -433,7 +441,7 @@ jobs:
       - name: The guests are the ones Linux built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -486,6 +494,17 @@ jobs:
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2204
 
+      # mise caches Rust symlinks, not ~/.rustup. A cache hit can leave a
+      # toolchain directory without cargo and still report "all tools
+      # installed". The step above exports RUSTUP_TOOLCHAIN=1.94.1, and the
+      # EQL step below compiles cargo:sqlx-cli with it when the cache does not
+      # hold that tool, so the root toolchain is repaired before that step:
+      # after it, the build fails with "Missing manifest in toolchain".
+      - name: Restore the root Rust toolchain behind the cached mise link
+        run: |
+          mise install --force rust
+          mise x -- cargo --version
+
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
           version: 2026.4.0
@@ -495,14 +514,10 @@ jobs:
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2204
 
-      # mise caches Rust symlinks, not ~/.rustup. A cache hit can leave a
-      # toolchain directory without cargo and still report "all tools installed".
-      # Reconcile both workspaces' configured toolchains before cargo is used.
-      - name: Restore Rust toolchains behind the cached mise links
+      # The same repair for EQL's own toolchain, before cargo is used.
+      - name: Restore the EQL Rust toolchain behind the cached mise link
         run: |
-          mise install --force rust
           mise -C packages/eql install --force rust
-          mise x -- cargo --version
           mise -C packages/eql x -- cargo --version
 
       # `mise run build` compiles eql-codegen to write the bundle.
@@ -518,7 +533,7 @@ jobs:
       - name: The guests are the ones wasi-check built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm; do
+          for guest in encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -595,7 +610,7 @@ jobs:
       - name: The guests are the ones the wasi-check job built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -607,9 +622,17 @@ jobs:
 
       # The whole package, not a `-run` filter: live tests are the ones that
       # call `liveClient`, and not all of them are named `TestLive*`.
+      # ./encrypt/... stops at the nested modules (encrypt/encrypttest,
+      # encrypt/example), so each runs too: a live test added to one of them
+      # would otherwise never run here.
       - name: Go live tests
         working-directory: languages/golang
-        run: CGO_ENABLED=0 go test -v ./encrypt/...
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go test -v ./encrypt/...
+          ../../scripts/go-nested-modules.sh | while IFS= read -r nested; do
+            (cd "$nested" && CGO_ENABLED=0 go test -v ./...)
+          done
 
       - name: stack-encrypt examples
         run: |

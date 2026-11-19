@@ -28,8 +28,10 @@ crate-type = ["cdylib", "rlib"]
 # was sealed under: `se_cipher_init` takes the 32-byte seed and nothing
 # else, and every data key derives from it. No ZeroKMS, no token, no
 # network. The Go tests load it to open the fixture's records and to run
-# hermetic round trips; `mise run wasm:guest:build:deterministic` builds it
-# beside the real guest. Never the embedded guest.
+# hermetic round trips, and package encrypttest embeds it to give an
+# application's tests an offline client; `mise run
+# wasm:guest:build:deterministic` builds it into encrypt/encrypttest/wasm.
+# Never the guest package encrypt embeds.
 deterministic-kms = ["stack-kms/test-support"]
 # The guest build that holds the EQL types (ADR-0007, amended 2026-10-06):
 # links eql-bindings and installs its by-name dispatch as the engine's

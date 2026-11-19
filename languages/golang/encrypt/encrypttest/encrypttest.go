@@ -1,5 +1,12 @@
-// Package encrypttest holds assertions for tests of code that uses package
-// encrypt and its generated records.
+// Package encrypttest helps test code that uses package encrypt and its
+// generated records. Import it only from _test.go files.
+//
+// [NewClient] gives a test a client that needs no network and no
+// CipherStash credentials. It runs the same engine and generated code as a
+// production client, with keys derived from a seed in place of ZeroKMS:
+//
+//	client := encrypttest.NewClient(t)
+//	rows, err := users.Encrypt(t.Context(), client.DefaultKeyset(), people)
 //
 // A wrong context loses data silently. A query under the wrong context
 // matches nothing, and gives no error. [AssertContexts] pins the contexts
@@ -28,6 +35,9 @@ import (
 // and no network. [AssertContexts] reads this text; a test that wants the
 // text itself, to print or to compare whole, calls this.
 func Contexts(ctx context.Context, d gensupport.Declaration) (string, error) {
+	if err := versionSkew(); err != nil {
+		return "", err
+	}
 	checker, err := encrypt.NewChecker(ctx)
 	if err != nil {
 		return "", err
@@ -113,6 +123,9 @@ func FromPlaintext(name, typ string) Placeholder {
 //	)
 func AssertContexts(tb testing.TB, d gensupport.Declaration, want ...FieldContext) {
 	tb.Helper()
+	if err := versionSkew(); err != nil {
+		tb.Fatal(err)
+	}
 	got, err := Contexts(tb.Context(), d)
 	if err != nil {
 		tb.Fatalf("encrypttest: the engine refused the declaration: %v", err)

@@ -19,7 +19,7 @@ This repository is the CipherStash Stack monorepo for JavaScript/TypeScript. It 
 | `@cipherstash/wizard` | AI-powered encryption setup |
 | `@cipherstash/protect-ffi` | Native FFI bindings to the CipherStash Client SDK — the Rust core `@cipherstash/stack` encrypts and decrypts through |
 | `@cipherstash/protect-ffi-darwin-arm64`<br>`@cipherstash/protect-ffi-darwin-x64`<br>`@cipherstash/protect-ffi-linux-arm64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-musl`<br>`@cipherstash/protect-ffi-win32-x64-msvc` | Prebuilt per-platform binaries for `@cipherstash/protect-ffi`. Installed as optional dependencies; one is selected at load time for the host platform |
-| `@cipherstash/auth` | Authentication strategies for CipherStash (napi-rs native binding, with a WASM build for edge runtimes) — imported from `cipherstash/cipherstash-suite` with the `stack-auth` crate it wraps |
+| `@cipherstash/auth` | Authentication strategies for CipherStash (napi-rs native binding, with a WASM build for edge runtimes, plus the `./next` and `./start` framework adapters) — imported from `cipherstash/cipherstash-suite` with the `stack-auth` crate it wraps |
 | `@cipherstash/auth-darwin-arm64`<br>`@cipherstash/auth-darwin-x64`<br>`@cipherstash/auth-linux-arm64-gnu`<br>`@cipherstash/auth-linux-x64-gnu`<br>`@cipherstash/auth-linux-x64-musl`<br>`@cipherstash/auth-win32-x64-msvc` | Prebuilt per-platform binaries for `@cipherstash/auth`. Installed as optional peer dependencies; one is selected at load time for the host platform |
 | `@cipherstash/eql` | Encrypt Query Language — the PostgreSQL SQL bundle (`eql_v3` schema: domains, operators, index-term extractors) that stores and queries encrypted payloads, plus its generated TypeScript types. Applied by `stash eql install` and by the Prisma Next adapter's migrations. Released in lockstep with the `eql-bindings` Rust crate, which emits the payloads this SQL reads |
 
@@ -32,11 +32,17 @@ It also carries the source of five Rust crates published to crates.io,
 **`stack-auth`** and **`stack-profile`** (`packages/stack-auth`,
 `packages/stack-profile`) and **`stack-kms`**, **`stack-encrypt`** and
 **`stack-encrypt-derive`** (`packages/stack-kms`, `packages/stack-encrypt`,
-`packages/stack-encrypt-derive`), and of the **Go module** at
+`packages/stack-encrypt-derive`), and of the **Go modules** at
 `languages/golang` (`encrypt` and `auth`, over WASI guests built
-from the stack-* crates), released by `.github/workflows/release-golang.yml`
-as `languages/golang/vX.Y.Z` tags. All of these are in scope
+from the stack-* crates) and `languages/golang/encrypt/encrypttest`, released
+by `.github/workflows/release-golang.yml` as `languages/golang/vX.Y.Z` and
+`languages/golang/encrypt/encrypttest/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
+
+The `encrypttest` module ships test builds of the
+engine whose keys derive from a published seed. Those keys are not secret by
+design: the package is for tests only. A way for a production client to load
+a test build, or for a test build to reach ZeroKMS, is in scope.
 
 The five stack-* crates are licensed under the PolyForm Internal Use License
 1.0.0 (each crate's `LICENSE`), not the repository's MIT licence: they may be

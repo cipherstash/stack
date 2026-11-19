@@ -3429,6 +3429,7 @@ dependencies = [
  "stack-auth",
  "stack-encrypt-derive",
  "stack-kms",
+ "temp-env",
  "thiserror 1.0.69",
  "tokio",
  "trybuild",

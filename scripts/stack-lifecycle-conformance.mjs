@@ -13,7 +13,7 @@ import {
 const ENROLLMENT = 'conformance/stack-encrypt/v1/lifecycle-v1.enrollment.json'
 const GUESTS = [
   'encrypt/wasm/stack_encrypt_guest.wasm',
-  'encrypt/testdata/stack_encrypt_guest_deterministic.wasm',
+  'encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm',
 ]
 
 export function lifecycleIndex(index) {

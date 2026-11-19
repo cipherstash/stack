@@ -2,13 +2,65 @@
 
 Changes to the Go module `github.com/cipherstash/stack/languages/golang`:
 the SDK (`encrypt`), the generator (`stashgen`, `cmd/stashgen`) and the
-credential package (`auth`).
+credential package (`auth`). From rc.6 it also covers the module
+`github.com/cipherstash/stack/languages/golang/encrypt/encrypttest`, which
+is released at the same version.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 The module is pre-1.0, so a minor version may break the API; every break is
-listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
+listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`,
+and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
+
+## [0.1.0-rc.6] - 2026-11-18
+
+### Upgrading from rc.5
+
+Update the SDK:
+
+```sh
+go get github.com/cipherstash/stack/languages/golang@v0.1.0-rc.6
+```
+
+If your program imports `encrypttest`, add its module at the same version.
+Without it, the program does not build. The Breaking section explains why.
+
+```sh
+go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@v0.1.0-rc.6
+```
+
+The EQL SQL has not changed since rc.5. The `eql-v4-install.sql` attached
+to this release differs from rc.5's only in its version stamp. If you
+installed rc.5's bundle, you do not need to run it again.
+
+Run `go generate ./...` again only if you generate code under Go 1.27 and
+a struct has a `json.RawMessage` field. The Fixed section describes the
+change.
+
+### Added
+
+- **`encrypttest.NewClient`: a client for your application's tests that
+  needs no network and no CipherStash credentials** (#1696). It returns a
+  real `*encrypt.Client` over a test build of the engine. Each data key
+  derives from a seed in place of ZeroKMS. Your generated code runs
+  unchanged, and EQL v4 columns accept the values it writes. Every keyset
+  exists, selected by name or id. A cipher still refuses another keyset's
+  value with `ErrForeignKeyset`, and a wrong context fails with
+  `ErrForbidden`. `encrypttest.WithSeed` chooses the seed. The keys are not
+  secret, so import `encrypttest` only from `_test.go` files.
+  The release ships the two test builds of the engine in the `encrypttest`
+  module, so a program that does not import it does not download them.
+
+### Breaking
+
+- **`encrypttest` is a module of its own:
+  `github.com/cipherstash/stack/languages/golang/encrypt/encrypttest`.** Its
+  import path is unchanged. A program that imports it, for
+  `encrypttest.AssertContexts` for example, stops building with "no required
+  module provides package" until you add the module at the SDK's version:
+  `go get github.com/cipherstash/stack/languages/golang/encrypt/encrypttest@<version>`.
+  `encrypttest.NewClient` fails the test when the two versions differ.
 
 ### Fixed
 
