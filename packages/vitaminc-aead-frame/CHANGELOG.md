@@ -1,4 +1,16 @@
 
+## [0.10.0] - 2026-11-19
+
+### Breaking
+
+- **Breaking:** take dates and timestamps from jiff, because chrono is unmaintained
+- **Breaking:** narrow dates and timestamps to jiff's range in every binding, so a value one binding seals every binding opens
+- **Breaking:** let generic code bound on a borrowed plaintext without copying it
+
+### Features
+
+- read dates and timestamps sealed in chrono's range with walk_legacy_range, so values such as 9999-12-31T23:59:59Z can be migrated
+
 ## [0.9.1] - 2026-11-06
 
 ## [0.9.0] - 2026-11-04

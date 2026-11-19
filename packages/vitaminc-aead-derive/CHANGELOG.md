@@ -1,4 +1,16 @@
 
+## [0.10.0] - 2026-11-19
+
+### Breaking
+
+- **Breaking:** let generic code bound on a borrowed plaintext without copying it
+- **Breaking:** walk a derived struct by reference inside containers
+- **Breaking:** lend a passthrough field in place, so it never needs take
+
+### Fixes
+
+- lend a passthrough field in the by-value walk too
+
 ## [0.9.1] - 2026-11-06
 
 ## [0.9.0] - 2026-11-04

@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-19
+
+### Breaking
+
+- **Breaking:** take dates and timestamps from jiff, because chrono is unmaintained
+- **Breaking:** refuse a jiff timestamp jiff cannot rebuild, so it is never sealed and then unreadable
+- **Breaking:** narrow dates and timestamps to jiff's range in every binding, so a value one binding seals every binding opens
+- **Breaking:** let generic code bound on a borrowed plaintext without copying it
+- **Breaking:** walk a derived struct by reference inside containers
+- **Breaking:** lend a passthrough field in place, so it never needs take
+- **Breaking:** stop str, [u8; N] and Cow<str> lending an unwiped ProtectedRef
+
+### Documentation
+
+- list what lends a ProtectedRef, not what does not
+
+### Features
+
+- read dates and timestamps sealed in chrono's range with walk_legacy_range, so values such as 9999-12-31T23:59:59Z can be migrated
+- let a borrowed Lent walk as what it lends
+- add wipeable Date, Decimal and Uuid, as Timestamp is
+
+### Fixes
+
+- lend a passthrough field in the by-value walk too
+- compare decimals with no division instruction, and pin the wrappers' nulls and fields
+- say strip_trailing_zeros takes a mantissa below 10^29, and hide it from the docs
+
+### Performance
+
+- stop copying each passthrough frame a second time
+
 ## [0.9.1] - 2026-11-06
 
 ### Wire format
