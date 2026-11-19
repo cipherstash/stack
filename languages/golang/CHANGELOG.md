@@ -13,6 +13,18 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- `encrypt.OIDCFederationWithDetectedWorkspace(provider, opts...)` and
+  `auth.ProfileStore.OIDCWithDetectedWorkspace(ctx, provider, opts...)` use
+  OIDC federation without naming the workspace. The workspace is
+  `CS_WORKSPACE_CRN` if it is set. Otherwise it is the workspace of the
+  session `stash auth login` saved for the CLI's current workspace. A
+  `CS_WORKSPACE_CRN` that is not a CRN is an error, and the profile is not
+  read. With neither, the error says to set `CS_WORKSPACE_CRN` or run
+  `stash auth login`. `OIDCFederation` and `OIDC` with a named CRN work as
+  before. (#1724)
+
 ## [0.1.0-rc.6] - 2026-11-18
 
 ### Upgrading from rc.5

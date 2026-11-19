@@ -25,9 +25,10 @@ import (
 // profile, in the Rust client's order. [AccessKeyCredentials] takes four
 // values from a struct the program fills, with no fallback. [NewCredentials]
 // takes a client id, a client key, and a strategy explicitly. [OIDCFederation]
-// exchanges a token from an identity provider for a CipherStash token.
+// exchanges a token from an identity provider for a CipherStash token, and
+// [OIDCFederationWithDetectedWorkspace] does so for a workspace it detects.
 //
-// Those four are the only implementations:
+// Those are the only implementations:
 // the interface is sealed, so a bearer token always comes from an auth
 // strategy. A raw token cannot be refreshed when it expires, and a source
 // outside the strategies would bypass the cross-process refresh lock the
@@ -269,6 +270,61 @@ func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*res
 	return resolveWithStrategy(ctx, opts, func(ctx context.Context, profile *auth.ProfileStore, _ error) (*auth.Strategy, error) {
 		strategy, err := profile.OIDC(ctx, c.crn, c.provider, c.opts...)
 		if err != nil {
+			return nil, fmt.Errorf("encrypt: credentials: OIDC federation: %w", err)
+		}
+		return strategy, nil
+	})
+}
+
+// OIDCFederationWithDetectedWorkspace is [OIDCFederation] for a workspace
+// the program does not name. Use it when the workspace comes from the
+// environment or from a CLI login. Use OIDCFederation to name the workspace
+// yourself.
+//
+// The workspace is CS_WORKSPACE_CRN if that variable is set. Otherwise it is
+// the CLI's current workspace in the developer profile, which needs a
+// session saved by `stash auth login`. Only the workspace is read from that
+// session: every token still comes from exchanging the JWT that provider
+// returns. The client key is resolved as OIDCFederation resolves it, and
+// opts are the same.
+//
+// NewClient fails with:
+//
+//   - auth.ErrConfig if CS_WORKSPACE_CRN is set to a value that is not a
+//     CRN. The profile is not read in that case.
+//   - [ErrNoCredentials] if CS_WORKSPACE_CRN is not set and the profile has
+//     no saved session to read. The error says to set CS_WORKSPACE_CRN or
+//     run `stash auth login`.
+//   - The profile's own error if its current workspace or session cannot be
+//     read. A broken profile is never reported as not logged in.
+//
+// auth.ProfileStore.OIDCWithDetectedWorkspace documents each case.
+func OIDCFederationWithDetectedWorkspace(provider auth.OIDCProvider, opts ...auth.StrategyOption) Credentials {
+	return &detectedOIDCCredentials{provider: provider, opts: opts}
+}
+
+type detectedOIDCCredentials struct {
+	provider auth.OIDCProvider
+	opts     []auth.StrategyOption
+}
+
+// String names the credentials' kind; nothing is detected to print it.
+func (c detectedOIDCCredentials) String() string {
+	return "encrypt.OIDCFederationWithDetectedWorkspace"
+}
+
+func (c detectedOIDCCredentials) resolve(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
+	return resolveWithStrategy(ctx, opts, func(ctx context.Context, profile *auth.ProfileStore, noProfile error) (*auth.Strategy, error) {
+		strategy, err := profile.OIDCWithDetectedWorkspace(ctx, c.provider, c.opts...)
+		switch {
+		case errors.Is(err, auth.ErrNotAuthenticated):
+			// Why there is no profile, when there is none: a CS_CONFIG_PATH
+			// naming the wrong place reads differently from no login.
+			if noProfile != nil {
+				err = fmt.Errorf("%w: %w", err, noProfile)
+			}
+			return nil, fmt.Errorf("%w: OIDC federation: %w", ErrNoCredentials, err)
+		case err != nil:
 			return nil, fmt.Errorf("encrypt: credentials: OIDC federation: %w", err)
 		}
 		return strategy, nil

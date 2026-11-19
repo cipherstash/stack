@@ -31,12 +31,12 @@
 use serde::Deserialize;
 use stack_auth::Token;
 use stack_guest_abi::value::HostValue;
-use stack_profile::{DeviceIdentity, ProfileStore};
+use stack_profile::{DeviceIdentity, ProfileError, ProfileStore};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use stack_guest_abi::last_error::{internal, malformed};
 
-use crate::status::fail_profile;
+use crate::status::{fail_auth, fail_profile};
 
 /// The file `secretkey.json`, as `stack-auth`'s device client writes it
 /// and `stack-kms`'s `SecretKey` reads it: the ZeroKMS client id and the
@@ -208,6 +208,37 @@ pub fn token(dir: &[u8]) -> Result<Vec<u8>, u32> {
 /// select the device path and then report its profile error.
 pub fn has_token(dir: &[u8]) -> Result<Vec<u8>, u32> {
     Ok(vec![u8::from(store(dir)?.exists_profile::<Token>())])
+}
+
+/// The CRN of the session `stash auth login` saved for the current
+/// workspace of the store at `dir`, as text: the region the session
+/// records and the workspace its token names. An OIDC federation strategy
+/// whose caller names no workspace takes this one, when
+/// `CS_WORKSPACE_CRN` is unset. The host reads that variable; this guest
+/// has no environment.
+///
+/// Only a missing `current_workspace` file, or a current workspace with no
+/// saved session, means "not logged in": both are
+/// [`stack_auth::NotAuthenticated`]. A `current_workspace` file that cannot
+/// be read or names an invalid workspace is reported as itself. A session
+/// that records no region is `NotAuthenticated` too, as
+/// [`Token::workspace_crn`] reports it. This is the order stack-auth's own
+/// detection follows on a native target.
+///
+/// Only the CRN crosses: the token stays here.
+pub fn session_crn(dir: &[u8]) -> Result<Vec<u8>, u32> {
+    let not_authenticated = || fail_auth(&stack_auth::NotAuthenticated.into());
+    let session = match store(dir)?.current_workspace_store() {
+        Ok(session) => session,
+        Err(ProfileError::NoCurrentWorkspace) => return Err(not_authenticated()),
+        Err(e) => return Err(fail_profile(&e)),
+    };
+    if !session.exists_profile::<Token>() {
+        return Err(not_authenticated());
+    }
+    let token: Token = session.load_profile().map_err(|e| fail_profile(&e))?;
+    let crn = token.workspace_crn().map_err(|e| fail_auth(&e))?;
+    Ok(crn.to_string().into_bytes())
 }
 
 /// `device.json` in this store, read-only, as a codec object
@@ -434,6 +465,85 @@ mod tests {
             "0f4a4fd7-4a1a-4c5e-9d3e-7a4c8e3a9c11"
         );
         assert_eq!(as_text(field(&identity, "device_name")), "laptop");
+    }
+
+    /// A JWT whose claims name workspace `WS_A`. The signature is not
+    /// checked when a saved session is read.
+    const SESSION_JWT: &str = "e30.eyJpc3MiOiJodHRwczovL2N0cy5leGFtcGxlIiwic3ViIjoiQ1N8dGVzdCIsIndvcmtzcGFjZSI6IkFBQUFBQUFBQUFBQUFBQUEifQ.c2ln";
+
+    /// A profile at `t` whose current workspace is `WS_A`, with `auth`
+    /// as its saved session when it is not empty.
+    fn current_session(t: &tempfile::TempDir, auth: &str) {
+        let ws = t.path().join("workspaces").join(WS_A);
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(t.path().join("current_workspace"), WS_A).unwrap();
+        if !auth.is_empty() {
+            std::fs::write(ws.join(AUTH_FILENAME), auth).unwrap();
+        }
+    }
+
+    fn session(region: Option<&str>) -> String {
+        let region = region.map_or("null".to_string(), |r| format!("{r:?}"));
+        format!(
+            r#"{{"access_token":"{SESSION_JWT}","token_type":"Bearer","expires_at":1800000000,"region":{region}}}"#
+        )
+    }
+
+    #[test]
+    fn session_crn_is_the_current_sessions_region_and_workspace() {
+        let t = tempfile::tempdir().unwrap();
+        current_session(&t, &session(Some("ap-southeast-2.aws")));
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap(),
+            format!("crn:ap-southeast-2.aws:{WS_A}").as_bytes()
+        );
+    }
+
+    #[test]
+    fn session_crn_without_a_login_is_not_authenticated() {
+        // No current workspace.
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap_err(),
+            STATUS_AUTH_NOT_AUTHENTICATED
+        );
+        // A current workspace with no saved session.
+        current_session(&t, "");
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap_err(),
+            STATUS_AUTH_NOT_AUTHENTICATED
+        );
+        // A saved session that records no region.
+        current_session(&t, &session(None));
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap_err(),
+            STATUS_AUTH_NOT_AUTHENTICATED
+        );
+    }
+
+    #[test]
+    fn session_crn_reports_a_broken_profile_as_itself() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("current_workspace"), "not-a-workspace").unwrap();
+        assert_eq!(
+            session_crn(&dir(&t)).unwrap_err(),
+            STATUS_PROFILE_INVALID_WORKSPACE_ID
+        );
+
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(t.path().join("current_workspace")).unwrap();
+        assert_eq!(session_crn(&dir(&t)).unwrap_err(), STATUS_PROFILE_IO);
+
+        let t = tempfile::tempdir().unwrap();
+        current_session(&t, "{");
+        assert_eq!(session_crn(&dir(&t)).unwrap_err(), STATUS_PROFILE_JSON);
+
+        let t = tempfile::tempdir().unwrap();
+        current_session(
+            &t,
+            r#"{"access_token":"not-a-jwt","token_type":"Bearer","expires_at":1800000000,"region":"ap-southeast-2.aws"}"#,
+        );
+        assert_eq!(session_crn(&dir(&t)).unwrap_err(), STATUS_AUTH_CONFIG);
     }
 
     #[test]
