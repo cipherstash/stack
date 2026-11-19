@@ -14,9 +14,10 @@ license-file = "LICENSE"
 
 [dependencies]
 # `profile` (native only; stack-kms gates it off wasm32 itself) lets
-# `StackCipher::new()` fall back to the client key `stash auth login` writes
-# to the profile directory (`secretkey.json`) when CS_CLIENT_ID /
-# CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
+# `StackCipher::with_detected_credentials()` fall back to the client key
+# `stash auth login` writes to the profile directory (`secretkey.json`) when
+# CS_CLIENT_ID / CS_CLIENT_KEY are not set — the same place `AutoStrategy`
+# finds the token.
 stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false, features = ["profile"] }
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy. Only needed with `http`.

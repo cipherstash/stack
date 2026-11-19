@@ -33,7 +33,7 @@ struct ProfileV2 {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cipher = StackCipher::new().await?;
+    let cipher = StackCipher::with_detected_credentials().await?;
     let keyset = cipher.default_keyset();
 
     let profile = Profile {

@@ -37,8 +37,8 @@
 //!
 //! # Quick start
 //!
-// `StackCipher::new()` builds a ZeroKMS client from the environment, so it
-// only exists with `http`. Without it the entry point is
+// `StackCipher::with_detected_credentials()` builds a ZeroKMS client from the
+// environment, so it only exists with `http`. Without it the entry point is
 // `StackCipher::builder().kms(..)` over an explicit data-key source — the
 // shape the WASI/wazero guest builds against; see "Testing without ZeroKMS"
 // below for the same call over the in-memory stub.
@@ -48,9 +48,10 @@
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 use stack_encrypt::StackCipher;
 
-// Credentials: `npx stash auth login` on a developer machine, or
-// CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
-let cipher = StackCipher::new().await?;
+// Reads the credentials from CS_CLIENT_ID / CS_CLIENT_KEY and
+// CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN, or else from the login that
+// `npx stash auth login` saved.
+let cipher = StackCipher::with_detected_credentials().await?;
 let keyset = cipher.default_keyset();
 
 // Encryption consumes and wipes the owned plaintext.
@@ -65,8 +66,9 @@ assert_eq!(plaintext, "secret message");
     not(feature = "http"),
     doc = "Without the `http` feature a cipher is built over an explicit\
  data-key source — `StackCipher::builder().kms(..).init()` — rather than from\
- the environment. Enable `http` for `StackCipher::new()`, which discovers\
- ZeroKMS credentials itself."
+ the environment. Enable `http` for\
+ `StackCipher::with_detected_credentials()`, which reads ZeroKMS credentials\
+ from the environment or the CLI's login."
 )]
 //!
 //! Encrypting binds to a keyset (every data key is minted under one); decrypting
@@ -110,10 +112,12 @@ A cipher needs two credentials, resolved independently of each other:
   against; and
 - an **auth strategy** — whatever obtains a token ZeroKMS will accept.
 
-Each is looked for in the environment first, then in the current workspace of
-the CLI's profile directory (`~/.cipherstash`), which `npx stash auth login`
-writes. A logged-in developer machine has both there, so
-`StackCipher::new()` usually just works with nothing else set.
+A cipher reads credentials only from where your code says.
+[`StackCipher::with_detected_credentials`] is the one constructor that looks
+for them itself. It looks in the environment first, then in the CLI's profile
+directory (`~/.cipherstash`), which `npx stash auth login` writes. A
+logged-in developer machine has both there, so it works with nothing else
+set.
 
 Where there is no profile — CI, a container, wasm — the environment carries
 them. `CS_CLIENT_ID` + `CS_CLIENT_KEY` are the client key.
@@ -650,7 +654,7 @@ pub mod value;
 #[cfg(feature = "http")]
 pub use cipher::WithAuthStrategy;
 pub use cipher::{
-    Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,
+    Error, LeafBytesError, NoKms, PendingStackCipherText, SealedValue, StackCipher,
     StackCipherBuilder, StackCipherText,
 };
 pub use contexts::{
