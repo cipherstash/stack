@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     value is text, a `bool`, a float, or an integer that fits an `i64`.
     A value can also be an `Option` or a `Vec` of these, or another
     `AuditMetadata`. There is no conversion from `u64`, because ZeroKMS
-    cannot record a value above `i64::MAX` exactly.
+    cannot record a value above `i64::MAX` exactly. A float that is not
+    finite is sent as `null`.
   - Every `Pending` has `.audit(..)`. So it works for scalars, trees,
     targets, records, and `dynamic::record`. The encrypt and open plan
     chains have it too. So does `all(..)`. A query requests no data key,
@@ -28,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `a.zip(b).audit(m)`, or `all((a, b)).audit(m)`. Neither
     `a.audit(m).zip(b)` nor `all((a.audit(m), b))` compiles. A call
     therefore sends one map, with every key request that it makes.
+  - A call that requests no data key sends no metadata, and still
+    succeeds. A query term is one such call. So is a call over an empty
+    list.
   - ZeroKMS does not verify the metadata. A decrypt does not need it.
     ZeroKMS writes the metadata to its logs. Do not send plaintext,
     anything derived from plaintext, or secrets.

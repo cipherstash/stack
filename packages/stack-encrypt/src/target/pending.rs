@@ -370,10 +370,10 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// `retrieve_keys` for each keyset it decrypts leaves from. Each
     /// request is sent with the same metadata.
     ///
-    /// Some calls request no data key, such as a query term, or a record
-    /// that has only passthrough fields. Those calls send no metadata,
-    /// because they make no request to send it with. Empty metadata sends
-    /// none either.
+    /// Some calls request no data key: a query term, for example, or a
+    /// call over an empty list. Those calls send no metadata, because they
+    /// make no request to send it with. Those calls still succeed.
+    /// [`Audited`] lists them. Empty metadata sends none either.
     ///
     /// # Attach it last
     ///

@@ -69,13 +69,15 @@ pub(crate) type Unverified = Option<Arc<UnverifiedContext>>;
 /// - **A call sends one map.** A call can make more than one key request:
 ///   one to generate keys, and one to retrieve keys for each keyset it
 ///   decrypts values from. Each request is sent with the same facts. A call
-///   that requests no data key sends none.
+///   that requests no data key sends none, and still succeeds: see
+///   [`Audited`].
 ///
 /// # Values
 ///
-/// A value is anything ZeroKMS can record exactly: see [`AuditValue`].
-/// Metadata contains only those values, so attaching it to a call cannot
-/// fail.
+/// [`AuditValue`] lists the types that a value can have. ZeroKMS records
+/// each value as you give it, with one exception: a float that is not
+/// finite is sent as `null`. Metadata contains only those values, so
+/// attaching it to a call cannot fail.
 #[derive(Clone, Default, PartialEq)]
 pub struct AuditMetadata {
     fields: UnverifiedContext,
@@ -138,7 +140,10 @@ impl fmt::Debug for AuditMetadata {
     }
 }
 
-/// One value in [`AuditMetadata`]: something ZeroKMS can record exactly.
+/// One value in [`AuditMetadata`].
+///
+/// ZeroKMS records each value as you give it. There is one exception: a
+/// float that is not finite is sent as `null`. See [Numbers](#numbers).
 ///
 /// You do not name this type. [`AuditMetadata::with`] converts to it from:
 ///
@@ -168,7 +173,8 @@ impl fmt::Debug for AuditMetadata {
 /// ```
 ///
 /// JSON has no form for a float that is not finite: `NaN` or an infinity.
-/// That float is sent as `null`.
+/// That float is sent as `null`, so the audit log does not show which of
+/// the three it was. To record that, send the float as text.
 #[derive(Clone, PartialEq)]
 pub struct AuditValue(Option<UnverifiedContextValue>);
 
@@ -253,7 +259,28 @@ impl From<AuditMetadata> for AuditValue {
 /// and on a batch of chains ([`All`](crate::plan::All)).
 ///
 /// You can only await it. Awaiting runs the call, and sends the metadata
-/// with every key request that the call makes.
+/// with every data-key request that the call makes.
+///
+/// # A call that requests no data key
+///
+/// ZeroKMS logs data-key requests, and the metadata is sent with those
+/// requests. Some calls make none:
+///
+/// - a query term, because the cipher derives it from the index key of
+///   the keyset;
+/// - a record that has only passthrough fields;
+/// - a call over no values, such as an absent value (`None`) or an empty
+///   list.
+///
+/// Such a call sends no metadata, and it still succeeds. ZeroKMS released
+/// no data key for the call. So its log has no data-key request to add
+/// the facts to, with or without metadata.
+///
+/// The last case depends on the data, not on the code. So an audited call
+/// with nothing to send is not an error: a program that audits every
+/// decrypt must not fail on an empty list.
+///
+/// # Attach the metadata once, last
 ///
 /// An audited call has no `.audit(..)` and no `zip`. A batch does not take
 /// an audited call. So you attach the metadata once, last, to the whole
@@ -310,7 +337,9 @@ impl From<AuditMetadata> for AuditValue {
 #[must_use = "an audited call does nothing until it is awaited"]
 pub struct Audited<C> {
     call: C,
-    audit: Unverified,
+    // Not named `audit`. With a field of that name, rustc reports a second
+    // `.audit(..)` as "private field, not a method".
+    metadata: Unverified,
 }
 
 impl<C> Audited<C> {
@@ -318,13 +347,13 @@ impl<C> Audited<C> {
     pub(crate) fn new(call: C, metadata: AuditMetadata) -> Self {
         Self {
             call,
-            audit: metadata.into_unverified(),
+            metadata: metadata.into_unverified(),
         }
     }
 
     /// The call, and the metadata to send with its key requests.
     pub(crate) fn into_parts(self) -> (C, Unverified) {
-        (self.call, self.audit)
+        (self.call, self.metadata)
     }
 }
 

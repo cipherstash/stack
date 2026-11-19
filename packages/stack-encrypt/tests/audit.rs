@@ -260,6 +260,63 @@ async fn an_audited_call_that_failed_gives_its_error() {
     assert_eq!(source.take(), vec![]);
 }
 
+/// Audit metadata goes with data-key requests. A call that makes none sends
+/// nothing and still succeeds. The test covers a query term, a record of
+/// passthrough fields only, an absent value, and an empty list. The last
+/// two depend on the data, so an error there would fail a program on an
+/// empty page of rows.
+#[tokio::test]
+async fn an_audited_call_that_requests_no_data_key_succeeds_and_sends_nothing() {
+    let (cipher, source) = cipher().await;
+    let keyset = cipher.default_keyset();
+    let email = String::from("bob@example.com");
+
+    // A query term is derived from the keyset's index key.
+    let audited = keyset
+        .equality_term(email.clone(), nonempty!("users/email"))
+        .audit(list_issues())
+        .await
+        .unwrap();
+    let plain = keyset
+        .equality_term(email.clone(), nonempty!("users/email"))
+        .await
+        .unwrap();
+    assert_eq!(audited, plain);
+
+    // A record whose only field is stored in the clear.
+    let account = Account { email };
+    let _ = cipher
+        .encrypt(&account)
+        .context("accounts")
+        .fields()
+        .passthrough::<String>("email")
+        .audit(list_issues())
+        .await
+        .unwrap();
+
+    // An absent value, and an empty list.
+    let absent: Option<EncryptedEmail> = None::<String>
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+        .audit(list_issues())
+        .await
+        .unwrap();
+    assert!(absent.is_none());
+    let empty: Vec<EncryptedEmail> = Vec::<String>::new()
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+        .audit(list_issues())
+        .await
+        .unwrap();
+    assert!(empty.is_empty());
+    let opened: Vec<String> = empty
+        .decrypt_into(&cipher, nonempty!("users/email"))
+        .audit(list_issues())
+        .await
+        .unwrap();
+    assert!(opened.is_empty());
+
+    assert_eq!(source.take(), vec![]);
+}
+
 /// The tree entry points return a `Pending` too, so they take metadata.
 /// Opening leaves from two keysets is one retrieve call per keyset, and
 /// each carries the metadata.
