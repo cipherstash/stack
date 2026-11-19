@@ -61,7 +61,8 @@ Pair the `wasm-inline` entry with the `cookies` helper to back the strategy with
 // supabase/functions/get-token/index.ts
 import { AccessKeyStrategy } from "@cipherstash/auth/wasm-inline";
 import { cookieStore } from "@cipherstash/auth/cookies";
-import { Encryption } from "@cipherstash/stack";
+import { Encryption } from "@cipherstash/stack/wasm-inline";
+import { users } from "./schema.ts"; // your encryptedTable(s)
 
 Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
@@ -80,7 +81,15 @@ Deno.serve(async (req) => {
   // so your code never handles a raw bearer token. You don't call `getToken()`
   // yourself. (Need the token itself? See "Working with tokens directly" at the
   // end of this README.)
-  const encryption = new Encryption({ authStrategy: created.data });
+  const encryption = await Encryption({
+    schemas: [users],
+    config: {
+      // The WASM client needs the client id and key on every auth path.
+      clientId: Deno.env.get("CS_CLIENT_ID")!,
+      clientKey: Deno.env.get("CS_CLIENT_KEY")!,
+      authStrategy: created.data,
+    },
+  });
 
   // ... encrypt / decrypt with `encryption` ...
   return Response.json({ ok: true }, { headers: responseHeaders });
@@ -93,7 +102,8 @@ Deno.serve(async (req) => {
 {
   "imports": {
     "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.41/wasm-inline",
-    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.41/cookies"
+    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.41/cookies",
+    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@^1/wasm-inline"
   }
 }
 ```
@@ -111,7 +121,8 @@ When the end user is already signed in with a third-party OIDC provider (Clerk, 
 ```ts
 import { OidcFederationStrategy } from "@cipherstash/auth/wasm-inline";
 import { cookieStore } from "@cipherstash/auth/cookies";
-import { Encryption } from "@cipherstash/stack";
+import { Encryption } from "@cipherstash/stack/wasm-inline";
+import { users } from "./schema.ts"; // your encryptedTable(s)
 
 Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
@@ -128,7 +139,15 @@ Deno.serve(async (req) => {
 
   // As above, pass the strategy to a CipherStash SDK rather than calling
   // `getToken()` yourself — the SDK owns token acquisition and refresh.
-  const encryption = new Encryption({ authStrategy: created.data });
+  const encryption = await Encryption({
+    schemas: [users],
+    config: {
+      // The WASM client needs the client id and key on every auth path.
+      clientId: Deno.env.get("CS_CLIENT_ID")!,
+      clientKey: Deno.env.get("CS_CLIENT_KEY")!,
+      authStrategy: created.data,
+    },
+  });
 
   // ... encrypt / decrypt with `encryption` ...
   return Response.json({ ok: true }, { headers: responseHeaders });
@@ -404,6 +423,7 @@ render a signed-out state.
 import { headers } from "next/headers";
 import { csAuthHeader } from "@cipherstash/auth/next";
 import { Encryption } from "@cipherstash/stack";
+import { users } from "./schema"; // your encryptedTable(s)
 
 export async function loadSecret() {
   const strategy = csAuthHeader(await headers());
@@ -411,7 +431,10 @@ export async function loadSecret() {
 
   // Hand the strategy to a CipherStash SDK — it calls getToken() as needed.
   // (The warmed strategy itself never refreshes; it's good for this request.)
-  const encryption = new Encryption({ authStrategy: strategy });
+  const encryption = await Encryption({
+    schemas: [users],
+    config: { authStrategy: strategy },
+  });
   // ... encrypt / decrypt with `encryption` ...
 }
 ```
@@ -554,13 +577,17 @@ export const csAuth = createMiddleware({ type: "function" }).server(
 import { createServerFn } from "@tanstack/react-start";
 import { Encryption } from "@cipherstash/stack";
 import { csAuth } from "./cs-auth";
+import { users } from "./schema"; // your encryptedTable(s)
 
 export const loadSecret = createServerFn({ method: "GET" })
   .middleware([csAuth])
   .handler(async ({ context }) => {
     // `context.csAuth` is a WarmedAuthStrategy — typed by your middleware.
     // The SDK calls getToken() as needed; the strategy is good for this call.
-    const encryption = new Encryption({ authStrategy: context.csAuth });
+    const encryption = await Encryption({
+      schemas: [users],
+      config: { authStrategy: context.csAuth },
+    });
     // ... encrypt / decrypt with `encryption` ...
   });
 ```
@@ -670,6 +697,7 @@ other callers:
 import { createFileRoute } from "@tanstack/react-router";
 import { csFederateRequest } from "@cipherstash/auth/start";
 import { Encryption } from "@cipherstash/stack";
+import { users } from "../../server/schema"; // your encryptedTable(s)
 
 export const Route = createFileRoute("/api/data")({
   server: {
@@ -682,7 +710,10 @@ export const Route = createFileRoute("/api/data")({
           workspaceCrn: process.env.CS_WORKSPACE_CRN!,
           getJwt: () => getSessionJwt(),
         });
-        const encryption = new Encryption({ authStrategy: strategy });
+        const encryption = await Encryption({
+          schemas: [users],
+          config: { authStrategy: strategy },
+        });
         // ... encrypt / decrypt with `encryption` ...
         return Response.json(
           { workspaceId: result.workspaceId },

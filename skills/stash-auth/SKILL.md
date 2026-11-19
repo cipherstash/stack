@@ -1,6 +1,6 @@
 ---
 name: stash-auth
-description: How a CipherStash client authenticates — the canonical skill for credentials, auth strategies, and lock context. Covers the service-token model (every request to a CipherStash service carries a CTS-minted token; strategies exist to obtain one), the three separable concerns people conflate (client credentials, end-user identity, key binding), the `@cipherstash/auth` strategies (`AutoStrategy`, `AccessKeyStrategy`, `OidcFederationStrategy`, `DeviceSessionStrategy`) and the Result-unwrap trap on `create()`, the four `CS_*` variables and `stash env`, credential discovery vs explicit config on the native and WASM entries, client lifetime with user-scoped strategies, `.withLockContext` and what is deprecated around it, and CTS failure codes. Use when an operation fails with 401/NOT_AUTHENTICATED/WORKSPACE_MISMATCH, when choosing between an access key and OIDC federation, when wiring per-user identity-bound encryption, when minting deployment credentials, or whenever another skill mentions "credentials" or `config.authStrategy` — this skill is the canonical source for that model.
+description: How a CipherStash client authenticates — the canonical skill for credentials, auth strategies, and lock context. Covers the service-token model (every request to a CipherStash service carries a CTS-minted token; strategies exist to obtain one), the three separable concerns people conflate (client credentials, end-user identity, key binding), the `@cipherstash/auth` strategies (`AutoStrategy`, `AccessKeyStrategy`, `OidcFederationStrategy`, `DeviceSessionStrategy`) and the Result-unwrap trap on `create()`, the Next.js and TanStack Start adapters (`@cipherstash/auth/next`, `@cipherstash/auth/start`), the four `CS_*` variables and `stash env`, credential discovery vs explicit config on the native and WASM entries, client lifetime with user-scoped strategies, `.withLockContext` and what is deprecated around it, and CTS failure codes. Use when an operation fails with 401/NOT_AUTHENTICATED/WORKSPACE_MISMATCH, when choosing between an access key and OIDC federation, when wiring per-user identity-bound encryption, when minting deployment credentials, or whenever another skill mentions "credentials" or `config.authStrategy` — this skill is the canonical source for that model.
 ---
 
 # Authenticating to CipherStash
@@ -323,6 +323,82 @@ On those versions construct **one `Encryption()` client per request/user**.
 
 `AccessKeyStrategy` and `auto` authenticate a service, not a user, and are
 safe to share for the process lifetime either way.
+
+## Framework adapters (Next.js, TanStack Start)
+
+`@cipherstash/auth` ships two adapters that federate the current request's
+user once per request and persist the CTS token in a per-workspace `HttpOnly`
+cookie (`cs_token_<workspace-id>`), so the next request reuses it instead of
+exchanging again. Both hand your code a **warmed strategy**: it returns the
+same token on every `getToken()` and **never refreshes**, so use it within the
+request that produced it and never cache it across requests.
+
+**Next.js App Router — `@cipherstash/auth/next`.** Federate in middleware with
+`csFederationMiddleware`; read the strategy in a Server Component or Route
+Handler with `csAuthHeader(await headers())`. A cookie set in middleware is not
+readable in the same request, so the token reaches the render on a request
+header (`x-cs-cts-token`). That header is **not authenticated**: a forged one
+is accepted if it is well-formed and can point the app at an attacker's
+ZeroKMS endpoint. `csFederationMiddleware` strips the inbound header, but it
+throws when federation fails (including signed out), so call
+`csSanitizeHeaders(request)` in its `catch`, and make sure every path that can
+reach `csAuthHeader` runs the middleware — a `matcher` that excludes a
+reachable path is a forgery hole.
+
+```typescript
+import { headers } from "next/headers"
+import { csAuthHeader } from "@cipherstash/auth/next"
+import { Encryption } from "@cipherstash/stack"
+
+const strategy = csAuthHeader(await headers()) // null when signed out or not warmed
+if (!strategy) throw new Error("not signed in")
+
+const client = await Encryption({
+  schemas: [users],
+  config: { authStrategy: strategy },
+})
+```
+
+**TanStack Start — `@cipherstash/auth/start`.** Needs `@tanstack/react-start`
+1.132 or later (an optional peer). Call `csFederateCurrent` inside the
+`.server()` callback of a function middleware declared in **your own module**,
+and pass the strategy to the handler with `next({ context })`. No header is
+involved, so there is nothing to strip or forge. Do not wrap the middleware in
+a helper or hoist its options to module level: Start's compiler only strips a
+`.server()` callback written out in your code, and anything else ships your
+`getJwt`, your environment reads and the inline wasm to the browser.
+
+```typescript
+import { createMiddleware, createServerFn } from "@tanstack/react-start"
+import { csFederateCurrent } from "@cipherstash/auth/start"
+import { Encryption } from "@cipherstash/stack"
+
+export const csAuth = createMiddleware({ type: "function" }).server(
+  async ({ next }) => {
+    const csAuth = await csFederateCurrent({
+      workspaceCrn: process.env.CS_WORKSPACE_CRN!,
+      getJwt: () => getSessionJwt(), // this request's user's IdP JWT
+    })
+    return next({ context: { csAuth } })
+  },
+)
+
+export const loadSecret = createServerFn({ method: "GET" })
+  .middleware([csAuth])
+  .handler(async ({ context }) => {
+    const client = await Encryption({
+      schemas: [users],
+      config: { authStrategy: context.csAuth },
+    })
+    // ...
+  })
+```
+
+`csFederateCurrent` throws when federation fails, including signed out; pass
+`onError: "null"` to get `null` instead (it folds every failure, a wrong CRN
+included). For a route handler that holds the `Request` itself, use
+`csFederateRequest({ request, responseHeaders, workspaceCrn, getJwt })`, which
+returns `{ result, strategy }`.
 
 ## Lock context
 
