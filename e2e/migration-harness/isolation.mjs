@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const image = 'cipherstash-migration-isolation:local'
+// Keep equal to the pattern in run/app-host.mjs, which is mounted alone.
+const APP_HOST_ERROR_CODE =
+  /^(?:[0-9A-Z]{5}|ECONNRESET|ECONNREFUSED|ETIMEDOUT)$/
 /** @param {string} message */
 const infrastructure = (message) =>
   Object.assign(Error(message), { infrastructure: true })
@@ -662,7 +665,16 @@ export function createIsolation({
               request = pending.get(message.id)
             if (!request) continue
             pending.delete(message.id)
-            if (message.error) request.reject(Error(message.error))
+            if (message.error)
+              request.reject(
+                Object.assign(
+                  Error(message.error),
+                  typeof message.code === 'string' &&
+                    APP_HOST_ERROR_CODE.test(message.code)
+                    ? { code: message.code }
+                    : {},
+                ),
+              )
             else request.resolve(message.result)
           } catch {
             /* Application logging is untrusted diagnostic output. */

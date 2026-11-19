@@ -3,12 +3,18 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
-import { promisify } from 'node:util'
+import { isDeepStrictEqual, promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
 import { fakeMigrate } from './fake-migrator.mjs'
 import { migrationChecks } from './migration-checks.mjs'
 import { runMigrator } from './migrator.mjs'
 import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
+import { postgresBehaviour, postgresLegacy } from './postgres-behaviour.mjs'
+import {
+  postgresFreshWriteCheck,
+  postgresMigrationChecks,
+  validatePostgresBaseline,
+} from './postgres-oracle.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
 import {
   isSnapshotInfrastructureError,
@@ -31,6 +37,13 @@ export function createRealDriver({
   credentials,
   manifest,
 }) {
+  const procedure = manifest.procedure ?? 'dynamodb'
+  if (!['dynamodb', 'postgres-v2-to-v3'].includes(procedure))
+    throw Error('Unknown migration procedure')
+  const postgresUpgrade = procedure === 'postgres-v2-to-v3'
+  manifest.procedure = procedure
+  manifest.sourceEqlGeneration = 2
+  manifest.targetEqlGeneration = 3
   /** @type {import('./real-stores.mjs').Resource[]} */
   const resources = []
   const workspace = resolve(output, 'migrator')
@@ -81,8 +94,9 @@ export function createRealDriver({
   function forwards(stores) {
     return [...assigned(stores).forwards, ...services]
   }
-  /** @param {string} actor @param {string} directory @param {StoreSet|null} stores @param {string[]} argv */
-  async function execute(actor, directory, stores, argv) {
+  /** Runs one isolated command and keeps its output, whatever its exit code.
+   * @param {string} actor @param {string} directory @param {StoreSet|null} stores @param {string[]} argv */
+  async function attempt(actor, directory, stores, argv) {
     const result = await isolation.exec({
       actor,
       workspace: directory,
@@ -94,9 +108,80 @@ export function createRealDriver({
       resolve(output, `${actor}-${Date.now()}.log`),
       `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
     )
+    return result
+  }
+  /** @param {string} actor @param {string} directory @param {StoreSet|null} stores @param {string[]} argv */
+  async function execute(actor, directory, stores, argv) {
+    const result = await attempt(actor, directory, stores, argv)
     if (result.exitCode !== 0)
       throw Error(`${actor} command exited ${result.exitCode}`)
     return result
+  }
+  /** Reads the Oracle database from the harness as the Run's role. A store
+   * transport failure is infrastructure; anything else is migration damage. */
+  async function oracleSnapshot() {
+    try {
+      return await assigned(oracleStores).postgresSnapshot()
+    } catch (error) {
+      throw Object.assign(
+        Error('PostgreSQL Oracle snapshot failed', { cause: error }),
+        { infrastructure: isSnapshotInfrastructureError(error) },
+      )
+    }
+  }
+  /** The guide runs the PostgreSQL conversion as a one-off step in a
+   * write-maintenance window, not at application startup. The Oracle runs the
+   * workspace's `src/migrate.mjs` `migrate(env)` inside App Host against its
+   * fresh database, then runs it again: a rerun must either succeed without
+   * changing data or refuse without changing anything. Data, not the exit
+   * code, decides the rerun check, except that a rerun the isolation backend
+   * timed out has not refused: it was killed, so it fails. Returns the snapshot
+   * taken after the first run, before any application code starts.
+   * @returns {Promise<{checks: import('../types.js').OracleCheck[], converted: unknown}>} */
+  async function postgresConversion() {
+    const convert = () =>
+      attempt('app-host', oracleWorkspace, oracleStores, [
+        'node',
+        '/harness/app-host.mjs',
+        'migrate',
+      ])
+    const first = await convert()
+    if (first.exitCode !== 0)
+      return {
+        converted: null,
+        checks: [
+          {
+            id: 'migration.postgres-migrate',
+            passed: false,
+            cause: `migrate(env) exited ${first.exitCode}`,
+          },
+          {
+            id: 'migration.postgres-migrate-rerun',
+            passed: false,
+            cause: 'Rerun not checked: the first migrate(env) failed',
+          },
+        ],
+      }
+    const before = await oracleSnapshot()
+    const rerun = await convert()
+    const after = await oracleSnapshot()
+    const unchanged = isDeepStrictEqual(before, after)
+    const rerunCause = rerun.timedOut
+      ? 'Rerunning migrate(env) timed out'
+      : unchanged
+        ? null
+        : `Rerunning migrate(env) changed stored data (exit ${rerun.exitCode})`
+    return {
+      converted: before,
+      checks: [
+        { id: 'migration.postgres-migrate', passed: true },
+        {
+          id: 'migration.postgres-migrate-rerun',
+          passed: !rerunCause,
+          ...(rerunCause ? { cause: rerunCause } : {}),
+        },
+      ],
+    }
   }
   return {
     async provision() {
@@ -130,7 +215,10 @@ export function createRealDriver({
           }),
       ]
       await prepareWorkspace({
-        fixture: resolve(root, 'e2e/migration-harness/fixture'),
+        fixture: resolve(
+          root,
+          `e2e/migration-harness/${postgresUpgrade ? 'postgres-fixture' : 'fixture'}`,
+        ),
         workspace,
         guide,
         frictionPath: '/workspace/friction.json',
@@ -149,12 +237,14 @@ export function createRealDriver({
         runId: id,
         actor: 'migrator',
         eqlBundle,
+        postgresV2: postgresUpgrade,
         resources,
       })
       oracleStores = await createStoreSet({
         runId: id,
         actor: 'oracle',
         eqlBundle,
+        postgresV2: postgresUpgrade,
         resources,
       })
       manifest.storeCapabilities = {
@@ -180,9 +270,21 @@ export function createRealDriver({
           forwards: forwards(stores),
         })
         try {
-          for (const record of [legacy, mutation]) {
+          for (const record of postgresUpgrade
+            ? postgresLegacy
+            : [legacy, mutation]) {
             await initializationHost.call('put', [record])
-            await initializationHost.call('copyToPostgres', [record.pk])
+            if (!postgresUpgrade)
+              await initializationHost.call('copyToPostgres', [record.pk])
+          }
+          if (postgresUpgrade) {
+            const result = await postgresBehaviour((method, args) =>
+              initializationHost.call(method, args),
+            )
+            if (result.checks.some((check) => !check.passed))
+              throw Error(
+                'Legacy PostgreSQL reads or queries failed before migration',
+              )
           }
         } finally {
           await initializationHost.close()
@@ -190,8 +292,11 @@ export function createRealDriver({
       }
     },
     async snapshot() {
-      legacySnapshot = await assigned(oracleStores).snapshot()
-      validateLegacySnapshot(legacySnapshot)
+      legacySnapshot = postgresUpgrade
+        ? await assigned(oracleStores).postgresSnapshot()
+        : await assigned(oracleStores).snapshot()
+      if (postgresUpgrade) validatePostgresBaseline(legacySnapshot)
+      else validateLegacySnapshot(legacySnapshot)
       await writeFile(
         resolve(output, 'legacy-snapshot.json'),
         JSON.stringify(legacySnapshot),
@@ -207,6 +312,7 @@ export function createRealDriver({
             workspace,
             kind: fakeMigration,
             stack: stackSource.install,
+            procedure,
           })
         : await runMigrator({
             command,
@@ -224,6 +330,8 @@ export function createRealDriver({
                 timeoutMs,
               }),
           })
+      if ('runtime' in result && result.runtime)
+        manifest.agents = { ...manifest.agents, runtime: result.runtime }
       if (fakeMigration && fakeMigration !== 'noop')
         await execute('migrator', workspace, migratorStores, ['npm', 'install'])
       await writeFile(
@@ -327,6 +435,8 @@ export function createRealDriver({
       ])
       if (tarball)
         await verifyInstalledTarball({ workspace: oracleWorkspace, tarball })
+      // PostgreSQL starts createApp only after its conversion, in behaviour().
+      if (postgresUpgrade) return
       host = await isolation.openAppHost({
         actor: 'app-host',
         workspace: oracleWorkspace,
@@ -335,9 +445,77 @@ export function createRealDriver({
       })
     },
     async behaviour() {
+      /** @type {import('../types.js').OracleCheck[]} */
+      let conversion = []
+      /** @type {unknown} */
+      let converted = null
+      if (postgresUpgrade) {
+        ;({ checks: conversion, converted } = await postgresConversion())
+        host = await isolation.openAppHost({
+          actor: 'app-host',
+          workspace: oracleWorkspace,
+          env: env(oracleStores),
+          forwards: forwards(oracleStores),
+        })
+      }
       const application = host
       if (!application) throw Error('App Host has not started')
       try {
+        if (postgresUpgrade) {
+          let freshSnapshot
+          let freshSnapshotFailure
+          const result = await postgresBehaviour(
+            (method, args) => application.call(method, args),
+            async () => {
+              try {
+                freshSnapshot = await assigned(oracleStores).postgresSnapshot()
+              } catch (error) {
+                freshSnapshotFailure = error
+              }
+            },
+          )
+          const current = await oracleSnapshot()
+          result.checks.unshift(...conversion)
+          // The conversion is migrate(env)'s job: storage checks must hold
+          // before createApp runs, not only after the application has run.
+          const early = converted
+            ? postgresMigrationChecks(legacySnapshot, converted)
+            : []
+          result.checks.push(
+            ...postgresMigrationChecks(legacySnapshot, current).map((check) => {
+              const before = early.find((entry) => entry.id === check.id)
+              return before && !before.passed
+                ? {
+                    ...before,
+                    cause: `${before.cause} (before the application started)`,
+                  }
+                : check
+            }),
+          )
+          const checks = await result.mutate()
+          if (freshSnapshotFailure) {
+            throw Object.assign(
+              Error('PostgreSQL fresh storage inspection failed', {
+                cause: freshSnapshotFailure,
+              }),
+              {
+                infrastructure:
+                  isSnapshotInfrastructureError(freshSnapshotFailure),
+              },
+            )
+          }
+          checks.push(postgresFreshWriteCheck(freshSnapshot, 'new', current))
+          checks.push(
+            ...(await migrationChecks({
+              workspace,
+              installedWorkspace: oracleWorkspace,
+              stackVersion: manifest.stack,
+              ffiRange,
+              procedure,
+            })),
+          )
+          return checks
+        }
         /** @type {{snapshot: unknown} | {cause: string}} */
         let mutationRead = { snapshot: undefined }
         const result = await behaviour(

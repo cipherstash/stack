@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { createCheck, equal } from './behaviour-checks.mjs'
 
 export const legacy = {
   pk: 'legacy',
@@ -64,24 +65,7 @@ function orderedRows(value) {
 export async function behaviour(call, afterSetActive = async () => {}) {
   /** @type {import('../types.js').OracleCheck[]} */
   const checks = []
-  /** @param {string} id @param {()=>Promise<unknown>} action */
-  async function check(id, action) {
-    try {
-      await action()
-      checks.push({ id, passed: true })
-    } catch (error) {
-      checks.push({
-        id,
-        passed: false,
-        cause: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-  /** @param {unknown} actual @param {unknown} expected */
-  function equal(actual, expected) {
-    if (!isDeepStrictEqual(actual, expected))
-      throw new Error('Unexpected application result')
-  }
+  const check = createCheck(checks)
   /** @param {string} method @param {unknown} value
    * @param {unknown[]} expected @param {unknown} absent */
   async function lookup(method, value, expected, absent) {

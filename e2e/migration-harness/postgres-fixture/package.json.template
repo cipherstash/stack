@@ -1,0 +1,9 @@
+{
+  "name": "protect-postgres-migration-customer-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "check": "node --check src/app.mjs && node --check src/stores.mjs" },
+  "dependencies": { "@cipherstash/protect": "10.2.1", "postgres": "3.4.8" }
+}

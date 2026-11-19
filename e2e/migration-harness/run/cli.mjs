@@ -14,11 +14,17 @@ const { values } = parseArgs({
     fake: { type: 'string' },
     output: { type: 'string' },
     stack: { type: 'string' },
+    procedure: { type: 'string' },
   },
   strict: true,
 })
 const command = values.migrator ?? ''
 const fakeMigration = values.fake
+if (
+  values.procedure &&
+  !['dynamodb', 'postgres-v2-to-v3'].includes(values.procedure)
+)
+  throw Error('Unknown migration procedure')
 if (
   (!command && !fakeMigration) ||
   (command && fakeMigration) ||
@@ -31,6 +37,9 @@ const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const output = resolve(values.output ?? `.migration-harness-runs/${id}`)
 await mkdir(output, { recursive: true })
 const manifest = {
+  procedure: /** @type {'dynamodb'|'postgres-v2-to-v3'} */ (
+    values.procedure ?? 'dynamodb'
+  ),
   stack: values.stack ?? '^1.2.1',
   guideHash: null,
   fixtureRevision: (
