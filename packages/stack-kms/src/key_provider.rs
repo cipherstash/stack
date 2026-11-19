@@ -300,7 +300,9 @@ impl<P: KeyProvider, F: KeyProvider> KeyProvider for FallbackKeyProvider<P, F> {
 /// A workspace with no `secretkey.json` is
 /// [`KeyProviderError::NotConfigured`], so the provider can be either side
 /// of a [`FallbackKeyProvider`]. The provider never reads the key of another
-/// workspace in its place.
+/// workspace in its place. Any other error, such as a `CS_WORKSPACE_CRN`
+/// that is not a CRN, stops a `FallbackKeyProvider` without trying the
+/// other provider.
 ///
 /// # Example
 ///
@@ -330,8 +332,9 @@ enum ProfileWorkspace {
     Id(String),
     /// The CLI's current workspace.
     Current,
-    /// `CS_WORKSPACE_CRN` is set to a value that is not a CRN.
-    InvalidCrn,
+    /// `CS_WORKSPACE_CRN` is set to a value that is not a CRN. Holds the
+    /// parse error's message.
+    InvalidCrn(String),
 }
 
 #[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
@@ -356,7 +359,9 @@ impl ProfileKeyProvider {
     ///
     /// If `CS_WORKSPACE_CRN` is set to a value that is not a CRN,
     /// [`client_key`](KeyProvider::client_key) returns
-    /// [`KeyProviderError::LoadError`].
+    /// [`KeyProviderError::LoadError`], with the reason the value is not a
+    /// CRN. A [`FallbackKeyProvider`] stops at that error, on either side:
+    /// it does not try the other provider.
     pub fn for_detected_workspace() -> Self {
         Self::detected(
             std::env::var(crate::vars::CS_WORKSPACE_CRN).ok().as_deref(),
@@ -369,7 +374,7 @@ impl ProfileKeyProvider {
     fn detected(env_crn: Option<&str>, store: Option<stack_profile::ProfileStore>) -> Self {
         let workspace = match env_crn.map(str::parse::<stack_auth::Crn>) {
             Some(Ok(crn)) => ProfileWorkspace::Id(crn.workspace_id.to_string()),
-            Some(Err(_)) => ProfileWorkspace::InvalidCrn,
+            Some(Err(e)) => ProfileWorkspace::InvalidCrn(e.to_string()),
             None => ProfileWorkspace::Current,
         };
         Self { store, workspace }
@@ -402,8 +407,8 @@ impl KeyProvider for ProfileKeyProvider {
                 secret_key.client_key().await
             }
             ProfileWorkspace::Current => store.client_key().await,
-            ProfileWorkspace::InvalidCrn => Err(KeyProviderError::LoadError(format!(
-                "{} is not a workspace CRN",
+            ProfileWorkspace::InvalidCrn(reason) => Err(KeyProviderError::LoadError(format!(
+                "{} is not a workspace CRN: {reason}",
                 crate::vars::CS_WORKSPACE_CRN
             ))),
         }
@@ -529,6 +534,31 @@ mod tests {
             assert!(
                 matches!(&error, KeyProviderError::LoadError(message) if message.contains("CS_WORKSPACE_CRN")),
                 "the current workspace's key must not be used, got {error:?}"
+            );
+            let reason = "not-a-crn"
+                .parse::<stack_auth::Crn>()
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.to_string().contains(&reason),
+                "the parse error {reason:?} must be kept, got {error}"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_variable_that_is_not_a_crn_stops_a_fallback_chain() {
+            let dir = tempfile::tempdir().unwrap();
+            let (store, _) = profile_with_a_key_in_the_current_workspace(dir.path());
+            let provider = FallbackKeyProvider::new(
+                ProfileKeyProvider::detected(Some("not-a-crn"), Some(store)),
+                StaticKeyProvider::new(random_client_key()),
+            );
+
+            let error = provider.client_key().await.map(|_| ()).unwrap_err();
+
+            assert!(
+                matches!(error, KeyProviderError::LoadError(_)),
+                "the fallback must not be tried, got {error:?}"
             );
         }
 

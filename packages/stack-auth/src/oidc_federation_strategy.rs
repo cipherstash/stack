@@ -217,7 +217,9 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
     ///   CLI's current workspace has no saved session, or the saved session
     ///   records no region. Set `CS_WORKSPACE_CRN`, or log in with
     ///   `npx stash auth login`.
-    /// - [`AuthError::Store`] if the saved session cannot be read or parsed.
+    /// - [`AuthError::Store`] if the saved session cannot be read or parsed,
+    ///   or if the file that records the CLI's current workspace cannot be
+    ///   read or does not hold a valid workspace id.
     /// - [`AuthError::InvalidToken`] if the saved session's token is not a
     ///   JWT with a `workspace` claim.
     /// - [`AuthError::Server`] if the saved session records a region this

@@ -1,7 +1,7 @@
 //! Finds the workspace for a strategy whose caller did not name one.
 
 use cts_common::Crn;
-use stack_profile::ProfileStore;
+use stack_profile::{ProfileError, ProfileStore};
 
 use crate::{AuthError, Token};
 
@@ -31,10 +31,19 @@ fn crn_from(
     if let Some(crn) = env_crn {
         return crn.parse::<Crn>().map_err(AuthError::from);
     }
-    let session = store()
-        .and_then(|store| store.current_workspace_store().ok())
-        .filter(|workspace| workspace.exists_profile::<Token>())
-        .ok_or(AuthError::NotAuthenticated(crate::error::NotAuthenticated))?;
+    let not_authenticated = || AuthError::NotAuthenticated(crate::error::NotAuthenticated);
+    let store = store().ok_or_else(not_authenticated)?;
+    // Only a missing `current_workspace` file means "not logged in". A file
+    // that cannot be read, or that names an invalid workspace, is reported
+    // as itself, as `ProfileKeyProvider` reports it.
+    let session = match store.current_workspace_store() {
+        Ok(session) => session,
+        Err(ProfileError::NoCurrentWorkspace) => return Err(not_authenticated()),
+        Err(e) => return Err(e.into()),
+    };
+    if !session.exists_profile::<Token>() {
+        return Err(not_authenticated());
+    }
     session.load_profile::<Token>()?.workspace_crn()
 }
 
@@ -132,6 +141,25 @@ mod tests {
                 assert!(
                     matches!(result, Err(AuthError::NotAuthenticated(_))),
                     "expected NotAuthenticated, got: {result:?}"
+                );
+            }
+
+            #[test]
+            fn a_current_workspace_file_naming_an_invalid_id_is_a_store_error() {
+                let dir = tempfile::tempdir().unwrap();
+                std::fs::write(dir.path().join("current_workspace"), "not-a-workspace").unwrap();
+                let store = ProfileStore::new(dir.path());
+
+                let result = crn_from(None, || Some(store));
+
+                assert!(
+                    matches!(
+                        result,
+                        Err(AuthError::Store(crate::error::StoreError(
+                            ProfileError::InvalidWorkspaceId(_)
+                        )))
+                    ),
+                    "a broken profile must not read as not logged in, got: {result:?}"
                 );
             }
 
