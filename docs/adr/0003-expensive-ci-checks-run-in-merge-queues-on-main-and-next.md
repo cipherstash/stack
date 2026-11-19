@@ -4,6 +4,9 @@ status: accepted
 
 # Run the expensive CI checks in merge queues on `main` and `next`
 
+> Work on this decision paused in November 2026, until the same-size swap in
+> ADR 0004 is in place.
+
 We decided in October 2026 to split this repository's CI checks into push
 checks and gate checks. Push checks run on every push to a pull request. Gate
 checks run once, when the pull request is in a merge queue. `main` and `next`

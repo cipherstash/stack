@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0004
 ---
 
 # Move CI from Blacksmith to GitHub-hosted runners and RunsOn

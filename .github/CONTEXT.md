@@ -76,6 +76,12 @@ and runs on a self-provisioned cloud runner instead. Whether a job is heavy
 says where it runs, not when: a heavy job can be a push check.
 _Avoid_: big job, 16-core job
 
+**Same-size swap**:
+The change that moves each Blacksmith job to a RunsOn machine with the same
+vCPU count, architecture, and Ubuntu version. Memory and disk may be smaller.
+The job's triggers and steps stay the same.
+_Avoid_: like-for-like replacement, migration
+
 ## Relationships
 
 - Three separate choices apply to each check. Its trigger paths decide whether
@@ -85,3 +91,5 @@ _Avoid_: big job, 16-core job
 - Mutation testing is expensive but important. So it runs only once the
   design and implementation of a change are settled. Its failures must be
   fixed before the change merges. That makes it a heavy job and a gate check.
+- A same-size swap ignores the light and heavy distinction. A Blacksmith job
+  moves to RunsOn even if a GitHub-hosted standard runner could run it.
