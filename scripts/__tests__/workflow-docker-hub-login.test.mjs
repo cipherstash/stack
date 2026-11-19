@@ -3,6 +3,7 @@ import { dirname, join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { expr } from './lib/expressions.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { isRunsOnJob } from './lib/runs-on.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
@@ -33,8 +34,14 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * task that reaches either through its body, its `depends`, or a nested
  * `mise run`. A login a job did not need costs one step and nothing else.
  *
- * Only a literal `runs-on=` label counts as RunsOn. GitHub-hosted runners are
- * not limited this way, and Blacksmith jobs are leaving.
+ * A job counts as RunsOn when its label starts with `runs-on=`. It also
+ * counts when `MATRIX_RUNNERS` in `lib/runs-on.mjs` says its matrix gives it
+ * RunsOn machines, because a matrix runner is an expression this file cannot
+ * read. GitHub-hosted runners are not limited this way.
+ *
+ * In a called workflow, `secrets.*` is empty unless the caller passes it. A
+ * login there would skip, and the job would pull anonymously with no error.
+ * So every caller of a workflow whose RunsOn jobs log in passes both secrets.
  */
 
 // ---------------------------------------------------------------------------
@@ -269,11 +276,9 @@ export function credentialsFinding(credentials) {
   return null
 }
 
-const isRunsOn = (job) => String(job?.['runs-on'] ?? '').startsWith('runs-on=')
-
 /** Every finding for one job, or [] when it is correct. */
-export function jobFindings(where, job) {
-  if (!isRunsOn(job)) return []
+export function jobFindings(where, job, ref) {
+  if (!isRunsOnJob(job, ref)) return []
   const findings = []
   const containers = [
     ...Object.entries(job.services ?? {}).map(([name, svc]) => [
@@ -310,8 +315,41 @@ export function jobFindings(where, job) {
 function runsOnJobs() {
   return workflowFiles().flatMap((file) =>
     Object.entries(readWorkflow(file)?.jobs ?? {})
-      .filter(([, job]) => isRunsOn(job))
-      .map(([name, job]) => ({ where: `${file} ${name}`, job })),
+      .map(([name, job]) => ({ where: `${file} ${name}`, ref: `${file}#${name}`, job }))
+      .filter(({ job, ref }) => isRunsOnJob(job, ref)),
+  )
+}
+
+/** Whether a calling job passes both Docker Hub secrets to the workflow it calls. */
+export function callerFinding(job) {
+  if (job?.secrets === 'inherit') return null
+  const passed = job?.secrets ?? {}
+  const missing = [
+    ['DOCKER_HUB_USERNAME', USERNAME],
+    ['DOCKER_HUB_PASSWORD', PASSWORD],
+  ]
+    .filter(([name, value]) => passed[name] !== value)
+    .map(([name]) => name)
+  return missing.length
+    ? `does not pass ${missing.join(' and ')} to the workflow it calls, so its login would skip`
+    : null
+}
+
+/** Each local workflow call whose called RunsOn jobs log in, and what it lacks. */
+function callerFindings() {
+  return workflowFiles().flatMap((file) =>
+    Object.entries(readWorkflow(file)?.jobs ?? {})
+      .filter(([, job]) => String(job?.uses ?? '').startsWith('./.github/workflows/'))
+      .flatMap(([name, job]) => {
+        const called = job.uses.replace(/^\.\//, '').replace(/@.*$/, '')
+        const logsIn = Object.entries(readWorkflow(called)?.jobs ?? {}).some(
+          ([id, calledJob]) =>
+            isRunsOnJob(calledJob, `${called}#${id}`) &&
+            (calledJob.steps ?? []).some((step) => loginFinding(step) === null),
+        )
+        const finding = logsIn ? callerFinding(job) : null
+        return finding ? [`${file}#${name}: ${finding}`] : []
+      }),
   )
 }
 
@@ -322,7 +360,7 @@ describe('Docker Hub login on RunsOn', () => {
 
   it('finds the jobs it checks', () => {
     // A discovery test that finds nothing passes having checked nothing.
-    expect(jobs.length).toBeGreaterThan(20)
+    expect(jobs.length).toBeGreaterThan(50)
     expect(
       jobs.filter(({ job }) => (job.steps ?? []).some((s) => stepPulls(s)))
         .length,
@@ -332,9 +370,13 @@ describe('Docker Hub login on RunsOn', () => {
   })
 
   it('logs in before every pull', () => {
-    expect(jobs.flatMap(({ where, job }) => jobFindings(where, job))).toEqual(
-      [],
-    )
+    expect(
+      jobs.flatMap(({ where, job, ref }) => jobFindings(where, job, ref)),
+    ).toEqual([])
+  })
+
+  it('passes the Docker Hub secrets to every called workflow whose RunsOn jobs log in', () => {
+    expect(callerFindings()).toEqual([])
   })
 
   // Every job in the tree is correct, so the test above runs none of the
@@ -367,6 +409,30 @@ describe('Docker Hub login on RunsOn', () => {
     expect(
       jobFindings('w j', { 'runs-on': 'ubuntu-latest', steps: [up] }),
     ).toEqual([])
+    // A matrix runner that MATRIX_RUNNERS marks as RunsOn is in scope.
+    expect(
+      jobFindings(
+        'w j',
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, the literal `runs-on` value under test.
+        { 'runs-on': '${{ matrix.cfg.os }}', steps: [up] },
+        '.github/workflows/_build-ffi-artifacts.yml#binaries',
+      ),
+    ).toEqual([expect.stringMatching(/no Docker Hub login comes before it/)])
+  })
+
+  it('reports a call that does not pass both secrets', () => {
+    const uses = './.github/workflows/x.yml'
+    expect(callerFinding({ uses })).toMatch(/DOCKER_HUB_USERNAME/)
+    expect(callerFinding({ uses, secrets: 'inherit' })).toBeNull()
+    expect(
+      callerFinding({
+        uses,
+        secrets: { DOCKER_HUB_USERNAME: USERNAME, DOCKER_HUB_PASSWORD: PASSWORD },
+      }),
+    ).toBeNull()
+    expect(
+      callerFinding({ uses, secrets: { DOCKER_HUB_USERNAME: USERNAME } }),
+    ).toMatch(/DOCKER_HUB_PASSWORD/)
   })
 
   it('reports a login that would fail on a fork pull request', () => {

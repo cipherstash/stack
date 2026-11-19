@@ -207,6 +207,11 @@ jobs:
     uses: ./.github/workflows/_build-ffi-artifacts.yml
     with:
       ref: ${{ github.sha }}
+    # By name, not `secrets: inherit`, so the called workflow gets no other
+    # secret of this workflow.
+    secrets:
+      DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+      DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
   publish-ffi:
     name: Publish FFI packages
