@@ -1410,16 +1410,20 @@ impl<S: 'static, K: 'static> Plan<S, K> {
     /// # impl Field<u64> for User {
     /// #     fn field(&self, name: &str) -> Option<&u64> { (name == "id").then_some(&self.id) }
     /// # }
-    /// use stack_encrypt::{Equality, Plan};
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use stack_encrypt::{Equality, Plan, StackCipher};
     ///
-    /// // `_` is the type of the cipher's key source. The compiler infers it
-    /// // where a cipher runs the plan.
-    /// let plan: Plan<User, _> = Plan::context("users")
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let plan = Plan::context("users")
     ///     .fields()
     ///     .encrypt_index::<String>("email", Equality)
     ///     .passthrough::<u64>("id")
     ///     .build()?;
-    /// # let _: &Plan<User, stack_encrypt::kms::FakeDataKeySource> = &plan;
     /// println!("{}", plan.contexts());
     /// // email
     /// //   context: (users / email) / {scope?: CallerContext}
@@ -1428,7 +1432,14 @@ impl<S: 'static, K: 'static> Plan<S, K> {
     ///     plan.contexts(),
     ///     email = [["users", "email"], stack_encrypt::testing::caller_scope()],
     /// );
-    /// # Ok::<(), stack_encrypt::Error>(())
+    ///
+    /// // The plan the contexts describe is the one the cipher runs.
+    /// let user = User { email: "ada@example.com".into(), id: 7 };
+    /// let record = cipher.encrypt(&user).using(&plan).await?;
+    /// # let _ = record;
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
     /// ```
     pub fn contexts(&self) -> crate::Contexts {
         let base = match &self.inner.source {

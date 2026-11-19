@@ -552,10 +552,6 @@ different data-key source entirely:"#
     doc = "Build with [`builder`](Self::builder), over an explicit data-key source:"
 )]
 ///
-/// This example passes `FakeDataKeySource`, the in-memory source for tests.
-/// Do not use it for real data. Without `.kms(..)`, the builder uses
-/// ZeroKMS.
-///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
 /// use stack_encrypt::StackCipher;
@@ -572,6 +568,13 @@ different data-key source entirely:"#
 /// #     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(f)
 /// # }
 /// ```
+///
+/// This example passes `FakeDataKeySource`, the in-memory source for tests.
+/// Do not use it for real data.
+#[cfg_attr(
+    feature = "http",
+    doc = "Without `.kms(..)`, [`init`](StackCipherBuilder::init) uses ZeroKMS."
+)]
 ///
 /// Construction is async because it resolves the client's default keyset
 /// and loads its index key — one ZeroKMS round-trip, paid once, so a
