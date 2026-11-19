@@ -212,6 +212,20 @@ function pullingTasks(index) {
 
 const PULLING_TASKS = pullingTasks(taskIndex())
 
+// Pulls this file cannot find, because test code or a README the test runs
+// starts the container. Each named step counts as a pull.
+export const HIDDEN_PULLS = {
+  '.github/workflows/prisma-example-readme-e2e.yml#walkthrough': {
+    step: 'Run README walkthrough e2e',
+    reason:
+      "e2e/tests/prisma-example-readme.e2e.test.ts runs the Prisma example's README, whose `docker compose up -d` pulls postgres:16.",
+  },
+  '.github/workflows/tests.yml#e2e-tests': {
+    step: 'Run E2E tests',
+    reason: 'e2e/vitest.config.ts includes the same README walkthrough test.',
+  },
+}
+
 // ---------------------------------------------------------------------------
 // Steps and jobs
 // ---------------------------------------------------------------------------
@@ -297,7 +311,10 @@ export function jobFindings(where, job, ref) {
       )
   }
   const steps = job.steps ?? []
-  const firstPull = steps.findIndex((step) => stepPulls(step))
+  const hidden = HIDDEN_PULLS[ref]?.step
+  const firstPull = steps.findIndex(
+    (step) => stepPulls(step) || (hidden && step?.name === hidden),
+  )
   if (firstPull === -1) return findings
   const logins = steps
     .map((step, i) => ({ i, finding: loginFinding(step) }))
@@ -383,6 +400,17 @@ describe('Docker Hub login on RunsOn', () => {
 
   it('passes the Docker Hub secrets to every called workflow whose RunsOn jobs log in', () => {
     expect(callerFindings()).toEqual([])
+  })
+
+  it('names a RunsOn job and a real step for every hidden pull', () => {
+    // A stale entry would stop guarding the pull it was written for.
+    const stale = Object.entries(HIDDEN_PULLS)
+      .filter(([ref, { step }]) => {
+        const entry = jobs.find((j) => j.ref === ref)
+        return !(entry?.job.steps ?? []).some((s) => s?.name === step)
+      })
+      .map(([ref]) => ref)
+    expect(stale).toEqual([])
   })
 
   // Every job in the tree is correct, so the test above runs none of the
