@@ -4,6 +4,7 @@ use crate::access_key::AccessKey;
 use crate::access_key_refresher::AccessKeyRefresher;
 use crate::auto_refresh::AutoRefresh;
 use crate::token_store::{NoStore, TokenStore};
+use crate::token_verifier::{self, TokenVerifier};
 use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken};
@@ -48,6 +49,7 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, Service
 pub struct AccessKeyStrategy<S = NoStore> {
     inner: AutoRefresh<AccessKeyRefresher, S>,
     expected_workspace: WorkspaceId,
+    verifier: Option<TokenVerifier>,
 }
 
 impl AccessKeyStrategy {
@@ -90,14 +92,15 @@ impl AccessKeyStrategy {
             base_url_override: None,
             token_store: NoStore,
             transport: None,
+            verify_tokens: false,
         }
     }
 }
 
 impl<S: TokenStore> AuthStrategy for &AccessKeyStrategy<S> {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
-        self.inner
-            .get_token()
+        let token = self.inner.get_token().await?;
+        token_verifier::verify_cached(self.verifier.as_ref(), &self.inner, token)
             .await?
             .verify_workspace(self.expected_workspace)
     }
@@ -113,6 +116,7 @@ pub struct AccessKeyStrategyBuilder<S = NoStore> {
     base_url_override: Option<url::Url>,
     token_store: S,
     transport: Option<SharedTransport>,
+    verify_tokens: bool,
 }
 
 impl<S> AccessKeyStrategyBuilder<S> {
@@ -134,9 +138,39 @@ impl<S> AccessKeyStrategyBuilder<S> {
         self.transport = transport;
         self
     }
+
+    /// The auto strategy's [`verify_tokens`](Self::verify_tokens) setting,
+    /// handed through.
+    pub(crate) fn verify_tokens_if(mut self, verify_tokens: bool) -> Self {
+        self.verify_tokens = verify_tokens;
+        self
+    }
+
     /// Set the audience for token requests.
     pub fn audience(mut self, audience: impl Into<String>) -> Self {
         self.audience = Some(audience.into());
+        self
+    }
+
+    /// Verify every token before [`get_token`](AuthStrategy::get_token)
+    /// returns it, against the CTS that serves the CRN's region.
+    ///
+    /// The token must be signed with RS256 by a key that issuer publishes at
+    /// `<issuer>/.well-known/jwks.json`, name that issuer as `iss`, be within
+    /// its `exp` and, when it has one, its `nbf` (60 seconds of clock skew
+    /// allowed on each), and name this access key as `sub`
+    /// (`CS|CSAK<key_id>`), so a real token issued to another key cannot
+    /// stand in for this one. When [`audience`](Self::audience) is set, its
+    /// `aud` must contain it. A token that fails is refused with
+    /// [`AuthError::InvalidToken`]. A token for another workspace is refused
+    /// with [`AuthError::WorkspaceMismatch`], as without verification, but the
+    /// check is then on a `workspace` claim the issuer signed.
+    ///
+    /// The issuer is pinned from the CRN's region, not from
+    /// [`base_url`](Self::base_url) or `CS_CTS_HOST`, so redirecting where
+    /// tokens are requested does not change which tokens are accepted.
+    pub fn verify_tokens(mut self) -> Self {
+        self.verify_tokens = true;
         self
     }
 
@@ -174,6 +208,7 @@ impl<S> AccessKeyStrategyBuilder<S> {
             base_url_override: self.base_url_override,
             token_store: store,
             transport: self.transport,
+            verify_tokens: self.verify_tokens,
         }
     }
 }
@@ -195,15 +230,29 @@ impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
                 crate::cts_base_url_from_env()?.unwrap_or(CtsServiceDiscovery::endpoint(region)?)
             }
         };
+        let transport = transport::resolve(self.transport)?;
+        // The trusted issuer comes from the region, never from `base_url`:
+        // see `token_verifier`.
+        // A token CTS issued to this key names it in `sub`. Checking that
+        // stops a real token for another principal standing in for this one.
+        let subject = crate::access_key::token_subject(&self.access_key);
+        let verifier = token_verifier::resolve(
+            self.verify_tokens,
+            || Ok(region),
+            self.audience.clone(),
+            &transport,
+        )?
+        .map(|verifier| verifier.with_subject(subject));
         let refresher = AccessKeyRefresher::new(
             self.access_key,
             ensure_trailing_slash(base_url),
             self.audience,
-            transport::resolve(self.transport)?,
+            transport,
         );
         Ok(AccessKeyStrategy {
             inner: AutoRefresh::with_store(refresher, self.token_store),
             expected_workspace,
+            verifier,
         })
     }
 }

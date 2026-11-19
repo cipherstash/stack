@@ -112,7 +112,7 @@ where
 /// is served only to the JWT that produced it.
 ///
 /// It is deliberately the *whole JWT*, not the `iss`/`sub` claims read from
-/// it. The client cannot verify a JWT's signature, so a cache keyed on claims
+/// it. The client cannot verify the provider JWT's signature, so a cache keyed on claims
 /// would hand a forged JWT carrying a victim's `sub` the victim's cached CTS
 /// token without CTS ever seeing it. Keyed on the bytes, a forged JWT gets
 /// its own entry and is refused by CTS. The cost is one exchange each time

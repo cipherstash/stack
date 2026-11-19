@@ -9,6 +9,7 @@ use crate::auto_refresh::{AutoRefresh, StickyDenial};
 use crate::clock::{system_clock, SharedClock};
 use crate::oidc_refresher::{JwtDigest, JwtRefresher, OidcFederation, OidcProvider};
 use crate::token_store::{NoStore, TokenStore};
+use crate::token_verifier::{self, TokenVerifier};
 use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken, Token};
@@ -43,7 +44,7 @@ pub(crate) const DEFAULT_CACHE_CAPACITY: usize = 1024;
 /// the call that created the strategy instead, and lose the request.
 ///
 /// The cache is keyed on the whole JWT, never on claims read from it (the
-/// client cannot verify a JWT, so a forged one naming another user's `sub`
+/// client cannot verify the provider's JWT, so a forged one naming another user's `sub`
 /// must not reach that user's token), and holds at most
 /// [`cache_capacity`](OidcFederationStrategyBuilder::cache_capacity) JWTs
 /// (1024 by default), dropping the least recently used. Because
@@ -103,6 +104,7 @@ pub struct OidcFederationStrategy<P, S = NoStore> {
     federation: Arc<OidcFederation>,
     store: Arc<S>,
     expected_workspace: WorkspaceId,
+    verifier: Option<TokenVerifier>,
     engines: Mutex<Engines<S>>,
     /// The last account-level refusal (a usage limit, an unprovisioned org),
     /// remembered for the strategy as a whole.
@@ -198,6 +200,7 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
             transport: None,
             cache_capacity: DEFAULT_CACHE_CAPACITY,
             clock: system_clock(),
+            verify_tokens: false,
         }
     }
 }
@@ -382,7 +385,9 @@ impl<P, S: TokenStore> OidcFederationStrategy<P, S> {
                 return Err(err);
             }
         };
-        token.verify_workspace(self.expected_workspace)
+        token_verifier::verify_cached(self.verifier.as_ref(), &engine, token)
+            .await?
+            .verify_workspace(self.expected_workspace)
     }
 }
 
@@ -406,6 +411,7 @@ pub struct OidcFederationStrategyBuilder<P, S = NoStore> {
     transport: Option<SharedTransport>,
     cache_capacity: usize,
     clock: SharedClock,
+    verify_tokens: bool,
 }
 
 impl<P, S> OidcFederationStrategyBuilder<P, S> {
@@ -428,6 +434,25 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
         self.transport = Some(transport::share(transport));
         self
     }
+    /// Verify every CTS token before it is returned, against the CTS that
+    /// serves the CRN's region.
+    ///
+    /// The token must be signed with RS256 by a key that issuer publishes at
+    /// `<issuer>/.well-known/jwks.json`, name that issuer as `iss`, and be
+    /// within its `exp` and, when it has one, its `nbf` (60 seconds of clock
+    /// skew allowed on each). A token that fails is refused with
+    /// [`AuthError::InvalidToken`]. A token for another workspace is refused
+    /// with [`AuthError::WorkspaceMismatch`], as without verification, but the
+    /// check is then on a `workspace` claim the issuer signed.
+    ///
+    /// The issuer is pinned from the CRN's region, not from
+    /// [`base_url`](Self::base_url) or `CS_CTS_HOST`, so redirecting where
+    /// tokens are requested does not change which tokens are accepted.
+    pub fn verify_tokens(mut self) -> Self {
+        self.verify_tokens = true;
+        self
+    }
+
     /// Override the base URL resolved by service discovery.
     ///
     /// Takes precedence over both the `CS_CTS_HOST` environment variable and
@@ -502,6 +527,7 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
             transport: self.transport,
             cache_capacity: self.cache_capacity,
             clock: self.clock,
+            verify_tokens: self.verify_tokens,
         }
     }
 }
@@ -523,16 +549,22 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
                 crate::cts_base_url_from_env()?.unwrap_or(CtsServiceDiscovery::endpoint(region)?)
             }
         };
+        let transport = transport::resolve(self.transport)?;
+        // The trusted issuer comes from the region, never from `base_url`:
+        // see `token_verifier`.
+        let verifier =
+            token_verifier::resolve(self.verify_tokens, || Ok(region), None, &transport)?;
         let federation = OidcFederation::new(
             expected_workspace,
             ensure_trailing_slash(base_url),
-            transport::resolve(self.transport)?,
+            transport,
         );
         Ok(OidcFederationStrategy {
             provider: self.oidc_provider,
             federation: Arc::new(federation),
             store: Arc::new(self.token_store),
             expected_workspace,
+            verifier,
             engines: Mutex::new(Engines {
                 cache: JwtCache::new(self.cache_capacity),
                 pending: HashMap::new(),
@@ -925,7 +957,7 @@ mod tests {
     /// The cache is keyed on the JWT's bytes, not its claims: a JWT that
     /// copies a cached user's header and payload under another signature is
     /// exchanged (and refused here), never served that user's token. The
-    /// client cannot verify a signature, so a cache keyed on `iss`/`sub`
+    /// client cannot verify the provider JWT's signature, so a cache keyed on `iss`/`sub`
     /// would hand this forgery the victim's CTS token without CTS ever
     /// seeing it.
     #[tokio::test]

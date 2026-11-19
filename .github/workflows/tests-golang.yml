@@ -395,6 +395,12 @@ jobs:
         working-directory: languages/golang
         run: CGO_ENABLED=0 go test -v ./encrypt/...
 
+      # Verifies a real CTS token against CTS's published signing keys: the
+      # live proof that the token verifier's assumptions (RS256, the region's
+      # CTS as issuer, keys at its /.well-known/jwks.json) hold.
+      - name: stack-auth verifies a live CTS token
+        run: cargo run --locked -p stack-auth --example verify_tokens
+
       - name: stack-encrypt examples
         run: |
           for example in encrypted_record mixed_user search_terms zerokms_auth; do

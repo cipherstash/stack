@@ -59,6 +59,7 @@ mod error;
 mod service_token;
 mod token;
 mod token_store;
+mod token_verifier;
 mod transport;
 
 // The strategies that acquire and refresh tokens over HTTP, and the refresh
@@ -385,6 +386,12 @@ impl SecretToken {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Whether `other` is the same token, compared in constant time (for
+    /// tokens of the same length).
+    pub(crate) fn constant_time_eq(&self, other: &SecretToken) -> bool {
+        vitaminc_protected::ConstantTimeEq::constant_time_eq(self.0.as_str(), other.0.as_str())
+    }
 }
 
 /// Read the `CS_CTS_HOST` environment variable and parse it as a URL.
@@ -408,6 +415,15 @@ pub(crate) fn ensure_trailing_slash(mut url: url::Url) -> url::Url {
     url
 }
 
+/// The header, claims and signature segments of a compact JWT, or `None`
+/// when it does not have exactly three. The one place a token is split, so
+/// claim decoding and signature verification agree on what a JWT is.
+pub(crate) fn jwt_segments(token: &str) -> Option<[&str; 3]> {
+    let mut segments = token.split('.');
+    let parts = [segments.next()?, segments.next()?, segments.next()?];
+    segments.next().is_none().then_some(parts)
+}
+
 /// Decode a JWT payload by splitting on `.`, base64-decoding the middle
 /// segment, and deserializing the JSON. Signatures are **not** verified — we
 /// only ever read claims from a token we already hold.
@@ -421,17 +437,16 @@ where
     C: serde::de::DeserializeOwned,
 {
     use base64::Engine;
-    let segments: Vec<&str> = token.split('.').collect();
-    if segments.len() != 3 {
+    let Some([_, claims, _]) = jwt_segments(token) else {
         return Err(AuthError::InvalidToken(error::InvalidToken(
             "JWT must have three segments".to_string(),
         )));
-    }
+    };
     // Neither decoder's own message is passed on: base64's names a byte of
     // the token, and serde_json's can quote the claim it refused. A token is
     // a credential (see `ErrorPayload` for the rule).
     let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(segments[1])
+        .decode(claims)
         .map_err(|_| {
             AuthError::InvalidToken(error::InvalidToken(
                 "the JWT's claims segment is not base64url".to_string(),
@@ -448,6 +463,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_jwt_has_exactly_three_segments() {
+        assert_eq!(
+            jwt_segments("h.c.s"),
+            Some(["h", "c", "s"]),
+            "three segments should split"
+        );
+        assert_eq!(
+            jwt_segments("h..s"),
+            Some(["h", "", "s"]),
+            "an empty segment is still a segment"
+        );
+        for token in ["", "h", "h.c", "h.c.s.x", "h.c.s."] {
+            assert_eq!(jwt_segments(token), None, "{token:?}");
+        }
+    }
 
     /// A claims segment that does not decode is reported by kind and
     /// position, never by the decoder's text: base64's names a byte of the
