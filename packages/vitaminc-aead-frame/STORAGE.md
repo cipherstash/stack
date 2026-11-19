@@ -95,7 +95,7 @@ that are hashed or signed. But:
   as long as the customer keeps the row, and over that time its type will
   change.
 - It does not use serde. Every sealed type would need Borsh derives,
-  including types from other crates (`uuid`, `chrono`), and the serde
+  including types from other crates (`uuid`, `jiff`), and the serde
   attributes that govern schema evolution here (`default`, `alias`) do not
   apply.
 - A reader in another language needs the layout of the Rust type to read

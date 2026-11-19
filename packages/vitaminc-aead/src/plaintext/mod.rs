@@ -44,7 +44,7 @@ pub use tee::Tee;
 
 /// A value that can describe itself to a [`Sink`].
 ///
-/// Implemented by Rust primitives and containers, by the optional chrono,
+/// Implemented by Rust primitives and containers, by the optional jiff,
 /// `rust_decimal` and uuid types, and by host bindings for their own values.
 /// A struct implements it by walking its fields into a map, which is what
 /// `#[derive(Encrypt)]` generates.
@@ -118,7 +118,7 @@ pub trait Encrypt {
 /// source implements it: `bool`, the integers (except `u8`, which is not a
 /// source at all), the floats, `String` and `&str`, `Vec<u8>`, `[u8; N]`
 /// and `&[u8]`, [`Bytes`] and [`Raw`], the borrowed, `Protected` and
-/// `ProtectedRef` forms of each, and the chrono, `rust_decimal` and uuid
+/// `ProtectedRef` forms of each, and the jiff, `rust_decimal` and uuid
 /// types behind their features. A container does not, and neither does an
 /// `Option<T>`, even of a scalar: its `None` is a leaf too, but a caller
 /// that bounds on `Scalar` asks for a value that is present, and decides

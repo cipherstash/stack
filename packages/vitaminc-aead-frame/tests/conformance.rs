@@ -1,8 +1,10 @@
 //! The shared binding corpus against the frame and the ciphertext codec:
 //! every vector parses as one frame and writes back byte for byte, from its
-//! own walk and from a scalar built independently with std, chrono and
+//! own walk and from a scalar built independently with std, jiff and
 //! rust_decimal, so a bug that reads and writes symmetrically wrong cannot
-//! pass. Every malformed vector is refused, every normalized vector reads
+//! pass. Building each date and timestamp with jiff also shows that every
+//! value another binding seals opens as a jiff value in Rust. Every
+//! malformed vector is refused, every normalized vector reads
 //! and writes back as its canonical bytes, every malformed ciphertext is
 //! refused by the ciphertext codec, and every leaf-type AAD vector has the
 //! context bytes it pins.
@@ -14,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use vitaminc_aead::plaintext::kinds::chrono as conv;
+use vitaminc_aead::plaintext::kinds::jiff as conv;
 use vitaminc_aead::{
     Encrypt, Float, Int, IntoAad, Kind, KnownLogical, LeafTypeAad, Logical, Physical, Raw,
     TimeUnit, UnknownLogicalId,
@@ -87,15 +89,15 @@ fn expected(row: &serde_json::Value) -> Vec<u8> {
     match kind {
         "undefined" => scalar(Some(Logical::Undefined), Physical::Null),
         "date" => {
-            let date = chrono::NaiveDate::parse_from_str(text(), "%Y-%m-%d").expect("valid date");
+            let date: jiff::civil::Date = text().parse().expect("valid date");
             scalar(
                 Some(Logical::Date),
                 Physical::Int(Int::I32(conv::date_days(date))),
             )
         }
         "timestamp" => {
-            let instant: chrono::DateTime<chrono::Utc> = text().parse().expect("valid timestamp");
-            let nanos = conv::timestamp_nanos(instant).expect("not a leap second");
+            let instant: jiff::Timestamp = text().parse().expect("valid timestamp");
+            let nanos = conv::timestamp_nanos(instant).expect("in range");
             let unit = match row["unit"].as_str() {
                 None | Some("nanos") => TimeUnit::Nanos,
                 Some("micros") => TimeUnit::Micros,

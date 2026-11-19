@@ -105,7 +105,7 @@ A cipher that has to be awaited implements [`AsyncCipher`] instead, and drives [
 
 ### Encrypting data
 
-[`encrypt`] takes any [`Encrypt`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), the integers `i8`, `i16`, `i32`, `i64`, `i128`, `u16`, `u32`, `u64` and `u128`, `f32` and `f64`, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), a `ProtectedRef` borrow from `as_protected_ref()` (walked as the `&Protected<T>` it came from), and, behind features, `chrono`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them. Each source that is one leaf on its own also implements [`Scalar`], the bound for a caller that must seal exactly one leaf.
+[`encrypt`] takes any [`Encrypt`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), the integers `i8`, `i16`, `i32`, `i64`, `i128`, `u16`, `u32`, `u64` and `u128`, `f32` and `f64`, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), a `ProtectedRef` borrow from `as_protected_ref()` (walked as the `&Protected<T>` it came from), and, behind features, `jiff`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them. Each source that is one leaf on its own also implements [`Scalar`], the bound for a caller that must seal exactly one leaf.
 
 ```rust
 # use vitaminc_aead::{Cipher, Context, Unspecified};
@@ -435,7 +435,7 @@ No optional features are enabled by default.
 
 | Feature | Effect |
 | --- | --- |
-| `chrono` | Adds date and UTC timestamp conversions, including `Timestamp` and its leap-second checks. |
+| `jiff` | Adds `jiff::civil::Date` and `jiff::Timestamp` as sources and decrypt targets, and `Timestamp`, a UTC instant that is wiped when dropped. The wire's range for dates and timestamps is jiff's, years -9999 to 9999, in every binding, so every value opens into a jiff type. |
 | `rust_decimal` | Adds `rust_decimal::Decimal` encoding and decoding. |
 | `uuid` | Adds `uuid::Uuid` encoding and decoding. |
 | `hlist` | Exposes the static heterogeneous-list API in `hlist`. |

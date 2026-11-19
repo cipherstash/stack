@@ -75,8 +75,8 @@ pub const UINT128: u8 = 0x11;
 /// 1970-01-01.
 pub const DATE: u8 = 0x12;
 /// UTC timestamp: `i64` Unix seconds, then `u32` nanoseconds, little-endian.
-/// Nanoseconds must be below 1,000,000,000; chrono's leap-second
-/// representations are rejected. This codec reads the tag as
+/// Nanoseconds must be below 1,000,000,000; a leap second, as chrono wrote
+/// one, is rejected. This codec reads the tag as
 /// [`Logical::Timestamp`](crate::Logical) in nanoseconds (see [`crate::leaf`]).
 pub const TIMESTAMP: u8 = 0x13;
 /// Decimal: rust_decimal's 16-byte `serialize()` layout, preserving scale.

@@ -42,8 +42,8 @@ pub mod plaintext;
 pub mod seal;
 pub mod shape;
 pub mod tags;
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 mod timestamp;
 pub mod typed;
 mod unspecified;
@@ -76,11 +76,11 @@ pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, Decrypt
 // The frame: a value as transport bytes, and back.
 #[doc(inline)]
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
-// A UTC instant that always encrypts.
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+// A UTC instant that is wiped when dropped, and always encrypts.
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[doc(inline)]
-pub use timestamp::{LeapSecond, Timestamp};
+pub use timestamp::{OutOfRange, Timestamp};
 
 #[doc(inline)]
 #[allow(deprecated)]

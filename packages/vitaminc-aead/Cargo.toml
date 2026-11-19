@@ -13,7 +13,7 @@ categories.workspace = true
 rust-version.workspace = true
 
 [package.metadata.docs.rs]
-features = ["chrono", "rust_decimal", "uuid", "hlist"]
+features = ["jiff", "rust_decimal", "uuid", "hlist"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
@@ -32,10 +32,11 @@ futures-util = { version = "0.3.31", default-features = false, features = ["allo
 
 # Optional `Encrypt` sources for logical types: a date and a timestamp,
 # a decimal, and a uuid. Each is a few lines over the core model.
-[dependencies.chrono]
-version = "0.4.44"
+# jiff without its default features: no time-zone database, no system
+# time-zone lookup and no filesystem access, only the civil and instant types.
+[dependencies.jiff]
+version = "1.0.0"
 default-features = false
-features = ["std"]
 optional = true
 
 [dependencies.rust_decimal]
@@ -50,7 +51,7 @@ default-features = false
 optional = true
 
 [features]
-chrono = ["dep:chrono"]
+jiff = ["dep:jiff"]
 rust_decimal = ["dep:rust_decimal"]
 uuid = ["dep:uuid"]
 # Opt-in HList-based ciphertext shape. Trades the dynamic `Cipher::Ok` enum
@@ -79,4 +80,4 @@ quickcheck_macros = "1.2.0"
 trybuild = "1.0.118"
 futures-executor = "0.3.31"
 serde_json = { workspace = true }
-chrono = { version = "0.4.44", default-features = false, features = ["std"] }
+jiff = { version = "1.0.0", default-features = false }
