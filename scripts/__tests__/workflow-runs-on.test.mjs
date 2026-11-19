@@ -1,4 +1,7 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { REPO_ROOT } from './lib/repo-root.mjs'
 import {
   isRunsOnJob,
   MATRIX_RUNNERS,
@@ -41,6 +44,50 @@ function isExpressionRunner(job) {
 
 const expressionRunnerRefs = () =>
   refsWhere(({ job }) => isExpressionRunner(job))
+
+// A new RunsOn machine can still be running apt from boot. apt-get fails at
+// once on the held lock unless told to wait for it.
+const APT_COMMAND =
+  /\bapt(?:-get)?\s.*\b(?:update|install|upgrade|dist-upgrade|remove|purge|autoremove)\b/
+
+export function aptFinding(run) {
+  for (const line of String(run).split('\n')) {
+    if (/^\s*#/.test(line)) continue
+    if (APT_COMMAND.test(line) && !line.includes('DPkg::Lock::Timeout='))
+      return `runs apt without waiting for the lock: "${line.trim()}". Add -o DPkg::Lock::Timeout=300.`
+  }
+  return null
+}
+
+/** A step, or the steps of the local composite action it uses. */
+function stepsOf(step, seen = new Set()) {
+  const uses = typeof step?.uses === 'string' ? step.uses.trim() : ''
+  if (!uses.startsWith('./')) return [step]
+  const dir = uses.replace(/^\.\//, '').replace(/\/$/, '')
+  if (seen.has(dir)) return []
+  seen.add(dir)
+  for (const file of ['action.yml', 'action.yaml']) {
+    const rel = `${dir}/${file}`
+    if (existsSync(join(REPO_ROOT, rel)))
+      return (readWorkflow(rel)?.runs?.steps ?? []).flatMap((inner) =>
+        stepsOf(inner, seen),
+      )
+  }
+  return []
+}
+
+export function aptFindingsInRunsOnJobs() {
+  return jobs
+    .filter(({ job, ref }) => isRunsOnJob(job, ref))
+    .flatMap(({ ref, job }) =>
+      (job.steps ?? []).flatMap((step, i) =>
+        stepsOf(step)
+          .map((inner) => aptFinding(inner?.run ?? ''))
+          .filter(Boolean)
+          .map((finding) => `${ref} step ${i + 1}: ${finding}`),
+      ),
+    )
+}
 
 describe('RunsOn runner labels', () => {
   it('builds the labels ADR 0004 names', () => {
@@ -97,5 +144,21 @@ describe('RunsOn runner labels', () => {
     expect(
       Object.values(MATRIX_RUNNERS).every(({ reason }) => reason.trim()),
     ).toBe(true)
+  })
+})
+
+describe('apt on a new RunsOn machine', () => {
+  it('recognises an apt command that does not wait for the lock', () => {
+    expect(aptFinding('sudo apt-get update')).toMatch(/DPkg::Lock::Timeout/)
+    expect(aptFinding('sudo apt install -y jq')).toMatch(/DPkg::Lock::Timeout/)
+    expect(
+      aptFinding('sudo apt-get -o DPkg::Lock::Timeout=300 install -y doxygen'),
+    ).toBeNull()
+    expect(aptFinding('# sudo apt-get update')).toBeNull()
+    expect(aptFinding('apt-cache policy doxygen')).toBeNull()
+  })
+
+  it('waits for the apt lock in every RunsOn job', () => {
+    expect(aptFindingsInRunsOnJobs()).toEqual([])
   })
 })
