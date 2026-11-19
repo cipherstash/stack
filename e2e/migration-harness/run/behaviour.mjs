@@ -59,8 +59,9 @@ function orderedRows(value) {
     .sort((left, right) => String(left.pk).localeCompare(String(right.pk)))
 }
 /** Calls only the App Host JSON RPC boundary; never imports application code.
- * @param {AppCall} call */
-export async function behaviour(call) {
+ * @param {AppCall} call
+ * @param {()=>Promise<void>} afterSetActive */
+export async function behaviour(call, afterSetActive = async () => {}) {
   /** @type {import('../types.js').OracleCheck[]} */
   const checks = []
   /** @param {string} id @param {()=>Promise<unknown>} action */
@@ -125,9 +126,7 @@ export async function behaviour(call) {
   // Mutation checks are deliberately separate so #1535 can insert no-rewrite here.
   return {
     checks,
-    /** @param {{afterSetActive?: ()=>Promise<void>}} [hooks] afterSetActive
-     * runs before any later full put can overwrite the setActive result. */
-    async mutate(hooks = {}) {
+    async mutate() {
       await check('behaviour.fresh-write', async () => {
         equal(await call('get', [fresh.pk]), null)
         await call('put', [fresh])
@@ -161,11 +160,25 @@ export async function behaviour(call) {
       await check('behaviour.balance-decimal-string', async () =>
         equal(record(await call('get', [fresh.pk])).balance, fresh.balance),
       )
+      // Inspect the stored shape before any read: a `get` that repairs a stale
+      // active__hmac would otherwise hide it from migration.active-hmac-absent.
+      // Inspection failures abort the Oracle rather than fail this check.
+      /** @type {unknown[]} */
+      const inspectionFailure = []
       await check('behaviour.set-active', async () => {
-        await call('setActive', [mutation.pk, false])
+        try {
+          await call('setActive', [mutation.pk, false])
+        } finally {
+          try {
+            await afterSetActive()
+          } catch (error) {
+            inspectionFailure.push(error)
+          }
+        }
+        if (inspectionFailure.length) return
         equal(record(await call('get', [mutation.pk])).active, false)
       })
-      await hooks.afterSetActive?.()
+      if (inspectionFailure.length) throw inspectionFailure[0]
       const copiedMutation = {
         ...mutation,
         active: false,

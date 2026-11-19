@@ -107,3 +107,32 @@ test('fresh-write lookup failure is visible as stable Oracle evidence', async ()
     },
   )
 })
+test('Mutation Data is inspected after setActive and before a read can repair it', async () => {
+  const order: string[] = []
+  const result = await behaviour(
+    async (method: string) => {
+      order.push(method)
+      return method.startsWith('find') ? [] : null
+    },
+    async () => {
+      order.push('inspect')
+    },
+  )
+  await result.mutate()
+  const setActive = order.indexOf('setActive')
+  assert.notEqual(setActive, -1, 'setActive must be called')
+  assert.equal(
+    order[setActive + 1],
+    'inspect',
+    `inspection must follow setActive directly: ${order.slice(setActive).join(',')}`,
+  )
+})
+test('a Mutation Data inspection failure still aborts the Oracle', async () => {
+  const result = await behaviour(
+    async (method: string) => (method.startsWith('find') ? [] : null),
+    async () => {
+      throw Object.assign(Error('store unavailable'), { infrastructure: true })
+    },
+  )
+  await assert.rejects(result.mutate(), /store unavailable/)
+})

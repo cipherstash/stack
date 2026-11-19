@@ -5,6 +5,7 @@ import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
+import { fakeMigrate } from './fake-migrator.mjs'
 import { migrationChecks } from './migration-checks.mjs'
 import { runMigrator } from './migrator.mjs'
 import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
@@ -13,17 +14,19 @@ import {
   isSnapshotInfrastructureError,
   snapshotErrorCode,
 } from './snapshot-errors.mjs'
+import { resolveStack, verifyInstalledTarball } from './stack-source.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
 /** @typedef {Awaited<ReturnType<typeof createStoreSet>>} StoreSet
  * @typedef {Pick<ReturnType<typeof import('../isolation.mjs').createIsolation>, 'prove'|'exec'|'openAppHost'|'stop'>} Isolation */
 /** Real application execution has exactly one route: the proven isolation host.
- * @param {{id:string,root:string,output:string,command:string,isolation:Isolation,credentials:Record<string,string>,manifest:import('../types.js').Manifest & {stack:string}}} options */
+ * @param {{id:string,root:string,output:string,command:string,fakeMigration?:string,isolation:Isolation,credentials:Record<string,string>,manifest:import('../types.js').Manifest & {stack:string}}} options */
 export function createRealDriver({
   id,
   root,
   output,
   command,
+  fakeMigration,
   isolation,
   credentials,
   manifest,
@@ -40,6 +43,8 @@ export function createRealDriver({
   let host = null
   let baseCommit = ''
   let ffiRange = ''
+  /** @type {Awaited<ReturnType<typeof resolveStack>>|undefined} */
+  let stackSource
   /** @type {unknown} */
   let legacySnapshot
   /** @param {StoreSet|null} stores */
@@ -100,34 +105,10 @@ export function createRealDriver({
       if (proof?.verified !== true)
         throw Error('Isolation capability proof failed')
       manifest.isolation = proof
-      const resolved = JSON.parse(
-        (
-          await promisify(execFile)('npm', [
-            'view',
-            `@cipherstash/stack@${manifest.stack}`,
-            'version',
-            '--json',
-          ])
-        ).stdout,
-      )
-      manifest.stack = Array.isArray(resolved) ? resolved.at(-1) : resolved
-      if (
-        typeof manifest.stack !== 'string' ||
-        !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(manifest.stack)
-      )
-        throw Error('Could not resolve exact Stack version')
-      ffiRange = JSON.parse(
-        (
-          await promisify(execFile)('npm', [
-            'view',
-            `@cipherstash/stack@${manifest.stack}`,
-            'dependencies.@cipherstash/protect-ffi',
-            '--json',
-          ])
-        ).stdout,
-      )
-      if (typeof ffiRange !== 'string' || !ffiRange)
-        throw Error('Could not resolve Stack FFI dependency')
+      stackSource = await resolveStack({ source: manifest.stack, root, output })
+      manifest.stack = stackSource.version
+      manifest.stackSource = stackSource
+      ffiRange = stackSource.ffiRange
       const guide = resolve(root, 'docs/migration/protect-dynamodb-to-stack.md')
       const content = await readFile(guide, 'utf8')
       manifest.guideHash = createHash('sha256').update(content).digest('hex')
@@ -217,22 +198,34 @@ export function createRealDriver({
       )
     },
     async migrate() {
-      const result = await runMigrator({
-        command,
-        timeoutMs: manifest.agents?.limits?.timeMs,
-        maxToolCalls: manifest.agents?.limits?.toolCalls,
-        maxModelTurns: manifest.agents?.limits?.turns,
-        stop: () => isolation.stop({ expected: true }),
-        execute: (argv, timeoutMs) =>
-          isolation.exec({
-            actor: 'migrator',
+      if (!stackSource) throw Error('Stack source not resolved')
+      if (stackSource.tarball)
+        await cp(stackSource.tarball, resolve(workspace, 'resolved-stack.tgz'))
+      const result = fakeMigration
+        ? await fakeMigrate({
+            root,
             workspace,
-            env: env(migratorStores),
-            command: argv,
-            forwards: forwards(migratorStores),
-            timeoutMs,
-          }),
-      })
+            kind: fakeMigration,
+            stack: stackSource.install,
+          })
+        : await runMigrator({
+            command,
+            timeoutMs: manifest.agents?.limits?.timeMs,
+            maxToolCalls: manifest.agents?.limits?.toolCalls,
+            maxModelTurns: manifest.agents?.limits?.turns,
+            stop: () => isolation.stop({ expected: true }),
+            execute: (argv, timeoutMs) =>
+              isolation.exec({
+                actor: 'migrator',
+                workspace,
+                env: env(migratorStores),
+                command: argv,
+                forwards: forwards(migratorStores),
+                timeoutMs,
+              }),
+          })
+      if (fakeMigration && fakeMigration !== 'noop')
+        await execute('migrator', workspace, migratorStores, ['npm', 'install'])
       await writeFile(
         resolve(output, 'migrator-transcript.log'),
         `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
@@ -315,12 +308,25 @@ export function createRealDriver({
             .split(sep)
             .some((part) => ['node_modules', '.git'].includes(part)),
       })
+      // The Migrator controls its copy of the tarball. Supply the App Host with
+      // the host-resolved artifact, removing first so a planted symlink cannot
+      // redirect the write, and confirm npm installed exactly that artifact.
+      const tarball = stackSource?.tarball
+      const installed = resolve(oracleWorkspace, 'resolved-stack.tgz')
+      if (tarball) {
+        await rm(installed, { force: true })
+        await cp(tarball, installed)
+      }
       await execute('app-host', oracleWorkspace, oracleStores, [
         'npm',
         'install',
         '--save-exact',
-        `@cipherstash/stack@${manifest.stack}`,
+        tarball
+          ? 'file:./resolved-stack.tgz'
+          : `@cipherstash/stack@${manifest.stack}`,
       ])
+      if (tarball)
+        await verifyInstalledTarball({ workspace: oracleWorkspace, tarball })
       host = await isolation.openAppHost({
         actor: 'app-host',
         workspace: oracleWorkspace,
@@ -332,8 +338,25 @@ export function createRealDriver({
       const application = host
       if (!application) throw Error('App Host has not started')
       try {
-        const result = await behaviour((method, args) =>
-          application.call(method, args),
+        /** @type {{snapshot: unknown} | {cause: string}} */
+        let mutationRead = { snapshot: undefined }
+        const result = await behaviour(
+          (method, args) => application.call(method, args),
+          async () => {
+            mutationRead = await read(mutation.pk)
+            if ('cause' in mutationRead)
+              throw Object.assign(new Error(mutationRead.cause), {
+                infrastructure: false,
+                checks: [
+                  ...checks,
+                  {
+                    id: 'migration.active-hmac-absent',
+                    passed: false,
+                    cause: mutationRead.cause,
+                  },
+                ],
+              })
+          },
         )
         const checks = result.checks
         /** A store outage stays infrastructure and carries the checks already
@@ -361,14 +384,7 @@ export function createRealDriver({
             ? { id: 'no-rewrite.legacy-bytes', passed: false, ...current }
             : noRewrite(legacySnapshot, current.snapshot),
         )
-        // Inspect setActive before later full writes can repair stale HMACs.
-        /** @type {{snapshot: unknown} | {cause: string}} */
-        let mutationRead = { snapshot: undefined }
-        await result.mutate({
-          afterSetActive: async () => {
-            mutationRead = await read(mutation.pk)
-          },
-        })
+        await result.mutate()
         const migration = await migrationChecks({
           workspace,
           installedWorkspace: oracleWorkspace,
