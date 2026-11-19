@@ -23,7 +23,7 @@
     "@types/semver": "7.8.0",
     "dotenv": "17.4.2",
     "postgres": "^3.4.8",
-    "semver": "^7.8.0",
+    "semver": "^7.8.6",
     "typescript": "catalog:repo",
     "vitest": "catalog:repo",
     "yaml": "^2.9.1"
