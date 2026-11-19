@@ -13,6 +13,16 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- **`sqlc-gen-stash`, a sqlc process plugin for EQL v4 columns**
+  (`cmd/sqlc-gen-stash`). It writes sqlc-gen-go's package, giving each EQL v4
+  column its `encrypt/eql` type, and a `<package>stash` package beside it with
+  plaintext companions, batch `Encrypt` and `Decrypt` helpers, opt-in query
+  methods that encrypt parameters and decrypt results, and optional per-column
+  values for query builders. It is a module of its own in this repository and
+  is not yet tagged; install it from a checkout.
+
 ## [0.1.0-rc.6] - 2026-11-18
 
 ### Upgrading from rc.5

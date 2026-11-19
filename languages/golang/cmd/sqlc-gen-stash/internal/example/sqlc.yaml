@@ -1,0 +1,44 @@
+version: "2"
+plugins:
+  - name: go-stash
+    process:
+      # Built by go generate (generate.go), so the example uses the plugin
+      # in this checkout. sqlc runs from this folder.
+      cmd: .bin/sqlc-gen-stash
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: query.sql
+    codegen:
+      # sqlc-gen-stash writes the package db, as sqlc-gen-go does, and the
+      # package dbstash under it.
+      - plugin: go-stash
+        out: db
+        options:
+          go:
+            package: db
+            sql_package: pgx/v5
+            emit_result_struct_pointers: true
+            emit_params_struct_pointers: true
+            emit_pointers_for_null_types: true
+            omit_unused_structs: true
+            overrides:
+              - db_type: uuid
+                go_type:
+                  import: github.com/google/uuid
+                  type: UUID
+              - db_type: uuid
+                nullable: true
+                go_type:
+                  import: github.com/google/uuid
+                  type: UUID
+                  pointer: true
+          stash:
+            # Per-column values for every table, including contacts, which
+            # no query returns, so it has no model.
+            emit_table_fields: true
+            emit_methods_with_param_encryption: true
+            emit_methods_with_result_decryption: true
+            identity:
+              pattern: '^(.+_eql4)(?:_eq|_search)?$'
+              replacement: '$1'

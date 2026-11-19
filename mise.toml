@@ -34,6 +34,9 @@ rust = { version = "1.94.1", components = "rustc,cargo,rustfmt,rust-std,clippy,r
 # resolve an older patch from a cache. Keep it at or above go.mod's `go` line.
 go = "1.26.10"
 golangci-lint = "2.14.0"
+# sqlc for languages/golang/cmd/sqlc-gen-stash, whose example `go generate`
+# regenerates with `sqlc generate`. The generated files name this version.
+"aqua:sqlc-dev/sqlc" = "1.31.1"
 # wasm-pack for the auth binding's `build:wasm`, which builds
 # languages/typescript/packages/stack-auth-wasm into the auth package's wasm/.
 # Same pin and backend id as protect-ffi's mise.toml (`wasm-pack` is not a
