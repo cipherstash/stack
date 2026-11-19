@@ -353,6 +353,8 @@
 // go-envconfig can fill it. [NewCredentials] takes a client id, a client
 // key, and a strategy explicitly. [OIDCFederation] exchanges a token from an
 // identity provider for a CipherStash token.
+// [OIDCFederationWithDetectedWorkspace] does the same for the workspace
+// CS_WORKSPACE_CRN names, else the CLI's current workspace.
 //
 // None takes a raw token: a token is always a strategy's, since a raw one
 // cannot be refreshed when it expires. Credentials that cannot be resolved
