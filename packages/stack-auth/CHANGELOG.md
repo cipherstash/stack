@@ -28,6 +28,10 @@
   workspace, read from its saved session. With neither, the result is
   `NotAuthenticated`. `OidcFederationStrategy::new(crn, provider)` is
   unchanged.
+- `OidcFederationStrategy::builder_with_detected_workspace(provider)` returns
+  a builder whose `build()` detects the workspace in the same way. Use it to
+  set other options, such as a token store, without naming the workspace.
+  `OidcFederationStrategy::builder(crn, provider)` is unchanged.
 
 ### Fixes
 
