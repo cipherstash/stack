@@ -1,0 +1,5 @@
+error[E0599]: no method named `audit` found for struct `QueryOp<'a, F, Op, I, K>` in the current scope
+  --> tests/ui/query_chain_has_no_audit.rs:11:63
+   |
+11 |     let _ = cipher.query(op::Eq, "bob@example.com").on(&plan).audit(facts);
+   |                                                               ^^^^^ method not found in `QueryOp<'_, std::string::String, stack_encrypt::op::Eq, stack_encrypt::Equality, FakeDataKeySource>`
