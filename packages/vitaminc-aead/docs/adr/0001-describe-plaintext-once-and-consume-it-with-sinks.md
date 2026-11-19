@@ -631,8 +631,8 @@ refuses every version 1 leaf, as `DecryptError::Cipher`. Tagged version 1
 leaves from the `Value` path open only through the explicit
 `Aes256Cipher::opening_version_1()` view. That view is an `OpensVersion1`,
 a full `Cipher` that works with typed `decrypt` as well as `decrypt_into`,
-and it still seals version 2. Its callers are the Go binding, through
-`decrypt_to_frame`, and the legacy fixtures. The cost is that 0.5 `Encrypt` data has no in-place upgrade:
+and it still seals version 2. Its caller is the Go binding, through
+`decrypt_to_frame`. The cost is that 0.5 `Encrypt` data has no in-place upgrade:
 it must be decrypted with 0.5 and encrypted again. A reader of `Value`-path
 data opts in to version 1 knowing where its leaves came from.
 
@@ -1023,8 +1023,11 @@ back there. The binding refuses a `Date` outside it.
 > range of `Date` and `Timestamp` narrows to jiff's in every binding:
 > dates -009999-01-01 to 9999-12-31, instants -009999-01-02T01:59:59Z to
 > 9999-12-30T22:00:00.999999999Z. A value one binding seals, every binding
-> opens into its native type. A leaf sealed past those years under the old
-> range now authenticates and is refused as malformed.
+> opens into its native type. A leaf sealed outside that range under the
+> old one now authenticates and is refused as malformed. That includes
+> the common "no end" value 9999-12-31T23:59:59Z, which is past jiff's
+> last instant. There is no reader for such leaves: data sealed under the
+> old range is not supported.
 
 JavaScript has no type of its own for a calendar date, a timestamp finer
 than a millisecond, a decimal or a uuid. The binding represents each as an
