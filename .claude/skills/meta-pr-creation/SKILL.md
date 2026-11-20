@@ -80,4 +80,6 @@ Reference wording traps (same as issues):
   "mark it ready" from them. `gh pr ready <number>` flips it.
 - Force-pushing a branch with an open PR is fine (rebases, re-signs) — but
   say so in a PR comment when the rewrite changes more than commit hashes.
-- Don't merge, close, or mark ready-for-review without being asked.
+- Do not merge, close, or mark ready-for-review without being asked.
+- Pull requests that build on each other go in a GitHub stack. Follow
+  `docs/claude/stacked-pull-requests.md`.
