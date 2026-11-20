@@ -1,18 +1,9 @@
-# actionlint validates every `runs-on:` against the list of GitHub-hosted runner
-# labels it ships with. Blacksmith runners are self-hosted from its perspective,
-# so without this file each of the fourteen jobs using one is reported as an
-# unknown label — and the release lint gate (.github/workflows/lint-release.yml)
-# would be red on the day it lands, for reasons that have nothing to do with the
-# release machinery it exists to check.
+# actionlint checks every `runs-on:` label against the GitHub-hosted labels it
+# knows, and against the self-hosted labels listed here.
 #
-# Nothing complained before because actionlint has never run in this repository;
-# lint-release.yml is what introduces it.
+# The list is empty. Every self-hosted job runs on RunsOn, and each RunsOn
+# label starts with `runs-on=${{ github.run_id }}`. actionlint does not check
+# a label that contains an expression. So a Blacksmith label is now unknown,
+# and actionlint reports it.
 self-hosted-runner:
-  labels:
-    - blacksmith-4vcpu-ubuntu-2404
-    # Every job in the imported EQL suite. Sixteen of them, and the size is
-    # deliberate upstream: the sharded SQLx matrix compiles the full Rust
-    # dependency tree, so the runner is chosen for the compile rather than for
-    # the tests. Kept as its own label rather than renamed to the 4vcpu one —
-    # rehoming those jobs is a cost decision, not a lint fix.
-    - blacksmith-16vcpu-ubuntu-2204
+  labels: []

@@ -58,7 +58,7 @@ jobs:
     name: Build EQL SQL
     needs: [eql-armed]
     if: needs.eql-armed.outputs.armed == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 20
     defaults:
       run:
@@ -110,7 +110,7 @@ jobs:
     name: Build postgres-eql image (PG ${{ matrix.pg_version }})
     needs: [eql-armed, build-sql]
     if: needs.eql-armed.outputs.armed == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 30
     permissions:
       contents: read
@@ -134,6 +134,24 @@ jobs:
           name: eql-sql
           # The Dockerfile COPYs it from its own build context.
           path: packages/eql/docker/
+
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
@@ -190,7 +208,7 @@ jobs:
     # skips this job.
     needs: [eql-armed, build-sql, build-images]
     if: needs.build-sql.outputs.update_floating_tags == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     permissions:
       contents: read
@@ -199,6 +217,24 @@ jobs:
       EQL_VERSION: ${{ needs.build-sql.outputs.eql_version }}
 
     steps:
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:

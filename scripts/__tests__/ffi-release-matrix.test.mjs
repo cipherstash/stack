@@ -8,6 +8,7 @@ import {
   triplesFromPlatformManifests,
 } from '../ffi-release-matrix.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { runsOnLabel } from './lib/runs-on.mjs'
 
 /**
  * The release matrix decides what each of the six platform jobs compiles and
@@ -56,7 +57,9 @@ function logFileOf(scriptName) {
   return redirect ? redirect[1] : null
 }
 
-const MATRIX = releaseMatrix(TRIPLES)
+const RUN_ID = '1234'
+const MATRIX = releaseMatrix(TRIPLES, RUN_ID)
+const RUNS_ON_4 = runsOnLabel(4, { runId: RUN_ID })
 
 describe('the platform fixture matches the package', () => {
   it('covers exactly the platforms this package publishes', () => {
@@ -157,21 +160,21 @@ describe('release matrix', () => {
       {
         platform: 'linux-x64-gnu',
         target: 'x86_64-unknown-linux-gnu',
-        os: 'blacksmith-4vcpu-ubuntu-2404',
+        os: RUNS_ON_4,
         script: 'zigbuild',
         log: 'zig.log',
       },
       {
         platform: 'linux-arm64-gnu',
         target: 'aarch64-unknown-linux-gnu',
-        os: 'blacksmith-4vcpu-ubuntu-2404',
+        os: RUNS_ON_4,
         script: 'zigbuild',
         log: 'zig.log',
       },
       {
         platform: 'linux-x64-musl',
         target: 'x86_64-unknown-linux-musl',
-        os: 'blacksmith-4vcpu-ubuntu-2404',
+        os: RUNS_ON_4,
         script: 'build:native',
         log: 'cargo.log',
       },
@@ -180,8 +183,16 @@ describe('release matrix', () => {
 
   it('sends a platform the table does not name to a Linux runner', () => {
     // The fallback arm, which the table above cannot reach. A seventh platform
-    // added tomorrow gets Blacksmith unless `runnerFor` is taught otherwise.
-    expect(runnerFor('linux-arm64-musl')).toBe('blacksmith-4vcpu-ubuntu-2404')
+    // added tomorrow builds on RunsOn unless `runnerFor` is taught otherwise.
+    expect(runnerFor('linux-arm64-musl', RUN_ID)).toBe(RUNS_ON_4)
+  })
+
+  it('refuses a RunsOn label with no run ID in it', () => {
+    // `runs-on=undefined/…` would be one label shared by every run, so one
+    // run's machine could take another run's job.
+    expect(() => runnerFor('linux-x64-gnu', '')).toThrow(/GITHUB_RUN_ID/)
+    // Only a RunsOn label needs the run ID.
+    expect(runnerFor('darwin-x64', '')).toBe('macos-latest')
   })
 
   it('is empty for an empty mapping, rather than inventing platforms', () => {

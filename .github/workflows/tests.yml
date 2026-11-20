@@ -21,7 +21,7 @@ jobs:
   # Tightening to fail on warnings is tracked in #625.
   lint:
     name: Lint (Biome)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 10
     steps:
       - name: Checkout Repo
@@ -54,7 +54,7 @@ jobs:
 
   run-tests:
     name: Run Tests (Node ${{ matrix.node-version }})
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 25
     strategy:
       matrix:
@@ -399,7 +399,7 @@ jobs:
 
   e2e-tests:
     name: Run E2E Tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
 
     # Auth-dependent suites in `e2e/` skip themselves unless these env vars
@@ -467,6 +467,24 @@ jobs:
       - name: Build the @cipherstash/auth binding
         id: auth-binding
         uses: ./.github/actions/build-auth-binding
+
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
 
       # Run the standalone `e2e/` workspace via turbo so the `^build`
       # dep on the `test:e2e` task builds cli + wizard first. CLI's own
@@ -551,7 +569,7 @@ jobs:
   # a silent fallback to the NAPI module is impossible.
   wasm-e2e-tests:
     name: Run WASM E2E Tests (Deno)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 35
 
     permissions:
@@ -695,7 +713,7 @@ jobs:
 
   run-tests-bun:
     name: Run Tests (Bun)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 15
     continue-on-error: true
 

@@ -35,6 +35,13 @@ on:
         description: Commit to build from
         required: true
         type: string
+    # For the musl leg's Docker Hub login. Optional, because the login does
+    # nothing without them and the build still runs.
+    secrets:
+      DOCKER_HUB_USERNAME:
+        required: false
+      DOCKER_HUB_PASSWORD:
+        required: false
 
 permissions:
   contents: read
@@ -114,12 +121,15 @@ jobs:
       # a native x86_64 build — so the other two legs were paying an
       # `apt-get update` (full package indexes) plus a ~200MB toolchain they do
       # not link against.
+      #
+      # A fresh RunsOn machine can still be running apt from boot, and apt-get
+      # fails at once on a held lock unless told to wait for it.
       - name: Install cross-compile toolchain (linux-arm64-gnu)
         if: ${{ matrix.cfg.platform == 'linux-arm64-gnu' }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y gcc-13-aarch64-linux-gnu
+          sudo apt-get -o DPkg::Lock::Timeout=300 update
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y gcc-13-aarch64-linux-gnu
           sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-13 /usr/bin/aarch64-linux-gnu-gcc
 
       # Rust comes from the runner image; only the TARGET has to be added. This
@@ -215,6 +225,26 @@ jobs:
           else
             pnpm run "$BUILD_SCRIPT"
           fi
+
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it. Only the RunsOn legs log in. The macOS leg has no Docker,
+      # so `docker login` would fail there once the secrets exist.
+      - name: Log in to Docker Hub
+        if: ${{ startsWith(matrix.cfg.os, 'runs-on=') }}
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
 
       # The musl binary is built inside Alpine Linux, a musl system, so the
       # compiler and its runtime libraries are musl's own. The toolchain this
@@ -358,7 +388,7 @@ jobs:
     # this job collects the six platform artifacts and uploads the complete set
     # as one artifact, so a caller downloads `ffi-tarballs` and has everything.
     needs: [binaries]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6

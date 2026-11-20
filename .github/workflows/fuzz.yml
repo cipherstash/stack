@@ -65,7 +65,7 @@ jobs:
     # Not on the nightly schedule, which is the campaign's. A manual dispatch
     # runs both jobs.
     if: github.event_name != 'schedule'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -112,7 +112,7 @@ jobs:
   fuzz-campaign:
     name: fuzz campaign (${{ matrix.slug }})
     if: github.event_name != 'pull_request'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 30
     strategy:
       fail-fast: false
