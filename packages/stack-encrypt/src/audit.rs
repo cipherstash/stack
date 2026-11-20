@@ -29,6 +29,8 @@
 use std::fmt;
 use std::sync::Arc;
 
+use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+
 use crate::kms::{UnverifiedContext, UnverifiedContextValue};
 
 /// Audit metadata in the form ZeroKMS takes, ready to send, or `None` for
@@ -76,6 +78,39 @@ pub(crate) type Unverified = Option<Arc<UnverifiedContext>>;
 /// each value as you give it, with one exception: a float that is not
 /// finite is sent as `null`. Metadata contains only those values, so
 /// attaching it to a call cannot fail.
+///
+/// # From data
+///
+/// A language binding has the facts as data, not as Rust values. For that
+/// case, `AuditMetadata` implements serde's `Deserialize`. It reads a map
+/// that has text keys, from any serde format.
+///
+/// ```
+/// use serde_json::json;
+/// use stack_encrypt::AuditMetadata;
+///
+/// let metadata: AuditMetadata = serde_json::from_value(json!({
+///     "purpose": "export",
+///     "rows": 250,
+///     "tables": ["users", "orders"],
+/// }))?;
+/// let built = AuditMetadata::new()
+///     .with("purpose", "export")
+///     .with("rows", 250)
+///     .with("tables", vec!["users", "orders"]);
+/// assert_eq!(metadata, built);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+///
+/// A value in the data follows the rules of [`AuditValue`]. Three kinds of
+/// data are refused, because ZeroKMS has no form for them:
+///
+/// - bytes;
+/// - an integer that does not fit a signed 64-bit integer;
+/// - a key that appears twice in one map.
+///
+/// The error names the kind of data that was refused. It does not show a
+/// value.
 #[derive(Clone, Default, PartialEq)]
 pub struct AuditMetadata {
     fields: UnverifiedContext,
@@ -249,6 +284,133 @@ impl<T: Into<AuditValue>> From<Vec<T>> for AuditValue {
 impl From<AuditMetadata> for AuditValue {
     fn from(metadata: AuditMetadata) -> Self {
         Self(Some(UnverifiedContextValue::Map(metadata.fields.0)))
+    }
+}
+
+/// Reads metadata from a map that has text keys. The type documents the
+/// rules, under "From data".
+impl<'de> Deserialize<'de> for AuditMetadata {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(MetadataVisitor)
+    }
+}
+
+/// Reads the top-level map. Anything else is refused, `null` included.
+struct MetadataVisitor;
+
+impl<'de> Visitor<'de> for MetadataVisitor {
+    type Value = AuditMetadata;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a map of audit metadata")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<AuditMetadata, A::Error> {
+        read_map(map)
+    }
+}
+
+/// Read one map of facts. A key that appears twice is refused: the builder
+/// replaces a fact on purpose, but data that names a key twice is a mistake
+/// in the sender.
+fn read_map<'de, A: MapAccess<'de>>(mut map: A) -> Result<AuditMetadata, A::Error> {
+    let mut metadata = AuditMetadata::new();
+    while let Some(key) = map.next_key::<String>()? {
+        let Fact(value) = map.next_value()?;
+        if metadata.fields.0.insert(key, value.0).is_some() {
+            return Err(de::Error::custom("a key that appears twice in one map"));
+        }
+    }
+    Ok(metadata)
+}
+
+/// One value, read from data.
+struct Fact(AuditValue);
+
+impl<'de> Deserialize<'de> for Fact {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(FactVisitor).map(Fact)
+    }
+}
+
+/// The message for an integer that ZeroKMS cannot read exactly. It does not
+/// show the integer: serde's own message would.
+const INTEGER_TOO_WIDE: &str = "an integer that does not fit a signed 64-bit integer";
+
+/// Reads one value. Each method goes through the same `From` conversion
+/// that [`AuditMetadata::with`] uses, so data and Rust values follow one
+/// set of rules. serde's defaults pass the narrower integers to
+/// `visit_i64` and `visit_u64`, and `f32` to `visit_f64`. Bytes have no
+/// method here, so serde's default refuses them.
+struct FactVisitor;
+
+impl<'de> Visitor<'de> for FactVisitor {
+    type Value = AuditValue;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a bool, an integer, a float, text, null, a list or a map")
+    }
+
+    fn visit_bool<E: de::Error>(self, value: bool) -> Result<AuditValue, E> {
+        Ok(AuditValue::from(value))
+    }
+
+    fn visit_i64<E: de::Error>(self, value: i64) -> Result<AuditValue, E> {
+        Ok(AuditValue::from(value))
+    }
+
+    fn visit_u64<E: de::Error>(self, value: u64) -> Result<AuditValue, E> {
+        i64::try_from(value)
+            .map(AuditValue::from)
+            .map_err(|_| E::custom(INTEGER_TOO_WIDE))
+    }
+
+    fn visit_i128<E: de::Error>(self, value: i128) -> Result<AuditValue, E> {
+        i64::try_from(value)
+            .map(AuditValue::from)
+            .map_err(|_| E::custom(INTEGER_TOO_WIDE))
+    }
+
+    fn visit_u128<E: de::Error>(self, value: u128) -> Result<AuditValue, E> {
+        i64::try_from(value)
+            .map(AuditValue::from)
+            .map_err(|_| E::custom(INTEGER_TOO_WIDE))
+    }
+
+    fn visit_f64<E: de::Error>(self, value: f64) -> Result<AuditValue, E> {
+        Ok(AuditValue::from(value))
+    }
+
+    fn visit_str<E: de::Error>(self, value: &str) -> Result<AuditValue, E> {
+        Ok(AuditValue::from(value))
+    }
+
+    fn visit_string<E: de::Error>(self, value: String) -> Result<AuditValue, E> {
+        Ok(AuditValue::from(value))
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<AuditValue, E> {
+        Ok(AuditValue(None))
+    }
+
+    fn visit_none<E: de::Error>(self) -> Result<AuditValue, E> {
+        Ok(AuditValue(None))
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<AuditValue, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<AuditValue, A::Error> {
+        let mut values = Vec::new();
+        while let Some(Fact(value)) = seq.next_element()? {
+            values.push(value);
+        }
+        Ok(AuditValue::from(values))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<AuditValue, A::Error> {
+        read_map(map).map(AuditValue::from)
     }
 }
 
@@ -473,5 +635,200 @@ mod tests {
         );
         let audited = format!("{:?}", Audited::new("the call", metadata));
         assert_eq!(audited, r#"Audited { call: "the call", .. }"#);
+    }
+
+    // ---- from data -------------------------------------------------------
+
+    /// `value` as a frame, the form a language binding sends, read back as
+    /// metadata.
+    fn from_frame<T: serde::Serialize>(value: &T) -> Result<AuditMetadata, String> {
+        use crate::AsProtectedRef as _;
+        let frame = vitaminc_aead_frame::serde::to_vec(value).expect("the value is a frame");
+        vitaminc_aead_frame::serde::from_slice(frame.as_protected_ref().risky_ref())
+            .map_err(|e| e.to_string())
+    }
+
+    /// One entry, `{"fact": value}`, as a frame.
+    fn fact<T: serde::Serialize>(value: T) -> Result<AuditMetadata, String> {
+        from_frame(&std::collections::BTreeMap::from([("fact", value)]))
+    }
+
+    /// Bytes, written as a frame's bytes leaf and not as a list of integers.
+    struct Bytes<'a>(&'a [u8]);
+
+    impl serde::Serialize for Bytes<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_bytes(self.0)
+        }
+    }
+
+    fn every_kind() -> Value {
+        json!({
+            "flag": true,
+            "text": "list issues",
+            "negative": -7,
+            "positive": 250,
+            "float": 0.25,
+            "null": null,
+            "list": [1, null, "two", [3]],
+            "nested": { "team": "platform", "deeper": { "rows": 2 } },
+        })
+    }
+
+    fn every_kind_built() -> AuditMetadata {
+        AuditMetadata::new()
+            .with("flag", true)
+            .with("text", "list issues")
+            .with("negative", -7)
+            .with("positive", 250)
+            .with("float", 0.25)
+            .with("null", None::<bool>)
+            .with(
+                "list",
+                vec![
+                    AuditValue::from(1),
+                    AuditValue::from(None::<bool>),
+                    AuditValue::from("two"),
+                    AuditValue::from(vec![3]),
+                ],
+            )
+            .with(
+                "nested",
+                AuditMetadata::new()
+                    .with("team", "platform")
+                    .with("deeper", AuditMetadata::new().with("rows", 2)),
+            )
+    }
+
+    #[test]
+    fn data_reads_as_the_builder_builds() {
+        // Owned text, borrowed text, and a frame: the three ways text and
+        // numbers reach the reader.
+        let owned: AuditMetadata = serde_json::from_value(every_kind()).unwrap();
+        assert_eq!(owned, every_kind_built());
+        let text = every_kind().to_string();
+        let borrowed: AuditMetadata = serde_json::from_str(&text).unwrap();
+        assert_eq!(borrowed, every_kind_built());
+        assert_eq!(from_frame(&every_kind()), Ok(every_kind_built()));
+        // What is read is what is sent.
+        assert_eq!(sent(owned), Some(every_kind()));
+    }
+
+    #[test]
+    fn an_empty_map_reads_as_empty_metadata() {
+        let empty: AuditMetadata = serde_json::from_value(json!({})).unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(sent(empty), None);
+    }
+
+    #[test]
+    fn an_integer_of_any_width_is_read_when_it_fits() {
+        let max = AuditMetadata::new().with("fact", i64::MAX);
+        let min = AuditMetadata::new().with("fact", i64::MIN);
+        assert_eq!(
+            fact(i8::MIN),
+            Ok(AuditMetadata::new().with("fact", i8::MIN))
+        );
+        assert_eq!(
+            fact(u32::MAX),
+            Ok(AuditMetadata::new().with("fact", u32::MAX))
+        );
+        assert_eq!(fact(i64::MIN), Ok(min.clone()));
+        assert_eq!(fact(i64::MAX.unsigned_abs()), Ok(max.clone()));
+        assert_eq!(fact(i128::from(i64::MIN)), Ok(min));
+        assert_eq!(fact(u128::from(i64::MAX.unsigned_abs())), Ok(max));
+    }
+
+    #[test]
+    fn an_integer_that_does_not_fit_is_refused_and_not_shown() {
+        let above = i64::MAX.unsigned_abs() + 1;
+        let refused = [
+            (fact(above), above.to_string()),
+            (fact(u64::MAX), u64::MAX.to_string()),
+            (fact(i128::from(above)), above.to_string()),
+            (
+                fact(i128::from(i64::MIN) - 1),
+                (i128::from(i64::MIN) - 1).to_string(),
+            ),
+            (fact(u128::MAX), u128::MAX.to_string()),
+        ];
+        for (result, integer) in refused {
+            let message = result.expect_err("the integer does not fit");
+            assert!(!message.contains(&integer), "{message}");
+        }
+        // A frame's reader gives one fixed message for a refused value. JSON
+        // passes on the reader's own message, so that message is checked here.
+        let json = serde_json::from_value::<AuditMetadata>(json!({ "fact": u64::MAX }));
+        let message = json.expect_err("the integer does not fit").to_string();
+        assert!(message.contains(INTEGER_TOO_WIDE), "{message}");
+        assert!(!message.contains(&u64::MAX.to_string()), "{message}");
+    }
+
+    #[test]
+    fn a_float_follows_the_rules_of_the_builder() {
+        assert_eq!(fact(0.5f32), Ok(AuditMetadata::new().with("fact", 0.5f32)));
+        assert_eq!(fact(0.25f64), Ok(AuditMetadata::new().with("fact", 0.25)));
+        let null = AuditMetadata::new().with("fact", None::<bool>);
+        assert_eq!(fact(f64::NAN), Ok(null.clone()));
+        assert_eq!(fact(f32::INFINITY), Ok(null.clone()));
+        assert_eq!(fact(f64::NEG_INFINITY), Ok(null));
+    }
+
+    #[test]
+    fn bytes_are_refused_and_not_shown() {
+        let message = fact(Bytes(b"secret")).expect_err("bytes have no form");
+        assert!(!message.contains("secret"), "{message}");
+        let in_a_list = fact(vec![Bytes(b"secret")]).expect_err("bytes have no form");
+        assert!(!in_a_list.contains("secret"), "{in_a_list}");
+        // A frame's reader gives one fixed message. serde's own reader of
+        // bytes passes on this reader's words.
+        let bytes = serde::de::value::BytesDeserializer::<serde::de::value::Error>::new(b"secret");
+        let message = Fact::deserialize(bytes)
+            .map(|_| ())
+            .expect_err("bytes have no form")
+            .to_string();
+        assert!(message.contains("a bool, an integer, a float"), "{message}");
+        assert!(!message.contains("secret"), "{message}");
+    }
+
+    #[test]
+    fn a_key_that_appears_twice_is_refused() {
+        for text in [
+            r#"{ "purpose": "first", "purpose": "second" }"#,
+            r#"{ "nested": { "purpose": "first", "purpose": "second" } }"#,
+            r#"{ "list": [{ "purpose": "first", "purpose": "second" }] }"#,
+        ] {
+            let message = serde_json::from_str::<AuditMetadata>(text)
+                .expect_err("the key appears twice")
+                .to_string();
+            assert!(message.contains("a key that appears twice"), "{message}");
+            assert!(!message.contains("first") && !message.contains("second"));
+        }
+        // The same key in two different maps is two facts.
+        let apart = r#"{ "purpose": "a", "nested": { "purpose": "b" } }"#;
+        assert_eq!(
+            serde_json::from_str::<AuditMetadata>(apart).unwrap().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn only_a_map_is_metadata() {
+        for not_a_map in [json!(null), json!([]), json!("purpose"), json!(7)] {
+            let message = serde_json::from_value::<AuditMetadata>(not_a_map)
+                .expect_err("not a map")
+                .to_string();
+            assert!(message.contains("a map of audit metadata"), "{message}");
+        }
+        assert!(from_frame(&None::<bool>).is_err());
+    }
+
+    #[test]
+    fn an_optional_value_reads_as_the_value_or_as_null() {
+        use serde::de::value::Error;
+        let none = FactVisitor.visit_none::<Error>().unwrap();
+        assert_eq!(none, AuditValue::from(None::<bool>));
+        let some = FactVisitor.visit_some(json!(7)).unwrap();
+        assert_eq!(some, AuditValue::from(7));
     }
 }

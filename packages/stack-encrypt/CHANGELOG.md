@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ZeroKMS writes the metadata to its logs. Do not send plaintext,
     anything derived from plaintext, or secrets.
   - Each decrypt method documents this with an example that runs.
+  - `AuditMetadata` implements serde's `Deserialize` (#1067). It reads a
+    map with text keys from any serde format, for a language binding that
+    has the facts as data. A value follows the same rules as a value given
+    to `with`. Bytes, an integer that does not fit an `i64`, and a key
+    that appears twice in one map are refused. The error does not show a
+    value.
 - **`StackCipherBuilder::auth_strategy` and `key_provider`** (#1700).
   `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init()`
   builds the ZeroKMS client from an auth strategy and a client key provider
