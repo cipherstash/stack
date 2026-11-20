@@ -329,8 +329,12 @@ func (cph *Cipher) TermWithAuditForTest(ctx context.Context, value any, fieldCon
 
 // AuditFactsForTest is the audit metadata the cipher holds, as the guest
 // receives it: the options object's "audit" value, through the transport
-// codec. nil for a cipher that sends none.
+// codec. nil for a cipher that sends none. A refusal the cipher holds, which
+// its first call would report, is the error.
 func (cph *Cipher) AuditFactsForTest() (any, error) {
+	if cph.err != nil {
+		return nil, cph.err
+	}
 	facts, ok := cph.dataKeyCall().wire()["audit"]
 	if !ok {
 		return nil, nil
@@ -340,4 +344,15 @@ func (cph *Cipher) AuditFactsForTest() (any, error) {
 		return nil, err
 	}
 	return vcffi.Unmarshal(encoded)
+}
+
+// AuditUncheckedForTest is the cipher with facts as its audit metadata, as
+// given and with no check. The builder cannot build a value that ZeroKMS
+// has no form for, so a test uses this to send the guest one anyway: an
+// integer above the largest int64, or bytes. The guest then refuses the
+// call, which also shows that the call sent its metadata.
+func (cph *Cipher) AuditUncheckedForTest(facts map[string]any) *Cipher {
+	next := cph.copy()
+	next.audit = func() map[string]any { return facts }
+	return next
 }

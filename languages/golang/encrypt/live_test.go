@@ -105,12 +105,11 @@ func TestLiveAuditMetadataReachesZeroKMS(t *testing.T) {
 	c := encrypt.LiveClient(t)
 	ctx := t.Context()
 	requests := encrypt.RecordRequests(c)
-	metadata := encrypt.AuditMetadata{
-		"purpose": "live audit test",
-		"rows":    len(livePeople),
-		"at":      time.Date(2026, 11, 20, 21, 0, 0, 0, time.FixedZone("AEDT", 11*60*60)),
-		"request": map[string]any{"id": "req_01J9Z3"},
-	}
+	metadata := encrypt.NewAuditMetadata().
+		Text("purpose", "live audit test").
+		Int("rows", len(livePeople)).
+		Time("at", time.Date(2026, 11, 20, 21, 0, 0, 0, time.FixedZone("AEDT", 11*60*60))).
+		Map("request", encrypt.NewAuditMetadata().Text("id", "req_01J9Z3"))
 	want := map[string]any{
 		"purpose": "live audit test",
 		"rows":    float64(len(livePeople)),
@@ -169,9 +168,10 @@ func TestLiveAuditMetadataReachesZeroKMS(t *testing.T) {
 		t.Errorf("a Decrypt with no metadata sent %v, want no facts", got)
 	}
 
-	// Metadata the engine refuses stops the call before any key is
-	// requested: ZeroKMS receives nothing.
-	refused := plain.Audit(encrypt.AuditMetadata{"fact": uint64(math.MaxUint64)})
+	// Metadata the guest refuses stops the call before any key is
+	// requested: ZeroKMS receives nothing. The builder has no method for
+	// an integer above the largest int64, so the test puts one there.
+	refused := plain.AuditUncheckedForTest(map[string]any{"fact": uint64(math.MaxUint64)})
 	if _, err := testusers.Encrypt(ctx, refused, livePeople); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Errorf("Encrypt with an integer above int64: %v, want ErrEncoding", err)
 	}

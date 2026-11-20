@@ -62,10 +62,9 @@ func run(ctx context.Context) error {
 	// Audit gives the cipher audit metadata: facts about the call, which
 	// ZeroKMS writes to its audit log with the request for the data keys.
 	// ZeroKMS does not verify the facts. Do not send plaintext or secrets.
-	reader := cipher.Audit(encrypt.AuditMetadata{
-		"purpose":    "example",
-		"request_id": "req_01J9Z3",
-	})
+	reader := cipher.Audit(encrypt.NewAuditMetadata().
+		Text("purpose", "example").
+		Text("request_id", "req_01J9Z3"))
 	back, err := Decrypt(ctx, reader, encrypted)
 	if err != nil {
 		return fmt.Errorf("decrypt: %w", err)

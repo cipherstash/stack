@@ -234,15 +234,16 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	}
 	// A read through a cipher that has audit metadata opens the same rows:
 	// a read asks for data keys, so the guest takes the metadata there.
-	audited := cipher.Audit(encrypt.AuditMetadata{"purpose": "read a profile"})
+	audited := cipher.Audit(encrypt.NewAuditMetadata().Text("purpose", "read a profile"))
 	opened, err = audited.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}, [][][]byte{{name}, {}})
 	if err != nil || len(opened) != 2 || len(opened[0]) != 1 || string(opened[0][0]) != `"Alice"` {
 		t.Fatalf("opened through an audited cipher: %q, %v", opened, err)
 	}
-	// The read sends the cipher's metadata to the guest. The engine refuses
+	// The read sends the cipher's metadata to the guest. The guest refuses
 	// an integer above the largest int64, so a read through a cipher that
-	// holds one fails. A read that sent no metadata would succeed.
-	refused := cipher.Audit(encrypt.AuditMetadata{"fact": uint64(math.MaxUint64)})
+	// holds one fails. A read that sent no metadata would succeed. The
+	// builder has no method for such an integer, so the test puts it there.
+	refused := cipher.AuditUncheckedForTest(map[string]any{"fact": uint64(math.MaxUint64)})
 	_, err = refused.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}, [][][]byte{{name}})
 	if !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("a read through a cipher with metadata the engine refuses: %v, want ErrEncoding", err)

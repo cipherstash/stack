@@ -28,12 +28,12 @@ func ExampleCipher_Audit() {
 	var rows []testusers.EncryptedUser // read from the database
 	requestID := "req_01J9Z3"
 
-	service := client.DefaultKeyset().Audit(encrypt.AuditMetadata{"service": "billing"})
-	request := service.Audit(encrypt.AuditMetadata{
-		"purpose":    "list issues",
-		"request_id": requestID,
-		"at":         time.Now(),
-	})
+	service := client.DefaultKeyset().Audit(encrypt.NewAuditMetadata().Text("service", "billing"))
+	request := service.Audit(encrypt.NewAuditMetadata().
+		Text("purpose", "list issues").
+		Text("request_id", requestID).
+		Int("rows", len(rows)).
+		Time("at", time.Now()))
 	people, err := testusers.Decrypt(ctx, request, rows)
 	if err != nil {
 		log.Fatal(err)
@@ -52,7 +52,8 @@ func ExampleClient_Audit() {
 	defer client.Close()
 	var rows []testusers.EncryptedUser // read from the database
 
-	people, err := testusers.Decrypt(ctx, client.Audit(encrypt.AuditMetadata{"purpose": "export"}), rows)
+	metadata := encrypt.NewAuditMetadata().Text("purpose", "export")
+	people, err := testusers.Decrypt(ctx, client.Audit(metadata), rows)
 	if err != nil {
 		log.Fatal(err)
 	}

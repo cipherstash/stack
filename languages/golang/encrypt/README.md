@@ -243,11 +243,10 @@ ZeroKMS logs every data-key request with the identity that made it. To
 provide additional context for that log, give the cipher audit metadata:
 
 ```go
-cipher := client.DefaultKeyset().Audit(encrypt.AuditMetadata{
-	"purpose":    "list issues",
-	"request_id": requestID,
-})
-people, err := users.Decrypt(ctx, cipher, rows)
+metadata := encrypt.NewAuditMetadata().
+	Text("purpose", "list issues").
+	Text("request_id", requestID)
+people, err := users.Decrypt(ctx, cipher.Audit(metadata), rows)
 ```
 
 Every `Encrypt` and `Decrypt` through that cipher sends the facts to
@@ -259,15 +258,16 @@ same key. So a program can state its service once, and add a request ID for
 each request:
 
 ```go
-service := client.DefaultKeyset().Audit(encrypt.AuditMetadata{"service": "billing"})
-request := service.Audit(encrypt.AuditMetadata{"request_id": requestID})
+service := cipher.Audit(encrypt.NewAuditMetadata().Text("service", "billing"))
+request := service.Audit(encrypt.NewAuditMetadata().Text("request_id", requestID))
 ```
 
 To decrypt rows from any keyset, with metadata, pass `client.Audit(..)`
 where a `Decrypter` is taken:
 
 ```go
-people, err := users.Decrypt(ctx, client.Audit(encrypt.AuditMetadata{"purpose": "export"}), rows)
+metadata := encrypt.NewAuditMetadata().Text("purpose", "export")
+people, err := users.Decrypt(ctx, client.Audit(metadata), rows)
 ```
 
 > **Take care**
@@ -285,36 +285,55 @@ A query sends no audit metadata. A query term is derived from the index key
 of the keyset, so a query asks ZeroKMS for no data key. A query through a
 cipher that has metadata still works.
 
-A value has one of these types, and no other:
+#### The values of a fact
 
-- `nil`, a `bool`, or a `string`;
-- an integer or a float of any built-in size;
-- a `time.Time`;
-- a `[]any` or a `[]string`, for a list;
-- a `map[string]any` or an `AuditMetadata`, for a nested map.
+Each method adds one fact, and its parameter type is the type of the value.
+So the compiler refuses a value of another type.
 
-The first call through the cipher refuses any other type with `ErrEncoding`.
-A `[]byte`, a struct, a pointer, and a named type such as `type ID string`
-are four examples. Convert the value to a type in the list: send a `[]byte`
-as text, such as its hex form.
+| Method | Value |
+|---|---|
+| `Text(key, value)` | a `string` |
+| `Bool(key, value)` | a `bool` |
+| `Int(key, value)` | an `int` |
+| `Int64(key, value)` | an `int64` |
+| `Float(key, value)` | a `float64` |
+| `Time(key, value)` | a `time.Time` |
+| `Null(key)` | no value, sent as null |
+| `TextList(key, values...)` | a list of `string` values |
+| `List(key, list)` | an `AuditList`, for a list of other values |
+| `Map(key, metadata)` | a nested `AuditMetadata` |
+
+Convert a value of another type yourself. For a named type such as
+`type ID string`, write `string(id)`. For a `[]byte`, send text, such as its
+hex form. ZeroKMS reads an integer as an `int64`, so there is no method for a
+`uint64`: convert it, or send it as text.
+
+Each method returns new metadata and leaves its own unchanged. A later fact
+replaces an earlier one that has the same key.
 
 ZeroKMS records each value as you give it, with two exceptions:
 
-- A `time.Time` is sent as RFC 3339 text in UTC, such as
-  `"2026-11-20T10:00:00Z"`. The text keeps the instant to the nanosecond, and
-  not the zone that the time was in. A time outside the years 0 to 9999 is
-  refused, because RFC 3339 has no form for it.
+- A time is sent as RFC 3339 text in UTC, such as `"2026-11-20T10:00:00Z"`.
+  The text keeps the instant to the nanosecond, and not the zone that the
+  time was in.
 - A float that is not finite is sent as null.
 
-ZeroKMS reads a number as an `int64` or a `float64`. So an integer above the
-largest `int64` is refused too: send it as text.
+The compiler cannot check three things, because they depend on the value.
+The first call through the cipher refuses each one with `ErrEncoding`:
+
+- a key or a text that is not valid UTF-8;
+- a time outside the years 0 to 9999, because RFC 3339 has no form for it;
+- maps and lists nested more than 32 levels deep.
+
+Printing an `AuditMetadata` shows its keys and never a value.
 
 `go test` compiles the examples in this section: see `ExampleCipher_Audit`
 and `ExampleClient_Audit`. The example program in `encrypt/example` runs a
 decrypt with audit metadata.
 
-In the Rust crate this is `AuditMetadata` and `.audit(..)`. In the ZeroKMS
-protocol it is the unverified context of a key request.
+In the Rust crate this is `AuditMetadata::new().with(key, value)` and
+`.audit(..)`. In the ZeroKMS protocol it is the unverified context of a key
+request.
 
 ## Reading
 

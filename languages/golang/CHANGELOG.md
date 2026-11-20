@@ -21,18 +21,20 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   ID. `cipher.Audit(metadata)` returns a cipher that sends the facts with
   every data-key request. `client.Audit(metadata)` returns a `Decrypter`
   that does the same for rows from any keyset.
+  - Build the metadata with `encrypt.NewAuditMetadata()` and one method for
+    each fact: `Text`, `Bool`, `Int`, `Int64`, `Float`, `Time`, `Null`,
+    `TextList`, `List`, and `Map`. The parameter type of each method is the
+    type of its value, so the compiler refuses a value of another type.
+    There is no method for a `[]byte` or a `uint64`: send each one as text.
   - Every `Encrypt` and `Decrypt` through the cipher sends the facts. So
     does every read of an encrypted JSON document. A query asks ZeroKMS for
     no data key, so a query sends none.
   - `Audit` adds to the facts the cipher has. A fact replaces one that has
-    the same key. The cipher keeps its own copy of the facts.
-  - A value has one of a closed list of types: nil, a bool, a string, a
-    built-in integer or float, a `time.Time`, a `[]any`, a `[]string`, a
-    `map[string]any`, or an `AuditMetadata`. Any other type is refused
-    with `ErrEncoding`, and so is an integer above the largest `int64`.
-    Send a `[]byte` as text.
-  - A `time.Time` is sent as RFC 3339 text in UTC. A time outside the
-    years 0 to 9999 is refused.
+    the same key.
+  - A time is sent as RFC 3339 text in UTC. A time outside the years 0 to
+    9999 is refused with `ErrEncoding`. So is a key or a text that is not
+    valid UTF-8.
+  - Printing an `AuditMetadata` shows its keys and never a value.
   - ZeroKMS does not verify the facts, and a decrypt does not need them.
     ZeroKMS writes them to its logs. Do not send plaintext, anything
     derived from plaintext, or secrets.
