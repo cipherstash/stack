@@ -77,6 +77,7 @@ jobs:
   changes:
     name: Detect JS-relevant changes
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
     outputs:
       js: ${{ steps.r.outputs.js }}
     steps:
@@ -178,6 +179,7 @@ jobs:
   repo-checks:
     name: Repo checks
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -988,6 +990,7 @@ jobs:
     needs: [lint, changes, repo-checks, run-tests, e2e-tests, wasm-e2e-tests, run-tests-bun]
     if: always()
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - name: Assert every needed job passed or was skipped
         env:

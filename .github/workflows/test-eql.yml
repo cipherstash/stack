@@ -474,6 +474,7 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
