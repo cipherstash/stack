@@ -47,23 +47,43 @@ func TestAuditHoldsTheFactsAsGiven(t *testing.T) {
 	if got := facts(t, base.Audit(encrypt.AuditMetadata{})); got != nil {
 		t.Fatalf("Audit of no facts holds %v", got)
 	}
+	sydney := time.FixedZone("AEDT", 11*60*60)
+	at := time.Date(2026, 11, 20, 10, 0, 0, 0, sydney)
+	type window struct{ From, To time.Time }
 	cipher := base.Audit(encrypt.AuditMetadata{
 		"purpose": "export",
 		"rows":    250,
-		"dry_run": false,
-		"actor":   nil,
-		"ratio":   0.25,
-		"tables":  []string{"users", "orders"},
-		"request": map[string]any{"id": "req_01J9Z3"},
+		// A time is sent as RFC 3339 text in UTC, wherever it is.
+		"at":       at,
+		"at_nanos": time.Date(2026, 11, 20, 10, 0, 0, 123456789, time.UTC),
+		"at_ptr":   &at,
+		"times":    []time.Time{at},
+		"window":   window{From: at, To: at.Add(time.Hour)},
+		"mixed":    []any{"ok", at, map[string]any{"at": at}},
+		"dry_run":  false,
+		"actor":    nil,
+		"ratio":    0.25,
+		"tables":   []string{"users", "orders"},
+		"request":  map[string]any{"id": "req_01J9Z3"},
 	})
+	const utc = "2026-11-19T23:00:00Z"
 	want := object(
 		vcvalue.Field{Key: "actor", Value: nil},
+		vcvalue.Field{Key: "at", Value: utc},
+		vcvalue.Field{Key: "at_nanos", Value: "2026-11-20T10:00:00.123456789Z"},
+		vcvalue.Field{Key: "at_ptr", Value: utc},
 		vcvalue.Field{Key: "dry_run", Value: false},
+		vcvalue.Field{Key: "mixed", Value: []any{"ok", utc, object(vcvalue.Field{Key: "at", Value: utc})}},
 		vcvalue.Field{Key: "purpose", Value: "export"},
 		vcvalue.Field{Key: "ratio", Value: 0.25},
 		vcvalue.Field{Key: "request", Value: object(vcvalue.Field{Key: "id", Value: "req_01J9Z3"})},
 		vcvalue.Field{Key: "rows", Value: int64(250)},
 		vcvalue.Field{Key: "tables", Value: []any{"users", "orders"}},
+		vcvalue.Field{Key: "times", Value: []any{utc}},
+		vcvalue.Field{Key: "window", Value: object(
+			vcvalue.Field{Key: "From", Value: utc},
+			vcvalue.Field{Key: "To", Value: "2026-11-20T00:00:00Z"},
+		)},
 	)
 	if got := facts(t, cipher); !reflect.DeepEqual(got, want) {
 		t.Fatalf("facts = %#v\nwant    %#v", got, want)
@@ -184,6 +204,7 @@ func TestAuditedCipherRoundTrips(t *testing.T) {
 		"purpose": "list issues",
 		"rows":    len(people),
 		"ratio":   math.NaN(),
+		"at":      time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC),
 		"request": map[string]any{"id": "req_01J9Z3", "tables": []string{"users"}},
 	})
 
@@ -242,9 +263,9 @@ func TestTheGuestRefusesAuditOnATermCall(t *testing.T) {
 	}
 }
 
-// ZeroKMS has no form for bytes, a time or an integer above the largest
-// int64. The engine refuses each one before any key is requested, and the
-// error does not show the value.
+// ZeroKMS has no form for bytes or for an integer above the largest int64.
+// The engine refuses each one before any key is requested, and the error
+// does not show the value.
 func TestAuditValuesZeroKMSHasNoFormFor(t *testing.T) {
 	c := deterministicClient(t)
 	ctx := context.Background()
@@ -254,7 +275,6 @@ func TestAuditValuesZeroKMSHasNoFormFor(t *testing.T) {
 	}
 	for name, value := range map[string]any{
 		"bytes":                      []byte("leak-marker"),
-		"a time":                     time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC),
 		"an integer above int64":     uint64(math.MaxInt64) + 1,
 		"bytes inside a list":        []any{"ok", []byte("leak-marker")},
 		"bytes inside a nested fact": map[string]any{"inner": []byte("leak-marker")},

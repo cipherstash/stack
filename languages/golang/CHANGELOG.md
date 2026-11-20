@@ -26,10 +26,10 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
     no data key, so a query sends none.
   - `Audit` adds to the facts the cipher has. A fact replaces one that has
     the same key. The cipher keeps its own copy of the facts.
-  - A value is a bool, a string, an integer, a float, nil, a slice of
-    these, or a map with string keys. A `[]byte`, a `time.Time`, and an
-    integer above the largest `int64` are refused with `ErrEncoding`. Send
-    each one as text.
+  - A value is a bool, a string, an integer, a float, a `time.Time`, nil,
+    a slice of these, or a map with string keys. A `time.Time` is sent as
+    RFC 3339 text in UTC. A `[]byte` and an integer above the largest
+    `int64` are refused with `ErrEncoding`. Send each one as text.
   - ZeroKMS does not verify the facts, and a decrypt does not need them.
     ZeroKMS writes them to its logs. Do not send plaintext, anything
     derived from plaintext, or secrets.

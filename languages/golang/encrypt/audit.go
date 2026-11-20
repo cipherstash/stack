@@ -3,6 +3,7 @@ package encrypt
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
@@ -47,16 +48,21 @@ import (
 //
 // # Values
 //
-// A value is a bool, a string, an integer, a float, nil, a slice of these,
-// or a map with string keys. A struct is sent as a map of its fields.
-// ZeroKMS records each value as you give it, with one exception: a float
-// that is not finite is sent as null.
+// A value is a bool, a string, an integer, a float, a time.Time, nil, a
+// slice of these, or a map with string keys. A struct is sent as a map of
+// its fields. ZeroKMS records each value as you give it, with two
+// exceptions:
+//
+//   - A time.Time is sent as RFC 3339 text in UTC, such as
+//     "2026-11-20T10:00:00Z", because ZeroKMS has no type for a time. The
+//     text keeps the instant to the nanosecond. It does not keep the zone
+//     that the time was in.
+//   - A float that is not finite is sent as null.
 //
 // ZeroKMS has no form for these values, and the first call through the
 // cipher refuses them with [ErrEncoding]:
 //
 //   - a []byte: send it as text, such as its hex form;
-//   - a time.Time: send it as text, such as its RFC 3339 form;
 //   - an integer above the largest int64: send it as text.
 type AuditMetadata map[string]any
 
@@ -97,9 +103,31 @@ func (a auditFacts) with(metadata AuditMetadata) (auditFacts, error) {
 		}
 	}
 	for _, field := range object {
-		facts[field.Key] = field.Value
+		facts[field.Key] = sendable(field.Value)
 	}
 	return func() map[string]any { return facts }, nil
+}
+
+// sendable is a decoded value in the form the cipher sends: every time in
+// it is RFC 3339 text in UTC. ZeroKMS has no type for a time, and the
+// engine refuses one, so the SDK chooses the text that encoding/json would
+// write. The codec has already brought each time to UTC, at whatever depth
+// the caller put it: in a slice, in a struct, or behind a pointer. The
+// value is the cipher's own copy, so it is changed in place.
+func sendable(value any) any {
+	switch v := value.(type) {
+	case time.Time:
+		return v.UTC().Format(time.RFC3339Nano)
+	case []any:
+		for i := range v {
+			v[i] = sendable(v[i])
+		}
+	case vcvalue.Object:
+		for i := range v {
+			v[i].Value = sendable(v[i].Value)
+		}
+	}
+	return value
 }
 
 // Audit returns a cipher that sends metadata to ZeroKMS with every data-key

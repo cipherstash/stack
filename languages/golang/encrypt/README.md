@@ -285,11 +285,18 @@ A query sends no audit metadata. A query term is derived from the index key
 of the keyset, so a query asks ZeroKMS for no data key. A query through a
 cipher that has metadata still works.
 
-A value is a bool, a string, an integer, a float, `nil`, a slice of these, or
-a map with string keys. ZeroKMS has no form for a `[]byte`, a `time.Time`, or
-an integer above the largest `int64`. The first call through the cipher
-refuses each one with `ErrEncoding`, so send it as text. A float that is not
-finite is sent as null.
+A value is a bool, a string, an integer, a float, a `time.Time`, `nil`, a
+slice of these, or a map with string keys. ZeroKMS records each value as you
+give it, with two exceptions:
+
+- A `time.Time` is sent as RFC 3339 text in UTC, such as
+  `"2026-11-20T10:00:00Z"`. The text keeps the instant to the nanosecond, and
+  not the zone that the time was in.
+- A float that is not finite is sent as null.
+
+ZeroKMS has no form for a `[]byte` or for an integer above the largest
+`int64`. The first call through the cipher refuses each one with
+`ErrEncoding`, so send it as text.
 
 In the Rust crate this is `AuditMetadata` and `.audit(..)`. In the ZeroKMS
 protocol it is the unverified context of a key request.
