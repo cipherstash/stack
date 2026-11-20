@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that variable is not set. Native targets with the `profile` feature.
 - `ClientKey::generate_for_test()` (behind `test-support`) returns a random,
   well-formed client key for tests.
+- Re-exports `UnverifiedContextValue`, the type of one value in an
+  `UnverifiedContext`. A crate that builds an unverified context no longer
+  needs its own dependency on `zerokms-protocol`.
 - `DeterministicSource` (behind `test-support`), a key source whose keys are
   a function of a seed and the descriptor, for fixtures that hold real sealed
   bytes. It refuses a wrong context as ZeroKMS does, as `Forbidden`.

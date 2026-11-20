@@ -314,6 +314,45 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// # Errors
     /// Refuses foreign keysets before retrieval; also reports provider,
     /// authentication and plaintext type errors.
+    ///
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// provide additional context for the audit log, call `.audit(..)`
+    /// before you await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::{AuditMetadata, Ciphertext, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let keyset = cipher.default_keyset();
+    /// let stored: Ciphertext = keyset.encrypt(String::from("sk_live_1234")).await?;
+    ///
+    /// let api_key: String = keyset
+    ///     .decrypt(stored)
+    ///     .audit(
+    ///         AuditMetadata::new()
+    ///             .with("purpose", "list issues")
+    ///             .with("request_id", "req_01J9Z3"),
+    ///     )
+    ///     .await?;
+    /// assert_eq!(api_key, "sk_live_1234");
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
     pub fn decrypt<P: OpaqueDecode>(&self, ciphertext: Ciphertext) -> Pending<'_, P, K> {
         P::decrypt_from(ciphertext, self)
     }
@@ -322,6 +361,41 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// # Errors
     /// Refuses foreign keysets before retrieval; wrong context or altered
     /// ciphertext fails authentication. Provider and type errors propagate.
+    ///
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// provide additional context for the audit log, call `.audit(..)`
+    /// before you await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::{AuditMetadata, Ciphertext, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let keyset = cipher.default_keyset();
+    /// let stored: Ciphertext = keyset.encrypt_with_context(42i64, "users/age").await?;
+    ///
+    /// let age: i64 = keyset
+    ///     .decrypt_with_context(stored, "users/age")
+    ///     .audit(AuditMetadata::new().with("purpose", "profile page"))
+    ///     .await?;
+    /// assert_eq!(age, 42);
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
     pub fn decrypt_with_context<'c, P: OpaqueDecode>(
         &self,
         ciphertext: Ciphertext,

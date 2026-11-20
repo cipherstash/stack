@@ -18,10 +18,12 @@ use std::sync::Arc;
 
 use stack_kms::{
     DataKey, DataKeySource, GenerateKeyPayload, IndexKeySource, Iv, MaybeSend, RetrieveKeyPayload,
+    UnverifiedContext,
 };
 use uuid::Uuid;
 
 use super::request::{tally, KeysetAnswer, Request, RequestKind, Responses};
+use crate::audit::{AuditMetadata, Audited, Unverified};
 use crate::contexts::CallContexts;
 use crate::keyset::KeysetState;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
@@ -332,6 +334,56 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         }
     }
 
+    /// Send `metadata` with every key request that this call makes, for
+    /// the ZeroKMS audit log. Audit metadata is optional: a call without it
+    /// sends none.
+    ///
+    /// ```
+    /// use stack_encrypt::{AuditMetadata, Ciphertext, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let keyset = cipher.default_keyset();
+    /// let purpose = AuditMetadata::new().with("purpose", "store api key");
+    ///
+    /// let stored: Ciphertext = keyset
+    ///     .encrypt(String::from("sk_live_1234"))
+    ///     .audit(purpose)
+    ///     .await?;
+    /// # let _ = stored;
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS does not verify the metadata. A decrypt does not need it.
+    /// ZeroKMS writes the metadata to its logs, so do not send plaintext or
+    /// secrets. See [`AuditMetadata`] for the full rules.
+    ///
+    /// # One map for each call
+    ///
+    /// A call can make several key requests: one `generate_keys`, and one
+    /// `retrieve_keys` for each keyset it decrypts leaves from. Each
+    /// request is sent with the same metadata.
+    ///
+    /// Some calls request no data key: a query term, for example, or a
+    /// call over an empty list. Those calls send no metadata, because they
+    /// make no request to send it with. Those calls still succeed.
+    /// [`Audited`] lists them. Empty metadata sends none either.
+    ///
+    /// # Attach it last
+    ///
+    /// The result is an [`Audited`] call. You can only await it. So call
+    /// [`zip`](Self::zip), [`all`](Self::all), and [`map`](Self::map)
+    /// first. Then attach the metadata to the whole call.
+    pub fn audit(self, metadata: AuditMetadata) -> Audited<Self> {
+        Audited::new(self, metadata)
+    }
+
     /// The contexts this call will use, with the caller's values filled in.
     ///
     /// Each distinct context appears once, in the order the call's leaves
@@ -639,10 +691,17 @@ where
     /// Unboxed, so it carries no `Send`/`Sync` demands beyond the backend's
     /// own; the public [`IntoFuture`] impl boxes it.
     pub(crate) async fn settle(self) -> Result<T, Error> {
+        self.settle_with(None).await
+    }
+
+    /// Settle as [`settle`](Self::settle) does, and send `audit` with
+    /// every key request. An [`Audited`] call settles through this method.
+    pub(crate) async fn settle_with(self, audit: Unverified) -> Result<T, Error> {
         if let Some(error) = self.failed {
             return Err(error);
         }
-        let mut responses = dispatch(self.cipher, self.keyset, self.requests).await?;
+        let mut responses =
+            dispatch(self.cipher, self.keyset, self.requests, audit.as_deref()).await?;
         (self.fulfil)(&mut responses)
     }
 }
@@ -708,6 +767,38 @@ where
     }
 }
 
+/// Awaiting an audited `Pending` settles it, as awaiting the `Pending`
+/// does, with the audit metadata on every key request.
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a, T: 'a, K> IntoFuture for Audited<Pending<'a, T, K>>
+where
+    K: DataKeySource + IndexKeySource + Sync,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (pending, audit) = self.into_parts();
+        Box::pin(pending.settle_with(audit))
+    }
+}
+
+/// See the native impl above. This one is the same, without the `Sync`
+/// bound.
+#[cfg(target_arch = "wasm32")]
+impl<'a, T: 'a, K> IntoFuture for Audited<Pending<'a, T, K>>
+where
+    K: DataKeySource + IndexKeySource,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (pending, audit) = self.into_parts();
+        Box::pin(pending.settle_with(audit))
+    }
+}
+
 /// One [`RequestKind::RetrieveDataKey`], unpacked for
 /// [`dispatch`]: the retrieves are grouped by `keyset_id` and read back by
 /// index, so they are held as a list of their own rather than as requests.
@@ -729,6 +820,7 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
     cipher: &StackCipher<K>,
     keyset: Option<Uuid>,
     requests: Vec<Request>,
+    audit: Option<&UnverifiedContext>,
 ) -> Result<Responses, Error> {
     let mut generates: Vec<Descriptor> = Vec::new();
     let mut retrieves: Vec<Retrieve> = Vec::new();
@@ -771,7 +863,7 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
     // early and boxed is a pointer wide at both moments, and its output is
     // kept narrow too (an error travels boxed, a keyset's outcome shared).
     // `tests/heap_hygiene.rs` is what notices.
-    let retrieving = retrieve_data_keys(cipher, &retrieves);
+    let retrieving = retrieve_data_keys(cipher, &retrieves, audit);
     let retrieve_keys = Box::pin(async move { retrieving.await.map_err(Box::new) });
     let load_keysets = Box::pin(load_keysets(cipher, &loads));
 
@@ -791,7 +883,7 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
         let expected = payloads.len();
         let keys = cipher
             .kms()
-            .generate_keys(payloads, Some(keyset), None)
+            .generate_keys(payloads, Some(keyset), audit.map(Cow::Borrowed))
             .await?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
@@ -814,6 +906,7 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
 async fn retrieve_data_keys<K: DataKeySource>(
     cipher: &StackCipher<K>,
     retrieves: &[Retrieve],
+    audit: Option<&UnverifiedContext>,
 ) -> Result<Vec<DataKey>, Error> {
     let mut groups: Vec<(Uuid, Vec<usize>)> = Vec::new();
     let mut group_of: HashMap<Uuid, usize> = HashMap::new();
@@ -838,7 +931,7 @@ async fn retrieve_data_keys<K: DataKeySource>(
         let expected = payloads.len();
         let keys = cipher
             .kms()
-            .retrieve_keys(payloads, Some(keyset_id), None)
+            .retrieve_keys(payloads, Some(keyset_id), audit)
             .await?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
@@ -1635,7 +1728,7 @@ mod tests {
             Request::generate_under(Descriptor::of("users/email")),
             Request::generate_under(long.clone()),
         ];
-        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests).await else {
+        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests, None).await else {
             panic!("an over-long descriptor must be refused");
         };
         assert!(
@@ -1651,7 +1744,7 @@ mod tests {
         let mut pairs = generating_pairs(&keyset, 1).await.unwrap();
         let (iv, tag) = pairs.remove(0);
         let requests = vec![Request::retrieve_under(iv, tag, long, keyset.keyset_id())];
-        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests).await else {
+        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests, None).await else {
             panic!("an over-long descriptor must be refused");
         };
         assert!(matches!(err, Error::DescriptorTooLong { .. }), "{err}");
@@ -1668,7 +1761,7 @@ mod tests {
             "a".repeat(Descriptor::MAX_LEN),
         ))];
         assert!(
-            dispatch(&cipher, Some(keyset.keyset_id()), requests)
+            dispatch(&cipher, Some(keyset.keyset_id()), requests, None)
                 .await
                 .is_ok(),
             "at the limit"

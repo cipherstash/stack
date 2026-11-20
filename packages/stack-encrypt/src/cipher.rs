@@ -23,7 +23,7 @@
 //!
 //! * **Encrypt** — [`PendingStackCipherText::plan`] walks the value into
 //!   vitaminc's pending tree and does no I/O. A single
-//!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt_tree`]
+//!   [`PendingStackCipherText::into_pending`] (or the [`KeysetCipher::encrypt_tree`]
 //!   convenience) then batches **one** `generate_keys` call for the whole
 //!   tree, under the handle's keyset, and seals every leaf through
 //!   `MintedKeys`, the sealing half of this crate's [`Cipher`], one key per
@@ -1206,18 +1206,24 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// Encrypt a value, binding `context`, and seal it against fresh ZeroKMS
     /// data keys in a single batched `generate_keys` call under this keyset.
     /// Every key is requested under the [`Descriptor`] of `context`.
-    pub async fn encrypt_tree<'a, T, A>(
+    ///
+    /// Returns a [`Pending`](crate::Pending): await it, or first attach
+    /// [audit metadata](crate::Pending::audit) for the key request. A value
+    /// that cannot be planned fails when awaited, before any request.
+    pub fn encrypt_tree<'a, T, A>(
         &self,
         value: T,
         context: A,
-    ) -> Result<StackCipherText, Error>
+    ) -> crate::target::Pending<'_, StackCipherText, K>
     where
         T: Encrypt,
         A: IntoContext<'a>,
     {
         let context = context.into_context();
-        let pending = PendingStackCipherText::plan(value, context.clone())?;
-        pending.seal(self, context).await
+        match PendingStackCipherText::plan(value, context.clone()) {
+            Ok(pending) => pending.into_pending(self, context),
+            Err(error) => crate::target::Pending::failed(self, error),
+        }
     }
 
     /// Decrypt a tree of individually sealed leaves.
@@ -1225,16 +1231,51 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// Like [`StackCipher::decrypt`], constrained to this keyset: a leaf sealed
     /// under any other is [`Error::ForeignKeyset`], refused before any key
     /// is retrieved.
-    pub async fn decrypt_tree<'a, T, A>(
-        &self,
+    ///
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// provide additional context for the audit log, call `.audit(..)`
+    /// before you await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::{AuditMetadata, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let keyset = cipher.default_keyset();
+    /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
+    ///
+    /// let name: String = keyset
+    ///     .decrypt_tree(stored, "users/name")
+    ///     .audit(AuditMetadata::new().with("purpose", "profile page"))
+    ///     .await?;
+    /// assert_eq!(name, "alice");
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
+    pub fn decrypt_tree<'s, 'a, T, A>(
+        &'s self,
         ciphertext: StackCipherText,
         context: A,
-    ) -> Result<T, Error>
+    ) -> crate::target::Pending<'s, T, K>
     where
-        T: Decrypt,
+        T: Decrypt + 's,
         A: IntoContext<'a>,
     {
-        decrypt_through(self.into(), ciphertext, context).await
+        decrypt_through(self.into(), ciphertext, context)
     }
 }
 
@@ -1249,19 +1290,17 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
 /// is a derivation of the descriptor its key was minted under —
 /// `for_sequence_element`, `for_map_entry`, `for_leaf` — and that
 /// derivation is the library's to compute, never the caller's to supply.
-async fn decrypt_through<'s, 'a, T, K: DataKeySource + IndexKeySource + 's>(
+fn decrypt_through<'s, 'a, T, K: 's>(
     scope: crate::target::CipherRef<'s, K>,
     ciphertext: StackCipherText,
     aad: impl IntoContext<'a>,
-) -> Result<T, Error>
+) -> crate::target::Pending<'s, T, K>
 where
-    T: Decrypt,
+    T: Decrypt + 's,
 {
-    let context = aad.into_context();
-    let keyed = crate::target::bind_pending(scope, ciphertext, Descriptor::of(context.clone()))
-        .settle()
-        .await?;
-    open_keyed(keyed, context)
+    let context = aad.into_context().into_owned();
+    crate::target::bind_pending(scope, ciphertext, Descriptor::of(context.clone()))
+        .try_map(move |keyed| open_keyed(keyed, context))
 }
 
 impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
@@ -1295,16 +1334,54 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// trust — one tenant's data at a time — should hold that tenant's
     /// [`KeysetCipher::decrypt_tree`], which is one round trip at most and refuses
     /// a foreign leaf before any.
-    pub async fn decrypt<'a, T, A>(
-        &self,
+    ///
+    /// # Audit metadata
+    ///
+    /// ZeroKMS logs every key request with the identity that made it. To
+    /// provide additional context for the audit log, call `.audit(..)`
+    /// before you await the result. `.audit(..)` takes an
+    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
+    /// as its purpose or a request id.
+    ///
+    /// ```
+    /// use stack_encrypt::{AuditMetadata, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let keyset = cipher.default_keyset();
+    /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
+    ///
+    /// let name: String = cipher
+    ///     .decrypt(stored, "users/name")
+    ///     .audit(AuditMetadata::new().with("purpose", "profile page"))
+    ///     .await?;
+    /// assert_eq!(name, "alice");
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS records the facts as given and does not verify them. The
+    /// decrypt does not need them. The facts can differ from those sent
+    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
+    /// send plaintext or secrets.
+    ///
+    /// This call makes one key request for each keyset the leaves were sealed
+    /// under. Each request is sent with the same facts.
+    pub fn decrypt<'s, 'a, T, A>(
+        &'s self,
         ciphertext: StackCipherText,
         context: A,
-    ) -> Result<T, Error>
+    ) -> crate::target::Pending<'s, T, K>
     where
-        T: Decrypt,
+        T: Decrypt + 's,
         A: IntoContext<'a>,
     {
-        decrypt_through(self.into(), ciphertext, context).await
+        decrypt_through(self.into(), ciphertext, context)
     }
 }
 
@@ -1663,8 +1740,8 @@ pub(crate) fn bind_keys(
 
 /// A value planned for sealing: vitaminc's tree of pending leaves, each
 /// holding its tagged plaintext and the AAD its place in the value derives,
-/// with no ZeroKMS I/O done yet. [`seal`](Self::seal) turns it into a
-/// [`StackCipherText`].
+/// with no ZeroKMS I/O done yet. [`into_pending`](Self::into_pending)
+/// turns it into a [`StackCipherText`].
 ///
 /// [`plan`](Self::plan) walks the value once, through vitaminc's
 /// `EncryptSink`, which owns every container rule (element and entry AAD,
@@ -1699,9 +1776,11 @@ impl PendingStackCipherText {
         count(&self.0)
     }
 
-    /// Generate one data key per keyed leaf (one batched ZeroKMS call — none
-    /// for a passthrough-only tree), every key under the [`Descriptor`] of
-    /// `context`, and seal the whole tree.
+    /// Seal the whole tree. The result is a
+    /// [`Pending`](crate::target::Pending). Awaiting it generates one data
+    /// key for each keyed leaf, then seals every leaf. All the keys come
+    /// from one batched ZeroKMS call, under the [`Descriptor`] of `context`.
+    /// A tree that has only passthrough leaves makes no call.
     ///
     /// `context` is the context the tree was planned under — the value passed to
     /// [`plan`](Self::plan), in the same shape (see the
@@ -1710,29 +1789,19 @@ impl PendingStackCipherText {
     /// check that the two agree, which is why [`KeysetCipher::encrypt_tree`], which
     /// does both steps from one value, is the form to prefer.
     ///
-    /// Settles through the target layer's request carrier
-    /// ([`seal_pending`](crate::target)), so this and
-    /// `encrypt_into_with_context` into a `StackCipherText` share one definition of how a tree
-    /// is sealed and one path to ZeroKMS.
-    pub async fn seal<'a, K: DataKeySource + IndexKeySource>(
-        self,
-        cipher: &KeysetCipher<'_, K>,
-        context: impl IntoContext<'a>,
-    ) -> Result<StackCipherText, Error> {
-        self.into_pending(cipher, context).settle().await
-    }
-
-    /// Turn this tree into a [`Pending`](crate::target::Pending) request
-    /// carrier without settling it.
+    /// Await the result. To send audit metadata with the key request, call
+    /// [`.audit(..)`](crate::Pending::audit) on the result first.
     ///
-    /// [`seal`](Self::seal) is this plus an immediate settle — one ZeroKMS
-    /// call per tree. `into_pending` exists for callers that hold *several*
-    /// independently planned trees (one per record field in a language
-    /// binding, say) and want them merged with
-    /// [`Pending::zip`](crate::target::Pending::zip) /
-    /// [`Pending::all`](crate::target::Pending::all) so the whole assembly
-    /// seals in **one** batched `generate_keys` call. Same sealing path
-    /// either way.
+    /// A caller can have *several* trees that were planned independently,
+    /// such as one for each record field in a language binding. Merge them
+    /// with [`Pending::zip`](crate::target::Pending::zip) or
+    /// [`Pending::all`](crate::target::Pending::all). The whole assembly
+    /// then seals in **one** batched `generate_keys` call.
+    ///
+    /// This method settles through [`seal_pending`](crate::target), the
+    /// request carrier of the target layer. `encrypt_into_with_context`
+    /// into a `StackCipherText` settles through it too. So a tree is sealed
+    /// in one way, through one path to ZeroKMS.
     ///
     /// **Context contract.** The cipher-directed path deliberately accepts
     /// *any* AAD, including none at all (`()`) — it mirrors
@@ -1868,7 +1937,7 @@ fn open_leaf(keyed: KeyedLeaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, 
 /// in the order vitaminc's [`seal_all`] visits the leaves.
 ///
 /// The batch is fetched before the walk, in one `generate_keys` call per
-/// pending (see [`PendingStackCipherText::seal`]), so the walk itself is
+/// pending (see [`PendingStackCipherText::into_pending`]), so the walk itself is
 /// synchronous. A leaf for which no key is left is refused.
 struct MintedKeys<'k, I> {
     keyset_id: Uuid,

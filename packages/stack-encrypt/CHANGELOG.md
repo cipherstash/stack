@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Audit metadata for ZeroKMS key requests** (#1705). ZeroKMS logs every
+  key request with the identity that made it. An `AuditMetadata` adds
+  facts about the call to that log, such as its purpose or a request id.
+  To send it, call `.audit(metadata)` on a call before you await it. A
+  call without it sends none, and its request is unchanged.
+  - Build the metadata with `AuditMetadata::new().with(key, value)`. A
+    value is text, a `bool`, a float, or an integer that fits an `i64`.
+    A value can also be an `Option` or a `Vec` of these, or another
+    `AuditMetadata`. There is no conversion from `u64`, because ZeroKMS
+    cannot record a value above `i64::MAX` exactly. A float that is not
+    finite is sent as `null`.
+  - Every `Pending` has `.audit(..)`. So it works for scalars, trees,
+    targets, records, and `dynamic::record`. The encrypt and open plan
+    chains have it too. So does `all(..)`. A query requests no data key,
+    so the query chains do not have it.
+  - `.audit(..)` returns an `Audited` call. You can only await an
+    `Audited` call. So attach the metadata last, to the whole call:
+    `a.zip(b).audit(m)`, or `all((a, b)).audit(m)`. Neither
+    `a.audit(m).zip(b)` nor `all((a.audit(m), b))` compiles. A call
+    therefore sends one map, with every key request that it makes.
+  - A call that requests no data key sends no metadata, and still
+    succeeds. A query term is one such call. So is a call over an empty
+    list.
+  - ZeroKMS does not verify the metadata. A decrypt does not need it.
+    ZeroKMS writes the metadata to its logs. Do not send plaintext,
+    anything derived from plaintext, or secrets.
+  - Each decrypt method documents this with an example that runs.
 - **`StackCipherBuilder::auth_strategy` and `key_provider`** (#1700).
   `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init()`
   builds the ZeroKMS client from an auth strategy and a client key provider
@@ -132,6 +159,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apply when the pending is awaited, not when the term is described.
 
 ### Breaking
+
+- **The tree entry points return a `Pending`** (#1705), so they can take
+  audit metadata like every other call. `KeysetCipher::encrypt_tree`,
+  `KeysetCipher::decrypt_tree`, and `StackCipher::decrypt` were
+  `async fn`s. `.await` on them works as before. To migrate:
+  - Code that used the result as a `Future` (`tokio::spawn`,
+    `futures::join!`) calls `.into_future()` on it first.
+  - Awaiting a `Pending` on a native target needs the key source to be
+    `Sync`, as the scalar and plan entry points already did. Generic code
+    over the key source adds `K: Sync`.
+
+- **`PendingStackCipherText::seal` is removed** (#1705). Once `seal`
+  returned a `Pending`, it was the same function as `into_pending`. Call
+  `into_pending(cipher, context)` instead, with the same arguments. Await
+  the result as before. `KeysetCipher::encrypt_tree` plans and seals in
+  one call.
 
 - **`target::ExpectedContext` is no longer part of the API** (#1488). It
   is the check that a `#[stash(context_field)]` record runs on decrypt:

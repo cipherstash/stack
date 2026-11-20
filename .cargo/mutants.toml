@@ -47,15 +47,19 @@ exclude_globs = ["packages/stack-encrypt-derive/**"]
 #
 # The regexes match the name `--list` prints, `path:line:col: replace …`.
 # Anchor on the replacement text, so an entry cannot swallow a reachable
-# sibling with the same function name. The wasm32 `TokenStoreFn` and
-# `Pending::into_future` entries also match on the line number, because
-# their names are identical to the native impl's. If those lines move, a
-# full sweep reports them again. Then change the line numbers here.
+# sibling with the same function name. The wasm32 `TokenStoreFn` entry also
+# matches on the line number, because its name is identical to the native
+# impl's. If those lines move, a full sweep reports them again. Then change
+# the line numbers here.
 #
 # The wasm32 `AutoStrategy::detect_inner` entry matches any line. The native
 # function of the same name has one mutant, with the same replacement. That
 # mutant does not compile, because `AutoStrategy` has no `Default`. So the
 # entry excludes no mutant that a test could catch.
+#
+# The two wasm32 `into_future` entries in `pending.rs` match any line for the
+# same reason. The future that a native `into_future` returns has no
+# `Default`, so the native mutant does not compile.
 exclude_re = [
   # stack-auth — unreachable under the native test build.
   'stack-auth/src/transport\.rs:\d+:\d+: replace <impl std::fmt::Display for NoTransport>::fmt ',
@@ -75,6 +79,7 @@ exclude_re = [
   # variant; the native one returns a `FallbackKeyProvider`).
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace client_key_provider -> EnvKeyProvider with Default::default\(\)$',
   'stack-encrypt/src/target/pending\.rs:\d+:\d+: replace <impl IntoFuture for Pending<.*>>::into_future -> Self::IntoFuture with Default::default\(\)$',
+  'stack-encrypt/src/target/pending\.rs:\d+:\d+: replace <impl IntoFuture for Audited<Pending<.*>>>::into_future -> Self::IntoFuture with Default::default\(\)$',
   # stack-encrypt — equivalent.
   # An operator and an index are unit structs, whose `Default` is the value
   # `clone` and `case_sensitive` already return.

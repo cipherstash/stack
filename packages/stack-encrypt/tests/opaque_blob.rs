@@ -319,7 +319,7 @@ async fn fixed_cipher() -> stack_encrypt::StackCipher<FixedKeySource> {
 
 /// Seal `bytes` as one bytes leaf through the structural writer, as the Go
 /// engine seals an opaque struct, and return it as a `Ciphertext`.
-async fn seal_bytes<K: stack_kms::DataKeySource + stack_kms::IndexKeySource + 'static>(
+async fn seal_bytes<K: stack_kms::DataKeySource + stack_kms::IndexKeySource + Sync + 'static>(
     keyset: &KeysetCipher<'_, K>,
     bytes: Vec<u8>,
     context: &'static str,
