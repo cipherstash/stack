@@ -2,7 +2,7 @@
 //!
 //! Every encrypt and decrypt asks ZeroKMS for data keys. ZeroKMS logs each
 //! request with the identity that made it. [`AuditMetadata`] adds facts
-//! that only the application knows, such as why it needs the key.
+//! that only the application knows, such as the purpose of the call.
 //!
 //! To send it, call `.audit(..)` on a call before you await it. Each
 //! decrypt method shows how, with an example:

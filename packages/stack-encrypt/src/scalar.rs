@@ -318,8 +318,8 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// # Audit metadata
     ///
     /// ZeroKMS logs every key request with the identity that made it. To
-    /// also log why this decrypt happened, call `.audit(..)` before you
-    /// await the result. `.audit(..)` takes an
+    /// provide additional context for the audit log, call `.audit(..)`
+    /// before you await the result. `.audit(..)` takes an
     /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
     /// as its purpose or a request id.
     ///
@@ -365,8 +365,8 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// # Audit metadata
     ///
     /// ZeroKMS logs every key request with the identity that made it. To
-    /// also log why this decrypt happened, call `.audit(..)` before you
-    /// await the result. `.audit(..)` takes an
+    /// provide additional context for the audit log, call `.audit(..)`
+    /// before you await the result. `.audit(..)` takes an
     /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
     /// as its purpose or a request id.
     ///

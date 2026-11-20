@@ -361,8 +361,8 @@ impl<K: 'static> StackCipher<K> {
     /// # Audit metadata
     ///
     /// ZeroKMS logs every key request with the identity that made it. To
-    /// also log why this decrypt happened, make `.audit(..)` the last call
-    /// of the chain, before you await it. `.audit(..)` takes an
+    /// provide additional context for the audit log, make `.audit(..)` the
+    /// last call of the chain, before you await it. `.audit(..)` takes an
     /// [`AuditMetadata`]: facts about the call, such as its purpose or a
     /// request id.
     ///
