@@ -13,6 +13,27 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Added
+
+- **Audit metadata for the ZeroKMS audit log** (#1067). ZeroKMS logs every
+  data-key request with the identity that made it. `encrypt.AuditMetadata`
+  adds facts about the call to that log, such as its purpose or a request
+  ID. `cipher.Audit(metadata)` returns a cipher that sends the facts with
+  every data-key request. `client.Audit(metadata)` returns a `Decrypter`
+  that does the same for rows from any keyset.
+  - Every `Encrypt` and `Decrypt` through the cipher sends the facts. So
+    does every read of an encrypted JSON document. A query asks ZeroKMS for
+    no data key, so a query sends none.
+  - `Audit` adds to the facts the cipher has. A fact replaces one that has
+    the same key. The cipher keeps its own copy of the facts.
+  - A value is a bool, a string, an integer, a float, nil, a slice of
+    these, or a map with string keys. A `[]byte`, a `time.Time`, and an
+    integer above the largest `int64` are refused with `ErrEncoding`. Send
+    each one as text.
+  - ZeroKMS does not verify the facts, and a decrypt does not need them.
+    ZeroKMS writes them to its logs. Do not send plaintext, anything
+    derived from plaintext, or secrets.
+
 ## [0.1.0-rc.6] - 2026-11-18
 
 ### Upgrading from rc.5

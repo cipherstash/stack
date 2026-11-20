@@ -1,15 +1,19 @@
 package encrypt
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -184,13 +188,13 @@ func (cph *Cipher) OpenTreeForTest(ctx context.Context, tree []any, plan *record
 	if err != nil {
 		return nil, err
 	}
-	return cph.client.openTree(ctx, cph.keyset, cph.context, p, tree)
+	return cph.client.openTree(ctx, cph.keyset, cph.context, cph.audit, p, tree)
 }
 
 // OpenTreeForTest deliberately bypasses host plan validation to observe the
 // uninitialised guest's preflight, including plans the host refuses earlier.
 func (k *Checker) OpenTreeForTest(ctx context.Context, tree []any, plan *record.Plan, expected string) ([]record.Source, error) {
-	return k.c.openTree(ctx, k.c.DefaultKeyset().keyset, expected, plan, tree)
+	return k.c.openTree(ctx, k.c.DefaultKeyset().keyset, expected, nil, plan, tree)
 }
 
 // OpenFrameForTest hands the guest a stored batch already in the transport
@@ -205,13 +209,13 @@ func (cph *Cipher) OpenFrameForTest(ctx context.Context, encoded []byte, rows in
 	if err != nil {
 		return nil, err
 	}
-	return cph.client.openEncoded(ctx, cph.keyset, cph.context, p, encoded, rows)
+	return cph.client.openEncoded(ctx, cph.keyset, cph.context, cph.audit, p, encoded, rows)
 }
 
 // OpenFrameForTest is the uninitialised guest's view of the same batch: its
 // preflight on the raw bytes, before any cipher exists.
 func (k *Checker) OpenFrameForTest(ctx context.Context, encoded []byte, rows int, plan *record.Plan, expected string) ([]record.Source, error) {
-	return k.c.openEncoded(ctx, k.c.DefaultKeyset().keyset, expected, plan, encoded, rows)
+	return k.c.openEncoded(ctx, k.c.DefaultKeyset().keyset, expected, nil, plan, encoded, rows)
 }
 
 // ObserveEncryptPlansForTest copies the actual plan buffer at the WASM call
@@ -245,3 +249,89 @@ func (f *observedEncryptCall) Call(ctx context.Context, params ...uint64) ([]uin
 // codec, so a test can show that a frame the guest refuses is one the host
 // could never have written either.
 func UnmarshalCipherTextForTest(buf []byte) (any, error) { return unmarshalCipherText(buf) }
+
+// RecordedRequest is one request a client sent to ZeroKMS: its URL path and
+// its body.
+type RecordedRequest struct {
+	Path string
+	Body []byte
+}
+
+// RecordRequests makes c record every request it sends to ZeroKMS from now
+// on. The returned function gives the requests recorded since its last
+// call. A test uses it to read what a call sent, such as the audit metadata
+// of a data-key request. Call it before the client's first call under test,
+// and not while a call is running.
+func RecordRequests(c *Client) func() []RecordedRequest {
+	recorder := &recordingTransport{next: c.transport.rt}
+	c.transport.rt = recorder
+	return recorder.take
+}
+
+type recordingTransport struct {
+	next     http.RoundTripper
+	mu       sync.Mutex
+	requests []RecordedRequest
+}
+
+func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		body, err := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		r.mu.Lock()
+		r.requests = append(r.requests, RecordedRequest{Path: req.URL.Path, Body: bytes.Clone(body)})
+		r.mu.Unlock()
+		req = req.Clone(req.Context())
+		req.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	return r.next.RoundTrip(req)
+}
+
+func (r *recordingTransport) take() []RecordedRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	taken := r.requests
+	r.requests = nil
+	return taken
+}
+
+// TermWithAuditForTest sends the guest a term call whose options carry
+// audit metadata, which no call of the SDK does: a term asks for no data
+// key, so the SDK leaves the metadata out. The test reads what the guest
+// answers to a host that sends it anyway.
+func (cph *Cipher) TermWithAuditForTest(ctx context.Context, value any, fieldContext []any) ([]byte, error) {
+	encodedValue, err := vcffi.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	encodedContext, err := vcffi.Marshal(fieldContext)
+	if err != nil {
+		return nil, err
+	}
+	code, _ := termKindCode(record.Equality)
+	opts, err := vcffi.Marshal(options(cph.keyset, "", cph.audit))
+	if err != nil {
+		return nil, err
+	}
+	return cph.client.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.term, buf(encodedValue), buf(encodedContext), scalar(uint64(code)), buf(opts))
+	})
+}
+
+// AuditFactsForTest is the audit metadata the cipher holds, as the guest
+// receives it: the options object's "audit" value, through the transport
+// codec. nil for a cipher that sends none.
+func (cph *Cipher) AuditFactsForTest() (any, error) {
+	facts, ok := options(cph.keyset, "", cph.audit)["audit"]
+	if !ok {
+		return nil, nil
+	}
+	encoded, err := vcffi.Marshal(facts)
+	if err != nil {
+		return nil, err
+	}
+	return vcffi.Unmarshal(encoded)
+}

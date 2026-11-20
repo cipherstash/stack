@@ -2,9 +2,11 @@ package encrypt_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
@@ -92,6 +94,91 @@ func TestLiveRecordsAndTerms(t *testing.T) {
 	if scoped.Equal(other[1].Email.Equality) || scoped.Equal(encrypted[1].Email.Equality) {
 		t.Error("tenant probe equals another tenant's or the unextended term")
 	}
+}
+
+// Audit metadata reaches ZeroKMS as the unverified context of each data-key
+// request, from a cipher and from the client. A call with no metadata sends
+// an empty one, and a query makes no request to send any with.
+func TestLiveAuditMetadataReachesZeroKMS(t *testing.T) {
+	c := encrypt.LiveClient(t)
+	ctx := t.Context()
+	requests := encrypt.RecordRequests(c)
+	metadata := encrypt.AuditMetadata{
+		"purpose": "live audit test",
+		"rows":    len(livePeople),
+		"request": map[string]any{"id": "req_01J9Z3"},
+	}
+	want := map[string]any{
+		"purpose": "live audit test",
+		"rows":    float64(len(livePeople)),
+		"request": map[string]any{"id": "req_01J9Z3"},
+	}
+	// unverified is the unverified context of the one request a call made
+	// to the endpoint.
+	unverified := func(call, endpoint string) map[string]any {
+		t.Helper()
+		made := requests()
+		if len(made) != 1 || !strings.HasSuffix(made[0].Path, "/"+endpoint) {
+			t.Fatalf("%s made %d requests (%v), want one to %s", call, len(made), paths(made), endpoint)
+		}
+		var body struct {
+			UnverifiedContext map[string]any `json:"unverified_context"`
+		}
+		if err := json.Unmarshal(made[0].Body, &body); err != nil {
+			t.Fatalf("%s: the request body is not JSON: %v", call, err)
+		}
+		return body.UnverifiedContext
+	}
+	plain := c.DefaultKeyset()
+	if _, err := plain.KeysetID(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requests() // the client's start-up requests are not under test
+
+	cipher := plain.Audit(metadata)
+	encrypted, err := testusers.Encrypt(ctx, cipher, livePeople)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := unverified("an audited Encrypt", "generate-data-key"); !reflect.DeepEqual(got, want) {
+		t.Errorf("an audited Encrypt sent %v, want %v", got, want)
+	}
+	if _, err := testusers.Decrypt(ctx, cipher, encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if got := unverified("an audited Decrypt", "retrieve-data-key"); !reflect.DeepEqual(got, want) {
+		t.Errorf("an audited Decrypt sent %v, want %v", got, want)
+	}
+	if _, err := testusers.Decrypt(ctx, c.Audit(metadata), encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if got := unverified("a Decrypt through the audited client", "retrieve-data-key"); !reflect.DeepEqual(got, want) {
+		t.Errorf("a Decrypt through the audited client sent %v, want %v", got, want)
+	}
+
+	// No metadata: the request carries no facts.
+	if _, err := testusers.Decrypt(ctx, plain, encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if got := unverified("a Decrypt with no metadata", "retrieve-data-key"); len(got) != 0 {
+		t.Errorf("a Decrypt with no metadata sent %v, want no facts", got)
+	}
+
+	// A query through the audited cipher asks ZeroKMS for nothing.
+	if _, err := testusers.Fields.Age.Eq(ctx, cipher, 34); err != nil {
+		t.Fatal(err)
+	}
+	if made := requests(); len(made) != 0 {
+		t.Errorf("a query made %d requests (%v), want none", len(made), paths(made))
+	}
+}
+
+func paths(requests []encrypt.RecordedRequest) []string {
+	out := make([]string, len(requests))
+	for i, r := range requests {
+		out[i] = r.Path
+	}
+	return out
 }
 
 func TestLiveForeignKeysetIsRefusedBeforeRetrieval(t *testing.T) {

@@ -31,9 +31,13 @@ type Cipher struct {
 	// context is the label Context named, for a type whose context is one
 	// of its fields; "" names none.
 	context string
-	// err is a refused extension part or context, reported by the first
-	// call rather than by Extend or Context: a cipher is made without a
-	// request, and no call on this package panics.
+	// audit is the audit metadata Audit gave, sent with every data-key
+	// request; nil sends none. The facts are never changed after they are
+	// made, so ciphers share them.
+	audit auditFacts
+	// err is a refused extension part, context or audit value, reported by
+	// the first call rather than by Extend, Context or Audit: a cipher is
+	// made without a request, and no call on this package panics.
 	err error
 }
 
@@ -109,10 +113,10 @@ func ownedPart(part any) any {
 // Deprecated: use Scope. Extend is removed in 0.1.0.
 func (cph *Cipher) Extend(parts ...any) *Cipher { return cph.Scope(parts...) }
 
-// copy is this cipher with the same keyset, scopes, bindings, context and
-// error, for a method that adds to one of them.
+// copy is this cipher with the same keyset, scopes, bindings, context, audit
+// metadata and error, for a method that adds to one of them.
 func (cph *Cipher) copy() *Cipher {
-	next := &Cipher{client: cph.client, keyset: cph.keyset, context: cph.context, err: cph.err}
+	next := &Cipher{client: cph.client, keyset: cph.keyset, context: cph.context, audit: cph.audit, err: cph.err}
 	next.extension = append(next.extension, cph.extension...)
 	next.bindings = append(next.bindings, cph.bindings...)
 	return next

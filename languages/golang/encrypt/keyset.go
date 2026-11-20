@@ -78,11 +78,17 @@ func (anyKeyset) selector() map[string]any { return map[string]any{"any": map[st
 
 // options renders the per-call options object the guest parses: the keyset
 // selector and, on an open with a context named, the context the guest
-// checks each record's context field against.
-func options(sel KeysetSelector, context string) map[string]any {
+// checks each record's context field against. audit is the audit metadata
+// the guest sends with the call's data-key requests; nil, or no facts, adds
+// no key. The guest refuses the key on a call that derives a term, so
+// those calls pass nil.
+func options(sel KeysetSelector, context string, audit auditFacts) map[string]any {
 	opts := map[string]any{"keyset": sel.selector()}
 	if context != "" {
 		opts["context"] = context
+	}
+	if audit != nil {
+		opts["audit"] = audit()
 	}
 	return opts
 }

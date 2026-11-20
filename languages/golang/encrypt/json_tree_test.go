@@ -231,6 +231,13 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	if len(opened) != 2 || len(opened[0]) != 1 || string(opened[0][0]) != `"Alice"` || len(opened[1]) != 0 {
 		t.Fatalf("opened %q", opened)
 	}
+	// A read through a cipher that has audit metadata opens the same rows:
+	// a read asks for data keys, so the guest takes the metadata there.
+	audited := cipher.Audit(encrypt.AuditMetadata{"purpose": "read a profile"})
+	opened, err = audited.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}, [][][]byte{{name}, {}})
+	if err != nil || len(opened) != 2 || len(opened[0]) != 1 || string(opened[0][0]) != `"Alice"` {
+		t.Fatalf("opened through an audited cipher: %q, %v", opened, err)
+	}
 	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.age"}}, [][][]byte{{name}})
 	if !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("another path's entry: %v", err)

@@ -237,6 +237,63 @@ cannot use different ones.
 client; `Client.Keyset(encrypt.KeysetName(..))` or `Client.Keyset(id)` any
 other, loaded on first use. `Cipher.KeysetID(ctx)` resolves it.
 
+### Audit metadata
+
+ZeroKMS logs every data-key request with the identity that made it. To
+provide additional context for that log, give the cipher audit metadata:
+
+```go
+cipher := client.DefaultKeyset().Audit(encrypt.AuditMetadata{
+	"purpose":    "list issues",
+	"request_id": requestID,
+})
+people, err := users.Decrypt(ctx, cipher, rows)
+```
+
+Every `Encrypt` and `Decrypt` through that cipher sends the facts to
+ZeroKMS. So does every read of an encrypted JSON document. Audit metadata is
+optional: a cipher without it sends none.
+
+`Audit` adds to the facts the cipher has. A fact replaces one that has the
+same key. So a program can state its service once, and add a request ID for
+each request:
+
+```go
+service := client.DefaultKeyset().Audit(encrypt.AuditMetadata{"service": "billing"})
+request := service.Audit(encrypt.AuditMetadata{"request_id": requestID})
+```
+
+To decrypt rows from any keyset, with metadata, pass `client.Audit(..)`
+where a `Decrypter` is taken:
+
+```go
+people, err := users.Decrypt(ctx, client.Audit(encrypt.AuditMetadata{"purpose": "export"}), rows)
+```
+
+> **Take care**
+>
+> - ZeroKMS does not verify the facts. No key depends on them, so do not
+>   use them for access control.
+> - ZeroKMS writes the facts to its logs. Do not send plaintext, anything
+>   derived from plaintext, or secrets. An IP address or a user agent is
+>   personal data. The SDK sends only what you pass.
+
+A decrypt does not need the facts the encrypt sent. A decrypt can send
+other facts, or none.
+
+A query sends no audit metadata. A query term is derived from the index key
+of the keyset, so a query asks ZeroKMS for no data key. A query through a
+cipher that has metadata still works.
+
+A value is a bool, a string, an integer, a float, `nil`, a slice of these, or
+a map with string keys. ZeroKMS has no form for a `[]byte`, a `time.Time`, or
+an integer above the largest `int64`. The first call through the cipher
+refuses each one with `ErrEncoding`, so send it as text. A float that is not
+finite is sent as null.
+
+In the Rust crate this is `AuditMetadata` and `.audit(..)`. In the ZeroKMS
+protocol it is the unverified context of a key request.
+
 ## Reading
 
 `users.Decrypt` takes a `Decrypter`: the `*Cipher`, which refuses a row
