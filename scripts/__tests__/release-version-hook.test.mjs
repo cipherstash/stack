@@ -36,6 +36,7 @@ import { readWorkflow } from './lib/workflows.mjs'
 const RELEASE_WORKFLOW = '.github/workflows/release.yml'
 const CHANGESETS_ACTION = 'changesets/action'
 const VERSION_SCRIPT = 'sync-lockstep-versions.mjs'
+const PEERS_WRAPPER = 'with-lockstep-peers-hidden.mjs'
 
 /** Every step in a workflow, flattened across jobs, with its job name. */
 function steps(workflow) {
@@ -156,6 +157,28 @@ describe('no root script invokes a bare changesets command', () => {
         'package and leaves packages/eql/crates/eql-bindings/Cargo.toml, every Cargo.lock that ' +
         'records it, and the bundled SQL at the previous version. Route the alias through ' +
         '`pnpm run version` instead of calling the changesets CLI directly.',
+    ).toEqual([])
+  })
+
+  it('runs every `changeset version` with the lockstep peers hidden', () => {
+    // `@cipherstash/auth` pins its platform packages as exact-version peers in
+    // one fixed group. Run bare, `changeset version` reads that as a peer
+    // leaving its range and turns a minor changeset into 1.0.0 for all seven
+    // packages. The wrapper is what stops it; see
+    // `with-lockstep-peers-hidden.test.mjs`, which drives the real CLI both
+    // ways.
+    const offenders = invoking('version')
+      .filter(
+        ([, body]) =>
+          !new RegExp(`${PEERS_WRAPPER}\\s+changeset\\s+version\\b`).test(body),
+      )
+      .map(([name, body]) => `${name}: ${body}`)
+    expect(
+      offenders,
+      `A root script runs \`changeset version\` without scripts/${PEERS_WRAPPER}. A minor ` +
+        'changeset on @cipherstash/auth would then be versioned as a major. Run it as ' +
+        `\`node scripts/${PEERS_WRAPPER} changeset version\`, or route the alias through ` +
+        '`pnpm run version`.',
     ).toEqual([])
   })
 
