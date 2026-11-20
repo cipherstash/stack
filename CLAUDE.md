@@ -22,6 +22,11 @@ Use the five default triage labels. See `docs/agents/triage-labels.md`.
 Use a multi-context layout rooted at `CONTEXT-MAP.md`, with package-specific
 `CONTEXT.md` files added as needed. See `docs/agents/domain.md`.
 
+### Stacked pull requests
+
+Read `docs/claude/stacked-pull-requests.md` before you open pull requests that
+build on each other, or when the user asks for a stack of pull requests.
+
 ## Before you finish
 
 Two rules from `AGENTS.md` are the ones most often missed. They are repeated here
