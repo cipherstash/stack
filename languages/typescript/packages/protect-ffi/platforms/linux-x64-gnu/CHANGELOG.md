@@ -1,5 +1,16 @@
 # @cipherstash/protect-ffi-linux-x64-gnu
 
+## 0.33.1
+
+### Patch Changes
+
+- 457b28e: The native binaries now use rustls 0.23.45, which fixes GHSA-2mjx-qc3c-rqvc
+  (affecting rustls 0.23.13 up to 0.23.44). The package's API is unchanged.
+- f7f1c76: The package's source links now point at its folder under
+  `languages/typescript/` in cipherstash/stack. The previous release linked to
+  its old folder under `packages/`, which no longer exists, so the README's
+  source links and the npm page's repository link returned 404.
+
 ## 0.33.0
 
 ## 0.32.0
