@@ -1,6 +1,18 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
+    "@cipherstash/e2e#harness:selftest": {
+      "cache": false
+    },
+    "@cipherstash/e2e#harness:typecheck": {
+      "cache": false
+    },
+    "@cipherstash/e2e#harness:isolation-probe": {
+      "cache": false
+    },
+    "@cipherstash/e2e#harness:store-probe": {
+      "cache": false
+    },
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"],
