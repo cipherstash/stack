@@ -192,6 +192,27 @@ gh stack init --base main <bottom branch> <next branch> <top branch>
 `init` does not push anything.
 `init` adopts a branch that is checked out in another worktree without checking it out here.
 
+`init` checks out the top branch in the current worktree.
+If you need the branch you were on, switch back to it after `init`.
+
+On 20 November 2026, `init` adopted two branches that already existed.
+Neither branch was checked out in another worktree.
+The worktree was on the bottom branch before `init`, and on the top branch after it.
+`init` printed `You're on <top branch> (top of stack).`
+
+`init` records the commit of your local `main` as the base of the bottom branch.
+It does this even when the bottom branch builds on a newer `origin/main`.
+"Open questions" at the end of this guide asks what this changes.
+
+These things happened on 20 November 2026:
+
+- Local `main` was five commits behind `origin/main`.
+- The bottom branch had been rebased onto `origin/main` before `init`.
+- After `init`, `gh stack view --json` showed the local `main` commit as the bottom branch's `base`, with `"needsRebase": false`.
+- The stack on GitHub showed the `origin/main` commit as the base of the bottom pull request.
+
+So the local record and GitHub named different base commits.
+
 ## Add a branch
 
 Run `gh stack add` from the top branch of the stack.
@@ -386,3 +407,4 @@ Nobody has checked the answers to these questions in a run:
 - Does the **Rebase stack** button sign commits? GitHub's reference page on stacks says yes. GitHub's page on managing stacks says no.
 - Which branch does `github.base_ref` name for a pull request in the middle of a stack? `impact.yml` and `mutants.yml` read that value.
 - How does the `main` ruleset setting `require_extra_approval_for_unattributed_changes` treat the rebase that GitHub runs after a merge? No public documentation for that setting was found.
+- When `init` records an out-of-date local `main` commit as the base, does a later `gh stack rebase` or `sync` do anything different?
