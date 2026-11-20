@@ -12,6 +12,8 @@
   Stack CLI and customer workers.
 - [Migration Harness](./e2e/migration-harness/CONTEXT.md) — tests the
   Protect.js upgrade guide by having agents follow it and judging the result.
+- [CI](./.github/CONTEXT.md) — runs the checks that verify a change, and pays
+  for the machines that run them, within a shared monthly budget.
 
 ## Relationships
 
