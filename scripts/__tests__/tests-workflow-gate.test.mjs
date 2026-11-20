@@ -166,6 +166,14 @@ const READS_EXCLUDED = new Map([
     'Reads `.github/workflows/`. protect-ffi’s suite also runs in `repo-checks`.',
   ],
   [
+    'languages/typescript/packages/protect-ffi/integration-tests/tests/v4-codec.ts',
+    'Reads the built codec under `packages/eql/target`. The live suite that imports it runs only in `integration-protect-ffi.yml`, which is not gated and builds the codec itself, never in `pnpm test`.',
+  ],
+  [
+    'languages/typescript/packages/protect-ffi/integration-tests/tests/v4-codec-path.test.ts',
+    'Names `packages/eql` only to compute the path `v4-codec.ts` resolves, and reads nothing there. It runs only in the live suite in `integration-protect-ffi.yml`, which is not gated, never in `pnpm test`.',
+  ],
+  [
     'packages/eql/packages/eql/scripts/sync-generated.mjs',
     'Reads `crates/eql-bindings/bindings` and `schema`. Run by `check:generated` and the release, never by `pnpm test`.',
   ],
