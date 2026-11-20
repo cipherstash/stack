@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import { inheritedToolConfig } from './lib/inherited-tool-config.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
 
@@ -204,18 +205,18 @@ describe('the relevance filter still selects the imported tree', () => {
   const wf = readWorkflow(EQL_WORKFLOW)
 
   /**
-   * Every path the `dorny/paths-filter` step lists, across every filter it
-   * declares. `filters:` is a YAML document embedded in a YAML string, so it is
+   * Every filter the `dorny/paths-filter` step declares, as `[key, paths]`.
+   * `filters:` is a YAML document embedded in a YAML string, so it is
    * parsed rather than pattern-matched — a regex over the raw block would also
    * match the surrounding commentary.
    */
-  const filterPaths = Object.values(wf?.jobs ?? {})
+  const filters = Object.values(wf?.jobs ?? {})
     .flatMap((job) => job?.steps ?? [])
     .filter((step) => (step?.uses ?? '').startsWith('dorny/paths-filter@'))
-    .flatMap((step) => {
-      const filters = yaml.load(step?.with?.filters ?? '')
-      return Object.values(filters ?? {}).flat()
-    })
+    .flatMap((step) =>
+      Object.entries(yaml.load(step?.with?.filters ?? '') ?? {}),
+    )
+  const filterPaths = filters.flatMap(([, paths]) => paths)
 
   it('finds the paths-filter step', () => {
     // Without this the check below iterates an empty list and passes having
@@ -371,10 +372,18 @@ describe('the relevance filter still selects the imported tree', () => {
     ).toContain('packages/stack-auth')
   })
 
+  /**
+   * The fourth legitimate class: config that mise and cargo read from the
+   * parent directories of the subtree, which the cheap jobs' `eql:` filter
+   * selects because they run both tools there.
+   */
+  const inheritedConfig = inheritedToolConfig(EQL_PREFIX.replace(/\/$/, ''))
+
   it('prefixes every source path with the subtree root', () => {
-    // Three legitimate exceptions, all outside the subtree by nature: the
-    // workflow's own path, a composite action it `uses:`, and a crate the
-    // workspace compiles by path (plus the root manifest it inherits from).
+    // Four legitimate exceptions, all outside the subtree by nature: the
+    // workflow's own path, a composite action it `uses:`, a crate the
+    // workspace compiles by path (plus the root manifest it inherits from),
+    // and parent-directory config that mise and cargo read.
     const external = externalPathDependencies.dirs.map((dir) => `${dir}/**`)
     const offenders = filterPaths.filter(
       (path) =>
@@ -382,30 +391,36 @@ describe('the relevance filter still selects the imported tree', () => {
         !path.startsWith(EQL_PREFIX) &&
         !localActionPrefixes.some((prefix) => path.startsWith(prefix)) &&
         !external.includes(path) &&
-        !(externalPathDependencies.inherits && path === 'Cargo.toml'),
+        !(externalPathDependencies.inherits && path === 'Cargo.toml') &&
+        !inheritedConfig.includes(path),
     )
 
     expect(
       offenders,
-      `These \`paths:\` entries in ${EQL_WORKFLOW} are not under \`${EQL_PREFIX}\`, are not the workflow itself, are not a composite action it \`uses:\`, and are not a crate the EQL workspace compiles by path (${external.join(', ')}). dorny/paths-filter matches repo-root-relative paths, so after the subtree import an unprefixed glob matches the WRONG tree — \`src/**\` selects \`languages/typescript/packages/stack/src/**\` and never \`packages/eql/src/**\`. The heavy jobs then skip on real EQL changes, report \`skipped\`, and \`ci-required\` treats skipped as pass.\n${offenders.map((p) => `  ${p}`).join('\n')}`,
+      `These \`paths:\` entries in ${EQL_WORKFLOW} are not under \`${EQL_PREFIX}\`, are not the workflow itself, are not a composite action it \`uses:\`, are not a crate the EQL workspace compiles by path (${external.join(', ')}), and are not config mise or cargo read from a parent directory (${inheritedConfig.join(', ')}). dorny/paths-filter matches repo-root-relative paths, so after the subtree import an unprefixed glob matches the WRONG tree — \`src/**\` selects \`languages/typescript/packages/stack/src/**\` and never \`packages/eql/src/**\`. The heavy jobs then skip on real EQL changes, report \`skipped\`, and \`ci-required\` treats skipped as pass.\n${offenders.map((p) => `  ${p}`).join('\n')}`,
     ).toEqual([])
   })
 
-  it('selects every crate the EQL workspace compiles by path', () => {
-    // The other direction: a path dependency outside the subtree that the
-    // filter does NOT select is a job that compiles a crate and never runs on
+  it('selects every crate the EQL workspace compiles by path, in every filter', () => {
+    // The other direction: a path dependency outside the subtree that a
+    // filter does NOT select is a job that reaches a crate and never runs on
     // a change to it — the gap commit 7219ea1ad repaired by hand, now derived.
-    const missing = externalPathDependencies.dirs
-      .map((dir) => `${dir}/**`)
-      .filter((glob) => !filterPaths.includes(glob))
-    if (
-      externalPathDependencies.inherits &&
-      !filterPaths.includes('Cargo.toml')
-    )
-      missing.push('Cargo.toml')
+    //
+    // Per filter, because each one gates a job that runs cargo here:
+    // `relevant:` gates `rust-crates`, which compiles them, and `eql:` gates
+    // `docs-static`, whose `build` runs `cargo run -p eql-codegen` and so
+    // loads their manifests to resolve the workspace.
+    const missing = filters.flatMap(([key, paths]) => {
+      const globs = externalPathDependencies.dirs
+        .map((dir) => `${dir}/**`)
+        .filter((glob) => !paths.includes(glob))
+      if (externalPathDependencies.inherits && !paths.includes('Cargo.toml'))
+        globs.push('Cargo.toml')
+      return globs.map((glob) => `${key}: ${glob}`)
+    })
     expect(
       missing,
-      `The EQL workspace compiles these by path and the relevance filter in ${EQL_WORKFLOW} does not select them, so the \`rust-crates\` job skips on a change that can break it. Add each to the filter — and, because the three copies are held equal, to the \`push: paths:\` list and to bench-eql.yml in the same edit.\n${missing.map((p) => `  ${p}`).join('\n')}`,
+      `The EQL workspace reaches these by path and a filter in ${EQL_WORKFLOW} does not select them, so the jobs it gates skip on a change that can break them. Add each to that filter — and, for \`relevant:\`, because the three copies are held equal, to the \`push: paths:\` list and to bench-eql.yml in the same edit.\n${missing.map((p) => `  ${p}`).join('\n')}`,
     ).toEqual([])
   })
 })
@@ -1127,7 +1142,7 @@ describe('the scan sees every task mise sees', () => {
     // TOML form.
     expect(TASKS.get('test:sqlx')?.depends).toEqual(['test:sqlx:prep'])
     // `#MISE depends=[...]` header-comment form, which only file tasks use. Without
-    // it `docs:validate:source` — which test-eql.yml runs on every PR — stops
+    // it `docs:validate:source` — which test-eql.yml runs in `docs-static` — stops
     // being a caller of `build`.
     expect(TASKS.get('docs:validate:source')?.depends).toEqual(['build'])
   })
