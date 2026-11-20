@@ -1,6 +1,6 @@
 ---
 name: stash-auth
-description: How a CipherStash client authenticates — the canonical skill for credentials, auth strategies, and lock context. Covers the service-token model (every request to a CipherStash service carries a CTS-minted token; strategies exist to obtain one), the three separable concerns people conflate (client credentials, end-user identity, key binding), the `@cipherstash/auth` strategies (`AutoStrategy`, `AccessKeyStrategy`, `OidcFederationStrategy`, `DeviceSessionStrategy`) and the Result-unwrap trap on `create()`, the Next.js and TanStack Start adapters (`@cipherstash/auth/next`, `@cipherstash/auth/start`), the four `CS_*` variables and `stash env`, credential discovery vs explicit config on the native and WASM entries, client lifetime with user-scoped strategies, `.withLockContext` and what is deprecated around it, and CTS failure codes. Use when an operation fails with 401/NOT_AUTHENTICATED/WORKSPACE_MISMATCH, when choosing between an access key and OIDC federation, when wiring per-user identity-bound encryption, when minting deployment credentials, or whenever another skill mentions "credentials" or `config.authStrategy` — this skill is the canonical source for that model.
+description: How a CipherStash client authenticates — the canonical skill for credentials, auth strategies, and lock context. Covers the service-token model, the `@cipherstash/auth` strategies, the Next.js and TanStack Start adapters (`@cipherstash/auth/next`, `@cipherstash/auth/start`), the four `CS_*` variables, and `.withLockContext`. Use when an operation fails with 401/NOT_AUTHENTICATED/WORKSPACE_MISMATCH, when choosing between an access key and OIDC federation, when wiring per-user identity-bound encryption, when minting deployment credentials, or whenever another skill mentions "credentials" or `config.authStrategy` — this skill is the canonical source for that model.
 ---
 
 # Authenticating to CipherStash
@@ -350,13 +350,17 @@ import { headers } from "next/headers"
 import { csAuthHeader } from "@cipherstash/auth/next"
 import { Encryption } from "@cipherstash/stack"
 
-const strategy = csAuthHeader(await headers()) // null when signed out or not warmed
-if (!strategy) throw new Error("not signed in")
+// Call inside a request: `headers()` throws at module top level.
+export async function loadSecret() {
+  const strategy = csAuthHeader(await headers()) // null when signed out or not warmed
+  if (!strategy) throw new Error("not signed in")
 
-const client = await Encryption({
-  schemas: [users],
-  config: { authStrategy: strategy },
-})
+  const client = await Encryption({
+    schemas: [users],
+    config: { authStrategy: strategy },
+  })
+  // ...
+}
 ```
 
 **TanStack Start — `@cipherstash/auth/start`.** Needs `@tanstack/react-start`

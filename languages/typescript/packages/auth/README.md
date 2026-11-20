@@ -62,7 +62,9 @@ Pair the `wasm-inline` entry with the `cookies` helper to back the strategy with
 import { AccessKeyStrategy } from "@cipherstash/auth/wasm-inline";
 import { cookieStore } from "@cipherstash/auth/cookies";
 import { Encryption } from "@cipherstash/stack/wasm-inline";
-import { users } from "./schema.ts"; // your encryptedTable(s)
+// Author ./schema.ts with `encryptedTable` / `types` from
+// "@cipherstash/stack/wasm-inline" — not the native "@cipherstash/stack/v3".
+import { users } from "./schema.ts";
 
 Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
@@ -101,12 +103,14 @@ Deno.serve(async (req) => {
 ```jsonc
 {
   "imports": {
-    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.41/wasm-inline",
-    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.41/cookies",
-    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@^1/wasm-inline"
+    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@0.44.1/wasm-inline",
+    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@0.44.1/cookies",
+    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@1.2.1/wasm-inline"
   }
 }
 ```
+
+Pin exact versions: Deno caches by specifier, so a range drifts between deploys. Pin `@cipherstash/auth` to the version your `@cipherstash/stack` depends on (`npm view @cipherstash/stack@1.2.1 dependencies`). A different one loads a second copy of the auth wasm, and the strategy you hand to `Encryption` then comes from a different version than the one it was built against.
 
 Nothing extra in `supabase/config.toml` — no `static_files`, no asset copying, no bundler plugins. The `wasm-inline` entry embeds the wasm module as base64 inside the JS shim, so it loads with zero runtime config.
 
@@ -122,7 +126,9 @@ When the end user is already signed in with a third-party OIDC provider (Clerk, 
 import { OidcFederationStrategy } from "@cipherstash/auth/wasm-inline";
 import { cookieStore } from "@cipherstash/auth/cookies";
 import { Encryption } from "@cipherstash/stack/wasm-inline";
-import { users } from "./schema.ts"; // your encryptedTable(s)
+// Author ./schema.ts with `encryptedTable` / `types` from
+// "@cipherstash/stack/wasm-inline" — not the native "@cipherstash/stack/v3".
+import { users } from "./schema.ts";
 
 Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
