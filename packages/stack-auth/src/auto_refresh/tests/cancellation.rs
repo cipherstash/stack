@@ -120,7 +120,18 @@ enum Phase {
     Install,
 }
 
+/// [`cancelled_at_unbounded`], bounded (virtual time) so a broken engine fails
+/// instead of hanging.
 async fn cancelled_at(phase: Phase, usable: bool, initial: bool) {
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        cancelled_at_unbounded(phase, usable, initial),
+    )
+    .await
+    .expect("each phase must finish");
+}
+
+async fn cancelled_at_unbounded(phase: Phase, usable: bool, initial: bool) {
     let clock = TestClock::new(1_000);
     let issuer = Arc::new(Issuer::new(initial));
     let store = Arc::new(GatedStore {

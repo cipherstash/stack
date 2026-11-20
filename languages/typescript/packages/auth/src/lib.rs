@@ -296,12 +296,16 @@ impl TokenStore for NapiTokenStore {
     }
 
     async fn save(&self, token: &Token) {
-        let Ok(json) = serde_json::to_string(token).map(Zeroizing::new) else {
+        // Serialise into a `SecretBuf`, which wipes every buffer it
+        // outgrows, then move the bytes into the `String` the JS callback
+        // takes.
+        let Ok(mut json) = stack_profile::SecretBuf::json_string(token) else {
             return;
         };
+        let json = std::mem::take(&mut *json);
         let (tx, rx) = oneshot::channel::<Promise<()>>();
         let status = self.save.call_with_return_value(
-            json.to_string(),
+            json,
             ThreadsafeFunctionCallMode::NonBlocking,
             move |promise: Promise<()>| {
                 let _ = tx.send(promise);

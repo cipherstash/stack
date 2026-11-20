@@ -154,7 +154,9 @@ impl TokenStore for JsTokenStore {
     }
 
     async fn save(&self, token: &Token) {
-        let Ok(json) = serde_json::to_string(token).map(Zeroizing::new) else {
+        // Serialise into a `SecretBuf`, which wipes every buffer it
+        // outgrows, and the result when it is dropped.
+        let Ok(json) = stack_profile::SecretBuf::json_string(token) else {
             return;
         };
         let promise = match self.save.call1(&JsValue::NULL, &JsValue::from_str(&json)) {

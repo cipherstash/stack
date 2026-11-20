@@ -27,13 +27,32 @@ const MIN_READ_SPARE: usize = 512;
 /// one, which [`Zeroizing`] wipes. Spare capacity is wiped too, since
 /// `Vec<u8>`'s `Zeroize` covers the whole allocation.
 ///
-/// Writing to it ([`io::Write`](std::io::Write)) and reading into it
-/// ([`read_from`](Self::read_from)) both write straight into the buffer, so
-/// no intermediate copy of the bytes is left behind.
-pub(crate) struct SecretBuf(Zeroizing<Vec<u8>>);
+/// Writing to it ([`io::Write`](std::io::Write)) writes straight into the
+/// buffer, so no intermediate copy of the bytes is left behind.
+///
+/// Use it wherever a secret is serialised: `serde_json::to_string` and
+/// `to_vec` grow a plain buffer as they go, freeing a partial copy of the
+/// secret at each step.
+///
+/// ```
+/// use stack_profile::SecretBuf;
+///
+/// let body = SecretBuf::json(&serde_json::json!({ "token": "s3cret" }))?;
+/// // `body` is wiped when it is dropped.
+/// assert_eq!(body.as_slice(), br#"{"token":"s3cret"}"#);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub struct SecretBuf(Zeroizing<Vec<u8>>);
+
+impl Default for SecretBuf {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SecretBuf {
-    pub(crate) fn new() -> Self {
+    /// An empty buffer with room for a typical profile file or token.
+    pub fn new() -> Self {
         Self::with_capacity(INITIAL_CAPACITY)
     }
 
@@ -47,6 +66,13 @@ impl SecretBuf {
     /// hint to avoid reallocating, and reads through no unwiped scratch
     /// buffer: a file whose metadata under-reports its length (as some
     /// network and FUSE filesystems do) still leaves no copy behind.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reader's error, other than
+    /// [`Interrupted`](std::io::ErrorKind::Interrupted), which is retried, or
+    /// [`OutOfMemory`](std::io::ErrorKind::OutOfMemory) when the buffer cannot
+    /// grow. The bytes read so far are wiped either way.
     pub(crate) fn read_from(mut reader: impl Read) -> std::io::Result<Self> {
         let mut buf = Self::new();
         loop {
@@ -73,6 +99,53 @@ impl SecretBuf {
     /// The bytes held so far.
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    /// The buffer itself, still wiped on drop.
+    ///
+    /// The allocation is handed over, not copied. Do not grow the returned
+    /// `Vec`: it is an ordinary `Vec` again, and growing it leaves an unwiped
+    /// copy behind.
+    pub fn into_zeroizing(self) -> Zeroizing<Vec<u8>> {
+        self.0
+    }
+
+    /// `value` as JSON, serialised straight into a `SecretBuf`.
+    ///
+    /// Use this, not `serde_json::to_vec` or `to_string`, for any value that
+    /// holds a secret: those grow a plain buffer as they write and free each
+    /// outgrown copy unwiped.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serialiser's error. The bytes written so far are wiped.
+    pub fn json<T: serde::Serialize + ?Sized>(value: &T) -> serde_json::Result<Zeroizing<Vec<u8>>> {
+        let mut buf = Self::new();
+        serde_json::to_writer(&mut buf, value)?;
+        Ok(buf.into_zeroizing())
+    }
+
+    /// [`json`](Self::json) as a `String`, for an API that takes one.
+    ///
+    /// The bytes are moved into the `String`, not copied. Take it out with
+    /// `std::mem::take(&mut *json)` when it must be handed over by value.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serialiser's error. The bytes written so far are wiped.
+    pub fn json_string<T: serde::Serialize + ?Sized>(
+        value: &T,
+    ) -> serde_json::Result<Zeroizing<String>> {
+        let mut bytes = Self::json(value)?;
+        match String::from_utf8(std::mem::take(&mut *bytes)) {
+            Ok(json) => Ok(Zeroizing::new(json)),
+            // serde_json only writes UTF-8, so this is unreachable; the bytes
+            // are still wiped if it ever is not.
+            Err(e) => {
+                drop(Zeroizing::new(e.into_bytes()));
+                Err(serde::ser::Error::custom("serialised JSON was not UTF-8"))
+            }
+        }
     }
 
     /// Make room for `additional` more bytes without letting the `Vec`
@@ -149,6 +222,21 @@ mod tests {
 
     fn payload(len: usize) -> Vec<u8> {
         (0..=255).cycle().take(len).collect()
+    }
+
+    #[test]
+    fn json_serialises_into_the_buffer() {
+        let value = serde_json::json!({ "token": "s3cret" });
+        assert_eq!(
+            SecretBuf::json(&value).unwrap().as_slice(),
+            br#"{"token":"s3cret"}"#,
+            "the bytes must be the JSON of the value",
+        );
+        assert_eq!(
+            SecretBuf::json_string(&value).unwrap().as_str(),
+            r#"{"token":"s3cret"}"#,
+            "the string must be the JSON of the value",
+        );
     }
 
     #[test]
@@ -268,5 +356,33 @@ mod tests {
     fn read_from_returns_a_read_error() {
         let err = SecretBuf::read_from(Failing).err().unwrap();
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn serialised_json_comes_out_byte_for_byte() {
+        // Large enough that the buffer grows several times on the way.
+        let secret = "s".repeat(20_000);
+        let mut buf = SecretBuf::new();
+        serde_json::to_writer(&mut buf, &serde_json::json!({ "token": secret })).unwrap();
+
+        let expected = serde_json::to_vec(&serde_json::json!({ "token": secret })).unwrap();
+        assert_eq!(buf.as_bytes(), expected.as_slice());
+        assert_eq!(buf.into_zeroizing().as_slice(), expected.as_slice());
+    }
+
+    /// `into_zeroizing` hands over the buffer itself. A copy would leave the
+    /// original allocation behind for `SecretBuf`'s own drop to wipe, but the copy
+    /// would be an exact-size `Vec` the caller might grow, which is what the type
+    /// exists to prevent.
+    #[test]
+    fn into_zeroizing_moves_the_allocation_rather_than_copying_it() {
+        let mut buf = SecretBuf::new();
+        buf.write_all(b"bearer-token").unwrap();
+        let before = buf.as_bytes().as_ptr();
+
+        let bytes = buf.into_zeroizing();
+
+        assert_eq!(bytes.as_ptr(), before);
+        assert_eq!(bytes.as_slice(), b"bearer-token");
     }
 }
