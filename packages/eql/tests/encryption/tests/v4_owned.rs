@@ -640,9 +640,10 @@ fn the_traits_the_compile_fail_examples_refuse_exist_for_the_right_shapes() {
     encrypts::<text::TextEqQuery>();
 }
 
-/// How many copies of the plaintext the ciphertext `c` makes. The owned form
-/// that `encrypt_into` runs moves the plaintext into the seal. The borrowed
-/// form, which a collection runs for each element, copies it once.
+/// How many copies of the plaintext the ciphertext `c` makes: none. The
+/// owned form that `encrypt_into` runs moves the plaintext into the seal.
+/// The borrowed form, which a collection runs for each element, reads it in
+/// place.
 mod the_ciphertext {
     use super::*;
 
@@ -674,6 +675,12 @@ mod the_ciphertext {
             self.text.visit(sink)
         }
     }
+    /// Sealing a borrowed value reads the text in place.
+    impl Encrypt for &Counted {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            self.text.as_str().visit(sink)
+        }
+    }
     /// The counter is not secret.
     impl Zeroize for Counted {
         fn zeroize(&mut self) {
@@ -695,7 +702,7 @@ mod the_ciphertext {
     }
 
     #[tokio::test]
-    async fn the_owned_form_copies_nothing_and_the_borrowed_form_copies_once() {
+    async fn neither_the_owned_form_nor_the_borrowed_form_copies_the_plaintext() {
         let (cipher, _) = common::cipher().await;
         let keyset = cipher.default_keyset();
 
@@ -718,7 +725,7 @@ mod the_ciphertext {
         );
 
         let (value, clones) = counted();
-        let _: Ciphertext = keyset
+        let borrowed: Ciphertext = keyset
             .run(
                 <Ciphertext as EncryptTarget<Counted>>::encryption(),
                 &value,
@@ -726,7 +733,11 @@ mod the_ciphertext {
             )
             .await
             .unwrap();
-        assert_eq!(clones.load(Ordering::SeqCst), 1, "the borrowed form");
+        assert_eq!(clones.load(Ordering::SeqCst), 0, "the borrowed form");
+        let opened: String = String::decrypt_from_with_context(borrowed, &cipher, aead())
+            .await
+            .unwrap();
+        assert_eq!(opened, "ada@example.com", "the borrowed value is sealed");
     }
 
     /// A refused context requests no key.

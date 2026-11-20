@@ -176,7 +176,9 @@ pub use clww_ore::{OpeClww8VariableV1, OreClww8VariableV1};
 use vitaminc_aead::Encrypt;
 use vitaminc_hmac::HmacSha256Prf;
 use vitaminc_normalize::{terms, NormalizeError, Normalized};
-use vitaminc_ore::{OrderEncrypt, OrderError, OrderKeyInit, OrderScheme, OrderTarget};
+use vitaminc_ore::{
+    OrderEncrypt, OrderError, OrderKeyInit, OrderPlaintext, OrderScheme, OrderTarget, SchemeVisitor,
+};
 use vitaminc_prf::{
     BlockVisitor, Context, IntoPrfContext, MapAccess, PrfError, PrfValue, PrfVisitor,
     PrfVisitorError, SeqAccess,
@@ -1442,7 +1444,9 @@ pub trait Orderable: sealed::Sealed + Zeroize + Send + 'static {
 }
 
 mod sealed {
-    use vitaminc_ore::{OrderError, OrderScheme, OrderSpace, OrderTarget, Supports};
+    use vitaminc_ore::{
+        OrderError, OrderPlaintext, OrderScheme, OrderSpace, OrderTarget, Supports,
+    };
 
     /// Hands `&self` to the space as the `vitaminc-aead` `Encrypt` source
     /// it is (`&String`, `&i32`, ...), so the owner keeps the one copy and
@@ -1455,6 +1459,13 @@ mod sealed {
             &self,
             space: &OrderSpace<'_, S>,
         ) -> Result<S::Term, OrderError<S::Error>>;
+        /// The value's order encoding, which needs no key. A term whose
+        /// keyset is not loaded yet keeps this, and not the value, until
+        /// the keyset arrives. It is wiped on drop.
+        fn order_plaintext(
+            &self,
+            target: OrderTarget,
+        ) -> Result<Option<OrderPlaintext>, vitaminc_ore::TermsError>;
         /// What an order query of this value is refused for before any
         /// key is requested: nothing, for a value whose order encoding
         /// always exists. Text overrides it (`query::order`).
@@ -1473,6 +1484,14 @@ macro_rules! orderable {
                 space: &vitaminc_ore::OrderSpace<'_, S>,
             ) -> Result<S::Term, OrderError<S::Error>> {
                 space.encrypt_checked(self).map(vitaminc_ore::OrderTerm::into_raw)
+            }
+            fn order_plaintext(
+                &self,
+                target: OrderTarget,
+            ) -> Result<Option<vitaminc_ore::OrderPlaintext>, vitaminc_ore::TermsError> {
+                Ok(vitaminc_ore::order_terms(target, self)?
+                    .pop()
+                    .map(|term| term.normalized))
             }
         }
         impl Orderable for $ty {
@@ -1500,6 +1519,14 @@ impl sealed::Sealed for String {
         space
             .encrypt_checked(self)
             .map(vitaminc_ore::OrderTerm::into_raw)
+    }
+    fn order_plaintext(
+        &self,
+        target: OrderTarget,
+    ) -> Result<Option<vitaminc_ore::OrderPlaintext>, vitaminc_ore::TermsError> {
+        Ok(vitaminc_ore::order_terms(target, self)?
+            .pop()
+            .map(|term| term.normalized))
     }
     fn check_query(&self, block: bool) -> Result<(), TermError> {
         query::order_text(self, block)
@@ -1854,90 +1881,33 @@ impl<T: Orderable> PartialOrd for OreBlockTerm<T> {
     }
 }
 
-/// A [`PrfVisitor`] that carries the plaintext in and hands the CLLW ORE
-/// ciphertext out. The PRF block keys clww-ore's vitaminc ORE scheme
-/// *inside* `visit_block` and dies there: the block arrives by value, is
-/// copied into the scheme's key (wiped when the scheme drops) and wiped
-/// here, the value is encrypted, and only the ciphertext leaves. No key is
-/// ever returned to the caller.
+/// Key the order scheme `S` of one index from the PRF, under `domain` and
+/// the index's context.
+///
+/// The PRF block keys the scheme inside Vitamin C's [`SchemeVisitor`] and
+/// is wiped there: the block is copied into the scheme's key, which is wiped
+/// when the scheme drops. The visitor holds no plaintext, so the value is
+/// never passed to the PRF call, and a backend that derives the block later
+/// keeps no copy of it. The caller then encrypts the value on the scheme, by
+/// reference.
 ///
 /// The column is opened with the value's target and the empty context:
 /// the key is already this index's own, derived under the index's
 /// descriptor, so there is nothing left for a context to separate. The
 /// column's salt still binds the scheme and the target.
-///
-/// This is the shape a 2-party PRF needs: the caller supplies a PRF input
-/// (the context) and receives a term, and where the key comes from — or
-/// whether one exists at all — is the visitor's business. Swapping the
-/// backend for one that returns per-prefix PRF outputs instead of a key
-/// changes this visitor, not its callers.
-///
-/// The plaintext is owned (`T: 'static`) because the visitor outlives the
-/// call under an asynchronous backend; `Send` for the same reason. Scheme
-/// failures surface through the visitor's `Value` rather than
-/// [`PrfVisitorError`] so they keep their own error type.
-///
-/// The plaintext is held in a [`Zeroizing`], so it is wiped when the
-/// visitor drops: after `visit_block`, or unvisited if the PRF fails first.
-/// `encrypt_in` reads it by reference and clww-ore copies nothing out of it
-/// unwiped, so that drop is the last place its bytes live.
-struct OreVisitor<T: Orderable>(Zeroizing<T>);
-
-impl<T, P> PrfVisitor<[u8; 32], P> for OreVisitor<T>
+fn keyed<S>(prf: &HmacSha256Prf, domain: &[u8], context: &Context<'_>) -> Result<S, TermError>
 where
-    T: Orderable,
-    P: Send + 'static,
+    S: OrderKeyInit<Key = Protected<[u8; 32]>> + Send + 'static,
 {
-    type Value = Result<OreClww8VariableV1, TermError>;
-
-    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let scheme = ClwwOre::new(Protected::new(block));
-        block.zeroize();
-        let space = scheme.target(T::TARGET);
-        Ok(sealed::Sealed::encrypt_in(&*self.0, &space).map_err(order_error))
-    }
-}
-
-/// The OPE twin of [`OreVisitor`]: same key handling, produces a CLLW OPE
-/// ciphertext (byte order is plaintext order).
-struct OpeVisitor<T: Orderable>(Zeroizing<T>);
-
-impl<T, P> PrfVisitor<[u8; 32], P> for OpeVisitor<T>
-where
-    T: Orderable,
-    P: Send + 'static,
-{
-    type Value = Result<OpeClww8VariableV1, TermError>;
-
-    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let scheme = ClwwOpe::new(Protected::new(block));
-        block.zeroize();
-        let space = scheme.target(T::TARGET);
-        Ok(sealed::Sealed::encrypt_in(&*self.0, &space).map_err(order_error))
-    }
-}
-
-/// The block ORE twin of [`OreVisitor`]: same key handling, under its own
-/// domain. ore-rs's `BlockOre` routes the space to its 6-bit or chained
-/// engine by the target's width, and derives the one ORE key both use from
-/// the block under a label of its own. The plaintext is held in a
-/// [`Zeroizing`], as [`OreVisitor`]'s is: ore-rs reads it by reference and
-/// works on scrubbed copies, so that drop is the last place its bytes live.
-struct OreBlockVisitor<T: Orderable>(Zeroizing<T>);
-
-impl<T, P> PrfVisitor<[u8; 32], P> for OreBlockVisitor<T>
-where
-    T: Orderable,
-    P: Send + 'static,
-{
-    type Value = Result<ore_rs::Term, TermError>;
-
-    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let scheme = ore_rs::BlockOre::new(Protected::new(block));
-        block.zeroize();
-        let term = sealed::Sealed::encrypt_in(&*self.0, &scheme.target(T::TARGET));
-        Ok(term.map_err(ore_block_error))
-    }
+    let context_bytes = context.as_bytes();
+    context_bytes
+        .prf_visit_with_context(
+            prf,
+            Context::pae(&[domain, context_bytes]),
+            SchemeVisitor::new(),
+        )
+        .into_result()
+        .map_err(TermError::from_prf)
 }
 
 /// Why ore-rs produced no block ORE term, as a [`TermError`]: the value's
@@ -1956,6 +1926,21 @@ fn ore_block_error(error: OrderError<ore_rs::OreError>) -> TermError {
     }
 }
 
+/// The order encoding of a value read in place, as its type's target. It
+/// needs no key, so a term whose keyset is not loaded yet derives it during
+/// the build, and the value is not kept. The error is the one
+/// [`encrypt_in`](sealed::Sealed::encrypt_in) reports for the same value.
+fn order_plaintext<T: Orderable, E>(value: &T) -> Result<OrderPlaintext, OrderError<E>> {
+    match sealed::Sealed::order_plaintext(value, T::TARGET) {
+        Ok(Some(plaintext)) => Ok(plaintext),
+        Ok(None) => Err(OrderError::NotScalar),
+        Err(error) => Err(match error.term() {
+            Some(term) => OrderError::Term(term.error()),
+            None => OrderError::NotScalar,
+        }),
+    }
+}
+
 /// Derive an ORE term: PRF of the encoded context under a PAE-encoded
 /// `[domain, context]` framing — the same framing every other term kind uses
 /// (see the module docs), so no reimplementation of this derivation can
@@ -1970,15 +1955,34 @@ fn ore<T: Orderable>(
 ) -> Result<OreTerm<T>, TermError> {
     // Wrapped before anything can fail, so a refused value is wiped too.
     let value = Zeroizing::new(value);
-    let context_bytes = context.as_bytes();
-    context_bytes
-        .prf_visit_with_context(
-            prf,
-            Context::pae(&[ORE_KEY_DOMAIN, context_bytes]),
-            OreVisitor(value),
-        )
-        .into_result()
-        .map_err(TermError::from_prf)?
+    ore_of(prf, &value, context)
+}
+
+/// [`ore`] of a value read in place. The value stays with the caller,
+/// and nothing here copies it.
+fn ore_of<T: Orderable>(
+    prf: &HmacSha256Prf,
+    value: &T,
+    context: Context<'_>,
+) -> Result<OreTerm<T>, TermError> {
+    let scheme: ClwwOre = keyed(prf, ORE_KEY_DOMAIN, &context)?;
+    sealed::Sealed::encrypt_in(value, &scheme.target(T::TARGET))
+        .map_err(order_error)
+        .map(OreTerm::new)
+}
+
+/// [`ore_of`] of an order encoding [`order_plaintext`] made of a `T`.
+fn ore_of_plaintext<T: Orderable>(
+    prf: &HmacSha256Prf,
+    plaintext: &OrderPlaintext,
+    context: Context<'_>,
+) -> Result<OreTerm<T>, TermError> {
+    let scheme: ClwwOre = keyed(prf, ORE_KEY_DOMAIN, &context)?;
+    scheme
+        .target(T::TARGET)
+        .encrypt_term(plaintext)
+        .map(vitaminc_ore::OrderTerm::into_raw)
+        .map_err(order_error)
         .map(OreTerm::new)
 }
 
@@ -1993,15 +1997,34 @@ pub(crate) fn ope<T: Orderable>(
 ) -> Result<OpeTerm<T>, TermError> {
     // Wrapped before anything can fail, so a refused value is wiped too.
     let value = Zeroizing::new(value);
-    let context_bytes = context.as_bytes();
-    context_bytes
-        .prf_visit_with_context(
-            prf,
-            Context::pae(&[OPE_KEY_DOMAIN, context_bytes]),
-            OpeVisitor(value),
-        )
-        .into_result()
-        .map_err(TermError::from_prf)?
+    ope_of(prf, &value, context)
+}
+
+/// [`ope`] of a value read in place. The value stays with the caller,
+/// and nothing here copies it.
+pub(crate) fn ope_of<T: Orderable>(
+    prf: &HmacSha256Prf,
+    value: &T,
+    context: Context<'_>,
+) -> Result<OpeTerm<T>, TermError> {
+    let scheme: ClwwOpe = keyed(prf, OPE_KEY_DOMAIN, &context)?;
+    sealed::Sealed::encrypt_in(value, &scheme.target(T::TARGET))
+        .map_err(order_error)
+        .map(OpeTerm::new)
+}
+
+/// [`ope_of`] of an order encoding [`order_plaintext`] made of a `T`.
+fn ope_of_plaintext<T: Orderable>(
+    prf: &HmacSha256Prf,
+    plaintext: &OrderPlaintext,
+    context: Context<'_>,
+) -> Result<OpeTerm<T>, TermError> {
+    let scheme: ClwwOpe = keyed(prf, OPE_KEY_DOMAIN, &context)?;
+    scheme
+        .target(T::TARGET)
+        .encrypt_term(plaintext)
+        .map(vitaminc_ore::OrderTerm::into_raw)
+        .map_err(order_error)
         .map(OpeTerm::new)
 }
 
@@ -2014,15 +2037,34 @@ fn ore_block<T: Orderable>(
 ) -> Result<OreBlockTerm<T>, TermError> {
     // Wrapped before anything can fail, so a refused value is wiped too.
     let value = Zeroizing::new(value);
-    let context_bytes = context.as_bytes();
-    context_bytes
-        .prf_visit_with_context(
-            prf,
-            Context::pae(&[ORE_BLOCK_KEY_DOMAIN, context_bytes]),
-            OreBlockVisitor(value),
-        )
-        .into_result()
-        .map_err(TermError::from_prf)?
+    ore_block_of(prf, &value, context)
+}
+
+/// [`ore_block`] of a value read in place. The value stays with the caller,
+/// and nothing here copies it.
+fn ore_block_of<T: Orderable>(
+    prf: &HmacSha256Prf,
+    value: &T,
+    context: Context<'_>,
+) -> Result<OreBlockTerm<T>, TermError> {
+    let scheme: ore_rs::BlockOre = keyed(prf, ORE_BLOCK_KEY_DOMAIN, &context)?;
+    sealed::Sealed::encrypt_in(value, &scheme.target(T::TARGET))
+        .map_err(ore_block_error)
+        .map(|term| OreBlockTerm(term, PhantomData))
+}
+
+/// [`ore_block_of`] of an order encoding [`order_plaintext`] made of a `T`.
+fn ore_block_of_plaintext<T: Orderable>(
+    prf: &HmacSha256Prf,
+    plaintext: &OrderPlaintext,
+    context: Context<'_>,
+) -> Result<OreBlockTerm<T>, TermError> {
+    let scheme: ore_rs::BlockOre = keyed(prf, ORE_BLOCK_KEY_DOMAIN, &context)?;
+    scheme
+        .target(T::TARGET)
+        .encrypt_term(plaintext)
+        .map(vitaminc_ore::OrderTerm::into_raw)
+        .map_err(ore_block_error)
         .map(|term| OreBlockTerm(term, PhantomData))
 }
 
@@ -2078,6 +2120,40 @@ where
     }
 }
 
+/// The same term of a value read in place: the value stays with the
+/// caller, and is not copied. When the keyset is not loaded yet, the
+/// pending keeps the value's order encoding until it is, and wipes it.
+impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for OreTerm<S>
+where
+    S: Orderable,
+    T: IntoPrfContext<'c>,
+{
+    fn encrypt_from<'a>(
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
+        context: NonEmpty<T>,
+    ) -> Pending<'a, Self, K>
+    where
+        Self: 'a,
+    {
+        let context = context.into_prf_context().into_owned();
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = ore_of(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            // Encoded now, so the pending keeps no borrow of the value. The
+            // scheme runs when the pending has loaded the keyset.
+            None => match order_plaintext(source) {
+                Ok(plaintext) => cipher.deferred(move |keyset| {
+                    ore_of_plaintext(&keyset.prf, &plaintext, context).map_err(Error::from)
+                }),
+                Err(error) => Pending::ready(cipher, Err(order_error(error).into())),
+            },
+        }
+    }
+}
+
 /// An OPE term of any [`Orderable`] source. Under the local HMAC
 /// backend, derived during the synchronous build — the returned [`Pending`]
 /// carries no requests.
@@ -2104,6 +2180,40 @@ where
             }
             None => cipher
                 .deferred(move |keyset| ope(&keyset.prf, source, context).map_err(Error::from)),
+        }
+    }
+}
+
+/// The same term of a value read in place: the value stays with the
+/// caller, and is not copied. When the keyset is not loaded yet, the
+/// pending keeps the value's order encoding until it is, and wipes it.
+impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for OpeTerm<S>
+where
+    S: Orderable,
+    T: IntoPrfContext<'c>,
+{
+    fn encrypt_from<'a>(
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
+        context: NonEmpty<T>,
+    ) -> Pending<'a, Self, K>
+    where
+        Self: 'a,
+    {
+        let context = context.into_prf_context().into_owned();
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = ope_of(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            // Encoded now, so the pending keeps no borrow of the value. The
+            // scheme runs when the pending has loaded the keyset.
+            None => match order_plaintext(source) {
+                Ok(plaintext) => cipher.deferred(move |keyset| {
+                    ope_of_plaintext(&keyset.prf, &plaintext, context).map_err(Error::from)
+                }),
+                Err(error) => Pending::ready(cipher, Err(order_error(error).into())),
+            },
         }
     }
 }
@@ -2135,6 +2245,40 @@ where
             None => cipher.deferred(move |keyset| {
                 ore_block(&keyset.prf, source, context).map_err(Error::from)
             }),
+        }
+    }
+}
+
+/// The same term of a value read in place: the value stays with the
+/// caller, and is not copied. When the keyset is not loaded yet, the
+/// pending keeps the value's order encoding until it is, and wipes it.
+impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for OreBlockTerm<S>
+where
+    S: Orderable,
+    T: IntoPrfContext<'c>,
+{
+    fn encrypt_from<'a>(
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
+        context: NonEmpty<T>,
+    ) -> Pending<'a, Self, K>
+    where
+        Self: 'a,
+    {
+        let context = context.into_prf_context().into_owned();
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = ore_block_of(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            // Encoded now, so the pending keeps no borrow of the value. The
+            // scheme runs when the pending has loaded the keyset.
+            None => match order_plaintext(source) {
+                Ok(plaintext) => cipher.deferred(move |keyset| {
+                    ore_block_of_plaintext(&keyset.prf, &plaintext, context).map_err(Error::from)
+                }),
+                Err(error) => Pending::ready(cipher, Err(ore_block_error(error).into())),
+            },
         }
     }
 }
@@ -2693,6 +2837,118 @@ mod tests {
                 Err(PrfError::Visitor(PrfVisitorError::UnexpectedShape))
             ),
             "{result:?}"
+        );
+    }
+}
+
+/// An order term of a value read in place, through a keyset that is not
+/// loaded yet. The pending keeps the value's order encoding, and no borrow
+/// of the value.
+#[cfg(test)]
+mod order_terms_before_the_keyset_loads {
+    use stack_kms::{FakeCredentialKeySource, SecretToken};
+
+    use super::*;
+    use crate::{nonempty, StackCipher};
+
+    async fn not_loaded() -> StackCipher<FakeCredentialKeySource> {
+        StackCipher::builder()
+            .kms(FakeCredentialKeySource::new())
+            .init()
+            .await
+            .unwrap()
+    }
+    fn jwt() -> SecretToken {
+        SecretToken::new("alice.jwt")
+    }
+
+    /// The term made before the load is the term made after it, for each of
+    /// the three order schemes, and it still orders against another value's.
+    #[tokio::test]
+    async fn a_borrowed_value_has_the_term_a_loaded_keyset_derives() {
+        let cipher = not_loaded().await;
+        let keyset = cipher.default_keyset();
+        let context = || nonempty!("readings").with("level");
+        macro_rules! term {
+            ($term:ty, $value:expr) => {
+                <$term as Term<&_, _, _>>::encrypt_from($value, &keyset, context())
+                    .with_credential(jwt())
+                    .await
+                    .unwrap()
+            };
+        }
+
+        // Each first call is built while the keyset is not loaded.
+        assert!(keyset.loaded_state().is_none());
+        let before = <OreTerm<u32> as Term<&u32, _, _>>::encrypt_from(&7, &keyset, context());
+        let ope_before = <OpeTerm<u32> as Term<&u32, _, _>>::encrypt_from(&7, &keyset, context());
+        let block_before = <OreBlockTerm<String> as Term<&String, _, _>>::encrypt_from(
+            &String::from("ada"),
+            &keyset,
+            context(),
+        );
+        let before = before.with_credential(jwt()).await.unwrap();
+        let ope_before = ope_before.with_credential(jwt()).await.unwrap();
+        let block_before = block_before.with_credential(jwt()).await.unwrap();
+
+        assert!(
+            keyset.loaded_state().is_some(),
+            "the calls loaded the keyset"
+        );
+        assert_eq!(before.as_bytes(), term!(OreTerm<u32>, &7).as_bytes());
+        assert_eq!(ope_before.as_bytes(), term!(OpeTerm<u32>, &7).as_bytes());
+        let ada = String::from("ada");
+        let bob = String::from("bob");
+        assert_eq!(
+            block_before.compare(&term!(OreBlockTerm<String>, &ada)),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(
+            block_before.compare(&term!(OreBlockTerm<String>, &bob)),
+            Some(std::cmp::Ordering::Less)
+        );
+    }
+
+    /// A value with no order encoding is refused with the same error
+    /// before the load as after it.
+    #[tokio::test]
+    async fn a_refused_value_reads_the_same_before_and_after_the_load() {
+        // U+0378 is not assigned in Unicode 16.
+        let unassigned = String::from("\u{378}");
+        let context = || nonempty!("readings").with("level");
+
+        let cipher = not_loaded().await;
+        let keyset = cipher.default_keyset();
+        assert!(keyset.loaded_state().is_none());
+        let before = <OreBlockTerm<String> as Term<&String, _, _>>::encrypt_from(
+            &unassigned,
+            &keyset,
+            context(),
+        )
+        .with_credential(jwt())
+        .await
+        .map(drop)
+        .unwrap_err();
+
+        // A term that is not refused loads the keyset.
+        let _ = <OreTerm<u32> as Term<&u32, _, _>>::encrypt_from(&7, &keyset, context())
+            .with_credential(jwt())
+            .await
+            .unwrap();
+        assert!(keyset.loaded_state().is_some());
+        let after = <OreBlockTerm<String> as Term<&String, _, _>>::encrypt_from(
+            &unassigned,
+            &keyset,
+            context(),
+        )
+        .with_credential(jwt())
+        .await
+        .map(drop)
+        .unwrap_err();
+        assert_eq!(format!("{before:?}"), format!("{after:?}"));
+        assert!(
+            matches!(before, Error::Term(TermError::Normalize(_))),
+            "{before:?}"
         );
     }
 }

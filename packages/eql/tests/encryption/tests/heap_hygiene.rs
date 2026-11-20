@@ -835,9 +835,9 @@ mod owned_seals {
         json!({"long": text, "short": marked("short")})
     }
 
-    /// The owned forms do not copy the document: each makes one block
-    /// fewer of the length of the document's long string than the borrowed
-    /// form of the same type, which copies the document once.
+    /// No form copies the document: the owned form and the borrowed form of
+    /// each type make the same number of blocks of the length of the
+    /// document's long string.
     #[test]
     fn a_document_sealed_by_value_is_not_copied() {
         let rt = runtime();
@@ -864,10 +864,8 @@ mod owned_seals {
             });
         });
         assert_eq!(
-            borrowed,
-            owned + 1,
-            "JsonTreeDocument: the borrowed form copies the document once and the owned \
-             form does not (borrowed {borrowed}, owned {owned})"
+            borrowed, owned,
+            "JsonTreeDocument: neither form copies the document (borrowed {borrowed}, owned {owned})"
         );
 
         let source = JsonPlaintext::from(long());
@@ -894,10 +892,8 @@ mod owned_seals {
             });
         });
         assert_eq!(
-            borrowed,
-            owned + 1,
-            "Json: the borrowed form copies the document once and the owned form does not \
-             (borrowed {borrowed}, owned {owned})"
+            borrowed, owned,
+            "Json: neither form copies the document (borrowed {borrowed}, owned {owned})"
         );
     }
 }

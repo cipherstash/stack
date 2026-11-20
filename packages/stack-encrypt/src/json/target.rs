@@ -51,7 +51,7 @@ pub trait JsonTarget<S: Zeroize>: EncryptTarget<S> {
     where
         S: 's,
     {
-        Encryption::from_build(
+        Encryption::from_owned_build(
             Self::json_encryption::<K>(options.clone()).shapes(),
             move |source: S, cipher, context| {
                 let guarded = Protected::new(source);
@@ -104,7 +104,7 @@ impl<S: Zeroize, T: JsonTarget<S> + MaybeSend> JsonTarget<Option<S>> for Option<
     {
         Encryption::from_build(
             T::json_encryption::<K>(options.clone()).shapes(),
-            move |source: &'s Option<S>, cipher, context: T::ContextInput| match source {
+            move |source: &Option<S>, cipher, context: T::ContextInput| match source {
                 Some(value) => cipher
                     .run(T::json_encryption(options), value, context)
                     .map(Some),
@@ -119,7 +119,7 @@ impl<S: Zeroize, T: JsonTarget<S> + MaybeSend> JsonTarget<Option<S>> for Option<
     where
         S: 's,
     {
-        Encryption::from_build(
+        Encryption::from_owned_build(
             T::json_owned_encryption::<K>(options.clone()).shapes(),
             move |source: Option<S>, cipher, context: T::ContextInput| {
                 // Building the target's declaration can panic, so the value
@@ -319,7 +319,7 @@ where
 {
     match options {
         Ok(options) => T::json_owned_encryption(options),
-        Err(error) => Encryption::from_build(Vec::new(), move |mut source: S, cipher, _| {
+        Err(error) => Encryption::from_owned_build(Vec::new(), move |mut source: S, cipher, _| {
             source.zeroize();
             Pending::failed(cipher, error.into())
         }),

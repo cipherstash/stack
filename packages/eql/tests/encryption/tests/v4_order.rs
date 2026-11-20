@@ -140,7 +140,7 @@ async fn each_ordered_type_stores_its_catalog_terms() {
         } else {
             frame::<f64>(7.0)
         };
-        let json = stored(&keyset, name, value.clone()).await;
+        let json = stored(&keyset, name, again(&value)).await;
         let mut keys: Vec<&str> = json
             .as_object()
             .unwrap()
@@ -156,7 +156,7 @@ async fn each_ordered_type_stores_its_catalog_terms() {
         assert_eq!(keys, expected, "{name}");
         assert_eq!(json["v"], 4, "{name}");
 
-        let q = query(&keyset, name, value.clone()).await;
+        let q = query(&keyset, name, again(&value)).await;
         assert!(
             q.get("c").is_none(),
             "{name}: a query carries no ciphertext"
@@ -382,7 +382,7 @@ async fn ord_and_ord_ope_store_one_term() {
         ("TextOrd", "TextOrdOpe", frame("Zoë")),
     ];
     for (ord, ope, value) in pairs {
-        let a = stored(&keyset, ord, value.clone()).await;
+        let a = stored(&keyset, ord, again(&value)).await;
         let b = stored(&keyset, ope, value).await;
         assert_eq!(op(&a), op(&b), "{ord} and {ope}");
     }
@@ -978,4 +978,10 @@ fn postgres_compares_rows_the_go_sdk_sealed() {
             "ORDER BY ord_term over Go-sealed {column}"
         );
     }
+}
+
+/// A second frame of the same bytes. A frame is not `Clone`.
+fn again(frame: &ValueFrame) -> ValueFrame {
+    use stack_encrypt::AsProtectedRef as _;
+    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
 }

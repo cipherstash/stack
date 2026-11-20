@@ -983,7 +983,7 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
 
     let null = stack_encrypt::Protected::new([0x00u8]);
     let null = ValueFrame::from_bytes(null.as_protected_ref().as_ref_of()).unwrap();
-    let named: date::Date = by_name(&keyset, "Date", null.clone()).await;
+    let named: date::Date = by_name(&keyset, "Date", again(&null)).await;
     assert_eq!(leaf_len(&named.c), leaf_len(&absent.c), "by name too");
     let opened = targets::decrypt(
         "Date",
@@ -999,7 +999,7 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
     // A type whose term is equality's stores a null with a null's term,
     // the one a query of a null derives (#1298); a type with an order term
     // has no null to store, since its term column would show it.
-    let eq: date::DateEq = by_name(&keyset, "DateEq", null.clone()).await;
+    let eq: date::DateEq = by_name(&keyset, "DateEq", again(&null)).await;
     let present_eq: date::DateEq = by_name(&keyset, "DateEq", frame(day("2024-02-29"))).await;
     assert_eq!(
         leaf_len(&eq.c),
@@ -1008,7 +1008,7 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
     );
     assert_ne!(eq.hm, present_eq.hm, "a null's term is no value's");
     assert_eq!(
-        hm(&keyset, "DateEq", null.clone()).await,
+        hm(&keyset, "DateEq", again(&null)).await,
         eq.hm.0,
         "a query of a null finds it"
     );
@@ -1119,4 +1119,10 @@ fn postgres_stores_a_sealed_null_in_a_storage_only_column() {
         .map(|row| row.get(0))
         .collect();
     assert_eq!(found, [1, 3]);
+}
+
+/// A second frame of the same bytes. A frame is not `Clone`.
+fn again(frame: &ValueFrame) -> ValueFrame {
+    use stack_encrypt::AsProtectedRef as _;
+    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
 }

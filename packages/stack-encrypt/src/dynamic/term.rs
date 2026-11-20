@@ -49,7 +49,9 @@ use serde::{Deserialize, Serialize, Serializer};
 use super::{Error, Reason};
 use crate::json::{JsonOptions, JsonPath};
 use crate::sem::{DefaultMatch, MatchOptions, Orderable, TermError, Tokenizer};
-use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
+use crate::target::{
+    chosen, CallerContext, Encryption, Index, IndexSpec, Pending, Source, SourceMode,
+};
 use crate::value::{Date, Decimal, Timestamp};
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 
@@ -457,11 +459,12 @@ pub async fn term<'c, K, P, D>(
 ) -> Result<Vec<u8>, Error>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
-    P: Encrypt + Clone,
+    P: Encrypt + EncryptRef,
     D: IntoPrfContext<'c>,
 {
-    // A value the index does not take is refused as that kind, first.
-    if !kind.defines(value.clone()) {
+    // A value the index does not take is refused as that kind, first. The
+    // checks read the value in place.
+    if !kind.defines(value.lend()) {
         return Err(Error::Term {
             field: None,
             kind: kind.clone(),
@@ -472,7 +475,7 @@ where
     // derived as the empty filter a stored value keeps. The value is read
     // as it is, not re-framed, so every scalar `defines` takes is one a
     // probe takes.
-    prepare_probe(kind, value.clone())?;
+    prepare_probe(kind, value.lend())?;
     derive(cipher, value, kind, context)?
         .await
         .map(TermBytes::into_bytes)
@@ -873,23 +876,25 @@ impl Index<ValueFrame> for IndexSpec {
     fn spec(&self) -> IndexSpec {
         self.clone()
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, ValueFrame>>(
+    fn operation<'s, K: 'static, M: SourceMode<'s, ValueFrame>>(
         &self,
     ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
         let spec = self.clone();
-        chosen(move |source: M::Source, cipher, cx: CallerContext| {
-            // A term derives under the query context: the scopes, with no
-            // binding.
-            let (query, stored) = (cx.query(), cx.stored());
-            let context = match cx.validated() {
-                Ok(context) => CallerContext::query_nonempty(context),
-                Err(error) => return Pending::failed(cipher, error),
-            };
-            match derive(cipher, M::view(&source), &spec, context) {
-                Ok(pending) => pending.under_context(query, stored),
-                Err(error) => Pending::failed(cipher, error.into_crate()),
-            }
-        })
+        chosen(
+            move |source: Source<'_, ValueFrame>, cipher, cx: CallerContext| {
+                // A term derives under the query context: the scopes, with no
+                // binding.
+                let (query, stored) = (cx.query(), cx.stored());
+                let context = match cx.validated() {
+                    Ok(context) => CallerContext::query_nonempty(context),
+                    Err(error) => return Pending::failed(cipher, error),
+                };
+                match derive(cipher, source.view(), &spec, context) {
+                    Ok(pending) => pending.under_context(query, stored),
+                    Err(error) => Pending::failed(cipher, error.into_crate()),
+                }
+            },
+        )
     }
 }
 

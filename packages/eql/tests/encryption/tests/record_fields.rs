@@ -176,7 +176,7 @@ async fn a_query_from_the_field_reference_gives_the_stored_term() {
     assert_ne!(other.hm, stored.email.hm);
 }
 
-#[derive(Clone, Zeroize)]
+#[derive(Zeroize)]
 struct Contact {
     email: String,
     name: String,
@@ -534,7 +534,7 @@ async fn an_eql_field_opens_only_under_the_scope_and_the_binding_it_was_sealed_u
     assert_eq!(calls.lock().unwrap().retrieve.len(), before);
 }
 
-#[derive(Clone, Zeroize)]
+#[derive(Zeroize)]
 struct Lead {
     email: String,
     profile: JsonPlaintext,
@@ -704,7 +704,7 @@ async fn the_derive_and_a_data_plan_write_the_same_row_under_a_scope_and_a_bindi
     assert_ne!(term(43).await.hm, derived.email.hm);
 }
 
-#[derive(Clone, Zeroize)]
+#[derive(Zeroize)]
 struct Note {
     id: u128,
     tenant: u64,
@@ -1003,7 +1003,7 @@ async fn a_json_document_encrypts_from_a_json_plaintext() {
     assert_eq!(calls.lock().unwrap().retrieve.len(), before);
 }
 
-#[derive(Clone, Zeroize)]
+#[derive(Zeroize)]
 struct Customer {
     id: u64,
     profile: JsonPlaintext,

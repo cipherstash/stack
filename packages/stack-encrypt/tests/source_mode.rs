@@ -1,18 +1,16 @@
 //! How a description receives its plaintext (`target::{Borrowed, Owned}`).
 //!
-//! Vitamin C's by-value `Encrypt` walk and `PrfValue` consume their input. A description
-//! handed a borrow (the default, and what every `EncryptTarget::encryption`
-//! declaration runs in) clones before an operation consumes; one handed the
-//! value (`Owned`) gives it to the operation. These tests hold the two claims
-//! that make owned mode worth having:
+//! Every operation reads its plaintext in place, so no mode copies it. A
+//! description handed a borrow (the default, and what every
+//! `EncryptTarget::encryption` declaration runs in) leaves the value with the
+//! caller. One handed the value (`Owned`) reads it and lets go of it. These
+//! tests hold the claims that follow:
 //!
-//! - a plaintext that is **not `Clone`** runs a single operation — a
-//!   ciphertext alone, or one term alone — and the output is the same as the
-//!   borrowed path's;
-//! - the number of copies is exactly what the mode promises: none for one
-//!   owned operation, `n - 1` for an owned `zip` of `n`, one per consuming
-//!   operation when borrowed, and none ever for a match term, which only
-//!   reads its text.
+//! - a plaintext that is **not `Clone`** runs one operation, or several over
+//!   the same value, and the output is the same as the borrowed path's;
+//! - no operation copies the plaintext, in either mode, alone or beside
+//!   others;
+//! - an owned plaintext is let go before its key request is sent.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -61,6 +59,11 @@ impl Encrypt for Secret {
         self.0.visit(sink)
     }
 }
+impl Encrypt for &Secret {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (&self.0).visit(sink)
+    }
+}
 impl PrfValue for Secret {
     fn prf_visit_with_context<'a, P, V, C>(self, prf: &P, context: C, visitor: V) -> P::Ok<V::Value>
     where
@@ -106,6 +109,11 @@ impl Clone for Counted {
 impl Encrypt for Counted {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.text.visit(sink)
+    }
+}
+impl Encrypt for &Counted {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (&self.text).visit(sink)
     }
 }
 impl PrfValue for Counted {
@@ -214,7 +222,7 @@ async fn a_value_frame_seals_by_value_through_ciphertext_alone() {
     );
 }
 
-// --- How many copies each mode makes ----------------------------------------
+// --- No mode copies the plaintext --------------------------------------------
 
 #[tokio::test]
 async fn one_owned_operation_makes_no_copy() {
@@ -240,14 +248,14 @@ async fn one_owned_operation_makes_no_copy() {
 fn sealed_and_indexed<'s, S, M>(
 ) -> Encryption<'s, S, (StackCipherText, EqualityTerm), FakeDataKeySource, CallerContext, M>
 where
-    S: Encrypt + PrfValue + 's,
-    M: stack_encrypt::target::ConsumeSource<'s, S> + stack_encrypt::target::ShareSource<'s, S>,
+    S: Encrypt + vitaminc_aead::EncryptRef + 's,
+    M: stack_encrypt::target::SourceMode<'s, S>,
 {
     ciphertext().accepting().zip(equality())
 }
 
 #[tokio::test]
-async fn an_owned_zip_copies_for_every_side_but_the_last() {
+async fn an_owned_zip_makes_no_copy() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
@@ -258,8 +266,8 @@ async fn an_owned_zip_copies_for_every_side_but_the_last() {
         .unwrap();
     assert_eq!(
         clones.load(Ordering::SeqCst),
-        1,
-        "two owned operations should share one copy: the last takes the value"
+        0,
+        "the term reads the value in place, and the ciphertext takes it"
     );
 
     // And what each side made is what it would have made alone.
@@ -271,18 +279,42 @@ async fn an_owned_zip_copies_for_every_side_but_the_last() {
     assert_eq!(term, expected, "the zipped term is the text's term");
 
     let (value, clones) = Counted::new(NUMBER);
-    let three = sealed_and_indexed::<_, Owned>().zip(equality::<_, _, Owned>());
+    let three = sealed_and_indexed::<_, Owned>().zip(equality());
     let (_, again) = keyset.run(three, value, caller()).await.unwrap();
     assert_eq!(
         clones.load(Ordering::SeqCst),
-        2,
-        "three owned operations should make two copies"
+        0,
+        "three operations over one owned value should make no copy"
     );
     assert_eq!(again, expected, "the third side's term is the text's term");
 }
 
+/// A plaintext that is not `Clone` runs a ciphertext and a term over the one
+/// value. Before, an owned `zip` needed a copy for every side but the last.
 #[tokio::test]
-async fn a_borrowed_operation_copies_once_for_each_operation_that_consumes() {
+async fn a_plaintext_that_is_not_clone_seals_beside_a_term() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let (sealed, term) = keyset
+        .run(
+            sealed_and_indexed::<_, Owned>(),
+            Secret::new(NUMBER),
+            caller(),
+        )
+        .await
+        .unwrap();
+
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
+    assert_eq!(opened, NUMBER, "the ciphertext opens to the text");
+    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    assert_eq!(term, expected, "the term is the text's term");
+}
+
+#[tokio::test]
+async fn a_borrowed_operation_makes_no_copy() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
@@ -291,7 +323,7 @@ async fn a_borrowed_operation_copies_once_for_each_operation_that_consumes() {
         .run(ciphertext::<_, _, Borrowed>(), &value, aead())
         .await
         .unwrap();
-    assert_eq!(clones.load(Ordering::SeqCst), 1, "a borrowed ciphertext");
+    assert_eq!(clones.load(Ordering::SeqCst), 0, "a borrowed ciphertext");
     let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
         .await
         .unwrap();
@@ -304,8 +336,8 @@ async fn a_borrowed_operation_copies_once_for_each_operation_that_consumes() {
         .unwrap();
     assert_eq!(
         clones.load(Ordering::SeqCst),
-        2,
-        "a borrowed ciphertext beside a borrowed term copies once for each"
+        0,
+        "a borrowed ciphertext beside a borrowed term reads the one value"
     );
     let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
     assert_eq!(term, expected, "the borrowed term is the text's term");
@@ -352,7 +384,8 @@ struct SealedWithContext {
 }
 
 /// A record with two fields derived from the plaintext: its owned form is the
-/// default, which reads the value through the borrowed form.
+/// default, which reads the value through the borrowed form. Both fields read
+/// the value in place.
 #[derive(EncryptTarget)]
 #[stash(plaintext = Counted)]
 struct SealedAndEqual {
@@ -384,8 +417,8 @@ async fn a_record_with_one_derived_field_moves_the_value_into_it() {
         .unwrap();
     assert_eq!(opened, NUMBER, "the moved value is what is sealed");
 
-    // The borrowed form, which a collection runs for each element, copies
-    // the value once to seal it.
+    // The borrowed form, which a collection runs for each element, reads
+    // the value in place.
     let (value, clones) = Counted::new(NUMBER);
     let _: SealedOnly = keyset
         .run(
@@ -397,8 +430,8 @@ async fn a_record_with_one_derived_field_moves_the_value_into_it() {
         .unwrap();
     assert_eq!(
         clones.load(Ordering::SeqCst),
-        1,
-        "the borrowed form copies once"
+        0,
+        "the borrowed form reads the value in place"
     );
 
     // A record that stores its context moves the value too.
@@ -429,13 +462,13 @@ async fn a_record_with_one_derived_field_moves_the_value_into_it() {
         .unwrap();
     assert_eq!(
         clones.load(Ordering::SeqCst),
-        1,
-        "the borrowed form copies once"
+        0,
+        "the borrowed form reads the value in place"
     );
 }
 
 #[tokio::test]
-async fn a_record_with_two_derived_fields_copies_the_value_for_each() {
+async fn a_record_with_two_derived_fields_copies_nothing() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
@@ -446,8 +479,8 @@ async fn a_record_with_two_derived_fields_copies_the_value_for_each() {
         .unwrap();
     assert_eq!(
         clones.load(Ordering::SeqCst),
-        2,
-        "the default owned form reads the value through the borrowed form"
+        0,
+        "both fields read the value in place"
     );
     let opened: String = String::decrypt_from_with_context(record.c, &cipher, aead())
         .await
@@ -485,6 +518,11 @@ impl Drop for Dropped {
 impl Encrypt for Dropped {
     fn visit<S: Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
         std::mem::take(&mut self.text).visit(sink)
+    }
+}
+impl Encrypt for &Dropped {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (&self.text).visit(sink)
     }
 }
 impl PrfValue for Dropped {

@@ -48,7 +48,7 @@ use stack_encrypt::plan::IntoLabel;
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::{
     ciphertext, indexed, open, passthrough as carried, Borrowed, DeclaredContext, Encrypted,
-    Encryption, IndexSpec,
+    Encryption, IndexSpec, Owned,
 };
 use stack_encrypt::{
     nonempty, CipherText, Error, Label, NonEmpty, SealedValue, StackCipher, StackCipherText,
@@ -639,17 +639,25 @@ fn text_label(tenant: &ValueFrame) -> Label {
 /// The declaration as the combinators write it for one note: the tenant
 /// is carried as it is, and `text` runs under the label read from it. The
 /// label is in the record, so the description is composed for each record.
+///
+/// The description is handed the note itself. A frame is not `Clone`, so the
+/// tenant is moved into the output, as a data plan moves a passthrough field.
 fn note_declaration<'s>(
     note: &Note,
-) -> Encryption<'s, Note, TypedNote, DeterministicSource, DeclaredContext> {
-    carried::<ValueFrame, _, Borrowed, DeclaredContext>()
-        .project(|n: &Note| &n.tenant)
-        .zip(
-            indexed::<ValueFrame, _, Borrowed, _>(IndexSpec::Equality)
+) -> Encryption<'s, Note, TypedNote, DeterministicSource, DeclaredContext, Owned> {
+    carried::<ValueFrame, _, Owned, DeclaredContext>()
+        .split(
+            indexed::<ValueFrame, _, Owned, _>(IndexSpec::Equality)
                 .under(NonEmpty::from(text_label(&note.tenant)))
-                .project(|n: &Note| &n.text),
+                .split(
+                    carried::<u32, _, Owned, DeclaredContext>(),
+                    |parts: (ValueFrame, u32)| parts,
+                    |_| {},
+                ),
+            |n: Note| (n.tenant, (n.text, n.id)),
+            |_| {},
         )
-        .zip(carried::<u32, _, Borrowed, DeclaredContext>().project(|n: &Note| &n.id))
+        .map(|(tenant, (text, id))| ((tenant, text), id))
 }
 
 /// The same declaration as a binding sends it: the plan-level
@@ -701,7 +709,7 @@ async fn seal_note_typed(cipher: &StackCipher<DeterministicSource>) -> StackCiph
     record_of_note(
         cipher
             .default_keyset()
-            .run(note_declaration(&note), &note, DeclaredContext::default())
+            .run(note_declaration(&note), note, DeclaredContext::default())
             .await
             .expect("the combinators seal the note"),
     )

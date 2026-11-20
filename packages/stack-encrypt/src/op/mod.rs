@@ -850,16 +850,15 @@ impl QueryToken {
 /// The equality index answers `Eq` over any plaintext with an equality
 /// domain, and refuses text it cannot normalize (a code point unassigned
 /// in Unicode 16) before any keyset is resolved, as the dynamic path does.
-/// The check normalizes a copy of the value, which vitaminc wipes as it
-/// reads it, so the plaintext is `Clone`, as every scalar is.
+/// The check reads the value in place, so nothing is copied.
 impl<S> Supports<Eq, S> for Equality
 where
-    S: crate::Encrypt + Clone + 'static,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + 'static,
 {
     type Query = EqualityTerm;
     type Verifier = ();
     fn prepare(&self, value: &S) -> Result<(), Error> {
-        Ok(query::equality(value.clone())?)
+        Ok(query::equality(vitaminc_aead::EncryptRef::lend(value))?)
     }
     fn query((): (), term: EqualityTerm, _: QueryToken) -> EqualityTerm {
         term
@@ -1011,7 +1010,7 @@ impl<T: LabelledTarget> LabelledTarget for crate::target::Encrypted<T> {}
 
 impl<S> Answers<Eq, S> for EqualityTerm
 where
-    S: crate::Encrypt + Clone + 'static,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + 'static,
 {
     type Via = Equality;
 }

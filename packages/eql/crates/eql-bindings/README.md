@@ -665,20 +665,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The field's context: the table, then the column.
     let column = Label::new(["users", "email"])?;
-    // The plaintext, as its transport frame.
-    let email = ValueFrame::of("alice@example.com")?;
+    // The plaintext, as its transport frame. A frame is moved into the call
+    // that uses it, and is not `Clone`, so each call is given its own.
+    let email = || ValueFrame::of("alice@example.com");
 
     // Each call names the type, and returns the EQL value as JSON bytes.
-    let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, email.clone())?.await?;
+    let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, email()?)?.await?;
     // A query also names the index that answers its operator.
     let index = IndexSpec::Equality;
-    let probe: Vec<u8> = targets::query("TextEq", &index, &keyset, &column, email.clone())?.await?;
+    let probe: Vec<u8> = targets::query("TextEq", &index, &keyset, &column, email()?)?.await?;
     let stored_value: TextEq = serde_json::from_slice(&stored)?;
     let query: TextEqQuery = serde_json::from_slice(&probe)?;
     assert_eq!(query.hm, stored_value.hm);
 
     let opened: ValueFrame = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
-    assert_eq!(opened, email);
+    assert_eq!(opened, email()?);
     Ok(())
 }
 ```

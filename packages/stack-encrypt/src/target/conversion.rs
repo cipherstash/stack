@@ -47,7 +47,7 @@ pub trait EncryptTarget<S: Zeroize>: Sized + 'static {
     where
         S: 's,
     {
-        Encryption::from_build(
+        Encryption::from_owned_build(
             Self::encryption::<K>().shapes(),
             move |source: S, cipher, context| {
                 let guarded = Protected::new(source);

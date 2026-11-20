@@ -1,20 +1,21 @@
-//! A single operation in owned mode asks nothing of the plaintext beyond the
+//! An operation in owned mode asks nothing of the plaintext beyond the
 //! operation's own capability: no `Clone`, so a value that is moved and
-//! wiped can be sealed or indexed.
+//! wiped can be sealed or indexed. A ciphertext and an equality term read
+//! the value by reference as well as by value, which is `EncryptRef`.
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, Orderable, OreTerm};
 use stack_encrypt::target::{
     ciphertext, equality, matching, ope, ore, CallerContext, Owned, Pending,
 };
-use stack_encrypt::{nonempty, KeysetCipher, Encrypt, StackCipherText};
+use stack_encrypt::{nonempty, Encrypt, EncryptRef, KeysetCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
-fn seal<'a, S: Encrypt>(
+fn seal<'a, S: Encrypt + EncryptRef>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, StackCipherText, FakeDataKeySource> {
     keyset.run(ciphertext::<_, _, Owned>(), value, nonempty!("column").into())
 }
-fn index<'a, S: Encrypt>(
+fn index<'a, S: Encrypt + EncryptRef>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, EqualityTerm, FakeDataKeySource> {

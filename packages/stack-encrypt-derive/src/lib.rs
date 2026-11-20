@@ -225,7 +225,7 @@
 //! use stack_encrypt::target::transcode::{Transcode, Visitor};
 //! use stack_encrypt::target::{self, CallerContext, EncryptTarget, RequiredContext};
 //! use stack_encrypt::{
-//!     CipherText, Decryptable, EncryptInto, Encryption, Error, Encrypt, SealedValue,
+//!     CipherText, Decryptable, EncryptInto, Encryption, Error, Encrypt, EncryptRef, SealedValue,
 //!     StackCipher, nonempty,
 //! };
 //! use zeroize::Zeroize;
@@ -255,7 +255,7 @@
 //! }
 //! // The declaration: the canonical ciphertext operation, read into this type.
 //! // It seals under the AEAD half of the context the record threads to it.
-//! impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for LeafBytes {
+//! impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for LeafBytes {
 //!     type ContextInput = RequiredContext<CallerContext>;
 //!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
 //!     where

@@ -753,8 +753,8 @@ pub use target::{
 // `IntoAad` and `IntoPrfContext` are vitaminc's blankets over it, so both
 // derivations see the same bytes.
 pub use vitaminc_aead::{
-    CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, IntoAad,
-    IntoContext, Node, PassthroughFrame, Unspecified,
+    CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, EncryptRef,
+    IntoAad, IntoContext, Node, PassthroughFrame, Unspecified,
 };
 // The vitaminc 0.4 names, deprecated there; re-exported for one transition so
 // a caller that spelled them keeps compiling with a warning.

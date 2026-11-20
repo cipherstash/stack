@@ -149,7 +149,8 @@ use crate::Encrypt;
 /// # What wiping covers
 ///
 /// The document is wiped when the `JsonPlaintext` is dropped
-/// ([`ZeroizeOnDrop`]). A clone is wiped when it is dropped too. The JSON
+/// ([`ZeroizeOnDrop`]). It is not `Clone`, so there is one document to
+/// wipe. The JSON
 /// text written to seal the document is built in a buffer of its final
 /// size, and that buffer is wiped when the document has been sealed.
 ///
@@ -204,12 +205,6 @@ impl From<Value> for JsonPlaintext {
     /// float before it goes into a document.
     fn from(value: Value) -> Self {
         Self(value)
-    }
-}
-
-impl Clone for JsonPlaintext {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
     }
 }
 
@@ -452,12 +447,10 @@ mod tests {
     }
 
     #[test]
-    fn zeroize_leaves_a_null_and_a_clone_is_its_own_copy() {
+    fn zeroize_leaves_a_null() {
         let mut document = JsonPlaintext::from(json!({"secret": "hunter2", "pin": 1234}));
-        let copy = document.clone();
         document.zeroize();
         assert_eq!(document.value(), &Value::Null);
-        assert_eq!(copy.value(), &json!({"secret": "hunter2", "pin": 1234}));
     }
 
     #[test]
