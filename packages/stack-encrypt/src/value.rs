@@ -87,7 +87,9 @@ pub enum RangeError {
     Date,
     /// An instant outside jiff's range, `-009999-01-02T01:59:59Z` to
     /// `9999-12-30T22:00:00.999999999Z`.
-    #[error("the timestamp is outside the representable range, years -9999 to 9999")]
+    #[error(
+        "the timestamp is outside the representable range, -009999-01-02T01:59:59Z to 9999-12-30T22:00:00.999999999Z"
+    )]
     Timestamp,
     /// Nanoseconds of one second or more, which are not a nanosecond
     /// field.
@@ -425,8 +427,8 @@ mod jiff_conversions {
         /// # Errors
         ///
         /// [`RangeError::Timestamp`] for an instant before jiff's own
-        /// `Timestamp::MIN`, which jiff 1.0.0 can make when it parses text
-        /// with a UTC offset.
+        /// `Timestamp::MIN`. jiff 1.0.0 (jiff-core 1.0.0) can make one when
+        /// it parses text with a UTC offset. jiff 1.0.1 refuses that text.
         fn try_from(instant: jiff::Timestamp) -> Result<Self, RangeError> {
             let nanos = conv::timestamp_nanos(instant).ok_or(RangeError::Timestamp)?;
             Timestamp::from_nanos(nanos).ok_or(RangeError::Timestamp)
@@ -769,20 +771,6 @@ mod tests {
                 read::<Timestamp>(Logical::Timestamp(TimeUnit::Nanos), Int::I128(nanos)).unwrap();
             assert_eq!(jiff::Timestamp::from(&ours), instant);
         }
-    }
-
-    /// jiff 1.0.0 parses this to an instant half a second before its own
-    /// minimum (a debug assertion in jiff stops it in debug builds). It
-    /// has no encoding, so the conversion refuses it.
-    #[cfg(all(feature = "jiff", not(debug_assertions)))]
-    #[test]
-    fn an_instant_before_jiffs_minimum_is_refused() {
-        let below: jiff::Timestamp = "-009999-01-02T01:59:58.5Z".parse().unwrap();
-        assert!(below < jiff::Timestamp::MIN);
-        assert_eq!(
-            Timestamp::try_from(below).unwrap_err(),
-            RangeError::Timestamp
-        );
     }
 
     #[cfg(feature = "rust_decimal")]

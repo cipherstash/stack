@@ -172,8 +172,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `v4::plaintext::Date` (an `i32` of days since 1970-01-01),
   `v4::plaintext::Timestamp` (`i64` Unix seconds and `u32` nanoseconds,
   UTC) and `v4::plaintext::Decimal` (an `i128` mantissa and a `u8` scale).
-  Each is built range checked against vitaminc's ranges (dates and
-  timestamps in years -9999 to 9999), refused with a
+  Each is built range checked against vitaminc's ranges (dates from
+  `-009999-01-01` to `9999-12-31`, instants from `-009999-01-02T01:59:59Z`
+  to `9999-12-30T22:00:00.999999999Z`), refused with a
   `v4::plaintext::RangeError` that does not show the value, wiped on drop
   (`Zeroize`, `ZeroizeOnDrop`), and not `Copy`: jiff's and
   rust_decimal's types cannot be wiped, so the by-name dispatch could not

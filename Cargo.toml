@@ -82,7 +82,7 @@ cts-common = { version = "0.43.0", default-features = false }
 zerokms-protocol = "0.12.31"
 recipher = "=0.3.1"
 # The two order-preserving schemes Stack Encrypt's order terms encrypt
-# through. Both implement vitaminc-ore's `OrderScheme` against vitaminc 0.9:
+# through. Both implement vitaminc-ore's `OrderScheme` against vitaminc 0.10:
 # `clww-ore` (cllw-ore renamed) for CLWW ORE and OPE, and ore-rs's
 # `BlockOre` for block ORE, which routes a value to its 6-bit fixed-width
 # engine (up to ten bytes) or its chained one (wider, or variable length),

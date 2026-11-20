@@ -139,7 +139,8 @@ plaintext, or, for a date, a timestamp or a decimal, one of
 A date, a timestamp and a decimal have no Rust standard type, and jiff's
 and rust_decimal's types cannot be wiped, so these three are this crate's
 own. Each is built range checked (vitaminc's ranges, which are jiff's and
-rust_decimal's: dates and timestamps in years -9999 to 9999), refusing a
+rust_decimal's: dates from `-009999-01-01` to `9999-12-31`, instants from
+`-009999-01-02T01:59:59Z` to `9999-12-30T22:00:00.999999999Z`), refusing a
 value outside them with an error that does not show it, and wipes its
 integers when dropped. It is not `Copy`. The `jiff` and `rust_decimal`
 features convert to and from jiff's `civil::Date` and `Timestamp` and
