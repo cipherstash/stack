@@ -103,11 +103,20 @@ jobs:
 
       # Never fails the job: the enforce step below is the gate, and the
       # comment must be posted first.
+      #
+      # A mutant's time is almost all its incremental build (its tests take
+      # about a second), and one crate's rebuild leaves most of the runner's
+      # 16 vCPUs idle, so mutants build in parallel, each job in its own copy
+      # of the tree. Every job but the first pays one cold build of the
+      # dependencies before its first mutant (`copy_target` would not save
+      # it: it copies the checkout's target/, which is empty here, not the
+      # baseline's). Run one at a time, a 387-mutant diff took 64 minutes.
       - name: Run cargo-mutants
         id: mutants
         continue-on-error: true
         env:
           EVENT_NAME: ${{ github.event_name }}
+          CARGO_MUTANTS_JOBS: 6
         run: |
           set +e
           crates=(-p stack-auth -p stack-encrypt)
