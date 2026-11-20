@@ -215,6 +215,7 @@ export type { WarmedAuthStrategy } from "./warmed.d.ts";
  * import { headers } from "next/headers";
  * import { csAuthHeader } from "@cipherstash/auth/next";
  * import { Encryption } from "@cipherstash/stack";
+ * import { users } from "./schema"; // your encryptedTable(s)
  *
  * export async function loadSecret() {
  *   const strategy = csAuthHeader(await headers());
@@ -222,7 +223,10 @@ export type { WarmedAuthStrategy } from "./warmed.d.ts";
  *
  *   // Hand the strategy to a CipherStash SDK — it calls getToken() as needed.
  *   // (The warmed strategy itself never refreshes; it's good for this request.)
- *   const encryption = new Encryption({ authStrategy: strategy });
+ *   const encryption = await Encryption({
+ *     schemas: [users],
+ *     config: { authStrategy: strategy },
+ *   });
  *   // ... encrypt / decrypt with `encryption` ...
  * }
  * ```
