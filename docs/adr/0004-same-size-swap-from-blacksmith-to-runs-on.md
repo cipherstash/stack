@@ -101,8 +101,9 @@ revert the swap only if CI stops working.
 - **Keep warm machines ready.** Jobs would start faster. Warm machines cost
   money while idle.
 - **Pay for a Docker Team or Pro plan.** Either plan removes the pull limit.
-  Billed yearly, Team costs $15 a user a month and Pro costs $9. A Team plan
-  also gives a token that belongs to the organisation, not to one person.
+  Billed yearly, Team costs $15 a user a month, for at least 2 users. Pro
+  costs $9 a month. A Team plan also gives a token that belongs to the
+  organisation, not to one person.
 
 ## Consequences
 
@@ -117,7 +118,10 @@ revert the swap only if CI stops working.
 - Each RunsOn machine has its own public address. Docker Hub still refused
   anonymous pulls in the October 2026 trial, so jobs log in.
 - The free Docker Hub account allows 200 pulls in 6 hours, for all jobs
-  together. In busy hours, jobs can reach that limit, and their pulls fail.
+  together. That figure comes from Docker's documentation, at
+  https://docs.docker.com/docker-hub/usage/pulls/. Docker's pricing page
+  says 100 pulls an hour instead. In busy hours, jobs can reach the limit,
+  and their pulls fail.
 - A pull request from a fork runs its code on a machine in our AWS account. So
   this repository requires approval before any outside contributor's
   workflows run.

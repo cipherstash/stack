@@ -457,7 +457,7 @@ Expected: the two gnu legs and the wrapper job pass. The musl leg fails as it do
 Run: `gh pr checks 1419 --watch`. Read each failed job's log with `gh run view <run-id> --log-failed`.
 
 - **Killed for lack of memory:** the log shows exit code 137, "Killed", or "signal: 9, SIGKILL". Change that job's `family=c8a+m8a` to `family=m8a`. Run `pnpm run test:scripts`, then commit with the message `ci(runners): give <job name> 4 GB per vCPU on m8a`, and push.
-- **`toomanyrequests` from Docker Hub:** report the job to the user. The secrets may not exist yet. Or the jobs may have used all 200 pulls that the free account allows in 6 hours.
+- **`toomanyrequests` from Docker Hub:** report the job to the user. The secrets may not exist yet. Or the jobs may have used all 200 pulls that the free account allows in 6 hours. ADR 0004 names the source of that figure.
 - **Any other failure:** compare it with the same job's latest run on `main`. Report it to the user with an excerpt from each log.
 
 ### Task 6: Record the decision and this plan in #1416
