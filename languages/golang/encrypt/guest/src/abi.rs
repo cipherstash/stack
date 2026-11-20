@@ -100,7 +100,7 @@ use stack_guest_abi::step::{self, Operation, Step};
 
 use crate::io;
 use crate::ops::{self, Bytes};
-use crate::options::{parse_options, parse_selector, scope_for, KeysetSelector, Side};
+use crate::options::{parse_options, parse_selector, scope_for, Export, KeysetSelector};
 #[cfg(not(feature = "deterministic-kms"))]
 use crate::status::STATUS_INTERNAL;
 #[cfg(not(feature = "deterministic-kms"))]
@@ -421,7 +421,7 @@ pub unsafe extern "C" fn se_term(
         let context = Bytes::new(unsafe { input(ctx_ptr, ctx_len)? }.to_vec());
         let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::term(&value, &context, kind)?;
-        let options = parse_options(opts, Side::Term)?;
+        let options = parse_options(opts, Export::Term)?;
         let cipher = cipher()?;
         run(Box::pin(async move {
             let keyset = options.keyset.resolve(&cipher).await?;
@@ -458,7 +458,7 @@ pub unsafe extern "C" fn se_encrypt_record(
         let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
         let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::record(&source, &plan)?;
-        let options = parse_options(opts, Side::Mint)?;
+        let options = parse_options(opts, Export::EncryptRecord)?;
         let cipher = cipher()?;
         run(Box::pin(async move {
             let keyset = options.keyset.resolve(&cipher).await?;
@@ -500,7 +500,7 @@ pub unsafe extern "C" fn se_decrypt_record(
         let record = unsafe { input(rec_ptr, rec_len)? }.to_vec();
         let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
         let opts = unsafe { input(opt_ptr, opt_len)? };
-        let options = parse_options(opts, Side::Open)?;
+        let options = parse_options(opts, Export::DecryptRecord)?;
         ops::validate::record_tree(&record, &plan, options.context.as_ref())?;
         let cipher = cipher()?;
         run(Box::pin(async move {
@@ -566,7 +566,7 @@ pub unsafe extern "C" fn se_query_term(
         let operator = unsafe { input(op_ptr, op_len)? }.to_vec();
         let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::query_term(&value, &plan, &field, &operator)?;
-        let options = parse_options(opts, Side::Term)?;
+        let options = parse_options(opts, Export::QueryTerm)?;
         let cipher = cipher()?;
         run(Box::pin(async move {
             let keyset = options.keyset.resolve(&cipher).await?;
@@ -611,7 +611,7 @@ pub unsafe extern "C" fn se_json_open(
         let request = Bytes::new(unsafe { input(req_ptr, req_len)? }.to_vec());
         let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::json_open(&rows, &plan, &field, &request)?;
-        let options = parse_options(opts, Side::Mint)?;
+        let options = parse_options(opts, Export::JsonOpen)?;
         let cipher = cipher()?;
         run(Box::pin(async move {
             let keyset = options.keyset.resolve(&cipher).await?;

@@ -29,7 +29,7 @@ use stack_encrypt::{
 };
 use stack_encrypt::{AuditMetadata, Controlled, Protected};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
-use stack_encrypt_guest::options::{parse_options, scope_for, KeysetSelector, Side};
+use stack_encrypt_guest::options::{parse_options, scope_for, Export, KeysetSelector};
 use stack_encrypt_guest::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_TERM,
 };
@@ -475,7 +475,8 @@ fn the_audit_option_is_sent_with_every_data_key_request() {
     ]));
     let (facts, expected) = audit_facts();
 
-    let minting = parse_options(&options_frame(Some(facts.clone())), Side::Mint).expect("options");
+    let minting =
+        parse_options(&options_frame(Some(facts.clone())), Export::EncryptRecord).expect("options");
     let record = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
         &protect(&source),
@@ -488,7 +489,8 @@ fn the_audit_option_is_sent_with_every_data_key_request() {
         vec![("generate", Some(expected.clone()))]
     );
 
-    let opening = parse_options(&options_frame(Some(facts)), Side::Open).expect("options");
+    let opening =
+        parse_options(&options_frame(Some(facts)), Export::DecryptRecord).expect("options");
     block_on(ops::decrypt_record(
         &cipher,
         &record,
@@ -503,6 +505,155 @@ fn the_audit_option_is_sent_with_every_data_key_request() {
     );
 }
 
+/// A read of an encrypted JSON document retrieves a data key, so its `audit`
+/// option reaches the key source as an encrypt's and a decrypt's do. The row
+/// is the entry `col -> selector` returns, as the SQL grafts it: the entry
+/// with the document's header and the entry's ordinal.
+#[cfg(feature = "eql")]
+#[test]
+fn the_audit_option_is_sent_with_a_json_read() {
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    let plan = encode(obj(vec![(
+        "profile",
+        obj(vec![
+            ("context", Tree::Array(vec![s("users"), s("profile")])),
+            ("type", s("json")),
+            ("null", s("sql")),
+            ("target", s("JsonSearch")),
+        ]),
+    )]));
+    let source = encode(Tree::Array(vec![obj(vec![(
+        "profile",
+        Tree::Bytes(br#"{"name":"Alice","age":34}"#.to_vec()),
+    )])]));
+    let sealed = block_on(ops::encrypt_record(
+        &keyset,
+        &protect(&source),
+        &protect(&plan),
+        AuditMetadata::new(),
+    ))
+    .expect("seal the document");
+
+    // The stored EQL value: one passthrough node of JSON bytes.
+    let stored = match decode_tree(&sealed) {
+        CipherText::Sequence(rows) => match rows.into_iter().next() {
+            Some(CipherText::Map(fields)) => match fields.into_iter().next() {
+                Some((_, CipherText::Map(outputs))) => match outputs.into_iter().next() {
+                    Some((_, CipherText::Passthrough(PassthroughFrame(frame)))) => {
+                        match decode(&frame) {
+                            Tree::Bytes(json) => json,
+                            other => panic!("an EQL value is bytes, got {}", kind(&other)),
+                        }
+                    }
+                    _ => panic!("the field holds one passthrough node"),
+                },
+                _ => panic!("the row holds the field's outputs"),
+            },
+            _ => panic!("the batch holds one row"),
+        },
+        _ => panic!("a sealed batch is a sequence"),
+    };
+    let document: serde_json::Value = serde_json::from_slice(&stored).expect("the EQL value");
+
+    // The selector for `$.name`, and the entry that carries it.
+    let path = encode(obj(vec![("path", s("$.name"))]));
+    let term = block_on(ops::query_term(
+        &keyset,
+        &protect(&path),
+        &protect(&plan),
+        b"profile",
+        b"selector",
+    ))
+    .expect("derive the selector");
+    let selector = query_term_entries(&term)
+        .into_iter()
+        .find_map(|(key, value)| match (key.as_str(), value) {
+            ("term", Tree::String(selector)) => Some(selector),
+            _ => None,
+        })
+        .expect("a selector is text");
+    let entries = document["sv"].as_array().expect("the document's entries");
+    let (ordinal, entry) = entries
+        .iter()
+        .enumerate()
+        .find(|(_, entry)| entry["s"] == selector.as_str())
+        .expect("an entry carries the selector");
+    let mut entry = entry.clone();
+    entry["h"] = document["h"].clone();
+    entry["j"] = serde_json::json!(ordinal);
+    let row = serde_json::to_vec(&entry).expect("the entry is JSON");
+
+    let rows = encode(Tree::Array(vec![Tree::Array(vec![Tree::Bytes(row)])]));
+    let request = encode(obj(vec![
+        ("operation", s("selector")),
+        ("path", s("$.name")),
+    ]));
+    let (facts, expected) = audit_facts();
+    let reading = parse_options(&options_frame(Some(facts)), Export::JsonOpen).expect("options");
+    cipher.kms().take_unverified(); // the seal's request is not under test
+
+    let opened = block_on(ops::json_open(
+        &keyset,
+        &protect(&rows),
+        &protect(&plan),
+        b"profile",
+        &protect(&request),
+        reading.audit,
+    ))
+    .expect("open the read");
+    assert_eq!(
+        decode(&opened),
+        Tree::Array(vec![Tree::Array(vec![Tree::Bytes(br#""Alice""#.to_vec())])])
+    );
+    assert_eq!(
+        cipher.kms().take_unverified(),
+        vec![("retrieve", Some(expected))]
+    );
+}
+
+/// A value with a logical type has no form in audit metadata: a date, a
+/// timestamp, a decimal or a UUID. The frame's reader refuses each one, so a
+/// binding sends a time as text (see `options`).
+#[test]
+fn a_typed_value_in_audit_is_refused() {
+    use stack_encrypt::dynamic::plaintext::{Logical, TimeUnit};
+    let typed = |ty: Logical, value: Tree| Tree::Typed(ty, Box::new(value));
+    for (label, value) in [
+        ("a date", typed(Logical::Date, Tree::Int32(20_000))),
+        (
+            "a timestamp",
+            typed(
+                Logical::Timestamp(TimeUnit::Seconds),
+                Tree::Int64(1_795_000_000),
+            ),
+        ),
+        (
+            "a decimal",
+            typed(Logical::Decimal { scale: 2 }, Tree::Int64(1999)),
+        ),
+        ("a UUID", typed(Logical::Uuid, Tree::Bytes(vec![7; 16]))),
+    ] {
+        for nested in [value.clone(), Tree::Array(vec![value.clone()])] {
+            let options = options_frame(Some(obj(vec![("fact", nested)])));
+            for export in [
+                Export::EncryptRecord,
+                Export::DecryptRecord,
+                Export::JsonOpen,
+            ] {
+                assert_eq!(
+                    parse_options(&options, export).err(),
+                    Some(STATUS_ENCODING),
+                    "{label} must be refused for {export:?}"
+                );
+            }
+        }
+    }
+    // The same instant as text is read.
+    let text = options_frame(Some(obj(vec![("fact", s("2026-11-20T10:00:00Z"))])));
+    assert!(parse_options(&text, Export::DecryptRecord).is_ok());
+}
+
 /// With no `audit` key, and with an empty one, a call sends no unverified
 /// context.
 #[test]
@@ -510,7 +661,8 @@ fn no_audit_option_sends_no_unverified_context() {
     let cipher = cipher();
     let source = encode(Tree::Array(vec![row(29, "alice smith")]));
     for audit in [None, Some(obj(vec![]))] {
-        let minting = parse_options(&options_frame(audit.clone()), Side::Mint).expect("options");
+        let minting =
+            parse_options(&options_frame(audit.clone()), Export::EncryptRecord).expect("options");
         let record = block_on(ops::encrypt_record(
             &cipher.default_keyset(),
             &protect(&source),
@@ -518,7 +670,7 @@ fn no_audit_option_sends_no_unverified_context() {
             minting.audit,
         ))
         .expect("encrypt records");
-        let opening = parse_options(&options_frame(audit), Side::Open).expect("options");
+        let opening = parse_options(&options_frame(audit), Export::DecryptRecord).expect("options");
         block_on(ops::decrypt_record(
             &cipher,
             &record,

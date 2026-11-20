@@ -27,7 +27,7 @@ mod support;
 use stack_encrypt::dynamic::frame::encode_ciphertext;
 use stack_encrypt::dynamic::plaintext::Logical;
 use stack_encrypt::{AuditMetadata, CipherText, Descriptor, Node, PassthroughFrame, StackCipher};
-use stack_encrypt_guest::options::{parse_options, Side};
+use stack_encrypt_guest::options::{parse_options, Export};
 use stack_encrypt_guest::status::fail_error;
 use stack_encrypt_guest::{config, ops};
 use stack_guest_abi::call;
@@ -560,7 +560,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
         (
             "options that are not an object",
             failure("options", &["stack_guest_abi::malformed_input"], || {
-                parse_options(&encode(s(CONTEXT)), Side::Open)
+                parse_options(&encode(s(CONTEXT)), Export::DecryptRecord)
             }),
         ),
         // -- ZeroKMS, through a key source whose answers carry the body ---
@@ -593,7 +593,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("keyset", &["stack_kms::keyset_not_found"], || {
                 let options = parse_options(
                     &encode(obj(vec![("keyset", obj(vec![("name", s("tenant"))]))])),
-                    Side::Mint,
+                    Export::EncryptRecord,
                 )?;
                 block_on(options.keyset.resolve(&failing)).map(drop)
             }),
@@ -610,7 +610,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     ("keyset", obj(vec![("default", obj(vec![]))])),
                     ("audit", facts),
                 ]);
-                parse_options(&encode(options), Side::Mint).map(drop)
+                parse_options(&encode(options), Export::EncryptRecord).map(drop)
             }),
         ),
         (
@@ -620,7 +620,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     ("keyset", obj(vec![("default", obj(vec![]))])),
                     ("audit", obj(vec![(AUDIT_FACT, s(AUDIT_FACT))])),
                 ]);
-                parse_options(&encode(options), Side::Term).map(drop)
+                parse_options(&encode(options), Export::Term).map(drop)
             }),
         ),
         // -- the access token ----------------------------------------------
@@ -864,7 +864,7 @@ fn a_keyset_not_found_carries_its_help_and_request_kind() {
     let error = failure("keyset", &["stack_kms::keyset_not_found"], || {
         let options = parse_options(
             &encode(obj(vec![("keyset", obj(vec![("name", s("tenant"))]))])),
-            Side::Mint,
+            Export::EncryptRecord,
         )?;
         block_on(options.keyset.resolve(&failing)).map(drop)
     });
