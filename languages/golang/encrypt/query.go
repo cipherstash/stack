@@ -145,8 +145,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	if err != nil {
 		return QueryTerm{}, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	// A term asks for no data key, so the call sends no audit metadata.
-	opts, err := vcffi.Marshal(options(cph.keyset, "", nil))
+	opts, err := cph.termCall().marshal()
 	if err != nil {
 		return QueryTerm{}, err
 	}

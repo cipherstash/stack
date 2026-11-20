@@ -188,13 +188,15 @@ func (cph *Cipher) OpenTreeForTest(ctx context.Context, tree []any, plan *record
 	if err != nil {
 		return nil, err
 	}
-	return cph.client.openTree(ctx, cph.keyset, cph.context, cph.audit, p, tree)
+	opts := cph.dataKeyCall()
+	opts.context = cph.context
+	return cph.client.openTree(ctx, opts, p, tree)
 }
 
 // OpenTreeForTest deliberately bypasses host plan validation to observe the
 // uninitialised guest's preflight, including plans the host refuses earlier.
 func (k *Checker) OpenTreeForTest(ctx context.Context, tree []any, plan *record.Plan, expected string) ([]record.Source, error) {
-	return k.c.openTree(ctx, k.c.DefaultKeyset().keyset, expected, nil, plan, tree)
+	return k.c.openTree(ctx, callOptions{keyset: k.c.DefaultKeyset().keyset, context: expected}, plan, tree)
 }
 
 // OpenFrameForTest hands the guest a stored batch already in the transport
@@ -209,13 +211,15 @@ func (cph *Cipher) OpenFrameForTest(ctx context.Context, encoded []byte, rows in
 	if err != nil {
 		return nil, err
 	}
-	return cph.client.openEncoded(ctx, cph.keyset, cph.context, cph.audit, p, encoded, rows)
+	opts := cph.dataKeyCall()
+	opts.context = cph.context
+	return cph.client.openEncoded(ctx, opts, p, encoded, rows)
 }
 
 // OpenFrameForTest is the uninitialised guest's view of the same batch: its
 // preflight on the raw bytes, before any cipher exists.
 func (k *Checker) OpenFrameForTest(ctx context.Context, encoded []byte, rows int, plan *record.Plan, expected string) ([]record.Source, error) {
-	return k.c.openEncoded(ctx, k.c.DefaultKeyset().keyset, expected, nil, plan, encoded, rows)
+	return k.c.openEncoded(ctx, callOptions{keyset: k.c.DefaultKeyset().keyset, context: expected}, plan, encoded, rows)
 }
 
 // ObserveEncryptPlansForTest copies the actual plan buffer at the WASM call
@@ -312,7 +316,9 @@ func (cph *Cipher) TermWithAuditForTest(ctx context.Context, value any, fieldCon
 		return nil, err
 	}
 	code, _ := termKindCode(record.Equality)
-	opts, err := vcffi.Marshal(options(cph.keyset, "", cph.audit))
+	// The options of a data-key call, on a term call: the metadata rides
+	// where the SDK never puts it.
+	opts, err := cph.dataKeyCall().marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +331,7 @@ func (cph *Cipher) TermWithAuditForTest(ctx context.Context, value any, fieldCon
 // receives it: the options object's "audit" value, through the transport
 // codec. nil for a cipher that sends none.
 func (cph *Cipher) AuditFactsForTest() (any, error) {
-	facts, ok := options(cph.keyset, "", cph.audit)["audit"]
+	facts, ok := cph.dataKeyCall().wire()["audit"]
 	if !ok {
 		return nil, nil
 	}
