@@ -66,14 +66,18 @@ does not act while a workflow runs.
 _Avoid_: lint, selector guard, path-filter lint
 
 **Light job**:
-A job that runs acceptably on a GitHub-hosted standard runner. Whether a job is
-light says where it runs, not when: a light job can be a gate check.
+A job that runs acceptably on a GitHub-hosted standard runner. ADR 0002
+planned to run light jobs there. ADR 0004 superseded that plan, so being light
+no longer decides where a job runs. Being light says nothing about when a job
+runs: a light job can be a gate check.
 _Avoid_: small job, cheap job
 
 **Heavy job**:
-A job that needs more machine than a GitHub-hosted standard runner gives it,
-and runs on a self-provisioned cloud runner instead. Whether a job is heavy
-says where it runs, not when: a heavy job can be a push check.
+A job that needs more machine than a GitHub-hosted standard runner gives it.
+ADR 0002 planned to run heavy jobs on a self-provisioned cloud runner instead.
+ADR 0004 superseded that plan, so being heavy no longer decides where a job
+runs. Being heavy says nothing about when a job runs: a heavy job can be a push
+check.
 _Avoid_: big job, 16-core job
 
 **Same-size swap**:
@@ -84,9 +88,10 @@ _Avoid_: like-for-like replacement, migration
 
 ## Relationships
 
-- Three separate choices apply to each check. Its trigger paths decide whether
+- Two separate choices apply to each check. Its trigger paths decide whether
   it runs at all. Being a push check or a gate check decides when it runs.
-  Being a light job or a heavy job decides where it runs.
+- Being a light job or a heavy job is a third, separate property. Under
+  ADR 0002, it decided where a check runs. ADR 0004 superseded that plan.
 - The fuzz regression replay, for example, is a light job and a gate check.
 - Mutation testing is expensive but important. So it runs only once the
   design and implementation of a change are settled. Its failures must be
