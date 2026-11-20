@@ -421,7 +421,7 @@ pub unsafe extern "C" fn se_term(
         let context = Bytes::new(unsafe { input(ctx_ptr, ctx_len)? }.to_vec());
         let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::term(&value, &context, kind)?;
-        let options = parse_options(opts, Side::Mint)?;
+        let options = parse_options(opts, Side::Term)?;
         let cipher = cipher()?;
         run(Box::pin(async move {
             let keyset = options.keyset.resolve(&cipher).await?;
@@ -436,6 +436,8 @@ pub unsafe extern "C" fn se_term(
 /// rows and fields seal from **one** batched key request regardless of row
 /// count — dispatched as one `generate-data-key` call per 500 keyed leaves,
 /// sequentially — and terms derive under the same keyset's index key.
+/// `opts` may carry `audit`, the audit metadata the engine sends with each
+/// of those key requests ([`crate::options`]).
 ///
 /// # Safety
 ///
@@ -460,7 +462,7 @@ pub unsafe extern "C" fn se_encrypt_record(
         let cipher = cipher()?;
         run(Box::pin(async move {
             let keyset = options.keyset.resolve(&cipher).await?;
-            ops::encrypt_record(&keyset, &source, &plan).await
+            ops::encrypt_record(&keyset, &source, &plan, options.audit).await
         }))
     })
 }
@@ -475,6 +477,8 @@ pub unsafe extern "C" fn se_encrypt_record(
 /// `opts` may also carry `context`, the context the host expects each
 /// record's context field to hold ([`crate::options`]); a record storing
 /// another is `STATUS_CONTEXT_MISMATCH`, before any key is retrieved.
+/// `opts` may carry `audit` too, the audit metadata the engine sends with
+/// each key request.
 /// The output buffer contains **plaintext**: the host copies it out and
 /// immediately `se_dealloc`s it (which wipes it).
 ///
@@ -501,7 +505,7 @@ pub unsafe extern "C" fn se_decrypt_record(
         let cipher = cipher()?;
         run(Box::pin(async move {
             let scope = scope_for(&cipher, &options.keyset).await?;
-            ops::decrypt_record(scope, &record, &plan, options.context).await
+            ops::decrypt_record(scope, &record, &plan, options.context, options.audit).await
         }))
     })
 }
@@ -562,7 +566,7 @@ pub unsafe extern "C" fn se_query_term(
         let operator = unsafe { input(op_ptr, op_len)? }.to_vec();
         let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::query_term(&value, &plan, &field, &operator)?;
-        let options = parse_options(opts, Side::Mint)?;
+        let options = parse_options(opts, Side::Term)?;
         let cipher = cipher()?;
         run(Box::pin(async move {
             let keyset = options.keyset.resolve(&cipher).await?;
@@ -578,7 +582,9 @@ pub unsafe extern "C" fn se_query_term(
 /// was prepared under); a codec-encoded list per row of JSON texts out. The
 /// output buffer contains **plaintext**: the host copies it out and
 /// immediately `se_dealloc`s it (which wipes it). The rows and the request
-/// hold no plaintext and are left untouched.
+/// hold no plaintext and are left untouched. `opts` may carry `audit`, the
+/// audit metadata the engine sends with the read's key request
+/// ([`crate::options`]).
 ///
 /// # Safety
 ///
@@ -609,7 +615,7 @@ pub unsafe extern "C" fn se_json_open(
         let cipher = cipher()?;
         run(Box::pin(async move {
             let keyset = options.keyset.resolve(&cipher).await?;
-            ops::json_open(&keyset, &rows, &plan, &field, &request).await
+            ops::json_open(&keyset, &rows, &plan, &field, &request, options.audit).await
         }))
     })
 }

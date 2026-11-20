@@ -13,7 +13,9 @@
 //!   statuses.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use std::future::IntoFuture;
 
@@ -25,9 +27,9 @@ use stack_encrypt::{
     nonempty, CipherText, Label, Node, PassthroughFrame, PendingStackCipherText, SealedValue,
     StackCipher,
 };
-use stack_encrypt::{Controlled, Protected};
+use stack_encrypt::{AuditMetadata, Controlled, Protected};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
-use stack_encrypt_guest::options::{scope_for, KeysetSelector};
+use stack_encrypt_guest::options::{parse_options, scope_for, KeysetSelector, Side};
 use stack_encrypt_guest::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_TERM,
 };
@@ -37,7 +39,7 @@ use stack_kms::{
 };
 use support::{protect, Tree};
 use uuid::Uuid;
-use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
+use zerokms_protocol::{IdentifiedBy, UnverifiedContext, UnverifiedContextValue};
 
 /// `futures::executor::block_on` over anything awaitable: the term API
 /// returns a `Pending`, which is `IntoFuture` rather than `Future`.
@@ -57,6 +59,16 @@ struct Counting {
     inner: FakeDataKeySource,
     generate_calls: AtomicUsize,
     retrieve_calls: AtomicUsize,
+    /// The unverified context of every data-key request, in order: what a
+    /// call's audit metadata reaches ZeroKMS as.
+    unverified: Mutex<Vec<(&'static str, Option<UnverifiedContext>)>>,
+}
+
+impl Counting {
+    /// The unverified context of each data-key request so far, cleared.
+    fn take_unverified(&self) -> Vec<(&'static str, Option<UnverifiedContext>)> {
+        std::mem::take(&mut *self.unverified.lock().expect("not poisoned"))
+    }
 }
 
 impl DataKeySource for Counting {
@@ -67,6 +79,10 @@ impl DataKeySource for Counting {
         unverified_context: Option<Cow<'_, UnverifiedContext>>,
     ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
         self.generate_calls.fetch_add(1, Ordering::SeqCst);
+        self.unverified
+            .lock()
+            .expect("not poisoned")
+            .push(("generate", unverified_context.as_deref().cloned()));
         self.inner
             .generate_keys(payloads, keyset_id, unverified_context)
             .await
@@ -79,6 +95,10 @@ impl DataKeySource for Counting {
         unverified_context: Option<&UnverifiedContext>,
     ) -> Result<Vec<DataKey>, stack_kms::Error> {
         self.retrieve_calls.fetch_add(1, Ordering::SeqCst);
+        self.unverified
+            .lock()
+            .expect("not poisoned")
+            .push(("retrieve", unverified_context.cloned()));
         self.inner
             .retrieve_keys(payloads, keyset_id, unverified_context)
             .await
@@ -411,6 +431,109 @@ fn unsupported_term_inputs_are_encoding_errors() {
 // Records
 // =============================================================================
 
+/// The options object with the default keyset and, when given, an `audit`
+/// key: the frame a host sends.
+fn options_frame(audit: Option<Tree>) -> Vec<u8> {
+    let mut entries = vec![("keyset", obj(vec![("default", obj(vec![]))]))];
+    if let Some(audit) = audit {
+        entries.push(("audit", audit));
+    }
+    encode(obj(entries))
+}
+
+/// The facts a host sends, and the same facts as ZeroKMS takes them.
+fn audit_facts() -> (Tree, UnverifiedContext) {
+    let sent = obj(vec![
+        ("purpose", s("list issues")),
+        ("rows", Tree::UInt32(3)),
+        ("request", obj(vec![("id", s("req_01J9Z3"))])),
+    ]);
+    let text = |value: &str| Some(UnverifiedContextValue::String(value.to_owned()));
+    let received = UnverifiedContext(HashMap::from([
+        ("purpose".to_owned(), text("list issues")),
+        ("rows".to_owned(), Some(UnverifiedContextValue::I64(3))),
+        (
+            "request".to_owned(),
+            Some(UnverifiedContextValue::Map(HashMap::from([(
+                "id".to_owned(),
+                text("req_01J9Z3"),
+            )]))),
+        ),
+    ]));
+    (sent, received)
+}
+
+/// The `audit` key of the options object reaches ZeroKMS as the unverified
+/// context of the call's data-key requests: from the frame a host sends,
+/// through the options parser and the record operations, to the key source.
+#[test]
+fn the_audit_option_is_sent_with_every_data_key_request() {
+    let cipher = cipher();
+    let source = encode(Tree::Array(vec![
+        row(29, "alice smith"),
+        row(34, "bob jones"),
+    ]));
+    let (facts, expected) = audit_facts();
+
+    let minting = parse_options(&options_frame(Some(facts.clone())), Side::Mint).expect("options");
+    let record = block_on(ops::encrypt_record(
+        &cipher.default_keyset(),
+        &protect(&source),
+        &protect(&plan()),
+        minting.audit,
+    ))
+    .expect("encrypt records");
+    assert_eq!(
+        cipher.kms().take_unverified(),
+        vec![("generate", Some(expected.clone()))]
+    );
+
+    let opening = parse_options(&options_frame(Some(facts)), Side::Open).expect("options");
+    block_on(ops::decrypt_record(
+        &cipher,
+        &record,
+        &protect(&plan()),
+        None,
+        opening.audit,
+    ))
+    .expect("decrypt records");
+    assert_eq!(
+        cipher.kms().take_unverified(),
+        vec![("retrieve", Some(expected))]
+    );
+}
+
+/// With no `audit` key, and with an empty one, a call sends no unverified
+/// context.
+#[test]
+fn no_audit_option_sends_no_unverified_context() {
+    let cipher = cipher();
+    let source = encode(Tree::Array(vec![row(29, "alice smith")]));
+    for audit in [None, Some(obj(vec![]))] {
+        let minting = parse_options(&options_frame(audit.clone()), Side::Mint).expect("options");
+        let record = block_on(ops::encrypt_record(
+            &cipher.default_keyset(),
+            &protect(&source),
+            &protect(&plan()),
+            minting.audit,
+        ))
+        .expect("encrypt records");
+        let opening = parse_options(&options_frame(audit), Side::Open).expect("options");
+        block_on(ops::decrypt_record(
+            &cipher,
+            &record,
+            &protect(&plan()),
+            None,
+            opening.audit,
+        ))
+        .expect("decrypt records");
+        assert_eq!(
+            cipher.kms().take_unverified(),
+            vec![("generate", None), ("retrieve", None)]
+        );
+    }
+}
+
 #[test]
 fn a_record_batch_encrypts_in_one_call_and_round_trips() {
     let cipher = cipher();
@@ -424,6 +547,7 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
         &cipher.default_keyset(),
         &protect(&source),
         &protect(&plan()),
+        AuditMetadata::new(),
     ))
     .expect("encrypt records");
     // Three rows, two ciphertext fields each: still exactly one call.
@@ -434,6 +558,7 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
         &record,
         &protect(&plan()),
         None,
+        AuditMetadata::new(),
     ))
     .expect("decrypt records");
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 1);
@@ -464,6 +589,7 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
         &cipher.default_keyset(),
         &protect(&source),
         &protect(&plan()),
+        AuditMetadata::new(),
     ))
     .expect("encrypt record");
 
@@ -490,7 +616,8 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
             &cipher,
             &forged,
             &protect(&plan()),
-            None
+            None,
+            AuditMetadata::new()
         )),
         Err(STATUS_ENCODING),
         "a passthrough in a ciphertext slot must be a hard error, never plaintext"
@@ -521,7 +648,8 @@ fn a_passthrough_source_value_is_refused_a_ciphertext_slot() {
             block_on(ops::encrypt_record(
                 &cipher.default_keyset(),
                 &protect(&source),
-                &protect(&plan)
+                &protect(&plan),
+                AuditMetadata::new()
             )),
             Err(STATUS_ENCODING)
         );
@@ -535,6 +663,7 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
         &cipher.default_keyset(),
         &protect(&encode(row(34, "alice smith"))),
         &protect(&plan()),
+        AuditMetadata::new(),
     ))
     .expect("encrypt record");
 
@@ -623,6 +752,7 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
         &cipher.default_keyset(),
         &protect(&encode(row(34, "alice smith"))),
         &protect(&extended_plan()),
+        AuditMetadata::new(),
     ))
     .expect("encrypt record");
 
@@ -711,6 +841,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
         &record,
         &protect(&plan_with(extended("age"))),
         None,
+        AuditMetadata::new(),
     ))
     .expect("open through the plan");
     let Tree::Object(fields) = decode(&opened) else {
@@ -723,7 +854,8 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
             &cipher,
             &record,
             &protect(&plan_with(label("age"))),
-            None
+            None,
+            AuditMetadata::new()
         )),
         Err(STATUS_AUTH),
         "the flat label is not the one it was sealed under"
@@ -757,7 +889,8 @@ fn a_structured_plan_context_is_validated_at_parse() {
             block_on(ops::encrypt_record(
                 &cipher.default_keyset(),
                 &protect(&source),
-                &protect(&plan_with(bad))
+                &protect(&plan_with(bad)),
+                AuditMetadata::new()
             )),
             Err(STATUS_ENCODING),
             "a plan context of {label} must be refused at parse"
@@ -775,13 +908,15 @@ fn a_structured_plan_context_is_validated_at_parse() {
         &cipher.default_keyset(),
         &protect(&source),
         &protect(&plan_with(Tree::Array(vec![label("f"), s("")]))),
+        AuditMetadata::new(),
     ))
     .expect("a label extended by an empty part is never empty");
     assert!(block_on(ops::decrypt_record(
         &cipher,
         &sealed,
         &protect(&plan_with(Tree::Array(vec![label("f"), s("")]))),
-        None
+        None,
+        AuditMetadata::new()
     ))
     .is_ok());
 }
@@ -797,7 +932,8 @@ fn record_shape_violations_are_encoding_errors() {
         block_on(ops::encrypt_record(
             &cipher.default_keyset(),
             &protect(&missing),
-            &protect(&plan())
+            &protect(&plan()),
+            AuditMetadata::new()
         )),
         Err(STATUS_ENCODING)
     );
@@ -811,7 +947,8 @@ fn record_shape_violations_are_encoding_errors() {
         block_on(ops::encrypt_record(
             &cipher.default_keyset(),
             &protect(&extra),
-            &protect(&plan())
+            &protect(&plan()),
+            AuditMetadata::new()
         )),
         Err(STATUS_ENCODING)
     );
@@ -824,7 +961,8 @@ fn record_shape_violations_are_encoding_errors() {
         block_on(ops::encrypt_record(
             &cipher.default_keyset(),
             &protect(&nested),
-            &protect(&plan())
+            &protect(&plan()),
+            AuditMetadata::new()
         )),
         Err(STATUS_ENCODING),
         "a term-indexed field must be a scalar"
@@ -860,6 +998,7 @@ fn record_shape_violations_are_encoding_errors() {
                 &cipher.default_keyset(),
                 &protect(&encode(obj(vec![("f", Tree::UInt32(1))]))),
                 &protect(&encode(bad_plan)),
+                AuditMetadata::new(),
             )),
             Err(STATUS_ENCODING)
         );
@@ -892,7 +1031,8 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         block_on(ops::encrypt_record(
             &cipher.default_keyset(),
             &protect(&source),
-            &protect(&bad_plan)
+            &protect(&bad_plan),
+            AuditMetadata::new()
         )),
         Err(STATUS_ENCODING)
     );
@@ -906,7 +1046,8 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
             &cipher,
             &source,
             &protect(&bad_plan),
-            None
+            None,
+            AuditMetadata::new()
         )),
         Err(STATUS_ENCODING)
     );
@@ -925,6 +1066,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         &cipher.default_keyset(),
         &protect(&source),
         &protect(&odd_plan),
+        AuditMetadata::new(),
     ))
     .expect("encrypt");
     let opened = block_on(ops::decrypt_record(
@@ -932,6 +1074,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         &sealed,
         &protect(&odd_plan),
         None,
+        AuditMetadata::new(),
     ))
     .expect("decrypt");
     let Tree::Object(fields) = decode(&opened) else {
@@ -965,12 +1108,14 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
         &acme,
         &protect(&encode(row(29, "alice smith"))),
         &protect(&plan()),
+        AuditMetadata::new(),
     ))
     .expect("encrypt acme row");
     let globex_rows = block_on(ops::encrypt_record(
         &globex,
         &protect(&encode(row(34, "bob jones"))),
         &protect(&plan()),
+        AuditMetadata::new(),
     ))
     .expect("encrypt globex row");
     let batch = {
@@ -991,6 +1136,7 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
         &batch,
         &protect(&plan()),
         None,
+        AuditMetadata::new(),
     ))
     .expect("any opens the mixed batch");
     assert_eq!(
@@ -1005,7 +1151,13 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
 
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
     assert_eq!(
-        block_on(ops::decrypt_record(acme, &batch, &protect(&plan()), None)),
+        block_on(ops::decrypt_record(
+            acme,
+            &batch,
+            &protect(&plan()),
+            None,
+            AuditMetadata::new()
+        )),
         Err(STATUS_FOREIGN_KEYSET)
     );
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), before);
@@ -1185,7 +1337,8 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
             block_on(ops::encrypt_record(
                 &cipher.default_keyset(),
                 &protect(&source),
-                &protect(&plan)
+                &protect(&plan),
+                AuditMetadata::new()
             )),
             Err(STATUS_ENCODING),
             "{label} must be refused by the op too"
@@ -1235,6 +1388,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         &cipher.default_keyset(),
         &protect(&encode(row(29, "alice"))),
         &protect(&plan),
+        AuditMetadata::new(),
     ))
     .expect("encrypt record");
     assert_eq!(
@@ -1300,7 +1454,13 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
             "{label} must be refused by validation"
         );
         assert_eq!(
-            block_on(ops::decrypt_record(&cipher, &tree, &protect(&plan), None)),
+            block_on(ops::decrypt_record(
+                &cipher,
+                &tree,
+                &protect(&plan),
+                None,
+                AuditMetadata::new()
+            )),
             Err(STATUS_ENCODING),
             "{label} must be refused by the op too"
         );
@@ -2209,6 +2369,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         &cipher.default_keyset(),
         &protect(&batch),
         &protect(&plan),
+        AuditMetadata::new(),
     ))
     .expect("encrypt a batch of two tenants");
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 1);
@@ -2228,8 +2389,14 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
     };
     assert_ne!(eq_of(&rows[0]), eq_of(&rows[1]));
 
-    let opened = block_on(ops::decrypt_record(&cipher, &record, &protect(&plan), None))
-        .expect("each record opens under the context it stores");
+    let opened = block_on(ops::decrypt_record(
+        &cipher,
+        &record,
+        &protect(&plan),
+        None,
+        AuditMetadata::new(),
+    ))
+    .expect("each record opens under the context it stores");
     let Tree::Array(opened) = decode(&opened) else {
         panic!("an array of rows");
     };
@@ -2251,6 +2418,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
             &record,
             &protect(&plan),
             Some(acme.clone()),
+            AuditMetadata::new(),
         )),
         Err(STATUS_CONTEXT_MISMATCH),
         "the globex record is not the acme one"
@@ -2276,6 +2444,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         &cipher.default_keyset(),
         &protect(&one),
         &protect(&plan),
+        AuditMetadata::new(),
     ))
     .expect("encrypt one");
     assert_eq!(
@@ -2287,6 +2456,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         &record,
         &protect(&plan),
         Some(acme),
+        AuditMetadata::new(),
     ))
     .expect("the expected context opens it");
     let Tree::Object(fields) = decode(&opened) else {

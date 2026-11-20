@@ -2,8 +2,9 @@
 //!
 //! Every export that touches a keyset takes one more codec-encoded
 //! argument: a frame object with one required key, `keyset`, whose
-//! value is a tagged object naming the keyset the call binds to, and on
-//! `se_decrypt_record` one optional key, `context` (below):
+//! value is a tagged object naming the keyset the call binds to, and two
+//! optional keys: `context` on `se_decrypt_record`, and `audit` on the
+//! exports that request data keys (both below):
 //!
 //! | selector          | meaning |
 //! |-------------------|---------|
@@ -37,12 +38,31 @@
 //! and a term's context arrives as its own argument. A `context` that is
 //! not a string, or not a plain label, is [`STATUS_ENCODING`] too.
 //!
+//! `audit` is audit metadata: facts about the call, which the engine sends
+//! with every data-key request the call makes, for the ZeroKMS audit log.
+//! It is the data form of the Rust call's `.audit(metadata)`, and
+//! [`AuditMetadata`] reads it. The value is an object with text keys. A
+//! value in it is a bool, an integer that fits a signed 64-bit integer, a
+//! float, text, null, a list of these, or another such object. Bytes, a
+//! wider integer and a value with a logical type (a date, a timestamp, a
+//! decimal) are [`STATUS_ENCODING`], and so is an `audit` that is not an
+//! object. A float that is not finite is sent as null. An empty object
+//! sends nothing, as an absent key does. ZeroKMS does not verify the facts,
+//! and no key depends on them.
+//!
+//! `audit` is accepted where the call requests data keys:
+//! `se_encrypt_record`, `se_decrypt_record` and `se_json_open`. On `se_term`
+//! and `se_query_term` it is [`STATUS_ENCODING`]: a term is derived from the
+//! keyset's index key, so the call makes no data-key request to send the
+//! facts with, and a host that sent them there would log nothing.
+//!
 //! This object is a cross-language contract: every binding builds it, so
-//! it is objects, strings, bytes and nothing else, and this module is its
-//! one home. The Go bindings plan points here.
+//! it is objects, strings, bytes and, inside `audit`, the plain values
+//! listed above, and this module is its one home. The Go bindings plan
+//! points here.
 
 use stack_encrypt::CipherRef;
-use stack_encrypt::{KeysetCipher, Label, StackCipher};
+use stack_encrypt::{AuditMetadata, KeysetCipher, Label, StackCipher};
 use stack_kms::{IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
 use zerokms_protocol::Name;
@@ -67,24 +87,37 @@ pub enum KeysetSelector {
     Any,
 }
 
-/// Which side of the boundary an options object is parsed for: the sealing
-/// and term exports need a keyset to mint under, so `{"any"}` is refused
-/// there.
+/// Which export an options object is parsed for. It decides which keys the
+/// object may carry:
+///
+/// | side   | `{"any"}` | `context` | `audit` |
+/// |--------|-----------|-----------|---------|
+/// | `Mint` | refused   | refused   | read    |
+/// | `Term` | refused   | refused   | refused |
+/// | `Open` | read      | read      | read    |
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
-    /// `se_encrypt_record`, `se_term`.
+    /// `se_encrypt_record` and `se_json_open`: the call needs one keyset to
+    /// work under, and requests data keys.
     Mint,
+    /// `se_term` and `se_query_term`: the call needs one keyset to derive
+    /// under, and requests no data key.
+    Term,
     /// `se_decrypt_record`.
     Open,
 }
 
 /// The parsed options object.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Options {
     pub keyset: KeysetSelector,
     /// The context the host expects a record's context field to hold;
     /// opening only. See the [module docs](self).
     pub context: Option<Label>,
+    /// The audit metadata to send with the call's data-key requests. Empty
+    /// when the host sent none: empty metadata sends nothing. See the
+    /// [module docs](self).
+    pub audit: AuditMetadata,
 }
 
 /// Parse the options frame a host sent for `side`. Anything outside the
@@ -94,7 +127,7 @@ pub fn parse_options(bytes: &[u8], side: Side) -> Result<Options, u32> {
     let wire: wire::Options =
         from_slice(bytes).map_err(|e| malformed(format!("the options: {e}")))?;
     let keyset = KeysetSelector::from(wire.keyset);
-    if side == Side::Mint {
+    if side != Side::Open {
         if wire.context.is_some() {
             return Err(malformed(
                 r#"the "context" option is for decrypting a record only"#,
@@ -104,9 +137,15 @@ pub fn parse_options(bytes: &[u8], side: Side) -> Result<Options, u32> {
             return Err(malformed(r#"{"any"} names no keyset to encrypt under"#));
         }
     }
+    if side == Side::Term && wire.audit.is_some() {
+        return Err(malformed(
+            r#"the "audit" option is for a call that requests data keys; a term requests none"#,
+        ));
+    }
     Ok(Options {
         keyset,
         context: wire.context.map(|context| context.0),
+        audit: wire.audit.unwrap_or_default(),
     })
 }
 
@@ -126,7 +165,7 @@ pub fn parse_selector(bytes: &[u8]) -> Result<KeysetSelector, u32> {
 /// accepted; each error here is still a fixed string, for the reader.
 mod wire {
     use serde::{Deserialize, Deserializer};
-    use stack_encrypt::Label;
+    use stack_encrypt::{AuditMetadata, Label};
     use uuid::Uuid;
     use zerokms_protocol::Name;
 
@@ -138,6 +177,11 @@ mod wire {
         /// like any other non-string, as it always has been.
         #[serde(default, deserialize_with = "present")]
         pub(super) context: Option<ContextLabel>,
+        /// Absent is `None`. Present, it must be an object: a null is
+        /// refused, as it is for `context`. [`AuditMetadata`] reads the
+        /// object and refuses a value ZeroKMS has no form for.
+        #[serde(default, deserialize_with = "present")]
+        pub(super) audit: Option<AuditMetadata>,
     }
 
     fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
@@ -374,6 +418,7 @@ mod tests {
             Ok(Options {
                 keyset: KeysetSelector::Default,
                 context: None,
+                audit: AuditMetadata::new(),
             })
         );
         for (label, bad) in [
@@ -415,6 +460,7 @@ mod tests {
             Ok(Options {
                 keyset: KeysetSelector::Default,
                 context: Some(Label::parse("tenants/acme").expect("a label")),
+                audit: AuditMetadata::new(),
             })
         );
         for (label, bad, side) in [
@@ -456,8 +502,132 @@ mod tests {
             Ok(Options {
                 keyset: KeysetSelector::Any,
                 context: None,
+                audit: AuditMetadata::new(),
             })
         );
         assert_eq!(opts(any(), Side::Mint).err(), Some(STATUS_ENCODING));
+        assert_eq!(opts(any(), Side::Term).err(), Some(STATUS_ENCODING));
+    }
+
+    #[test]
+    fn a_term_takes_a_keyset_and_nothing_else() {
+        assert_eq!(
+            opts(options(obj(vec![("default", empty())])), Side::Term),
+            Ok(Options {
+                keyset: KeysetSelector::Default,
+                context: None,
+                audit: AuditMetadata::new(),
+            })
+        );
+        let with_context = obj(vec![
+            ("keyset", obj(vec![("default", empty())])),
+            ("context", V::Str("tenants/acme".into())),
+        ]);
+        assert_eq!(opts(with_context, Side::Term).err(), Some(STATUS_ENCODING));
+    }
+
+    /// The options with an `audit` key holding `audit`.
+    fn audited(audit: V) -> V {
+        obj(vec![
+            ("keyset", obj(vec![("default", empty())])),
+            ("audit", audit),
+        ])
+    }
+
+    fn facts() -> V {
+        obj(vec![
+            ("purpose", V::Str("list issues".into())),
+            ("rows", V::U32(250)),
+            ("dry_run", V::Bool(false)),
+            ("actor", V::Null),
+            ("tables", V::Arr(vec![V::Str("users".into()), V::I32(-1)])),
+            ("request", obj(vec![("id", V::Str("req_01J9Z3".into()))])),
+        ])
+    }
+
+    fn facts_built() -> AuditMetadata {
+        AuditMetadata::new()
+            .with("purpose", "list issues")
+            .with("rows", 250)
+            .with("dry_run", false)
+            .with("actor", None::<bool>)
+            .with(
+                "tables",
+                vec![
+                    stack_encrypt::AuditValue::from("users"),
+                    stack_encrypt::AuditValue::from(-1),
+                ],
+            )
+            .with("request", AuditMetadata::new().with("id", "req_01J9Z3"))
+    }
+
+    #[test]
+    fn audit_is_read_where_the_call_requests_data_keys() {
+        for side in [Side::Mint, Side::Open] {
+            assert_eq!(
+                opts(audited(facts()), side),
+                Ok(Options {
+                    keyset: KeysetSelector::Default,
+                    context: None,
+                    audit: facts_built(),
+                }),
+                "{side:?}"
+            );
+        }
+        // An empty object is metadata with no facts, which sends nothing.
+        let none = opts(audited(empty()), Side::Open).expect("an empty object");
+        assert!(none.audit.is_empty());
+    }
+
+    #[test]
+    fn audit_is_refused_on_a_term_even_when_empty() {
+        assert_eq!(
+            opts(audited(facts()), Side::Term).err(),
+            Some(STATUS_ENCODING)
+        );
+        assert_eq!(
+            opts(audited(empty()), Side::Term).err(),
+            Some(STATUS_ENCODING)
+        );
+    }
+
+    #[test]
+    fn audit_is_an_object_of_values_zerokms_has_a_form_for() {
+        let fact = |value: V| audited(obj(vec![("fact", value)]));
+        for (label, bad) in [
+            ("null", audited(V::Null)),
+            ("a string", audited(V::Str("purpose".into()))),
+            ("a list", audited(V::Arr(vec![]))),
+            ("bytes", fact(V::Bytes(vec![1, 2, 3]))),
+            ("bytes in a list", fact(V::Arr(vec![V::Bytes(vec![1])]))),
+            (
+                "an integer above a signed 64-bit integer",
+                fact(V::U64(u64::MAX)),
+            ),
+            (
+                "given twice",
+                obj(vec![
+                    ("keyset", obj(vec![("default", empty())])),
+                    ("audit", empty()),
+                    ("audit", empty()),
+                ]),
+            ),
+            (
+                "a fact given twice",
+                audited(obj(vec![("fact", V::Bool(true)), ("fact", V::Bool(true))])),
+            ),
+        ] {
+            assert_eq!(
+                opts(bad, Side::Open).err(),
+                Some(STATUS_ENCODING),
+                "{label} must be refused"
+            );
+        }
+        // The largest integer that fits is read.
+        let max = fact(V::U64(i64::MAX.unsigned_abs()));
+        assert_eq!(
+            opts(max, Side::Open).map(|options| options.audit),
+            Ok(AuditMetadata::new().with("fact", i64::MAX))
+        );
     }
 }
