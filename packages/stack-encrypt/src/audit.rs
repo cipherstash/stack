@@ -102,15 +102,20 @@ pub(crate) type Unverified = Option<Arc<UnverifiedContext>>;
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 ///
-/// A value in the data follows the rules of [`AuditValue`]. Three kinds of
+/// A value in the data follows the rules of [`AuditValue`]. Four kinds of
 /// data are refused, because ZeroKMS has no form for them:
 ///
+/// - data that is not a map, at the top level;
 /// - bytes;
 /// - an integer that does not fit a signed 64-bit integer;
-/// - a key that appears twice in one map.
+/// - a key that is not text, or that appears twice in one map.
 ///
-/// The error names the kind of data that was refused. It does not show a
-/// value.
+/// The message of this reader names the kind of data that was refused. The
+/// message does not show a key or a value.
+///
+/// One limit comes from the format, and not from this reader. `serde_json`
+/// reads a JSON number above `u64::MAX` as a float, before this reader sees
+/// the number. So that number is sent as a float, and it is not refused.
 #[derive(Clone, Default, PartialEq)]
 pub struct AuditMetadata {
     fields: UnverifiedContext,
@@ -291,9 +296,30 @@ impl From<AuditMetadata> for AuditValue {
 /// rules, under "From data".
 impl<'de> Deserialize<'de> for AuditMetadata {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_map(MetadataVisitor)
+        // `deserialize_any`, not `deserialize_map`: asked for a map, a format
+        // that holds another kind of data writes the error itself, and
+        // serde_json's shows the data. Asked for anything, the format hands
+        // the data to the visitor, which refuses it without showing it.
+        deserializer.deserialize_any(MetadataVisitor)
     }
 }
+
+/// Refuse the scalars that serde's own message would show. For a scalar
+/// that a visitor does not take, serde's default error prints the scalar:
+/// `invalid type: string "..."`. Each method here gives `$message` in its
+/// place. serde's defaults pass the narrower integers, `f32`, a `char` and
+/// owned or borrowed text to these methods. Its messages for the other
+/// kinds (null, bytes, a list, a map) name the kind and show no content.
+macro_rules! refuse_without_showing {
+    ($message:expr; $($method:ident($scalar:ty)),+ $(,)?) => {$(
+        fn $method<E: de::Error>(self, _: $scalar) -> Result<Self::Value, E> {
+            Err(E::custom($message))
+        }
+    )+};
+}
+
+/// The message for top-level data that is a scalar.
+const NOT_A_MAP: &str = "a scalar where a map of audit metadata belongs";
 
 /// Reads the top-level map. Anything else is refused, `null` included.
 struct MetadataVisitor;
@@ -308,6 +334,12 @@ impl<'de> Visitor<'de> for MetadataVisitor {
     fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<AuditMetadata, A::Error> {
         read_map(map)
     }
+
+    refuse_without_showing! {
+        NOT_A_MAP;
+        visit_bool(bool), visit_i64(i64), visit_u64(u64), visit_i128(i128),
+        visit_u128(u128), visit_f64(f64), visit_str(&str),
+    }
 }
 
 /// Read one map of facts. A key that appears twice is refused: the builder
@@ -315,13 +347,51 @@ impl<'de> Visitor<'de> for MetadataVisitor {
 /// in the sender.
 fn read_map<'de, A: MapAccess<'de>>(mut map: A) -> Result<AuditMetadata, A::Error> {
     let mut metadata = AuditMetadata::new();
-    while let Some(key) = map.next_key::<String>()? {
+    while let Some(Key(key)) = map.next_key()? {
         let Fact(value) = map.next_value()?;
         if metadata.fields.0.insert(key, value.0).is_some() {
             return Err(de::Error::custom("a key that appears twice in one map"));
         }
     }
     Ok(metadata)
+}
+
+/// The message for a key that is a scalar other than text.
+const KEY_NOT_TEXT: &str = "a key that is not text";
+
+/// One key of a map of facts: text, and nothing else.
+struct Key(String);
+
+impl<'de> Deserialize<'de> for Key {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // `deserialize_any`, for the reason [`AuditMetadata`]'s reader
+        // gives.
+        deserializer.deserialize_any(KeyVisitor).map(Key)
+    }
+}
+
+struct KeyVisitor;
+
+impl Visitor<'_> for KeyVisitor {
+    type Value = String;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a text key")
+    }
+
+    fn visit_str<E: de::Error>(self, key: &str) -> Result<String, E> {
+        Ok(key.to_owned())
+    }
+
+    fn visit_string<E: de::Error>(self, key: String) -> Result<String, E> {
+        Ok(key)
+    }
+
+    refuse_without_showing! {
+        KEY_NOT_TEXT;
+        visit_bool(bool), visit_i64(i64), visit_u64(u64), visit_i128(i128),
+        visit_u128(u128), visit_f64(f64),
+    }
 }
 
 /// One value, read from data.
@@ -644,6 +714,8 @@ mod tests {
     fn from_frame<T: serde::Serialize>(value: &T) -> Result<AuditMetadata, String> {
         use crate::AsProtectedRef as _;
         let frame = vitaminc_aead_frame::serde::to_vec(value).expect("the value is a frame");
+        // `risky_ref`: the reader takes plain bytes, and the frame holds this
+        // test's own values, which are not secret.
         vitaminc_aead_frame::serde::from_slice(frame.as_protected_ref().risky_ref())
             .map_err(|e| e.to_string())
     }
@@ -813,14 +885,88 @@ mod tests {
     }
 
     #[test]
-    fn only_a_map_is_metadata() {
-        for not_a_map in [json!(null), json!([]), json!("purpose"), json!(7)] {
-            let message = serde_json::from_value::<AuditMetadata>(not_a_map)
+    fn only_a_map_is_metadata_and_the_error_does_not_show_the_data() {
+        // Each value holds a marker, as text or as digits. No message may
+        // show one.
+        let shown = ["marker", "424242"];
+        for not_a_map in [
+            json!(null),
+            json!(["marker", 424242]),
+            json!("marker"),
+            json!(424242),
+            json!(-424242),
+            json!(424242.5),
+            json!(true),
+        ] {
+            let owned = serde_json::from_value::<AuditMetadata>(not_a_map.clone())
                 .expect_err("not a map")
                 .to_string();
-            assert!(message.contains("a map of audit metadata"), "{message}");
+            let text = not_a_map.to_string();
+            let borrowed = serde_json::from_str::<AuditMetadata>(&text)
+                .expect_err("not a map")
+                .to_string();
+            for message in [owned, borrowed] {
+                assert!(message.contains("a map of audit metadata"), "{message}");
+                assert!(!shown.iter().any(|s| message.contains(s)), "{message}");
+                assert!(!message.contains("true"), "{message}");
+            }
+        }
+        // The wide integers and one character reach the same refusal.
+        use serde::de::value::{CharDeserializer, Error, I128Deserializer, U128Deserializer};
+        let wide = [
+            AuditMetadata::deserialize(I128Deserializer::<Error>::new(-424242)),
+            AuditMetadata::deserialize(U128Deserializer::<Error>::new(424242)),
+            AuditMetadata::deserialize(CharDeserializer::<Error>::new('q')),
+        ];
+        for result in wide {
+            let message = result.expect_err("not a map").to_string();
+            assert_eq!(message, NOT_A_MAP);
         }
         assert!(from_frame(&None::<bool>).is_err());
+        assert!(from_frame(&"marker").is_err());
+    }
+
+    #[test]
+    fn a_key_that_is_not_text_is_refused_and_not_shown() {
+        use serde::de::value::{Error, MapDeserializer};
+        fn refused<'de, K>(key: K) -> String
+        where
+            K: serde::de::IntoDeserializer<'de, Error>,
+        {
+            let map = MapDeserializer::<_, Error>::new(std::iter::once((key, true)));
+            AuditMetadata::deserialize(map)
+                .expect_err("the key is not text")
+                .to_string()
+        }
+        for message in [
+            refused(424242u64),
+            refused(-424242i64),
+            refused(424242i128),
+            refused(424242u128),
+            refused(424242.5f64),
+            refused(true),
+        ] {
+            assert_eq!(message, KEY_NOT_TEXT);
+        }
+        // serde's own message for a key of another kind names the kind, and
+        // says what the reader takes.
+        let unit = refused(());
+        assert!(unit.contains("a text key"), "{unit}");
+        // Text keys are read, owned or borrowed.
+        let owned = MapDeserializer::<_, Error>::new(std::iter::once((String::from("k"), true)));
+        let borrowed = MapDeserializer::<_, Error>::new(std::iter::once(("k", true)));
+        let want = AuditMetadata::new().with("k", true);
+        assert_eq!(AuditMetadata::deserialize(owned).unwrap(), want);
+        assert_eq!(AuditMetadata::deserialize(borrowed).unwrap(), want);
+    }
+
+    #[test]
+    fn serde_json_reads_a_number_above_u64_as_a_float() {
+        // The limit the type documents: serde_json gives this reader a
+        // float, so the reader cannot refuse the number as an integer.
+        let wide: AuditMetadata =
+            serde_json::from_str(r#"{ "fact": 99999999999999999999999 }"#).unwrap();
+        assert_eq!(wide, AuditMetadata::new().with("fact", 1e23));
     }
 
     #[test]
