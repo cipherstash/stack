@@ -1,0 +1,52 @@
+{
+  "case": "stack-330",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Avoid logging raw subcommand input. `subcommand` is user-provided; echoing it directly can leak plaintext if sensitive data is pasted by mistake.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Echoing an unknown subcommand back to the user's own terminal is immaterial."
+    },
+    {
+      "id": "CR-2",
+      "title": "Add error handling and fix variable shadowing in `login()`. Lines 8 and 20 can reject without a catch block. If line 20 rejects, the spinner started at line 19 ",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "The cited line numbers (8, 20, 25) don't match the code in login(). The real points are shadowing of `auth` and a spinner left running when pollForToken rejects. Both are cosmetic, since the rejection reaches main() and the process exits anyway."
+    },
+    {
+      "id": "CR-3",
+      "title": "Avoid `process.exit()` in helper and avoid raw error-message logging. Line 38 hard-exits from a reusable helper, which makes orchestration brittle. Line 37 logs",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "bindDevice calls process.exit(1) at line 63. The init orchestration can't recover from that and aborts, which is a real brittleness introduced by this change."
+    },
+    {
+      "id": "CR-4",
+      "title": "Use one CLI invocation style consistently. Line 497 switches to `npx `@cipherstash/stack` auth login` while the rest of the doc uses `npx stash ...`.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Inconsistent CLI invocation style in the docs. Since the package has a single `stash` bin, both forms work."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

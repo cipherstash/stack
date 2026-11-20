@@ -1,0 +1,37 @@
+{
+  "case": "stack-996",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Minor release breaks compilation for consumers that encrypt nullable-typed Json values",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Correctly shows that EncryptResult<P> plus P defaulting to PlaintextForColumn makes Json-column encrypt results nullable, a compile-breaking type change in a minor release; it proposes a semver review and running the typecheck."
+    },
+    {
+      "id": "FS-2",
+      "title": "Supabase per-term fallback now throws where it used to send a \"null\" operand",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The new null-envelope check in encryptGroupPerTerm is real, but it is an intended fail-closed improvement on a narrow fallback path, so it adds no release risk."
+    }
+  ],
+  "cost_usd": 1.4660345000000004,
+  "wall_seconds": 189.600119,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

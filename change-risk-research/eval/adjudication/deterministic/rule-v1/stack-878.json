@@ -1,0 +1,11 @@
+{
+  "case": "stack-878",
+  "evaluator": "deterministic/rule-v1",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "rules_fired": ["R3", "R5", "R6", "R7"],
+  "findings": [],
+  "cost_usd": 0.0,
+  "wall_seconds": null
+}

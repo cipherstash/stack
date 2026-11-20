@@ -1,0 +1,25 @@
+{
+  "case": "stack-371",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Future copy edits in messages.ts change CLI output with E2E staying green",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 0.8748672,
+  "wall_seconds": 102.124712
+}

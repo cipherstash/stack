@@ -1,0 +1,11 @@
+{
+  "case": "stack-975",
+  "evaluator": "deterministic/rule-v1",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "rules_fired": [],
+  "findings": [],
+  "cost_usd": 0.0,
+  "wall_seconds": null
+}

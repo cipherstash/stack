@@ -1,0 +1,59 @@
+{
+  "case": "stack-568",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Strategy constructors re-exported by @cipherstash/stack now return Result; documented `authStrategy: X.create(...)` usage breaks on upgrade",
+      "impact": "high",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The JSDoc examples and the live lock-context.test.ts still pass OidcFederationStrategy/AccessKeyStrategy.create(...) unwrapped as authStrategy; after the 0.41 bump that hands a Result envelope to newClient."
+    },
+    {
+      "id": "FS-2",
+      "title": "Native-path protect-ffi 0.28 handling of the getToken() Result envelope is unverified",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Hypothesizes that protect-ffi 0.28's native newClient may not handle the Result envelope, but nothing in the cited code or repo shows the native binding behaves differently; the risk is unverified rather than demonstrated."
+    },
+    {
+      "id": "FS-3",
+      "title": "Consumers importing the AuthError type from @cipherstash/stack stop compiling",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Intentional, changeset-documented type rename in a 0.x minor; the compile break is the expected migration."
+    },
+    {
+      "id": "FS-4",
+      "title": "Wizard prerequisites check may throw instead of reporting missing credentials if auth 0.41 failure.type strings differ",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Speculative: the changeset itself documents SCREAMING_CASE failure types like NOT_AUTHENTICATED, and the PascalCase value is only a hand-written test mock, so no renamed variant is shown."
+    }
+  ],
+  "cost_usd": 1.8609478999999998,
+  "wall_seconds": 221.822876,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

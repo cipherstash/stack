@@ -1,0 +1,169 @@
+{
+  "description": "Development cases from cipherstash/stack with the expected outcome. Holdout cases are deliberately not included: they are used only for evaluation and must not shape the skill.",
+  "cases": [
+    {
+      "id": "stack-119",
+      "repository": "cipherstash/stack",
+      "base_sha": "33ac5e5a074b288eb0435cf9b2bf41d062e1767d",
+      "head_sha": "35c482112c8f4016cc86fd885e309a1778d64f9b",
+      "title": "",
+      "expected": {
+        "impact": "medium",
+        "attention": true,
+        "defects": [
+          {
+            "id": "KD-1",
+            "match_criteria": "Scenario identifies that undefined/missing model field values are not handled like null and reach encryption, or produce an error/incorrect output.",
+            "post_hoc": false
+          },
+          {
+            "id": "KD-2",
+            "match_criteria": "Scenario identifies that hyphenated field keys are mis-parsed when bulk model results are reassembled, leaving values under the wrong key.",
+            "post_hoc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "stack-301",
+      "repository": "cipherstash/stack",
+      "base_sha": "7ba9119c7e66a331f0b47ecc2fe377f3a716a911",
+      "head_sha": "c447e26192143763874cd1340836289fbb2fa133",
+      "title": "feat(stack): usability improvements",
+      "expected": {
+        "impact": "high",
+        "attention": true,
+        "defects": [
+          {
+            "id": "KD-1",
+            "match_criteria": "Scenario must say that null (or nullable) values now reach encryption/decryption because the runtime null handling was removed, with a consequence of wrong output (ciphertext for null, failure, or broken null round trip). Saying only 'types changed' is not a match.",
+            "post_hoc": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "stack-336",
+      "repository": "cipherstash/stack",
+      "base_sha": "abf3ddd89593290fe88f657c97570ea44816401a",
+      "head_sha": "8ebc77b5efb6df66525665781c4a9ea922732356",
+      "title": "feat: consolidate cli tools into @cipherstash/cli",
+      "expected": {
+        "impact": "medium",
+        "attention": true,
+        "defects": [
+          {
+            "id": "KD-1",
+            "match_criteria": "Scenario identifies that the OAuth/device-flow client identifier now varies (by referrer) and may be rejected by the auth server.",
+            "post_hoc": false
+          },
+          {
+            "id": "KD-2",
+            "match_criteria": "Scenario identifies that the published CLI imports @cipherstash/stack at runtime without declaring it as a runtime or peer dependency.",
+            "post_hoc": true
+          },
+          {
+            "id": "KD-3",
+            "match_criteria": "Scenario identifies that the moved overrides are not read by pnpm and the pinned versions no longer apply.",
+            "post_hoc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "stack-548",
+      "repository": "cipherstash/stack",
+      "base_sha": "b650a8c29720731d40fc9705f021e75af3047e4f",
+      "head_sha": "632bdf61b3e4dc23cee6f492a2b2009ab4abe195",
+      "title": "fix(stack): bulk-model id split corrupts field names containing hyphens",
+      "expected": {
+        "impact": "medium",
+        "attention": false,
+        "defects": []
+      }
+    },
+    {
+      "id": "stack-659",
+      "repository": "cipherstash/stack",
+      "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+      "head_sha": "3e040fad4db2c9a8ab3262eba80da51ce49beba1",
+      "title": "fix(v3): supabase short-needle guard, withLockContext input widening, error-union discrimination",
+      "expected": {
+        "impact": "medium",
+        "attention": true,
+        "defects": []
+      }
+    },
+    {
+      "id": "stack-878",
+      "repository": "cipherstash/stack",
+      "base_sha": "62e6c4392f2f602f12f19643c6aa4325695c9c41",
+      "head_sha": "71a243635607fac92c76ed5730418d989bfd86d6",
+      "title": "feat(release): build the release pipeline for the seven FFI packages",
+      "expected": {
+        "impact": "medium",
+        "attention": true,
+        "defects": [
+          {
+            "id": "KD-1",
+            "match_criteria": "Scenario names the neon dist / artefact-copy step failing because of how it is invoked (crate name / environment variable), or flags that step as unverified and likely to fail.",
+            "post_hoc": false
+          },
+          {
+            "id": "KD-2",
+            "match_criteria": "Scenario identifies the pipeline exit-status / SIGPIPE / pipefail interaction in the verification steps, or that a verification check can pass/fail incorrectly because of shell pipeline semantics.",
+            "post_hoc": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "stack-975",
+      "repository": "cipherstash/stack",
+      "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+      "head_sha": "24f7b2c6043bf62b14b58f8b5d191946df9f617d",
+      "title": "docs(skills): add signed-range query recipe",
+      "expected": {
+        "impact": "low",
+        "attention": false,
+        "defects": []
+      }
+    },
+    {
+      "id": "stack-1022",
+      "repository": "cipherstash/stack",
+      "base_sha": "3e8f6cb8ce846eb9773d545c79b11c6e187dbd7a",
+      "head_sha": "ab8ca589fac1be02bb893917556823cc8f77270d",
+      "title": "fix(go): Context copies byte-slice parts",
+      "expected": {
+        "impact": "medium",
+        "attention": true,
+        "defects": []
+      }
+    },
+    {
+      "id": "stack-1088",
+      "repository": "cipherstash/stack",
+      "base_sha": "b6e6100c848039528c19d82c39f96c19c730e32a",
+      "head_sha": "ac5f088a6eb7efe753740149e0fce8926e354f5a",
+      "title": "fix(deps): patch vitest to 4.1.11",
+      "expected": {
+        "impact": "low",
+        "attention": false,
+        "defects": []
+      }
+    },
+    {
+      "id": "stack-1109",
+      "repository": "cipherstash/stack",
+      "base_sha": "9c2fc652a80c1264ae3a283c5913d9ce03940122",
+      "head_sha": "a258a817bc373605193259443775c1e25ce50544",
+      "title": "chore(deps): bump proxy-addr from 2.0.7 to 2.0.8",
+      "expected": {
+        "impact": "low",
+        "attention": false,
+        "defects": []
+      }
+    }
+  ]
+}

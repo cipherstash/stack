@@ -1,0 +1,36 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Cited lockfile/workflow lines exist, but the claimed DNS-resolution difference is pure speculation ('if ... could') with no code showing any resolver config change that would break ZeroKMS lookups on Ubuntu runners."
+    },
+    {
+      "id": "F-02",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Accurately describes the dependency graph, but provides no concrete compile incompatibility or resolver behaviour change; the failure mechanism is hypothetical and not supported by the cited code."
+    },
+    {
+      "id": "F-03",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The lockfile does re-point windows-sys and add macOS system-configuration edges, but Cargo resolves these within declared ranges and the finding itself concedes breakage is unlikely; no concrete break mechanism is shown."
+    },
+    {
+      "id": "F-04",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Speculative resolver behaviour change with no concrete mechanism, and its own cited CI evidence shows the e2e property suite and build jobs passing on the head commit."
+    }
+  ]
+}

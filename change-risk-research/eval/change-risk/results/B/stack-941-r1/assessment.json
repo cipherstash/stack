@@ -1,0 +1,571 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c806cfd83c5bff9df8d76a886f1658d6c9a5521c",
+  "head_sha": "37c32967ba73a69c10db604445c663bab92f1807",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md; commit messages in the range were read as untrusted context"
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md at head (describes the EQL pipeline and the cutover); no separate architecture docs"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "available",
+      "source": ".github/CODEOWNERS at head"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence, pre-run)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No view of GitHub repository settings: who can dispatch workflows, branch rulesets, environments, npm/crates.io trusted-publisher configuration, GHCR package access"
+    }
+  },
+  "summary": "Moves the EQL release pipeline (SQL bundle, docs bundle, crate, postgres-eql image, prerelease npm publish) from the dead packages/eql/.github/ directory into the root workflows, gated by a switch derived from FROZEN_PUBLISHERS so it stays inert until the Phase-5 cutover. Two things change today. release.yml, the single npm publishing workflow for all JS and FFI packages, gains workflow_dispatch and a `classify` job that every publish job now depends on. The root rebuild-docs.yml is deleted; per the commit message it never fired. The most material risk is that a dispatch against any branch reads both the arming switch and the release-gate from that branch's own code, so whether the pipeline is inert, and what a prerelease publishes, is decided by unreviewed code. No publish job declares a GitHub `environment:`. Most of the remaining risk sits in the first armed run: npm publishes first and cannot be undone, the other four artefacts follow in separate builds that have never run here, and release-plz publishes the crate on its own trigger without checking the npm release. Static workflow tests cover the gating wiring. None were run and no CI results were available.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "build_or_release",
+      "description": "release.yml (npm trusted-publishing workflow for every JS/FFI package) gains a `workflow_dispatch` trigger and a `classify` job. `ffi-artifacts`, `publish-ffi` and `release` now also require `needs.classify.outputs.mode == 'production'`, which holds only when GITHUB_REF_NAME is `main`. On a push to main this adds a job but leaves the JS/FFI release unchanged.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-11"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "security_boundary",
+      "description": "A dispatch against a non-main branch whose HEAD subject starts with `chore(release):` is classified `prerelease`. The prerelease jobs create a GitHub release and tags, publish @cipherstash/eql to npm over OIDC, force-create a release/eql-<V> branch and dispatch release-plz.yml. They are gated on the arming switch and the release gate, both computed from the dispatched ref's own checkout.",
+      "certainty": "observed",
+      "evidence": ["E-2", "E-3", "E-4", "E-5", "E-6", "E-7"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "Adds the production EQL chain to release.yml (eql-sql -> eql-docs -> eql-image dispatch), keyed on @cipherstash/eql appearing in changesets' publishedPackages. Also adds root release-plz.yml (crate publish on push to main under packages/eql/**, or on dispatch) and release-postgres-eql-image.yml (GHCR push, dispatch only). All are gated on `eql-armed`, which is false while @cipherstash/eql is in FROZEN_PUBLISHERS.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9", "E-10", "E-12", "E-13", "E-15", "E-22"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "Deletes the root rebuild-docs.yml, which POSTed DOCS_WEBHOOK_URL on `@cipherstash/stack@*` tag pushes. According to the commit message, changesets creates those tags with GITHUB_TOKEN, so the workflow never ran. I did not verify that.",
+      "certainty": "inferred",
+      "evidence": ["E-17"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "build_or_release",
+      "description": "EQL npm publish scripts: npm-publish.mjs now sends prereleases to their channel dist-tag (PRE_GA_LATEST=false) rather than `latest`. verify-release-assets.mjs (prepublishOnly) now refuses unless the bundled SQL carries `COMMENT ON SCHEMA eql_v3 IS '<package version>'`; the committed bundle carries '3.0.5', matching package.json.",
+      "certainty": "observed",
+      "evidence": ["E-18", "E-19"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "test_only",
+      "description": "Lint and test scope expanded: lint-release.yml actionlints the four new workflows and shellchecks the prepare-bindings-assets wrapper, lint-no-workflow-caching.mjs targets the new workflows and audits the docker/release-plz/gpg actions, and the new eql-pipeline-armed.test.mjs pins the exact set of jobs gated on the switch. The packages/eql/.github/ directory is deleted.",
+      "certainty": "observed",
+      "evidence": ["E-10", "E-20"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": ".github/workflows/release.yml (JS, FFI and EQL npm publishing)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New dispatch trigger, classify job on every publish path, EQL production and prerelease jobs.",
+      "evidence": ["E-1", "E-2", "E-11"]
+    },
+    {
+      "id": "AC-2",
+      "name": ".github/workflows/release-plz.yml (eql-bindings crate)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New root workflow publishing the crate over crates.io OIDC; push and dispatch triggers.",
+      "evidence": ["E-8", "E-15"]
+    },
+    {
+      "id": "AC-3",
+      "name": ".github/workflows/release-postgres-eql-image.yml (ghcr.io/cipherstash/postgres-eql)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New root dispatch-only workflow pushing multi-arch images and floating tags.",
+      "evidence": ["E-22"]
+    },
+    {
+      "id": "AC-4",
+      "name": "_build-eql-sql.yml / _build-eql-docs.yml",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Reusable builds that create the eql-<V> GitHub release and attach SQL and docs.",
+      "evidence": ["E-13"]
+    },
+    {
+      "id": "AC-5",
+      "name": "@cipherstash/eql npm package",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "Published by `release` (changeset publish) in production and by prerelease-eql-npm; its prepublishOnly guard and dist-tag policy changed.",
+      "evidence": ["E-5", "E-12", "E-18", "E-19"]
+    },
+    {
+      "id": "AC-6",
+      "name": "eql-bindings crate on crates.io",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "release-plz.yml publishes it from packages/eql/Cargo.toml.",
+      "evidence": ["E-8", "E-15"]
+    },
+    {
+      "id": "AC-7",
+      "name": "eql-<V> GitHub releases (SQL bundle, docs) and postgres-eql image",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "Created by _build-eql-sql.yml and _build-eql-docs.yml, and by the dispatched image workflow.",
+      "evidence": ["E-13", "E-22"]
+    },
+    {
+      "id": "AC-8",
+      "name": "scripts/release-gate.mjs FROZEN_PUBLISHERS",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Imported by the new scripts/eql-pipeline-armed.mjs; its @cipherstash/eql entry is the arming switch.",
+      "evidence": ["E-4", "E-9"]
+    },
+    {
+      "id": "AC-9",
+      "name": "Docs-site rebuild webhook (DOCS_WEBHOOK_URL)",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "The root rebuild-docs.yml that called it is deleted; the commit message says it never fired.",
+      "evidence": ["E-17"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "A dispatch against an unmerged branch decides for itself whether EQL publishes and what it publishes",
+      "trigger": "Someone who can dispatch workflows (by mistake, as an insider, or with a compromised token) runs release.yml or release-plz.yml against a branch. The branch's HEAD subject is `chore(release): …`, its package.json pins X.Y.Z-alpha.N, and it deletes the @cipherstash/eql FROZEN_PUBLISHERS entry or otherwise edits release-gate.mjs. After the cutover, the deletion is no longer needed.",
+      "affected_components": ["AC-1", "AC-2", "AC-5", "AC-6", "AC-7", "AC-8"],
+      "mechanism": "`classify` sets mode=prerelease for any non-main ref with that subject (release.yml:84-91). `eql-armed` and `gate` run `node scripts/eql-pipeline-armed.mjs` and `node scripts/release-gate.mjs` from that ref's checkout (release.yml:151, 192), so both answers come from the branch under release. The prerelease jobs then hold contents:write and id-token:write. They create the eql-<V> release and the eql-typescript-v<V> tag, publish the npm package built from the branch, force-update release/eql-<V> and dispatch release-plz.yml there, which reads the switch from that branch again (release-plz.yml:44,73). No publish job declares an `environment:`, so no required reviewer stands between a dispatch and a publish. CODEOWNERS governs merges, not dispatches. Before this change release.yml had no workflow_dispatch.",
+      "consequence": "Before the cutover, npm and crates.io trusted publishing do not name this repository, so the registry publishes should fail. Public eql-<V> GitHub releases with SQL assets, tags and a release branch can still be created in cipherstash/stack from unreviewed code. After the cutover, an @cipherstash/eql prerelease (SQL install bundle embedded) and the eql-bindings crate can be published from an unmerged branch, with valid provenance naming this repository. Publishing cannot be undone, and the SQL is applied to customer databases.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": [
+        "E-1",
+        "E-2",
+        "E-3",
+        "E-4",
+        "E-5",
+        "E-6",
+        "E-7",
+        "E-8",
+        "E-9"
+      ],
+      "existing_verification": [
+        {
+          "description": "eql-pipeline-armed.test.mjs pins which jobs carry the `eql-armed` condition. It checks condition text and does not examine which ref the switch is read from.",
+          "status": "exists_not_run",
+          "evidence": ["E-10"]
+        },
+        {
+          "description": "workflow-dispatch-job-conditions.test.mjs evaluates job conditions on a dispatch event (changed in this diff; contents only skimmed).",
+          "status": "exists_not_run",
+          "evidence": ["E-20"]
+        }
+      ],
+      "missing_verification": [
+        "No check that a prerelease publish can only come from a reviewed or protected ref",
+        "No visibility of repository settings (who can dispatch, rulesets on release/** and chore(release) branches, environment protection)"
+      ],
+      "mitigation": "Put the publishing jobs (prerelease-eql-*, release, publish-ffi, release-plz `release`, image build) behind a GitHub environment with required reviewers and a deployment-branch policy, or restrict prerelease dispatch to a protected branch pattern. Optionally read the arming switch from the default branch rather than the dispatched ref. Confirm the npm and crates.io trusted-publisher entries pin the environment as well as the workflow filename.",
+      "domain_tags": ["authorization", "build_release", "configuration"]
+    },
+    {
+      "id": "FS-2",
+      "title": "First armed run publishes npm first, then other artefacts may never follow, or the crate ships alone",
+      "trigger": "The first push to main after the FROZEN_PUBLISHERS entry is deleted (Phase-5 cutover), or any later EQL release in which a downstream build fails, or the gate and the switch disagree.",
+      "affected_components": [
+        "AC-1",
+        "AC-2",
+        "AC-3",
+        "AC-4",
+        "AC-5",
+        "AC-6",
+        "AC-7"
+      ],
+      "mechanism": "`release` runs `changeset publish` (irreversible) before eql-sql, eql-docs and eql-image, which then do their own cold builds on Blacksmith runners (release.yml:508-556; _build-eql-sql.yml:80-87). None of these jobs has executed in this repository. Documented prerequisites that no workflow can check in advance (a GPG_PRIVATE_KEY secret and GHCR write access) are missing today (AGENTS.md:358-360). release-plz.yml publishes the crate on its own push trigger, gated only on `eql-armed` and not on the npm release succeeding (release-plz.yml:26-44, 75-78). The production npm publish is held by `gate`, not by `eql-armed`, and AGENTS.md:343-355 states nothing asserts the two agree.",
+      "consequence": "Version V of @cipherstash/eql reaches npm with no matching eql-V SQL release, docs bundle or postgres-eql image. Or eql-bindings V reaches crates.io while the npm release was blocked. The single-version promise across five artefacts breaks, nothing reports it as a release failure, and recovery means hand-dispatching or cutting a new version.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-12", "E-13", "E-15", "E-16", "E-23"],
+      "existing_verification": [
+        {
+          "description": "eql-pipeline-armed.test.mjs drives the switch in both states as a unit, but not the workflows end to end.",
+          "status": "exists_not_run",
+          "evidence": ["E-10"]
+        },
+        {
+          "description": "eql-summary job reports per-job results in the run summary (an observability aid, not a check).",
+          "status": "exists_not_run",
+          "evidence": ["E-12"]
+        }
+      ],
+      "missing_verification": [
+        "No dry run of the armed production chain (eql-sql, eql-docs, image) before the cutover",
+        "No assertion that the crate publish requires, or follows, a successful npm publish of the same version",
+        "No test that `gate` and `eql-armed` agree on whether @cipherstash/eql is publishable"
+      ],
+      "mitigation": "Before the cutover, exercise the armed chain with a prerelease identity on a protected branch. Provision the GPG key and GHCR access first. Gate release-plz's `release` on the npm version already being on the registry, or trigger it from release.yml after `release`. Add a test asserting that release-gate and eql-pipeline-armed agree.",
+      "domain_tags": ["build_release", "configuration"]
+    },
+    {
+      "id": "FS-3",
+      "title": "SQL on the GitHub release and in the image is rebuilt from source rather than taken from the npm tarball",
+      "trigger": "An armed production or prerelease EQL release, built with a different `rust latest` toolchain or environment than the one that ran `pnpm run version`.",
+      "affected_components": ["AC-4", "AC-5", "AC-7"],
+      "mechanism": "The npm package ships the SQL committed by the version hook and checked by verify-release-assets.mjs. _build-eql-sql.yml instead regenerates SQL with `mise run --force build --version` at publish time (lines 80-87), and the image workflow builds it a third time. The version stamp will match in every case. AGENTS.md:427-431 records that nothing proves regeneration reproduces the published bytes.",
+      "consequence": "The eql-V GitHub release asset or the image can carry SQL bytes that differ from npm's under the same version and stamp. A digest comparison against the npm release manifest fails, or a different function body is installed depending on which channel a customer used.",
+      "impact": "medium",
+      "basis": "speculative",
+      "evidence": ["E-13", "E-14", "E-22"],
+      "existing_verification": [
+        {
+          "description": "eql-sql-asset-freshness.test.mjs compares the version and stamp across the in-tree artefacts, not the bytes rebuilt in CI.",
+          "status": "exists_not_run",
+          "evidence": ["E-20"]
+        }
+      ],
+      "missing_verification": [
+        "No digest comparison between the rebuilt SQL and the committed or npm-bundled release-manifest before attaching"
+      ],
+      "mitigation": "Attach the committed packages/eql/packages/eql/sql bundle (or verify the rebuilt file's digest against its release-manifest.json) instead of shipping a fresh build.",
+      "domain_tags": ["build_release", "serialization_compatibility"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No control or test bounds which refs may run the prerelease or crate publish paths, and repository and environment settings were not visible.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-7", "E-10"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The armed pipeline has never run end to end in this repository. Its first execution is the cutover release.",
+      "scenarios": ["FS-2", "FS-3"],
+      "evidence": ["E-10", "E-16"]
+    },
+    {
+      "id": "VG-3",
+      "description": "None of the changed script tests were run: no CI results were provided and node_modules is absent, so vitest could not run.",
+      "scenarios": ["FS-1", "FS-2", "FS-3"],
+      "evidence": ["E-21"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Review release.yml's `classify` and prerelease jobs, and release-plz.yml's dispatch trigger, for who can start a credentialed publish and from which refs.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "other",
+      "description": "Add a protected GitHub environment (required reviewers, deployment-branch policy) to every publishing job, and bind the npm and crates.io trusted publishers to it.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "test",
+      "description": "Add a test asserting `release-gate.mjs` and `eql-pipeline-armed.mjs` agree on @cipherstash/eql, and that release-plz's publish depends on the npm version being on the registry.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "rollback_plan",
+      "description": "Before deleting the FROZEN_PUBLISHERS entry, provision GPG_PRIVATE_KEY and GHCR access, rehearse with a prerelease identity, and write down how to hand-dispatch the SQL, docs and image jobs if they fail after npm has published.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "compatibility_check",
+      "description": "Verify the rebuilt SQL digest against the committed release-manifest.json before attaching it to the GitHub release or baking it into the image.",
+      "addresses": ["FS-3"]
+    },
+    {
+      "id": "RC-6",
+      "kind": "test",
+      "description": "Run `pnpm test:scripts` (or confirm CI ran it green) on head before merge.",
+      "addresses": ["VG-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Read closely: release.yml, release-plz.yml, release-postgres-eql-image.yml, _build-eql-sql.yml, eql-pipeline-armed.mjs and its test, and the npm-publish, verify-release-assets, lint-no-workflow-caching and lint-release diffs. Skimmed: _build-eql-docs.yml, AGENTS.md, SECURITY.md, docs/plans, the eql-suite-ci, cargo-publish-opt-out and workflow-dispatch-job-conditions test changes, release-plz.toml.",
+      "effect": "Defects in the skimmed test logic or the docs build could be missed."
+    },
+    {
+      "id": "CL-2",
+      "description": "No deployment context: GitHub rulesets, dispatch permissions, environments, and npm, crates.io and GHCR publisher configuration are unknown.",
+      "effect": "Whether FS-1 is reachable today, and by whom, cannot be settled. Registry-side controls may already block parts of it."
+    },
+    {
+      "id": "CL-3",
+      "description": "No CI results, and the tests could not be run locally (no node_modules, no network).",
+      "effect": "All test evidence is exists_not_run. Verification confidence is low."
+    },
+    {
+      "id": "CL-4",
+      "description": "The claim that the deleted root rebuild-docs.yml never fired comes from a commit message, and I could not check it.",
+      "effect": "If it did fire, docs-site rebuilds on @cipherstash/stack releases stop silently (low impact, not raised as a scenario)."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 39,
+      "line_end": 43,
+      "claim": "release.yml gains a `workflow_dispatch: {}` trigger, which it did not have at base.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 76,
+      "line_end": 125,
+      "claim": "classify: mode=production only when GITHUB_REF_NAME is main; any other ref whose HEAD subject is `chore(release):*` becomes prerelease, after a version-shape check and an existing-tag short-circuit.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 132,
+      "line_end": 192,
+      "claim": "eql-armed and gate both check out the triggering ref and run scripts/eql-pipeline-armed.mjs and scripts/release-gate.mjs from it.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "scripts/eql-pipeline-armed.mjs",
+      "rev": "head",
+      "line_start": 24,
+      "line_end": 37,
+      "claim": "The switch is `!FROZEN_PUBLISHERS.has('@cipherstash/eql')`, imported from the checked-out release-gate.mjs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 642,
+      "line_end": 754,
+      "claim": "prerelease-eql-npm holds id-token:write and contents:write, builds from the dispatched sha, runs npm-publish.mjs and creates the eql-typescript-v<V> tag.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 756,
+      "line_end": 786,
+      "claim": "prerelease-eql-crate creates or force-updates release/eql-<V> at the run's sha and dispatches release-plz.yml on it.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "command_output",
+      "command": "grep -n 'environment:' .github/workflows/release.yml .github/workflows/release-plz.yml .github/workflows/release-postgres-eql-image.yml",
+      "claim": "No job in the three publishing workflows declares a GitHub environment (no output).",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": ".github/workflows/release-plz.yml",
+      "rev": "head",
+      "line_start": 44,
+      "line_end": 85,
+      "claim": "release-plz.yml is dispatchable, reads the switch from the triggering ref, and its release job holds id-token:write and contents:write.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "scripts/release-gate.mjs",
+      "rev": "head",
+      "line_start": 142,
+      "line_end": 149,
+      "claim": "@cipherstash/eql is frozen because npm provenance names encrypt-query-language and release.yml carries no NPM_TOKEN, so a registry publish from here should currently fail.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "test",
+      "path": "scripts/__tests__/eql-pipeline-armed.test.mjs",
+      "rev": "head",
+      "line_start": 32,
+      "line_end": 148,
+      "claim": "Tests the switch in both states and pins the exact list of jobs whose `if:` text contains the eql-armed condition. Nothing about refs or environments.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 343,
+      "line_end": 363,
+      "claim": "The JS `release` job now needs classify and requires mode == 'production' in addition to gate success.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 508,
+      "line_end": 556,
+      "claim": "The EQL version is resolved from changesets' publishedPackages after the npm publish, and eql-sql then builds and creates the eql-<V> release.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": ".github/workflows/_build-eql-sql.yml",
+      "rev": "head",
+      "line_start": 80,
+      "line_end": 124,
+      "claim": "The SQL release assets are regenerated with `mise run --force build --version` in CI and attached to a new release, not copied from the committed bundle.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "documentation",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 427,
+      "line_end": 431,
+      "claim": "mise pins rust `latest` and nothing proves regenerating the SQL reproduces npm's published bytes.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": ".github/workflows/release-plz.yml",
+      "rev": "head",
+      "line_start": 26,
+      "line_end": 78,
+      "claim": "The crate publish runs on push to main under packages/eql/** and is gated only on eql-armed, with no dependency on release.yml's npm publish.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "documentation",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 358,
+      "line_end": 362,
+      "claim": "The cutover still needs a GPG_PRIVATE_KEY secret and GHCR write access, and no workflow can assert either in advance.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "diff",
+      "path": ".github/workflows/rebuild-docs.yml",
+      "rev": "base",
+      "line_start": 1,
+      "line_end": 17,
+      "claim": "The deleted root workflow POSTed DOCS_WEBHOOK_URL on `@cipherstash/stack@*` tag pushes. The commit message says it never ran because those tags are created with GITHUB_TOKEN.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-18",
+      "kind": "code",
+      "path": "packages/eql/packages/eql/scripts/npm-publish.mjs",
+      "rev": "head",
+      "line_start": 16,
+      "line_end": 19,
+      "claim": "PRE_GA_LATEST flipped to false, so prereleases publish under alpha/beta/rc rather than latest.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "code",
+      "path": "packages/eql/packages/eql/scripts/verify-release-assets.mjs",
+      "rev": "head",
+      "line_start": 53,
+      "line_end": 59,
+      "claim": "prepublishOnly now requires the exact version stamp in the SQL bundle. The committed bundle carries '3.0.5', matching package.json 3.0.5.",
+      "status": "verified"
+    },
+    {
+      "id": "E-20",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[1]",
+      "claim": "release-postgres-eql-image.yml historically co-changed with release-eql.yml, which does not exist at head. The pipeline shape changed rather than the file being forgotten.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-21",
+      "kind": "command_output",
+      "command": "ls node_modules",
+      "claim": "No node_modules in the checkout, so the vitest script tests could not be run offline.",
+      "status": "verified"
+    },
+    {
+      "id": "E-22",
+      "kind": "code",
+      "path": ".github/workflows/release-postgres-eql-image.yml",
+      "rev": "head",
+      "line_start": 15,
+      "line_end": 100,
+      "claim": "The image workflow is dispatch-only, gated on eql-armed, and rebuilds SQL itself from the dispatched ref with a free-form eql_version input.",
+      "status": "verified"
+    },
+    {
+      "id": "E-23",
+      "kind": "documentation",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 343,
+      "line_end": 355,
+      "claim": "The production npm publish is held by `gate`, not by `eql-armed`, and nothing asserts the two agree.",
+      "status": "verified"
+    }
+  ]
+}

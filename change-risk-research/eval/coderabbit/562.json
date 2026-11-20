@@ -1,0 +1,29 @@
+{
+  "pr": 562,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/562#discussion_r3526585366",
+      "path": "packages/stack/src/encryption/index.ts",
+      "line": 868,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Deprecation warning is silently skipped when both fields are set. The warning only fires `if (clientConfig?.strategy && !clientConfig.authStrategy)`.",
+      "is_nitpick": false,
+      "id": "CR-1"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/562#discussion_r3526882411",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 454,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Mutual-exclusion error mentions `authStrategy` even when the deprecated `strategy` field caused it. `authStrategy` here is resolved as `cfg.authStrategy ?? cfg.strategy`, so when a caller sets the deprecated `config.strategy` together with `accessKey`, the thrown message still says `config.authStrategy` and `config.accessKey` are mutually exclusive — misleading since the caller never touched `authStrategy`.",
+      "is_nitpick": false,
+      "id": "CR-2"
+    }
+  ],
+  "notes": "Review 4633068640: 1 actionable inline; review 4633443286: 1 actionable inline. Both threads resolved ('Addressed in commit'). Empty-body CodeRabbit reviews 4633281674 and 4633478063 are thread replies (r3526758050, r3526903212; not findings). Summary comment also shows a 'Review limit reached' (rate-limited) notice for the final commit range db9a756..9e08252. Copilot/coderdan/auxesis comments not counted. Release-notes block removed from description."
+}

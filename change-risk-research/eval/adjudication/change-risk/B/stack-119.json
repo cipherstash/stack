@@ -1,0 +1,71 @@
+{
+  "case": "stack-119",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Model field not matched to the table definition is written as plaintext with a success result",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "True: unmatched fields pass through as plaintext with success. Design property of the new API rather than a bug; material for an encryption SDK."
+    },
+    {
+      "id": "FS-2",
+      "title": "Bulk model reconstruction truncates hyphenated field names, leaving plaintext under the original key",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Real hyphen-split reconstruction bug (same mechanism later fixed in the stack copy by #548). Post-hoc defect candidate.",
+      "post_hoc_matches": ["KD-2"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Lock-context model operations ship with no executed test of identity binding",
+      "impact": "high",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": false,
+      "note": "Verification gap restated as a scenario; says no defect found."
+    },
+    {
+      "id": "FS-4",
+      "title": "Workspace example apps no longer type-check; CI does not build them",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Verified apps import the removed EncryptedData type."
+    },
+    {
+      "id": "FS-5",
+      "title": "decryptModel silently returns undecrypted values it does not recognise",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Plausible: shape-based detection passes strings through. Evidence lines not individually checked."
+    }
+  ],
+  "cost_usd": 1.3716107000000004,
+  "wall_seconds": 172.951819,
+  "case_note": "Missed KD-1 (undefined fields not handled like null)."
+}

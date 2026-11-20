@@ -1,0 +1,71 @@
+{
+  "case": "stack-349",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Rewritten migration drops the original column on a populated table, losing its data",
+      "impact": "critical",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The rewrite emits DROP COLUMN with only a commented-out UPDATE, and the wizard's migrate prompt defaults to yes, so populated columns are silently lost."
+    },
+    {
+      "id": "FS-2",
+      "title": "Type-string change makes drizzle-kit regenerate ALTERs for already-encrypted columns, which the rewriter turns into DROPs of ciphertext",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Same speculative snapshot-diff-to-DROP chain; it assumes drizzle-kit emits the exact qualified form the regex matches, which the cited code does not show."
+    },
+    {
+      "id": "FS-3",
+      "title": "Shipped stash-cli skill and stack README still instruct the removed `db setup` command",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The removed db setup command is still documented in the shipped skill (which the wizard copies into user repos) and in the stack README."
+    },
+    {
+      "id": "FS-4",
+      "title": "Auto-detection without opt-out picks the wrong install mode",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Detection has no opt-out because parseArgs only sets flags to true, and Supabase detection only matches host suffixes, whereas the removed setup asked the user explicitly."
+    },
+    {
+      "id": "FS-5",
+      "title": "New .env precedence silently retargets DATABASE_URL for db install/push and migrations",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "stash.ts now loads .env.local etc. before .env and dotenv does not overwrite, so DATABASE_URL can resolve differently than at base, where only config() ran."
+    }
+  ],
+  "cost_usd": 1.8407256999999997,
+  "wall_seconds": 247.370268,
+  "case_note": "KD-1 not matched; FS-2 adjacent.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

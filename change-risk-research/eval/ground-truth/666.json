@@ -1,0 +1,24 @@
+{
+  "pr": 666,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "defect",
+  "expert_impact": "medium",
+  "attention_warranted": true,
+  "impact_confidence": "medium",
+  "rationale": "Pins init's installs to an embedded version set and warns on skew with a bare `!==`. A user on a newer runtime than the CLI embeds is told to downgrade, and a runtime-only release leaves the CLI's embed stale. The PR's own review flagged the staleness and it was deferred to #669. Latent, acknowledged; no incident recorded.",
+  "known_defects": [
+    {
+      "id": "KD-1",
+      "description": "Version-skew check has no direction; newer installed packages are reported as skew and users are steered to downgrade; embed goes stale on runtime-only releases",
+      "fixed_by": "#669",
+      "mechanism": "versionSkew compares with !== ; no lockstep release of stash with runtime packages",
+      "match_criteria": "Scenario identifies that the embedded/pinned versions can go stale relative to independently released runtime packages, or that the skew comparison treats newer versions as mismatches (downgrade advice).",
+      "impact": "medium",
+      "evidence": ["https://github.com/cipherstash/stack/pull/669"]
+    }
+  ],
+  "notes": ""
+}

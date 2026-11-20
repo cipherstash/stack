@@ -1,0 +1,59 @@
+{
+  "pr": 666,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/666#discussion_r3592863663",
+      "path": "packages/cli/src/bin/main.ts",
+      "line": 85,
+      "severity_label": "📐 Maintainability & Code Quality | 🟡 Minor | ⚡ Quick win",
+      "claim": "Add E2E coverage for the missing-package guidance. This install hint is user-facing, so keep it covered by a CLI regression in the E2E suite.",
+      "is_nitpick": false,
+      "id": "CR-1"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/666#discussion_r3592863669",
+      "path": "packages/cli/src/commands/init/steps/install-deps.ts",
+      "line": 80,
+      "severity_label": "🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "`warnOnVersionSkew` loses the prod/dev split, so its alignment command misclassifies `stash`. `skewed.map(({ pkg }) => pinnedSpec(pkg))` is passed as the *prod* argument to `combinedInstallCommands` with `[]` for dev, regardless of package role.",
+      "is_nitpick": false,
+      "id": "CR-2"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/666#discussion_r3593210521",
+      "path": "packages/cli/src/commands/init/steps/install-deps.ts",
+      "line": 221,
+      "severity_label": "🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "Print alignment commands when missing packages and skew coexist non-interactively. This path installs only missing packages, but never displays `alignCommands`.",
+      "is_nitpick": false,
+      "id": "CR-3"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/666#discussion_r3593210529",
+      "path": "skills/stash-drizzle/SKILL.md",
+      "line": 33,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Verify all first-party packages in the manual-install guidance. Checking only `@cipherstash/stack` does not detect skew in the integration adapter (affects skills/stash-drizzle/SKILL.md and skills/stash-supabase/SKILL.md).",
+      "is_nitpick": false,
+      "id": "CR-4"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/666#pullrequestreview-4711163168",
+      "path": "packages/cli/src/commands/init/steps/install-deps.ts",
+      "line": 262,
+      "severity_label": "outside diff range | 🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "Do not report success while alignment failed or skew remains. An alignment command can fail while every package remains present at its old version.",
+      "is_nitpick": false,
+      "id": "CR-5"
+    }
+  ],
+  "notes": "Review 4710706839: 2 actionable inline. Review 4711163168: 2 actionable inline + 1 outside-diff. Review 4711148627 is an empty-body thread reply. All threads resolved. CodeRabbit reply in thread r3593196875 (acknowledging fix; not a finding). r3592863669 is outdated (line from original_line). Copilot and auxesis review comments not counted. Description had two unmarked '## Summary by CodeRabbit' sections; both removed."
+}

@@ -1,0 +1,37 @@
+{
+  "case": "stack-728",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "v3 plaintext\u2192encrypted migration that used to fail loudly now runs and drops populated column data",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "At base, migration.ts had no sweep and the regex ignored v3, so plaintext->v3 failed at migrate. At head it is silently rewritten into ADD/DROP/RENAME with only comment and info-level warnings and no non-empty-table guard."
+    },
+    {
+      "id": "FS-2",
+      "title": "Encrypted\u2192encrypted type change (v2\u2192v3 or v3 domain swap) rewritten into a DROP of the ciphertext column",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The base regex matched only eql_v2_encrypted, so a v2->v3 or v3->v3 ALTER went through unchanged or failed loudly. At head it is rewritten to drop the existing ciphertext column, and the cited base/head lines and the ops.json domain DDL support this."
+    }
+  ],
+  "cost_usd": 1.4325321000000002,
+  "wall_seconds": 222.437076,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,58 @@
+{
+  "case": "stack-860",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Native entry passes the auth strategy under the pre-0.31 `strategy` key",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Its own evidence says the alias survives; the native call still passes strategy on main today with no later fix."
+    },
+    {
+      "id": "FS-2",
+      "title": "Deployments with a base64 clientKey fail at client construction after upgrade",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "DynamoDB/operation callers branching on error.code see different codes",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "A remaining FFI call path still carries a key 0.31 rejects",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative; no remaining path identified."
+    }
+  ],
+  "cost_usd": 1.2954598999999998,
+  "wall_seconds": 166.231577
+}

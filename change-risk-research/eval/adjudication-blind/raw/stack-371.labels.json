@@ -1,0 +1,28 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "AGENTS.md:83-84 does still call it the 'phase-2 messages module' in the plan pointer, but this is doc wording with no release risk."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The diff replaces the literal E2E expectations with the same messages.* constants that prod uses, so copy regressions (including an emptied constant, since toContain('') always passes) no longer fail tests; a snapshot test of messages is a concrete mitigation."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Base tests hard-coded literals while head tests read the shared constants, so wording changes in messages.ts change CLI output with no failing test; the finding correctly scopes this as minor and suggests a snapshot."
+    }
+  ]
+}

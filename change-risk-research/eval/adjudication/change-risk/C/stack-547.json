@@ -1,0 +1,59 @@
+{
+  "case": "stack-547",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "`stash eql upgrade --eql-version 3` drops every customer column typed with an eql_v3 domain",
+      "impact": "critical",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "DROP SCHEMA CASCADE drops domain-typed columns."
+    },
+    {
+      "id": "FS-2",
+      "title": "v3 Supabase filters send a decryptable ciphertext plus all index terms in PostgREST GET URLs",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "v3 `like`/`ilike` silently return no rows for default-configured text_search columns",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "protect-ffi 0.27.0 bump or eqlVersion plumbing changes v2 output for existing users",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative."
+    }
+  ],
+  "cost_usd": 2.2732639,
+  "wall_seconds": 234.638836,
+  "case_note": "Missed KD-1 (instanceof detection)."
+}

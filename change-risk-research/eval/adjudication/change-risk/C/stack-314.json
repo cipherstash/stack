@@ -1,0 +1,59 @@
+{
+  "case": "stack-314",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "push leaves the database with no active EQL configuration when the insert fails",
+      "impact": "high",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Verified (see B): non-transactional UPDATE/INSERT and cast_as values the CHECK rejects."
+    },
+    {
+      "id": "FS-2",
+      "title": "install --force drops EQL-dependent indexes and constraints on encrypted columns",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "DROP SCHEMA CASCADE removes dependent constraints/indexes on reinstall."
+    },
+    {
+      "id": "FS-3",
+      "title": "install executes an unpinned, unverified 'latest' EQL SQL bundle as a privileged role",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "A positional argument after --dry-run silently disables the dry run",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Argument parsing turns a positional into the flag value."
+    }
+  ],
+  "cost_usd": 1.7105069000000002,
+  "wall_seconds": 226.653946,
+  "case_note": "Missed KD-1 (jiti default-export interop)."
+}

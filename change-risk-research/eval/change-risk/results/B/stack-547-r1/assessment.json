@@ -1,0 +1,531 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "b405a54850ce8e85170355b99a8baeac956be635",
+  "head_sha": "e027b7492a097cef6b21aee990678cd6e4520482",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff / git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md; .changeset files in the diff were read as content."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Docs and specs added by the change (docs/reference/supabase-sdk.md, skills/stash-supabase/SKILL.md) read as untrusted content; no separate architecture input."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md inputs."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence, pre-run)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Adds EQL v3 support: a new typed schema (`@cipherstash/stack/eql/v3`, `/v3`), an `encryptedSupabaseV3` adapter, `eqlVersion` wire selection on the client (protect-ffi 0.26 -> 0.27 for everyone), and a CLI v3 install/upgrade path with two vendored ~36k-line SQL bundles. The v2 code is refactored into overridable seams that are meant to keep v2 behaviour unchanged. The most material risk is in the CLI: unlike the v2 bundle, which keeps the customer column type `public.eql_v2_encrypted` outside the dropped schema, the v3 bundle defines every customer column domain inside `eql_v3` and opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`. The new `stash eql upgrade --eql-version 3` and `install --eql-version 3 --force` both run that bundle, so on a database that already has v3-typed columns they would drop those columns and their encrypted data. Nothing guards against this and no test covers it. Secondary risks: the v3 Supabase filters send full ciphertext envelopes in GET query strings (documented as interim), the free-text `like`/`ilike` defaults silently miss matches, and the FFI bump for v2 users could not be verified here. No tests were run; CI results were not provided.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "external_side_effect",
+      "description": "New CLI flag `--eql-version <2|3>` on `stash eql install` and `stash eql upgrade`. With 3, the installer runs the vendored v3 bundle (full, or the Supabase variant with operator classes removed) in a transaction and, for Supabase, grants on `eql_v3` and `eql_v3_internal`. The bundle starts with DROP SCHEMA IF EXISTS eql_v3 CASCADE and eql_v3_internal CASCADE, and the customer column domains (e.g. eql_v3.text_search) live in eql_v3.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3", "E-4"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "invariant",
+      "description": "v3 `isInstalled` needs both eql_v3 and eql_v3_internal. A database that has only eql_v3 (an older pre-alpha.2 generation) counts as not installed, so a plain `stash eql install --eql-version 3` reruns the dropping bundle over it.",
+      "certainty": "observed",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "New public entry points `@cipherstash/stack/eql/v3` and `@cipherstash/stack/v3` (ESM+CJS+types) and `encryptedSupabaseV3`. EncryptionClient methods widen from EncryptedTable/JsPlaintext to structural BuildableTable/Plaintext (adds Date). `Encryption()` now throws when v2 and v3 tables are mixed, and passes the resolved `eqlVersion` to protect-ffi `newClient`. This stays `undefined` for v2-only schema sets.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "dependency",
+      "description": "@cipherstash/protect-ffi goes from 0.26.0 to 0.27.0 for every @cipherstash/stack consumer (native per-platform binaries and the wasm-inline entry), including v2-only users.",
+      "certainty": "observed",
+      "evidence": ["E-10"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "security_boundary",
+      "description": "The v3 Supabase builder encrypts each filter operand with `encrypt()` (a full storage envelope: ciphertext plus all index terms), not with `encryptQuery`, and sends it as JSON text in the PostgREST filter value, which travels in GET query strings.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-12"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "public_contract",
+      "description": "v3 Supabase `like`/`ilike` (and `not`/`or` variants) on encrypted columns become PostgREST `cs` (bloom-filter containment). The default match options keep `include_original: true`, which per the code's own comment stops substring patterns from matching.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-11", "E-12"]
+    },
+    {
+      "id": "BC-7",
+      "kind": "other",
+      "description": "The v2 Supabase builder, encryption operations and model helpers are refactored: private members become protected, there are new dialect hook methods, column-name mapping (identity for v2), and `assertValidNumericValue` is now also applied on the lock-context encrypt path. `encryptQuery(array, opts)` now takes the single-value path instead of batch mode when opts are given. The bigint case is removed from `inferQueryOpFromPlaintext`. `resolveLockContext` adds a structural `identityContext` check.",
+      "certainty": "observed",
+      "evidence": ["E-13"]
+    },
+    {
+      "id": "BC-8",
+      "kind": "build_or_release",
+      "description": "CI gains a type-test step and a check that the vendored v3 SQL bundles match the fixture. A new FTA complexity workflow is added. Shipped CLI dist now includes the v3 SQL files (copied from src/sql) and the updated stash-supabase skill.",
+      "certainty": "observed",
+      "evidence": ["E-14", "E-15"]
+    }
+  ],
+  "impact": "critical",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "stash CLI: eql install / eql upgrade / db status (packages/cli)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "New v3 routing, version detection and bundle selection.",
+      "evidence": ["E-1", "E-4", "E-5"]
+    },
+    {
+      "id": "AC-2",
+      "name": "Customer PostgreSQL / Supabase databases with eql_v3.* columns",
+      "kind": "database",
+      "relationship": "confirmed",
+      "how": "The shipped docs tell users to create tables with columns typed eql_v3.text_search / integer_ord / timestamp_ord. Those columns depend on domains inside the schema the bundle drops.",
+      "evidence": ["E-2", "E-16"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Vendored EQL v3 SQL bundles (packages/cli/src/sql/cipherstash-encrypt-v3*.sql)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "New install bundles applied to customer databases; copied into CLI dist.",
+      "evidence": ["E-2", "E-14"]
+    },
+    {
+      "id": "AC-4",
+      "name": "@cipherstash/stack encryptedSupabaseV3 (src/supabase/query-builder-v3.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "New adapter: wire encoding of mutations and filters for eql_v3 domains.",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "AC-5",
+      "name": "@cipherstash/stack v2 encryptedSupabase and EncryptionClient",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Refactored into overridable seams. Signatures widened. eqlVersion is passed to newClient.",
+      "evidence": ["E-8", "E-13"]
+    },
+    {
+      "id": "AC-6",
+      "name": "@cipherstash/protect-ffi native/WASM binding",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Version bump to 0.27.0 in dependencies and lockfile for all platforms.",
+      "evidence": ["E-10"]
+    },
+    {
+      "id": "AC-7",
+      "name": "stash-supabase agent skill copied into customer repos",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "The CLI tsup config copies ../../skills into dist/skills for `stash init`. The skill gains v3 install and query guidance.",
+      "evidence": ["E-15", "E-11"]
+    },
+    {
+      "id": "AC-8",
+      "name": "PostgREST / proxy / Supabase request logs",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "Receive GET query strings that now contain full encrypted envelopes for v3 filters. That this happens is stated in the shipped docs, not observed.",
+      "evidence": ["E-12"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "`stash eql upgrade --eql-version 3` (or install --force) drops customer columns typed with eql_v3 domains",
+      "trigger": "A user with tables already using eql_v3.* columns (as the docs instruct) runs `stash eql upgrade --eql-version 3`, runs `stash eql install --eql-version 3 --force`, or runs a plain v3 install against an older-generation v3 install (eql_v3 present, eql_v3_internal absent).",
+      "affected_components": ["AC-1", "AC-2", "AC-3"],
+      "mechanism": "upgradeCommand checks isInstalled({eqlVersion:3}) and then calls installer.install({eqlVersion:3}) (upgrade.ts:53,96). install() runs the bundled SQL and then COMMITs (installer/index.ts:335,341). The v3 bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (cipherstash-encrypt-v3.sql:38), and the column domains are defined in that schema (e.g. CREATE DOMAIN eql_v3.timestamp, :545). In PostgreSQL, dropping a domain with CASCADE drops the table columns of that type. The v2 bundle avoids exactly this: it creates the customer column type in `public` and only if absent, with the note 'Customer data columns use this type, so it must not be dropped' (cipherstash-encrypt.sql:28-41). The test helper for this change even notes the bundle 'must never run unconditionally' against a shared database (helpers/eql-v3.ts:80-82), but the CLI upgrade path runs it unconditionally once v3 is detected. BC-2 makes this reachable without --force for older-generation installs.",
+      "consequence": "Every eql_v3-typed column in the database is silently removed in a committed transaction. The encrypted data in those columns is lost and can only come back from a backup. The CLI reports success ('EQL extensions upgraded').",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-3", "E-4", "E-5", "E-16", "E-17"],
+      "existing_verification": [
+        {
+          "description": "installer.test.ts checks that the v3 bundle and grants are issued and that isInstalled requires both schemas (mocked pg). It does not check behaviour against existing v3 columns.",
+          "status": "exists_not_run",
+          "evidence": ["E-18"]
+        }
+      ],
+      "missing_verification": [
+        "Integration test: create a table with eql_v3.text_search columns and data, run `stash eql upgrade --eql-version 3`, and assert the columns and rows survive (or that the CLI refuses).",
+        "Confirmation from the EQL maintainers of whether the v3 bundle is meant to be re-runnable over live data."
+      ],
+      "mitigation": "Until the bundle is non-destructive, make v3 upgrade, --force and stale-generation reinstall refuse (or require an explicit destructive confirmation) when any column in pg_attribute depends on a type in eql_v3. Alternatively, move the column domains out of the dropped schema, as v2 does with public.eql_v2_encrypted. Document clearly that v3 alpha upgrades are destructive.",
+      "domain_tags": ["persistence_migration", "encryption"]
+    },
+    {
+      "id": "FS-2",
+      "title": "v3 Supabase filters put full ciphertext envelopes and all index terms in GET URLs",
+      "trigger": "Any v3 Supabase filter (`eq`, `gt`, `like`, `in`, `or`, ...) on an encrypted column issued through PostgREST.",
+      "affected_components": ["AC-4", "AC-8"],
+      "mechanism": "encryptCollectedTerms calls `encryptionClient.encrypt()` per operand and returns JSON.stringify of the full storage payload (query-builder-v3.ts:194-249). The code and docs say this carries a decryptable `c` plus every index term (hm, ob/ORE, bloom) and lands in URL logs (supabase-sdk.md:158-168).",
+      "consequence": "Ciphertexts and searchable index terms (including order-revealing terms) are kept in proxy, CDN and Supabase request logs outside the database's access controls. This widens what an attacker with log access can analyse; plaintext is still not exposed without keys. Large envelopes, or `.in()` with many values, can also exceed URL length limits (a loud failure).",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-6", "E-12"],
+      "existing_verification": [
+        {
+          "description": "supabase-v3-builder.test.ts checks operator mapping and encoding with a mocked Supabase client. It does not check log or URL exposure.",
+          "status": "exists_not_run",
+          "evidence": ["E-7"]
+        }
+      ],
+      "missing_verification": [
+        "A security sign-off that the interim full-envelope operand (tracked as CIP-3402 in comments) is acceptable to release, and a measurement of operand URL size per domain."
+      ],
+      "mitigation": "Gate encryptedSupabaseV3 as experimental/alpha in release notes. Send filters via POST/RPC where possible. Ship the term-only query envelope before GA.",
+      "domain_tags": ["encryption", "other"]
+    },
+    {
+      "id": "FS-3",
+      "title": "v3 `like`/`ilike` silently return no or partial rows with default match options or `%` patterns",
+      "trigger": "A user declares `types.TextSearch(...)` without `freeTextSearch({ include_original: false })`, or passes a v2-style `%alice%` pattern (as the v2 sections of the same skill show), and queries with `.like`/`.ilike` through encryptedSupabaseV3.",
+      "affected_components": ["AC-4", "AC-7"],
+      "mechanism": "Encrypted like/ilike become `cs` on the bloom filter (query-builder-v3.ts:260-277). The operand is a full envelope whose bloom includes the original whole value when include_original is true, the default in defaultMatchOpts (match-defaults.ts:33-41). The code comment says such patterns then only match exact values (query-builder-v3.ts:72-78).",
+      "consequence": "Search features return empty or incomplete results without an error. This is functional degradation, not data loss.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-7", "E-11"],
+      "existing_verification": [
+        {
+          "description": "Builder unit test only checks that like/ilike become `cs`. Whether the result is correct depends on the live-gated pg/Supabase tests, which were not run.",
+          "status": "exists_not_run",
+          "evidence": ["E-7"]
+        }
+      ],
+      "missing_verification": [
+        "Live test that substring `.ilike` finds rows with the default TextSearch configuration (expected to fail today) and with include_original:false."
+      ],
+      "mitigation": "Default include_original to false for v3 domains used through Supabase, or reject/warn on `%` and on include_original:true at query time.",
+      "domain_tags": ["public_api", "encryption"]
+    },
+    {
+      "id": "FS-4",
+      "title": "protect-ffi 0.27 bump changes v2 behaviour for existing users",
+      "trigger": "Any existing v2 user upgrades @cipherstash/stack and gets protect-ffi 0.27.0 (native or WASM).",
+      "affected_components": ["AC-5", "AC-6"],
+      "mechanism": "The dependency moves to 0.27.0 (package.json:247), and newClient now receives an `eqlVersion` key (undefined for v2) (encryption/index.ts:153-167). The comments claim v2 output stays byte-identical, but that is a property of the FFI release and cannot be checked in this checkout (no node_modules, no network).",
+      "consequence": "If 0.27 changes v2 payload shape, query-term encoding or error codes, v2 users could write payloads that older readers or the installed eql_v2 SQL handle differently. That is a cross-version data-compatibility problem.",
+      "impact": "high",
+      "basis": "speculative",
+      "evidence": ["E-10", "E-8"],
+      "existing_verification": [
+        {
+          "description": "Existing v2 suites (encrypt-query*.test.ts, supabase.test.ts) exercise the FFI, but most are gated on live credentials.",
+          "status": "exists_not_run",
+          "evidence": ["E-19"]
+        }
+      ],
+      "missing_verification": [
+        "A CI run of the live v2 suites against 0.27.0, and a golden-payload comparison of v2 encrypt/encryptQuery output between 0.26 and 0.27."
+      ],
+      "mitigation": "Confirm that the protect-ffi 0.27 changelog states v2 wire output is unchanged, and run the credentialed v2 suites before release.",
+      "domain_tags": ["dependency", "serialization_compatibility"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test exercises v3 install/upgrade against a database that already holds v3-typed columns. The installer tests use a mocked pg client.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-18"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The v3 Supabase query behaviour (free-text correctness, operand size) is only covered by live-gated tests whose results were not available.",
+      "scenarios": ["FS-2", "FS-3"],
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "VG-3",
+      "description": "No CI result shows the v2 suites passing on protect-ffi 0.27.0.",
+      "scenarios": ["FS-4"],
+      "evidence": ["E-10"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "other",
+      "description": "Add a pre-flight guard to `eql upgrade --eql-version 3`, `install --eql-version 3 --force` and the stale-generation reinstall: query for user columns whose type lives in eql_v3 and abort (or require an explicit destructive flag) if any exist.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add a Postgres integration test that seeds an eql_v3.text_search column with rows, runs the v3 upgrade, and asserts the data survives or the command refuses.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "documentation",
+      "description": "State in the changeset, CLI help and the stash-supabase skill that v3 is alpha and that rerunning the v3 bundle is destructive. Mark encryptedSupabaseV3 as experimental and flag the URL-logged operands.",
+      "addresses": ["FS-1", "FS-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "review_focus",
+      "description": "Have the EQL/security owners sign off on the interim full-envelope filter operand and the include_original default for v3 free-text search.",
+      "addresses": ["FS-2", "FS-3"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "compatibility_check",
+      "description": "Run the credentialed v2 suites and a 0.26 vs 0.27 golden-payload comparison before publishing.",
+      "addresses": ["FS-4", "VG-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "The ~36k-line vendored SQL bundles were checked only for schema drops, domain locations and the v2 contrast. Their operator semantics were not reviewed.",
+      "effect": "Defects inside the EQL v3 SQL (operator correctness, CHECK constraints) are not assessed."
+    },
+    {
+      "id": "CL-2",
+      "description": "No tests were run: there is no node_modules, no Postgres server and no credentials, and no CI results were provided.",
+      "effect": "Every verification status is exists_not_run. The PostgreSQL CASCADE behaviour in FS-1 rests on documented PostgreSQL semantics, not a reproduction."
+    },
+    {
+      "id": "CL-3",
+      "description": "src/eql/v3/* (columns/table/types), src/encryption/v3.ts and src/types.ts were skimmed, not read line by line. Test, plan and spec documents were not reviewed.",
+      "effect": "Type-level or schema-builder defects specific to v3 may be missed."
+    },
+    {
+      "id": "CL-4",
+      "description": "The wasm-inline `Encryption` factory is still typed to v2 tables and never passes eqlVersion. v3 tables forced through it would get v2 wire format. Not raised as a scenario because the types prevent this without a cast.",
+      "effect": "The interaction between v3 and wasm-inline is not assessed."
+    },
+    {
+      "id": "CL-5",
+      "description": "The protect-ffi 0.27 release contents could not be inspected (no network, no installed package).",
+      "effect": "FS-4 stays speculative."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/upgrade.ts",
+      "rev": "head",
+      "line_start": 50,
+      "line_end": 101,
+      "claim": "upgradeCommand checks isInstalled({eqlVersion}) and then calls installer.install({... eqlVersion}) with no check for existing data.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/cli/src/sql/cipherstash-encrypt-v3.sql",
+      "rev": "head",
+      "line_start": 36,
+      "line_end": 47,
+      "claim": "The v3 bundle runs DROP SCHEMA IF EXISTS eql_v3 CASCADE and DROP SCHEMA IF EXISTS eql_v3_internal CASCADE.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/cli/src/sql/cipherstash-encrypt-v3.sql",
+      "rev": "head",
+      "line_start": 545,
+      "line_end": 560,
+      "claim": "Customer column domains (eql_v3.timestamp, eql_v3.timestamp_eq, ...) are created inside the eql_v3 schema.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/cli/src/installer/index.ts",
+      "rev": "head",
+      "line_start": 297,
+      "line_end": 341,
+      "claim": "install() rejects --latest for v3, loads the bundled v3 SQL, runs it, and COMMITs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/cli/src/installer/index.ts",
+      "rev": "head",
+      "line_start": 211,
+      "line_end": 227,
+      "claim": "v3 isInstalled needs both eql_v3 and eql_v3_internal. The comment says a stale install is treated as not installed so the bundle replaces it by dropping both schemas.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack/src/supabase/query-builder-v3.ts",
+      "rev": "head",
+      "line_start": 194,
+      "line_end": 249,
+      "claim": "Filter operands are produced by encrypt() (full storage envelope) and JSON-stringified as the PostgREST filter value.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack/src/supabase/query-builder-v3.ts",
+      "rev": "head",
+      "line_start": 72,
+      "line_end": 78,
+      "claim": "Encrypted like/ilike become `cs`. With the default include_original:true, substring patterns only match when the pattern equals the stored value.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 87,
+      "line_end": 106,
+      "claim": "resolveEqlVersion throws on mixed v2/v3 schemas, returns undefined for v2-only and 3 for v3-only. The result is passed to newClient as eqlVersion.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "diff",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "claim": "New exports ./eql/v3 and ./v3 (import/require/types). tsup entries were added for src/eql/v3/index.ts and src/encryption/v3.ts.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 247,
+      "line_end": 247,
+      "claim": "@cipherstash/protect-ffi dependency is 0.27.0 (was 0.26.0). The lockfile updates all per-platform binaries.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/stack/src/schema/match-defaults.ts",
+      "rev": "head",
+      "line_start": 33,
+      "line_end": 41,
+      "claim": "defaultMatchOpts returns include_original: true, shared by the v2 freeTextSearch and the v3 domain builders.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "documentation",
+      "path": "docs/reference/supabase-sdk.md",
+      "rev": "head",
+      "line_start": 158,
+      "line_end": 168,
+      "claim": "The docs acknowledge that full-envelope operands carry a decryptable ciphertext plus all index terms in GET query strings, which can land in URL logs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "diff",
+      "path": "packages/stack/src/supabase/query-builder.ts",
+      "rev": "head",
+      "claim": "The v2 builder is refactored to protected members with dialect hooks whose defaults are identity / v2 behaviour.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": "packages/cli/tsup.config.ts",
+      "rev": "head",
+      "line_start": 23,
+      "line_end": 23,
+      "claim": "CLI build copies src/sql (now including the v3 bundles) into dist/sql.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": "packages/cli/tsup.config.ts",
+      "rev": "head",
+      "line_start": 25,
+      "line_end": 29,
+      "claim": "CLI build copies the repo skills directory into dist/skills for `stash init` to put into customer repos.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "documentation",
+      "path": "docs/reference/supabase-sdk.md",
+      "rev": "head",
+      "line_start": 91,
+      "line_end": 96,
+      "claim": "The docs instruct users to create tables with columns typed eql_v3.text_search, eql_v3.integer_ord and eql_v3.timestamp_ord.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "code",
+      "path": "packages/cli/src/sql/cipherstash-encrypt.sql",
+      "rev": "head",
+      "line_start": 28,
+      "line_end": 43,
+      "claim": "By contrast, the v2 bundle creates public.eql_v2_encrypted only if absent, outside the dropped schema, because customer columns use it.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "test",
+      "path": "packages/cli/src/__tests__/installer.test.ts",
+      "rev": "head",
+      "line_start": 208,
+      "line_end": 300,
+      "claim": "v3 installer tests check the bundle and grants and the two-schema isInstalled with a mocked pg client. No test covers existing v3 columns.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "test",
+      "path": "packages/stack/__tests__/supabase.test.ts",
+      "rev": "head",
+      "line_start": 109,
+      "line_end": 112,
+      "claim": "The v2 Supabase integration suite is skipped unless SUPABASE_ENABLED.",
+      "status": "verified"
+    }
+  ]
+}

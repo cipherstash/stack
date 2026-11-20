@@ -1,0 +1,25 @@
+{
+  "case": "stack-975",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "low",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Untested recipe could return wrong rows silently if copied into customer queries",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Low: recipe untested on negative doubles; plausible gap, no defect shown."
+    }
+  ],
+  "cost_usd": 0.9977893999999998,
+  "wall_seconds": 132.348599
+}

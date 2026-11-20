@@ -1,0 +1,14 @@
+{
+  "pr": 996,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "no_known_defect",
+  "expert_impact": "medium",
+  "attention_warranted": true,
+  "impact_confidence": "low",
+  "rationale": "Refactor of createEncryptionClient forwarding with public type changes in the encryption client.",
+  "known_defects": [],
+  "notes": "No known defect does not mean risk-free; reported scenarios on this case are adjudicated individually (valid / unsupported / incorrect)."
+}

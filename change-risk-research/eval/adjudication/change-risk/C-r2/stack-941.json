@@ -1,0 +1,69 @@
+{
+  "case": "stack-941",
+  "evaluator": "change-risk/C-r2",
+  "run": 2,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Dispatch against a non-branch ref named `main` classifies as production and publishes npm packages from an unreviewed commit",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "After arming, any writer can publish an EQL prerelease (npm, crate, SQL release) from an unreviewed branch",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "First armed production run publishes npm before the never-executed SQL/docs/image jobs, leaving a partial EQL release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "npm publishes before the asset jobs, leaving a partial release."
+    },
+    {
+      "id": "FS-4",
+      "title": "GitHub-release and image SQL rebuilt from source can differ in bytes from the bundle shipped in npm under the same version",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-5",
+      "title": "Removing the live root rebuild-docs.yml stops docs-site rebuilds on @cipherstash/stack releases if the webhook is still in use",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 2.2865137000000004,
+  "wall_seconds": 270.597651
+}

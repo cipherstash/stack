@@ -1,0 +1,48 @@
+{
+  "case": "stack-1002",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Armed auth release publishes gnu binaries with a glibc floor of the build runner",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "glibc floor of gnu builds not pinned like the FFI line."
+    },
+    {
+      "id": "FS-2",
+      "title": "musl leg produces no .node and the armed release holds every JS publish on that push",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Adjacent to KD-1: says the musl leg is built wrongly, but predicts a loud build failure rather than a glibc-linked binary that fails to load. Not counted as a match."
+    },
+    {
+      "id": "FS-3",
+      "title": "Widened release-plz trigger boots the armed EQL crates job on unrelated root Cargo changes",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 2.5503738999999994,
+  "wall_seconds": 305.966086,
+  "case_note": "KD-1 not matched; FS-2 adjacent."
+}

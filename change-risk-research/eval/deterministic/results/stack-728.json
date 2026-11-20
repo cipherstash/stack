@@ -1,0 +1,318 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "48889952ecb25dcf3c31481e7c7197099b85adb8",
+  "head_sha": "8dcbf05390020d7fe8ffca6aa7d2bbee3d41fc73",
+  "merge_base_sha": "48889952ecb25dcf3c31481e7c7197099b85adb8",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "48889952ecb25dcf3c31481e7c7197099b85adb8",
+    "cutoff_date": "2026-07-19T21:19:43+10:00",
+    "commits_read": 1534,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 9,
+    "additions": 725,
+    "deletions": 48,
+    "binary_files": 0,
+    "by_status": {
+      "added": 1,
+      "modified": 8
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/cli": 5,
+      ".": 3,
+      "packages/wizard": 1
+    },
+    "component_count": 3,
+    "top_level_dirs": {
+      "packages": 6,
+      "skills": 2,
+      ".changeset": 1
+    },
+    "languages": {
+      "TypeScript": 6,
+      "Markdown": 3
+    }
+  },
+  "path_classes": {
+    "docs": 3,
+    "test": 2,
+    "agent_instructions": 2
+  },
+  "files": [
+    {
+      "path": ".changeset/wild-donkeys-shave.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 22,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/cli/src/__tests__/rewrite-migrations.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 336,
+      "deletions": 4,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/install.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 23,
+      "deletions": 4,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 198,
+      "deletions": 40,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/eql/__tests__/migration.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 89,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/eql/migration.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 48,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/wizard/src/lib/rewrite-migrations.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/wizard",
+      "language": "TypeScript"
+    },
+    {
+      "path": "skills/stash-cli/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "skills/stash-drizzle/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "packages/cli/src/commands/db/install.ts",
+        "commits": 35,
+        "commits_last_90d": 32,
+        "distinct_authors": 5
+      },
+      {
+        "path": "skills/stash-cli/SKILL.md",
+        "commits": 29,
+        "commits_last_90d": 27,
+        "distinct_authors": 5
+      },
+      {
+        "path": "skills/stash-drizzle/SKILL.md",
+        "commits": 23,
+        "commits_last_90d": 19,
+        "distinct_authors": 4
+      },
+      {
+        "path": "packages/wizard/src/lib/rewrite-migrations.ts",
+        "commits": 5,
+        "commits_last_90d": 5,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+        "commits": 4,
+        "commits_last_90d": 2,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/cli/src/__tests__/rewrite-migrations.test.ts",
+        "commits": 2,
+        "commits_last_90d": 0,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/cli/src/commands/eql/__tests__/migration.test.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/eql/migration.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "skills/stash-drizzle/SKILL.md",
+        "usually_changes_with": "skills/stash-encryption/SKILL.md",
+        "co_commits": 16,
+        "confidence": 0.73,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "skills/stash-drizzle/SKILL.md",
+        "usually_changes_with": "skills/stash-supabase/SKILL.md",
+        "co_commits": 11,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 22
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/wild-donkeys-shave.md": ["@cipherstash/developers"],
+      "packages/cli/src/__tests__/rewrite-migrations.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/db/install.ts": ["@cipherstash/developers"],
+      "packages/cli/src/commands/db/rewrite-migrations.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/eql/__tests__/migration.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/eql/migration.ts": ["@cipherstash/developers"],
+      "packages/wizard/src/lib/rewrite-migrations.ts": [
+        "@cipherstash/developers"
+      ],
+      "skills/stash-cli/SKILL.md": ["@cipherstash/developers"],
+      "skills/stash-drizzle/SKILL.md": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 3
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 2,
+    "source_files_changed": 4,
+    "source_without_related_test": [],
+    "source_with_related_test_unchanged": [],
+    "mapping": [
+      {
+        "source": "packages/cli/src/commands/db/install.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/installer.test.ts",
+          "packages/cli/src/__tests__/release-train.test.ts",
+          "packages/cli/src/__tests__/supabase-migration.test.ts",
+          "packages/cli/src/commands/db/__tests__/find-generated-migration.test.ts",
+          "packages/cli/src/commands/db/__tests__/prisma-next-install-guard.test.ts",
+          "packages/cli/src/commands/eql/__tests__/migration.test.ts",
+          "packages/cli/src/commands/impl/steps/__tests__/handoff-claude.test.ts",
+          "packages/cli/src/commands/impl/steps/__tests__/handoff-codex.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/db/rewrite-migrations.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/rewrite-migrations.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/eql/migration.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/eql/__tests__/migration.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/wizard/src/lib/rewrite-migrations.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/rewrite-migrations.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

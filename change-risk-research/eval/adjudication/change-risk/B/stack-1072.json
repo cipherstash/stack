@@ -1,0 +1,47 @@
+{
+  "case": "stack-1072",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A plan-only PR merges something a Test JS step would have rejected, turning main red",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Required Test JS checks stay Pending on plan-only PRs",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    },
+    {
+      "id": "FS-3",
+      "title": "EQL cutover plan can drift from FROZEN_PUBLISHERS unchecked",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 0.9002991,
+  "wall_seconds": 137.632242
+}

@@ -1,0 +1,59 @@
+{
+  "pr": 568,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/568#discussion_r3533330349",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 481,
+      "severity_label": "🗄️ Data Integrity & Integration | 🟡 Minor | ⚡ Quick win",
+      "claim": "`result.failure.error.message` uses the wrong shape. `failure` should expose the message directly; otherwise an auth-construction failure can throw a secondary `TypeError` while building the error string.",
+      "is_nitpick": false,
+      "id": "CR-1"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/568#pullrequestreview-4641319694",
+      "path": "packages/cli/src/commands/init/steps/authenticate.ts",
+      "line": 17,
+      "severity_label": "outside diff range | 🗄️ Data Integrity & Integration | 🟠 Major | ⚡ Quick win",
+      "claim": "Failure-type handling is less granular than the sibling implementation. `checkExistingAuth()` treats every `detected.failure` / `result.failure` as \"not authenticated\" and silently falls through to `undefined`, whereas `hasCredentials()` in `packages/wizard/src/lib/prerequisites.ts` (same migration cohort) explicitly checks `failure.type` for `NOT_AUTHENTICATED`/`MISSING_WORKSPACE_CRN` and rethrows anything else.",
+      "is_nitpick": false,
+      "id": "CR-2"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/568#pullrequestreview-4641319694",
+      "path": "packages/cli/src/commands/auth/login.ts",
+      "line": 39,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Consider extracting the repeated failure-handling into a helper. The `if (x.failure) { log; process.exit(1) }` pattern is repeated three times (Lines 40-43, 57-61, 76-80) with only the message/spinner text varying.",
+      "is_nitpick": true,
+      "id": "CR-3"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/568#pullrequestreview-4641319694",
+      "path": "packages/wizard/src/__tests__/prerequisites.test.ts",
+      "line": 11,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Consider covering the rethrow and `detect()`-failure branches. The mock only drives the `getToken()` → `NOT_AUTHENTICATED` path.",
+      "is_nitpick": true,
+      "id": "CR-4"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/568#pullrequestreview-4641319694",
+      "path": "packages/stack/__tests__/wasm-inline-strategy.test.ts",
+      "line": 139,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Consider adding a test for the `AccessKeyStrategy.create` failure path. The mock at Line 22 only returns `{ data: ... }`.",
+      "is_nitpick": true,
+      "id": "CR-5"
+    }
+  ],
+  "notes": "Transcribed by hand from inline MCP output. 1 inline thread (CR-1); CodeRabbit later withdrew it as a false positive after the author's reply (reply https://github.com/cipherstash/stack/pull/568#discussion_r3541119218, not a finding). Review body 4641319694: 1 actionable (inline), 1 outside-diff, 3 nitpicks. One CodeRabbit review with empty body (4650798309). Summary/walkthrough issue comment present ('No actionable comments were generated in the recent review'); pre-merge checks all passed."
+}

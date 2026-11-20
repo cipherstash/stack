@@ -1,0 +1,59 @@
+{
+  "pr": 301,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/301#discussion_r2849457587",
+      "path": "packages/stack/src/encryption/operations/bulk-encrypt.ts",
+      "line": 97,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Positional result mapping in BulkEncryptOperation.execute() and BulkEncryptOperationWithLockContext.execute() assumes encryptBulk returns one result per input; if null plaintexts are filtered, ids are silently paired with the wrong encrypted payloads. Apply null-safe result mapping.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-2",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/301#discussion_r2849999633",
+      "path": "packages/stack/__tests__/schema-builders.test.ts",
+      "line": 31,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Test names describe 'string' but assertions check for 'text' (also at line 317); the names mislead readers.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-3",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/301#pullrequestreview-3851007664",
+      "path": "packages/stack/src/schema/index.ts",
+      "line": 148,
+      "severity_label": "outside diff range | ⚠️ Potential issue | 🟡 Minor",
+      "claim": "JSDoc for EncryptedField.dataType() (and EncryptedColumn.dataType()) still documents the default as 'string'; effective default is now 'text'.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-4",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/301#pullrequestreview-3851007664",
+      "path": "packages/stack/README.md",
+      "line": 627,
+      "severity_label": "outside diff range | ⚠️ Potential issue | 🟡 Minor",
+      "claim": "README references csValue(valueName) returning ProtectValue, which is not exported from the current API; should be encryptedField(valueName) returning EncryptedField (also in the Subpath Exports table).",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-5",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/301#pullrequestreview-3851007664",
+      "path": "packages/stack/src/schema/index.ts",
+      "line": 192,
+      "severity_label": "nitpick",
+      "claim": "EncryptedColumn constructor initializes castAsValue to 'string' while EncryptedField was updated to 'text'; masked by normalization in build() but leaves internal state out of sync.",
+      "is_nitpick": true
+    }
+  ],
+  "notes": "Two CodeRabbit reviews (COMMENTED). Walkthrough/summary issue comment later updated to 'Review failed: The pull request is closed.' for the final commit. CR-2 thread resolved. Release-notes summary in PR body excluded."
+}

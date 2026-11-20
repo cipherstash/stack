@@ -1,0 +1,254 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "cf8ebc23880abc7c51c4353551f3b4f9261f78ce",
+  "head_sha": "d257468c35efffdfe17f8e2b2cdcd744abfdf76a",
+  "merge_base_sha": "cf8ebc23880abc7c51c4353551f3b4f9261f78ce",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "cf8ebc23880abc7c51c4353551f3b4f9261f78ce",
+    "cutoff_date": "2026-04-30T14:41:00+10:00",
+    "commits_read": 850,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 7,
+    "additions": 68,
+    "deletions": 30,
+    "binary_files": 0,
+    "by_status": {
+      "modified": 6,
+      "added": 1
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/cli": 7
+    },
+    "component_count": 1,
+    "top_level_dirs": {
+      "packages": 7
+    },
+    "languages": {
+      "TypeScript": 6,
+      "Markdown": 1
+    }
+  },
+  "path_classes": {
+    "security_sensitive": 3,
+    "test": 2,
+    "agent_instructions": 1,
+    "docs": 1
+  },
+  "files": [
+    {
+      "path": "packages/cli/AGENTS.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 11,
+      "deletions": 9,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": "packages/cli",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/cli/src/bin/stash.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 6,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/auth/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/auth/login.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/messages.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 29,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/tests/e2e/auth-login-cancel.e2e.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["security_sensitive", "test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/tests/e2e/smoke.e2e.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 13,
+      "deletions": 10,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "packages/cli/src/bin/stash.ts",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/auth/login.ts",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/auth/index.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/tests/e2e/smoke.e2e.test.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/AGENTS.md",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/tests/e2e/auth-login-cancel.e2e.test.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/cli/src/bin/stash.ts",
+        "usually_changes_with": "packages/cli/src/commands/db/install.ts",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/cli/src/bin/stash.ts",
+        "usually_changes_with": "packages/cli/src/commands/init/providers/supabase.ts",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 13
+  },
+  "ownership": {
+    "codeowners_found": false,
+    "owners_by_file": {},
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 2
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 2,
+    "source_files_changed": 4,
+    "source_without_related_test": [
+      "packages/cli/src/commands/auth/index.ts",
+      "packages/cli/src/commands/auth/login.ts"
+    ],
+    "source_with_related_test_unchanged": ["packages/cli/src/bin/stash.ts"],
+    "mapping": [
+      {
+        "source": "packages/cli/src/bin/stash.ts",
+        "related_tests_at_head": ["packages/cli/tests/helpers/pty.ts"],
+        "match": "reference",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/auth/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/auth/login.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/messages.ts",
+        "related_tests_at_head": [
+          "packages/cli/tests/e2e/auth-login-cancel.e2e.test.ts",
+          "packages/cli/tests/e2e/smoke.e2e.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

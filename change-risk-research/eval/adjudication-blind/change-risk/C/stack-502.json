@@ -1,0 +1,37 @@
+{
+  "case": "stack-502",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Same-named but different operation classes exported from ./encryption and ./dynamodb",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The cited lines show same-named, different classes exported from ./encryption (Client-based) and ./dynamodb (EncryptionClient-based), a consumer-facing naming hazard created by this PR."
+    },
+    {
+      "id": "FS-2",
+      "title": "Exported constructors and class identity become semver-bound public API",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The core claim holds (value exports expose constructors that take the internal Client; tsup builds separate entries with no splitting option); the CJS instanceof point is hedged as unverified but plausible."
+    }
+  ],
+  "cost_usd": 0.9495290000000002,
+  "wall_seconds": 129.638171,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

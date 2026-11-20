@@ -1,0 +1,42 @@
+{
+  "pr": 823,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "defect",
+  "expert_impact": "high",
+  "attention_warranted": true,
+  "impact_confidence": "high",
+  "rationale": "Rewrote the Drizzle EQL migration rewriter to add-only and fail-closed. Its already-encrypted index skipped dollar-quoted bodies, so DDL inside DO $$ \u2026 $$ did not count; the sweep staged an empty twin beside real ciphertext, exiting 0. Also left schema/snapshot divergence unreported and a non-Error throw broke partial-result reporting.",
+  "known_defects": [
+    {
+      "id": "KD-1",
+      "description": "DDL inside dollar-quoted DO blocks is ignored by the already-encrypted guard; sweep stages an empty twin column beside existing ciphertext",
+      "fixed_by": "#839 (issue #836)",
+      "mechanism": "isInsideCommentOrString skips dollar-quoted bodies for the index pass too",
+      "match_criteria": "Scenario identifies that SQL inside dollar-quoted / DO blocks (or other statement forms the parser skips) is not seen when deciding whether a column is already encrypted, leading to wrong rewrites.",
+      "impact": "high",
+      "evidence": ["https://github.com/cipherstash/stack/pull/839"]
+    },
+    {
+      "id": "KD-2",
+      "description": "After a successful sweep, schema.ts and drizzle snapshot still declare the column as the encrypted domain; the divergence is silent",
+      "fixed_by": "#839",
+      "mechanism": "rewriter changes SQL only",
+      "match_criteria": "Scenario identifies divergence between rewritten migrations and the drizzle schema/snapshot after the rewrite (next generate re-emits or conflicts).",
+      "impact": "medium",
+      "evidence": ["https://github.com/cipherstash/stack/pull/839"]
+    },
+    {
+      "id": "KD-3",
+      "description": "Wizard sweep catch reads partial result off an unchecked cast; a non-Error throw raises TypeError inside the catch",
+      "fixed_by": "#839",
+      "mechanism": "unchecked cast in sweepMigrationDirs",
+      "match_criteria": "Scenario identifies error-handling in the wizard sweep failing on non-Error throws.",
+      "impact": "low",
+      "evidence": ["https://github.com/cipherstash/stack/pull/839"]
+    }
+  ],
+  "notes": ""
+}

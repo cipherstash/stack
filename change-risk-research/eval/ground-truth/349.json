@@ -1,0 +1,24 @@
+{
+  "pr": 349,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "defect",
+  "expert_impact": "high",
+  "attention_warranted": true,
+  "impact_confidence": "high",
+  "rationale": "Changed drizzle `encryptedType` dataType() to return the pre-quoted `\"public\".\"eql_v2_encrypted\"`. drizzle-kit's ALTER COLUMN path quotes it again and prefixes `\"undefined\".`, producing invalid SQL; the migration rewriter regex did not match the new mangled form, so broken ALTERs reached users (0.15.0).",
+  "known_defects": [
+    {
+      "id": "KD-1",
+      "description": "Pre-quoted schema-qualified type name makes drizzle-kit generate invalid ALTER COLUMN SQL that the rewriter does not catch",
+      "fixed_by": "#353",
+      "mechanism": "drizzle-kit wraps dataType() in quotes and prefixes typeSchema for ALTER",
+      "match_criteria": "Scenario identifies that returning a quoted / schema-qualified type string from dataType() can be mis-rendered by drizzle-kit (double quoting, 'undefined' schema) in generated migrations, or that the rewriter regex will not match the forms drizzle-kit emits.",
+      "impact": "high",
+      "evidence": ["https://github.com/cipherstash/stack/pull/353"]
+    }
+  ],
+  "notes": ""
+}

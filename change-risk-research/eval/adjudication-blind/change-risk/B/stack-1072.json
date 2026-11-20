@@ -1,0 +1,48 @@
+{
+  "case": "stack-1072",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A plan-only PR merges something a Test JS step would have rejected, turning main red",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Correctly notes that the guard skips non-test scripts and runtime-built paths while the PR run is skipped, so main's push run is the first check; the cited release-gate string and the lint-no-dead-package-paths exclusion check out."
+    },
+    {
+      "id": "FS-2",
+      "title": "Required Test JS checks stay Pending on plan-only PRs",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Path-filtered workflows report no checks, so required Test JS checks would stay Pending, as test-eql.yml documents. The repo says no required checks exist today, so the risk is conditional but plausible and introduced by this filter."
+    },
+    {
+      "id": "FS-3",
+      "title": "EQL cutover plan can drift from FROZEN_PUBLISHERS unchecked",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The PR removes the DOCS entry that held the EQL plan to FROZEN_PUBLISHERS, while release-gate.mjs still points operators at that plan's Phase-5 cutover, so the plan can now drift with nothing checking it."
+    }
+  ],
+  "cost_usd": 0.9002991,
+  "wall_seconds": 137.632242,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

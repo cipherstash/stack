@@ -1,0 +1,48 @@
+{
+  "case": "stack-1026",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A partly built EQL asset set is treated as complete by every later run",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "eqlAssets returns needed=false as soon as the eql-<v> tag exists, without checking for docs or image, so once eql-sql has succeeded a failed eql-docs/eql-image (e.g. GHCR access, listed as outstanding in AGENTS.md) is never repaired by later pushes."
+    },
+    {
+      "id": "FS-2",
+      "title": "Failed-publish recovery depends on unverified changesets/action behaviour and may fail every push to main",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Recovery depends on changesets/action setting publishedPackages and pushing tags when the publish command fails, which is unverified (tests inject it); otherwise eqlAssets throws on every production push."
+    },
+    {
+      "id": "FS-3",
+      "title": "Wait passes but changeset publish still sees a stale npm packument and fails with E402",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Speculative registry-cache inconsistency after the wait succeeds; the E402 risk pre-existed and nothing in the cited code shows the change causes it."
+    }
+  ],
+  "cost_usd": 1.3559278999999997,
+  "wall_seconds": 207.954419,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

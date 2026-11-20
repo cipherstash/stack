@@ -1,0 +1,326 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+  "head_sha": "6e7ae4e117c4847b62491d63da8df5e74b4a5bc9",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "7 check runs on head, all success; per-step logs not provided"
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md at head read; no dedicated architecture docs supplied"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "partial",
+      "note": "only via collect-evidence output"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "the companion cipherstash/docs PR and docs build were not available"
+    }
+  },
+  "summary": "Additive public-surface change to @cipherstash/stack (minor changeset). Re-exports the existing operation classes from the ./encryption and ./dynamodb subpath entries, adds EncryptedQuery and EncryptedFromSchema type exports to ./types, removes @internal tags from EncryptQueryOperation/BatchEncryptQueryOperation (and their WithLockContext variants), and adds type-only imports plus TSDoc wording fixes. No encryption, payload, lock-context or result-shape logic changes; the encryption/operations <-> encryption/index import cycle already existed at base. The release risk is about API contract, not runtime: runtime class constructors that take internal types become public API, and the ./encryption and ./dynamodb entries now export different classes under the same names. Both are low impact. CI on head passed, but no test checks the exported surface or the built .d.ts files.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "@cipherstash/stack/encryption now exports ten operation classes as runtime values (EncryptOperation, EncryptQueryOperation, BatchEncryptQueryOperation, DecryptOperation, EncryptModelOperation, DecryptModelOperation, BulkEncryptOperation, BulkDecryptOperation, BulkEncryptModelsOperation, BulkDecryptModelsOperation), including their constructors.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-4"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "@cipherstash/stack/dynamodb now exports its four DynamoDB operation classes as runtime values. Their names match four of the classes exported from ./encryption, but they are different classes.",
+      "certainty": "observed",
+      "evidence": ["E-2", "E-5"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "@cipherstash/stack/types now exports the EncryptedQuery and EncryptedFromSchema types. This is type-only and adds no runtime code.",
+      "certainty": "observed",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "documentation",
+      "description": "Removed the @internal TSDoc tags from the EncryptQuery/BatchEncryptQuery operation classes, added type-only imports (LockContext, encryptedTable/Column/Field) so TSDoc links resolve, reworded one @throws line and fixed one @param name. tsconfig has no stripInternal, so @internal did not affect the emitted declarations at base. Type-only imports are erased under verbatimModuleSyntax.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "build_or_release",
+      "description": "Adds a minor changeset for @cipherstash/stack, so a minor version will be published that includes the widened surface.",
+      "certainty": "observed",
+      "evidence": ["E-8"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack ./encryption entry (src/encryption/index.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "New value re-exports of the operation classes.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack ./dynamodb entry (src/dynamodb/index.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "New value re-exports of the DynamoDB operation classes.",
+      "evidence": ["E-2"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/stack ./types entry (src/types-public.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Two new type exports.",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Published npm package build (tsup ESM/CJS + dts, per-entry bundles)",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "tsup builds every subpath entry, including encryption/index.ts and dynamodb/index.ts, into ESM, CJS and .d.ts outputs that the package exports map publishes.",
+      "evidence": ["E-9", "E-10"]
+    },
+    {
+      "id": "AC-5",
+      "name": "cipherstash/docs TypeDoc reference build",
+      "kind": "documentation",
+      "relationship": "likely",
+      "how": "The PR description says the docs repo builds the TypeDoc reference against release tags and depends on these exports. That repo was not available to check.",
+      "evidence": ["E-11"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Downstream TypeScript consumers of @cipherstash/stack",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "They can now import, name and construct the operation classes. No consumer code was available.",
+      "evidence": ["E-1", "E-2"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Same-named but different operation classes exported from ./encryption and ./dynamodb",
+      "trigger": "A consumer imports EncryptModelOperation, DecryptModelOperation, BulkEncryptModelsOperation or BulkDecryptModelsOperation from the wrong subpath, for example by IDE auto-import, to type the result of encryptedDynamoDB(...).encryptModel() or EncryptionClient.encryptModel().",
+      "affected_components": ["AC-1", "AC-2", "AC-6"],
+      "mechanism": "src/encryption/index.ts re-exports the classes from ./operations/* (Client-based constructors). src/dynamodb/index.ts re-exports different classes with the same names from dynamodb/operations/* (EncryptionClient-based constructors). The changeset lists both sets under the same names.",
+      "consequence": "The consumer's code fails to type-check, or instanceof checks against the wrong class return false. This is loud and local; it does not affect encryption or data.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-5"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No test or doc distinguishes the two sets of same-named classes."
+      ],
+      "mitigation": "Note the distinction in the TSDoc/changeset, or alias the DynamoDB exports (for example DynamoDBEncryptModelOperation) before the names ship and become hard to rename.",
+      "domain_tags": ["public_api"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Exported constructors and class identity become semver-bound public API",
+      "trigger": "A later release changes an operation constructor (for example its internal FFI Client parameter or its argument order), or a consumer relies on `instanceof EncryptOperation` across package entry points.",
+      "affected_components": ["AC-1", "AC-4", "AC-6"],
+      "mechanism": "Previously the classes could be reached only as return types. Now they are runtime value exports, so their constructors (which take the internal `Client` type, e.g. encrypt-query.ts constructor) are public. tsup bundles each entry separately. For CJS output, tsup's default of no code splitting would give src/index.ts (which re-exports Encryption) and src/encryption/index.ts separate class copies, so instanceof could fail across entries. This last point comes from tsup defaults and was not verified against built output.",
+      "consequence": "Internal refactors of the operation classes become breaking changes for anyone who constructs them directly, and instanceof checks may misbehave in CJS consumers. The failures are compile-time or logic errors in consumer code, not data or security effects.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-4", "E-9", "E-10"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No API-surface or built-package (dist) test checks what each subpath exports or how the classes behave across entries."
+      ],
+      "mitigation": "Document the classes as return types only (not for direct construction or instanceof). Optionally export them type-only (`export type { ... }`), which is enough for naming and TypeDoc links.",
+      "domain_tags": ["public_api", "build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "Nothing checks the exported surface or the built declaration files. The CI test jobs passed, but they run vitest against source (turbo `test` depends only on ^build). There is no evidence that the stack package's own tsup/dts build ran in CI for this change.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-12", "E-13"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Decide whether the classes should be value exports or type-only exports, and whether the DynamoDB classes need distinct names, before the minor release fixes the names.",
+      "addresses": ["FS-1", "FS-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Run `pnpm --filter @cipherstash/stack build` and confirm that dist/encryption/index.d.ts, dist/dynamodb/index.d.ts and the CJS bundles expose the new exports.",
+      "addresses": ["VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "The package was not built and tests were not run locally (no network or credentials). CI results are summary-level only.",
+      "effect": "The claims about the CJS class-copy behaviour and the dts output are inferred from tsup defaults and config, not observed."
+    },
+    {
+      "id": "CL-2",
+      "description": "The companion cipherstash/docs PR and the TypeDoc build were unavailable.",
+      "effect": "The PR's claim that the docs build has 0 warnings could not be verified. It affects only documentation."
+    },
+    {
+      "id": "CL-3",
+      "description": "Biome lint config was read, but no lint run was seen. The type-only imports are referenced only in comments.",
+      "effect": "Whether a lint step would flag them as unused is unknown. If it did, the failure would be loud and in CI only."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 48,
+      "line_end": 59,
+      "claim": "Value re-export block of the ten encryption operation classes.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/dynamodb/index.ts",
+      "rev": "head",
+      "line_start": 103,
+      "line_end": 108,
+      "claim": "Value re-export block of the four DynamoDB operation classes.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/src/types-public.ts",
+      "rev": "head",
+      "line_start": 14,
+      "line_end": 39,
+      "claim": "EncryptedQuery and EncryptedFromSchema are added to the type-only exports.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/encrypt-query.ts",
+      "rev": "head",
+      "line_start": 17,
+      "line_end": 26,
+      "claim": "EncryptQueryOperation's constructor takes the internal FFI Client. The module imports noClientError from ../index, a cycle that already existed at base.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack/src/dynamodb/operations/encrypt-model.ts",
+      "rev": "head",
+      "line_start": 19,
+      "line_end": 23,
+      "claim": "The DynamoDB EncryptModelOperation is a separate class whose constructor takes an EncryptionClient, unlike encryption/operations/encrypt-model.ts, which takes a Client.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "diff",
+      "path": "packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+      "rev": "head",
+      "claim": "Only the @internal TSDoc blocks are removed; no logic changes.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack/tsconfig.json",
+      "rev": "head",
+      "claim": "verbatimModuleSyntax is true and stripInternal is not set, so the @internal tag did not change emitted declarations and the type-only imports are erased.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "diff",
+      "path": ".changeset/export-operation-result-types.md",
+      "rev": "head",
+      "claim": "Minor changeset for @cipherstash/stack describing the widened exports.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/stack/tsup.config.ts",
+      "rev": "head",
+      "line_start": 5,
+      "line_end": 22,
+      "claim": "Each subpath entry, including encryption and dynamodb, is built separately as cjs and esm with dts. No splitting option is set.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 139,
+      "line_end": 168,
+      "claim": "The ./dynamodb and ./encryption subpaths are published with import/require and types entries.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "pr_description",
+      "claim": "The change exists so the TypeDoc build in cipherstash/docs can link these symbols. The author reports 0 docs warnings locally.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-12",
+      "kind": "ci_result",
+      "claim": "All 7 check runs on head succeeded (Run Tests on Node 22/24 and Bun, E2E, CodeQL, OSV).",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "turbo.json",
+      "rev": "head",
+      "line_start": 15,
+      "line_end": 19,
+      "claim": "The turbo test task depends on ^build (dependencies' builds) rather than the package's own build.",
+      "status": "verified"
+    }
+  ]
+}

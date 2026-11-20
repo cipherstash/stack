@@ -1,0 +1,370 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "3e8f6cb8ce846eb9773d545c79b11c6e187dbd7a",
+  "head_sha": "ab8ca589fac1be02bb893917556823cc8f77270d",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title 'fix(go): Context copies byte-slice parts' was given in CASE.md."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Package doc comments (doc.go, record.go) and stackencrypt/README.md at head; .github/workflows/tests-golang.yml header."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "available",
+      "source": ".github/CODEOWNERS (via evidence.json)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "The title undersells the change. Besides making Context and ExtendContext copy byte-slice parts (a defensive fix against caller-buffer aliasing), it adds a new capability: Cipher.Term now takes variadic Options, so ExtendContext can scope a search probe to the same extended (e.g. per-tenant) context that EncryptRecords/DecryptRecords use. RecordOption changes from a func type to an interface, with a new Option sub-interface that only ExtendContext implements. All changes are in the Go stackencrypt package; the probe and record paths now share one extend() helper. The material risk is silent search misses: a probe whose extension differs from the write (given twice, different integer type, omitted, or produced by another language's client) returns no matches with no error. That does not expose plaintext or match across tenants, and new unit tests check that the probe and record contexts are byte-identical. The cross-tenant live test needs ZeroKMS credentials, and no test results were available. The public Go API change (Term signature, RecordOption kind) is loud (compile-time) and limited. Advisory: focused review of the probe-context equivalence and cross-language term compatibility.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "invariant",
+      "description": "NewContext and Context.With now store a copy of a []byte part (ownPart -> bytes.Clone), and ExtendContext copies its []byte parts when the option is built. Previously a Context/option aliased the caller's buffer, so reusing the buffer changed the context later used for encryption, decryption or a probe.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "Cipher.Term gains a variadic `opts ...Option` parameter; given ExtendContext, it extends the probe's context by the same parts, in order, that a record call appends to each field's context. A bad extension part fails the Term call before any guest call.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "RecordOption changes from `func(*recordOptions)` to an interface with an unexported method; a new Option interface (RecordOption + applyTerm) is returned by ExtendContext. WithPlan stays a RecordOption only, so passing it to Term is a compile error. Existing call sites that pass ExtendContext/WithPlan to record calls still compile.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "other",
+      "description": "Applying an extension to a field context in the record plan is refactored into the shared extend() helper. The semantics (append in order, With() check per part) are unchanged from base.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-6"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "languages/golang/stackencrypt (Context, record options, Cipher.Term)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "All behaviour changes are in this package's exported API.",
+      "evidence": ["E-1", "E-3", "E-4"]
+    },
+    {
+      "id": "AC-2",
+      "name": "stackencrypt Client record-decrypt forms (client.go DecryptRecords/DecryptRecord)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Accept `opts ...RecordOption`, whose kind changes from func type to interface; not edited in this diff (the co-change signal flags client.go as usually changed alongside cipher.go).",
+      "evidence": ["E-7", "E-10"]
+    },
+    {
+      "id": "AC-3",
+      "name": "stackencrypt examples (example/main.go, example/explicit/main.go)",
+      "kind": "documentation",
+      "relationship": "confirmed",
+      "how": "Call cipher.Term with four arguments; these still compile because the new parameter is variadic.",
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Downstream Go applications using stackencrypt search probes and ExtendContext",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Applications that write records with ExtendContext and probe with Term. They can now scope probes, and a mismatched extension silently returns no matches. Code that declares an interface with the old Term signature, or uses RecordOption as a func, stops compiling.",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Stored terms written by other language clients (Rust encrypt_into_with_context)",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "Package docs claim Go probes are byte-equal to Rust-derived terms and that ExtendContext mirrors encrypt_into_with_context, so an extended Go probe must match extended Rust-written terms. No cross-language test of the extended probe was found.",
+      "evidence": ["E-9"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Tenant-scoped probe silently matches nothing when its extension differs from the write",
+      "trigger": "An application adopts Term(..., ExtendContext(tenant)) but the probe's extension differs from the one rows were written under: the option is given twice (a helper adds it and so does the caller), the tenant is passed as int on one side and uint64 on the other, or the probe omits it.",
+      "affected_components": ["AC-1", "AC-4"],
+      "mechanism": "contextExtension.appendTo appends parts with no deduplication (record.go:124), and extend() applies every part in order (record.go:168). Term now runs the probe context through the same path (cipher.go:107). Context parts are typed, so the derived terms differ whenever the part list differs, and nothing reports the mismatch.",
+      "consequence": "Equality/match/order queries return zero rows with no error. Data stays encrypted and cross-tenant matching does not occur, but search features appear broken or return incomplete results.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-4", "E-3", "E-11"],
+      "existing_verification": [
+        {
+          "description": "TestSeveralExtensionsJoinInOrder shows two options join like one option, that order matters and that a duplicate extends twice, on both the record and probe sides.",
+          "status": "exists_not_run",
+          "evidence": ["E-11"]
+        },
+        {
+          "description": "TestTermExtensionMatchesRecordFieldContext checks that the probe context is deep-equal to the record field context under the same extension, and differs for another tenant or none.",
+          "status": "exists_not_run",
+          "evidence": ["E-11"]
+        }
+      ],
+      "missing_verification": [
+        "Nothing at runtime detects a probe whose extension does not match the stored rows. Only documentation (record.go:147-154) warns about double application."
+      ],
+      "mitigation": "Keep the documented 'one option value held and passed to every call' guidance prominent (README does not yet mention ExtendContext or Term). Consider making the option idempotent or exposing a helper that returns the extended field Context, so callers can log or compare it.",
+      "domain_tags": ["tenant_isolation", "public_api", "encryption"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Extended Go probe does not match terms written by another language client under the same extension",
+      "trigger": "Rows are written by the Rust crate (encrypt_into_with_context) or another client with a tenant extension, then searched from Go with Term(..., ExtendContext(tenant)).",
+      "affected_components": ["AC-1", "AC-5"],
+      "mechanism": "The Go probe context is built as the nested-left list [[field, p1], p2] by Context.With (context.go:70) and sent to the guest's term call. Equivalence to Rust's extended field context is asserted in docs but tested only Go-record vs Go-probe (unit) and Go vs Go (live).",
+      "consequence": "Cross-language tenant-scoped searches silently return no rows.",
+      "impact": "medium",
+      "basis": "speculative",
+      "evidence": ["E-9", "E-12"],
+      "existing_verification": [
+        {
+          "description": "TestLiveRecordsAndTerms checks a Go tenant probe equals a Go-written extended term, and differs from another tenant's and the unextended term (needs ZeroKMS credentials).",
+          "status": "exists_not_run",
+          "evidence": ["E-12"]
+        }
+      ],
+      "missing_verification": [
+        "A fixture or test comparing an extended Go probe against a term derived by the Rust crate under encrypt_into_with_context."
+      ],
+      "mitigation": "Add a cross-language fixture (Rust-derived extended term in testdata) that the Go probe must equal.",
+      "domain_tags": ["serialization_compatibility", "tenant_isolation"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Downstream Go code stops compiling after the Term and RecordOption signature changes",
+      "trigger": "A consumer declares an interface with the old `Term(ctx, any, Context, TermKind) (any, error)` signature (e.g. for mocking), takes a method value with that type, or treats RecordOption as a func type.",
+      "affected_components": ["AC-1", "AC-4"],
+      "mechanism": "Adding a variadic parameter changes Term's method type (cipher.go:99), so *Cipher no longer satisfies such interfaces. RecordOption is now an interface (record.go:91).",
+      "consequence": "Build failure on upgrade. This is loud and caught at compile time, with no runtime or data effect.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-5"],
+      "existing_verification": [],
+      "missing_verification": [
+        "Release notes or changelog entry noting the API change."
+      ],
+      "mitigation": "Note the signature change in release notes.",
+      "domain_tags": ["public_api"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test results were available. The unit and guest tests covering the change exist but were not seen to run (running them locally was not permitted). The live cross-tenant test requires ZeroKMS credentials.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-11", "E-12", "E-13"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No cross-language test that a Go probe under ExtendContext equals a Rust-derived term under encrypt_into_with_context.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-9", "E-12"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Confirm the tests-golang.yml go:test and live jobs pass on this change, including TestLiveRecordsAndTerms' tenant-probe assertions.",
+      "addresses": ["VG-1", "FS-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "compatibility_check",
+      "description": "Add or run a fixture comparing an extended Go probe to a Rust-derived extended term.",
+      "addresses": ["VG-2", "FS-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "review_focus",
+      "description": "Review Cipher.Term (cipher.go:99-111) and extend()/contextExtension (record.go:117-175) to confirm the probe and record paths cannot diverge, and that the shadowed `context` parameter is used after extension.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "documentation",
+      "description": "Call out the Term signature and RecordOption kind change, and the tenant-probe usage, in release notes/README.",
+      "addresses": ["FS-3", "FS-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No PR description or CI results. The title describes only the byte-copy fix, not the Term/Option feature.",
+      "effect": "Intent and test outcomes were inferred from code and test text."
+    },
+    {
+      "id": "CL-2",
+      "description": "The guest (WASI/Rust) side of term derivation and the Rust crate's encrypt_into_with_context encoding were not read.",
+      "effect": "Cross-language equivalence (FS-2) is unverified, so it is marked speculative."
+    },
+    {
+      "id": "CL-3",
+      "description": "Downstream consumers outside this repository are unknown, and no module release/tag information was available.",
+      "effect": "The breadth of FS-3 and FS-1 adoption cannot be estimated."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "languages/golang/stackencrypt/context.go",
+      "rev": "head",
+      "line_start": 45,
+      "line_end": 81,
+      "claim": "NewContext and With store ownPart(part); ownPart clones []byte parts.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "languages/golang/stackencrypt/record.go",
+      "rev": "head",
+      "line_start": 157,
+      "line_end": 163,
+      "claim": "ExtendContext copies each part through ownPart when the option is built.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "languages/golang/stackencrypt/cipher.go",
+      "rev": "head",
+      "line_start": 99,
+      "line_end": 111,
+      "claim": "Term takes opts ...Option, applies applyTerm, and extends the context via extend(), returning its error.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "languages/golang/stackencrypt/record.go",
+      "rev": "head",
+      "line_start": 91,
+      "line_end": 175,
+      "claim": "RecordOption/Option interfaces; contextExtension.appendTo appends without dedupe for both record and term; extend() applies parts in order via With.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "languages/golang/stackencrypt/record.go",
+      "rev": "base",
+      "line_start": 82,
+      "line_end": 96,
+      "claim": "At base, RecordOption was `func(*recordOptions)` and ExtendContext returned a closure aliasing its parts slice.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "languages/golang/stackencrypt/record.go",
+      "rev": "head",
+      "line_start": 438,
+      "line_end": 444,
+      "claim": "planValue uses extend(ctx, opts.extension) in place of the previous inline loop.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "languages/golang/stackencrypt/client.go",
+      "rev": "head",
+      "line_start": 401,
+      "line_end": 410,
+      "claim": "Client.DecryptRecords/DecryptRecord accept opts ...RecordOption.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "languages/golang/stackencrypt/example/main.go",
+      "rev": "head",
+      "line_start": 145,
+      "line_end": 145,
+      "claim": "The example calls cipher.Term with four arguments (compatible with the variadic addition).",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "documentation",
+      "path": "languages/golang/stackencrypt/doc.go",
+      "rev": "head",
+      "line_start": 51,
+      "line_end": 60,
+      "claim": "Docs state Go terms are byte-equal to Rust-derived terms and that ExtendContext extends the probe the same way as record calls.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[0]",
+      "claim": "cipher.go usually co-changes with client.go (3/3), which is absent here.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "test",
+      "path": "languages/golang/stackencrypt/unit_test.go",
+      "rev": "head",
+      "line_start": 305,
+      "line_end": 450,
+      "claim": "New unit tests: probe context equals record field context under the same extension; extensions join in order and duplicates extend twice; options own byte parts.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "test",
+      "path": "languages/golang/stackencrypt/live_test.go",
+      "rev": "head",
+      "line_start": 224,
+      "line_end": 250,
+      "claim": "The live test checks that a tenant probe matches only its own tenant's extended terms (Go to Go only).",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "test",
+      "path": "languages/golang/stackencrypt/guest_test.go",
+      "rev": "head",
+      "line_start": 738,
+      "line_end": 791,
+      "claim": "Guest tests check that a bad extension part fails Term, EncryptRecords and DecryptRecord with the part-type error.",
+      "status": "verified"
+    }
+  ]
+}

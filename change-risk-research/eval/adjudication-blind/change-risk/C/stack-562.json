@@ -1,0 +1,37 @@
+{
+  "case": "stack-562",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Direct EncryptionClient.init({ strategy }) caller silently loses its auth strategy",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Verified that head init() forwards only config.authStrategy and that the alias is resolved only in Encryption(), so a direct init({strategy}) call falls back silently to ambient credentials."
+    },
+    {
+      "id": "FS-2",
+      "title": "Deprecation console.warn surfaces in production logs for existing `strategy` users",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The once-per-process console.warn is intended deprecation behaviour, and one extra log line is immaterial."
+    }
+  ],
+  "cost_usd": 1.2545301000000002,
+  "wall_seconds": 157.972549,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

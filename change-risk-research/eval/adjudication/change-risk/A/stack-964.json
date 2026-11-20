@@ -1,0 +1,47 @@
+{
+  "case": "stack-964",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Published dist/wasm-inline.d.ts is incomplete or wrong after moving DTS emission into the dual-format config",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Shipped skills recommend cross-entry schemas to customers whose installed @cipherstash/stack predates the fix",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Pending changeset contradicts the new guidance in the same release's changelog",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 1.8241178999999998,
+  "wall_seconds": 233.74533
+}

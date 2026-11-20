@@ -1,0 +1,25 @@
+{
+  "case": "stack-982",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Patch-level next change breaks @cipherstash/nextjs build or tests",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 0.8907192999999998,
+  "wall_seconds": 130.0422
+}

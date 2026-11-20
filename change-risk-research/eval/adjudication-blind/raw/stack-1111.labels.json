@@ -1,0 +1,52 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "A one-time cold cache after a key change is the expected, self-healing cost of re-keying the cache; it is not material release risk, and head CI passed."
+    },
+    {
+      "id": "F-02",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The cited cargo tools and fuzz timeout-minutes: 30 exist, but a one-off slow cold-cache run is an expected, self-healing consequence, and head CI shows no timeouts."
+    },
+    {
+      "id": "F-03",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Speculative: it rests on the hypothesis that the pinned mise-action versions ignore cache_key_prefix, a long-standing declared input of mise-action, and cites no code showing this."
+    },
+    {
+      "id": "F-04",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Cold caches after re-keying are an expected one-off cost that self-heals; immaterial to release risk."
+    },
+    {
+      "id": "F-05",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The v3.6.3 pin and prefix lines exist, but nothing cited shows that version ignores cache_key_prefix (an input mise-action has long declared); the mechanism is hypothetical."
+    },
+    {
+      "id": "F-06",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The mechanism depends on an unverified assumption that the pinned mise-action versions drop cache_key_prefix; the cited YAML and test show nothing of the kind, and head CI is green."
+    }
+  ]
+}

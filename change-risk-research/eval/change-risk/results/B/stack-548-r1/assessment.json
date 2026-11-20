@@ -1,0 +1,228 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "b650a8c29720731d40fc9705f021e75af3047e4f",
+  "head_sha": "632bdf61b3e4dc23cee6f492a2b2009ab4abe195",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B",
+    "generated_at": "2026-10-12"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md was supplied."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results supplied; evidence.json ci.available is false."
+    },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed as an input in CASE.md."
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Consumers found by git grep at head only."
+    },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership (collect-evidence 1.0.0)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json (collect-evidence 1.0.0), base ancestry only"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Narrow bug fix in @cipherstash/stack's bulk model helpers. Per-field results are keyed by `${modelIndex}-${fieldKey}`; reconstruction previously used `split('-')`, so any field key containing a hyphen was truncated (`some-field` -> `some`) and the encrypted/decrypted value landed under the wrong key while the real field vanished. The change replaces four duplicated blocks (bulkEncryptModels, bulkDecryptModels and both lock-context variants) with one helper that splits at the first hyphen. Because the model index is always a non-negative integer with no hyphen, the first hyphen is always the separator, so the fix is correct for every id the code builds; for hyphen-free keys the output is identical to before. No payload shape, lock-context binding, or operation-result contract changes. A regression test was added for the two non-lock-context paths (not run here; no CI supplied). No material failure scenario introduced by this change was found. Note (pre-existing, not caused by this change): packages/protect/src/ffi/model-helpers.ts still carries the same naive split, and no changeset accompanies the fix.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "invariant",
+      "description": "Bulk model reconstruction now maps each `${modelIndex}-${fieldKey}` result id back to its full field key by splitting at the first hyphen only. Models whose (possibly nested, dot-joined) field keys contain hyphens now get their encrypted/decrypted values under the correct key instead of a truncated one; models without hyphenated keys are reconstructed exactly as before.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3", "E-4"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "test_only",
+      "description": "New vitest regression file exercising bulkEncryptModels and bulkDecryptModels with hyphenated column names, against a mocked @cipherstash/protect-ffi.",
+      "certainty": "observed",
+      "evidence": ["E-5"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/stack bulk model helpers (model-helpers.ts)",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "fieldsForModelIndex added and used in all four bulk reconstruction paths.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack EncryptionClient bulkEncryptModels / bulkDecryptModels (incl. lock-context variants)",
+      "kind": "public_api",
+      "relationship": "confirmed",
+      "how": "Operations in packages/stack/src/encryption/operations import the bulk helpers; their returned model shape changes only for hyphenated keys.",
+      "evidence": ["E-6"]
+    },
+    {
+      "id": "AC-3",
+      "name": "packages/migrate backfill and packages/bench seed",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "Call encryptionClient.bulkEncryptModels and consume the returned rows keyed by column name; hyphenated column names now round-trip correctly.",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "AC-4",
+      "name": "packages/protect ffi model-helpers (separate package)",
+      "kind": "package",
+      "relationship": "hypothetical",
+      "how": "Not changed and not a consumer; carries an identical naive split, so the same bug remains for @cipherstash/protect users. Listed for completeness, not as a risk of this change.",
+      "evidence": ["E-8"]
+    }
+  ],
+  "failure_scenarios": [],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The new regression test was not run (no CI results, dependencies not installed) and covers only bulkEncryptModels and bulkDecryptModels with top-level hyphenated keys; the lock-context variants and nested hyphenated paths (e.g. `profile.some-field`) are covered only by sharing the same helper.",
+      "scenarios": [],
+      "evidence": ["E-5", "E-9"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Confirm the stack package test suite (including bulk-model-hyphen-fields.test.ts and nested-models.test.ts) passes in CI; optionally add a lock-context and a nested hyphenated-path case.",
+      "addresses": ["VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "documentation",
+      "description": "Add a changeset for @cipherstash/stack so the fix is released and noted in the changelog, and consider porting the same fix to packages/protect/src/ffi/model-helpers.ts (pre-existing, out of scope).",
+      "addresses": []
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No CI results, PR description or deployment context; tests could not be run because node_modules is absent in the checkout.",
+      "effect": "Verification relies on reading the code and the added test; pass/fail of the test is unknown."
+    },
+    {
+      "id": "CL-2",
+      "description": "Rows written previously by the buggy bulkEncryptModels with hyphenated columns may be missing those values at rest; this is pre-existing damage the fix does not repair and was not assessed.",
+      "effect": "Data remediation for past writes is outside this assessment."
+    },
+    {
+      "id": "CL-3",
+      "description": "The same naive split remains in packages/protect/src/ffi/model-helpers.ts (pre-existing, unchanged by this diff).",
+      "effect": "@cipherstash/protect users with hyphenated fields remain affected; not counted as a risk of this change."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/helpers/model-helpers.ts",
+      "rev": "head",
+      "line_start": 628,
+      "line_end": 639,
+      "claim": "fieldsForModelIndex splits each id at the first '-' and keeps the full remainder as the field key.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/helpers/model-helpers.ts",
+      "rev": "base",
+      "line_start": 670,
+      "line_end": 678,
+      "claim": "At base, reconstruction used key.split('-') and took only element [1] as the field key, truncating hyphenated keys (same pattern at 739, 811, 884).",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/helpers/model-helpers.ts",
+      "rev": "head",
+      "line_start": 145,
+      "line_end": 149,
+      "claim": "Result ids are built as `${modelIndex}-${fieldKey}` where modelIndex is a numeric array index, so the first hyphen is always the separator.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/helpers/model-helpers.ts",
+      "rev": "head",
+      "line_start": 680,
+      "line_end": 698,
+      "claim": "After extracting per-model fields, keys are split on '.' and written via setNestedValue (unchanged), so nested hyphenated paths are restored correctly.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "test",
+      "path": "packages/stack/__tests__/bulk-model-hyphen-fields.test.ts",
+      "rev": "head",
+      "line_start": 78,
+      "line_end": 117,
+      "claim": "Regression tests assert hyphenated keys survive bulkEncryptModels and bulkDecryptModels and no truncated keys appear; protect-ffi is mocked; lock-context variants not exercised.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/bulk-encrypt-models.ts",
+      "rev": "head",
+      "line_start": 11,
+      "line_end": 11,
+      "claim": "The bulk-encrypt-models operation imports from ../helpers/model-helpers (bulk-decrypt-models.ts:10 likewise).",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/migrate/src/backfill.ts",
+      "rev": "head",
+      "line_start": 359,
+      "line_end": 366,
+      "claim": "Backfill calls options.encryptionClient.bulkEncryptModels and uses the returned rows.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/protect/src/ffi/model-helpers.ts",
+      "rev": "head",
+      "line_start": 731,
+      "line_end": 735,
+      "claim": "The protect package still reconstructs bulk models with key.split('-').",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "history_signal",
+      "signal": "ci",
+      "claim": "No CI results were supplied to the collector.",
+      "status": "verified"
+    }
+  ]
+}

@@ -1,0 +1,204 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "New WasmEncryptionClient.encrypt accepts null (WasmPlaintext) and forwards it to wasmEncrypt with no guard, unlike the Node EncryptOperation null short-circuit."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "WASM encrypt/decrypt return raw values/throw instead of Result objects and lack the null guard the Node entry has; divergence is introduced by this new subpath."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Auth 0.38 moves platform bindings to optional peers and the catalog lists only six platforms as optionalDependencies, so unlisted platforms may lack a binding; plausible and caused by this change."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "tsconfig comment confirms protect-ffi 0.24 resolves to WASM types without the node condition, and stack's public types derive from protect-ffi, so consumers' resolution can differ."
+    },
+    {
+      "id": "F-05",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Claims auth 0.38 API breaks login but cites no evidence of any API change; purely speculative."
+    },
+    {
+      "id": "F-06",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head resolveStrategy throws when both strategy and accessKey are set; it does not silently prefer strategy."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same as F-04: published types reference protect-ffi whose conditional exports give WASM typings to consumers without the node condition."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Version hand-set to 0.18.0 while a pending minor changeset exists and no changeset covers the new subpath/dep bumps, so changesets will skip versions and omit changelog entries."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same verified null-guard gap in the new WASM client versus Node operations."
+    },
+    {
+      "id": "F-10",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Payload-format incompatibility of protect-ffi 0.24 is hypothetical; no cited code shows a format change and CI e2e against EQL 2.3.1 passes."
+    },
+    {
+      "id": "F-11",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Payload change is speculative, and the main-entry non-node bundling concern is conjecture not shown by the cited code."
+    },
+    {
+      "id": "F-12",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head the example's error response returns only code and message; the stack is logged, not returned."
+    },
+    {
+      "id": "F-13",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head the catalog defines all six platform packages and cli/package.json already uses catalog:repo for them."
+    },
+    {
+      "id": "F-14",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Hand-set 0.18.0 plus pending minor changeset yields 0.19.0, which the example's ^0.18.0 specifier excludes, and no changeset documents the new subpath."
+    },
+    {
+      "id": "F-15",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "reason": "Example README documentation completeness is immaterial to release risk."
+    },
+    {
+      "id": "F-16",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head .env.example deliberately omits CS_WORKSPACE_CRN with a comment explaining why."
+    },
+    {
+      "id": "F-17",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Lockstep comments are unchanged, but no evidence shows 0.24 changed payload format; consequence is speculative."
+    },
+    {
+      "id": "F-18",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "wasm-inline is a new ESM-only subpath for edge runtimes; nothing was removed and no breakage is shown."
+    },
+    {
+      "id": "F-19",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Response shape of a demo edge function is a style concern."
+    },
+    {
+      "id": "F-20",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "WasmPlaintext already includes null and recursive arrays, so JSON null/array payloads are not blocked."
+    },
+    {
+      "id": "F-21",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same verified changesets/version conflict leading to the example's ^0.18.0 not resolving and missing release notes."
+    },
+    {
+      "id": "F-22",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head the wasm-e2e-tests job sets permissions contents: read and persist-credentials: false."
+    },
+    {
+      "id": "F-23",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Example manifest already declares node >=22; package-manager version policy for a private example is immaterial."
+    },
+    {
+      "id": "F-24",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head the constructor is gated by a module-private symbol and throws for external callers."
+    },
+    {
+      "id": "F-25",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Asserts auth 0.38 breaks login/detect without showing any API or binding-load change in the cited code."
+    }
+  ]
+}

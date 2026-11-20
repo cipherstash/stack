@@ -1,0 +1,59 @@
+{
+  "case": "stack-301",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "bulkDecrypt/decrypt of nullable encrypted columns now sends null to protect-ffi",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Null no longer short-circuited in decrypt/bulkDecrypt; matches KD-1 mechanism and consequence."
+    },
+    {
+      "id": "FS-2",
+      "title": "cast_as 'string' -> 'text' could change how values are encoded or indexed against data at rest",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": false,
+      "note": "Raises cast_as string->text but shows no mechanism by which it changes encoding; says itself the likely effect is none."
+    },
+    {
+      "id": "FS-3",
+      "title": "Supabase filters with a null value now reach encryptQuery and fail the query",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same removed null handling reaching encryptQuery via Supabase filters, failure consequence; meets KD-1 criteria."
+    },
+    {
+      "id": "FS-4",
+      "title": "Nullable-field type mapping changed without type tests",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Type mapping changed without type-test update; compile-time only."
+    }
+  ],
+  "cost_usd": 1.7879986,
+  "wall_seconds": 241.621503,
+  "case_note": "KD-1 found (FS-1, FS-3)."
+}

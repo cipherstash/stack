@@ -1,0 +1,10 @@
+{
+  "case": "stack-503",
+  "exit_code": 0,
+  "started": "2026-10-12T23:55:20.263370+00:00",
+  "wall_seconds": 46.880975,
+  "net_flags": [],
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "total_cost_usd": 0.3129351
+}

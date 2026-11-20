@@ -1,0 +1,263 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+  "head_sha": "24f7b2c6043bf62b14b58f8b5d191946df9f617d",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title is given in CASE.md"
+    },
+    "ci_results": { "status": "unavailable", "note": "No CI results supplied" },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md; in-repo skill text and build configs were read as source"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership (CODEOWNERS found: @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json, evidence.md)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Documentation-only change to the shipped `stash-postgres` agent skill: adds an \"Absolute-value ranges\" recipe that decomposes `min <= abs(amount) < max` over an EQL v3 ordered column into a positive and a negative signed range with four separately encrypted bounds, rewords one comment in the free-text recipe without changing its meaning, and adds a patch changeset for `stash`. No library, SQL or build code changes. The skill is copied into the `stash` CLI tarball and installed into customer repos by `stash init`, so wrong guidance would propagate, but I checked the recipe's logic (the negative branch's reversed inequalities and the bound values -10/-20 are correct; overlap at zero is harmless in a single WHERE) and its API surface (`types.DoubleOrd`, `queryType: 'orderAndRange'`, the `eql_v3.query_double_ord` domain and the `eql_v3_double_ord` x `query_double_ord` comparison operators all exist at head). The one residual risk is that the recipe is not exercised by any test, and no repo test covers range queries over negative doubles. Advisory verdict: ready for normal review.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "documentation",
+      "description": "Adds an absolute-value range recipe to skills/stash-postgres/SKILL.md: explains that abs() cannot be evaluated over encrypted order terms, gives the signed-range decomposition, a postgres-js example encrypting four bounds with queryType 'orderAndRange' against a types.DoubleOrd column and casting to eql_v3.query_double_ord, and instructs validating 0 <= min < max.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "documentation",
+      "description": "Rewords the comment in the free-text match recipe; it still states that a TextSearch column uses query_text_search and a TextMatch column uses query_text_match, consistent with the column-to-query domain table in the same file.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-3"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "Adds a changeset requesting a patch release of the `stash` package (packages/cli) to ship the updated skill.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "low",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "skills/stash-postgres/SKILL.md",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "New recipe section and reworded comment.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "stash npm package (packages/cli) dist/skills",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "packages/cli/tsup.config.ts copies ../../skills into dist/skills, which `stash init` installs into customer .claude/.codex skill directories; the changeset bumps this package.",
+      "evidence": ["E-4", "E-5"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/wizard dist/skills",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "packages/wizard/tsup.config.ts also copies ../../skills into its tarball; its comment says skills now belong with the wizard, yet this changeset bumps only `stash`, so the wizard's copy gets the recipe only at its next release (staleness, not breakage).",
+      "evidence": ["E-6"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Customer code written by agents following the skill",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "Agents installed with the skill may copy the recipe into application queries over encrypted columns.",
+      "evidence": ["E-4"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Untested recipe could return wrong rows silently if copied into customer queries",
+      "trigger": "An agent applies the recipe to a column or bound set where encrypted order terms do not order as the recipe assumes (e.g. negative doubles), or adapts it to a different ordered type.",
+      "affected_components": ["AC-2", "AC-4"],
+      "mechanism": "The recipe relies on eql_v3_double_ord order terms preserving plaintext order across sign. The SQL operators it uses exist (E-7) and the predicate logic is correct, but no test in the repo runs a range query over negative doubles (the double_ord e2e seeds only positive salaries, E-8; negative ordering is exercised only for bigint, E-9), and the recipe itself is not executed anywhere.",
+      "consequence": "A customer filter returns too many or too few rows with no error. Recovery is a doc fix plus the customer correcting their query; no stored data is affected.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-2", "E-7", "E-8", "E-9"],
+      "existing_verification": [
+        {
+          "description": "BigintOrd integration test seeds a negative balance and filters with gt(0n), covering sign ordering for bigint only.",
+          "status": "exists_not_run",
+          "evidence": ["E-9"]
+        }
+      ],
+      "missing_verification": [
+        "An e2e/integration check that runs the signed-range predicate over a DoubleOrd column seeded with negative, zero and positive values."
+      ],
+      "mitigation": "Have a reviewer run the snippet once against a local EQL v3 database with mixed-sign values, or add a negative-value case to the double_ord e2e suite.",
+      "domain_tags": ["encryption", "public_api"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test executes the new recipe or range queries over negative doubles; skills are not type-checked or run.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-8", "E-10"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Reviewer to confirm the negative-branch inequalities (`<= -min`, `> -max`) and run the snippet against a mixed-sign DoubleOrd column.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Optionally add a negative-value case to examples/prisma/test/e2e/num.e2e.test.ts.",
+      "addresses": ["VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Order-preservation of double_ord terms across sign is implemented outside what I read (encryption crate / protect-ffi); I did not verify it.",
+      "effect": "FS-1 remains plausible rather than ruled out."
+    },
+    {
+      "id": "CL-2",
+      "description": "No CI results, PR description or deployment context were available; nothing was run.",
+      "effect": "Verification confidence is low; no test is claimed to pass."
+    },
+    {
+      "id": "CL-3",
+      "description": "History signals show skills/stash-postgres/SKILL.md usually co-changes with other skills (stash-cli, stash-encryption, stash-indexing, stash-supabase). I did not check whether those skills should also get the recipe.",
+      "effect": "Possible inconsistency across skills; not a release risk for this change."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "skills/stash-postgres/SKILL.md",
+      "claim": "Diff adds the Absolute-value ranges section and rewords the free-text comment; documentation only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "skills/stash-postgres/SKILL.md",
+      "rev": "head",
+      "line_start": 330,
+      "line_end": 370,
+      "claim": "Recipe: (amount >= min AND amount < max) OR (amount <= -min AND amount > -max), four bounds encrypted with orderAndRange and cast to eql_v3.query_double_ord; validate 0 <= min < max.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "skills/stash-postgres/SKILL.md",
+      "rev": "head",
+      "line_start": 113,
+      "line_end": 121,
+      "claim": "Domain table maps TextMatch to query_text_match and TextSearch to query_text_search, matching the reworded comment.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/cli/tsup.config.ts",
+      "rev": "head",
+      "line_start": 82,
+      "line_end": 88,
+      "claim": "Skills at the monorepo root are copied into the CLI's dist/skills so `stash init` can install them into customer repos.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "diff",
+      "path": ".changeset/stash-postgres-signed-range.md",
+      "claim": "Changeset requests a patch bump of 'stash' (packages/cli/package.json name is \"stash\").",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/wizard/tsup.config.ts",
+      "rev": "head",
+      "line_start": 21,
+      "line_end": 25,
+      "claim": "The wizard package also copies ../../skills into its dist.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/eql/packages/eql/sql/cipherstash-encrypt.sql",
+      "rev": "head",
+      "line_start": 31590,
+      "line_end": 31660,
+      "claim": "Comparison operators are defined between public.eql_v3_double_ord and eql_v3.query_double_ord.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "test",
+      "path": "examples/prisma/test/e2e/num.e2e.test.ts",
+      "rev": "head",
+      "line_start": 37,
+      "line_end": 42,
+      "claim": "The double_ord e2e suite seeds only positive values.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "test",
+      "path": "packages/stack-drizzle/integration/relational.integration.test.ts",
+      "rev": "head",
+      "line_start": 126,
+      "line_end": 129,
+      "claim": "BigintOrd integration test seeds a negative balance to exercise gt(0n) exclusion.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "history_signal",
+      "signal": "tests",
+      "claim": "Collector reports 0 test files and 0 source files changed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[0]",
+      "claim": "SKILL.md usually co-changes with skills/stash-cli/SKILL.md (3 commits, conf 0.6), absent here.",
+      "status": "verified"
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "case": "stack-905",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "jsonwebtoken 10 changes token handling in stack-auth, so ZeroKMS auth fails or tokens are mis-treated",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The cited code only shows tokens being wrapped as ServiceToken; nothing shows stack-auth 0.42.2 decodes or validates tokens in a way jsonwebtoken 10 would reject, so the auth-outage mechanism is speculation from the major version bump."
+    },
+    {
+      "id": "FS-2",
+      "title": "wasm32 build breaks because jsonwebtoken 10 now pulls in aws-lc-rs",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The lockfile shows jsonwebtoken 10.4.0 now depends on aws-lc-rs (aws-lc-sys builds C via cc/cmake) instead of ring, and stack-auth is an unconditional dependency compiled for wasm32, so a wasm32 build break is a plausible, change-caused risk; confirming the wasm32 clippy and wasm-pack builds is concrete verification."
+    },
+    {
+      "id": "FS-3",
+      "title": "Opaque patch changes in cipherstash-client/core/config or zerokms-protocol alter ciphertext or protocol behaviour",
+      "impact": "high",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "No evidence is offered that the cipherstash-client or zerokms-protocol patch releases change payload or search-term encoding; the claim rests only on the upstream sources not being visible."
+    },
+    {
+      "id": "FS-4",
+      "title": "Rust crates move to 0.42.2 while the @cipherstash/auth npm catalog stays at 0.42.0, leaving the CVE in the auth binding",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "dependabot.yml documents that the four crates are bumped in step with the @cipherstash/auth catalog, which stays at 0.42.0 while the crates move to 0.42.2 and the comment is left stale, and lib.rs shows JS-backed strategies crossing that boundary; this is a real deviation from the documented lockstep policy, introduced by this change."
+    }
+  ],
+  "cost_usd": 1.4029971,
+  "wall_seconds": 200.211822,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

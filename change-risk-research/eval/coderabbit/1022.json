@@ -1,0 +1,8 @@
+{
+  "pr": 1022,
+  "coderabbit_present": false,
+  "collected_via": "github mcp",
+  "summary_comment_present": false,
+  "findings": [],
+  "notes": "No CodeRabbit reviews, review comments, issue comments or commit status. Reviewers: copilot-pull-request-reviewer (overview, no findings), freshtonic (APPROVED); Codex review summary comment present. PR base is feat/go-term-options (stacked PR)."
+}

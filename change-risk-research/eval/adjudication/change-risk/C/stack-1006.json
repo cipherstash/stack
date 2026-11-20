@@ -1,0 +1,47 @@
+{
+  "case": "stack-1006",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Baked 3.0.6 bytes and the eventual @cipherstash/eql 3.0.6 release drift apart, or release order is inverted",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Consumers with a stale vendored migrations/cipherstash/ fail db init or silently stay on the old bundle",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "The 3.0.6 reinstall drops objects that depend on eql_v3 on every existing database, for a version-stamp-only release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 2.0590509,
+  "wall_seconds": 268.668757
+}

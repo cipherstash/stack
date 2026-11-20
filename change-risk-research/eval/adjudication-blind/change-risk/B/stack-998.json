@@ -1,0 +1,26 @@
+{
+  "case": "stack-998",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Non-EQL releases now run the Cargo.lock refresh and can commit unrelated lock churn",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The lock churn depends on a committed Cargo.lock already drifting from its manifests, which is a pre-existing tree state and not caused by this change; on an in-sync lock, `cargo update -p eql-bindings` at an unchanged version is a no-op."
+    }
+  ],
+  "cost_usd": 1.1214233,
+  "wall_seconds": 123.073986,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,26 @@
+{
+  "case": "stack-982",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Patch-level next change breaks @cipherstash/nextjs build or tests",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Citations are accurate, but no specific behavioural or type change in next 15.5.24 is shown that would break @cipherstash/nextjs; the breakage is hypothetical."
+    }
+  ],
+  "cost_usd": 0.8907192999999998,
+  "wall_seconds": 130.0422,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

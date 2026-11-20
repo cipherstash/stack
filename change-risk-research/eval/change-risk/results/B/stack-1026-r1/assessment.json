@@ -1,0 +1,423 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c4ab67ac3257f234bb635a87feaa1dc9e6cd5b5d",
+  "head_sha": "d4a95551a1cc90e311f1e6755222f745305be5c2",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "partial",
+      "note": "Only the title in CASE.md; no PR body."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md and workflow comments at head"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md inputs beyond what evidence.json reports"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (evidence.json / evidence.md, pre-base history only)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No access to npm, GitHub tags/releases or previous workflow runs"
+    }
+  },
+  "summary": "Release-pipeline-only change to .github/workflows/release.yml plus two new node-builtin scripts. (1) The `release` job now waits, for up to 15 minutes, until `npm view <pkg> versions` lists every package that publish-ffi and publish-auth exported, before `changeset publish` runs. This targets the E402 re-publish failures. (2) The production EQL asset chain (eql-sql/docs/image) no longer keys on outputs of a step after `changeset publish`. A new `eql-assets` job runs on every production push. It asks npm whether the tree's EQL version is published and whether the `eql-<version>` tag exists, then builds at the commit named by the `@cipherstash/eql@<version>` changesets tag, or at this run's commit when this run published it. The jobs switch from the implicit success() to `!cancelled()` with explicit result checks. No library code, payload format or customer-facing package content changes. The main residual risk is that the repair path depends on things the change asserts but cannot show: that changesets/action exports publishedPackages and pushes its tags even when `changeset publish` fails, and that a `@cipherstash/eql@3.0.6` tag exists. If either assumption is false, eql-assets fails closed with an error on pushes to main, and the motivating 3.0.6 assets are still not built automatically. Failures are loud and do not block npm publishing. Impact is medium. Extensive vitest suites exist but were not run (vitest is not installed and there is no network).",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "concurrency_or_ordering",
+      "description": "Before `changeset publish`, the release job now polls npm (`npm view <name> versions`) every 15 s, for up to 900 s (step timeout 20 min), until every name@version that publish-ffi and publish-auth exported is listed. Lookup errors are retried. On timeout the step fails before anything is published. With both native jobs skipped, the outputs are empty and there is no wait.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "build_or_release",
+      "description": "publish-ffi and publish-auth now expose a `published` job output: a space-separated list of every tarball's name@version, including those skipped as already published.",
+      "certainty": "observed",
+      "evidence": ["E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "The decision to build the EQL SQL release, docs bundle and image moves from the `release` job's post-publish step to a new `eql-assets` job. That job runs whenever mode is production and the gate succeeded, whether `release` succeeded, failed or was skipped. Assets are owed when EQL is armed, the tree version passes a semver regex, `eql-<version>` does not exist, and either this run published it or npm lists it.",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6", "E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "The SQL/docs build ref and the release target_commitish change from github.sha to the commit named by the `@cipherstash/eql@<version>` tag, or to GITHUB_SHA when this run published it. If npm has the version and neither the asset tag nor the changesets tag exists, the script throws and the job fails instead of guessing.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-8"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "error_handling",
+      "description": "eql-sql, eql-docs and eql-image now use `!cancelled()` plus explicit `needs.<job>.result == 'success'` checks in place of the implicit success(), and no longer `needs` gate/release directly. A failed eql-assets job yields empty outputs, so the chain is skipped.",
+      "certainty": "observed",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "documentation",
+      "description": "AGENTS.md documents the npm wait and the registry-and-tag-keyed EQL asset decision. The file is a repository agent guide and is not shipped in packages.",
+      "certainty": "observed",
+      "evidence": ["E-9"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": ".github/workflows/release.yml (release, publish-ffi, publish-auth, eql-* jobs)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Gains the npm wait step, new job outputs, the eql-assets job and new conditions on the EQL chain.",
+      "evidence": ["E-1", "E-4", "E-5", "E-7"]
+    },
+    {
+      "id": "AC-2",
+      "name": "scripts/eql-release-assets.mjs and scripts/wait-for-npm-versions.mjs",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "New scripts run in the workflow. Both import npmVersions from scripts/release-gate.mjs.",
+      "evidence": ["E-2", "E-6", "E-10"]
+    },
+    {
+      "id": "AC-3",
+      "name": ".github/workflows/_build-eql-sql.yml / _build-eql-docs.yml (reusable)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "They now receive the ref and tag from eql-assets. For a repair they check out an older commit and create the eql-<version> release at it.",
+      "evidence": ["E-11"]
+    },
+    {
+      "id": "AC-4",
+      "name": "GitHub release eql-<version> (SQL install bundle), docs bundle and postgres-eql image",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "Whether, when and from which commit these customer-facing artefacts are produced is now decided by eql-assets.",
+      "evidence": ["E-7", "E-11"]
+    },
+    {
+      "id": "AC-5",
+      "name": "npm packages @cipherstash/protect-ffi*, @cipherstash/auth* and all changesets-published JS packages",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "`changeset publish` is now delayed behind, and can be prevented by, the wait step.",
+      "evidence": ["E-1", "E-2"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Repair path relies on changesets/action outputs and tags surviving a failed `changeset publish`",
+      "trigger": "`changeset publish` publishes @cipherstash/eql and then exits non-zero (the 3.0.6 E402 case). Also the existing 3.0.6 state, on the first production push after merge, if no `@cipherstash/eql@3.0.6` tag was ever pushed.",
+      "affected_components": ["AC-1", "AC-2", "AC-4"],
+      "mechanism": "eql-assets builds only if this run's publishedPackages names EQL, or if the `@cipherstash/eql@<version>` tag exists (eql-release-assets.mjs:91-105). The workflow comment asserts that changesets/action sets publishedPackages even when `changeset publish` fails. If the action instead sets outputs and pushes tags only after the publish command succeeds, a failed publish gives thisRun=false and no changesets tag. eql-assets then reports 'not on npm' if npm has not listed the version yet, or throws 'no … tag says which commit published it' once npm lists it. This repeats on every subsequent production push until someone pushes the tag by hand. The tree is at 3.0.6 (packages/eql/packages/eql/package.json), the version described as on npm with no tag or release.",
+      "consequence": "The automatic repair this change is meant to provide does not happen. EQL SQL, docs and image assets stay missing, and release.yml shows a failing eql-assets job on every push to main until there is manual intervention. npm publishing and the Version Packages PR are unaffected. The failure is loud and fails closed, with no wrong artefact.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-6", "E-8", "E-12", "E-13", "E-14"],
+      "existing_verification": [
+        {
+          "description": "eql-release-assets.test.mjs simulates 'runs them when `changeset publish` fails' with a non-empty publishedPackages fixture, and refuses a version that has no changesets tag. The fixture assumes the action's behaviour and does not verify it.",
+          "status": "exists_not_run",
+          "evidence": ["E-13"]
+        }
+      ],
+      "missing_verification": [
+        "Confirmation, from changesets/action v1.9.0 source or a past failed run, that publishedPackages is set and tags are pushed when the publish command exits non-zero",
+        "Confirmation that tag `@cipherstash/eql@3.0.6` exists in cipherstash/stack"
+      ],
+      "mitigation": "Before merge, check whether the `@cipherstash/eql@3.0.6` tag exists. If it does not, push it at the publishing commit, or build 3.0.6's assets by hand. Check changesets/action's failure-path outputs, and if they are not set, correct the workflow comment and the AGENTS.md claim.",
+      "domain_tags": ["build_release", "distributed_state"]
+    },
+    {
+      "id": "FS-2",
+      "title": "npm listing lag beyond 15 minutes blocks every JS release in that run",
+      "trigger": "An FFI or auth release where npm's packument takes longer than 900 s to list a version, or `npm view` errors persistently, for example during a registry incident.",
+      "affected_components": ["AC-1", "AC-5"],
+      "mechanism": "waitForVersions throws at the deadline and the step fails before `changeset publish` (wait-for-npm-versions.mjs:77-89), so the release job publishes no JS packages and does not update the Version Packages PR. Errors are retried rather than surfaced early.",
+      "consequence": "The release is delayed until someone re-runs the job. Nothing is published twice or published partially by this step. This is a loud, recoverable outcome and is strictly better than the base's E402 failure after a partial publish.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-2", "E-3"],
+      "existing_verification": [
+        {
+          "description": "wait-for-npm-versions.test.mjs covers timeout, 404 handling, retried errors, exact-version matching and the process exit with an npm shim.",
+          "status": "exists_not_run",
+          "evidence": ["E-15"]
+        }
+      ],
+      "missing_verification": [],
+      "mitigation": "Accept the risk. The error message already tells the operator to re-run.",
+      "domain_tags": ["build_release", "retry_idempotency"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Repair rebuild runs head's reusable workflow against an older source tree",
+      "trigger": "eql-assets repairs an older EQL version (ref ≠ github.sha) after the build tooling under packages/eql has changed between that commit and head.",
+      "affected_components": ["AC-3", "AC-4"],
+      "mechanism": "`uses: ./.github/workflows/_build-eql-sql.yml` resolves at the run's commit, but the job checks out `inputs.ref` (the older publishing commit) and runs `mise run --force build --version` from that tree. The mise version, task names or release paths at head may not match the old tree.",
+      "consequence": "Most mismatches fail loudly (if-no-files-found: error). A silent difference in the SQL bundle compared with the npm tarball is possible only if the build is not deterministic across tool versions. That is unverified.",
+      "impact": "medium",
+      "basis": "speculative",
+      "evidence": ["E-11", "E-8"],
+      "existing_verification": [],
+      "missing_verification": [
+        "A digest comparison between the repaired SQL bundle and the one inside the npm tarball for the same version"
+      ],
+      "mitigation": "For the first repair (3.0.6), compare the attached cipherstash-encrypt.sql against the npm tarball's copy before announcing it.",
+      "domain_tags": ["build_release", "serialization_compatibility"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test or evidence establishes changesets/action's outputs and tag push when `changeset publish` fails. The test fixture encodes the assumption.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-12", "E-13"]
+    },
+    {
+      "id": "VG-2",
+      "description": "None of the new or changed vitest suites were run. vitest is not installed in the checkout and there is no network, and no CI results were supplied.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-16"]
+    },
+    {
+      "id": "VG-3",
+      "description": "Nothing checks that a repaired SQL bundle is byte-identical to the npm tarball's bundle for the same version.",
+      "scenarios": ["FS-3"],
+      "evidence": ["E-11"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Reviewer: confirm from changesets/action v1.9.0 whether `publishedPackages` is set and tags are pushed when the publish script exits non-zero. Correct the release.yml comment (lines 504-507) and AGENTS.md if it is not.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "rollback_plan",
+      "description": "Before merge, check for the `@cipherstash/eql@3.0.6` tag. If it is absent, push it at the 3.0.6 publishing commit, so the first push after merge repairs 3.0.6 instead of failing eql-assets on every push.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "test",
+      "description": "Run the vitest suites for eql-release-assets, wait-for-npm-versions and workflow-dispatch-job-conditions in CI, and check the result before merge.",
+      "addresses": ["VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "compatibility_check",
+      "description": "After the first automatic repair, diff the attached SQL bundle against the npm tarball's bundle for that version.",
+      "addresses": ["FS-3", "VG-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "There was no access to npm, the GitHub tags and releases, or past workflow runs, so the existence of `@cipherstash/eql@3.0.6` and `eql-3.0.6` could not be checked.",
+      "effect": "FS-1's trigger for the first post-merge run cannot be confirmed or ruled out."
+    },
+    {
+      "id": "CL-2",
+      "description": "changesets/action behaviour on a failed publish is inferred from the assessor's knowledge of the action, not from source read in this environment.",
+      "effect": "FS-1 stays plausible_failure, not observed_defect."
+    },
+    {
+      "id": "CL-3",
+      "description": "The workflow-dispatch-job-conditions.test.mjs refactor (-265 lines moved to scripts/__tests__/lib/expressions.mjs) and the expression evaluator were skimmed, not read line by line.",
+      "effect": "A weakening of existing condition tests caused by the refactor could have been missed."
+    },
+    {
+      "id": "CL-4",
+      "description": "GitHub Actions semantics, such as job outputs being evaluated from a failed job, and `!cancelled()`, were taken from documentation knowledge and the in-repo expression simulator, not observed in a live run.",
+      "effect": "Condition-level correctness rests on unrun simulation tests."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 613,
+      "line_end": 618,
+      "claim": "The 'Wait for npm to list the native packages' step runs scripts/wait-for-npm-versions.mjs with FFI_PUBLISHED/AUTH_PUBLISHED, before the changesets step.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "scripts/wait-for-npm-versions.mjs",
+      "rev": "head",
+      "line_start": 48,
+      "line_end": 91,
+      "claim": "waitForVersions polls npmVersions, retries errors, and throws on deadline listing the missing versions.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "scripts/wait-for-npm-versions.mjs",
+      "rev": "head",
+      "line_start": 24,
+      "line_end": 25,
+      "claim": "Default timeout is 900 s with a 15 s interval.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 225,
+      "line_end": 226,
+      "claim": "publish-ffi exposes outputs.published from the publish step. publish-auth does the same at lines 380-381.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 669,
+      "line_end": 700,
+      "claim": "The eql-assets job runs on `!cancelled()`, production mode and gate success, and runs eql-release-assets.mjs with PUBLISHED_PACKAGES from release.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "scripts/eql-release-assets.mjs",
+      "rev": "head",
+      "line_start": 86,
+      "line_end": 113,
+      "claim": "The decision: an existing asset tag means nothing is needed. thisRun or npmHas is required. ref is the changesets tag commit, or headSha when thisRun. Otherwise it throws.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 702,
+      "line_end": 763,
+      "claim": "eql-sql/docs/image are gated on `!cancelled()`, eql-assets.outputs.needed and explicit upstream success, and take ref/version from eql-assets.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "scripts/eql-release-assets.mjs",
+      "rev": "head",
+      "line_start": 99,
+      "line_end": 105,
+      "claim": "Without a changesets tag and without thisRun, the script throws and asks for a manual build or tag push.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "diff",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 371,
+      "line_end": 380,
+      "claim": "AGENTS.md states that a run whose changeset publish failed still builds the assets and that EQL 3.0.6 is the first repair.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "scripts/release-gate.mjs",
+      "rev": "head",
+      "line_start": 676,
+      "line_end": 689,
+      "claim": "npmVersions runs `npm view <name> versions --json`, returns null on E404 and throws otherwise.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": ".github/workflows/_build-eql-sql.yml",
+      "rev": "head",
+      "line_start": 64,
+      "line_end": 122,
+      "claim": "The reusable workflow checks out inputs.ref, builds with mise from that tree, and creates the release at target_commitish.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 504,
+      "line_end": 509,
+      "claim": "The comment asserts that changesets/action sets publishedPackages even when changeset publish fails. This is the assumption FS-1 depends on.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "test",
+      "path": "scripts/__tests__/eql-release-assets.test.mjs",
+      "rev": "head",
+      "line_start": 444,
+      "line_end": 459,
+      "claim": "The failed-publish scenario test injects a non-empty publishedPackages fixture. It simulates the assumption and does not verify the action.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": "packages/eql/packages/eql/package.json",
+      "rev": "head",
+      "claim": "The tree's EQL version at head is 3.0.6, the version the change says is on npm with no tag or release.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "test",
+      "path": "scripts/__tests__/wait-for-npm-versions.test.mjs",
+      "rev": "head",
+      "line_start": 91,
+      "line_end": 204,
+      "claim": "Unit tests cover the wait's timeout, 404, error retry and exact-match behaviour.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "command_output",
+      "command": "ls repo/node_modules; sed -n 1,12p repo/scripts/__tests__/eql-release-assets.test.mjs",
+      "claim": "The tests import vitest and no node_modules is present, so the suites could not be run offline.",
+      "status": "verified"
+    }
+  ]
+}

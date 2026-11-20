@@ -1,0 +1,71 @@
+{
+  "case": "stack-823",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Partial-progress tests depend on `chmod 0o444` actually blocking a write. Both copies force the sweep to throw by making the second migration read-only, which h",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "chmod-based test is a no-op as root, so the partial-progress path is untested in CI"
+    },
+    {
+      "id": "CR-2",
+      "title": "Close the clack session before exiting non-zero. Every other abort path in this function emits `if (!embedded) p.outro('Migration aborted.')` before `throw new ",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "missing outro"
+    },
+    {
+      "id": "CR-3",
+      "title": "Duplicate warning with a dangling colon. `rewriteEncryptedMigrations` already emits the identical \"\u2026the rewrite left alone. Review them before migrating:\" warni",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "duplicate warning"
+    },
+    {
+      "id": "CR-4",
+      "title": "Guard the partial-result read against non-object throws. `err as Partial<RewriteSweepError>` is an unchecked cast: for `throw null` / `throw undefined`, `partia",
+      "nitpick": false,
+      "label": "match",
+      "matches": ["KD-3"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "non-object throw escapes the sweep's catch: KD-3 mechanism"
+    },
+    {
+      "id": "CR-5",
+      "title": "Add the `\"public\"` rationale to both rewriters or centralize the assumption. `packages/wizard/src/lib/rewrite-migrations.ts` documents that `\"public\".\"<domain>\"",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    },
+    {
+      "id": "CR-6",
+      "title": "Guard the partial-result carrier before reading it. A caught value may be `null`/`undefined`; this assertion does not change runtime behavior, so `partial.rewri",
+      "nitpick": true,
+      "label": "match",
+      "matches": ["KD-3"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "same mechanism in the CLI copy (nitpick)"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}

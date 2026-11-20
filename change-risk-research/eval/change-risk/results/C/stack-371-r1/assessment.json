@@ -1,0 +1,246 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "cf8ebc23880abc7c51c4353551f3b4f9261f78ce",
+  "head_sha": "d257468c35efffdfe17f8e2b2cdcd744abfdf76a",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": { "status": "available", "source": "repo/ at head" },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "5 check runs on head, all success; job-level conclusions only, no step logs"
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "packages/cli/AGENTS.md at head only"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "partial",
+      "note": "As reported by collect-evidence in evidence.json"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Pure refactor of the @cipherstash/cli package: user-facing strings that E2E tests assert on are moved into a new `src/messages.ts` const object, and the CLI entrypoint, `auth` command and `selectRegion()` prompt now interpolate those constants. Every extracted constant reproduces the previous literal byte-for-byte (including the ': ' composition for unknown-command errors), so rendered CLI output is unchanged. The new module is bundled by tsup into dist/bin/stash.js, adds no dependency and is not exported from the library entry. E2E tests import the same constants; the `db migrate` assertion is tightened from a substring to the full message. CI 'Run Tests' (which builds and runs the CLI E2E suite) passed on head. No material failure scenario identified.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "other",
+      "description": "CLI help banner, usage lines, unknown command/subcommand errors, db migrate stub warning, region prompt and cancel message are now built from constants in src/messages.ts. The resulting strings are identical to the base literals; no user-visible output change.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3", "E-4", "E-5"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "test_only",
+      "description": "E2E smoke and auth-cancel tests assert using the shared constants instead of literals. The db-migrate test now asserts the full warning text instead of the 'not yet implemented' fragment. Copy changes made in messages.ts will no longer be caught by these tests (intended design).",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "documentation",
+      "description": "packages/cli/AGENTS.md documents the messages.ts convention; the file is not in the package's published `files` list.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "high",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/cli stash binary (src/bin/stash.ts, commands/auth)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Call sites import the new messages module; output strings unchanged.",
+      "evidence": ["E-2", "E-3", "E-4"]
+    },
+    {
+      "id": "AC-2",
+      "name": "packages/cli/src/messages.ts",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "New const object of message strings, bundled into dist/bin/stash.js by tsup.",
+      "evidence": ["E-1", "E-10"]
+    },
+    {
+      "id": "AC-3",
+      "name": "CLI E2E suite (tests/e2e)",
+      "kind": "other",
+      "relationship": "changed",
+      "how": "Assertions now reference the shared constants.",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Test JS workflow (Run Tests job)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Runs `turbo run test:e2e --filter @cipherstash/cli`, which builds then exercises dist/bin/stash.js.",
+      "evidence": ["E-11", "E-12"]
+    }
+  ],
+  "failure_scenarios": [],
+  "verification_gaps": [],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Optional: future copy edits in messages.ts deserve a human look, since the E2E tests now follow them automatically and will not flag a wording change.",
+      "addresses": []
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "ci.json gives only job-level conclusions; step-level logs for the CLI E2E step were not available.",
+      "effect": "Passing E2E is inferred from the 'Run Tests' job succeeding with that step in it, not from a test log."
+    },
+    {
+      "id": "CL-2",
+      "description": "Tests were not run locally (no network; dependencies not installed).",
+      "effect": "Verification relies on CI results and code reading."
+    },
+    {
+      "id": "CL-3",
+      "description": "Collector flagged usual co-changes (db/install.ts, init/providers/supabase.ts) absent here; the diff touches no db install or init logic, so these were not investigated further.",
+      "effect": "Minor; the co-change signal reflects past feature work on stash.ts, not a dependency of this refactor."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/cli/src/messages.ts",
+      "rev": "head",
+      "line_start": 12,
+      "line_end": 29,
+      "claim": "New `messages` const with cli/auth/db strings; values equal the previously inlined literals.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/cli/src/bin/stash.ts",
+      "rev": "head",
+      "line_start": 57,
+      "line_end": 60,
+      "claim": "HELP banner/usage interpolate messages.cli.versionBannerPrefix and usagePrefix, producing the same text as base.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/cli/src/bin/stash.ts",
+      "rev": "head",
+      "line_start": 195,
+      "line_end": 260,
+      "claim": "db migrate warning, unknown db subcommand and unknown command errors use constants with the same ': ' composition as base.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/cli/src/commands/auth/index.ts",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 48,
+      "claim": "auth HELP usage and unknown auth command error use constants; output unchanged.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/cli/src/commands/auth/login.ts",
+      "rev": "head",
+      "line_start": 17,
+      "line_end": 26,
+      "claim": "selectRegion prompt and cancel text use messages.auth.selectRegion/cancelled ('Select a region', 'Cancelled.'), same as base; exit code 0 path unchanged.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "test",
+      "path": "packages/cli/tests/e2e/smoke.e2e.test.ts",
+      "rev": "head",
+      "line_start": 14,
+      "line_end": 74,
+      "claim": "Smoke tests assert on shared constants plus inline command names/tokens and exit codes; db migrate assertion now matches the full message.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "test",
+      "path": "packages/cli/tests/e2e/auth-login-cancel.e2e.test.ts",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 19,
+      "claim": "Cancel test waits for messages.auth.selectRegion and asserts messages.auth.cancelled with exit code 0.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "documentation",
+      "path": "packages/cli/AGENTS.md",
+      "rev": "head",
+      "claim": "Documents the messages.ts convention for assertion-stable strings.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/cli/package.json",
+      "rev": "head",
+      "line_start": 7,
+      "line_end": 13,
+      "claim": "Published `files` are dist, README.md, LICENSE, CHANGELOG.md; AGENTS.md does not ship.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/cli/tsup.config.ts",
+      "rev": "head",
+      "line_start": 27,
+      "line_end": 41,
+      "claim": "stash.ts entry is bundled by tsup (skipNodeModulesBundle only externalises node_modules), so the relative messages.js import is inlined into dist/bin/stash.js.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 86,
+      "line_end": 89,
+      "claim": "Run Tests job runs CLI E2E via turbo, whose test:e2e task depends on build.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "ci_result",
+      "claim": "Check run 'Run Tests' on head d257468c completed with conclusion success (all 5 check runs succeeded).",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "pr_description",
+      "claim": "Author reports build clean, 76 unit tests and 8 E2E tests passing, biome clean.",
+      "status": "inferred"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "case": "stack-981",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "hickory 0.26 resolver change breaks the EQL test harness build or its ZeroKMS calls in CI",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.1745275000000004,
+  "wall_seconds": 121.45495
+}

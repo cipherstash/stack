@@ -1,0 +1,59 @@
+{
+  "case": "stack-823",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Add-only rewrite leaves the DB out of step with the Drizzle schema; app writes ciphertext into the plaintext column",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Schema and snapshot still declare the domain after the add-only rewrite."
+    },
+    {
+      "id": "FS-2",
+      "title": "`stash init` (Drizzle) misreports a fail-closed sweep as a drizzle-kit failure and says EQL is not installed",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Shipped stash-drizzle skill still describes the swept repair as data-destroying and sends users to a staged flow that collides with it",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Projects with historical unplaceable ALTERs can no longer complete `stash eql migration --drizzle` or the wizard",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 2.0316145000000003,
+  "wall_seconds": 264.539183,
+  "case_note": "KD-2 found; KD-1 and KD-3 missed."
+}

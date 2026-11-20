@@ -1,0 +1,71 @@
+{
+  "case": "stack-496",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "protect-ffi 0.24.0 native bump changes payloads or API for existing Node users without a matching EQL bump",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Payload-format incompatibility of protect-ffi 0.24 is hypothetical; no cited code shows a format change and CI e2e against EQL 2.3.1 passes."
+    },
+    {
+      "id": "FS-2",
+      "title": "WASM client encrypts null into a real ciphertext where the Node client returns null",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same verified null-guard gap in the new WASM client versus Node operations."
+    },
+    {
+      "id": "FS-3",
+      "title": "Consumers' TypeScript resolves protect-ffi WASM types for stack's main-entry declarations",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "tsconfig comment confirms protect-ffi 0.24 resolves to WASM types without the node condition, and stack's public types derive from protect-ffi, so consumers' resolution can differ."
+    },
+    {
+      "id": "FS-4",
+      "title": "CLI/wizard auth 0.36 -> 0.38 upgrade breaks login or token fetch",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Claims auth 0.38 API breaks login but cites no evidence of any API change; purely speculative."
+    },
+    {
+      "id": "FS-5",
+      "title": "Hand-edited 0.18.0 version conflicts with changesets release flow",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Version hand-set to 0.18.0 while a pending minor changeset exists and no changeset covers the new subpath/dep bumps, so changesets will skip versions and omit changelog entries."
+    }
+  ],
+  "cost_usd": 1.7789879,
+  "wall_seconds": 252.81205,
+  "case_note": "Missed KD-1 (duplicated classes across declaration builds).",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,48 @@
+{
+  "case": "stack-1026",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Repair path relies on changesets/action outputs and tags surviving a failed `changeset publish`",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "eqlAssets throws or reports not-on-npm without thisRun or a changesets tag (eql-release-assets.mjs:91-105), and the release.yml comment's claim that changesets/action sets publishedPackages after a failed publish is untested (tests inject it), so the 3.0.6 repair may fail on every push."
+    },
+    {
+      "id": "FS-2",
+      "title": "npm listing lag beyond 15 minutes blocks every JS release in that run",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The timeout behaviour is accurately described, but the finding itself concludes it is a loud, recoverable, intended trade-off and recommends accepting it."
+    },
+    {
+      "id": "FS-3",
+      "title": "Repair rebuild runs head's reusable workflow against an older source tree",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The new repair path calls head's local reusable workflow (pinned mise 2026.4.0, head's task invocation and paths) but checks out an older inputs.ref, a tooling mismatch the change introduces; it plausibly causes build failures or SQL that does not match the npm tarball."
+    }
+  ],
+  "cost_usd": 1.2161822999999998,
+  "wall_seconds": 195.306171,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

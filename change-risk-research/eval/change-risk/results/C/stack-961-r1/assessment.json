@@ -1,0 +1,487 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+  "head_sha": "386792876d402f36645c6724a58b7a9f4a371e78",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "partial",
+      "source": "ci.json",
+      "note": "31 check runs, all success, conclusions only. No logs, so it is not visible which live tests ran and which were skipped. Combined status 'pending' with 0 statuses."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md, packages/cli/AGENTS.md, README and the new ADR at head were read as context. No deployment architecture was available."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "partial",
+      "source": "evidence.json",
+      "note": "Only what collect-evidence reported."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (evidence.json, evidence.md)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "Nothing was available about customer database sizes, installer role ownership or how `stash eql upgrade` is run in practice."
+    }
+  },
+  "summary": "Before this change, `stash eql install` and `stash eql upgrade` ran the EQL bundle in one transaction. The bundle's `DROP SCHEMA eql_v3/eql_v3_internal CASCADE` silently dropped customer functional indexes, and any views, policies or constraints, that depended on EQL. The new code takes an advisory lifecycle lock and walks pg_depend to classify dependants. It refuses before mutating anything when it finds a dependant that is not an index. Otherwise it runs the bundle, rebuilds each captured index with plain CREATE INDEX, restores cluster, replica identity, comment and statistics settings, runs ANALYZE, verifies the result and commits, all in the same transaction. Installation-state reads are moved into assessEqlInstallation. The main release risk is operational, not data loss. Every CREATE INDEX and ANALYZE now runs inside the transaction that dropped the old indexes, so tables with EQL-backed indexes stay locked for the whole rebuild. Upgrades can now fail closed where they used to succeed, for example when the installer role does not own the indexed tables or the new bundle cannot rebuild an old index definition. Failures roll back, and the live tests cover rollback and the refusal classes. CI is all green, and its live-Postgres job ran on PG16 and PG17.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "state_or_persistence",
+      "description": "Install and upgrade now capture every ordinary, non-partitioned index that transitively depends on EQL objects. They recreate each one from pg_get_indexdef after the bundle runs, restore its cluster, replica-identity, comment and statistics settings, ANALYZE its table and verify the result, all in the bundle's transaction. At base, these indexes were silently dropped by CASCADE.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3", "E-4"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "Install and upgrade now refuse before making any change, with EqlReinstallRefusalError, when a dependant other than an index (view, policy, constraint, generated column, trigger, customer operator or partitioned index) depends on EQL objects. At base the install succeeded and dropped those objects.",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6", "E-12"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "concurrency_or_ordering",
+      "description": "A transaction-scoped advisory lock (`cipherstash.eql.lifecycle`) is polled for up to 5 minutes before the install. If it is still unavailable, EqlLifecycleLockTimeoutError is raised. JIT is disabled for the transaction.",
+      "certainty": "observed",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "error_handling",
+      "description": "The install and upgrade commands map EqlReinstallRefusalError to a clean CliExit(1). Lock timeouts, reconstruction errors and verification errors still propagate as thrown errors. Non-refusal failures are wrapped as 'Failed to install EQL ... rolled back'.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "other",
+      "description": "Installed-state detection (presence, version, preflight capabilities, ORE state, surface verification) for status, install, upgrade and verify is centralised in assessEqlInstallation and runs in a READ ONLY transaction. The preflight checks themselves are carried over unchanged.",
+      "certainty": "observed",
+      "evidence": ["E-10"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "build_or_release",
+      "description": "CI now runs the CLI live suite against PG16 (Node 22) and PG17 (Node 24). turbo forwards STASH_TEST_DATABASE_URL. Live suites share a single fork. The CLI adds two devDependencies: an EQL 3.0.2 baseline alias and protect-ffi.",
+      "certainty": "observed",
+      "evidence": ["E-11", "E-13"]
+    },
+    {
+      "id": "BC-7",
+      "kind": "documentation",
+      "description": "The README, the shipped skills/stash-cli/SKILL.md and the changeset now say that reinstall is a maintenance-window operation and that generated `eql migration` files contain the raw bundle without these protections.",
+      "certainty": "observed",
+      "evidence": ["E-14", "E-15"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/cli installer (derived-search-index-restoration.ts, index.ts)",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "Contains the new capture, replace, rebuild and verify protocol around the EQL bundle.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "`stash eql install` / `stash eql upgrade` commands",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Both call EQLInstaller.install(), which now runs the restoration protocol, and both now render refusal errors.",
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Customer PostgreSQL databases (tables carrying EQL-backed functional indexes)",
+      "kind": "database",
+      "relationship": "confirmed",
+      "how": "The protocol drops and recreates customer indexes, runs ANALYZE and holds table locks for the transaction, against the database at the configured databaseUrl.",
+      "evidence": ["E-2", "E-3"]
+    },
+    {
+      "id": "AC-4",
+      "name": "EQLInstaller programmatic API (documented in packages/cli/README.md)",
+      "kind": "public_api",
+      "relationship": "confirmed",
+      "how": "The README documents `installer.install({ supabase: true })` for programmatic use, so programmatic callers get the new refusal and lock behaviour.",
+      "evidence": ["E-16"]
+    },
+    {
+      "id": "AC-5",
+      "name": "`stash eql status` / `eql verify`",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "They now read installation state through assessEqlInstallation.",
+      "evidence": ["E-10"]
+    },
+    {
+      "id": "AC-6",
+      "name": "tests.yml CI matrix and the turbo test env",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Adds a PG16 leg and forwards the live database URL to the test task.",
+      "evidence": ["E-11"]
+    },
+    {
+      "id": "AC-7",
+      "name": "skills/stash-cli/SKILL.md (ships in the stash tarball)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Shipped guidance on upgrade behaviour and maintenance windows.",
+      "evidence": ["E-15"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Upgrade blocks reads and writes on large encrypted tables while every captured index is rebuilt inside one transaction",
+      "trigger": "An operator runs `stash eql upgrade` (or `install --force`) against a production database with large tables that carry EQL functional indexes, outside a maintenance window. The README previously called the install SQL 'idempotent and safe to re-run'.",
+      "affected_components": ["AC-1", "AC-2", "AC-3"],
+      "mechanism": "The bundle's DROP SCHEMA ... CASCADE drops the dependent indexes, which takes an ACCESS EXCLUSIVE lock on each parent table. rebuildIndexes then runs each captured definition as a plain, non-CONCURRENTLY CREATE INDEX, runs ANALYZE on every table, and only then commits (derived-search-index-restoration.ts:575-598, 678-687). At base, the transaction ended right after the bundle. It now also covers a full index build per index, evaluating EQL SQL functions on every row, plus ANALYZE. All of it runs while table locks taken at the drop are still held.",
+      "consequence": "Application queries against those tables block for the whole rebuild. On large tables that can be minutes or longer, an availability outage. If a server-side statement_timeout or lock_timeout fires, everything rolls back safely, but the upgrade cannot complete without a window.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-2", "E-3", "E-1", "E-14"],
+      "existing_verification": [
+        {
+          "description": "The live reinstall suite rebuilds indexes on single-row tables only. It covers correctness, not duration or locking.",
+          "status": "exists_not_run",
+          "evidence": ["E-12"]
+        },
+        {
+          "description": "The CI jobs 'Run Tests (Node 22)' and 'Run Tests (Node 24)' that run the CLI live suites passed.",
+          "status": "ran_passed",
+          "evidence": ["E-13"]
+        }
+      ],
+      "missing_verification": [
+        "No measurement of lock duration or rebuild time on a table of realistic size",
+        "No dry-run or preflight output that tells the operator how many indexes and tables will be rebuilt and locked"
+      ],
+      "mitigation": "Already present: README and SKILL.md now say to run upgrade in a maintenance window. Consider having `upgrade --dry-run` list the indexes and tables that will be rebuilt and locked, and put the lock warning in the CLI output itself.",
+      "domain_tags": ["persistence_migration", "concurrency"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Upgrade now fails, where it used to succeed, when the installer role does not own the indexed customer tables",
+      "trigger": "The installer connects as a role that owns, or is a member of the owner of, the EQL schemas, but does not own the application tables carrying EQL-backed indexes. Examples are a dedicated migration or admin role on managed Postgres, or tables owned by an app role.",
+      "affected_components": ["AC-1", "AC-2", "AC-3", "AC-4"],
+      "mechanism": "DROP ... CASCADE removes dependent objects without checking ownership of each one, so at base the upgrade succeeded and silently dropped the indexes. At head, rebuildIndexes runs CREATE INDEX on the customer table, and PostgreSQL requires table ownership for that. The failure becomes DerivedSearchIndexReconstructionError and is wrapped as 'Failed to install EQL ... rolled back' (index.ts:196-213). Preflight checks only that the role can drop the EQL schemas, not that it owns the dependent tables (installation-state.ts:66-76, 228-231).",
+      "consequence": "The upgrade fails closed after doing the work and rolls back, and is shown as a generic thrown error rather than a refusal. The customer cannot upgrade EQL with that role until they change roles or drop the indexes. No data is lost.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-9", "E-10", "E-17"],
+      "existing_verification": [
+        {
+          "description": "The live test 'preserves index ownership' runs as the superuser `cipherstash`, so the non-owner path is not exercised.",
+          "status": "exists_not_run",
+          "evidence": ["E-17"]
+        }
+      ],
+      "missing_verification": [
+        "A live test where the installer role owns the EQL schemas but not the table carrying the dependent index",
+        "A preflight check of ownership of dependent tables, so the refusal happens before mutation and with a clear message"
+      ],
+      "mitigation": "Add an ownership check in inspectReinstallDependencies (or preflight) that refuses with EqlReinstallRefusalError and names the table, before the bundle runs.",
+      "domain_tags": ["persistence_migration", "authorization"]
+    },
+    {
+      "id": "FS-3",
+      "title": "An upgrade that changes or removes an EQL function used by an existing index can no longer complete",
+      "trigger": "A future pinned bundle removes, renames or changes the signature or return type of a function (for example eql_v3.eq_term) that a customer index expression references, or changes how pg_get_indexdef prints the rebuilt definition.",
+      "affected_components": ["AC-1", "AC-2", "AC-3"],
+      "mechanism": "The rebuild replays the captured CREATE INDEX text verbatim. Verification also requires the new pg_get_indexdef output to be byte-identical to the captured text (derived-search-index-restoration.ts:612-637). Any change to the bundle surface used by an index expression either fails the CREATE or fails verification, and either one rolls back the whole upgrade.",
+      "consequence": "The customer is stuck on the old EQL version until they manually drop and recreate the affected indexes around the upgrade. This is loud and safe, but it shifts a migration burden onto future EQL releases and onto customers.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-18"],
+      "existing_verification": [
+        {
+          "description": "upgrade-encrypted-indexes.live.test.ts upgrades from the released 3.0.2 bundle to the pinned bundle with real ciphertext and unique and ORE indexes. It is gated on CS_* credentials, and whether it ran in CI is not visible.",
+          "status": "unknown",
+          "evidence": ["E-18"]
+        }
+      ],
+      "missing_verification": [
+        "A release-time check that each EQL function referenced by documented index recipes survives a bundle bump with the same signature"
+      ],
+      "mitigation": "Treat removal or signature change of index-referenced EQL functions as a breaking EQL change in the release process, and document the manual recovery path in the reconstruction error message.",
+      "domain_tags": ["persistence_migration", "serialization_compatibility"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test measures how long table locks are held, or what the rebuild costs, on non-trivial table sizes.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-12"]
+    },
+    {
+      "id": "VG-2",
+      "description": "All live tests run as a superuser, so the non-owner installer role path is untested.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-17"]
+    },
+    {
+      "id": "VG-3",
+      "description": "CI conclusions are visible but logs are not. Whether the credential-gated encrypted-index upgrade suite actually ran, rather than being skipped, cannot be confirmed.",
+      "scenarios": ["FS-3"],
+      "evidence": ["E-13", "E-18"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Review rebuildIndexes and the transaction body in restoreDerivedSearchIndexesAroundEqlReplacement for lock scope, and decide whether the CLI should warn about or list the tables that will be locked before it proceeds.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add a live test that installs EQL as a non-superuser role that owns the EQL schemas but not a table with a dependent index, and assert that the command refuses before mutation with a clear message.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "documentation",
+      "description": "Release notes should say that `stash eql upgrade` now holds locks on tables with EQL indexes for the full rebuild, and that it can fail closed where it previously succeeded.",
+      "addresses": ["FS-1", "FS-2", "FS-3"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "compatibility_check",
+      "description": "Confirm from the CI logs that upgrade-encrypted-indexes.live.test.ts ran rather than being skipped, on both PG16 and PG17.",
+      "addresses": ["VG-3", "FS-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "LIFECYCLE_DEPENDENCIES_SQL was read in full, but whether its classification is complete across every catalog edge (for example a constraint that owns an index built on an EQL opclass) was reasoned about, not executed. The refusal classes the live tests cover were checked by name only.",
+      "effect": "A dependant that is misclassified as a rebuildable index could still be lost silently. That risk was judged low but not proven."
+    },
+    {
+      "id": "CL-2",
+      "description": "The test, refactor and docs files (installer.test.ts, verify.ts, validate.ts, grants.ts, the sqlx uninstall tests, lint scripts) were skimmed, not read closely.",
+      "effect": "Behaviour changes in the assessment refactor (status, verify, validate) are only partly checked."
+    },
+    {
+      "id": "CL-3",
+      "description": "Concurrent DDL from sessions other than `stash` between dependency capture and the bundle's DROP is not covered by the advisory lock. An index created in that gap would be dropped without being rebuilt. The README documents this as a maintenance-window requirement.",
+      "effect": "Not raised as a scenario because the change documents it, and the same exposure existed at base."
+    },
+    {
+      "id": "CL-4",
+      "description": "No tests were run locally (no database, no network). Test results come only from ci.json conclusions.",
+      "effect": "Verification confidence is capped at medium."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "rev": "head",
+      "line_start": 571,
+      "line_end": 651,
+      "claim": "rebuildIndexes runs each captured definition with client.query (plain CREATE INDEX), then cluster, replica-identity, comment and statistics SQL, then ANALYZE per table, and verifies an exact pg_get_indexdef match and other properties.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "rev": "head",
+      "line_start": 678,
+      "line_end": 691,
+      "claim": "BEGIN, lock, SET LOCAL jit=off, inspect dependencies, run the bundle, rebuild indexes and COMMIT all happen in one transaction, with ROLLBACK on any error.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/eql/packages/eql/sql/cipherstash-encrypt.sql",
+      "rev": "head",
+      "line_start": 39,
+      "line_end": 47,
+      "claim": "The install bundle begins with DROP SCHEMA IF EXISTS eql_v3 CASCADE and DROP SCHEMA IF EXISTS eql_v3_internal CASCADE.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/cli/src/installer/index.ts",
+      "rev": "base",
+      "line_start": 434,
+      "line_end": 450,
+      "claim": "At base, install() ran only BEGIN, the bundled SQL and COMMIT, with no capture or rebuild of dependent indexes.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "rev": "head",
+      "line_start": 494,
+      "line_end": 558,
+      "claim": "inspectReinstallDependencies marks any dependant that is not an index, or an index with incomplete metadata, as unsafe and throws EqlReinstallRefusalError before the bundle runs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "rev": "head",
+      "line_start": 84,
+      "line_end": 160,
+      "claim": "A recursive pg_depend walk from the EQL schemas' objects, including a rewrite-rule-to-view edge.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "rev": "head",
+      "line_start": 467,
+      "line_end": 492,
+      "claim": "acquireLifecycleLock polls pg_try_advisory_xact_lock every 250 ms for up to 300 s, then throws EqlLifecycleLockTimeoutError.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "rev": "head",
+      "line_start": 205,
+      "line_end": 216,
+      "claim": "The install command maps only EqlReinstallRefusalError to CliExit(1) and rethrows every other error.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/cli/src/installer/index.ts",
+      "rev": "head",
+      "line_start": 194,
+      "line_end": 214,
+      "claim": "EQLInstaller.install calls restoreDerivedSearchIndexesAroundEqlReplacement. It passes TLS, lock-timeout, connection and refusal errors through, and wraps all others as 'Failed to install EQL ... rolled back'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/cli/src/installer/installation-state.ts",
+      "rev": "head",
+      "line_start": 66,
+      "line_end": 186,
+      "claim": "assessEqlInstallation reads presence, version, ORE, surface and capabilities in a READ ONLY transaction. Its capability SQL checks EQL schema drop rights but not ownership of customer tables.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "diff",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 52,
+      "line_end": 71,
+      "claim": "The run-tests matrix adds postgres-version 16 and 17 (Node 22 on PG16, Node 24 on PG17), and the service image tag follows the matrix.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "test",
+      "path": "packages/cli/src/installer/__tests__/reinstall.live.test.ts",
+      "rev": "head",
+      "line_start": 58,
+      "line_end": 93,
+      "claim": "The live reinstall suite builds a single-row table with functional indexes and tests rebuild, rollback, lock and refusal behaviour (tests at lines 81-607). Table sizes are trivial.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "ci_result",
+      "claim": "ci.json: all 31 check runs on the head commit completed with conclusion success, including 'Run Tests (Node 22)' and 'Run Tests (Node 24)', which run `pnpm run test` with STASH_TEST_DATABASE_URL set (tests.yml:356-359). Per-test skip status is not visible.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "documentation",
+      "path": "packages/cli/README.md",
+      "rev": "head",
+      "line_start": 213,
+      "line_end": 222,
+      "claim": "The README now says to run upgrade in a schema-migration maintenance window, and that the advisory lock serializes only `stash` lifecycle commands.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "documentation",
+      "path": "skills/stash-cli/SKILL.md",
+      "rev": "head",
+      "claim": "The shipped skill now describes capture, restore and verify, the maintenance window, and that generated migrations contain the raw bundle.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "documentation",
+      "path": "packages/cli/README.md",
+      "rev": "head",
+      "line_start": 471,
+      "line_end": 471,
+      "claim": "The README documents programmatic use of `installer.install({ supabase: true })`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "test",
+      "path": "packages/cli/src/installer/__tests__/reinstall.live.test.ts",
+      "rev": "head",
+      "line_start": 188,
+      "line_end": 209,
+      "claim": "The ownership test expects owner 'cipherstash', the CI superuser. No test runs the installer as a role that does not own the indexed table.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "test",
+      "path": "packages/cli/src/installer/__tests__/upgrade-encrypted-indexes.live.test.ts",
+      "rev": "head",
+      "line_start": 23,
+      "line_end": 43,
+      "claim": "The encrypted-index upgrade suite installs the 3.0.2 baseline and upgrades it. It is skipped unless STASH_TEST_DATABASE_URL and all four CS_* credentials are present.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "pr_description",
+      "claim": "The PR says the advisory lock coordinates only `stash` lifecycle commands, that a maintenance window is still required, and that capture, replacement, reconstruction and verification run in one transaction.",
+      "status": "verified"
+    }
+  ]
+}

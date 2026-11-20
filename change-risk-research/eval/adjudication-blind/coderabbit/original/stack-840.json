@@ -1,0 +1,22 @@
+{
+  "case": "stack-840",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Do not describe `bulkEncrypt` as untyped. Line 234 groups `bulkEncrypt` with `bulkDecrypt` as untyped, but `bulkEncrypt` remains column-typed through `BulkEncry",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head, README line 234 explicitly says bulkEncrypt is typed like encrypt via { table, column } and only bulkDecrypt resolves to the untyped union; the PR removed the 'untyped passthroughs' wording the finding complains about."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,366 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "e4a814b0266b714abca19b8583fe14f4f1061841",
+  "head_sha": "6ad6c76e7d7dccb2ecde472a20bda8e51cea9f56",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md; changeset files in the diff were read as untrusted content."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md; source comments read only as part of the checkout."
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Consumers found by git grep at head instead."
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Not listed as an input in CASE.md."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence 1.0.0)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Mostly a type-level refactor of the TypeScript @cipherstash/stack encryption client. It removes the `as never` forwarding casts in createEncryptionClient, gives the native client a strictly typed structural view, adds an internal PlaintextInput type (Plaintext | JsonDocument) and moves the FFI plaintext assertion into one toJsPlaintext helper. The change that matters publicly is that `encrypt` is now generic over the plaintext type, so its result is typed `Encrypted | null` when the argument can be null. In practice that means types.Json columns and calls that name `<Table, Col>` explicitly. Callers that dereference `result.data` will stop compiling, and this ships as a minor bump. The runtime encrypt, bulkEncrypt and encryptQuery paths look equivalent to base: null still short-circuits to null, and encryptQuery still routes on the second argument. The one runtime change is in stack-supabase: its per-term query fallback now throws on a null envelope instead of sending \"null\", which matches the bulk path. Nothing touches the payload format, keys or lock context. The encryptModel and bulkEncryptModels result types still rest on an unchecked assertion, which was already true at base.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "EncryptionClient.encrypt gains a third type parameter P (default: the column's plaintext type), and its return type becomes EncryptOperation<EncryptResult<P>>, where EncryptResult<P> = Encrypted | (null & P). For a types.Json column, or a value typed JsonDocument, `data` is now `Encrypted | null` where it used to be `Encrypted`. Scalar columns are unchanged. EncryptOperation and EncryptOperationWithLockContext take an optional R type parameter, and EncryptResult is a new export.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "The exported operation classes (EncryptOperation, EncryptQueryOperation, BatchEncryptQueryOperation, BulkEncryptOperation) widen their accepted plaintext from Plaintext to PlaintextInput, and their getOperation() return types widen to match. The native encryptQuery becomes a single `...args: EncryptQueryArgs` signature, and the typed client forwards with `...args`. The runtime routing (on args[1], then a term-array check) matches the base logic on `opts`.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "other",
+      "description": "The FFI plaintext assertion moves from inline `as JsPlaintext` casts to toJsPlaintext(), which is an identity cast. The internal null short-circuit returns `null` rather than `null as unknown as Encrypted`. Runtime values are unchanged.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-1"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "error_handling",
+      "description": "In stack-supabase, encryptGroupPerTerm (the per-term fallback used when the client has no bulkEncrypt) now calls encryptionFailure, which throws, when encrypt returns null data. At base it returned null, which was later serialized as the operand \"null\".",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "documentation",
+      "description": "The customer-shipped skills/stash-encryption/SKILL.md now documents that encrypt on a types.Json null resolves to { data: null }, typed Encrypted | null. New changesets bump @cipherstash/stack minor, and stack-supabase and stash patch.",
+      "certainty": "observed",
+      "evidence": ["E-10", "E-11"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack encryption client (client-v3.ts, index.ts, operations/*, types.ts)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Typed client, native client and operation classes changed.",
+      "evidence": ["E-1", "E-2", "E-4"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack-supabase query-encrypt",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "The per-term fallback now rejects a null envelope. It also types against ReturnType<EncryptionClient['encrypt']>.",
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "AC-3",
+      "name": "External TypeScript consumers of @cipherstash/stack/encryption and /v3 that call encrypt on types.Json columns",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Code that reads result.data from a nullable-typed Json encrypt, or annotates it as Encrypted, fails to compile after upgrading. No such consumer was inspected.",
+      "evidence": ["E-2", "E-11"]
+    },
+    {
+      "id": "AC-4",
+      "name": "In-repo consumers of EncryptionClient (cli encrypt/config, bench, stack-drizzle integration)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "These import the EncryptionClient type. A grep for `.encrypt(` outside stack/src/encryption and tests found only stack-supabase and docs or examples, so the direct encrypt-result dependency is limited.",
+      "evidence": ["E-12"]
+    },
+    {
+      "id": "AC-5",
+      "name": "stash-encryption agent skill (shipped to customers)",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Updated guidance on null Json encrypt results.",
+      "evidence": ["E-10"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Minor release breaks compilation for consumers that encrypt nullable-typed Json values",
+      "trigger": "A TypeScript consumer upgrades @cipherstash/stack to the minor release. Their code encrypts into a types.Json column with a plaintext typed JsonDocument (or calls encrypt<Table, Col> on a Json column) and then reads result.data.c, passes result.data to decrypt, or assigns it to an Encrypted-typed variable.",
+      "affected_components": ["AC-1", "AC-3"],
+      "mechanism": "EncryptionClient.encrypt now returns EncryptOperation<EncryptResult<P>> (client-v3.ts:192-196). EncryptResult<P> includes null whenever P does (encrypt.ts:41). JsonDocument admits null, and P defaults to the column's plaintext type. So code that compiled against `data: Encrypted` now sees `Encrypted | null` and fails strict null checks. The changeset classifies this as a minor bump.",
+      "consequence": "Consumer builds fail after a routine minor upgrade and need a null check at each call site. There is no runtime or data effect, and the new type is more accurate because the runtime already returned null.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-2", "E-3", "E-11"],
+      "existing_verification": [
+        {
+          "description": "typed-client-v3.test-d.ts asserts Encrypted | null for a literal null or JsonDocument, Encrypted for non-null and scalar values, and that explicit <Table, Col> calls still compile.",
+          "status": "exists_not_run",
+          "evidence": ["E-13"]
+        }
+      ],
+      "missing_verification": [
+        "CI typecheck results for every in-repo package that consumes @cipherstash/stack (cli, bench, stack-drizzle, stack-prisma, stack-supabase) were not seen.",
+        "dist-types declaration checks (node16 cts/mts) were not run against the new generic signature."
+      ],
+      "mitigation": "Confirm the semver call (minor vs major) for a type-narrowing change. Call out the required null check prominently in release notes, and run the monorepo typecheck and dist-types checks before publishing.",
+      "domain_tags": ["public_api", "build_release"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Supabase per-term fallback now throws where it used to send a \"null\" operand",
+      "trigger": "A stack-supabase query runs with an encryption client that lacks bulkEncrypt, and a filter operand encrypts to null data.",
+      "affected_components": ["AC-2"],
+      "mechanism": "encryptGroupPerTerm now calls encryptionFailure when result.data === null (query-encrypt.ts:417-422, head). At base, it returned result.data directly (query-encrypt.ts:413, base).",
+      "consequence": "The query fails loudly instead of sending the operand \"null\", which would have matched the wrong rows. The change fails closed, and a null operand is already rejected for JSON containment by assertJsonContainmentOperand. Reachability looks narrow because the typed client always provides bulkEncrypt.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-8", "E-9"],
+      "existing_verification": [
+        {
+          "description": "supabase-v3-builder.test.ts: 'rejects a null envelope on the per-term fallback rather than sending \"null\"'.",
+          "status": "exists_not_run",
+          "evidence": ["E-14"]
+        }
+      ],
+      "missing_verification": [],
+      "mitigation": "None needed beyond the changeset note. This aligns the fallback with the bulk path.",
+      "domain_tags": ["other"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No CI results were provided and the tests could not be run (no node_modules, no network). The type tests, forwarding unit tests and JSON integration test exist but their results are unknown.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-13", "E-14", "E-15"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Run the monorepo typecheck (including the dist-types node16 checks and every package that consumes @cipherstash/stack) and the stack type and unit tests before release.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "review_focus",
+      "description": "Have a reviewer decide whether a narrowing of encrypt's result type for Json columns belongs in a minor release, and check that the changelog tells users to null-check result.data.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "review_focus",
+      "description": "Check that the native encryptQuery `...args` routing (index.ts:349-366) matches base for (value, opts), (terms) and ([], opts).",
+      "addresses": ["VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Tests were not run and no CI results were available.",
+      "effect": "Verification confidence cannot exceed medium."
+    },
+    {
+      "id": "CL-2",
+      "description": "Test diffs (about 430 added lines) were skimmed by test name only. Source hunks were read in full.",
+      "effect": "The exact assertions in the tests are not confirmed."
+    },
+    {
+      "id": "CL-3",
+      "description": "External consumer code was not available. The extent of FS-1 depends on how many consumers encrypt Json values typed as nullable.",
+      "effect": "The breadth of FS-1 is unknown."
+    },
+    {
+      "id": "CL-4",
+      "description": "The PR description, CODEOWNERS and architecture docs were not listed as inputs.",
+      "effect": "The intended semver policy and ownership are not known."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack/src/encryption/operations/encrypt.ts",
+      "rev": "head",
+      "line_start": 104,
+      "line_end": 131,
+      "claim": "The null plaintext short-circuit returns null, and execute() asserts the result to Result<R, EncryptionError>.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack/src/encryption/client-v3.ts",
+      "rev": "head",
+      "line_start": 188,
+      "line_end": 196,
+      "claim": "EncryptionClient.encrypt is generic over P (defaulting to PlaintextForColumn<Col>) and returns EncryptOperation<EncryptResult<P>>.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack/src/encryption/operations/encrypt.ts",
+      "rev": "head",
+      "line_start": 41,
+      "line_end": 41,
+      "claim": "EncryptResult<P> = Encrypted | (null & P).",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack/src/types.ts",
+      "rev": "head",
+      "line_start": 106,
+      "line_end": 106,
+      "claim": "PlaintextInput = Plaintext | JsonDocument, used by the operation classes.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 349,
+      "line_end": 366,
+      "claim": "Native encryptQuery routes on args[1] and args[0], the same conditions base used on opts and plaintextOrTerms.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack/src/encryption/client-v3.ts",
+      "rev": "head",
+      "line_start": 532,
+      "line_end": 532,
+      "claim": "The typed client forwards encryptQuery with client.encryptQuery(...args).",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack/src/encryption/helpers/js-plaintext.ts",
+      "rev": "head",
+      "line_start": 24,
+      "line_end": 26,
+      "claim": "toJsPlaintext is an identity cast to JsPlaintext.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack-supabase/src/query-encrypt.ts",
+      "rev": "head",
+      "line_start": 395,
+      "line_end": 425,
+      "claim": "The per-term fallback throws via encryptionFailure when result.data is null.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack-supabase/src/query-encrypt.ts",
+      "rev": "base",
+      "line_start": 395,
+      "line_end": 413,
+      "claim": "At base, the per-term fallback returned result.data with no null check.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "diff",
+      "path": "skills/stash-encryption/SKILL.md",
+      "rev": "head",
+      "claim": "The skill documents that a null Json encrypt result is typed Encrypted | null.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "diff",
+      "path": ".changeset/stack-encrypt-json-null-result.md",
+      "rev": "head",
+      "claim": "The changeset bumps @cipherstash/stack minor and states that callers must now check data for null.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "command_output",
+      "command": "git -C repo grep -n -F '.encrypt(' 6ad6c76e -- languages/typescript/packages",
+      "claim": "Outside stack/src/encryption and tests, `.encrypt(` is called only in stack-supabase query-encrypt.ts, docs comments, the separate WASM client and dist-types examples.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "test",
+      "path": "languages/typescript/packages/stack/__tests__/typed-client-v3.test-d.ts",
+      "rev": "head",
+      "line_start": 535,
+      "line_end": 600,
+      "claim": "Type tests cover the null and non-null encrypt result typing and explicit <Table, Col> arguments.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "test",
+      "path": "languages/typescript/packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+      "rev": "head",
+      "line_start": 1917,
+      "line_end": 1917,
+      "claim": "A test covers the per-term null envelope rejection.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "test",
+      "path": "languages/typescript/packages/stack/__tests__/typed-client-v3.test.ts",
+      "rev": "head",
+      "line_start": 347,
+      "line_end": 395,
+      "claim": "Unit tests check that the encrypt, encryptQuery, model and bulk paths forward their arguments to the native client.",
+      "status": "verified"
+    }
+  ]
+}

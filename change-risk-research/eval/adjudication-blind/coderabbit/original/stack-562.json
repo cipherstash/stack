@@ -1,0 +1,32 @@
+{
+  "case": "stack-562",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Deprecation warning is silently skipped when both fields are set. The warning only fires `if (clientConfig?.strategy && !clientConfig.authStrategy)`.",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head the warning fires whenever clientConfig.strategy is set (index.ts:864), even alongside authStrategy; the quoted `&& !authStrategy` condition does not exist."
+    },
+    {
+      "id": "CR-2",
+      "title": "Mutual-exclusion error mentions `authStrategy` even when the deprecated `strategy` field caused it. `authStrategy` here is resolved as `cfg.authStrategy ?? cfg.",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head, wasm-inline.ts:450 picks the field name ('authStrategy' vs 'strategy') for the error message, so the message names the deprecated field when only that one was set."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

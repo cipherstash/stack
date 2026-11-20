@@ -1,0 +1,60 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Both entry points now export distinct same-named classes (dynamodb EncryptModelOperation extends DynamoDBOperation with private fields), so they are non-assignable and confusable; this is a naming hazard introduced by the new exports."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The classes are value-exported (not export type), so constructors taking the internal Client become public API under a minor changeset that frames the change as type-only."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same accurate point: value re-exports make constructors and class identity public surface in a minor release; the cited lines confirm value export and type-only new imports."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "encryption/index.ts and dynamodb/index.ts both export four same-named but different classes with different constructors, which leads to confusing type mismatches for consumers."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The core claim holds (value exports expose constructors that take the internal Client; tsup builds separate entries with no splitting option); the CJS instanceof point is hedged as unverified but plausible."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The cited lines show same-named, different classes exported from ./encryption (Client-based) and ./dynamodb (EncryptionClient-based), a consumer-facing naming hazard created by this PR."
+    },
+    {
+      "id": "F-07",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The @internal tags on the WithLockContext classes were removed while the changeset says they stay internal, but they are not exported, so this is only a doc-comment inconsistency (and no other WithLockContext class carries @internal either)."
+    }
+  ]
+}

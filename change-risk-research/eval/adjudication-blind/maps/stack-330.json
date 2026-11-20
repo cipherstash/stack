@@ -1,0 +1,66 @@
+{
+  "F-01": {
+    "evaluator": "coderabbit/original",
+    "finding": "CR-2"
+  },
+  "F-02": {
+    "evaluator": "change-risk/A",
+    "finding": "FS-2"
+  },
+  "F-03": {
+    "evaluator": "change-risk/B",
+    "finding": "FS-1"
+  },
+  "F-04": {
+    "evaluator": "change-risk/A",
+    "finding": "FS-1"
+  },
+  "F-05": {
+    "evaluator": "change-risk/B",
+    "finding": "FS-4"
+  },
+  "F-06": {
+    "evaluator": "change-risk/C",
+    "finding": "FS-2"
+  },
+  "F-07": {
+    "evaluator": "change-risk/C",
+    "finding": "FS-1"
+  },
+  "F-08": {
+    "evaluator": "coderabbit/original",
+    "finding": "CR-3"
+  },
+  "F-09": {
+    "evaluator": "coderabbit/original",
+    "finding": "CR-4"
+  },
+  "F-10": {
+    "evaluator": "change-risk/A",
+    "finding": "FS-4"
+  },
+  "F-11": {
+    "evaluator": "change-risk/C",
+    "finding": "FS-4"
+  },
+  "F-12": {
+    "evaluator": "change-risk/A",
+    "finding": "FS-3"
+  },
+  "F-13": {
+    "evaluator": "change-risk/C",
+    "finding": "FS-3"
+  },
+  "F-14": {
+    "evaluator": "change-risk/B",
+    "finding": "FS-2"
+  },
+  "F-15": {
+    "evaluator": "coderabbit/original",
+    "finding": "CR-1"
+  },
+  "F-16": {
+    "evaluator": "change-risk/B",
+    "finding": "FS-3"
+  }
+}

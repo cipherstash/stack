@@ -1,0 +1,578 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "7ba9119c7e66a331f0b47ecc2fe377f3a716a911",
+  "head_sha": "c447e26192143763874cd1340836289fbb2fa133",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "partial",
+      "note": "Only the title in CASE.md and the changeset text; no PR body."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results supplied; no tests were run (no node_modules, integration tests need ZeroKMS credentials)."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Repository profile (cipherstash.md), shipped skill and docs at head; protect-ffi source not available."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "collect-evidence found no CODEOWNERS file."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json, evidence.md)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Two behaviour changes in @cipherstash/stack ship together. (1) The low-level operations (encrypt, encryptQuery single and batch, decrypt, bulkEncrypt, bulkDecrypt) no longer short-circuit null: null values are now passed straight to protect-ffi instead of being preserved as null, and the null-tolerant result types are narrowed. Model operations still skip nulls. (2) The encrypt config sent to protect-ffi now uses cast_as 'text' instead of 'string' for every default or 'string' column, together with a protect-ffi bump 0.20.1 -> 0.20.2. The most material risks are runtime failures for existing callers that read or query nullable encrypted columns through the bulk, single or Supabase paths, and an unverified question about whether the cast_as change alters ciphertext or index terms for data already at rest. No test exercises either at runtime, and the tests that covered null handling were deleted. No CI results were available. The changeset marks this as minor; on a 0.3.0 package that means a 0.4.0 release, which caret ranges will not pull in automatically.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "encrypt/encryptQuery/decrypt no longer return null for null input; the null guards are removed and the value goes to protect-ffi (ffiEncrypt / ffiEncryptQuery / ffiDecrypt). The parameter and result types drop `| null`.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "bulkEncrypt, bulkDecrypt and batch encryptQuery no longer filter null entries and re-insert null at the original index; every entry, including null, is sent to protect-ffi, and results are mapped by position from the FFI output.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "configuration",
+      "description": "Schema builders emit cast_as 'text' where they previously emitted 'string' (default for EncryptedColumn/EncryptedField, explicit dataType('string'), and the zod default). This config is validated and passed to protect-ffi newClient for every client.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-8", "E-9"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "dependency",
+      "description": "@cipherstash/protect-ffi pinned dependency bumped from 0.20.1 to 0.20.2 (native binaries for all platforms change). Release notes for 0.20.2 were not available.",
+      "certainty": "observed",
+      "evidence": ["E-10"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "public_contract",
+      "description": "Public types change: `Encrypted`, `EncryptedValue` and `EncryptedQueryResult` no longer include null; the `EncryptPayload` type export is removed; `Decrypted`, `EncryptedFields`, `OtherFields`, `EncryptedFromSchema` now preserve nullability per field via NonNullable/`null extends`.",
+      "certainty": "observed",
+      "evidence": ["E-11", "E-12"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "documentation",
+      "description": "Shipped agent skill (skills/stash-encryption/SKILL.md), README and docs updated to state that plaintext values must be non-null; changeset declares a minor release.",
+      "certainty": "observed",
+      "evidence": ["E-13", "E-14"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack encryption operations (encrypt, decrypt, bulk, encryptQuery)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Null short-circuits removed; types narrowed.",
+      "evidence": ["E-1", "E-2", "E-4", "E-5", "E-6"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack schema builders / encrypt config",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "cast_as 'string' becomes 'text' in built config.",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "AC-3",
+      "name": "protect-ffi native client (newClient / encrypt / query terms)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "Receives the built encrypt config (newClient) and now receives null plaintexts/ciphertexts; version bumped.",
+      "evidence": ["E-9", "E-10", "E-4"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Supabase query builder (packages/stack/src/supabase)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Builds ScalarQueryTerm values from filter values cast `as JsPlaintext` (eq/in/match/not/or) and calls encryptQuery(terms); null filter values are no longer filtered by the batch operation. Only `is` filters are skipped.",
+      "evidence": ["E-15"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Model operations (encryptModel/decryptModel and bulk variants)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Skip null/undefined fields themselves before calling encryptBulk/decryptBulk, so they are not affected by the removed null handling.",
+      "evidence": ["E-16", "E-17"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Stored ciphertext and EQL index terms in customer databases",
+      "kind": "database",
+      "relationship": "hypothetical",
+      "how": "Data encrypted under cast_as 'string' (protect-ffi 0.20.1) is queried with terms generated under cast_as 'text' (0.20.2). Equivalence was not verifiable.",
+      "evidence": ["E-7", "E-18"]
+    },
+    {
+      "id": "AC-7",
+      "name": "TypeScript consumers of @cipherstash/stack",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "Code that imports EncryptPayload, passes null to encrypt/bulkEncrypt, or narrows on null results stops compiling or changes behaviour on upgrade.",
+      "evidence": ["E-11", "E-14"]
+    },
+    {
+      "id": "AC-8",
+      "name": "Drizzle operators",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Calls encryptQuery(terms) with values converted by toPlaintext to string|number, so null handling change is not expected to reach it.",
+      "evidence": ["E-19"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "bulkDecrypt/decrypt of nullable encrypted columns now sends null to protect-ffi",
+      "trigger": "An existing caller reads rows from a nullable encrypted column (database drivers return null, often typed as any or via a cast) and passes them to bulkDecrypt or decrypt, as was documented as supported at base (\"null values are preserved\").",
+      "affected_components": ["AC-1", "AC-3", "AC-7"],
+      "mechanism": "At base, createDecryptPayloads filtered `data !== null` and the result re-inserted `{ id, data: null }` (bulk-decrypt.ts:22,48 base); decrypt returned null early (decrypt.ts:47 base). At head createDecryptPayloads maps every entry to `ciphertext: data` (bulk-decrypt.ts:15-24) and passes it to decryptBulkFallible; decrypt calls ffiDecrypt directly. The same applies to encrypt/bulkEncrypt with null plaintext.",
+      "consequence": "After upgrade, reads that previously succeeded either fail as a whole (if the FFI rejects the batch on deserialisation) or return per-item errors for null rows; user-facing reads of records with empty optional encrypted fields break. If protect-ffi instead accepts null (e.g. as a JSON value for a json-cast column), encrypt(null) would store an encrypted payload where SQL NULL was stored before; this could not be checked without the FFI source.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-4", "E-5", "E-2", "E-20"],
+      "existing_verification": [
+        {
+          "description": "Tests for null preservation in bulk-protect, json-protect, number-protect, encrypt-query and protect-ops were deleted rather than replaced with tests for the new behaviour.",
+          "status": "unknown",
+          "evidence": ["E-20"]
+        },
+        {
+          "description": "Model-level null handling tests remain in protect-ops.test.ts (integration, needs credentials).",
+          "status": "exists_not_run",
+          "evidence": ["E-17"]
+        }
+      ],
+      "missing_verification": [
+        "A test showing what bulkDecrypt/decrypt/encrypt/bulkEncrypt return for a null entry at runtime under protect-ffi 0.20.2 (failure result with a stable error type, not a throw or an encrypted null).",
+        "A test that one null in a bulkDecrypt batch does not fail the other entries."
+      ],
+      "mitigation": "Either keep a runtime guard that returns a typed failure (or preserves null) for null inputs, or document the break in the changeset as breaking with a migration note and add tests pinning the new runtime behaviour.",
+      "domain_tags": ["public_api", "serialization_compatibility"]
+    },
+    {
+      "id": "FS-2",
+      "title": "cast_as 'string' -> 'text' could change how values are encoded or indexed against data at rest",
+      "trigger": "An existing application upgrades @cipherstash/stack and queries (equality/order/match) columns whose data was encrypted under the previous config (cast_as 'string', protect-ffi 0.20.1).",
+      "affected_components": ["AC-2", "AC-3", "AC-6"],
+      "mechanism": "build() now emits `cast_as: 'text'` where it emitted the stored castAsValue ('string') before (schema/index.ts:172,341 head vs 171,340 base); the zod default also moves to 'text'. The config is passed to protect-ffi newClient (encryption/index.ts:72-85). Whether protect-ffi 0.20.2 treats 'text' identically to how 0.20.1 treated 'string' (plaintext encoding, payload type metadata, index term derivation) is not visible from this repository. The EQL SQL bundle lists 'text' (not 'string') as the valid cast, which suggests 'text' is the canonical name and the change is an alignment, but this is not proof of equivalence.",
+      "consequence": "If they differ, new query terms do not match stored index terms and searches silently return no or wrong rows, or newly written payloads differ in shape from older ones. If they are equivalent (the likely intent), there is no effect.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-7", "E-8", "E-9", "E-18", "E-21"],
+      "existing_verification": [
+        {
+          "description": "schema-builders.test.ts asserts the built config now contains cast_as 'text'; it does not exercise encryption or search across the change.",
+          "status": "exists_not_run",
+          "evidence": ["E-21"]
+        }
+      ],
+      "missing_verification": [
+        "A compatibility test: encrypt with the base config (cast_as 'string', protect-ffi 0.20.1), then search/decrypt with the head config (cast_as 'text', 0.20.2) and assert matches.",
+        "protect-ffi 0.20.2 changelog confirming 'text' and 'string' are aliases."
+      ],
+      "mitigation": "Confirm with the protect-ffi owners that 'string' and 'text' map to the same column type, and add a cross-version encrypt/query fixture test before release.",
+      "domain_tags": ["encryption", "serialization_compatibility", "dependency"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Supabase filters with a null value now reach encryptQuery and fail the query",
+      "trigger": "An application using the Supabase wrapper calls `.eq(col, null)`, `.in(col, [a, null])`, `.match({ col: null })`, `.not(...)` or an `.or()` string with a null value on an encrypted column.",
+      "affected_components": ["AC-4", "AC-1", "AC-3"],
+      "mechanism": "The query builder casts filter values `as JsPlaintext` without filtering nulls (query-builder.ts:460-485), skipping only `is` filters, and calls encryptQuery(terms) (query-builder.ts:590). At base BatchEncryptQueryOperation dropped null/undefined terms and returned null in their slot (batch-encrypt-query.ts:34 base); at head every term goes to buildQueryPayload and the FFI (batch-encrypt-query.ts:113,183).",
+      "consequence": "The whole query fails with EncryptionFailedError where it previously sent a null term; for `.in` lists one null entry fails the full lookup. Loud, limited to this call pattern.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-15", "E-6"],
+      "existing_verification": [],
+      "missing_verification": [
+        "A Supabase builder test with a null filter value on an encrypted column."
+      ],
+      "mitigation": "Filter or reject null filter values in the Supabase builder with a clear error (or route them to `is null`).",
+      "domain_tags": ["public_api"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Nullable-field type mapping changed without type tests",
+      "trigger": "A TypeScript consumer uses Decrypted<T> or EncryptedFromSchema<T,S> on models with optional or nullable encrypted fields, or imports the removed EncryptPayload type.",
+      "affected_components": ["AC-7"],
+      "mechanism": "EncryptedFields/OtherFields/DecryptedFields now use NonNullable<T[K]> and `null extends T[K]` (types.ts:128-139,168). Because Encrypted no longer includes null, a field typed `Encrypted | null` would have been excluded from encrypted keys without the NonNullable change; the new mapping is untested. types.test-d.ts, which history shows always changes with types.ts, was not updated and has no nullable cases.",
+      "consequence": "Compile errors or incorrect inferred types for consumers on upgrade (e.g. a nullable encrypted field typed as Encrypted rather than plaintext after decrypt). Loud at build time, no runtime data effect.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-11", "E-12", "E-22", "E-23"],
+      "existing_verification": [
+        {
+          "description": "types.test-d.ts covers Decrypted/EncryptedFromSchema for non-nullable fields only.",
+          "status": "exists_not_run",
+          "evidence": ["E-23"]
+        }
+      ],
+      "missing_verification": [
+        "Type tests for optional and nullable encrypted fields through EncryptedFromSchema and Decrypted."
+      ],
+      "mitigation": "Add type tests for nullable fields; mention the removed EncryptPayload export and the null contract change in the changeset.",
+      "domain_tags": ["public_api"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test pins the runtime behaviour of the low-level and bulk operations for null input after the guards were removed; the previous null tests were deleted.",
+      "scenarios": ["FS-1", "FS-3"],
+      "evidence": ["E-20"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No cross-version test shows that data encrypted with cast_as 'string' under protect-ffi 0.20.1 is still searchable and decryptable with cast_as 'text' under 0.20.2.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-21", "E-10"]
+    },
+    {
+      "id": "VG-3",
+      "description": "No CI results were available and no tests were run; every listed test is exists_not_run.",
+      "scenarios": ["FS-1", "FS-2", "FS-3", "FS-4"],
+      "evidence": ["E-24"]
+    },
+    {
+      "id": "VG-4",
+      "description": "types.test-d.ts was not updated alongside the type mapping changes.",
+      "scenarios": ["FS-4"],
+      "evidence": ["E-22"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "compatibility_check",
+      "description": "Run an encrypt-with-base / query-and-decrypt-with-head fixture test (or get written confirmation from protect-ffi that 'string' and 'text' are aliases in 0.20.1 and 0.20.2) before publishing.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add tests for null entries in encrypt, decrypt, bulkEncrypt, bulkDecrypt and batch encryptQuery asserting a typed failure (or chosen behaviour), and that one null does not fail the rest of a bulk decrypt.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "test",
+      "description": "Add a Supabase builder test for null filter values on encrypted columns, and handle them explicitly in the builder.",
+      "addresses": ["FS-3"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "documentation",
+      "description": "Describe the release as breaking in the changeset: null no longer accepted by low-level/bulk operations, EncryptPayload removed, cast_as now 'text'. Include a migration note for reading nullable columns with bulkDecrypt.",
+      "addresses": ["FS-1", "FS-4"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "test",
+      "description": "Extend types.test-d.ts with nullable and optional encrypted fields.",
+      "addresses": ["FS-4", "VG-4"]
+    },
+    {
+      "id": "RC-6",
+      "kind": "review_focus",
+      "description": "Reviewer to check the index-by-position mapping in bulk-decrypt.ts/bulk-encrypt.ts/batch-encrypt-query.ts against protect-ffi output ordering and length now that no filtering occurs.",
+      "addresses": ["FS-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "protect-ffi source and 0.20.2 release notes were not available, and node_modules is absent.",
+      "effect": "Cannot determine whether null inputs throw, return per-item errors or are encrypted, nor whether cast_as 'text' and 'string' are equivalent. FS-1 and FS-2 consequences are conditional."
+    },
+    {
+      "id": "CL-2",
+      "description": "No tests were run; integration tests need ZeroKMS credentials and no CI results were supplied.",
+      "effect": "Verification confidence cannot exceed low/medium."
+    },
+    {
+      "id": "CL-3",
+      "description": "Test-file diffs were read for intent (deleted null tests, updated cast_as expectations) but not line-by-line; the DynamoDB integration was only checked for cast_as usage (compares to 'json').",
+      "effect": "A DynamoDB-specific null path could have been missed."
+    },
+    {
+      "id": "CL-4",
+      "description": "The PR body was unavailable; the change includes a merge from main (bd192bd) whose contents were not separated from the feature commits.",
+      "effect": "Intent behind the cast_as change is inferred from the commit title 'default to text for encrypt config' and the SQL bundle."
+    },
+    {
+      "id": "CL-5",
+      "description": "Minor: the JSDoc example for EncryptedTable.build still shows cast_as \"string\" (schema/index.ts:381) and EncryptedColumn still stores 'string' internally.",
+      "effect": "Documentation drift only; not a release risk."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "packages/stack/src/encryption/operations/encrypt.ts",
+      "rev": "base",
+      "line_start": 59,
+      "line_end": 61,
+      "claim": "At base encrypt returned null for null plaintext before calling the FFI; the guard is removed at head.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "diff",
+      "path": "packages/stack/src/encryption/operations/decrypt.ts",
+      "rev": "base",
+      "line_start": 47,
+      "line_end": 49,
+      "claim": "At base decrypt returned null for null encryptedData; at head ffiDecrypt is called directly.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "diff",
+      "path": "packages/stack/src/encryption/operations/encrypt-query.ts",
+      "rev": "base",
+      "line_start": 56,
+      "line_end": 59,
+      "claim": "At base encryptQuery returned { data: null } for null/undefined plaintext; removed at head.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/bulk-decrypt.ts",
+      "rev": "head",
+      "line_start": 15,
+      "line_end": 24,
+      "claim": "createDecryptPayloads maps every entry to ciphertext: data without filtering null.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/bulk-decrypt.ts",
+      "rev": "base",
+      "line_start": 20,
+      "line_end": 24,
+      "claim": "At base null data entries were filtered out before the FFI call and re-inserted as null.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+      "rev": "base",
+      "line_start": 32,
+      "line_end": 38,
+      "claim": "At base filterNullTerms skipped null/undefined term values; at head this.terms.map sends all terms (head lines 113, 183).",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack/src/schema/index.ts",
+      "rev": "head",
+      "line_start": 170,
+      "line_end": 174,
+      "claim": "EncryptedField.build emits cast_as 'text' when castAsValue is 'string'; same at line 341 for EncryptedColumn.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/stack/src/schema/index.ts",
+      "rev": "base",
+      "line_start": 26,
+      "line_end": 27,
+      "claim": "At base the castAsEnum default was 'string' and build emitted castAsValue unchanged (lines 171, 340).",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 72,
+      "line_end": 85,
+      "claim": "The validated encrypt config is passed to protect-ffi newClient.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "diff",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 183,
+      "line_end": 183,
+      "claim": "@cipherstash/protect-ffi bumped from 0.20.1 to 0.20.2 (pinned).",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/stack/src/types.ts",
+      "rev": "head",
+      "line_start": 32,
+      "line_end": 35,
+      "claim": "EncryptedValue and Encrypted no longer include null; EncryptPayload type removed (was exported from types-public.ts:14 at base).",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": "packages/stack/src/types.ts",
+      "rev": "head",
+      "line_start": 126,
+      "line_end": 139,
+      "claim": "EncryptedFields/OtherFields/DecryptedFields now use NonNullable and null extends to preserve per-field nullability.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "documentation",
+      "path": "skills/stash-encryption/SKILL.md",
+      "rev": "head",
+      "line_start": 223,
+      "line_end": 223,
+      "claim": "Shipped skill now says all plaintext values must be non-null and null handling is at the model level.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "diff",
+      "path": ".changeset/fresh-phones-smile.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 5,
+      "claim": "Changeset marks the null removal as a minor release of @cipherstash/stack (currently 0.3.0).",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": "packages/stack/src/supabase/query-builder.ts",
+      "rev": "head",
+      "line_start": 460,
+      "line_end": 485,
+      "claim": "Supabase builder pushes filter values cast as JsPlaintext into terms, skipping only 'is' filters, then calls encryptQuery(terms) at line 590.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/helpers/model-helpers.ts",
+      "rev": "head",
+      "line_start": 175,
+      "line_end": 178,
+      "claim": "Model helpers record null/undefined fields separately and do not send them to the FFI (also lines 231, 528, 578).",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "test",
+      "path": "packages/stack/__tests__/protect-ops.test.ts",
+      "rev": "head",
+      "line_start": 80,
+      "line_end": 103,
+      "claim": "Integration test asserts encryptModel preserves null fields.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "code",
+      "path": "packages/schema/cipherstash-encrypt-2-1-8.sql",
+      "rev": "head",
+      "line_start": 3604,
+      "line_end": 3608,
+      "claim": "The EQL SQL bundle accepts cast_as values {text, int, small_int, big_int, real, double, boolean, date, jsonb}; 'string' is not among them.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "code",
+      "path": "packages/stack/src/drizzle/operators.ts",
+      "rev": "head",
+      "line_start": 366,
+      "line_end": 374,
+      "claim": "Drizzle operators build terms from values converted by toPlaintext and call encryptQuery(terms).",
+      "status": "verified"
+    },
+    {
+      "id": "E-20",
+      "kind": "diff",
+      "path": "packages/stack/__tests__/bulk-protect.test.ts",
+      "rev": "head",
+      "claim": "The change deletes null-handling tests in bulk-protect, encrypt-query, encrypt-query-searchable-json, encrypt-query-stevec, json-protect, number-protect, protect-ops and searchable-json-pg (about 780 deleted test lines) without adding tests for the new null behaviour.",
+      "status": "verified"
+    },
+    {
+      "id": "E-21",
+      "kind": "test",
+      "path": "packages/stack/__tests__/schema-builders.test.ts",
+      "rev": "head",
+      "line_start": 26,
+      "line_end": 31,
+      "claim": "Schema builder tests assert cast_as 'text' in the built config only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-22",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[1]",
+      "claim": "packages/stack/src/types.ts changed with packages/stack/__tests__/types.test-d.ts in 3 of 3 prior commits; types.test-d.ts is not changed here.",
+      "status": "verified"
+    },
+    {
+      "id": "E-23",
+      "kind": "test",
+      "path": "packages/stack/__tests__/types.test-d.ts",
+      "rev": "head",
+      "line_start": 57,
+      "line_end": 141,
+      "claim": "Type tests cover Decrypted and EncryptedFromSchema but contain no nullable-field cases.",
+      "status": "verified"
+    },
+    {
+      "id": "E-24",
+      "kind": "history_signal",
+      "signal": "ci.available",
+      "claim": "collect-evidence reports ci.available=false; CASE.md lists only the diff, source checkout and collect-evidence output were provided; no CI results.",
+      "status": "verified"
+    }
+  ]
+}

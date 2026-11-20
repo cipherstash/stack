@@ -1,0 +1,59 @@
+{
+  "case": "stack-547",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "`stash eql upgrade --eql-version 3` (or install --force) drops customer columns typed with eql_v3 domains",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "DROP SCHEMA ... CASCADE drops columns typed with domains in that schema; real data-loss path on upgrade."
+    },
+    {
+      "id": "FS-2",
+      "title": "v3 Supabase filters put full ciphertext envelopes and all index terms in GET URLs",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Documented design property; correctly framed."
+    },
+    {
+      "id": "FS-3",
+      "title": "v3 `like`/`ilike` silently return no or partial rows with default match options or `%` patterns",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "protect-ffi 0.27 bump changes v2 behaviour for existing users",
+      "impact": "high",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative; no mechanism shown."
+    }
+  ],
+  "cost_usd": 2.0872557,
+  "wall_seconds": 223.125099,
+  "case_note": "Missed KD-1 (instanceof detection of encrypted columns)."
+}

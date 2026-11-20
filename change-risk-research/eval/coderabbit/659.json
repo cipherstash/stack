@@ -1,0 +1,8 @@
+{
+  "pr": 659,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [],
+  "notes": "No CodeRabbit review objects or inline comments; the walkthrough/summary comment states 'No actionable comments were generated in the recent review.' CodeRabbit commit status 'Review completed'. The PR body contained a '## Summary by CodeRabbit' section without the usual HTML comment markers; it was removed from the description as bot-generated. Copilot review present with no comments."
+}

@@ -1,0 +1,48 @@
+{
+  "case": "stack-1006",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Stamp-only 3.0.6 edge silently drops RLS policies, functional indexes and grants on every existing database",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The new 3.0.6 data edge runs the full bundle, which opens with DROP SCHEMA eql_v3 CASCADE and has no dependency protections (per safe-eql-reinstall.md), so dependent policies, indexes and grants are dropped on every existing database for a stamp-only release."
+    },
+    {
+      "id": "FS-2",
+      "title": "1.x upgrade holds locks for two full bundle reinstalls in one transaction",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "1.x databases now walk both the 3.0.5 and 3.0.6 reinstall edges in one migrate, as the migration header and changeset confirm, which lengthens the cascading-DDL lock window; this is plausible, though the transaction behaviour is not directly verified."
+    },
+    {
+      "id": "FS-3",
+      "title": "Relaxed lockstep marker lets stack-prisma ship baking 3.0.6 against @cipherstash/eql 3.0.5",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "At head eql is 3.0.5 while the migrations bake 3.0.6; the lockstep test only requires that some migration bakes the installed digest and the marker accepts both versions, so nothing offline blocks a stack-prisma release that pins eql 3.0.5 while installing 3.0.6."
+    }
+  ],
+  "cost_usd": 2.0440922999999995,
+  "wall_seconds": 283.728947,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

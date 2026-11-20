@@ -1,0 +1,79 @@
+{
+  "pr": 676,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/676#discussion_r3593992635",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 299,
+      "severity_label": "🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "Handle `ope` in the WASM query resolver. `resolveQueryIndex()` still maps `orderAndRange` to `ore` and only infers `ore`, so columns that expose `ope` without `ore` will throw on explicit range queries or be skipped during inference.",
+      "is_nitpick": false,
+      "id": "CR-1"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/676#discussion_r3594364721",
+      "path": "e2e/wasm/query-types.test.ts",
+      "line": 94,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Assert that containment needles omit the version envelope. The helper claims to enforce strict `{ sv: [...] }`, but a payload containing `v` still passes.",
+      "is_nitpick": false,
+      "id": "CR-2"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/676#discussion_r3594364742",
+      "path": "packages/stack/integration/wasm/adapter.ts",
+      "line": 424,
+      "severity_label": "🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "Only swallow the expected WASM rejection. `expectRejected()` catches every thrown value, but the WASM client surfaces plain `Error`s here, not a typed `AuthFailure`/`EncryptionError` envelope, so DB/network/ZeroKMS failures can still make a negative test pass.",
+      "is_nitpick": false,
+      "id": "CR-3"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/676#pullrequestreview-4712043181",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 401,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚖️ Poor tradeoff",
+      "claim": "Consider documenting the `as never` casts per Biome-ignore convention. The new FFI calls (Lines 414-422, 459-464) extend the file's existing `as never` pattern for opaque WASM handles.",
+      "is_nitpick": true,
+      "id": "CR-4"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/676#pullrequestreview-4712043181",
+      "path": "packages/stack/__tests__/wasm-inline-query.test.ts",
+      "line": 153,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Redundant `null as unknown as string` casts — `WasmPlaintext` already includes `null`. All three sites cast a literal `null` through `as unknown as string` when assigning `WasmQueryTerm.value`.",
+      "is_nitpick": true,
+      "id": "CR-5"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/676#pullrequestreview-4712470870",
+      "path": "e2e/wasm/query-types.test.ts",
+      "line": 152,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Narrow the selector without `as unknown`. Use a type-predicate assertion or explicit `typeof selector !== 'string'` guard before reading `.length`.",
+      "is_nitpick": true,
+      "id": "CR-6"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/676#pullrequestreview-4712470870",
+      "path": "packages/stack/integration/wasm/adapter.ts",
+      "line": 284,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Remove the blanket schema type escapes. `as never` and `as unknown` suppress validation of the dynamic schema-to-column mapping.",
+      "is_nitpick": true,
+      "id": "CR-7"
+    }
+  ],
+  "notes": "Review 4712043181: 1 actionable inline + 2 nitpicks; review 4712470870: 2 actionable inline + 2 nitpicks. All CodeRabbit threads resolved. Review 4713131648 is an empty-body thread reply (r3594952367). Summary comment present (reviews auto-paused; latest 'No actionable comments'; pre-merge Docstring Coverage warning 57.14%). coderdan inline comments not counted. Description had an unmarked '## Summary by CodeRabbit' section; removed."
+}

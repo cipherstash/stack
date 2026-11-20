@@ -1,0 +1,48 @@
+{
+  "case": "stack-1026",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A failed `changeset publish` leaves neither publishedPackages nor the changesets tag, so eql-assets throws on every push instead of repairing",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The cited code shows eqlAssets throws without thisRun or a changesets tag and eql-assets runs on every production push; changesets/action runs the publish via getExecOutput, which throws on a non-zero exit before outputs and tags are set, so the targeted repair can fail repeatedly."
+    },
+    {
+      "id": "FS-2",
+      "title": "The npm listing wait times out or does not match what changesets reads, which blocks or still fails the JS release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The new wait step throws at its 900 s deadline before changesets/action runs, holding the whole JS release until a re-run; this is a real, loud consequence of the change."
+    },
+    {
+      "id": "FS-3",
+      "title": "Repair builds publish SQL and docs built from an older commit with today's toolchain under an already-released version",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Repair builds rebuild old source with head's workflow and a 'latest' Rust toolchain; AGENTS.md says nothing proves the rebuilt bytes match npm's, so a released SQL bundle or image could differ silently."
+    }
+  ],
+  "cost_usd": 1.9054083000000002,
+  "wall_seconds": 240.770249,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

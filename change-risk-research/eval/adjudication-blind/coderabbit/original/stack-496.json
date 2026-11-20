@@ -1,0 +1,122 @@
+{
+  "case": "stack-496",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Harden GitHub token exposure in the new `wasm-e2e-tests` job. Line 164 adds a job without explicit `permissions`, and Line 175 uses checkout with default creden",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head the wasm-e2e-tests job sets permissions contents: read and persist-credentials: false."
+    },
+    {
+      "id": "CR-2",
+      "title": "Keep `.env.example` aligned with what the function actually reads. `CS_WORKSPACE_CRN` is documented as required here, but this function does not consume it. Eit",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head .env.example deliberately omits CS_WORKSPACE_CRN with a comment explaining why."
+    },
+    {
+      "id": "CR-3",
+      "title": "Declare required Node and pnpm versions in the example manifest. This manifest should explicitly enforce Node.js >= 22 and pnpm 9.x per repo policy.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Example manifest already declares node >=22; package-manager version policy for a private example is immaterial."
+    },
+    {
+      "id": "CR-4",
+      "title": "README is missing required install and test instructions. Please add explicit install steps (e.g., pnpm install) and a \u201chow to run tests\u201d section to satisfy the",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "Example README documentation completeness is immaterial to release risk."
+    },
+    {
+      "id": "CR-5",
+      "title": "Use the required `{ data }` success contract shape. The success payload currently returns ad-hoc top-level fields (`ok`, `plaintext`, `decrypted`, etc.) instead",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Response shape of a demo edge function is a style concern."
+    },
+    {
+      "id": "CR-6",
+      "title": "Return a stable `{ failure }` object and avoid exposing stack traces. The error response returns raw `stack` and does not follow the required `{ failure }` cont",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head the example's error response returns only code and message; the stack is logged, not returned."
+    },
+    {
+      "id": "CR-7",
+      "title": "optionalDependencies version drift: pnpm catalogs support exists, but this repo\u2019s catalog can\u2019t replace the 6 platform pins yet. - `catalog:` is supported in `o",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head the catalog defines all six platform packages and cli/package.json already uses catalog:repo for them."
+    },
+    {
+      "id": "CR-8",
+      "title": "Restore CJS subpath export for `./wasm-inline`. `packages/stack/package.json` exports `./wasm-inline` with only an `\"import\"` branch; there is no `\"require\"` en",
+      "nitpick": false,
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "wasm-inline is a new ESM-only subpath for edge runtimes; nothing was removed and no breakage is shown."
+    },
+    {
+      "id": "CR-9",
+      "title": "Hide the raw-client constructor before this API ships. A public `constructor(client: unknown)` lets consumers create invalid `WasmEncryptionClient` instances wi",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head the constructor is gated by a module-private symbol and throws for external callers."
+    },
+    {
+      "id": "CR-10",
+      "title": "Broaden the JSON value types on the public wrapper. The schema layer already supports `cast_as: 'json'`, but this wrapper only types JSON payloads as objects. T",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "WasmPlaintext already includes null and recursive arrays, so JSON null/array payloads are not blocked."
+    },
+    {
+      "id": "CR-11",
+      "title": "Reject conflicting auth inputs explicitly. `WasmClientConfig` documents `accessKey` and `strategy` as mutually exclusive, but `resolveStrategy()` silently prefe",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head resolveStrategy throws when both strategy and accessKey are set; it does not silently prefer strategy."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

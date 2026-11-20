@@ -1,0 +1,26 @@
+{
+  "case": "stack-371",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "E2E tests no longer catch regressions in asserted CLI copy",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The diff replaces the literal E2E expectations with the same messages.* constants that prod uses, so copy regressions (including an emptied constant, since toContain('') always passes) no longer fail tests; a snapshot test of messages is a concrete mitigation."
+    }
+  ],
+  "cost_usd": 0.7496230999999999,
+  "wall_seconds": 98.79111,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

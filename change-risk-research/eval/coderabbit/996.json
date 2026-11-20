@@ -1,0 +1,19 @@
+{
+  "pr": 996,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/996#discussion_r4225617383",
+      "path": ".changeset/stack-encrypt-ops-json-plaintext.md",
+      "line": 5,
+      "severity_label": "🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "Publish the widened operation type as a major release. `EncryptOperation.getOperation().plaintext` changed from `Plaintext | null` to `PlaintextInput | null`. `PlaintextInput` includes JSON documents, including arrays containing `null`, so existing consumers that assign this value to `Plaintext | null` no longer compile.",
+      "is_nitpick": false,
+      "id": "CR-1"
+    }
+  ],
+  "notes": "Review 5464556291: 1 actionable inline comment (unresolved), on final head. Summary/walkthrough comment present; it reports Merge Risk 'Moderate' and 3 failed pre-merge check warnings (Linked Issues, Out of Scope Changes, Docstring Coverage 61.54%) — recorded here, not counted as findings. Other review comments are from cipherstash-bot (multi-model review) and are not CodeRabbit. Release-notes block removed from description."
+}

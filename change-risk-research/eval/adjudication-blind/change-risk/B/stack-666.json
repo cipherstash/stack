@@ -1,0 +1,37 @@
+{
+  "case": "stack-666",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "After a stack- or adapter-only release, init and the stash-cli skill steer users and agents to downgrade @cipherstash/stack",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Stack-only releases leave stash's embed stale, and the direction-less skew check then steers users and agents to downgrade, which is exactly KD-1."
+    },
+    {
+      "id": "FS-2",
+      "title": "An embedded version missing from npm breaks init installs and `stash wizard` for that CLI release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same unpublished-pin risk: tsup embeds manifest versions and pinnedSpec/wizard spawn have no fallback, so a partial publish breaks installs."
+    }
+  ],
+  "cost_usd": 1.3758231,
+  "wall_seconds": 185.65075,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,71 @@
+{
+  "case": "stack-314",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "push leaves the database with no active (and a discarded pending/encrypting) EQL configuration when the INSERT fails",
+      "impact": "high",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Confirmed non-transactional UPDATE without WHERE followed by INSERT in push.ts, which also deactivates pending/encrypting rows."
+    },
+    {
+      "id": "FS-2",
+      "title": "push always fails for schemas with number, bigint or json columns because stack's cast_as values are rejected by the EQL CHECK constraint",
+      "impact": "high",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "stack emits cast_as 'number'/'bigint'/'json' (schema/index.ts:26,172,341) and EQL's config_check_cast rejects them (sql:3604-3608), so the newly added push would fail for those schemas."
+    },
+    {
+      "id": "FS-3",
+      "title": "install executes an unpinned, unverified 'latest' EQL SQL bundle against customer databases",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same unpinned releases/latest download confirmed in installer and drizzle path; executed without integrity or version check."
+    },
+    {
+      "id": "FS-4",
+      "title": "--supabase grants ALL on the eql_v2 schema and future objects to the anon role",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "grantSupabasePermissions (installer/index.ts:229-238) grants ALL on eql_v2 objects and default privileges to anon, as claimed."
+    },
+    {
+      "id": "FS-5",
+      "title": "Experimental changesets option can stop peer-dependent packages from being re-released alongside their peers",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The PR adds the experimental onlyUpdatePeerDependentsWhenOutOfRange option to .changeset/config.json, which can skip peer-dependent releases."
+    }
+  ],
+  "cost_usd": 1.5676871000000006,
+  "wall_seconds": 223.887106,
+  "case_note": "Missed KD-1 (jiti default-export interop).",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

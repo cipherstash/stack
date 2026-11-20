@@ -1,0 +1,180 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "c82c59d2069747d3c30c56b915940a5ac8ae225a",
+  "head_sha": "415ab2d43bddd7eb78517676788408041d6d1c73",
+  "merge_base_sha": "c82c59d2069747d3c30c56b915940a5ac8ae225a",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "c82c59d2069747d3c30c56b915940a5ac8ae225a",
+    "cutoff_date": "2026-08-18T13:20:53+10:00",
+    "commits_read": 2301,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 3,
+    "additions": 38,
+    "deletions": 21,
+    "binary_files": 0,
+    "by_status": {
+      "added": 1,
+      "modified": 2
+    }
+  },
+  "dispersion": {
+    "components": {
+      ".": 1,
+      "packages/protect-ffi": 1,
+      "packages/protect-ffi/crates/protect-ffi": 1
+    },
+    "component_count": 3,
+    "top_level_dirs": {
+      "packages": 2,
+      ".changeset": 1
+    },
+    "languages": {
+      "other": 2,
+      "TOML": 1
+    }
+  },
+  "path_classes": {
+    "security_sensitive": 1,
+    "lockfile": 1,
+    "dependency_manifest": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/protect-ffi-jsonwebtoken-cve.md.deferred",
+      "status": "added",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": ".",
+      "language": "other"
+    },
+    {
+      "path": "packages/protect-ffi/Cargo.lock",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 29,
+      "deletions": 17,
+      "binary": false,
+      "classes": ["lockfile"],
+      "component": "packages/protect-ffi",
+      "language": "other"
+    },
+    {
+      "path": "packages/protect-ffi/crates/protect-ffi/Cargo.toml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 4,
+      "deletions": 4,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-ffi/crates/protect-ffi",
+      "language": "TOML"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "packages/protect-ffi/Cargo.lock",
+        "commits": 4,
+        "commits_last_90d": 2,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/protect-ffi/crates/protect-ffi/Cargo.toml",
+        "commits": 4,
+        "commits_last_90d": 2,
+        "distinct_authors": 2
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [],
+    "bulk_commits_ignored": 40
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/protect-ffi-jsonwebtoken-cve.md.deferred": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/Cargo.lock": ["@cipherstash/developers"],
+      "packages/protect-ffi/crates/protect-ffi/Cargo.toml": [
+        "@cipherstash/developers"
+      ]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 2
+      }
+    }
+  },
+  "dependencies": [
+    {
+      "file": "packages/protect-ffi/crates/protect-ffi/Cargo.toml",
+      "dependencies": [
+        {
+          "section": "dependencies",
+          "name": "cipherstash-client",
+          "from": "{ version = \"=0.42.0\", features = [\"tokio\"] }",
+          "to": "{ version = \"=0.42.2\", features = [\"tokio\"] }"
+        },
+        {
+          "section": "dependencies",
+          "name": "cts-common",
+          "from": "{ version = \"=0.42.0\", default-features = false }",
+          "to": "{ version = \"=0.42.2\", default-features = false }"
+        },
+        {
+          "section": "dependencies",
+          "name": "stack-auth",
+          "from": "{ version = \"=0.42.0\" }",
+          "to": "{ version = \"=0.42.2\" }"
+        },
+        {
+          "section": "target.'cfg(not(target_arch = \"wasm32\"))'.dependencies",
+          "name": "stack-profile",
+          "from": "{ version = \"=0.42.0\" }",
+          "to": "{ version = \"=0.42.2\" }"
+        }
+      ]
+    }
+  ],
+  "tests": {
+    "test_files_changed": 0,
+    "source_files_changed": 0,
+    "source_without_related_test": [],
+    "source_with_related_test_unchanged": [],
+    "mapping": [],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

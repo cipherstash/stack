@@ -1,0 +1,92 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "handleError and getErrorCode now drop codes isProtectErrorCode rejects, a real behaviour change from this PR; checking the guard set against 0.31's thrown codes is a sensible verification."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Native newClient still passes `strategy` while the PR renames the WASM field to authStrategy and calls `strategy` a deprecated alias, so native auth depends on an unverified alias; passing authStrategy is an easy fix."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The exact 0.31.0 pin brings in hex-only clientKey decoding, which the changeset and the skill doc both describe, so base64-key deployments break on upgrade; a release-note or pre-check fix is proposed."
+    },
+    {
+      "id": "F-04",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The native entry already passed unnormalised config to the Rust normaliser at base, so WASM now matches native rather than diverging, and the author reports checking 0.31 WASM parsing; the claimed cross-binding mismatch has no support."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same real error-code remapping in dynamodb/helpers.ts and error-code.ts, caused by this change and supported by the cited lines."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The 0.31 pin with hex-only clientKey breaks base64-key deployments, as the changeset and skill doc record; leading the release notes with it is actionable."
+    },
+    {
+      "id": "F-07",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The cited code shows id stripped in every model helper and in bulk encrypt/decrypt, and the finding names no remaining path that still sends an undeclared key."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The base64 clientKey break comes from the exact 0.31 pin and is supported by the changeset and action comment; the mitigations are concrete."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The native path still sends `strategy` after the rename, and only a mocked test covers it, so a plausible unverified risk follows from the pin; confirm the field or pass authStrategy."
+    },
+    {
+      "id": "F-10",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The handleError change maps foreign codes to DYNAMODB_ENCRYPTION_ERROR exactly as cited; this behaviour change comes from the PR."
+    },
+    {
+      "id": "F-11",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same native `strategy` vs authStrategy inconsistency, supported by index.ts and the WASM test comment; the fix is concrete."
+    }
+  ]
+}

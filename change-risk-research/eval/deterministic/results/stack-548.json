@@ -1,0 +1,136 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "b650a8c29720731d40fc9705f021e75af3047e4f",
+  "head_sha": "632bdf61b3e4dc23cee6f492a2b2009ab4abe195",
+  "merge_base_sha": "b650a8c29720731d40fc9705f021e75af3047e4f",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "b650a8c29720731d40fc9705f021e75af3047e4f",
+    "cutoff_date": "2026-07-03T16:02:33+10:00",
+    "commits_read": 1105,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 2,
+    "additions": 143,
+    "deletions": 44,
+    "binary_files": 0,
+    "by_status": {
+      "added": 1,
+      "modified": 1
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/stack": 2
+    },
+    "component_count": 1,
+    "top_level_dirs": {
+      "packages": 2
+    },
+    "languages": {
+      "TypeScript": 2
+    }
+  },
+  "path_classes": {
+    "test": 1,
+    "security_sensitive": 1
+  },
+  "files": [
+    {
+      "path": "packages/stack/__tests__/bulk-model-hyphen-fields.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 118,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/encryption/helpers/model-helpers.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 25,
+      "deletions": 44,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "packages/stack/src/encryption/helpers/model-helpers.ts",
+        "commits": 5,
+        "commits_last_90d": 3,
+        "distinct_authors": 2
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [],
+    "bulk_commits_ignored": 16
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      "packages/stack/__tests__/bulk-model-hyphen-fields.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/src/encryption/helpers/model-helpers.ts": [
+        "@cipherstash/developers"
+      ]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 0
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 1,
+    "source_files_changed": 1,
+    "source_without_related_test": [],
+    "source_with_related_test_unchanged": [],
+    "mapping": [
+      {
+        "source": "packages/stack/src/encryption/helpers/model-helpers.ts",
+        "related_tests_at_head": [
+          "packages/stack/__tests__/bulk-model-hyphen-fields.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

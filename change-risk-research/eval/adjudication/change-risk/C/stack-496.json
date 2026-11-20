@@ -1,0 +1,70 @@
+{
+  "case": "stack-496",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "protect-ffi 0.24.0 native bump changes payloads or API for existing Node users without a matching EQL bump",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "WASM client encrypts null into a real ciphertext where the Node client returns null",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Consumers' TypeScript resolves protect-ffi WASM types for stack's main-entry declarations",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "CLI/wizard auth 0.36 -> 0.38 upgrade breaks login or token fetch",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative: API changes unknown, no mechanism."
+    },
+    {
+      "id": "FS-5",
+      "title": "Hand-edited 0.18.0 version conflicts with changesets release flow",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 1.7789879,
+  "wall_seconds": 252.81205,
+  "case_note": "Missed KD-1 (duplicated classes across declaration builds)."
+}

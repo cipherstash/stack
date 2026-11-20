@@ -1,0 +1,59 @@
+{
+  "case": "stack-676",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Missing WASM export breaks the whole wasm-inline entry, including existing encrypt/decrypt",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Speculative: nothing shows that the pinned protect-ffi 0.29.0 lacks the WASM query exports, a CI e2e job exercises the import, and the finding admits it could not inspect the package."
+    },
+    {
+      "id": "FS-2",
+      "title": "JSON containment/selector terms never row-matched in SQL; a wire mismatch would silently return no rows",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "JSON containment and selector terms from the WASM path are never run against Postgres, so a wire mismatch would go undetected."
+    },
+    {
+      "id": "FS-3",
+      "title": "Declared return type omits the bare-string selector result, so typed consumer code mis-handles it",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The declared return types have no string arm, yet selector queries return a bare string, so narrowing it with `in` would throw at runtime."
+    },
+    {
+      "id": "FS-4",
+      "title": "Shipped guidance encourages laxer logging of deterministic query terms",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The shipped JSDoc encourages laxer logging of deterministic, plaintext-derived query terms, which can be linked to stored index terms."
+    }
+  ],
+  "cost_usd": 1.9042930999999996,
+  "wall_seconds": 236.468045,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

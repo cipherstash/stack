@@ -1,0 +1,59 @@
+{
+  "case": "stack-330",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Docs and init promise credential-free local dev, but secrets CLI/API and LockContext still require CS_* env vars",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Cited code confirmed: the next-steps lost the CS_* instruction, the README claims no credentials are needed, and the secrets CLI, the Secrets constructor and loadWorkSpaceId still require CS_* or TOML. The skill file still documents CS_*."
+    },
+    {
+      "id": "FS-2",
+      "title": "Native @cipherstash/auth loaded eagerly breaks every stash command on platforms without a prebuilt binary",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "stash.ts statically imports the auth module, and login.ts loads the native @cipherstash/auth at module top level. The lockfile lists only six platform binaries, so platforms without one plausibly break every command."
+    },
+    {
+      "id": "FS-3",
+      "title": "Mandatory interactive device-code auth makes `stash init` unusable non-interactively or offline",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The confirmed unconditional interactive auth step, with no skip flag and a process.exit on bind failure, blocks non-interactive and offline init."
+    },
+    {
+      "id": "FS-4",
+      "title": "Exact-pin downgrades of @byteslice/result and evlog change library runtime for all consumers",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The lockfile diff confirms the downgrades (byteslice 0.2.2 to 0.2.0, evlog 1.11.0 to 1.9.0) and the exact pins. This is a plausible consumer-facing runtime change introduced by the PR, though its impact is unproven."
+    }
+  ],
+  "cost_usd": 1.4470523000000002,
+  "wall_seconds": 209.951526,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,46 @@
+{
+  "pr": 336,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "defect",
+  "expert_impact": "medium",
+  "attention_warranted": true,
+  "impact_confidence": "high",
+  "rationale": "Consolidation of CLI tools changed the device-code OAuth client_id to `cli-${referrer}`; CTS only registers `cli`, so login with a referrer fails INVALID_CLIENT.",
+  "known_defects": [
+    {
+      "id": "KD-1",
+      "description": "Device code flow sends client id `cli-<referrer>`; only `cli` is registered; login fails with INVALID_CLIENT",
+      "fixed_by": "#341",
+      "mechanism": "login(region, referrer) builds client id from referrer",
+      "match_criteria": "Scenario identifies that the OAuth/device-flow client identifier now varies (by referrer) and may be rejected by the auth server.",
+      "impact": "medium",
+      "evidence": ["https://github.com/cipherstash/stack/pull/341"]
+    },
+    {
+      "id": "KD-2",
+      "description": "stash bin is built with skipNodeModulesBundle while @cipherstash/stack is only a devDependency, so the published CLI cannot resolve it at runtime",
+      "fixed_by": "commit aa06dd126 (fix: cli runtime, adds an optional peer dependency)",
+      "mechanism": "tsup skipNodeModulesBundle + devDependency-only import",
+      "match_criteria": "Scenario identifies that the published CLI imports @cipherstash/stack at runtime without declaring it as a runtime or peer dependency.",
+      "impact": "high",
+      "evidence": ["aa06dd1265043f92cf5718555c8abdb77f037d15"],
+      "added_post_hoc": true,
+      "added_reason": "Found in an evaluator's finding during dev-split adjudication and confirmed by a later fix in the repository. Excluded from the pre-registered metrics; reported separately."
+    },
+    {
+      "id": "KD-3",
+      "description": "security overrides moved to a top-level npm-format `overrides` block, which pnpm ignores, so forced transitive versions stop applying",
+      "fixed_by": "commit d2322980e (deletes the inert overrides block)",
+      "mechanism": "pnpm.overrides -> top-level overrides",
+      "match_criteria": "Scenario identifies that the moved overrides are not read by pnpm and the pinned versions no longer apply.",
+      "impact": "medium",
+      "evidence": ["d2322980e66b26f12bdf13d4e4244a2cdcc91ddc"],
+      "added_post_hoc": true,
+      "added_reason": "Found in an evaluator's finding during dev-split adjudication and confirmed by a later fix in the repository. Excluded from the pre-registered metrics; reported separately."
+    }
+  ],
+  "notes": ""
+}

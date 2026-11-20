@@ -1,0 +1,47 @@
+{
+  "case": "stack-502",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "low",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Same-named operation classes from /encryption and /dynamodb confuse consumers' type annotations",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Low."
+    },
+    {
+      "id": "FS-2",
+      "title": "Operation constructors become a semver-bound contract",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "WithLockContext variants lose @internal despite the changeset saying they stay internal",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 0.9703377,
+  "wall_seconds": 152.414739
+}

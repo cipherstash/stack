@@ -1,0 +1,34 @@
+{
+  "F-01": {
+    "evaluator": "change-risk/B",
+    "finding": "FS-1"
+  },
+  "F-02": {
+    "evaluator": "change-risk/A",
+    "finding": "FS-1"
+  },
+  "F-03": {
+    "evaluator": "coderabbit/original",
+    "finding": "CR-2"
+  },
+  "F-04": {
+    "evaluator": "change-risk/A",
+    "finding": "FS-2"
+  },
+  "F-05": {
+    "evaluator": "coderabbit/original",
+    "finding": "CR-1"
+  },
+  "F-06": {
+    "evaluator": "change-risk/C",
+    "finding": "FS-1"
+  },
+  "F-07": {
+    "evaluator": "change-risk/B",
+    "finding": "FS-2"
+  },
+  "F-08": {
+    "evaluator": "change-risk/C",
+    "finding": "FS-2"
+  }
+}

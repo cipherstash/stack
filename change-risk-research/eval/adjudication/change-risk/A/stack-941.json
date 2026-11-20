@@ -1,0 +1,59 @@
+{
+  "case": "stack-941",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "After cutover, an EQL-only release publishes npm and crate but silently skips the SQL release, docs and image",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Asset jobs skipped through a skipped transitive ancestor with no status function in if: (implicit success)."
+    },
+    {
+      "id": "FS-2",
+      "title": "Once armed, any branch with a `chore(release):` HEAD can publish an EQL prerelease to npm and crates.io without review",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "classify becomes a new prerequisite of every JS and FFI publish",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    },
+    {
+      "id": "FS-4",
+      "title": "Docs site no longer receives a rebuild webhook on @cipherstash/stack releases",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 2.4004656,
+  "wall_seconds": 328.389447,
+  "case_note": "KD-1 found; KD-2 missed."
+}

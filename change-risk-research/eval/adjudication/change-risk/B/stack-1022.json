@@ -1,0 +1,47 @@
+{
+  "case": "stack-1022",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Tenant-scoped probe silently matches nothing when its extension differs from the write",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Plausible misuse path made reachable by the new option; silent zero-row result."
+    },
+    {
+      "id": "FS-2",
+      "title": "Extended Go probe does not match terms written by another language client under the same extension",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Cross-language mismatch asserted without showing a difference in context construction."
+    },
+    {
+      "id": "FS-3",
+      "title": "Downstream Go code stops compiling after the Term and RecordOption signature changes",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Signature change is a real compile break for interface implementers."
+    }
+  ],
+  "cost_usd": 1.0961003,
+  "wall_seconds": 152.28918
+}

@@ -1,0 +1,377 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c82c59d2069747d3c30c56b915940a5ac8ae225a",
+  "head_sha": "415ab2d43bddd7eb78517676788408041d6d1c73",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "18 check runs on the head commit, all success. Job names only; no logs, so whether credentialed suites actually exercised live auth cannot be confirmed from the logs."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md and docs/plans/2026-08-04-protect-ffi-monorepo-absorption.md at head; read only the protect-ffi publishing sections."
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "note": "Cargo.lock at base and head parsed locally. Upstream crate sources (stack-auth, cipherstash-client, zerokms-protocol, jsonwebtoken) and their changelogs were unavailable (no network)."
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "CASE.md does not list it as an input."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence 1.0.0)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Lockfile/manifest-only change to the Rust half of @cipherstash/protect-ffi: pins cipherstash-client, cts-common, stack-auth and stack-profile move =0.42.0 -> =0.42.2, which also moves cipherstash-config, cipherstash-core and zerokms-protocol (0.12.26 -> 0.12.28), and moves stack-auth's jsonwebtoken from 9.3.1 (ring backend) to 10.4.0 (aws-lc-rs backend) to address CVE-2026-25537. No first-party source changes. The material risk is a behaviour change inside the token-handling and encryption crates that this repository cannot see: a stricter JWT major version could reject or mis-handle service tokens and break every encrypt/decrypt call. CI on the head commit is fully green, including the live protect-ffi integration suite, Rust test+clippy (host and wasm32) and the Deno WASM E2E, which covers the happy path. aws-lc-rs was already in the build graph at base (rustls, vitaminc-encrypt), so new native build toolchain risk is small. The changeset is parked as .md.deferred per the documented pre-cutover convention, so nothing publishes from this PR and the CVE fix does not reach npm consumers until the cutover PR.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "dependency",
+      "description": "stack-auth's JWT library moves across a major version (jsonwebtoken 9.3.1 -> 10.4.0) and switches crypto backend from ring to aws-lc-rs, adding signature, zeroize and getrandom. Any decoding/validation of service-token claims inside stack-auth now runs on the new library, whose claim validation is stricter (the CVE fix concerns nbf/exp type confusion).",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "dependency",
+      "description": "Encryption-core crates bumped by patch versions: cipherstash-client/config/core 0.42.0 -> 0.42.2 and zerokms-protocol 0.12.26 -> 0.12.28. Their dependency lists are unchanged in the lockfile; what changed in their code is not visible here and is not described in the PR beyond 'No API changes'.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-3"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "A patch changeset for @cipherstash/protect-ffi is added under the inert .md.deferred extension, so changeset version/publish ignore it until the publishing cutover PR renames all parked changesets.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/protect-ffi Rust crate (Cargo.toml / Cargo.lock)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Dependency pins and lockfile changed.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "protect-ffi auth strategy integration (AutoStrategy / JS-backed AuthStrategy -> ServiceToken)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "lib.rs and wasm.rs import stack_auth types and build ServiceTokens; client_options.rs builds cipherstash_client::AutoStrategy (backed by stack-auth) for the default credential path. All encrypt/decrypt calls depend on a token from here.",
+      "evidence": ["E-6", "E-7", "E-8"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/protect-ffi native platform binaries and WASM build",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "_build-ffi-artifacts.yml compiles the crate for six platform targets at release; tests.yml builds the WASM output via wasm-pack. Both compile the new dependency graph.",
+      "evidence": ["E-9", "E-10"]
+    },
+    {
+      "id": "AC-4",
+      "name": "@cipherstash/stack and adapters (stack-drizzle, stack-supabase, prisma-next) consuming protect-ffi",
+      "kind": "package",
+      "relationship": "likely",
+      "how": "Consume protect-ffi for all encryption; affected only once a protect-ffi version containing this change is published. CI integration jobs for these passed against the workspace build.",
+      "evidence": ["E-11"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Changesets release flow / ffi changeset guard",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "lint:ffi-changeset step in tests.yml blocks un-deferred protect-ffi changesets; the deferred file is picked up at cutover.",
+      "evidence": ["E-4", "E-5"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "jsonwebtoken 10 handles service-token claims differently, so auth fails or token refresh breaks",
+      "trigger": "stack-auth (via AutoStrategy or a JS-backed strategy) decodes or validates a CTS/OIDC-federated service token whose claims jsonwebtoken 10 treats differently from 9.3.1 (e.g. stricter nbf/exp typing, required-claim defaults, or missing crypto-provider selection on some target), especially at refresh time after the first token expires.",
+      "affected_components": ["AC-2", "AC-3", "AC-4"],
+      "mechanism": "jsonwebtoken moves across a major version with a new crypto backend (Cargo.lock jsonwebtoken entry at head). stack-auth is its only dependent. protect-ffi obtains every ServiceToken through stack-auth (lib.rs, wasm.rs, client_options.rs). The upstream stack-auth diff 0.42.0 -> 0.42.2 that adapts to the new API could not be read.",
+      "consequence": "Clients fail to obtain or refresh a token, so encrypt/decrypt fails for all users on the affected path (fails loudly, no data corruption). A refresh-only failure would show up only in long-running processes, after the first token expires.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-6", "E-7", "E-8", "E-12"],
+      "existing_verification": [
+        {
+          "description": "protect-ffi integration suite (live encrypt/decrypt, lock context, JS auth strategies, WASM round trip) on head commit",
+          "status": "ran_passed",
+          "evidence": ["E-12"]
+        },
+        {
+          "description": "cargo test + clippy + rustfmt (host and wasm32 clippy) on head commit",
+          "status": "ran_passed",
+          "evidence": ["E-12", "E-10"]
+        },
+        {
+          "description": "Run WASM E2E Tests (Deno), which fails rather than skips when CS_* credentials are missing",
+          "status": "ran_passed",
+          "evidence": ["E-12", "E-9"]
+        },
+        {
+          "description": "PR author reports cargo test --lib 310 passed locally",
+          "status": "unknown",
+          "evidence": ["E-13"]
+        }
+      ],
+      "missing_verification": [
+        "A run long enough, or with a short-lived token, to exercise token refresh/expiry handling under jsonwebtoken 10.",
+        "OIDC federation end-to-end with a real third-party JWT (oidc-federation.test.ts explicitly covers only the constructor contract).",
+        "Review of the upstream stack-auth 0.42.0 -> 0.42.2 diff for how jsonwebtoken 10 features/validation are configured."
+      ],
+      "mitigation": "Read the stack-auth 0.42.2 changelog/diff for its jsonwebtoken Validation settings and feature selection; run one integration test with a forced token refresh before the cutover release; keep the previous protect-ffi version available for consumer pin-back.",
+      "domain_tags": ["authorization", "dependency"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Release-time platform build of the new graph fails or misbehaves on a target PR CI does not build",
+      "trigger": "The cutover release runs _build-ffi-artifacts.yml for the six platforms (darwin-x64, darwin-arm64, win32-x64-msvc, linux-x64-gnu, linux-arm64-gnu cross, linux-x64-musl) with jsonwebtoken now linking aws-lc-rs.",
+      "affected_components": ["AC-3"],
+      "mechanism": "PR CI builds only the host and wasm32; the six-platform matrix runs only from release.yml or the manually dispatched ffi-preflight.yml. aws-lc-rs was already compiled at base via rustls/vitaminc-encrypt, so the new edges are jsonwebtoken -> aws-lc-rs and pure-Rust crates, which lowers the likelihood.",
+      "consequence": "The release job fails closed and needs a fix and re-run; or, if one platform build silently differs, a broken binary ships for that platform.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-9", "E-14"],
+      "existing_verification": [
+        {
+          "description": "Host cargo build/test and wasm32 clippy in CI",
+          "status": "ran_passed",
+          "evidence": ["E-12"]
+        }
+      ],
+      "missing_verification": [
+        "ffi-preflight.yml dispatch against this revision (or the Version Packages branch) covering all six targets."
+      ],
+      "mitigation": "Dispatch ffi-preflight.yml before the cutover, as AGENTS.md already prescribes.",
+      "domain_tags": ["build_release", "dependency"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "Token refresh/expiry and OIDC-federated tokens are not exercised end-to-end under jsonwebtoken 10; CI covers fresh-token happy paths only.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-8", "E-12"]
+    },
+    {
+      "id": "VG-2",
+      "description": "Upstream diffs for stack-auth, cipherstash-client/core/config and zerokms-protocol were not reviewed; a round-trip test at one version cannot detect a payload or wire change against data written by 0.42.0.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "VG-3",
+      "description": "Six-platform release build is not run on the PR.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-14"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Review the upstream stack-auth 0.42.0 -> 0.42.2 diff, especially jsonwebtoken Validation and feature configuration and any claim-parsing change, and the cipherstash-client/zerokms-protocol release notes, for payload- or wire-affecting changes.",
+      "addresses": ["FS-1", "VG-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Run one integration test that forces a token refresh (short-lived token or clock skew) under the new graph.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "compatibility_check",
+      "description": "Decrypt a sample of ciphertexts produced by protect-ffi built on 0.42.0 with the 0.42.2 build before the cutover release.",
+      "addresses": ["VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "test",
+      "description": "Dispatch ffi-preflight.yml for all six platforms before the cutover release.",
+      "addresses": ["FS-2", "VG-3"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "documentation",
+      "description": "Update AGENTS.md / the absorption plan, which still say two changesets are parked; there are now three, and the CVE fix ships only when the cutover renames them.",
+      "addresses": ["VG-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Upstream crate sources and changelogs (stack-auth, cipherstash-client, cipherstash-core, cipherstash-config, zerokms-protocol, jsonwebtoken 10) were unavailable offline.",
+      "effect": "Cannot confirm 'No API changes' or rule out payload or wire changes in the encryption crates; FS-1 is plausible_failure rather than confirmed or ruled out."
+    },
+    {
+      "id": "CL-2",
+      "description": "ci.json gives job conclusions only, without logs.",
+      "effect": "Cannot confirm that credentialed suites ran their live tests rather than skipping, beyond the workflow comment that the WASM E2E fails when credentials are missing."
+    },
+    {
+      "id": "CL-3",
+      "description": "Whether the CVE is reachable in protect-ffi's client-side use of stack-auth (it receives tokens rather than validating third-party tokens for access control) was not established.",
+      "effect": "The security benefit of the bump is unquantified; this does not change the release risk."
+    },
+    {
+      "id": "CL-4",
+      "description": "CODEOWNERS and deployment context were not available inputs.",
+      "effect": "Reviewer routing and rollout controls are not assessed."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "packages/protect-ffi/Cargo.lock",
+      "rev": "head",
+      "line_start": 1908,
+      "line_end": 1923,
+      "claim": "jsonwebtoken 10.4.0 depends on aws-lc-rs, signature, zeroize and getrandom, and no longer on ring.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "diff",
+      "path": "packages/protect-ffi/crates/protect-ffi/Cargo.toml",
+      "rev": "head",
+      "line_start": 23,
+      "line_end": 26,
+      "claim": "cipherstash-client, cts-common and stack-auth are pinned =0.42.2.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "command_output",
+      "command": "python3 deps.py (tomllib parse of base and head Cargo.lock; lists dependents of aws-lc-rs, ring, jsonwebtoken)",
+      "claim": "At base, aws-lc-rs was already depended on by rustls, rustls-webpki, quinn-proto and vitaminc-encrypt; jsonwebtoken's only dependent is stack-auth at both revisions; zerokms-protocol moved 0.12.26 -> 0.12.28 with an unchanged dependency list.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "diff",
+      "path": ".changeset/protect-ffi-jsonwebtoken-cve.md.deferred",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 5,
+      "claim": "The patch changeset for @cipherstash/protect-ffi is parked with the .md.deferred extension.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "documentation",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 137,
+      "line_end": 147,
+      "claim": "protect-ffi still publishes from the old repo; changesets must be parked as .md.deferred until cutover; the doc says two are waiting.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/protect-ffi/crates/protect-ffi/src/lib.rs",
+      "rev": "head",
+      "line_start": 60,
+      "line_end": 60,
+      "claim": "protect-ffi imports stack_auth AuthStrategy, SecretToken and ServerError.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/protect-ffi/crates/protect-ffi/src/client_options.rs",
+      "rev": "head",
+      "line_start": 135,
+      "line_end": 136,
+      "claim": "The default credential path builds a cipherstash_client AutoStrategy.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "test",
+      "path": "packages/protect-ffi/integration-tests/tests/oidc-federation.test.ts",
+      "rev": "head",
+      "line_start": 26,
+      "line_end": 39,
+      "claim": "A live OIDC federation round trip is deliberately not tested in this repo.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 357,
+      "line_end": 358,
+      "claim": "The WASM E2E job (Deno) builds protect-ffi's WASM output in CI.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": ".github/workflows/tests-rust.yml",
+      "rev": "head",
+      "line_start": 112,
+      "line_end": 112,
+      "claim": "Rust CI runs clippy for host and wasm32.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "ci_result",
+      "claim": "Drizzle, Supabase and prisma-next v3 integration jobs and the E2E jobs passed on the head commit.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "ci_result",
+      "claim": "All 18 check runs on head 415ab2d4 concluded success, including 'protect-ffi integration suite', 'cargo test + clippy + rustfmt', 'Run WASM E2E Tests (Deno)' and both OSV scans.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "pr_description",
+      "claim": "The author reports a clean cargo build, cargo test --lib with 310 passed, and cargo tree resolving jsonwebtoken to 10.4.0.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": ".github/workflows/_build-ffi-artifacts.yml",
+      "rev": "head",
+      "line_start": 20,
+      "line_end": 22,
+      "claim": "The six-platform build is reusable and called only by release.yml and ffi-preflight.yml, not by PR CI.",
+      "status": "verified"
+    }
+  ]
+}

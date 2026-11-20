@@ -1,0 +1,569 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c93a39b034238d6479beef9b967a5347ca2d9549",
+  "head_sha": "2a38fb4e0de22309a30b47ac679a3373d54f6bc4",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "available",
+      "source": "pr-description.md"
+    },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "29 check runs on head: 17 success, 12 skipped. No release, preflight or build-auth-artifacts run is among them (they are push-to-main / dispatch-only)."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md, CONTRIBUTING.md and in-file workflow comments at head; the stack crates import plan in Linear is referenced but unavailable."
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Consumers found by git grep of package.json files only."
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Not listed as an input in CASE.md."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence, already run)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No information on how cipherstash-suite previously built and published @cipherstash/auth binaries, nor on PR E."
+    }
+  },
+  "summary": "PR D of the stack crates import adds, switched off, the pipelines that will publish @cipherstash/auth with its six napi platform packages to npm (release.yml auth-artifacts/publish-auth via the new reusable _build-auth-artifacts.yml) and stack-auth/stack-profile to crates.io (release-plz.yml crates-armed/release-crates), plus a manual auth-preflight.yml dry run. The release gate gains a separate `auth` flag so an unpublished auth version no longer reads as `js`. The inertness claim holds on reading: both npm jobs need the gate to succeed and report auth=true, which a frozen auth package cannot do, and crates-armed reads the @cipherstash/auth FROZEN_PUBLISHERS entry; script tests covering this ran and passed in CI. Merging this PR therefore publishes nothing. The risk is latent and lands at PR E, when the entries are deleted: the new build differs from the repository's proven FFI native build in two ways that matter. The linux-x64-musl leg sets no `-C target-feature=-crt-static`, under which rustc drops the cdylib crate type, so the leg most likely fails and blocks every JS release on that push; and the gnu legs build on Ubuntu 24.04 runners with no glibc floor, where the FFI line pins glibc 2.28, so the published binaries may not load on older Linux distributions used by @cipherstash/stack consumers. Neither binary check is on the publish path; the preflight that checks architecture and libc is dispatch-only, cannot be run until merged, and does not test glibc version or musl loading.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "build_or_release",
+      "description": "The release gate's classify() reports a separate `auth` flag for any unpublished name starting with @cipherstash/auth, removes those names from `js`, and writes `auth=` to GITHUB_OUTPUT; release.yml's gate job exports it.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "build_or_release",
+      "description": "release.yml gains auth-artifacts (calls _build-auth-artifacts.yml) and publish-auth (npm publish with provenance of six platform tarballs then the wrapper, tags and a GitHub release), both conditioned on production mode and gate auth=true; the `release` (changeset publish) job now also requires publish-auth success whenever auth=true.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "New reusable _build-auth-artifacts.yml builds six napi binaries (one matrix leg per platform, on GitHub-hosted runners) and the wasm wrapper, packs seven tarballs and verifies names, file presence and wrapper peer versions, but not binary architecture, libc or loadability.",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6", "E-7", "E-8"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "release-plz.yml gains crates-armed (runs `eql-pipeline-armed.mjs crates`, armed when @cipherstash/auth is absent from FROZEN_PUBLISHERS) and release-crates (release-plz release on the root workspace with OIDC trusted publishing, GPG signing, contents: write); new release-plz.toml publishes only stack-auth and stack-profile in one version group; the workflow now also triggers on root Cargo/release-plz/cliff changes.",
+      "certainty": "observed",
+      "evidence": ["E-9", "E-10", "E-11"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "build_or_release",
+      "description": "New dispatch-only auth-preflight.yml builds the seven tarballs, checks each binary's architecture with `file` and glibc NEEDED entries with readelf, and smoke-loads only the linux-x64-gnu pair on ubuntu-latest. It has no publish credentials.",
+      "certainty": "observed",
+      "evidence": ["E-12"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "configuration",
+      "description": ".changeset/config.json puts the seven auth packages in one fixed group; the seven auth manifests gain repository.directory (needed for npm provenance). package.json is excluded from the frozen-bytes check, so the manifest edit does not trip the gate.",
+      "certainty": "observed",
+      "evidence": ["E-13", "E-14"]
+    },
+    {
+      "id": "BC-7",
+      "kind": "test_only",
+      "description": "New and extended script tests: auth classification, crates line arming, the auth build workflow's flags and matrix, release-plz root config, repository URLs, lint target lists.",
+      "certainty": "observed",
+      "evidence": ["E-15", "E-16", "E-17"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": ".github/workflows/release.yml (Release JS)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New auth jobs; the changeset publish job's condition now depends on publish-auth when auth=true.",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "AC-2",
+      "name": ".github/workflows/_build-auth-artifacts.yml",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New reusable build of the seven auth tarballs.",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "AC-3",
+      "name": "scripts/release-gate.mjs",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "classify() and GITHUB_OUTPUT gain the auth flag.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-4",
+      "name": ".github/workflows/release-plz.yml + release-plz.toml (crates.io)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New crates line for stack-auth and stack-profile, switched by scripts/eql-pipeline-armed.mjs crates.",
+      "evidence": ["E-9", "E-10", "E-11"]
+    },
+    {
+      "id": "AC-5",
+      "name": "@cipherstash/auth and six @cipherstash/auth-* platform packages (npm)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Manifests edited; once armed, these are built and published by the new pipeline instead of from cipherstash-suite.",
+      "evidence": ["E-13", "E-18"]
+    },
+    {
+      "id": "AC-6",
+      "name": "@cipherstash/stack, cli, wizard (in-repo dependents of @cipherstash/auth)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "Depend on @cipherstash/auth via catalog:repo, so customers installing them load the auth native binary.",
+      "evidence": ["E-19"]
+    },
+    {
+      "id": "AC-7",
+      "name": "Customers' Node runtimes on Linux (glibc older than the build host, Alpine/musl)",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Would load the published platform binaries; no inventory of supported distributions was available.",
+      "evidence": ["E-20"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "linux-gnu auth binaries built on Ubuntu 24.04 with no glibc floor fail to load on older Linux",
+      "trigger": "PR E arms the line; a version of @cipherstash/auth is published by publish-auth; a customer on a distribution with an older glibc (e.g. Debian 11, RHEL/Alma 8, Amazon Linux 2) installs @cipherstash/stack or @cipherstash/auth.",
+      "affected_components": ["AC-2", "AC-5", "AC-6", "AC-7"],
+      "mechanism": "_build-auth-artifacts.yml builds linux-x64-gnu on ubuntu-latest and linux-arm64-gnu on ubuntu-24.04-arm with plain `napi build --target <triple>` (lines 45-53, 112-116), so symbol versions are taken from the runner's glibc. The repository's FFI native line deliberately builds gnu targets through cargo-zigbuild with `--target <triple>.2.28` to pin the glibc floor (_build-ffi-artifacts.yml:240-244, ffi-release-matrix.mjs:59-60). The auth preflight only checks that libc.so.6 is NEEDED and smoke-loads on ubuntu-latest, which has the same glibc as the build host, so a raised floor passes every check.",
+      "consequence": "require('@cipherstash/auth') throws `GLIBC_2.xx not found` at load time for those customers, breaking @cipherstash/stack (and cli, wizard) at runtime. npm publishes are irreversible; recovery is a new release built with a floor. Whether earlier versions published from cipherstash-suite supported these distributions is unknown.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-6", "E-21", "E-22", "E-12", "E-19"],
+      "existing_verification": [
+        {
+          "description": "auth-preflight.yml checks the gnu binaries link libc.so.6 and smoke-loads linux-x64-gnu on ubuntu-latest; dispatch-only and not run for this change.",
+          "status": "exists_not_run",
+          "evidence": ["E-12"]
+        }
+      ],
+      "missing_verification": [
+        "A check of the maximum GLIBC_* symbol version required by each gnu binary (e.g. objdump -T) against a stated floor.",
+        "A smoke load in an old-glibc container."
+      ],
+      "mitigation": "Build the gnu legs with a pinned glibc floor as the FFI line does (cargo-zigbuild `<triple>.2.28`, or a manylinux-style container), and add a max-GLIBC-version assertion to the build or preflight; confirm the floor matches what cipherstash-suite previously shipped.",
+      "domain_tags": ["build_release", "public_api"]
+    },
+    {
+      "id": "FS-2",
+      "title": "linux-x64-musl leg built without -crt-static: cdylib dropped, auth build fails and blocks the JS release",
+      "trigger": "First armed run of auth-artifacts (or the first preflight dispatch) after merge.",
+      "affected_components": ["AC-1", "AC-2", "AC-5"],
+      "mechanism": "The musl leg installs musl-tools and runs `napi build --target x86_64-unknown-linux-musl` with no RUSTFLAGS (_build-auth-artifacts.yml:54-56, 68-73, 112-116); neither cargo config sets crt-static for musl (root .cargo/config.toml covers wasm only; the auth one covers macOS only). Rust's musl targets default to crt-static, under which rustc drops the cdylib crate type, so no .node is produced (this rustc behaviour is from general knowledge, not run here). The FFI line sets `RUSTFLAGS=-C target-feature=-crt-static` for exactly this target (_build-ffi-artifacts.yml:236-238). The `mv` of stack-auth-node.linux-x64-musl.node then fails, auth-artifacts fails, publish-auth is skipped, and `release` requires publish-auth success when auth=true (release.yml:471-482).",
+      "consequence": "Fails closed: nothing auth is published, but the changeset publish for every other JS package on that push is also skipped until the workflow is fixed and re-run. If instead a statically linked musl module were produced, it would pass the preflight's musl check (which only asserts no glibc NEEDED) while possibly failing to load on Alpine; that variant would be high impact.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-6", "E-23", "E-24", "E-4", "E-12"],
+      "existing_verification": [
+        {
+          "description": "auth-build-artifacts.test.mjs checks the napi flags and matrix only; it does not check musl RUSTFLAGS. Ran in CI via test:scripts.",
+          "status": "ran_passed",
+          "evidence": ["E-17", "E-25"]
+        },
+        {
+          "description": "auth-preflight.yml would build the musl leg; dispatch-only, not run.",
+          "status": "exists_not_run",
+          "evidence": ["E-12"]
+        }
+      ],
+      "missing_verification": [
+        "A run of _build-auth-artifacts.yml (via auth-preflight) before PR E arms the line.",
+        "A load test of the musl binary in an Alpine container."
+      ],
+      "mitigation": "Set RUSTFLAGS='-C target-feature=-crt-static' on the musl leg (as _build-ffi-artifacts.yml does), and dispatch auth-preflight against main before PR E; consider adding an Alpine smoke load.",
+      "domain_tags": ["build_release"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Publish path ships platform binaries without the architecture/libc/load checks the preflight performs",
+      "trigger": "Any mis-built platform binary (wrong arch on a cross-compiled leg such as darwin-x64 on arm64 macos-latest, wrong libc, a module missing exports) once the line is armed, with no preflight dispatched for that version.",
+      "affected_components": ["AC-1", "AC-2", "AC-5", "AC-6"],
+      "mechanism": "_build-auth-artifacts.yml verifies only the tarball name and that the expected .node filename exists (lines 145-164); publish-auth publishes what it downloads (release.yml:362-418). The architecture, readelf and smoke checks exist only in auth-preflight.yml, which is manual and not a `needs` of publish-auth.",
+      "consequence": "A broken platform package is published irreversibly and breaks @cipherstash/auth (and @cipherstash/stack) on that platform until a new release.",
+      "impact": "high",
+      "basis": "speculative",
+      "evidence": ["E-8", "E-3", "E-12"],
+      "existing_verification": [
+        {
+          "description": "Name and file-presence checks in the build; peer-version check of the wrapper.",
+          "status": "exists_not_run",
+          "evidence": ["E-8"]
+        }
+      ],
+      "missing_verification": [
+        "An architecture/libc check inside the reusable build (so it runs on the publish path), not only in the dispatch-only preflight."
+      ],
+      "mitigation": "Move the `file`/readelf checks from auth-preflight.yml into _build-auth-artifacts.yml, and make running auth-preflight on the Version Packages branch a documented precondition of the first armed release.",
+      "domain_tags": ["build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "None of the new build or publish workflows has run: they are push-to-main or dispatch-only, and ci.json shows no run of them. Only actionlint, the no-caching lint and the script tests (structure, not behaviour) ran.",
+      "scenarios": ["FS-1", "FS-2", "FS-3"],
+      "evidence": ["E-25", "E-26", "E-12"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No check anywhere of the glibc symbol-version floor of the gnu binaries, nor a load test on musl.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-12"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "compatibility_check",
+      "description": "Pin a glibc floor for linux-x64-gnu and linux-arm64-gnu (zigbuild `.2.28` as the FFI line does, or an old-glibc container) and assert the maximum GLIBC_* version in the build.",
+      "addresses": ["FS-1", "VG-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add `RUSTFLAGS=-C target-feature=-crt-static` to the musl leg and extend auth-build-artifacts.test.mjs to require it, mirroring the FFI line.",
+      "addresses": ["FS-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "staged_rollout",
+      "description": "After merge and before PR E, dispatch auth-preflight.yml against main and keep its output as the evidence for arming; add Alpine and old-glibc smoke loads.",
+      "addresses": ["FS-1", "FS-2", "FS-3", "VG-1"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "review_focus",
+      "description": "Move the architecture and libc checks from auth-preflight.yml into _build-auth-artifacts.yml so they gate publish-auth.",
+      "addresses": ["FS-3"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "documentation",
+      "description": "Record what glibc and Node versions the cipherstash-suite-built auth binaries supported, so the new pipeline is checked against the same contract.",
+      "addresses": ["FS-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "How cipherstash-suite built and published @cipherstash/auth (glibc floor, musl flags, runners) is not available.",
+      "effect": "Cannot say whether FS-1 is a regression for existing consumers or matches prior behaviour."
+    },
+    {
+      "id": "CL-2",
+      "description": "No workflow or build was run locally (no network, no Rust cross toolchains); the rustc musl crt-static behaviour in FS-2 and glibc symbol versioning in FS-1 are from general toolchain knowledge.",
+      "effect": "FS-1 and FS-2 stay plausible_failure rather than observed_defect."
+    },
+    {
+      "id": "CL-3",
+      "description": "PR E (the arming change), crates.io/npm trusted-publisher configuration and the GPG secret are outside this diff.",
+      "effect": "The crates line's first publish and the repointing were not assessed; a mis-configured publisher would fail loudly at PR E."
+    },
+    {
+      "id": "CL-4",
+      "description": "CODEOWNERS and the dependency graph were not inputs; consumers were found by grepping package.json files. Omitted co-change signals (SECURITY.md, the EQL plan doc) were not followed up.",
+      "effect": "External consumers of the auth packages are hypothetical; documentation drift was not assessed."
+    },
+    {
+      "id": "CL-5",
+      "description": "Read closely: release-gate.mjs, eql-pipeline-armed.mjs, release.yml and release-plz.yml diffs, _build-auth-artifacts.yml, auth-preflight.yml, release-plz.toml, auth manifests. Skimmed: most new tests, cliff.toml, lint target-list edits, docs.",
+      "effect": "A defect in cliff.toml changelog config or in test assertions could be missed; both are low impact for an inert change."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "scripts/release-gate.mjs",
+      "rev": "head",
+      "line_start": 69,
+      "line_end": 98,
+      "claim": "AUTH_PREFIX and classify(): auth names set `auth` and are excluded from `js`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "scripts/release-gate.mjs",
+      "rev": "head",
+      "line_start": 1039,
+      "line_end": 1062,
+      "claim": "auth= written to GITHUB_OUTPUT before the blockers make the gate exit non-zero.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 350,
+      "line_end": 418,
+      "claim": "auth-artifacts and publish-auth run only in production mode with gate auth=true (implicit success() on gate); publish-auth runs npm publish --provenance per tarball.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 457,
+      "line_end": 482,
+      "claim": "release (changeset publish) requires gate success and, when auth=true, publish-auth success.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": ".github/workflows/_build-auth-artifacts.yml",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 30,
+      "claim": "Reusable build of the seven auth tarballs; does not publish.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": ".github/workflows/_build-auth-artifacts.yml",
+      "rev": "head",
+      "line_start": 37,
+      "line_end": 116,
+      "claim": "gnu legs on ubuntu-latest / ubuntu-24.04-arm, musl on ubuntu-latest with musl-tools; plain napi build with --target and no RUSTFLAGS or glibc pin.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": ".github/workflows/_build-auth-artifacts.yml",
+      "rev": "head",
+      "line_start": 220,
+      "line_end": 262,
+      "claim": "Wrapper packed with pnpm and checked for required files and exact platform peer versions.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": ".github/workflows/_build-auth-artifacts.yml",
+      "rev": "head",
+      "line_start": 145,
+      "line_end": 164,
+      "claim": "Platform tarball verification checks package name and .node filename presence only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": ".github/workflows/release-plz.yml",
+      "rev": "head",
+      "line_start": 191,
+      "line_end": 263,
+      "claim": "crates-armed runs eql-pipeline-armed.mjs crates; release-crates runs release-plz release on the root workspace only when armed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "scripts/eql-pipeline-armed.mjs",
+      "rev": "head",
+      "line_start": 44,
+      "line_end": 68,
+      "claim": "The crates line keys on the @cipherstash/auth FROZEN_PUBLISHERS entry.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "release-plz.toml",
+      "rev": "head",
+      "line_start": 17,
+      "line_end": 59,
+      "claim": "Only stack-auth and stack-profile release; all seven other root workspace members (matching Cargo.toml members) are release = false.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": ".github/workflows/auth-preflight.yml",
+      "rev": "head",
+      "line_start": 13,
+      "line_end": 132,
+      "claim": "Dispatch-only; checks arch with file, glibc NEEDED with readelf, musl only for absence of libc.so.6; smoke-loads only linux-x64-gnu on ubuntu-latest.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "diff",
+      "path": "languages/typescript/packages/auth/platforms/linux-x64-gnu/package.json",
+      "rev": "head",
+      "line_start": 4,
+      "line_end": 8,
+      "claim": "repository.directory added to the platform manifests (and the wrapper).",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": "scripts/release-gate.mjs",
+      "rev": "head",
+      "line_start": 225,
+      "line_end": 277,
+      "claim": "Frozen-bytes check excludes package.json for the wrapper and skips the platform packages (noTreeBytes), so manifest edits do not trip the gate.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "test",
+      "path": "scripts/__tests__/release-gate.test.mjs",
+      "rev": "head",
+      "line_start": 172,
+      "line_end": 225,
+      "claim": "classify() tests cover auth wrapper, auth platform and stack-auth-wasm cases.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "test",
+      "path": "scripts/__tests__/eql-pipeline-armed.test.mjs",
+      "rev": "head",
+      "line_start": 160,
+      "line_end": 180,
+      "claim": "Tests that the crates line is inert while the auth entry exists and arms when it is removed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "test",
+      "path": "scripts/__tests__/auth-build-artifacts.test.mjs",
+      "rev": "head",
+      "line_start": 38,
+      "line_end": 81,
+      "claim": "Tests the matrix, napi flags (--js false), git diff check and pnpm pack; nothing about musl RUSTFLAGS, glibc floor or binary checks.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "pr_description",
+      "claim": "Author states nothing in this PR can publish and PR E switches the jobs on; claims checks pass locally and in CI.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack/package.json",
+      "rev": "head",
+      "line_start": 230,
+      "line_end": 233,
+      "claim": "@cipherstash/stack depends on @cipherstash/auth (cli and wizard also do).",
+      "status": "verified"
+    },
+    {
+      "id": "E-20",
+      "kind": "code",
+      "path": "languages/typescript/packages/auth/platforms/linux-x64-gnu/package.json",
+      "rev": "head",
+      "line_start": 9,
+      "line_end": 21,
+      "claim": "Platform package declares os linux, cpu x64, libc glibc, with no glibc version constraint.",
+      "status": "verified"
+    },
+    {
+      "id": "E-21",
+      "kind": "code",
+      "path": ".github/workflows/_build-ffi-artifacts.yml",
+      "rev": "head",
+      "line_start": 240,
+      "line_end": 244,
+      "claim": "FFI line builds gnu targets with cargo-zigbuild and a glibc-pinned target `<triple>.2.28`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-22",
+      "kind": "code",
+      "path": "scripts/ffi-release-matrix.mjs",
+      "rev": "head",
+      "line_start": 59,
+      "line_end": 60,
+      "claim": "gnu targets cross-compile through cargo-zigbuild so the glibc floor can be pinned.",
+      "status": "verified"
+    },
+    {
+      "id": "E-23",
+      "kind": "code",
+      "path": ".github/workflows/_build-ffi-artifacts.yml",
+      "rev": "head",
+      "line_start": 236,
+      "line_end": 238,
+      "claim": "FFI musl build sets RUSTFLAGS=-C target-feature=-crt-static.",
+      "status": "verified"
+    },
+    {
+      "id": "E-24",
+      "kind": "code",
+      "path": "languages/typescript/packages/auth/.cargo/config.toml",
+      "rev": "head",
+      "line_start": 10,
+      "line_end": 11,
+      "claim": "Auth cargo config sets macOS link args only; root .cargo/config.toml sets wasm flags only; no musl crt-static setting exists outside the FFI workflow.",
+      "status": "verified"
+    },
+    {
+      "id": "E-25",
+      "kind": "ci_result",
+      "claim": "ci.json: 'Run Tests (Node 22)' and 'Run Tests (Node 24)' succeeded on head; that job runs `pnpm run test:scripts` (tests.yml:341-342), and 'Verify no caching in release workflows' and 'actionlint (release workflows)' succeeded.",
+      "status": "verified"
+    },
+    {
+      "id": "E-26",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 341,
+      "line_end": 342,
+      "claim": "run-tests job runs the script self-tests.",
+      "status": "verified"
+    }
+  ]
+}

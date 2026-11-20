@@ -1,0 +1,251 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+  "head_sha": "12d0ed73f5626eba5faf9a9825883482b4495099",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B",
+    "generated_at": "2026-10-12"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "partial",
+      "note": "No PR description supplied; only the CASE.md title and the head commit message were read."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results supplied; nothing is claimed to have run."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Comments in packages/eql/Cargo.toml, tests/sqlx/Cargo.toml, mise.toml and test-eql.yml at head."
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "note": "Derived by parsing packages/eql/Cargo.lock at base and head; cargo was not available to run cargo tree or a locked build."
+    },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json (@cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Lockfile-only change to packages/eql/Cargo.lock: reqwest 0.13.3 -> 0.13.4 pulls hickory-resolver/hickory-proto 0.25.2 -> 0.26.3 (new hickory-net crate, prefix-trie, system-configuration, ndk-context; enum-as-inner dropped) to pick up two security advisories, and re-resolves several Windows-only windows-sys edges to older versions. No Cargo.toml changed. The only path to reqwest/hickory from a workspace member is the unpublished eql_tests crate (publish = false) via cipherstash-client and stack-auth; the published eql-bindings crate and the SQL bundle do not depend on any changed package, and a library's Cargo.lock is not used by downstream consumers. The realistic failure is a loud one: the CI SQLx/e2e suite, which reaches ZeroKMS through cipherstash-client and so through the new DNS resolver, fails or flakes. test-eql.yml is path-triggered on Cargo.lock, so it should run on this change, but no CI result was supplied. Impact low; ready for normal review once CI is green.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "dependency",
+      "description": "The DNS resolver used by reqwest in the eql workspace moves from hickory-resolver/hickory-proto 0.25.2 to 0.26.3 (a 0.x minor bump, i.e. a semver-breaking range upstream), with networking split into a new hickory-net crate and new transitive deps (prefix-trie, system-configuration, ndk-context). This changes how cipherstash-client/stack-auth resolve hostnames inside the eql_tests harness.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "dependency",
+      "description": "Several crates' windows-sys edges are re-resolved to older versions (errno, quinn-udp, rustix 1.1.4, rustls-platform-verifier, tempfile -> 0.59.0; winapi-util -> 0.48.0) and core-foundation 0.9.4 is added for system-configuration. These only compile on Windows/macOS targets respectively.",
+      "certainty": "observed",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "No manifest, source, SQL or workflow file changes; published artefacts built from packages/eql (eql-bindings crate, SQL bundle) do not include any changed package.",
+      "certainty": "inferred",
+      "evidence": ["E-4", "E-5", "E-9"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/eql/Cargo.lock",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Only file in the diff.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "eql_tests (packages/eql/tests/sqlx)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "Depends on cipherstash-client =0.42.0, which depends on reqwest (directly and via stack-auth); reqwest depends on hickory-resolver. publish = false, so it is a test harness only.",
+      "evidence": ["E-3", "E-4", "E-5"]
+    },
+    {
+      "id": "AC-3",
+      "name": "test-eql CI workflow (SQLx matrix with ZeroKMS e2e)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Path-filtered on packages/eql/Cargo.lock; runs mise run test:sqlx:archive with CS_* credentials, i.e. cargo test --features proptest-e2e that encrypts through ZeroKMS over the network.",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "AC-4",
+      "name": "eql-bindings (published crate)",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "Lockfile entry depends only on eql-domains, schemars, serde, serde_json, ts-rs; none of these changed, so its build inputs are unaffected.",
+      "evidence": ["E-9"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "EQL SQLx/e2e CI fails or flakes because the test harness's ZeroKMS client resolves DNS differently",
+      "trigger": "CI runs the eql_tests e2e/fixture suite, which builds cipherstash-client/stack-auth against reqwest 0.13.4 + hickory-resolver 0.26.3 and makes network calls to ZeroKMS.",
+      "affected_components": ["AC-2", "AC-3"],
+      "mechanism": "hickory-resolver 0.26 is a breaking-range upgrade (new hickory-net crate, changed system-configuration handling). If its system resolver configuration handling or defaults differ on the CI runner, reqwest's lookups for ZeroKMS endpoints could fail or time out.",
+      "consequence": "Loud failure: the eql test job fails or is flaky, blocking merges for EQL changes until reverted or fixed. No customer-facing artefact is affected because eql_tests is publish = false and the published crate and SQL do not contain these packages.",
+      "impact": "low",
+      "basis": "speculative",
+      "evidence": ["E-2", "E-3", "E-6", "E-7"],
+      "existing_verification": [
+        {
+          "description": "test-eql.yml runs on any change to packages/eql/Cargo.lock and executes cargo test --features proptest-e2e with ZeroKMS credentials, which exercises the new resolver end to end.",
+          "status": "exists_not_run",
+          "evidence": ["E-6", "E-7"]
+        }
+      ],
+      "missing_verification": [
+        "A green test-eql run (including the credentialed build-archive/e2e job) on this head sha; no CI result was supplied."
+      ],
+      "mitigation": "Require the test-eql run to pass on this sha before merging; revert the lockfile if the e2e job regresses.",
+      "domain_tags": ["dependency"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No CI result and no local build: it is not shown that the workspace builds with --locked or that the e2e suite passes with the new resolver.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-6", "E-8"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Confirm the test-eql workflow (including the credentialed SQLx/e2e job) is green on 12d0ed73 before merge.",
+      "addresses": ["FS-1", "VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "cargo was not available and network access was forbidden, so the lockfile was not checked for consistency (cargo metadata --locked) and the hickory 0.26 changelog and the cited advisories were not read.",
+      "effect": "The upstream behaviour change in hickory 0.26 is known only from the lockfile; the windows-sys downgrades are assumed harmless because they only affect Windows targets and the eql CI jobs read run on Ubuntu runners."
+    },
+    {
+      "id": "CL-2",
+      "description": "No CI results supplied.",
+      "effect": "Verification confidence is capped at medium; nothing is claimed to have run or passed."
+    },
+    {
+      "id": "CL-3",
+      "description": "Developer machines (macOS/Windows) building eql_tests locally pick up the new system-configuration/core-foundation 0.9.4 and older windows-sys edges; these are not exercised by Linux-only CI.",
+      "effect": "A local-only build break on those platforms would not be caught by CI; low impact as it affects contributors only."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "packages/eql/Cargo.lock",
+      "claim": "Diff is lockfile-only: reqwest 0.13.3->0.13.4, hickory-proto/resolver 0.25.2->0.26.3, new hickory-net, prefix-trie, system-configuration(-sys), ndk-context, core-foundation 0.9.4; enum-as-inner removed; several windows-sys edges moved to 0.59.0/0.48.0.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/eql/Cargo.lock",
+      "rev": "head",
+      "line_start": 1605,
+      "line_end": 1675,
+      "claim": "hickory-net 0.26.3, hickory-proto 0.26.3 and hickory-resolver 0.26.3 entries; resolver now depends on hickory-net and system-configuration.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/eql/Cargo.lock",
+      "rev": "head",
+      "line_start": 3101,
+      "line_end": 3103,
+      "claim": "reqwest 0.13.4 (depends on hickory-resolver); its reverse deps in the lockfile are cipherstash-client and stack-auth, both reached only from eql_tests.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/eql/tests/sqlx/Cargo.toml",
+      "rev": "head",
+      "line_start": 5,
+      "line_end": 7,
+      "claim": "eql_tests is publish = false; only eql-bindings is released.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/eql/tests/sqlx/Cargo.toml",
+      "rev": "head",
+      "line_start": 17,
+      "line_end": 20,
+      "claim": "eql_tests depends on cipherstash-client =0.42.0 as the encryption oracle for fixtures and e2e queries.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": ".github/workflows/test-eql.yml",
+      "rev": "head",
+      "line_start": 96,
+      "line_end": 97,
+      "claim": "test-eql is path-triggered on packages/eql/Cargo.toml and packages/eql/Cargo.lock; its jobs run on ubuntu runners.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/eql/mise.toml",
+      "rev": "head",
+      "line_start": 110,
+      "line_end": 117,
+      "claim": "test:sqlx runs cargo test --features proptest-e2e, which encrypts through ZeroKMS via cipherstash-client; CI invokes it with CS_* credentials.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "history_signal",
+      "path": "packages/eql/Cargo.lock",
+      "signal": "ci",
+      "claim": "collect-evidence reports no CI results supplied; Cargo.lock had 4 commits in the last 90 days (routine dependency bumps).",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/eql/Cargo.lock",
+      "rev": "head",
+      "line_start": 1131,
+      "line_end": 1139,
+      "claim": "eql-bindings depends only on eql-domains, schemars, serde, serde_json, ts-rs; none changed.",
+      "status": "verified"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "case": "stack-1090",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Stack native client with a shared strategy runs getJwt in the client-creation request's context and binds users to the wrong identity",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The new guidance ('a module-level strategy is fine') sits next to a caveat that says the request is only 'not visible' on the stack native path; protect-ffi calls getToken through a Channel from the creating context, so a client built inside a request could silently resolve the first user's JWT, and no test covers that path."
+    },
+    {
+      "id": "FS-2",
+      "title": "Frequent JWT rotation multiplies CTS exchanges and a usage-limit refusal locks out every rotating user for 60 s",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Keying on the whole JWT makes every rotation a new /api/authorise exchange, and settle() records UsageLimitExceeded/OrgNotProvisioned as a strategy-wide 60s denial that engine_for returns for every new JWT, as the cited code shows."
+    },
+    {
+      "id": "FS-3",
+      "title": "Stored tokens from earlier releases, mixed-version deploys and shared stores miss the cache",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "BoundStore misses unstamped tokens, and older releases still write unstamped tokens while ignoring the field on read, so new instances re-exchange during a mixed-version deploy; the effect is limited to performance."
+    }
+  ],
+  "cost_usd": 2.0319943,
+  "wall_seconds": 266.546834,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

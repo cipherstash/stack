@@ -1,0 +1,70 @@
+{
+  "case": "stack-349",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Rewritten migration drops the original column's data on populated tables",
+      "impact": "critical",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Sweep rewrites every existing migration file, including hand-fixed or not-yet-deployed ones",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Changed Drizzle dataType string causes regenerated ALTERs on already-encrypted columns, which the sweep turns into DROPs",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Adjacent to KD-1, as in B: predicts spurious ALTER plus DROP, not mis-rendered SQL. Not a match."
+    },
+    {
+      "id": "FS-4",
+      "title": "Drizzle auto-detection changes `db install` from installing EQL to only writing a migration",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-5",
+      "title": "Removed `db setup` still documented in shipped skills and stack README",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.6686043000000002,
+  "wall_seconds": 243.317842,
+  "case_note": "KD-1 not matched; FS-3 adjacent."
+}

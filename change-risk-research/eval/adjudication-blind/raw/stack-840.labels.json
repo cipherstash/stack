@@ -1,0 +1,12 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head, README line 234 explicitly says bulkEncrypt is typed like encrypt via { table, column } and only bulkDecrypt resolves to the untyped union; the PR removed the 'untyped passthroughs' wording the finding complains about."
+    }
+  ]
+}

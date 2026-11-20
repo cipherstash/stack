@@ -1,0 +1,422 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "f2d98736fd44089a5ccaeb567464735385e44a6a",
+  "head_sha": "cf0e8b6f41a957fc32a02be83f7c5076fc82a753",
+  "assessor": {
+    "agent": "Codex",
+    "model": "GPT-6",
+    "skill_version": "1.1.0",
+    "condition": "Source-only assessment; optional history disabled; no network access, repository-code execution, or repository edits."
+  },
+  "inputs": {
+    "diff": {
+      "status": "partial",
+      "source": "Local git diff of the resolved revisions",
+      "note": "Inspected the complete change inventory and selected diffs. Several broad outputs were truncated; the entire diff was not reviewed."
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "Local git objects at base and head"
+    },
+    "pr_description": {
+      "status": "unavailable"
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No results supplied or retrieved; no tests executed."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "source": "Repository documentation and migration lifecycle documentation at HEAD"
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "source": "Selected imports, manifests, workflow dependencies, and lockfile diffs",
+      "note": "No complete dependency graph or upstream dependency implementation review."
+    },
+    "codeowners": {
+      "status": "available",
+      "source": ".github/CODEOWNERS",
+      "note": "Names @cipherstash/developers for default ownership and supply-chain paths."
+    },
+    "history_signals": {
+      "status": "unavailable",
+      "note": "Explicitly disabled; no optional history collected."
+    },
+    "deployment_context": {
+      "status": "partial",
+      "source": "Reverse-migration CLI instructions and release-golang.yml",
+      "note": "Actual application writer deployments, database configuration, release environment protection, and registry state are unknown."
+    }
+  },
+  "summary": "The range adds encrypted-to-plaintext migration, refactors the shared backfill engine, introduces Go release and advisory CI workflows, updates dependencies, and changes EQL test fixtures. The principal material scenario is irreversible loss of current values if an old writer updates ciphertext while a non-NULL plaintext twin remains stale: the generated drop checks completeness, not equivalence. Existing acknowledgements, write guards, and tests address important parts of this risk, but deployment-wide dual-write correctness is not established. Go publishing has explicit artifact and retry controls, although partial publication remains an operational scenario and this HEAD's inspected SQL builder produces v3 rather than the required v4 artifacts. Critical impact describes the conditional data-loss consequence, not its likelihood. Review coverage is selective; this is not a finding that all other changed areas are safe.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "state_or_persistence",
+      "description": "Adds reverse backfill from EQL ciphertext into typed plaintext columns, with separate migration events, resumable checkpoints, per-row skips, forced refresh, and generated encrypted-column drop migrations.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "concurrency_or_ordering",
+      "description": "Moves forward backfill onto a shared chunk engine. Chunk writes and checkpoints share a transaction, and in-memory progress advances after COMMIT; reverse writes additionally compare the current ciphertext with the value originally read.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "Adds manually dispatched Go releases that build embedded WASI guests, create a release-only commit, publish a version tag and SQL assets, and verify downloaded guest hashes through the Go proxy.",
+      "certainty": "observed",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "external_side_effect",
+      "description": "Adds a PR-event workflow that requests an external Claude review routine, plus an advisory impact workflow using pinned Python tools and cached baselines.",
+      "certainty": "observed",
+      "evidence": ["E-10", "E-11"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "dependency",
+      "description": "Updates JavaScript, Rust, and Go dependency resolutions. Inspected examples include Anthropic SDK updates, an explicit MCP SDK dependency, catalog and security override changes, and golang.org/x/sys.",
+      "certainty": "observed",
+      "evidence": ["E-12"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "test_only",
+      "description": "Changes EQL entry tests to obtain selectors from loaded fixtures and adds a selector-literal guard to the database-independent schema test task.",
+      "certainty": "observed",
+      "evidence": ["E-13"]
+    }
+  ],
+  "impact": "critical",
+  "verification_confidence": "medium",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/migrate",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Adds reverse migration APIs and shares the transaction/checkpoint engine with forward migration.",
+      "evidence": ["E-1", "E-4"]
+    },
+    {
+      "id": "AC-2",
+      "name": "stash decrypt commands and generated SQL",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Introduces reverse migration orchestration and irreversible encrypted-column removal.",
+      "evidence": ["E-2", "E-3"]
+    },
+    {
+      "id": "AC-3",
+      "name": "PostgreSQL tables selected for reverse migration",
+      "kind": "database",
+      "relationship": "confirmed",
+      "how": "The new runner writes plaintext to the selected table; generated SQL locks that table and drops its ciphertext column and associated indexes.",
+      "evidence": ["E-1", "E-3"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Application instances and jobs writing migrated tables",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Successful cutover requires every writer to maintain the plaintext twin. No actual customer deployment was inspected.",
+      "evidence": ["E-2"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Go module releases and attached SQL assets",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "The new workflow creates immutable version tags containing built guests and separately uploads installation assets.",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "AC-6",
+      "name": "PR advisory automation",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New workflows run impact analysis and invoke an external review routine.",
+      "evidence": ["E-10", "E-11"]
+    },
+    {
+      "id": "AC-7",
+      "name": "EQL selector verification",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "Fixture-derived selectors and a schema-task guard alter how selector compatibility is checked.",
+      "evidence": ["E-13"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "A stale non-NULL plaintext twin passes the encrypted-column drop gate",
+      "trigger": "After a row is backfilled, an old application instance or background job updates only its ciphertext, leaving the plaintext twin non-NULL but stale; the operator subsequently applies the generated drop.",
+      "affected_components": ["AC-1", "AC-2", "AC-3", "AC-4"],
+      "mechanism": "Ordinary reverse backfill selects rows with NULL plaintext and therefore does not repair this row. The generated drop acquires an ACCESS EXCLUSIVE lock but checks only ciphertext IS NOT NULL AND plaintext IS NULL. A stale non-NULL twin passes that check, so the ciphertext containing the latest value can be removed. The lock closes the count/drop race but cannot establish equivalence of values already present. Dual-write deployment is acknowledged by the operator rather than verified by the migration.",
+      "consequence": "The latest value loses its live database copy and the application retains an older value. Recovery requires an independent retained copy or backup; without one the loss is irreversible.",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-3"],
+      "existing_verification": [
+        {
+          "description": "Integration tests exercise preservation of existing plaintext, forced replacement, and a concurrent atomic dual-write during bulk decryption.",
+          "status": "exists_not_run",
+          "evidence": ["E-5"]
+        },
+        {
+          "description": "Live SQL tests exercise successful drop and atomic refusal when a plaintext twin is NULL.",
+          "status": "exists_not_run",
+          "evidence": ["E-6"]
+        }
+      ],
+      "missing_verification": [
+        "Evidence that all application instances, background jobs, and other writers maintain both columns throughout backfill and cutover.",
+        "A focused end-to-end case where ciphertext changes after backfill while plaintext remains non-NULL, demonstrating the required operational safeguard.",
+        "Observed execution results for the reverse-migration and generated-SQL tests."
+      ],
+      "mitigation": "Treat complete dual-write deployment as a release prerequisite: drain old writers, verify all write paths, and perform a reconciliation while dual-writes remain active before authorizing the drop. Retain a recoverable database backup until post-cutover validation finishes. Do not interpret zero NULL twins as proof that values agree.",
+      "domain_tags": ["persistence_migration", "concurrency"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Go publication stops after the version tag is pushed",
+      "trigger": "A GitHub release or asset-upload request fails after the tag push, or subsequent proxy verification fails.",
+      "affected_components": ["AC-5"],
+      "mechanism": "The publish job pushes the version tag before creating or completing the GitHub release; proxy verification is a later job. These operations are not atomic. A version can therefore be addressable while its SQL assets or verification are incomplete. The workflow contains recovery logic that preserves an existing tag when its tree and parent match.",
+      "consequence": "Consumers may encounter an incomplete release page or lack the matching SQL installation assets. Operators must complete the original release without replacing the published module version.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-7"],
+      "existing_verification": [
+        {
+          "description": "Artifact tests exercise normalized guest file modes and agreement between build and publish trees.",
+          "status": "exists_not_run",
+          "evidence": ["E-8"]
+        }
+      ],
+      "missing_verification": [
+        "A witnessed release attempt interrupted after tag push and recovered through the same run's failed-job retry.",
+        "Executed evidence that release assets and proxy-downloaded guest hashes match the intended release."
+      ],
+      "mitigation": "Exercise recovery with a prerelease before a final release. If publication fails after the tag exists, rerun failed jobs from that run; do not move or delete the tag. Confirm SQL assets and proxy verification before announcing availability.",
+      "domain_tags": ["build_release", "retry_idempotency"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The source-level completeness guards cannot establish deployment-wide dual-write correctness or equality between non-NULL plaintext and ciphertext.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-2", "E-3", "E-5"]
+    },
+    {
+      "id": "VG-2",
+      "description": "Relevant migration tests exist, but no execution results were available. The inspected reverse-backfill integration suite uses a stub decryption client and is skipped without PG_TEST_URL, so its source alone does not prove actual SDK, credentials, or lock-context behavior.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-5", "E-6", "E-14"]
+    },
+    {
+      "id": "VG-3",
+      "description": "Go artifact tests and workflow checks do not supply an observed complete publication or partial-publication recovery result.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "VG-4",
+      "description": "This HEAD's inspected EQL build script emits the v3 installer filenames, whereas the new Go workflow requires v4 filenames and explicitly aborts if they are absent. The workflow documents this prerequisite; Go release readiness from this exact revision is not established.",
+      "scenarios": [],
+      "evidence": ["E-7", "E-9"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "staged_rollout",
+      "description": "Verify deployment of every dual-write path, drain old writers, reconcile migrated values, switch reads, and only then apply encrypted-column drops.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Obtain passing PostgreSQL migration and generated-SQL results, including interruption/resume, forced refresh, skipped rows, concurrent writes, and the stale non-NULL twin case. Include a real SDK round trip in the intended deployment configuration.",
+      "addresses": ["FS-1", "VG-1", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "rollback_plan",
+      "description": "Retain a verified recoverable backup through cutover. Before the drop, preserve ciphertext for recovery; after the drop, reverting application code alone cannot restore removed data.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "compatibility_check",
+      "description": "Release Go only from a revision that builds the required EQL v4 installation assets, then verify the guest-containing module and matching SQL together.",
+      "addresses": ["VG-4"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "test",
+      "description": "Use a prerelease to verify artifact publication, proxy hashes, and same-run recovery after a post-tag failure before relying on the new Go workflow for final releases.",
+      "addresses": ["FS-2", "VG-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "The range changes 142 files. Inspection concentrated on reverse migration, the shared backfill engine, destructive SQL, and Go publication. Dependency changes, EQL fixture changes, advisory automation, documentation, and generated snapshots received selective inspection.",
+      "effect": "The assessment does not establish exhaustive coverage of every changed behavior or dependency."
+    },
+    {
+      "id": "CL-2",
+      "description": "Several broad source and diff outputs were truncated. Focused reads recovered the principal scenario sources, but not the full omitted content. Git also emitted sandbox-related temporary-cache warnings while returning revision and source output.",
+      "effect": "Only inspected source supports the findings; omitted output is not treated as evidence of safety."
+    },
+    {
+      "id": "CL-3",
+      "description": "No repository code, tests, collector, validator, or renderer was executed. No assessment files were written, as requested.",
+      "effect": "The JSON was assembled against the inspected schema but has no machine-validation result; all referenced tests remain exists_not_run."
+    },
+    {
+      "id": "CL-4",
+      "description": "Optional history and network access were disabled. No PR description, CI results, upstream dependency implementation details, registry state, or hosting configuration was obtained.",
+      "effect": "Historical coupling, upstream compatibility, deployed controls, and successful release execution remain unverified."
+    },
+    {
+      "id": "CL-5",
+      "description": "The actual decryption implementation was not traced through every native and WASM boundary. PostgreSQL conversion behavior for every supported target type was not independently verified.",
+      "effect": "Serialization fidelity, SDK result correlation, and type-conversion edge cases require additional focused verification; no defect in those contracts is asserted here."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "languages/typescript/packages/migrate/src/decrypt.ts",
+      "rev": "head",
+      "line_start": 319,
+      "line_end": 663,
+      "claim": "The runner fetches pending ciphertext, bulk-decrypts it, serializes returned values, and writes bound plaintext parameters. Forced writes compare the original ciphertext; ordinary writes also require NULL plaintext.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/backfill.ts",
+      "rev": "head",
+      "claim": "The CLI checks existing-twin hazards, warns about forced overwrite, asks for dual-write deployment acknowledgement, records that acknowledgement, and invokes runDecryptBackfill. An active reverse lifecycle bypasses a new dual-write acknowledgement.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/drop.ts",
+      "rev": "head",
+      "line_start": 262,
+      "line_end": 342,
+      "claim": "Generated SQL locks the table, counts ciphertext with NULL plaintext, refuses on a positive count, and otherwise drops the encrypted column. It does not compare plaintext with decrypted ciphertext.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "diff",
+      "path": "languages/typescript/packages/migrate/src/backfill.ts",
+      "rev": "head",
+      "claim": "The diff replaces the forward runner's inline loop with runChunkedMigration. The separately inspected engine performs the write and checkpoint in one transaction and updates counters after COMMIT.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "test",
+      "path": "languages/typescript/packages/migrate/src/__tests__/decrypt.integration.test.ts",
+      "rev": "head",
+      "line_start": 630,
+      "line_end": 674,
+      "claim": "Tests assert preservation of pre-existing plaintext in an ordinary run, replacement under force, and preservation of a concurrent dual-write during bulkDecrypt.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "test",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/__tests__/decrypt-sql.live.test.ts",
+      "rev": "head",
+      "line_start": 122,
+      "line_end": 170,
+      "claim": "Live SQL tests cover plan reapplication, successful encrypted-column/index removal, refusal with an undecrypted row, and refusal to uninstall while another EQL column exists.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": ".github/workflows/release-golang.yml",
+      "rev": "head",
+      "claim": "The new workflow requires v4 SQL artifacts, builds and hashes guests, compares release trees, pushes a tag before creating the release, supports matching-tag recovery, and verifies guest hashes through a proxy download.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "test",
+      "path": "scripts/__tests__/go-release-artifact.test.mjs",
+      "rev": "head",
+      "line_start": 288,
+      "line_end": 325,
+      "claim": "Tests check non-executable committed guest modes and acceptance of the build tree by publish; platform conditions can skip the latter test.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/eql/tasks/build.sh",
+      "rev": "head",
+      "claim": "The inspected builder assembles src/v3 SQL and writes release/cipherstash-encrypt.sql and release/cipherstash-encrypt-uninstall.sql rather than the v4 filenames required by the Go workflow.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": ".github/workflows/code-review.yml",
+      "rev": "head",
+      "claim": "A new workflow filters draft, bot, and fork PRs and posts PR metadata to a configured Anthropic routine using a bearer secret; the request step is continue-on-error.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": ".github/workflows/impact.yml",
+      "rev": "head",
+      "claim": "The impact workflow installs hash-pinned Python requirements, invokes reporting tests, pins a target reference, restores or builds baselines, and reports PR impact.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "diff",
+      "claim": "Inspected manifest and lockfile diffs update Anthropic SDKs and add an explicit MCP SDK dependency in wizard; update pnpm catalogs and security overrides; update golang.org/x/sys from v0.48.0 to v0.49.0; and change Rust dependency resolutions.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "diff",
+      "claim": "Inspected EQL diffs replace the pinned jsonb-entry selector with fixture-derived lookup, add cipherstash-client to the encryption test harness, and add selector_literal_guard to the schema task.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "test",
+      "path": "languages/typescript/packages/migrate/src/__tests__/decrypt.integration.test.ts",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 76,
+      "claim": "The reverse-backfill integration suite is gated by PG_TEST_URL and uses a stub bulkDecrypt implementation over deterministic markers rather than actual encryption or identity-bound payloads.",
+      "status": "verified"
+    }
+  ]
+}

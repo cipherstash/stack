@@ -1,0 +1,37 @@
+{
+  "case": "stack-666",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Pins go stale after a sibling release; init installs older packages and offers to downgrade newer ones",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Identifies that pins go stale after sibling-only releases and that the !== skew check offers to downgrade newer installs, which is KD-1."
+    },
+    {
+      "id": "FS-2",
+      "title": "An embedded pin names a version that is not installable from npm",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The build-before-publish embed can name a version that never reached npm, and exact pins then fail to install; plausible, and not KD-1."
+    }
+  ],
+  "cost_usd": 1.6266129000000003,
+  "wall_seconds": 182.959596,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

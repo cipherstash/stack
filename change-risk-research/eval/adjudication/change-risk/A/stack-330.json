@@ -1,0 +1,58 @@
+{
+  "case": "stack-330",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "`stash init` cannot complete without interactive, networked device login and a successful keyset bind",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "New guidance says no env vars are needed for local development, but `stash secrets` and LockContext still require them",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Encryption() may fail after following the new 'no credentials' quick start if protect-ffi 0.21.0 does not read the device token",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative."
+    },
+    {
+      "id": "FS-4",
+      "title": "Library consumers silently get older evlog and @byteslice/result versions with exact pins",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative."
+    }
+  ],
+  "cost_usd": 1.3369269000000001,
+  "wall_seconds": 187.829181
+}

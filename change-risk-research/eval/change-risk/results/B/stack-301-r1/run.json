@@ -1,0 +1,162 @@
+{
+  "case": "stack-301",
+  "pr": 301,
+  "condition": "B",
+  "run": 1,
+  "model_requested": "claude-opus-5-5",
+  "exit_code": 0,
+  "started": "2026-10-12T01:08:06.343071+00:00",
+  "wall_seconds": 241.621503,
+  "isolation": {
+    "hidden_paths": [
+      "/home/claude/stack",
+      "/tmp/claude-0",
+      "/root/.claude/projects"
+    ],
+    "git_protocols": "file",
+    "mcp": "none"
+  },
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "skills_loaded": [
+    "session-start-hook",
+    "change-risk",
+    "deep-research",
+    "design",
+    "slides",
+    "design-sync",
+    "dataviz",
+    "artifact-diagramming",
+    "artifact-capabilities",
+    "update-config",
+    "verify",
+    "debug",
+    "code-review",
+    "simplify",
+    "batch",
+    "fewer-permission-prompts",
+    "doctor",
+    "loop",
+    "claude-api",
+    "workflow-authoring",
+    "run",
+    "run-skill-generator",
+    "plugin-authoring",
+    "anthropic-skills:built-in-browser",
+    "anthropic-skills:chrome-browser",
+    "anthropic-skills:computer-use",
+    "anthropic-skills:deep-research",
+    "anthropic-skills:docs",
+    "anthropic-skills:docx",
+    "anthropic-skills:google-workspace",
+    "anthropic-skills:import-memory",
+    "anthropic-skills:morning",
+    "anthropic-skills:pdf",
+    "anthropic-skills:pptx",
+    "anthropic-skills:skill-creator",
+    "anthropic-skills:xlsx"
+  ],
+  "total_cost_usd": 1.7879986,
+  "duration_ms": 239979,
+  "duration_api_ms": 235810,
+  "num_turns": 40,
+  "is_error": false,
+  "subtype": "success",
+  "usage": {
+    "input_tokens": 64,
+    "cache_creation_input_tokens": 96770,
+    "cache_read_input_tokens": 2489221,
+    "output_tokens": 25779,
+    "output_tokens_details": {
+      "thinking_tokens": 5532
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 96770,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 948,
+        "cache_read_input_tokens": 121244,
+        "cache_creation_input_tokens": 2973,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2973
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 1469,
+      "outputTokens": 23,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.00015840000000000003,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 64,
+      "outputTokens": 25779,
+      "cacheReadInputTokens": 2489221,
+      "cacheCreationInputTokens": 96770,
+      "webSearchRequests": 0,
+      "costUSD": 1.7878402000000002,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 5532,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "tool_calls": 38,
+  "tool_counts": {
+    "Skill": 1,
+    "Read": 2,
+    "Bash": 31,
+    "Write": 2,
+    "Edit": 2
+  },
+  "skill_invoked": true,
+  "audit": {
+    "flags": [],
+    "clean": true
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  },
+  "audit_previous": {
+    "flags": [
+      {
+        "tool": "Read",
+        "why": "path or history outside the case",
+        "input": "{\"file_path\": \"/root/.claude/projects/-srv-cr-stack-301-B-r1/8b221732-734d-5292-976f-471e1931226b/tool-results/b2enbczf3.txt\"}"
+      },
+      {
+        "tool": "Write",
+        "why": "network-looking",
+        "input": "{\"file_path\": \"/srv/cr/stack-301-B-r1/out/assessment.json\", \"content\": \"{\\n  \\\"schema_version\\\": \\\"1\\\",\\n  \\\"repository\\\": \\\"cipherstash/stack\\\",\\n  \\\"base_sha\\\": \\\"7ba9119c7e66a331f0b47ecc2fe377f3a716a911\\\",\\n  \\\"head_sha\\\": \\\"c447e26192143763874cd1340836289fbb2fa133\\\",\\n  \\\"assessor\\\": {\\n    \\\"ag"
+      }
+    ],
+    "clean": false
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "case": "stack-941",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A dispatch against an unmerged branch decides for itself whether EQL publishes and what it publishes",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "New workflow_dispatch plus classify treating any non-main chore(release) HEAD as prerelease, with arming read from the dispatched ref and no environment protection, lets unreviewed branches cut releases/tags (and publish after cutover)."
+    },
+    {
+      "id": "FS-2",
+      "title": "First armed run publishes npm first, then other artefacts may never follow, or the crate ships alone",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Describes the irreversible npm publish preceding eql-sql/docs/image so a downstream failure leaves the npm package without matching SQL/docs/image artefacts (lockstep broken)."
+    },
+    {
+      "id": "FS-3",
+      "title": "SQL on the GitHub release and in the image is rebuilt from source rather than taken from the npm tarball",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same rebuild-vs-committed-bytes divergence as F-11, supported by _build-eql-sql.yml:87 and AGENTS.md."
+    }
+  ],
+  "cost_usd": 1.8768960999999997,
+  "wall_seconds": 251.551294,
+  "case_note": "KD-2 found; KD-1 (implicit success on skipped ancestors) missed.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

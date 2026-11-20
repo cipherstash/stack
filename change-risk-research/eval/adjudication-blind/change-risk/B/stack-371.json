@@ -1,0 +1,26 @@
+{
+  "case": "stack-371",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Future copy edits in messages.ts change CLI output with E2E staying green",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Base tests hard-coded literals while head tests read the shared constants, so wording changes in messages.ts change CLI output with no failing test; the finding correctly scopes this as minor and suggests a snapshot."
+    }
+  ],
+  "cost_usd": 0.8748672,
+  "wall_seconds": 102.124712,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

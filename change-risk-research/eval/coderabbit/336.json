@@ -1,0 +1,659 @@
+{
+  "pr": 336,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3053137460",
+      "path": "packages/cli/src/bin/stash.ts",
+      "line": 249,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Do not print raw fatal error messages. Upstream exceptions here can carry connection strings, secret values, or other plaintext from user input. Emit a generic failure by default and keep detailed diagnostics behind an explicitly sanitized debug path.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-2",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3053137464",
+      "path": "packages/cli/src/commands/wizard/__tests__/agent-sdk.test.ts",
+      "line": 69,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Avoid forwarding full `process.env` into the agent runtime. `...process.env` can expose unrelated CI/local secrets to the spawned agent toolchain. Restrict to a minimal allowlist.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-3",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3053137468",
+      "path": "packages/cli/src/commands/wizard/__tests__/agent-sdk.test.ts",
+      "line": 300,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Test name promises enforcement, but no enforcement is asserted. Line 299 (`expect(true).toBe(true)`) makes this pass even when `canUseTool` never denies anything. Please either assert denial (e.g., `permissionDenied === true`) or rename the test to reflect “does not hang” behavior.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-4",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3053137472",
+      "path": "packages/cli/src/commands/wizard/__tests__/health-checks.test.ts",
+      "line": 45,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "This stub never drives the code down the warning path. `checkReadiness()` only probes the gateway health URL in the shown implementation, so the `url.includes('npmjs')` branch is dead and this test currently exercises a 200 response instead. Align the mock with the actual checked endpoints, or add the missing non-blocking probe before asserting `ready_with_warnings`.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-5",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3053137476",
+      "path": "packages/cli/src/commands/wizard/__tests__/hooks.test.ts",
+      "line": 73,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Avoid literal `sk_live_...` fixtures to prevent secret-scanner failures. This line matches real-token patterns and can fail leak detection in CI. Build the test string dynamically so behavior is preserved without embedding a scanner-triggering literal.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-6",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3053137491",
+      "path": "packages/cli/src/commands/wizard/agent/interface.ts",
+      "line": 404,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Remove `error_max_turns` from success condition on line 404. The Claude Agent SDK treats `error_max_turns` as an **error outcome**, not a success case. The current logic (`(message.subtype === 'success' || message.subtype === 'error_max_turns') && !message.is_error`) incorrectly treats `error_max_turns` as success when `is_error` is false.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-7",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3053137496",
+      "path": "packages/cli/src/commands/wizard/health-checks/index.ts",
+      "line": 24,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Always clear the abort timer on failures too. If `fetch()` rejects before the explicit `clearTimeout()` call, the timer stays scheduled until it fires. That adds avoidable delay on fast failures and leaves stray timers behind across repeated readiness checks.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-8",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3053137502",
+      "path": "packages/cli/src/commands/wizard/health-checks/index.ts",
+      "line": 66,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Treat degraded blocking services as not ready. A blocking dependency returning `HTTP 503` lands in `'degraded'`, and this predicate only blocks on `'down'`. That lets the wizard continue even when the gateway health endpoint is explicitly failing.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-9",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3053137508",
+      "path": "packages/cli/src/commands/wizard/lib/prerequisites.ts",
+      "line": 23,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Use a recovery command that resolves to this package. `npx stash auth login` targets the `stash` package name, not `@cipherstash/cli`. That sends `npx` users down a broken recovery path right after the rename.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-10",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059126660",
+      "path": "package.json",
+      "line": 40,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Remove the `workspaces.catalogs` object from package.json—it's dead code in a pnpm project. The `workspaces` field with `catalogs` is a Bun workspace feature. pnpm does not read or use `package.json#workspaces.catalogs`. Instead, pnpm exclusively reads workspace and catalog configuration from `pnpm-workspace.yaml`.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-11",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059126671",
+      "path": "package.json",
+      "line": 98,
+      "severity_label": "⚠️ Potential issue | 🔴 Critical",
+      "claim": "Move `overrides` inside the `pnpm` object. The `overrides` field is at the root level of package.json (lines 77–98) but should be nested under `pnpm.overrides`. pnpm will not apply root-level overrides, which means the security-related overrides (e.g., vite, next, esbuild, rollup) are not being enforced. Move the entire `overrides` object into the existing `pnpm` configuration:",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-12",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059126676",
+      "path": "packages/cli/src/commands/wizard/__tests__/hooks.test.ts",
+      "line": 21,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Scanner expectations are out of sync with the actual hook rules. At **Line 16**, the operator fixtures (`'$', '(', ')'`) don’t match `scanPreToolUse`’s blocked operator list (`'$('`, `|`, `&&`, `||`, `>`, `>>`, `<`). At **Line 45**, `curl ... $API_KEY` should assert `secret_exfiltration`, not `dangerous_operator`.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-13",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059545841",
+      "path": "packages/cli/src/commands/wizard/agent/hooks.ts",
+      "line": 21,
+      "severity_label": "⚠️ Potential issue | 🔴 Critical",
+      "claim": "Destructive-command blocking is bypassable with common flag forms. Line [19] and Line [20] miss variants like `rm -fr` and `git push -f`, so dangerous commands can pass pre-scan.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-14",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059545854",
+      "path": "packages/cli/src/commands/wizard/agent/hooks.ts",
+      "line": 93,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Fail-closed behavior is documented but not enforced on scanner exceptions. If any scanner throws (unexpected input/type/runtime error), execution depends on caller behavior instead of returning a blocking verdict.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-15",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059545860",
+      "path": "packages/cli/src/commands/wizard/agent/hooks.ts",
+      "line": 67,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "First-100KB-only scanning can be trivially bypassed. Line [67] and Line [80] only scan the head of content. A secret/prompt payload after 100KB is not evaluated.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-16",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059902322",
+      "path": "packages/cli/README.md",
+      "line": 6,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Avoid advertising `db migrate` as supported while it is unimplemented. Line 6 says migration is handled, but Lines 271-279 explicitly state `db migrate` is not implemented. This is user-facing behavior mismatch.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-17",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059902329",
+      "path": "packages/cli/README.md",
+      "line": 434,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Fix invalid TypeScript in documentation examples (duplicate `const` variable names). The code snippets at lines 428-434 and 440-445 in packages/cli/README.md contain duplicate variable declarations that would fail when copy-pasted. Specifically:",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-18",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059902335",
+      "path": "packages/cli/src/commands/schema/build.ts",
+      "line": 133,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "`generateDrizzleClient` is unreachable code. The `'drizzle'` case in `generateClientFromSchemas` can never be reached. In `builderCommand` (line 390), `integration` is set to either `'supabase'` or `'postgresql'`, but never `'drizzle'`:",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-19",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059902348",
+      "path": "packages/cli/src/commands/schema/build.ts",
+      "line": 310,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Error message may leak sensitive connection details. Database connection errors can include parts of the connection string (host, port, or credentials embedded in the URL). Logging `error.message` directly could expose sensitive data.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-20",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059902371",
+      "path": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "line": 114,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Fail fast on required post-agent step failures. At **Line 109**, the catch block swallows all failures, so later required steps still run and the wizard can be treated as completed even when install/setup/push failed. This creates inconsistent state and misleading success.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-21",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/336#discussion_r3059902389",
+      "path": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "line": 113,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Do not log raw command error text. At **Line 112**, `err.message` from `execSync` can contain command output (stderr/stdout), which may include sensitive plaintext. Log a sanitized message instead of raw error content.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-22",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/secrets/helpers.ts",
+      "line": 40,
+      "severity_label": "outside diff range | ⚠️ Potential issue | 🟠 Major",
+      "claim": "Add `accessKey` to the missing variable validation. The `accessKey` variable (line 37) is required and used in the returned config (line 67), but it's not validated in the `missing` array check. If `CS_ACCESS_KEY` is missing, users won't see it listed in the helpful error message at lines 45-55; instead, they'll encounter a generic error at line 60.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-23",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "examples/basic/package.json",
+      "line": 1,
+      "severity_label": "outside diff range | ⚠️ Potential issue | 🟠 Major",
+      "claim": "Add required Node.js and pnpm engine constraints to the manifest. The `examples/basic/package.json` lacks the required `packageManager` and `engines` fields specified in the coding guidelines for example apps. Add the following to comply with `examples/**/package.json` requirements:",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-24",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "examples/basic/index.ts",
+      "line": 86,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Avoid logging plaintext contact data. This logs unencrypted PII (name, email) before encryption. As per coding guidelines, example apps should not log plaintext at any time.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-25",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "examples/basic/src/lib/supabase/server.ts",
+      "line": 3,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Validate environment variables before use. The non-null assertions (`!`) will cause cryptic runtime errors if `NEXT_PUBLIC_SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_ANON_KEY` are missing. Example apps should fail gracefully with clear guidance.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-26",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/db/setup.ts",
+      "line": 124,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Inconsistent branding in outro message. The outro still references \"CipherStash Forge\" while the rest of the file uses the new `stash db` command naming. This also applies to line 143.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-27",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "examples/basic/src/lib/supabase/encrypted.ts",
+      "line": 2,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Remove unused import: `contactsTable`. `contactsTable` is imported on line 2 but never used in the file. Remove it from the import statement.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-28",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/bin/stash.ts",
+      "line": 198,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "`--help` never reaches command-specific handlers. Because the global `flags.help` branch returns before dispatch, `stash auth --help` prints the top-level help instead of the dedicated auth help text. The same pattern will block any future command-specific `--help` handling too.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-29",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/README.md",
+      "line": 89,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Fix markdownlint MD058 table spacing warnings. Several tables are missing required blank lines around them. This is currently flagged by markdownlint and should be normalized to keep docs lint-clean.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-30",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/__tests__/agent-sdk.test.ts",
+      "line": 1,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Add `dotenv/config` import for env-dependent integration tests. This test reads environment variables but does not import dotenv bootstrap at the top.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-31",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/run.ts",
+      "line": 91,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Missing `shutdownAnalytics()` on cancel paths. When the user cancels at lines 91-94 or 206-209, `shutdownAnalytics()` is not called. While cancellation is a clean exit, any events captured before cancellation (e.g., `trackFrameworkDetected`) won't be flushed.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-32",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/agent/fetch-prompt.ts",
+      "line": 69,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Wrap successful response JSON parsing in try/catch. If the gateway returns a 200 OK with malformed JSON, `res.json()` will throw an unhandled exception. This should be caught and formatted consistently with other error paths.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-33",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/schema/build.ts",
+      "line": 426,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "`config.databaseUrl` may be undefined. If `loadStashConfig()` returns a config without `databaseUrl`, passing `undefined` to `introspectDatabase` will cause `pg.Client` to fail with an unclear error. Add validation before proceeding.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-34",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "line": 27,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Remove the guard check for `installCommand` — it is always defined. The `GatheredContext.installCommand` is guaranteed to be a non-empty string. In `gather.ts` (lines 47–49), it is assigned via: `packageManager.installCommand + ' `@cipherstash/stack`'` if detected, or defaults to `'npm install `@cipherstash/stack`'` otherwise.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-35",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/__tests__/wizard-tools.test.ts",
+      "line": 174,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Stale comment in test. Line 181 mentions \"Actually, we just wrote 'DANGER.*=other' above\" but the test writes `NORMAL_KEY=value`. This appears to be a copy-paste artifact.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-36",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/tools/wizard-tools.ts",
+      "line": 107,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "`ensureGitignore` silently skips if `.gitignore` doesn't exist. If the project doesn't have a `.gitignore` file, `ensureGitignore` returns early without creating one or warning the user. This could lead to accidentally committing sensitive `.env` files.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-37",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/secrets/helpers.ts",
+      "line": 59,
+      "severity_label": "nitpick",
+      "claim": "Consider removing redundant validation check. Once the `accessKey` validation is added to the `missing` array check (lines 40-42), this subsequent check becomes unreachable. If any required variable is missing, `process.exit(1)` is called at line 56, so line 59 can never encounter missing values.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-38",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/init/steps/build-schema.ts",
+      "line": 55,
+      "severity_label": "nitpick",
+      "claim": "Consider adding error handling for file write failures. The `writeFileSync` call (line 61) can throw on permission errors or disk space issues. While the error will propagate, a user-friendly message would improve the experience.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-39",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/__tests__/detect.test.ts",
+      "line": 109,
+      "severity_label": "nitpick",
+      "claim": "Consider adding a test for lockfile precedence. The tests cover individual lockfile detection, but there's no test for when multiple lockfiles exist (e.g., both `yarn.lock` and `package-lock.json`). This could help document the expected precedence behavior.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-40",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/lib/format.ts",
+      "line": 54,
+      "severity_label": "nitpick",
+      "claim": "Minor: The checkmark regex may not match common variants. The regex `/^\\s*[-*]?\\s*✅/` specifically looks for the ✅ emoji, but the docstring at line 54 also mentions `✓` and `✔`. Consider expanding the pattern to match these variants if the agent might output them.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-41",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/__tests__/gateway-messages.test.ts",
+      "line": 221,
+      "severity_label": "nitpick",
+      "claim": "Overly permissive assertion may mask gateway errors. The assertion `expect(res.status).toBeGreaterThanOrEqual(200)` passes for any status including 5xx server errors. While the comment acknowledges this is for dev gateway compatibility, consider tightening to explicitly allow expected statuses:",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-42",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "examples/basic/index.ts",
+      "line": 4,
+      "severity_label": "nitpick",
+      "claim": "Unused imports. `getAllContacts` and `createContact` are imported but never called (the usage at lines 90-91 is commented out). Either remove these imports or uncomment the demonstration code.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-43",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "examples/basic/src/lib/supabase/encrypted.ts",
+      "line": 5,
+      "severity_label": "nitpick",
+      "claim": "Top-level await limits CJS compatibility. Top-level `await` is an ESM-only feature. If this module needs to be consumed via `require()`, it will fail.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-44",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/lib/analytics.ts",
+      "line": 28,
+      "severity_label": "nitpick",
+      "claim": "Move imports to the top of the file. The `createHash`, `hostname`, and `userInfo` imports on lines 28-29 are placed in the middle of the file after the `getClient` function. Moving them to the top with other imports improves readability and follows standard conventions.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-45",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/lib/analytics.ts",
+      "line": 106,
+      "severity_label": "nitpick",
+      "claim": "Consider sanitizing error messages before tracking. The `error` parameter is sent directly to PostHog. If error messages ever contain tokens, connection strings, or other sensitive data (e.g., from database connection errors or auth failures), this could leak PII to analytics.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-46",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/run.ts",
+      "line": 179,
+      "severity_label": "nitpick",
+      "claim": "`selectIntegration` calls `process.exit` directly, bypassing caller control. The helper function exits the process on cancel, preventing the caller from performing cleanup. Consider returning `undefined` on cancel and letting `run()` handle the exit with proper analytics shutdown.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-47",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/schema/build.ts",
+      "line": 174,
+      "severity_label": "nitpick",
+      "claim": "Generated code uses top-level `await`. The generated encryption client uses `await Encryption({...})` at module scope (lines 180 and 218). This requires: - ES modules (`\"type\": \"module\"` in package.json or `.mjs` extension) - Node.js 14.8+ (or bundler support)",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-48",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "line": 94,
+      "severity_label": "nitpick",
+      "claim": "Error swallowing may silently mask critical failures. The `runStep` helper catches errors and continues to the next step. While this provides resilience, critical steps like `stash db setup` or `stash db push` failing could leave the system in an inconsistent state.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-49",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/lib/gather.ts",
+      "line": 169,
+      "severity_label": "nitpick",
+      "claim": "Same `process.exit()` concern in selection functions. Multiple `process.exit(0)` calls on user cancellation. These could throw a `CancelledError` instead for consistency with modern CLI patterns and better testability.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-50",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/lib/gather.ts",
+      "line": 66,
+      "severity_label": "nitpick",
+      "claim": "`process.exit()` makes the function difficult to test and reuse. Direct `process.exit(0)` calls prevent proper testing and reuse of `gatherContext`. Consider throwing a specific error or returning early to let the caller handle the exit.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-51",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/tools/wizard-tools.ts",
+      "line": 120,
+      "severity_label": "nitpick",
+      "claim": "Move import to top of file. The import on line 120 should be grouped with other imports at the top of the file for consistency and readability.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-52",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/tools/wizard-tools.ts",
+      "line": 150,
+      "severity_label": "nitpick",
+      "claim": "Consider adding a connection timeout. The database connection has no timeout configured. If the database is unreachable or slow, the operation could hang indefinitely.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-53",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/tools/wizard-tools.ts",
+      "line": 26,
+      "severity_label": "nitpick",
+      "claim": "Simplify path traversal check for clarity. Line 29's condition `resolve(resolved) !== resolved.replace(/\\/$/, '')` is redundant and unclear. Since `resolved` is already normalized by `resolve()`, calling `resolve()` again on it produces the same value, and the trailing-slash check doesn't strengthen the security validation.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-54",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/agent/hooks.ts",
+      "line": 58,
+      "severity_label": "nitpick",
+      "claim": "Consider expanding secret detection patterns. The current patterns cover PostHog, Stripe live keys, and basic hardcoded passwords. Consider adding patterns for other common secrets (AWS keys, GitHub tokens, generic API keys like `api_key=`, `apikey=`).",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-55",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/agent/hooks.ts",
+      "line": 8,
+      "severity_label": "nitpick",
+      "claim": "Export `ScanResult` interface for consumers. The `ScanResult` interface is used as the return type for all exported scanner functions but is not itself exported. Consumers of these functions (e.g., `interface.ts`) may need to type-check results.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-56",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/agent/interface.ts",
+      "line": 338,
+      "severity_label": "nitpick",
+      "claim": "Debug logging may expose sensitive data. Agent stderr output could potentially contain sensitive information. While this is gated behind `session.debug`, consider sanitizing or truncating the output similarly to how result messages are truncated at line 472-473.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-57",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4077066187",
+      "path": "packages/cli/src/commands/wizard/__tests__/wizard-tools.test.ts",
+      "line": 187,
+      "severity_label": "nitpick",
+      "claim": "Consider adding tests for other package managers. The test only covers pnpm detection. Consider adding similar tests for npm (`package-lock.json`), yarn (`yarn.lock`), and bun (`bun.lockb`) to ensure complete coverage.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-58",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4083722921",
+      "path": "packages/stack/package.json",
+      "line": 223,
+      "severity_label": "outside diff range | ⚠️ Potential issue | 🟡 Minor",
+      "claim": "Update Node.js engine requirement to `>=22`. The `engines.node` field specifies `>=18`, but the root `package.json` requires `>=22` (line 62), and the coding guidelines mandate enforcing Node.js version >= 22 in package.json engines. This inconsistency could allow the package to be installed in an unsupported Node.js environment.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-59",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4083722921",
+      "path": "packages/cli/src/commands/wizard/__tests__/hooks.test.ts",
+      "line": 54,
+      "severity_label": "nitpick",
+      "claim": "Use the consolidated package name in the safe-command fixture. At **Line 55**, the fixture still references `@cipherstash/stack`. Since this PR consolidates around `@cipherstash/cli`, updating this string keeps tests aligned with current naming.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-60",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4084589834",
+      "path": "packages/cli/README.md",
+      "line": 31,
+      "severity_label": "nitpick",
+      "claim": "Add a language to the fenced block at Line 31. This block is missing a fence language, which trips markdownlint (MD040).",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-61",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4084589834",
+      "path": "packages/cli/src/commands/wizard/agent/interface.ts",
+      "line": 339,
+      "severity_label": "nitpick",
+      "claim": "Debug stderr logging may expose sensitive content. When `debug` is enabled, agent stderr output is logged directly. While users explicitly opt-in to debug mode, stderr could contain file content fragments or error details.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-62",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4084589834",
+      "path": "packages/cli/src/commands/wizard/agent/interface.ts",
+      "line": 146,
+      "severity_label": "nitpick",
+      "claim": "Inconsistent `.env` pattern between Bash check and `SENSITIVE_FILE_PATTERNS`. The Bash-specific regex `/\\.(env|env\\.local)/` only blocks `.env` and `.env.local`, while `SENSITIVE_FILE_PATTERNS` uses `/\\.env($|\\.)/` which also covers `.env.production`, `.env.development`, etc. A command like `cat .env.production` would be blocked by the allowlist but `echo .env.production` wouldn't be—though the allowlist approach should catch most cases anyway.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-63",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4084589834",
+      "path": "packages/cli/src/commands/schema/build.ts",
+      "line": 59,
+      "severity_label": "nitpick",
+      "claim": "Consider adding a connection timeout. The `pg.Client` is created without a `connectionTimeoutMillis` option. If the database is unreachable, the command could hang indefinitely without feedback to the user.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-64",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4084589834",
+      "path": "packages/cli/src/commands/schema/build.ts",
+      "line": 180,
+      "severity_label": "nitpick",
+      "claim": "Generated code uses top-level `await`. The generated client uses top-level `await`:",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-65",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/336#pullrequestreview-4084589834",
+      "path": "packages/cli/src/commands/schema/build.ts",
+      "line": 161,
+      "severity_label": "nitpick",
+      "claim": "Generated schema assumes hardcoded `id` and `createdAt` columns. The generated Drizzle table definition includes `id: integer('id').primaryKey().generatedAlwaysAsIdentity()` and `createdAt: timestamp('created_at').defaultNow()`, but the actual database table may have different primary key names/types or no `created_at` column.",
+      "is_nitpick": true
+    }
+  ],
+  "notes": "4 CodeRabbit reviews (COMMENTED); 21 inline review threads (no further pages). Release-notes summary in PR body excluded; body otherwise empty."
+}

@@ -1,0 +1,79 @@
+{
+  "pr": 503,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/503#discussion_r3338477306",
+      "path": "packages/drizzle/package.json",
+      "line": 20,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "Update `bugs.url` to the migrated repo too. `repository` now points at `cipherstash/stack`, but `bugs.url` above still sends npm users to the old `cipherstash/protectjs` tracker.",
+      "is_nitpick": false,
+      "id": "CR-1"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/503#discussion_r3338477312",
+      "path": "packages/nextjs/package.json",
+      "line": 17,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "Migrate `bugs.url` along with `repository.url`. This manifest still advertises the old `cipherstash/protectjs` issue tracker even though the package source now points to `cipherstash/stack`.",
+      "is_nitpick": false,
+      "id": "CR-2"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/503#discussion_r3338477315",
+      "path": "packages/protect-dynamodb/package.json",
+      "line": 19,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "Point `bugs.url` at `cipherstash/stack` as well. Right now npm metadata would still route users to the old `protectjs` issues page even though the package repository has been migrated.",
+      "is_nitpick": false,
+      "id": "CR-3"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/503#discussion_r3338477320",
+      "path": "packages/protect/package.json",
+      "line": 19,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "`bugs.url` still targets the pre-migration repo. The repository metadata has moved to `cipherstash/stack`, but npm users would still be sent to `cipherstash/protectjs/issues` for support.",
+      "is_nitpick": false,
+      "id": "CR-4"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/503#discussion_r3338477326",
+      "path": "packages/schema/package.json",
+      "line": 17,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "Finish the repo migration by updating `bugs.url`. This package now declares `cipherstash/stack` as its repository, but the issue tracker metadata still points to the old `protectjs` repo.",
+      "is_nitpick": false,
+      "id": "CR-5"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/503#discussion_r3338477330",
+      "path": "packages/stack/package.json",
+      "line": 18,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "Update `bugs.url` to the migrated repository as well. Line 18 updates `repository.url` to `cipherstash/stack`, but Line 14 still points to `cipherstash/protectjs/issues`.",
+      "is_nitpick": false,
+      "id": "CR-6"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/503#pullrequestreview-4406243726",
+      "path": ".github/workflows/release.yml",
+      "line": 49,
+      "severity_label": "nitpick | ⚡ Quick win",
+      "claim": "Pin npm for trusted publishing to the npm 11.x line (>= 11.5.1) instead of `latest`. Trusted publishing requires npm CLI **11.5.1+** (and Node.js **22.14.0+**).",
+      "is_nitpick": true,
+      "id": "CR-7"
+    }
+  ],
+  "notes": "Transcribed by hand from inline MCP output. Review 4406243726: 6 actionable (inline, all marked 'Addressed in commit c28b5e4'), 1 nitpick. Summary/walkthrough issue comment present; pre-merge checks all passed. CodeRabbit status at head: 'Review skipped' (incremental review after fixes)."
+}

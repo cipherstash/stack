@@ -1,0 +1,21 @@
+{
+  "case": "stack-371",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Remove stale \u201cphase-2 messages module\u201d wording. This now conflicts with the current state (the module is implemented in this PR), so the plan section should ref",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "stale wording in AGENTS.md"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}
