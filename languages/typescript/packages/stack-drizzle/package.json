@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/stack-drizzle",
-	"version": "1.2.1",
+	"version": "1.3.0",
 	"description": "CipherStash Stack Drizzle ORM integration: searchable, application-layer field-level encryption for PostgreSQL.",
 	"keywords": [
 		"encrypted",
