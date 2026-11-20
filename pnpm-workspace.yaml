@@ -51,7 +51,7 @@ catalogs:
     '@vitest/coverage-v8': 4.1.12
   security:
     '@clerk/nextjs': 7.9.23
-    next: 15.5.28
+    next: 15.5.29
     vite: 8.3.5
 
 # Security overrides for Dependabot alerts on transitive deps that Dependabot
