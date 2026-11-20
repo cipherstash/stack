@@ -177,6 +177,17 @@ pub unsafe extern "C" fn sa_has_token(dir_ptr: *const u8, dir_len: u32) -> u64 {
     export1(dir_ptr, dir_len, ops::has_token)
 }
 
+/// The CRN of the current workspace's saved session, for the store at
+/// `dir`. See [`ops::session_crn`].
+///
+/// # Safety
+///
+/// As for [`sa_current_workspace`].
+#[no_mangle]
+pub unsafe extern "C" fn sa_session_crn(dir_ptr: *const u8, dir_len: u32) -> u64 {
+    export1(dir_ptr, dir_len, ops::session_crn)
+}
+
 /// `device.json` in the store at `dir`, read-only. See
 /// [`ops::device_identity`].
 ///

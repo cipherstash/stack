@@ -188,7 +188,10 @@ Keep the credentials in an exported field of any struct you print or log.
 
 `NewCredentials` takes a client id, a client key, and an `auth` strategy
 explicitly. `OIDCFederation` exchanges a token from an identity provider for a
-CipherStash token. No credentials take a raw token. The client
+CipherStash token. `OIDCFederationWithDetectedWorkspace(provider)` does the
+same without a CRN: the workspace is `CS_WORKSPACE_CRN` if it is set, else the
+CLI's current workspace, which needs `stash auth login`. No credentials take a
+raw token. The client
 key is consumed by `NewClient` and wiped, whatever the outcome.
 
 ## The cipher
