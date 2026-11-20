@@ -602,7 +602,8 @@ export const registry: CommandGroup[] = [
           {
             name: '--chunk-size',
             value: '<n>',
-            description: 'Rows encrypted per batch.',
+            description: 'Rows encrypted per batch; a positive whole number.',
+            default: '1000',
           },
           {
             name: '--encrypted-column',
