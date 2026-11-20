@@ -125,6 +125,9 @@ Two jobs with deliberately different roles:
   persisted across runs via `actions/cache` (write-once key + prefix
   `restore-keys`) so coverage compounds, minimized with `cargo fuzz cmin`
   to stay small, and any crash reproducer is uploaded as an artifact.
+  A failed scheduled run opens an issue titled `Fuzz (crates) failed on
+  main`, or comments on it if it is still open, linking the run
+  (`.github/workflows/_report-unattended-failure.yml`).
 
 The `pull_request` trigger is path-filtered to `packages/stack-auth/**`,
 `packages/stack-kms/**`, `packages/stack-encrypt/**`, the root `Cargo.toml`,
