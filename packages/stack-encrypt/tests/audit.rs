@@ -624,3 +624,51 @@ async fn a_derived_record_sends_its_metadata() {
         ]
     );
 }
+
+/// The dynamic path: the plan and the record arrive as data, as a language
+/// binding sends them.
+#[cfg(feature = "dynamic")]
+mod dynamic_path {
+    use serde_json::json;
+    use stack_encrypt::dynamic::{record, ValueFrame};
+    use stack_encrypt::AsProtectedRef as _;
+
+    use super::{cipher, list_issues, list_issues_json, Call};
+
+    #[tokio::test]
+    async fn a_dynamic_record_sends_its_metadata() {
+        let (cipher, source) = cipher().await;
+        let plan = vitaminc_aead_frame::serde::to_vec(&json!({
+            "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
+            "notes": { "context": ["users", "notes"], "outputs": ["c"], "type": "string" },
+        }))
+        .expect("the plan is a frame");
+        let plan = record::plan(plan.as_protected_ref()).expect("the plan parses");
+        let user = vitaminc_aead_frame::serde::to_vec(&json!({
+            "email": "bob@example.com",
+            "notes": "likes cats",
+        }))
+        .expect("the record is a frame");
+        let user = ValueFrame::from_bytes(user.as_protected_ref()).expect("the record is a value");
+
+        let sealed = record::encrypt(&cipher.default_keyset(), user, &plan)
+            .expect("the record fits the plan")
+            .audit(list_issues())
+            .await
+            .expect("the record seals");
+        assert_eq!(
+            source.take(),
+            vec![(Call::Generate, Some(list_issues_json()))]
+        );
+
+        record::decrypt(&cipher, sealed, &plan, None)
+            .expect("the record fits the plan")
+            .audit(list_issues())
+            .await
+            .expect("the record opens");
+        assert_eq!(
+            source.take(),
+            vec![(Call::Retrieve, Some(list_issues_json()))]
+        );
+    }
+}
