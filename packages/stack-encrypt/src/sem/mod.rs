@@ -1373,9 +1373,6 @@ where
 ///   term of bytes.
 /// - No plan, record, or target can store that term. A stored term would
 ///   reveal the order of the rows. No query could use that term.
-/// - A record that only decrypts can still name
-///   `Encrypted<OreTerm<Vec<u8>>>`. You can therefore still read rows
-///   that were stored before this rule.
 ///
 /// A `bool`, a `u8` and an `i8` have no target. An order term over a
 /// domain that small tells anyone holding the column too much: with two

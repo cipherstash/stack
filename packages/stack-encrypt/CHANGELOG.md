@@ -271,9 +271,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     store an order term over bytes.
   - Remove the order index from the field. Its ciphertext and its
     equality term are unchanged.
-  - Rows stored before stay readable. A record that only opens
-    (`DecryptInto`, `DecryptSource`) can still name
-    `Encrypted<OreTerm<Vec<u8>>>`.
+  - Rows stored before stay readable. Opening reads only the ciphertext
+    and ignores the stored order term, so name the field
+    `StackCipherText`, or `Encrypted<..>` over the terms it keeps.
   - The keyset's term functions `ore_term`, `ope_term` and
     `ore_block_term` still take bytes. Each derives one term. It is not a
     description, so no plan, record or target can be built from it.
