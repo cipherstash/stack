@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ZeroKMS does not verify the metadata. A decrypt does not need it.
     ZeroKMS writes the metadata to its logs. Do not send plaintext,
     anything derived from plaintext, or secrets.
-  - Each decrypt method documents this with an example that runs.
+  - The scalar and tree decrypt methods document this with an example
+    that runs.
 - **`StackCipherBuilder::auth_strategy` and `key_provider`** (#1700).
   `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init()`
   builds the ZeroKMS client from an auth strategy and a client key provider
