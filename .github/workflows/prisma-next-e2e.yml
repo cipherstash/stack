@@ -83,6 +83,7 @@ jobs:
   e2e:
     name: Run Prisma Next E2E
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
 
     # Skip cleanly on fork PRs where secrets aren't available. The
     # global-setup hook in the suite hard-errors when `CS_WORKSPACE_CRN`
