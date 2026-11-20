@@ -8,7 +8,7 @@
 
 **Tech Stack:** GitHub Actions YAML, RunsOn v3.6.2 labels, Node.js ESM scripts, Vitest, js-yaml, and actionlint 1.7.7.
 
-**Spec:** `docs/adr/0004-same-size-swap-from-blacksmith-to-runs-on.md`, on branch `docs/ci-cost-decisions` in pull request #1416.
+**Spec:** `docs/adr/0004-same-size-swap-from-blacksmith-to-runs-on.md`.
 
 ## Global Constraints
 
@@ -457,10 +457,12 @@ Expected: the two gnu legs and the wrapper job pass. The musl leg fails as it do
 Run: `gh pr checks 1419 --watch`. Read each failed job's log with `gh run view <run-id> --log-failed`.
 
 - **Killed for lack of memory:** the log shows exit code 137, "Killed", or "signal: 9, SIGKILL". Change that job's `family=c8a+m8a` to `family=m8a`. Run `pnpm run test:scripts`, then commit with the message `ci(runners): give <job name> 4 GB per vCPU on m8a`, and push.
-- **`toomanyrequests` from Docker Hub:** report the job to the user. The secrets may not exist yet.
+- **`toomanyrequests` from Docker Hub:** report the job to the user. The secrets may not exist yet. Or the jobs may have used all 200 pulls that the free account allows in 6 hours.
 - **Any other failure:** compare it with the same job's latest run on `main`. Report it to the user with an excerpt from each log.
 
 ### Task 6: Record the decision and this plan in #1416
+
+This task is done. Commit `6d0933ccd` on #1416 made these changes.
 
 **Files:**
 - Modify: `docs/adr/0004-same-size-swap-from-blacksmith-to-runs-on.md`, to `status: accepted`
@@ -469,17 +471,17 @@ Run: `gh pr checks 1419 --watch`. Read each failed job's log with `gh run view <
 
 Work in the worktree of branch `docs/ci-cost-decisions`. Leave out the CSV and PDF files at the repository root. They are local data, not documentation.
 
-- [ ] **Step 1: Set the ADR's status**
+- [x] **Step 1: Set the ADR's status**
 
 Change line 2 of ADR 0004 to `status: accepted`.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add .github/CONTEXT.md docs/adr/0002-light-ci-jobs-on-github-hosted-runners-heavy-jobs-on-runs-on.md docs/adr/0003-expensive-ci-checks-run-in-merge-queues-on-main-and-next.md docs/adr/0004-same-size-swap-from-blacksmith-to-runs-on.md docs/superpowers/plans/2026-11-19-same-size-swap-blacksmith-to-runs-on.md
 git commit -S -m "docs(ci): record the same-size swap from Blacksmith to RunsOn"
 ```
 
-- [ ] **Step 3: Push and update #1416**
+- [x] **Step 3: Push and update #1416**
 
 Run `git push`. Then add one paragraph to the body of #1416. It says that ADR 0004 supersedes ADR 0002 and pauses ADR 0003. Keep the pull request a draft.
