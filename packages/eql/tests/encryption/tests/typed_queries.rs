@@ -423,7 +423,7 @@ async fn a_field_reference_match_query_verifies_and_sizes_as_the_data_path_does(
             &plan,
             "value",
             Op::Matches,
-            input.clone(),
+            again(&input),
             page,
             &EqlTargets,
         )
@@ -662,4 +662,10 @@ async fn a_record_stores_a_null_in_an_eql_field_as_its_plan_says() {
         .await
         .unwrap();
     assert_eq!(opened.risky_ref(), frame(&source).risky_ref());
+}
+
+/// A second frame of the same bytes. A frame is not `Clone`.
+fn again(frame: &ValueFrame) -> ValueFrame {
+    use stack_encrypt::AsProtectedRef as _;
+    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
 }

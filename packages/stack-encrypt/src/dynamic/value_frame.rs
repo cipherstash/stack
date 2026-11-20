@@ -367,14 +367,6 @@ impl Decrypt for ValueFrame {
     }
 }
 
-/// A deep copy into a fresh [`Protected`] buffer, which wipes on drop as the
-/// original does.
-impl Clone for ValueFrame {
-    fn clone(&self) -> Self {
-        Self(Equatable::new(self.0.risky_ref().to_vec()))
-    }
-}
-
 /// Two frames are equal when their bytes are. The bytes are compared in
 /// constant time, so the comparison does not reveal where two frames first
 /// differ. Frames of different lengths are unequal at once, which reveals
@@ -1351,7 +1343,6 @@ mod tests {
         #[test]
         fn frames_with_the_same_bytes_are_equal() {
             let frame = ValueFrame::of("alice").unwrap();
-            assert_eq!(frame, frame.clone());
             assert_eq!(
                 frame,
                 ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
@@ -1597,13 +1588,11 @@ mod tests {
         );
         let back = Tree::from_frame(frame.risky_ref()).expect("reads back");
         assert_eq!(back, value);
-        let copy = frame.clone();
-        assert_eq!(copy.risky_ref(), frame.risky_ref());
-        assert_ne!(copy.risky_ref().as_ptr(), frame.risky_ref().as_ptr());
-        let bytes = copy.into_inner();
+        let expected = value.to_frame().expect("frames");
+        let bytes = frame.into_inner();
         assert_eq!(
             bytes.risky_ref(),
-            frame.risky_ref(),
+            expected.risky_ref(),
             "the frame, still protected"
         );
     }

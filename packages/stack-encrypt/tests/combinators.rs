@@ -605,7 +605,16 @@ async fn one_tree_under_a_label_is_the_ciphertext_combinator_under_it() {
 /// descriptors, the same terms, and each opens through the other's reader.
 async fn same_field_bytes<F, Terms, X>(value: F, indexes: X)
 where
-    F: Encrypt + Decrypt + Clone + Zeroize + Send + Sync + PartialEq + Debug + 'static,
+    F: Encrypt
+        + stack_encrypt::EncryptRef
+        + Decrypt
+        + Clone
+        + Zeroize
+        + Send
+        + Sync
+        + PartialEq
+        + Debug
+        + 'static,
     Terms: TermSet<F> + PartialEq + Debug + Send,
     X: Indexes<F, Terms = Terms> + Send + Sync + 'static,
 {

@@ -237,8 +237,8 @@ async fn shared_record_scalar_profile() {
         }
         assert_eq!(case.kind, case.input.kind);
         let input = value(&case.input);
-        let expected_row = object(vec![(corpus.field.clone(), input.clone())]);
-        let fresh = record::encrypt(&keyset, expected_row.clone(), &plan)
+        let expected_row = object(vec![(corpus.field.clone(), value(&case.input))]);
+        let fresh = record::encrypt(&keyset, &expected_row, &plan)
             .unwrap()
             .await
             .unwrap();
@@ -259,7 +259,7 @@ async fn shared_record_scalar_profile() {
             &plan,
             &corpus.field,
             Op::Eq,
-            input.clone(),
+            value(&case.input),
             &NoTargets,
         )
         .unwrap()

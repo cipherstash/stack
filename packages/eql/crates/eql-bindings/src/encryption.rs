@@ -118,8 +118,8 @@ use stack_encrypt::target::{
 };
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, Decryptable, Decryption, Describe,
-    Description, Encrypt, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, SealedValue,
-    StackCipherText,
+    Description, Encrypt, EncryptRef, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty,
+    SealedValue, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -260,7 +260,7 @@ impl Reader for Ciphertext {
 // The canonical ciphertext, read into EQL's `c`. The declaration requires the
 // AEAD (authenticated encryption) half of the context, as Stack Encrypt's own
 // `StackCipherText` does.
-impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Ciphertext {
+impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for Ciphertext {
     type ContextInput = RequiredContext<AeadContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
@@ -324,7 +324,7 @@ impl Transcode for Hmac256 {
         EqualityVisitor
     }
 }
-impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Hmac256 {
+impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for Hmac256 {
     type ContextInput = RequiredContext<CallerContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where

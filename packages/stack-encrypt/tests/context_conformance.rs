@@ -301,7 +301,10 @@ async fn shared_context_composition() {
             object(vec![(
                 "text",
                 object(vec![
-                    ("context", context_frame.clone()),
+                    (
+                        "context",
+                        ValueFrame::from_bytes(context_frame.as_protected_ref()).unwrap(),
+                    ),
                     ("outputs", frame(vec!["c", "eq"])),
                     ("type", frame("string")),
                 ]),
@@ -501,7 +504,7 @@ async fn shared_context_boundaries() {
                 })
                 .collect::<Vec<_>>(),
         );
-        let mut stored = record::encrypt(&keyset, rows.clone(), &plan)
+        let mut stored = record::encrypt(&keyset, &rows, &plan)
             .unwrap()
             .await
             .unwrap();

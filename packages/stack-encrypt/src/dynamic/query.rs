@@ -2289,7 +2289,8 @@ mod tests {
                     .as_protected_ref(),
             )
             .expect("context");
-            let value = value.clone();
+            // A frame is not `Clone`: the future owns a frame of the same bytes.
+            let value = ValueFrame::from_bytes(value.as_protected_ref()).expect("a frame");
             async move {
                 super::super::term(keyset, &value, &IndexSpec::Equality, ctx)
                     .await
@@ -2297,14 +2298,16 @@ mod tests {
             }
         };
         let day = frame(Some(Logical::Date), Physical::Int(Int::I32(19_782)));
-        let term = ask("day", Op::Eq, day.clone()).await.unwrap();
-        assert_eq!(term.operand(), &Operand::One(stored(&day, "day").await));
+        let expected = stored(&day, "day").await;
+        let term = ask("day", Op::Eq, day).await.unwrap();
+        assert_eq!(term.operand(), &Operand::One(expected));
         let at = frame(
             Some(Logical::Timestamp(TimeUnit::Nanos)),
             Physical::Int(Int::I128(1_760_662_923_123_456_789)),
         );
-        let term = ask("at", Op::Eq, at.clone()).await.unwrap();
-        assert_eq!(term.operand(), &Operand::One(stored(&at, "at").await));
+        let expected = stored(&at, "at").await;
+        let term = ask("at", Op::Eq, at).await.unwrap();
+        assert_eq!(term.operand(), &Operand::One(expected));
         let price = frame(
             Some(Logical::Decimal { scale: 2 }),
             Physical::Int(Int::I64(3400)),

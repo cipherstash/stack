@@ -215,7 +215,7 @@ async fn eq_terms(
     name: &str,
     value: ValueFrame,
 ) -> (serde_json::Value, serde_json::Value) {
-    let stored: serde_json::Value = by_name(keyset, name, value.clone()).await;
+    let stored: serde_json::Value = by_name(keyset, name, again(&value)).await;
     let query = targets::query(name, &common::index_of(name), keyset, &label(), value)
         .unwrap()
         .await
@@ -2629,4 +2629,10 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
         };
         runtime.block_on(go_rows::open_row(&cipher, &round_tripped));
     }
+}
+
+/// A second frame of the same bytes. A frame is not `Clone`.
+fn again(frame: &ValueFrame) -> ValueFrame {
+    use stack_encrypt::AsProtectedRef as _;
+    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
 }

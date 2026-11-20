@@ -774,7 +774,7 @@ pub(crate) fn terms_pending<'a, K>(
     Pending::ready(cipher, terms)
 }
 
-/// Seal `value` into a [`JsonDocument`]: one data key for the document,
+/// Seal `value`, read in place, into a [`JsonDocument`]: one data key for the document,
 /// requested under the descriptor of the stored context `stored`, and every
 /// entry sealed under it with the AAD that binds the entry to the document,
 /// the column and its ordinal. The selectors and the other terms derive
@@ -782,15 +782,12 @@ pub(crate) fn terms_pending<'a, K>(
 /// so a document bound to its row is still found by a query under the
 /// scopes. The two are one context for a caller with no binding.
 pub(crate) fn seal_pending<'a, K: 'static>(
-    value: Value,
+    value: &Value,
     options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
     query: NonEmpty<ContextPiece<'static>>,
     stored: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonDocument, K> {
-    // The caller's document, owned here: wiped when this returns, also when
-    // the context is refused below.
-    let value = PlainJson::protect(value);
     let piece = stored.into_context();
     let descriptor = Descriptor::from_piece(&piece);
     if let Err(error) = descriptor.check() {
@@ -804,13 +801,7 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         Ok(rng) => rng,
         Err(error) => return Pending::failed(cipher, error),
     };
-    let walked = match walk(
-        value.risky_ref().value(),
-        options,
-        cipher.prf(),
-        &prf_context,
-        &mut rng,
-    ) {
+    let walked = match walk(value, options, cipher.prf(), &prf_context, &mut rng) {
         Ok(walked) => walked,
         Err(error) => return Pending::failed(cipher, error.into()),
     };
@@ -819,10 +810,10 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         let opens = |number: &serde_json::Number| {
             number_text(number).is_some_and(|text| number_text_opens(&text))
         };
-        if !every_number(value.risky_ref().value(), &opens) {
+        if !every_number(value, &opens) {
             return Pending::failed(cipher, Error::Aead);
         }
-        match sealed_root_plaintext(value.risky_ref().value()) {
+        match sealed_root_plaintext(value) {
             Ok(bytes) => Some(bytes),
             Err(error) => return Pending::failed(cipher, Error::Other(Box::new(error))),
         }
