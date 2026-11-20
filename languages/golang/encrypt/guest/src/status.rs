@@ -179,8 +179,8 @@ pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
     }
 }
 
-// These matches are deliberately exhaustive — no `_` arms. None of the
-// stack-kms error enums is `#[non_exhaustive]`, so exhaustiveness is free
+// These matches are deliberately exhaustive — no `_` arms. The outer KMS
+// error and request error enums matched here are exhaustive, so this is free
 // compiler coverage: `GenerateKeyError` already grew `Unauthorized` /
 // `Forbidden` out of the shared `From<ViturRequestError>` pattern, and a
 // variant added tomorrow must be classified here before this crate builds,

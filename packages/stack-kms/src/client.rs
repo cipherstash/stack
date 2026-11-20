@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::sync::OnceLock;
 use uuid::Uuid;
 use zerokms_protocol::{
     GenerateKeyRequest, GenerateKeySpec, GeneratedKey, IdentifiedBy, Keyset, LoadKeysetRequest,
@@ -13,6 +14,7 @@ use vitaminc::random::{Generatable, SafeRand};
 #[cfg(feature = "http")]
 use crate::connection::HttpConnection;
 use crate::connection::ZeroKMSConnection;
+use crate::endpoint::{HostedEndpoint, InvalidEndpoint, ZeroKmsEndpoint};
 use crate::errors::{Error, GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 use crate::futures::map_async_chunked;
 use crate::key::{ClientKey, DataKey, DataKeyWithTag, IndexKey};
@@ -108,8 +110,10 @@ impl<CONNOPTS> ClientOpts<CONNOPTS> {
 ///
 /// The client is generic over the transport [`ZeroKMSConnection`]; the default
 /// [`HttpConnection`] talks to a real ZeroKMS endpoint. Each method takes an
-/// access token directly — see [`StackKms`] for the high-level wrapper that
-/// fetches and refreshes tokens via [`stack_auth`].
+/// access token directly, and the endpoint to send it to when the connection
+/// has none of its own (see [`ZeroKMSConnection::send`]) — see [`StackKms`]
+/// for the high-level wrapper that fetches and refreshes tokens via
+/// [`stack_auth`] and resolves that endpoint.
 #[cfg(feature = "http")]
 pub struct Client<C = HttpConnection> {
     connection: C,
@@ -165,6 +169,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         operation: &'static str,
         specs: &'a [Spec],
         access_token: &str,
+        endpoint: Option<&ZeroKmsEndpoint>,
         make_request: impl Fn(&'a [Spec]) -> Req + Sync,
         response_keys: impl Fn(Req::Response) -> Vec<Item> + Sync,
         map_key: impl Fn(&'a Spec, Item) -> Result<Out, E> + Sync,
@@ -182,7 +187,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
 
                 let keys = self
                     .connection
-                    .send(make_request(chunk), access_token)
+                    .send(make_request(chunk), access_token, endpoint)
                     .await
                     .map(&response_keys)
                     .map_err(E::from)?;
@@ -224,6 +229,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         key: &ClientKey,
         keyset_id: Option<Uuid>,
         access_token: &str,
+        endpoint: Option<&ZeroKmsEndpoint>,
         unverified_context: Option<&UnverifiedContext>,
     ) -> Result<Vec<DataKey>, RetrieveKeyError> {
         tracing::trace!(target: "stack_kms::retrieve_keys", "preparing payloads");
@@ -239,6 +245,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
             "retrieve_keys",
             &keys,
             access_token,
+            endpoint,
             |keys| RetrieveKeyRequest {
                 keys: keys.into(),
                 keyset_id: keyset_id.map(Into::into),
@@ -263,6 +270,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         client_key: &ClientKey,
         keyset_id: Option<Uuid>,
         access_token: &str,
+        endpoint: Option<&ZeroKmsEndpoint>,
         unverified_context: Option<Cow<'a, UnverifiedContext>>,
     ) -> Result<FallibleDataKeyVec, RetrieveKeyError> {
         tracing::trace!(target: "stack_kms::retrieve_keys_fallible", "preparing payloads");
@@ -278,6 +286,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
             "retrieve_keys_fallible",
             &keys,
             access_token,
+            endpoint,
             |keys| RetrieveKeyRequestFallible {
                 keys: keys.into(),
                 keyset_id: keyset_id.map(Into::into),
@@ -310,6 +319,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         client_key: &ClientKey,
         keyset_id: Option<IdentifiedBy>,
         access_token: &str,
+        endpoint: Option<&ZeroKmsEndpoint>,
     ) -> Result<(Keyset, IndexKey), LoadKeysetError> {
         let req = LoadKeysetRequest {
             client_id: client_key.key_id,
@@ -319,7 +329,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         let LoadKeysetResponse {
             keyset,
             partial_index_key,
-        } = self.connection.send(req, access_token).await?;
+        } = self.connection.send(req, access_token, endpoint).await?;
 
         let index_key = IndexKey::from_key_material(client_key, &partial_index_key.key_material)?;
 
@@ -333,6 +343,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         client_key: &ClientKey,
         keyset_id: Option<Uuid>,
         access_token: &str,
+        endpoint: Option<&ZeroKmsEndpoint>,
         unverified_context: Option<Cow<'a, UnverifiedContext>>,
     ) -> Result<Vec<DataKeyWithTag>, GenerateKeyError> {
         let keys = {
@@ -367,6 +378,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
             "generate_keys",
             &keys,
             access_token,
+            endpoint,
             |keys| GenerateKeyRequest {
                 keys: keys.into(),
                 keyset_id: keyset_id.map(Into::into),
@@ -400,7 +412,14 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
 /// `StackKms` owns the transport [`Client`], a [`stack_auth`] credential
 /// provider, and a [`ClientKey`]. Each operation fetches a fresh access token
 /// (refreshing as needed), resolves the ZeroKMS endpoint from the token's
-/// `services` claim on first use, and delegates to the low-level client.
+/// `services` claim, and delegates to the low-level client. Discovery accepts
+/// only CipherStash-hosted HTTPS endpoints in regions known to this build.
+/// Once ZeroKMS has accepted a token, every later token must carry a valid
+/// claim for that token's region; missing, untrusted, or different-region
+/// claims are refused before a request is sent. Each token goes to the
+/// endpoint it claims, so a later token may move that region's endpoint
+/// between the supported hosted domains. Explicitly configured endpoints
+/// bypass claim-based discovery.
 ///
 /// Build one with [`StackKmsBuilder`](crate::StackKmsBuilder) (the default
 /// HTTP transport, `http` feature), or with [`connect`](Self::connect) over
@@ -410,17 +429,29 @@ pub struct StackKms<C, Conn = HttpConnection> {
     client: Client<Conn>,
     credentials: C,
     client_key: ClientKey,
+    /// `None` when the connection was given its endpoint at init; otherwise
+    /// the region of the first claimed endpoint ZeroKMS accepted a token at,
+    /// once it has.
+    discovered: Option<OnceLock<cts_common::Region>>,
 }
 
 /// `StackKms` owns the transport [`Client`], a [`stack_auth`] credential
 /// provider, and a [`ClientKey`]. Without the `http` feature there is no
 /// default connection: build one with [`connect`](Self::connect) over the
 /// host's [`ZeroKMSConnection`].
+/// Discovery requires every token to name a supported CipherStash-hosted
+/// HTTPS endpoint, in the region of the first one ZeroKMS accepted. Later
+/// tokens can change its hosted domain; explicitly configured endpoints
+/// bypass discovery.
 #[cfg(not(feature = "http"))]
 pub struct StackKms<C, Conn> {
     client: Client<Conn>,
     credentials: C,
     client_key: ClientKey,
+    /// `None` when the connection was given its endpoint at init; otherwise
+    /// the region of the first claimed endpoint ZeroKMS accepted a token at,
+    /// once it has.
+    discovered: Option<OnceLock<cts_common::Region>>,
 }
 
 impl<C, Conn> StackKms<C, Conn>
@@ -441,36 +472,94 @@ where
     )]
     ///
     /// The connection is initialised from `opts`'s connection options; the
-    /// ZeroKMS endpoint is taken from the access token's `services` claim on
-    /// first use unless the connection already knows one.
+    /// ZeroKMS endpoint is taken from each access token's `services` claim
+    /// unless the connection already knows one. A claimed endpoint must be
+    /// CipherStash-hosted, and once ZeroKMS has accepted a token, every later
+    /// token must name the same region, while its hosted domain may change.
+    /// Whether the connection already knows one is decided here, once.
     pub fn connect(
         opts: ClientOpts<Conn::ConnectionOpts>,
         credentials: C,
         client_key: ClientKey,
     ) -> Result<Self, Error> {
-        let client = Client::init_opts(opts).map_err(|e| Error::ConnectionInit(Box::new(e)))?;
+        let client: Client<Conn> =
+            Client::init_opts(opts).map_err(|e| Error::ConnectionInit(Box::new(e)))?;
+        // Decided once, here, from what the connection was built with.
+        let discovered = (!client.connection().has_base_url()).then(OnceLock::new);
         Ok(Self {
             client,
             credentials,
             client_key,
+            discovered,
         })
     }
 
-    /// Fetch a token from the credentials provider and ensure the ZeroKMS base
-    /// URL has been resolved on the connection (from the token's `services`
-    /// claim). The URL is only resolved once; subsequent calls skip resolution.
-    async fn get_token(&self) -> Result<stack_auth::ServiceToken, Error> {
+    /// Fetch a token from the credentials provider, and the ZeroKMS endpoint
+    /// to send it to.
+    ///
+    /// An endpoint configured on the connection (`with_base_url`,
+    /// `CS_ZEROKMS_HOST`, or a transport that needs none) is the operator's
+    /// choice: the connection uses it, so this returns no endpoint. Otherwise
+    /// the endpoint comes from the token's `services` claim, which nothing
+    /// here verifies — a [`TokenStore`](stack_auth::TokenStore) can return a
+    /// token anyone wrote — so:
+    ///
+    /// * the claim may only name a CipherStash-hosted ZeroKMS
+    ///   ([`stack_auth::ServiceToken::hosted_zerokms_endpoint`]), and is
+    ///   checked on every token, and
+    /// * once ZeroKMS has accepted a token at a claimed endpoint (see
+    ///   [`settle`](Self::settle)), every later token must name that
+    ///   endpoint's region. A token for another region is refused before it
+    ///   is sent anywhere. A token naming the same region on the other hosted
+    ///   domain goes to the endpoint it names, so a long-lived client keeps
+    ///   working when the old domain is retired.
+    ///
+    /// Each token goes to the endpoint its own claim names, never to one
+    /// another token named. Until ZeroKMS has accepted a token nothing is
+    /// pinned: a forged token naming another hosted region is refused by
+    /// ZeroKMS there and leaves the client free for the real one.
+    async fn get_token(&self) -> Result<(stack_auth::ServiceToken, Option<HostedEndpoint>), Error> {
         let token = (&self.credentials).get_token().await?;
-        if !self.client.connection().has_base_url() {
-            let endpoint = crate::endpoint::ZeroKmsEndpoint::try_from(token.zerokms_url()?)?;
-            tracing::debug!(
-                target: "stack_kms",
-                %endpoint,
-                "resolved ZeroKMS endpoint from the token's services claim"
-            );
-            self.client.connection().ensure_base_url(endpoint);
+        // Configured explicitly: the claim is not consulted.
+        let Some(discovered) = &self.discovered else {
+            return Ok((token, None));
+        };
+        let claimed = match token.hosted_zerokms_endpoint() {
+            Ok(hosted) => HostedEndpoint {
+                endpoint: hosted.into(),
+                region: hosted.region(),
+            },
+            // Retain the KMS endpoint error classification for malformed or
+            // untrusted claims; successful discovery uses the shared cache.
+            Err(_) => ZeroKmsEndpoint::from_services_claim(token.zerokms_url()?)?,
+        };
+        if discovered
+            .get()
+            .is_some_and(|region| *region != claimed.region)
+        {
+            return Err(InvalidEndpoint::Mismatch.into());
         }
-        Ok(token)
+        Ok((token, Some(claimed)))
+    }
+
+    /// Pin a claimed endpoint's region once ZeroKMS has accepted a token sent
+    /// there, and pass the operation's result through.
+    ///
+    /// A response other than an error means ZeroKMS authenticated the token,
+    /// so the claim that routed it is one ZeroKMS stands behind. The first
+    /// such region wins; a concurrent first call that lost the race to a
+    /// different region is refused as a mismatch on its next token.
+    fn settle<T, E>(&self, result: Result<T, E>, endpoint: Option<HostedEndpoint>) -> Result<T, E> {
+        if let (Ok(_), Some(discovered), Some(endpoint)) = (&result, &self.discovered, endpoint) {
+            if discovered.set(endpoint.region).is_ok() {
+                tracing::debug!(
+                    target: "stack_kms",
+                    endpoint = %endpoint.endpoint,
+                    "pinned the ZeroKMS region from the token's services claim"
+                );
+            }
+        }
+        result
     }
 
     /// The [`ClientKey`] this client uses to derive data keys.
@@ -485,18 +574,20 @@ where
         keyset_id: Option<Uuid>,
         unverified_context: Option<Cow<'a, UnverifiedContext>>,
     ) -> Result<Vec<DataKeyWithTag>, Error> {
-        let token = self.get_token().await?;
+        let (token, endpoint) = self.get_token().await?;
 
-        self.client
+        let result = self
+            .client
             .generate_keys(
                 payloads,
                 &self.client_key,
                 keyset_id,
                 token.as_str(),
+                endpoint.as_ref().map(|e| &e.endpoint),
                 unverified_context,
             )
-            .await
-            .map_err(Error::from)
+            .await;
+        self.settle(result, endpoint).map_err(Error::from)
     }
 
     /// Retrieve multiple data keys for an iterator of [`RetrieveKeyPayload`].
@@ -506,18 +597,20 @@ where
         keyset_id: Option<Uuid>,
         unverified_context: Option<&UnverifiedContext>,
     ) -> Result<Vec<DataKey>, Error> {
-        let token = self.get_token().await?;
+        let (token, endpoint) = self.get_token().await?;
 
-        self.client
+        let result = self
+            .client
             .retrieve_keys(
                 payloads,
                 &self.client_key,
                 keyset_id,
                 token.as_str(),
+                endpoint.as_ref().map(|e| &e.endpoint),
                 unverified_context,
             )
-            .await
-            .map_err(Error::from)
+            .await;
+        self.settle(result, endpoint).map_err(Error::from)
     }
 
     /// Load a keyset and derive its [`IndexKey`] — the deterministic per-keyset
@@ -528,12 +621,18 @@ where
         &self,
         keyset_id: Option<IdentifiedBy>,
     ) -> Result<(Keyset, IndexKey), Error> {
-        let token = self.get_token().await?;
+        let (token, endpoint) = self.get_token().await?;
 
-        let (keyset, index_key) = self
+        let result = self
             .client
-            .load_keyset(&self.client_key, keyset_id, token.as_str())
-            .await?;
+            .load_keyset(
+                &self.client_key,
+                keyset_id,
+                token.as_str(),
+                endpoint.as_ref().map(|e| &e.endpoint),
+            )
+            .await;
+        let (keyset, index_key) = self.settle(result, endpoint)?;
 
         tracing::debug!(target: "stack_kms::load_keyset", "loaded keyset: [{}]({})", keyset.id, keyset.name);
 
@@ -548,19 +647,21 @@ where
         keyset_id: Option<Uuid>,
         unverified_context: Option<Cow<'a, UnverifiedContext>>,
     ) -> Result<FallibleDataKeyVec, Error> {
-        let token = self.get_token().await?;
+        let (token, endpoint) = self.get_token().await?;
 
         tracing::debug!(target: "stack_kms::retrieve_keys_fallible", "got token, retrieving keys");
-        self.client
+        let result = self
+            .client
             .retrieve_keys_fallible(
                 payloads,
                 &self.client_key,
                 keyset_id,
                 token.as_str(),
+                endpoint.as_ref().map(|e| &e.endpoint),
                 unverified_context,
             )
-            .await
-            .map_err(Error::from)
+            .await;
+        self.settle(result, endpoint).map_err(Error::from)
     }
 }
 
@@ -708,6 +809,522 @@ mod tests {
         }
     }
 
+    /// Where a token's `services` claim may send key operations.
+    /// The claim is unverified, so it may only name a CipherStash-hosted
+    /// ZeroKMS, and it cannot change a region ZeroKMS has accepted a token in.
+    mod endpoint_from_the_services_claim {
+        use super::*;
+        use base64ct::{Base64UrlUnpadded, Encoding};
+        use std::collections::VecDeque;
+        use std::sync::Mutex;
+
+        const SYDNEY: &str = "https://ap-southeast-2.aws.viturhosted.net/";
+        const VIRGINIA: &str = "https://us-east-1.aws.zerokms.cipherstashmanaged.net/";
+        const SYD: &str = "ap-southeast-2.aws";
+        const IAD: &str = "us-east-1.aws";
+
+        /// An unsigned JWT naming `zerokms` — the shape a poisoned
+        /// `TokenStore` can hand back, since nothing verifies the signature.
+        fn jwt(zerokms: Option<&str>) -> String {
+            let mut claims = serde_json::json!({
+                "iss": "https://ap-southeast-2.aws.cts.cipherstashmanaged.net/",
+                "sub": "CS|test-user",
+                "workspace": "ZVATKW3VHMFG27DY",
+            });
+            if let Some(url) = zerokms {
+                claims["services"] = serde_json::json!({ "zerokms": url });
+            }
+            let part =
+                |v: serde_json::Value| Base64UrlUnpadded::encode_string(v.to_string().as_bytes());
+            format!(
+                "{}.{}.c2ln",
+                part(serde_json::json!({ "alg": "HS256", "typ": "JWT" })),
+                part(claims)
+            )
+        }
+
+        /// Hands out the given tokens in order.
+        struct Tokens(Mutex<VecDeque<String>>);
+
+        impl Tokens {
+            fn new<const N: usize>(tokens: [String; N]) -> Self {
+                Self(Mutex::new(tokens.into()))
+            }
+        }
+
+        impl AuthStrategy for &Tokens {
+            async fn get_token(self) -> Result<stack_auth::ServiceToken, stack_auth::AuthError> {
+                let token = self
+                    .0
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("a token per call");
+                Ok(stack_auth::ServiceToken::new(stack_auth::SecretToken::new(
+                    token,
+                )))
+            }
+        }
+
+        /// A transport that, like `HttpConnection`, sends to the endpoint it
+        /// was configured with or else the one `StackKms` passes, and records
+        /// where each request went. ZeroKMS's answer to each request is
+        /// scripted: `true` accepts the token, `false` refuses it.
+        struct Discovering {
+            configured: Option<ZeroKmsEndpoint>,
+            answers: Mutex<VecDeque<bool>>,
+            /// Where each request went, and the token it carried.
+            sent: Mutex<Vec<(String, String)>>,
+        }
+
+        impl crate::connection::ZeroKMSConnectionInit for Discovering {
+            type ConnectionOpts = (Option<ZeroKmsEndpoint>, Vec<bool>);
+            type Error = std::convert::Infallible;
+
+            fn init((configured, answers): Self::ConnectionOpts) -> Result<Self, Self::Error> {
+                Ok(Self {
+                    configured,
+                    answers: Mutex::new(answers.into()),
+                    sent: Mutex::new(Vec::new()),
+                })
+            }
+        }
+
+        #[derive(Debug, thiserror::Error)]
+        #[error("401 Unauthorized")]
+        struct Refused;
+
+        impl ZeroKMSConnection for Discovering {
+            fn has_base_url(&self) -> bool {
+                self.configured.is_some()
+            }
+
+            async fn send<Request: ViturRequest>(
+                &self,
+                _request: Request,
+                access_token: &str,
+                endpoint: Option<&ZeroKmsEndpoint>,
+            ) -> Result<Request::Response, ViturRequestError> {
+                let to = self
+                    .configured
+                    .as_ref()
+                    .or(endpoint)
+                    .expect("an endpoint for every request");
+                self.sent
+                    .lock()
+                    .unwrap()
+                    .push((to.to_string(), access_token.to_owned()));
+                let accepted = self
+                    .answers
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("an answer per request");
+                if !accepted {
+                    return Err(ViturRequestError::response("refused", Refused));
+                }
+                let response = GenerateKeyResponse {
+                    keys: vec![generated_key(vec![1])],
+                };
+                Ok(serde_json::from_value(serde_json::to_value(response).unwrap()).unwrap())
+            }
+        }
+
+        fn kms(
+            configured: Option<&str>,
+            tokens: Tokens,
+            answers: impl Into<Vec<bool>>,
+        ) -> StackKms<Tokens, Discovering> {
+            let configured = configured.map(|s| s.parse().unwrap());
+            StackKms::connect(
+                ClientOpts::new((configured, answers.into())),
+                tokens,
+                random_client_key(),
+            )
+            .expect("connect")
+        }
+
+        /// One key operation, as a caller makes it.
+        async fn call(kms: &StackKms<Tokens, Discovering>) -> Result<(), Error> {
+            kms.generate_keys(
+                vec![GenerateKeyPayload::new("a", Cow::Owned(vec![]))],
+                None,
+                None,
+            )
+            .await
+            .map(|_| ())
+        }
+
+        /// The region pinned so far, as `<region>.<provider>`.
+        fn pinned(kms: &StackKms<Tokens, Discovering>) -> Option<String> {
+            kms.discovered
+                .as_ref()
+                .and_then(OnceLock::get)
+                .map(|region| region.identifier())
+        }
+
+        fn sent_to(kms: &StackKms<Tokens, Discovering>) -> Vec<String> {
+            let sent = kms.client.connection().sent.lock().unwrap();
+            sent.iter().map(|(to, _)| to.clone()).collect()
+        }
+
+        #[tokio::test]
+        async fn a_hosted_endpoint_is_used_and_pinned_once_zerokms_accepts_the_token() {
+            let kms = kms(None, Tokens::new([jwt(Some(SYDNEY))]), [true]);
+            call(&kms).await.expect("a hosted endpoint is accepted");
+            assert_eq!(sent_to(&kms), [SYDNEY]);
+            assert_eq!(pinned(&kms).as_deref(), Some(SYD));
+        }
+
+        #[tokio::test]
+        async fn a_host_outside_cipherstash_is_refused_and_not_pinned() {
+            let kms = kms(None, Tokens::new([jwt(Some("https://evil.example/"))]), []);
+            let err = call(&kms).await.expect_err("an attacker's host");
+            assert!(
+                matches!(err, Error::InvalidEndpoint(InvalidEndpoint::NotHosted)),
+                "{err:?}"
+            );
+            assert!(sent_to(&kms).is_empty(), "nothing is sent");
+            assert_eq!(pinned(&kms), None);
+        }
+
+        #[tokio::test]
+        async fn plain_http_is_refused() {
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some("http://ap-southeast-2.aws.viturhosted.net/"))]),
+                [],
+            );
+            let err = call(&kms).await.expect_err("http");
+            assert!(
+                matches!(err, Error::InvalidEndpoint(InvalidEndpoint::NotHosted)),
+                "{err:?}"
+            );
+            assert!(sent_to(&kms).is_empty(), "nothing is sent");
+            assert_eq!(pinned(&kms), None);
+        }
+
+        #[tokio::test]
+        async fn a_refused_first_token_does_not_stop_a_good_one() {
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some("https://evil.example/")), jwt(Some(SYDNEY))]),
+                [true],
+            );
+            call(&kms).await.expect_err("an attacker's host");
+            call(&kms).await.expect("the next caller's token");
+            assert_eq!(pinned(&kms).as_deref(), Some(SYD));
+        }
+
+        /// A forged token can name any hosted region. ZeroKMS there refuses
+        /// it, so it must not decide where the client's real tokens go: the
+        /// endpoint is pinned only once ZeroKMS has accepted a token.
+        #[tokio::test]
+        async fn a_token_zerokms_refuses_does_not_pin_its_region() {
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some(VIRGINIA)), jwt(Some(SYDNEY)), jwt(Some(SYDNEY))]),
+                [false, true, true],
+            );
+            let err = call(&kms)
+                .await
+                .expect_err("ZeroKMS refuses the forged token");
+            assert!(!matches!(err, Error::InvalidEndpoint(_)), "{err:?}");
+            assert_eq!(pinned(&kms), None, "a refused token pins nothing");
+
+            call(&kms).await.expect("the real token works");
+            call(&kms).await.expect("and keeps working");
+            assert_eq!(sent_to(&kms), [VIRGINIA, SYDNEY, SYDNEY]);
+            assert_eq!(pinned(&kms).as_deref(), Some(SYD));
+        }
+
+        #[tokio::test]
+        async fn a_later_token_naming_another_region_is_refused() {
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some(SYDNEY)), jwt(Some(VIRGINIA)), jwt(Some(SYDNEY))]),
+                [true, true],
+            );
+            call(&kms).await.expect("first token pins Sydney");
+            let err = call(&kms)
+                .await
+                .expect_err("a token for another region must not go to Sydney");
+            assert!(
+                matches!(err, Error::InvalidEndpoint(InvalidEndpoint::Mismatch)),
+                "{err:?}"
+            );
+            call(&kms).await.expect("Sydney tokens still work");
+            assert_eq!(
+                sent_to(&kms),
+                [SYDNEY, SYDNEY],
+                "Virginia's token went nowhere"
+            );
+            assert_eq!(pinned(&kms).as_deref(), Some(SYD));
+        }
+
+        /// CipherStash serves each region's ZeroKMS under both hosted domains
+        /// while it moves from `viturhosted.net` to
+        /// `zerokms.cipherstashmanaged.net`. When CTS starts issuing the new
+        /// name, a long-lived client pinned to the old one must keep working:
+        /// refusing would fail every call until the process restarted.
+        #[tokio::test]
+        async fn a_later_token_for_the_same_region_on_the_other_hosted_domain_is_accepted() {
+            const SYDNEY_NEW: &str = "https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net/";
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some(SYDNEY)), jwt(Some(SYDNEY_NEW)), jwt(Some(SYDNEY))]),
+                [true, true, true],
+            );
+            call(&kms).await.expect("first token pins Sydney");
+            call(&kms)
+                .await
+                .expect("same region on the new domain is the same ZeroKMS");
+            call(&kms).await.expect("and back again");
+            assert_eq!(
+                sent_to(&kms),
+                [SYDNEY, SYDNEY_NEW, SYDNEY],
+                "each token goes to the endpoint it names"
+            );
+            assert_eq!(pinned(&kms).as_deref(), Some(SYD));
+        }
+
+        #[tokio::test]
+        async fn the_domain_move_works_in_both_directions() {
+            const VIRGINIA_OLD: &str = "https://us-east-1.aws.viturhosted.net/";
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some(VIRGINIA)), jwt(Some(VIRGINIA_OLD))]),
+                [true, true],
+            );
+            call(&kms).await.expect("first token pins Virginia");
+            call(&kms)
+                .await
+                .expect("same region on the old domain is the same ZeroKMS");
+            assert_eq!(sent_to(&kms), [VIRGINIA, VIRGINIA_OLD]);
+            assert_eq!(pinned(&kms).as_deref(), Some(IAD));
+        }
+
+        mod given_a_same_region_hosted_domain_migration {
+            use super::*;
+
+            #[tokio::test]
+            async fn subsequent_requests_use_the_new_domain() {
+                const SYDNEY_NEW: &str =
+                    "https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net/";
+                let kms = kms(
+                    None,
+                    Tokens::new([
+                        jwt(Some(SYDNEY)),
+                        jwt(Some(SYDNEY_NEW)),
+                        jwt(Some(SYDNEY_NEW)),
+                    ]),
+                    [true, true, true],
+                );
+                call(&kms).await.expect("the first token discovers Sydney");
+                call(&kms)
+                    .await
+                    .expect("the refreshed token names the same region");
+                call(&kms).await.expect("and the next");
+
+                assert_eq!(
+                    sent_to(&kms),
+                    [SYDNEY, SYDNEY_NEW, SYDNEY_NEW],
+                    "requests must follow the trusted same-region domain migration before the old domain retires"
+                );
+            }
+        }
+
+        mod stress_tests {
+            use super::*;
+            use std::sync::Arc;
+            use tokio::sync::Barrier;
+
+            struct ConcurrentTokens {
+                tokens: Tokens,
+                barrier: Barrier,
+            }
+
+            impl AuthStrategy for &ConcurrentTokens {
+                async fn get_token(
+                    self,
+                ) -> Result<stack_auth::ServiceToken, stack_auth::AuthError> {
+                    let token = (&self.tokens).get_token().await?;
+                    self.barrier.wait().await;
+                    Ok(token)
+                }
+            }
+
+            /// Concurrent first callers holding tokens for two regions: each
+            /// token goes only to the region it names, ZeroKMS accepting them
+            /// pins exactly one region, and the other is refused from then on.
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            async fn concurrent_discovery_keeps_one_region() {
+                const CALLERS: usize = 32;
+                let tokens = std::array::from_fn::<_, CALLERS, _>(|i| {
+                    jwt(Some(if i % 2 == 0 { SYDNEY } else { VIRGINIA }))
+                });
+                let kms = Arc::new(
+                    StackKms::<_, Discovering>::connect(
+                        ClientOpts::new((None, vec![true; CALLERS])),
+                        ConcurrentTokens {
+                            tokens: Tokens::new(tokens),
+                            barrier: Barrier::new(CALLERS),
+                        },
+                        random_client_key(),
+                    )
+                    .unwrap(),
+                );
+                let mut callers = Vec::new();
+                for _ in 0..CALLERS {
+                    let kms = Arc::clone(&kms);
+                    callers.push(tokio::spawn(async move {
+                        kms.generate_keys(
+                            vec![GenerateKeyPayload::new("a", Cow::Owned(vec![]))],
+                            None,
+                            None,
+                        )
+                        .await
+                    }));
+                }
+                let mut accepted = 0;
+                for caller in callers {
+                    match caller.await.unwrap() {
+                        Ok(_) => accepted += 1,
+                        // A caller that reached the check after another
+                        // region was pinned is refused before sending.
+                        Err(error) => assert!(
+                            matches!(error, Error::InvalidEndpoint(InvalidEndpoint::Mismatch)),
+                            "{error:?}"
+                        ),
+                    }
+                }
+
+                let sent = kms.client.connection().sent.lock().unwrap().clone();
+                assert_eq!(sent.len(), accepted, "only refused callers send nothing");
+                for (to, token) in &sent {
+                    let named =
+                        stack_auth::ServiceToken::new(stack_auth::SecretToken::new(token.clone()))
+                            .hosted_zerokms_endpoint()
+                            .unwrap()
+                            .as_url()
+                            .to_string();
+                    assert_eq!(to, &named, "a token goes only where it names");
+                }
+
+                let won = kms
+                    .discovered
+                    .as_ref()
+                    .and_then(OnceLock::get)
+                    .copied()
+                    .expect("one region is pinned");
+                let won_url = if won.identifier() == SYD {
+                    SYDNEY
+                } else {
+                    VIRGINIA
+                };
+                assert_eq!(
+                    sent.iter().filter(|(to, _)| to == won_url).count(),
+                    CALLERS / 2,
+                    "every token for the pinned region is accepted"
+                );
+                let loser = if won.identifier() == SYD {
+                    VIRGINIA
+                } else {
+                    SYDNEY
+                };
+                let late = StackKms {
+                    client: Client::init_opts(ClientOpts::new((None, vec![]))).unwrap(),
+                    credentials: Tokens::new([jwt(Some(loser))]),
+                    client_key: random_client_key(),
+                    discovered: Some(OnceLock::from(won)),
+                };
+                let err = call(&late)
+                    .await
+                    .expect_err("the other region is refused once one is pinned");
+                assert!(
+                    matches!(err, Error::InvalidEndpoint(InvalidEndpoint::Mismatch)),
+                    "{err:?}"
+                );
+                assert!(sent_to(&late).is_empty(), "before anything is sent");
+            }
+        }
+
+        #[tokio::test]
+        async fn another_region_is_refused_on_either_domain() {
+            for other in [
+                "https://us-east-1.aws.viturhosted.net/",
+                "https://us-east-1.aws.zerokms.cipherstashmanaged.net/",
+            ] {
+                let kms = kms(
+                    None,
+                    Tokens::new([jwt(Some(SYDNEY)), jwt(Some(other))]),
+                    [true],
+                );
+                call(&kms).await.expect("first token pins Sydney");
+                let err = call(&kms).await.expect_err(other);
+                assert!(
+                    matches!(err, Error::InvalidEndpoint(InvalidEndpoint::Mismatch)),
+                    "{other}: {err:?}"
+                );
+                assert_eq!(sent_to(&kms), [SYDNEY]);
+            }
+        }
+
+        #[tokio::test]
+        async fn a_later_token_naming_a_foreign_host_is_refused() {
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some(SYDNEY)), jwt(Some("https://evil.example/"))]),
+                [true],
+            );
+            call(&kms).await.expect("first token pins Sydney");
+            let err = call(&kms).await.expect_err("foreign host");
+            assert!(
+                matches!(err, Error::InvalidEndpoint(InvalidEndpoint::NotHosted)),
+                "{err:?}"
+            );
+            assert_eq!(sent_to(&kms), [SYDNEY]);
+        }
+
+        #[tokio::test]
+        async fn a_later_token_without_the_claim_is_refused() {
+            let kms = kms(None, Tokens::new([jwt(Some(SYDNEY)), jwt(None)]), [true]);
+            call(&kms).await.expect("first token pins Sydney");
+            let err = call(&kms).await.expect_err("no services claim");
+            assert!(matches!(err, Error::Auth(_)), "{err:?}");
+        }
+
+        #[tokio::test]
+        async fn a_configured_endpoint_ignores_the_claim() {
+            // `CS_ZEROKMS_HOST` / `with_base_url` is the operator's choice:
+            // any host, `http` included, and the claim is never consulted.
+            let kms = kms(
+                Some("http://localhost:3002"),
+                Tokens::new([jwt(Some("https://evil.example/")), jwt(None)]),
+                [true, true],
+            );
+            call(&kms).await.expect("claim ignored");
+            call(&kms).await.expect("claim ignored");
+            assert_eq!(
+                sent_to(&kms),
+                ["http://localhost:3002/", "http://localhost:3002/"]
+            );
+            assert_eq!(pinned(&kms), None, "nothing is discovered");
+        }
+
+        #[tokio::test]
+        async fn a_transport_that_needs_no_endpoint_ignores_the_claim() {
+            let kms = StackKms::<_, TestConnection>::connect(
+                ClientOpts::new(TestConnectionBuilder::new()),
+                stack_auth::StaticTokenStrategy::new(jwt(Some("https://evil.example/"))),
+                random_client_key(),
+            )
+            .expect("connect");
+            let (_, endpoint) = kms.get_token().await.expect("claim ignored");
+            assert_eq!(endpoint, None);
+        }
+    }
+
     mod count_mismatch {
         use super::*;
 
@@ -730,6 +1347,7 @@ mod tests {
                     &client_key,
                     None,
                     "token",
+                    None,
                     None,
                 )
                 .await
@@ -763,6 +1381,7 @@ mod tests {
                     None,
                     "token",
                     None,
+                    None,
                 )
                 .await
                 .expect_err("count mismatch must be an error");
@@ -794,6 +1413,7 @@ mod tests {
                     &client_key,
                     None,
                     "token",
+                    None,
                     None,
                 )
                 .await
@@ -836,6 +1456,7 @@ mod tests {
                     None,
                     "token",
                     None,
+                    None,
                 )
                 .await
                 .expect_err("a failed request must surface");
@@ -861,6 +1482,7 @@ mod tests {
                     &client_key,
                     None,
                     "token",
+                    None,
                     None,
                 )
                 .await
@@ -919,6 +1541,7 @@ mod tests {
                 None,
                 "token",
                 None,
+                None,
             )
             .await
             .expect("generate_keys should succeed");
@@ -968,7 +1591,7 @@ mod tests {
         ];
 
         let keys = client
-            .generate_keys(payloads, &client_key, None, "token", None)
+            .generate_keys(payloads, &client_key, None, "token", None, None)
             .await
             .expect("generate_keys should succeed");
 
@@ -993,7 +1616,7 @@ mod tests {
         let payloads = vec![RetrieveKeyPayload::new(iv, "a", &[1, 2, 3])];
 
         let keys = client
-            .retrieve_keys(payloads, &client_key, None, "token", None)
+            .retrieve_keys(payloads, &client_key, None, "token", None, None)
             .await
             .expect("retrieve_keys should succeed");
 
@@ -1026,6 +1649,7 @@ mod tests {
                 None,
                 "token",
                 None,
+                None,
             )
             .await
             .expect("generate should succeed");
@@ -1048,6 +1672,7 @@ mod tests {
                 &client_key,
                 None,
                 "token",
+                None,
                 None,
             )
             .await
@@ -1080,11 +1705,11 @@ mod tests {
         };
 
         let (loaded_a, key_a) = keyset(shared_bytes.clone())
-            .load_keyset(&client_key, None, "token")
+            .load_keyset(&client_key, None, "token", None)
             .await
             .expect("load_keyset should succeed");
         let (_, key_b) = keyset(shared_bytes)
-            .load_keyset(&client_key, Some(keyset_id.into()), "token")
+            .load_keyset(&client_key, Some(keyset_id.into()), "token", None)
             .await
             .expect("load_keyset should succeed");
 
@@ -1095,7 +1720,7 @@ mod tests {
 
         // Different key material derives a different index key.
         let (_, key_c) = keyset(vec![8u8; 528])
-            .load_keyset(&client_key, None, "token")
+            .load_keyset(&client_key, None, "token", None)
             .await
             .expect("load_keyset should succeed");
         assert_ne!(key_a.key(), key_c.key());
@@ -1130,6 +1755,7 @@ mod tests {
                 &client_key,
                 None,
                 "token",
+                None,
                 None,
             )
             .await
