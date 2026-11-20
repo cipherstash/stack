@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
@@ -106,11 +108,14 @@ func TestLiveAuditMetadataReachesZeroKMS(t *testing.T) {
 	metadata := encrypt.AuditMetadata{
 		"purpose": "live audit test",
 		"rows":    len(livePeople),
+		"at":      time.Date(2026, 11, 20, 21, 0, 0, 0, time.FixedZone("AEDT", 11*60*60)),
 		"request": map[string]any{"id": "req_01J9Z3"},
 	}
 	want := map[string]any{
 		"purpose": "live audit test",
 		"rows":    float64(len(livePeople)),
+		// A time crosses as RFC 3339 text in UTC.
+		"at":      "2026-11-20T10:00:00Z",
 		"request": map[string]any{"id": "req_01J9Z3"},
 	}
 	// unverified is the unverified context of the one request a call made
@@ -162,6 +167,19 @@ func TestLiveAuditMetadataReachesZeroKMS(t *testing.T) {
 	}
 	if got := unverified("a Decrypt with no metadata", "retrieve-data-key"); len(got) != 0 {
 		t.Errorf("a Decrypt with no metadata sent %v, want no facts", got)
+	}
+
+	// Metadata the engine refuses stops the call before any key is
+	// requested: ZeroKMS receives nothing.
+	refused := plain.Audit(encrypt.AuditMetadata{"fact": uint64(math.MaxUint64)})
+	if _, err := testusers.Encrypt(ctx, refused, livePeople); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("Encrypt with an integer above int64: %v, want ErrEncoding", err)
+	}
+	if _, err := testusers.Decrypt(ctx, refused, encrypted); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("Decrypt with an integer above int64: %v, want ErrEncoding", err)
+	}
+	if made := requests(); len(made) != 0 {
+		t.Errorf("the refused calls made %d requests (%v), want none", len(made), paths(made))
 	}
 
 	// A query through the audited cipher asks ZeroKMS for nothing.

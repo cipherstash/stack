@@ -35,7 +35,8 @@ func facts(t *testing.T, cipher *encrypt.Cipher) any {
 
 func object(fields ...vcvalue.Field) vcvalue.Object { return fields }
 
-// A cipher sends the facts it was given, at the types the caller wrote.
+// A cipher sends the facts it was given, at the types the caller wrote. A
+// time is the exception: it is sent as RFC 3339 text in UTC.
 func TestAuditHoldsTheFactsAsGiven(t *testing.T) {
 	base := (&encrypt.Client{}).DefaultKeyset()
 	if got := facts(t, base); got != nil {
@@ -49,41 +50,54 @@ func TestAuditHoldsTheFactsAsGiven(t *testing.T) {
 	}
 	sydney := time.FixedZone("AEDT", 11*60*60)
 	at := time.Date(2026, 11, 20, 10, 0, 0, 0, sydney)
-	type window struct{ From, To time.Time }
 	cipher := base.Audit(encrypt.AuditMetadata{
 		"purpose": "export",
-		"rows":    250,
+		"dry_run": false,
+		"actor":   nil,
+		"ratio":   0.25,
+		"ratio32": float32(0.5),
+		// Every integer type the list names, at its own width.
+		"int": int(-1), "int8": int8(-8), "int16": int16(-16), "int32": int32(-32), "int64": int64(-64),
+		"uint": uint(1), "uint8": uint8(8), "uint16": uint16(16), "uint32": uint32(32), "uint64": uint64(64),
 		// A time is sent as RFC 3339 text in UTC, wherever it is.
 		"at":       at,
 		"at_nanos": time.Date(2026, 11, 20, 10, 0, 0, 123456789, time.UTC),
-		"at_ptr":   &at,
-		"times":    []time.Time{at},
-		"window":   window{From: at, To: at.Add(time.Hour)},
-		"mixed":    []any{"ok", at, map[string]any{"at": at}},
-		"dry_run":  false,
-		"actor":    nil,
-		"ratio":    0.25,
+		"at_half":  time.Date(2026, 11, 20, 10, 0, 0, 500000000, time.UTC),
+		"first":    time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC),
+		"last":     time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
 		"tables":   []string{"users", "orders"},
+		"mixed":    []any{"ok", 7, nil, at, []any{at}, map[string]any{"at": at}},
 		"request":  map[string]any{"id": "req_01J9Z3"},
+		"nested":   encrypt.AuditMetadata{"team": "platform"},
 	})
 	const utc = "2026-11-19T23:00:00Z"
 	want := object(
 		vcvalue.Field{Key: "actor", Value: nil},
 		vcvalue.Field{Key: "at", Value: utc},
+		vcvalue.Field{Key: "at_half", Value: "2026-11-20T10:00:00.5Z"},
 		vcvalue.Field{Key: "at_nanos", Value: "2026-11-20T10:00:00.123456789Z"},
-		vcvalue.Field{Key: "at_ptr", Value: utc},
 		vcvalue.Field{Key: "dry_run", Value: false},
-		vcvalue.Field{Key: "mixed", Value: []any{"ok", utc, object(vcvalue.Field{Key: "at", Value: utc})}},
+		vcvalue.Field{Key: "first", Value: "0000-01-01T00:00:00Z"},
+		vcvalue.Field{Key: "int", Value: int64(-1)},
+		vcvalue.Field{Key: "int16", Value: int16(-16)},
+		vcvalue.Field{Key: "int32", Value: int32(-32)},
+		vcvalue.Field{Key: "int64", Value: int64(-64)},
+		vcvalue.Field{Key: "int8", Value: int8(-8)},
+		vcvalue.Field{Key: "last", Value: "9999-12-31T23:59:59Z"},
+		vcvalue.Field{Key: "mixed", Value: []any{
+			"ok", int64(7), nil, utc, []any{utc}, object(vcvalue.Field{Key: "at", Value: utc}),
+		}},
+		vcvalue.Field{Key: "nested", Value: object(vcvalue.Field{Key: "team", Value: "platform"})},
 		vcvalue.Field{Key: "purpose", Value: "export"},
 		vcvalue.Field{Key: "ratio", Value: 0.25},
+		vcvalue.Field{Key: "ratio32", Value: float32(0.5)},
 		vcvalue.Field{Key: "request", Value: object(vcvalue.Field{Key: "id", Value: "req_01J9Z3"})},
-		vcvalue.Field{Key: "rows", Value: int64(250)},
 		vcvalue.Field{Key: "tables", Value: []any{"users", "orders"}},
-		vcvalue.Field{Key: "times", Value: []any{utc}},
-		vcvalue.Field{Key: "window", Value: object(
-			vcvalue.Field{Key: "From", Value: utc},
-			vcvalue.Field{Key: "To", Value: "2026-11-20T00:00:00Z"},
-		)},
+		vcvalue.Field{Key: "uint", Value: uint64(1)},
+		vcvalue.Field{Key: "uint16", Value: uint16(16)},
+		vcvalue.Field{Key: "uint32", Value: uint32(32)},
+		vcvalue.Field{Key: "uint64", Value: uint64(64)},
+		vcvalue.Field{Key: "uint8", Value: uint8(8)},
 	)
 	if got := facts(t, cipher); !reflect.DeepEqual(got, want) {
 		t.Fatalf("facts = %#v\nwant    %#v", got, want)
@@ -154,35 +168,67 @@ func TestPrintingACipherDoesNotShowItsFacts(t *testing.T) {
 	}
 }
 
-// A Go value the SDK cannot send is reported by the first call, as
-// ErrEncoding, and never by a panic. An earlier refusal is the one reported.
-func TestAValueTheSDKCannotSendIsReportedByTheFirstCall(t *testing.T) {
+// A value of a type the list does not name is reported by the first call,
+// as ErrEncoding, and never by a panic. The error names the fact and the
+// type, and shows no value. An earlier refusal is the one reported.
+func TestAValueOfAnotherTypeIsReportedByTheFirstCall(t *testing.T) {
 	ctx := context.Background()
 	client := &encrypt.Client{}
-	for name, value := range map[string]any{
-		"a channel":          make(chan int),
-		"a function":         func() {},
-		"text not in UTF-8":  "\xff",
-		"a map keyed by int": map[int]string{1: "a"},
+	type window struct{ From time.Time }
+	type requestID string
+	at := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	cycle := map[string]any{}
+	cycle["again"] = cycle
+	deep := []any{"leak-marker"}
+	for range 40 {
+		deep = []any{deep}
+	}
+	for name, tc := range map[string]struct {
+		value any
+		names string
+	}{
+		"bytes":                   {[]byte("leak-marker"), "[]byte"},
+		"a byte array":            {[4]byte{1, 2, 3, 4}, "[4]uint8"},
+		"a struct":                {window{From: at}, "window"},
+		"a pointer":               {&at, "*time.Time"},
+		"a named string":          {requestID("leak-marker"), "requestID"},
+		"a slice of integers":     {[]int{1}, "[]int"},
+		"a slice of times":        {[]time.Time{at}, "[]time.Time"},
+		"a map keyed by int":      {map[int]string{1: "leak-marker"}, "map[int]string"},
+		"a channel":               {make(chan int), "chan int"},
+		"a function":              {func() {}, "func()"},
+		"text not in UTF-8":       {"leak-marker\xff", "UTF-8"},
+		"a time in year 10000":    {time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC), "RFC 3339"},
+		"a time before year 0":    {time.Date(-1, 12, 31, 0, 0, 0, 0, time.UTC), "RFC 3339"},
+		"bytes inside a list":     {[]any{"ok", []byte("leak-marker")}, "[]byte"},
+		"bytes inside a map":      {map[string]any{"inner": []byte("leak-marker")}, "[]byte"},
+		"a map that holds itself": {cycle, "levels deep"},
+		"a list nested too deep":  {deep, "levels deep"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			metadata := encrypt.AuditMetadata{"fact": value}
+			metadata := encrypt.AuditMetadata{"the_fact": tc.value}
 			cipher := client.DefaultKeyset().Audit(metadata)
-			if _, err := testusers.Encrypt(ctx, cipher, people); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "Audit") {
-				t.Errorf("Encrypt: %v, want ErrEncoding from Audit", err)
-			}
-			if _, err := testusers.Decrypt(ctx, cipher, nil); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "Audit") {
-				t.Errorf("Decrypt: %v, want ErrEncoding from Audit", err)
-			}
-			if _, err := testusers.Decrypt(ctx, client.Audit(metadata), nil); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "Audit") {
-				t.Errorf("Decrypt through the client: %v, want ErrEncoding from Audit", err)
-			}
-			// A later Audit of good facts does not clear the refusal.
-			later := cipher.Audit(listIssues())
-			if _, err := testusers.Encrypt(ctx, later, people); !errors.Is(err, encrypt.ErrEncoding) {
-				t.Errorf("Encrypt after a later Audit: %v, want ErrEncoding", err)
+			for call, err := range map[string]error{
+				"Encrypt":                    second(testusers.Encrypt(ctx, cipher, people)),
+				"Decrypt":                    second(testusers.Decrypt(ctx, cipher, nil)),
+				"Decrypt through the client": second(testusers.Decrypt(ctx, client.Audit(metadata), nil)),
+				// A later Audit of good facts does not clear the refusal.
+				"Encrypt after a later Audit": second(testusers.Encrypt(ctx, cipher.Audit(listIssues()), people)),
+			} {
+				switch {
+				case !errors.Is(err, encrypt.ErrEncoding):
+					t.Errorf("%s: %v, want ErrEncoding", call, err)
+				case !strings.Contains(err.Error(), "Audit") || !strings.Contains(err.Error(), `"the_fact"`) || !strings.Contains(err.Error(), tc.names):
+					t.Errorf("%s: %v, want an error that names Audit, the fact and %q", call, err, tc.names)
+				case strings.Contains(err.Error(), "leak-marker"):
+					t.Errorf("%s shows the value: %v", call, err)
+				}
 			}
 		})
+	}
+	badKey := client.DefaultKeyset().Audit(encrypt.AuditMetadata{"leak-marker\xff": true})
+	if _, err := testusers.Encrypt(ctx, badKey, people); !errors.Is(err, encrypt.ErrEncoding) || strings.Contains(err.Error(), "leak-marker") {
+		t.Errorf("Encrypt with a key that is not UTF-8: %v, want ErrEncoding that does not show the key", err)
 	}
 	scoped := client.DefaultKeyset().Scope(struct{}{}).Audit(encrypt.AuditMetadata{"fact": make(chan int)})
 	if _, err := testusers.Encrypt(ctx, scoped, people); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "Scope") {
@@ -191,6 +237,14 @@ func TestAValueTheSDKCannotSendIsReportedByTheFirstCall(t *testing.T) {
 	var none *encrypt.Client
 	if _, err := testusers.Decrypt(ctx, none.Audit(listIssues()), nil); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Errorf("Decrypt through a nil client: %v, want ErrEncoding", err)
+	}
+	// 32 levels are taken: the limit refuses only what is deeper.
+	nested := []any{"ok"}
+	for range 30 {
+		nested = []any{nested}
+	}
+	if got := facts(t, client.DefaultKeyset().Audit(encrypt.AuditMetadata{"fact": nested})); got == nil {
+		t.Error("metadata nested 32 levels deep was not kept")
 	}
 }
 
@@ -263,10 +317,11 @@ func TestTheGuestRefusesAuditOnATermCall(t *testing.T) {
 	}
 }
 
-// ZeroKMS has no form for bytes or for an integer above the largest int64.
-// The engine refuses each one before any key is requested, and the error
-// does not show the value.
-func TestAuditValuesZeroKMSHasNoFormFor(t *testing.T) {
+// ZeroKMS reads a number as an int64 or a float64. Whether an integer fits
+// is the engine's rule, so the engine refuses one that does not. The
+// refusal reaches every call that sends the metadata, and the error does
+// not show the value.
+func TestAnIntegerAboveInt64IsRefusedByTheEngine(t *testing.T) {
 	c := deterministicClient(t)
 	ctx := context.Background()
 	encrypted, err := testusers.Encrypt(ctx, c.DefaultKeyset(), people)
@@ -274,15 +329,13 @@ func TestAuditValuesZeroKMSHasNoFormFor(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, value := range map[string]any{
-		"bytes":                      []byte("leak-marker"),
-		"an integer above int64":     uint64(math.MaxInt64) + 1,
-		"bytes inside a list":        []any{"ok", []byte("leak-marker")},
-		"bytes inside a nested fact": map[string]any{"inner": []byte("leak-marker")},
+		"at the top":    uint64(math.MaxInt64) + 1,
+		"inside a list": []any{"ok", uint64(math.MaxUint64)},
+		"inside a map":  map[string]any{"inner": uint64(math.MaxInt64) + 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			metadata := encrypt.AuditMetadata{"fact": value}
 			cipher := c.DefaultKeyset().Audit(metadata)
-			encrypt.ResetSends(c)
 			for call, err := range map[string]error{
 				"Encrypt":                    second(testusers.Encrypt(ctx, cipher, people)),
 				"Decrypt":                    second(testusers.Decrypt(ctx, cipher, encrypted)),
@@ -290,7 +343,7 @@ func TestAuditValuesZeroKMSHasNoFormFor(t *testing.T) {
 			} {
 				if !errors.Is(err, encrypt.ErrEncoding) {
 					t.Errorf("%s: %v, want ErrEncoding", call, err)
-				} else if strings.Contains(err.Error(), "leak-marker") || strings.Contains(err.Error(), "9223372036854775808") {
+				} else if strings.Contains(err.Error(), "9223372036854775808") || strings.Contains(err.Error(), "18446744073709551615") {
 					t.Errorf("%s shows the value: %v", call, err)
 				}
 			}

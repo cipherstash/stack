@@ -58,7 +58,15 @@ func run(ctx context.Context) error {
 	// Decrypt through the cipher. It carries the extension that Encrypt
 	// used, and it refuses rows from another keyset. The client would refuse
 	// these rows: it opens only rows sealed with no extension.
-	back, err := Decrypt(ctx, cipher, encrypted)
+	//
+	// Audit gives the cipher audit metadata: facts about the call, which
+	// ZeroKMS writes to its audit log with the request for the data keys.
+	// ZeroKMS does not verify the facts. Do not send plaintext or secrets.
+	reader := cipher.Audit(encrypt.AuditMetadata{
+		"purpose":    "example",
+		"request_id": "req_01J9Z3",
+	})
+	back, err := Decrypt(ctx, reader, encrypted)
 	if err != nil {
 		return fmt.Errorf("decrypt: %w", err)
 	}

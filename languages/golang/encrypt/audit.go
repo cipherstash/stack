@@ -2,21 +2,23 @@ package encrypt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // AuditMetadata is facts about a call that ZeroKMS writes to its audit log.
 //
-// Every Encrypt and Decrypt asks ZeroKMS for data keys, and ZeroKMS logs
-// each request with the identity that made it. AuditMetadata provides
-// additional context for that log: the purpose of the call, a request ID, a
-// trace ID, or the end user that the call acts for. Attach it to a cipher
-// with [Cipher.Audit], or to a client with [Client.Audit]:
+// Every Encrypt and Decrypt asks ZeroKMS for data keys. ZeroKMS logs each
+// request with the identity that made it. AuditMetadata provides additional
+// context for that log. Typical facts are the purpose of the call, a request
+// ID, a trace ID, and the end user that the call acts for.
+//
+// Attach it to a cipher with [Cipher.Audit], or to a client with
+// [Client.Audit]:
 //
 //	cipher := client.DefaultKeyset().Audit(encrypt.AuditMetadata{
 //		"purpose":    "list issues",
@@ -36,34 +38,45 @@ import (
 //   - A decrypt does not need them. A Decrypt can send different facts from
 //     the Encrypt, or none.
 //   - Do not send plaintext or secrets. ZeroKMS writes the facts to its
-//     logs. Do not send anything derived from plaintext either. An IP
-//     address or a user agent is personal data. The SDK sends only what
-//     you pass, and adds nothing.
+//     logs. Do not send anything derived from plaintext either.
+//   - An IP address or a user agent is personal data. The SDK sends only
+//     what you pass, and adds nothing.
 //   - A query sends none. A query term is derived from the index key of
-//     the keyset, so a query asks ZeroKMS for no data key, and there is no
-//     request to send the facts with. A query through a cipher that has
-//     metadata still works.
-//   - A call that asks for no data key sends none: an Encrypt or a Decrypt
-//     of no rows, or of rows that hold no sealed value.
+//     the keyset, so a query asks ZeroKMS for no data key. A query through
+//     a cipher that has metadata still works.
+//   - A call that asks for no data key sends none. An Encrypt or a Decrypt
+//     of no rows is one such call.
 //
 // # Values
 //
-// A value is a bool, a string, an integer, a float, a time.Time, nil, a
-// slice of these, or a map with string keys. A struct is sent as a map of
-// its fields. ZeroKMS records each value as you give it, with two
-// exceptions:
+// A value has one of these types, and no other:
+//
+//   - nil;
+//   - bool;
+//   - string;
+//   - an integer: int, int8, int16, int32, int64, uint, uint8, uint16,
+//     uint32, or uint64;
+//   - float32 or float64;
+//   - time.Time;
+//   - []any or []string, for a list;
+//   - map[string]any or AuditMetadata, for a nested map.
+//
+// The first call through the cipher refuses any other type, with
+// [ErrEncoding]. A []byte, a struct, a pointer, and a named type such as
+// `type ID string` are four examples. Convert the value to a type in the
+// list: send a []byte as text, such as its hex form.
+//
+// ZeroKMS records each value as you give it, with two exceptions:
 //
 //   - A time.Time is sent as RFC 3339 text in UTC, such as
 //     "2026-11-20T10:00:00Z", because ZeroKMS has no type for a time. The
 //     text keeps the instant to the nanosecond. It does not keep the zone
-//     that the time was in.
+//     that the time was in. RFC 3339 has no form for a time outside the
+//     years 0 to 9999. Such a time is refused.
 //   - A float that is not finite is sent as null.
 //
-// ZeroKMS has no form for these values, and the first call through the
-// cipher refuses them with [ErrEncoding]:
-//
-//   - a []byte: send it as text, such as its hex form;
-//   - an integer above the largest int64: send it as text.
+// ZeroKMS reads a number as an int64 or a float64. So an integer above the
+// largest int64 is refused too, with ErrEncoding: send it as text.
 type AuditMetadata map[string]any
 
 // auditFacts is the metadata a cipher holds: its own copy, which no caller
@@ -72,62 +85,121 @@ type AuditMetadata map[string]any
 // It is a function that returns the facts, and not the map itself, so that
 // printing a cipher never shows a fact. Package fmt prints a function as an
 // address, under every verb. It prints a map, or a pointer to a struct,
-// with its contents under some verbs. A fact can be personal data, and a
-// debug log is not the audit log.
+// with its contents under some verbs. A fact can be personal data. A debug
+// log is not the audit log.
 type auditFacts func() map[string]any
 
 // with is these facts and metadata's together. A fact in metadata replaces
-// one that has the same key. The result shares nothing with metadata: the
-// values go through the transport codec and back, which copies them and
-// reports a Go value that the codec cannot carry.
+// one that has the same key. The result shares nothing with metadata: every
+// value is checked and copied. A value of a type that audit metadata does
+// not take is an [ErrEncoding] that names Audit.
 func (a auditFacts) with(metadata AuditMetadata) (auditFacts, error) {
 	if len(metadata) == 0 {
 		return a, nil
 	}
-	encoded, err := vcffi.Marshal(map[string]any(metadata))
+	added, err := auditMap(metadata, 1)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: Audit: %v", ErrEncoding, err)
 	}
-	decoded, err := vcffi.Unmarshal(encoded)
-	if err != nil {
-		return nil, err
-	}
-	object, ok := decoded.(vcvalue.Object)
-	if !ok {
-		return nil, fmt.Errorf("the metadata was read back as %T", decoded)
-	}
-	facts := make(map[string]any, len(object))
+	facts := make(map[string]any, len(added))
 	if a != nil {
 		for key, value := range a() {
 			facts[key] = value
 		}
 	}
-	for _, field := range object {
-		facts[field.Key] = sendable(field.Value)
+	for key, value := range added {
+		facts[key] = value
 	}
 	return func() map[string]any { return facts }, nil
 }
 
-// sendable is a decoded value in the form the cipher sends: every time in
-// it is RFC 3339 text in UTC. ZeroKMS has no type for a time, and the
-// engine refuses one, so the SDK chooses the text that encoding/json would
-// write. The codec has already brought each time to UTC, at whatever depth
-// the caller put it: in a slice, in a struct, or behind a pointer. The
-// value is the cipher's own copy, so it is changed in place.
-func sendable(value any) any {
-	switch v := value.(type) {
-	case time.Time:
-		return v.UTC().Format(time.RFC3339Nano)
-	case []any:
-		for i := range v {
-			v[i] = sendable(v[i])
-		}
-	case vcvalue.Object:
-		for i := range v {
-			v[i].Value = sendable(v[i].Value)
-		}
+// maxAuditDepth is how deep a map or a list in audit metadata can nest. A
+// map that holds itself would otherwise never end. The transport codec
+// allows 128 levels for a whole call, and the options that carry the
+// metadata use two of them.
+const maxAuditDepth = 32
+
+// errAuditDepth is the refusal of metadata nested deeper than
+// [maxAuditDepth].
+var errAuditDepth = fmt.Errorf("the metadata nests more than %d levels deep", maxAuditDepth)
+
+// auditMap is a copy of m with each value as [auditValue] gives it. An
+// error names the key of the fact that was refused, and never a value: a
+// key is a name the program chose, and a value can be personal data.
+func auditMap(m map[string]any, depth int) (map[string]any, error) {
+	if depth > maxAuditDepth {
+		return nil, errAuditDepth
 	}
-	return value
+	out := make(map[string]any, len(m))
+	for key, value := range m {
+		if !utf8.ValidString(key) {
+			return nil, errors.New("a key is not valid UTF-8")
+		}
+		sent, err := auditValue(value, depth)
+		if err != nil {
+			return nil, fmt.Errorf("the fact %q: %w", key, err)
+		}
+		out[key] = sent
+	}
+	return out, nil
+}
+
+// auditValue is value in the form the cipher sends, as the cipher's own
+// copy. The type switch is the closed list of types that [AuditMetadata]
+// documents, so no value is read by reflection. A time becomes RFC 3339
+// text in UTC: ZeroKMS has no type for a time, and the guest's contract
+// gives every language SDK this one text form. Whether a number fits is
+// the engine's rule, so the engine checks it.
+func auditValue(value any, depth int) (any, error) {
+	switch v := value.(type) {
+	case nil, bool,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
+		return v, nil
+	case string:
+		if !utf8.ValidString(v) {
+			return nil, errors.New("text that is not valid UTF-8")
+		}
+		return v, nil
+	case time.Time:
+		utc := v.UTC()
+		if year := utc.Year(); year < 0 || year > 9999 {
+			return nil, errors.New("a time outside the years 0 to 9999 has no RFC 3339 form")
+		}
+		return utc.Format(time.RFC3339Nano), nil
+	case []any:
+		if depth >= maxAuditDepth {
+			return nil, errAuditDepth
+		}
+		out := make([]any, len(v))
+		for i, item := range v {
+			sent, err := auditValue(item, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = sent
+		}
+		return out, nil
+	case []string:
+		out := make([]any, len(v))
+		for i, item := range v {
+			sent, err := auditValue(item, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = sent
+		}
+		return out, nil
+	case map[string]any:
+		return auditMap(v, depth+1)
+	case AuditMetadata:
+		return auditMap(v, depth+1)
+	case []byte:
+		return nil, errors.New("a []byte is not an audit value: send it as text")
+	default:
+		return nil, fmt.Errorf("a %T is not an audit value", value)
+	}
 }
 
 // Audit returns a cipher that sends metadata to ZeroKMS with every data-key
@@ -145,14 +217,15 @@ func sendable(value any) any {
 // The second cipher sends both facts. The first still sends one.
 //
 // The cipher keeps its own copy of the facts. A later change to metadata
-// does not change what the cipher sends. A value that the SDK cannot send
-// is reported by the first call through the cipher, as [ErrEncoding].
+// does not change what the cipher sends. A value of a type that
+// [AuditMetadata] does not list is reported by the first call through the
+// cipher, as [ErrEncoding].
 func (cph *Cipher) Audit(metadata AuditMetadata) *Cipher {
 	next := cph.copy()
 	facts, err := cph.audit.with(metadata)
 	if err != nil {
 		if next.err == nil {
-			next.err = fmt.Errorf("%w: Audit: %v", ErrEncoding, err)
+			next.err = err
 		}
 		return next
 	}
@@ -161,26 +234,20 @@ func (cph *Cipher) Audit(metadata AuditMetadata) *Cipher {
 }
 
 // Audit returns a [Decrypter] that opens records as the client does, under
-// whichever keyset sealed each one, and sends metadata to ZeroKMS with
-// every data-key request it makes. See [AuditMetadata] for what ZeroKMS
-// does with the facts, and for what you must not send.
+// whichever keyset sealed each one. It sends metadata to ZeroKMS with every
+// data-key request it makes. See [AuditMetadata] for what ZeroKMS does with
+// the facts, and for what you must not send.
 //
 //	people, err := users.Decrypt(ctx, client.Audit(encrypt.AuditMetadata{
 //		"purpose": "export",
 //	}), rows)
 //
-// The Decrypter keeps its own copy of the facts. A value that the SDK
-// cannot send is reported by the first Decrypt through it, as
-// [ErrEncoding].
+// The Decrypter keeps its own copy of the facts. A value of a type that
+// [AuditMetadata] does not list is reported by the first Decrypt through
+// it, as [ErrEncoding].
 func (c *Client) Audit(metadata AuditMetadata) Decrypter {
-	audited := &auditedClient{client: c}
-	facts, err := audited.audit.with(metadata)
-	if err != nil {
-		audited.err = fmt.Errorf("%w: Audit: %v", ErrEncoding, err)
-		return audited
-	}
-	audited.audit = facts
-	return audited
+	facts, err := auditFacts(nil).with(metadata)
+	return &auditedClient{client: c, audit: facts, err: err}
 }
 
 // auditedClient is a client with audit metadata: what [Client.Audit]

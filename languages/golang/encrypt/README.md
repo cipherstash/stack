@@ -285,18 +285,33 @@ A query sends no audit metadata. A query term is derived from the index key
 of the keyset, so a query asks ZeroKMS for no data key. A query through a
 cipher that has metadata still works.
 
-A value is a bool, a string, an integer, a float, a `time.Time`, `nil`, a
-slice of these, or a map with string keys. ZeroKMS records each value as you
-give it, with two exceptions:
+A value has one of these types, and no other:
+
+- `nil`, a `bool`, or a `string`;
+- an integer or a float of any built-in size;
+- a `time.Time`;
+- a `[]any` or a `[]string`, for a list;
+- a `map[string]any` or an `AuditMetadata`, for a nested map.
+
+The first call through the cipher refuses any other type with `ErrEncoding`.
+A `[]byte`, a struct, a pointer, and a named type such as `type ID string`
+are four examples. Convert the value to a type in the list: send a `[]byte`
+as text, such as its hex form.
+
+ZeroKMS records each value as you give it, with two exceptions:
 
 - A `time.Time` is sent as RFC 3339 text in UTC, such as
   `"2026-11-20T10:00:00Z"`. The text keeps the instant to the nanosecond, and
-  not the zone that the time was in.
+  not the zone that the time was in. A time outside the years 0 to 9999 is
+  refused, because RFC 3339 has no form for it.
 - A float that is not finite is sent as null.
 
-ZeroKMS has no form for a `[]byte` or for an integer above the largest
-`int64`. The first call through the cipher refuses each one with
-`ErrEncoding`, so send it as text.
+ZeroKMS reads a number as an `int64` or a `float64`. So an integer above the
+largest `int64` is refused too: send it as text.
+
+`go test` compiles the examples in this section: see `ExampleCipher_Audit`
+and `ExampleClient_Audit`. The example program in `encrypt/example` runs a
+decrypt with audit metadata.
 
 In the Rust crate this is `AuditMetadata` and `.audit(..)`. In the ZeroKMS
 protocol it is the unverified context of a key request.
