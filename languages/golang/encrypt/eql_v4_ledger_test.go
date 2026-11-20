@@ -62,7 +62,7 @@ func TestV4DateTimestampNumericFieldsSealAndOpenBack(t *testing.T) {
 			Total: mustDecimal(t, "-79228162514264337593543950335"), Amount: mustDecimal(t, "1.50"),
 		},
 		{
-			ID: 2, Opened: encrypt.Date{Year: -262143, Month: time.January, Day: 1}, Due: encrypt.Date{Year: 262142, Month: time.December, Day: 31},
+			ID: 2, Opened: encrypt.Date{Year: -9999, Month: time.January, Day: 1}, Due: encrypt.Date{Year: 9999, Month: time.December, Day: 31},
 			Created: mustInstant(t, "2024-02-29T12:34:56.123456789Z"), Posted: time.Unix(0, 0),
 			Total: mustDecimal(t, "0.0000000000000000000000000001"), Amount: mustDecimal(t, "-0.00"),
 		},
@@ -138,8 +138,8 @@ func TestV4DateTimestampNumericFieldsSealAndOpenBack(t *testing.T) {
 	refusals := map[string]error{}
 	_, refusals["EncryptLedger zero date"] = testusers.EncryptLedger(ctx, cipher, []testusers.Ledger{{ID: 3, Opened: ledgers[0].Opened, Created: ledgers[0].Created, Posted: ledgers[0].Posted}})
 	_, refusals["Due.Encrypt zero"] = testusers.LedgerFields.Due.Encrypt(ctx, cipher, encrypt.Date{})
-	_, refusals["Due.Eq past the range"] = testusers.LedgerFields.Due.Eq(ctx, cipher, encrypt.Date{Year: 262143, Month: time.January, Day: 1})
-	_, refusals["Posted.Eq past the range"] = testusers.LedgerFields.Posted.Eq(ctx, cipher, time.Date(262143, time.January, 1, 0, 0, 0, 0, time.UTC))
+	_, refusals["Due.Eq past the range"] = testusers.LedgerFields.Due.Eq(ctx, cipher, encrypt.Date{Year: 10000, Month: time.January, Day: 1})
+	_, refusals["Posted.Eq past the range"] = testusers.LedgerFields.Posted.Eq(ctx, cipher, time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC))
 	_, refusals["Amount.Eq scale 29"] = testusers.LedgerFields.Amount.Eq(ctx, cipher, encrypt.Decimal{Scale: 29})
 	for path, err := range refusals {
 		if !errors.Is(err, encrypt.ErrEncoding) {
@@ -198,12 +198,12 @@ func TestV4DateTimestampNumericFieldsSealAndOpenBack(t *testing.T) {
 func ledgerRows(t *testing.T) []testusers.Ledger {
 	return []testusers.Ledger{
 		{
-			ID: 1, Opened: encrypt.Date{Year: -262143, Month: time.January, Day: 1}, Due: encrypt.Date{Year: 2024, Month: time.February, Day: 29},
+			ID: 1, Opened: encrypt.Date{Year: -9999, Month: time.January, Day: 1}, Due: encrypt.Date{Year: 2024, Month: time.February, Day: 29},
 			Created: mustInstant(t, "1969-12-31T23:59:59.999999999Z"), Posted: mustInstant(t, "2024-02-29T12:34:56.123456Z"),
 			Total: mustDecimal(t, "-79228162514264337593543950335"), Amount: mustDecimal(t, "1.50"),
 		},
 		{
-			ID: 2, Opened: encrypt.Date{Year: 262142, Month: time.December, Day: 31}, Due: encrypt.Date{Year: 2024, Month: time.March, Day: 1},
+			ID: 2, Opened: encrypt.Date{Year: 9999, Month: time.December, Day: 31}, Due: encrypt.Date{Year: 2024, Month: time.March, Day: 1},
 			Created: mustInstant(t, "2024-02-29T12:34:56.123456789Z"), Posted: mustInstant(t, "2024-02-29T12:34:56.123456999Z"),
 			Total: mustDecimal(t, "0.0000000000000000000000000001"), Amount: mustDecimal(t, "1.5"),
 		},
@@ -239,14 +239,12 @@ type ledgerPlain struct {
 	Amount  string `json:"amount"`
 }
 
-// isoDate is a Date as ISO 8601, with the signed year chrono reads for
-// years outside 0000 to 9999.
+// isoDate is a Date as ISO 8601. A year before 0000 has the signed
+// six-digit form jiff reads. Every date the engine admits has a year from
+// -9999 to 9999, so no other year needs a sign.
 func isoDate(d encrypt.Date) string {
-	switch {
-	case d.Year < 0:
-		return fmt.Sprintf("-%04d-%02d-%02d", -d.Year, d.Month, d.Day)
-	case d.Year > 9999:
-		return fmt.Sprintf("+%04d-%02d-%02d", d.Year, d.Month, d.Day)
+	if d.Year < 0 {
+		return fmt.Sprintf("-%06d-%02d-%02d", -d.Year, d.Month, d.Day)
 	}
 	return fmt.Sprintf("%04d-%02d-%02d", d.Year, d.Month, d.Day)
 }

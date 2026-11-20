@@ -721,7 +721,7 @@ pub const V3_ENCRYPTION_GAP: &str =
 /// derive and the by-name dispatch name. `None` for a family eql-bindings
 /// names no Rust plaintext type for yet. A date, a timestamp and a decimal
 /// are Stack Encrypt's own types (`stack_encrypt::value`, re-exported as
-/// `v4::plaintext`), which can be wiped where chrono's and rust_decimal's
+/// `v4::plaintext`), which can be wiped where jiff's and rust_decimal's
 /// cannot.
 /// A JSON document is Stack Encrypt's `JsonPlaintext`, re-exported
 /// there too: it can be wiped where a `serde_json::Value` cannot, and it

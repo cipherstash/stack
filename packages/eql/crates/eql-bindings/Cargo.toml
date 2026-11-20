@@ -72,9 +72,9 @@ stack-encrypt = [
   "dep:zeroize",
   "dep:thiserror",
 ]
-# Conversions between chrono's `NaiveDate` / `DateTime<Utc>` and
+# Conversions between jiff's `civil::Date` / `Timestamp` and
 # `v4::plaintext::Date` / `Timestamp`.
-chrono = ["stack-encrypt", "stack-encrypt/chrono"]
+jiff = ["stack-encrypt", "stack-encrypt/jiff"]
 # Conversions between rust_decimal's `Decimal` and `v4::plaintext::Decimal`.
 rust_decimal = ["stack-encrypt", "stack-encrypt/rust_decimal"]
 # The by-name dispatch a language binding needs (`encryption::targets`,
@@ -88,7 +88,7 @@ targets = [
 ]
 
 [package.metadata.docs.rs]
-features = ["targets", "chrono", "rust_decimal"]
+features = ["targets", "jiff", "rust_decimal"]
 
 [dev-dependencies]
 # Parity oracle: tests/catalog_parity.rs asserts the v3 domain inventory

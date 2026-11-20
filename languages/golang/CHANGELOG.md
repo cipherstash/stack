@@ -13,6 +13,35 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Dates and timestamps must be in years -9999 to 9999.** The range was
+  years -262143 to 262142. The engine now uses vitaminc 0.10, whose range
+  is the `jiff` crate's. Every language's binding uses the same range, so
+  every binding can decrypt a value any binding encrypts. The exact limits:
+  - an `encrypt.Date` from `-9999-01-01` to `9999-12-31`;
+  - a `time.Time` from `-009999-01-02T01:59:59Z` to
+    `9999-12-30T22:00:00.999999999Z`.
+
+  A date or instant outside the range is refused with `ErrEncoding`,
+  naming the field, when it is encrypted or queried. The stored format is
+  unchanged: a value in range has the same ciphertext and the same terms as
+  before.
+
+  A row stored earlier with a date or instant outside the range still
+  passes authentication, but no longer decrypts. It is reported as
+  `ErrAuthentication`, the error for a damaged ciphertext, because the
+  engine reads its value as malformed. cipherstash/vitaminc#630 tracks a
+  clearer error. PostgreSQL's `date` and `timestamptz` allow years after
+  9999. If you might have stored one, check before you upgrade. Decrypt
+  the column with the release you run now, or check its plaintext source.
+
+### Changed
+
+- `vcffi` and `vcvalue` move to vitaminc `f1fc9ae74`, the commit vitaminc
+  0.10.0 was released from. The host now checks the same date and
+  timestamp range as the guests.
+
 ## [0.1.0-rc.6] - 2026-11-18
 
 ### Upgrading from rc.5
