@@ -156,8 +156,8 @@ pub use payload::{GenerateKeyPayload, RetrieveKeyPayload};
 // Commonly needed re-exports from the protocol / crypto layers
 pub use recipher::key::{GenRandom, Iv};
 pub use zerokms_protocol::{
-    Context, DecryptionPolicy, IdentifiedBy, KeyId, Keyset, UnverifiedContext, ViturKeyMaterial,
-    MAX_DESCRIPTOR_LEN,
+    Context, DecryptionPolicy, IdentifiedBy, KeyId, Keyset, UnverifiedContext,
+    UnverifiedContextValue, ViturKeyMaterial, MAX_DESCRIPTOR_LEN,
 };
 
 /// Process-wide environment guard for tests that set or clear env vars.

@@ -23,11 +23,6 @@ stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false
 stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.3.0" }
-# The value type of a key request's unverified context, which audit metadata
-# is held as (`AuditMetadata`): stack-kms re-exports the map, not its
-# values. The tests also build ZeroKMS's request errors with it. Already in
-# the no-HTTP graph through stack-kms; it has no features of its own.
-zerokms-protocol = { workspace = true }
 
 # The workspace vitaminc: one canonical context encoding shared by
 # the AEAD and PRF derivations (`IntoContext`, cipherstash/vitaminc#339),
@@ -144,6 +139,10 @@ serde_json = { workspace = true, features = ["raw_value"] }
 # reqwest back into the "no HTTP" gate (`wasm:no-http-test`). The tests only
 # need `FakeDataKeySource` (`test-support`).
 stack-kms = { path = "../stack-kms", default-features = false, features = ["test-support"] }
+# To build the request errors ZeroKMS answers a keyset lookup with (a name it
+# does not know, a request that got no answer) in a test double. Already in
+# the no-HTTP graph through stack-kms; it has no features of its own.
+zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Sets and restores the `CS_*` variables in the tests of the credentials each
 # `init` uses. `temp_env` runs those tests one at a time, as it does in

@@ -29,9 +29,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use zerokms_protocol::UnverifiedContextValue;
-
-use crate::kms::UnverifiedContext;
+use crate::kms::{UnverifiedContext, UnverifiedContextValue};
 
 /// Audit metadata in the form ZeroKMS takes, ready to send, or `None` for
 /// none. Shared, so a call that makes several key requests sends it with
