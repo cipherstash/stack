@@ -25,7 +25,9 @@ import (
 // profile, in the Rust client's order. [AccessKeyCredentials] takes four
 // values from a struct the program fills, with no fallback. [NewCredentials]
 // takes a client id, a client key, and a strategy explicitly. [OIDCFederation]
-// exchanges a token from an identity provider for a CipherStash token.
+// exchanges a token from an identity provider for a CipherStash token, and
+// [OIDCFederationCredentials.WithClientKey] chooses where its client key
+// comes from: a [ClientKeySource].
 //
 // Those four are the only implementations:
 // the interface is sealed, so a bearer token always comes from an auth
@@ -77,8 +79,9 @@ type resolvedCredentials struct {
 	Close func() error
 	// MemoryLockError, when not nil, reports why memory the credentials
 	// hold key material in is not locked in RAM: the credential guest's,
-	// which the token strategy lives in and (for AutoCredentials and
-	// OIDCFederation) the client key passed through. AutoCredentials,
+	// which the token strategy lives in and (for AutoCredentials, and for
+	// OIDCFederation when the key is read from the profile) the client key
+	// passed through. AutoCredentials,
 	// AccessKeyCredentials, and OIDCFederation pass on their store's
 	// ProfileStore.MemoryLockError;
 	// NewCredentials, the caller's strategy's Strategy.MemoryLockError,
@@ -94,8 +97,8 @@ type resolvedCredentials struct {
 }
 
 // ErrNoCredentials is [AutoCredentials] finding no token strategy or no
-// client key in either place it looks. The wrapped error says which, and
-// what to set.
+// client key in either place it looks, or a [ClientKeySource] finding no
+// client key where it looks. The wrapped error says which, and what to set.
 var ErrNoCredentials = errors.New("encrypt: no credentials")
 
 // NewCredentials is [Credentials] from explicit values: a client id, a
@@ -122,10 +125,11 @@ func NewCredentials(clientID string, key *ClientKey, strategy *auth.Strategy) Cr
 	return c
 }
 
-// ErrCredentialsConsumed is [NewCredentials] given to a second NewClient:
-// the first consumed its key — whether it made a client or refused its
-// config — so there is nothing left to give. Build new credentials, with a
-// new key, for another client.
+// ErrCredentialsConsumed is [NewCredentials], or credentials with a
+// [ClientKeyFromValues] source, given to a second NewClient: the first
+// consumed the key — whether it made a client or refused its config — so
+// there is nothing left to give. Build new credentials, with a new key, for
+// another client.
 var ErrCredentialsConsumed = errors.New("encrypt: the credentials' client key was already consumed by an earlier NewClient")
 
 // explicitCredentials is NewCredentials. token is the strategy; only this
@@ -155,6 +159,12 @@ func (c *explicitCredentials) resolve(context.Context, resolveOptions) (*resolve
 	}
 	// No Close: the strategy and its store are the caller's.
 	return resolved, nil
+}
+
+// discard wipes the key unused, and marks the credentials consumed.
+func (c *explicitCredentials) discard() {
+	c.consumed.Store(true)
+	c.key.Wipe()
 }
 
 // String names the credentials' kind and client id; the key prints a
@@ -212,7 +222,7 @@ type autoCredentials struct{}
 func (autoCredentials) String() string { return "encrypt.AutoCredentials" }
 
 func (autoCredentials) resolve(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
-	return resolveWithStrategy(ctx, opts, func(ctx context.Context, profile *auth.ProfileStore, noProfile error) (*auth.Strategy, error) {
+	return resolveWithStrategy(ctx, opts, autoKeySource{}, func(ctx context.Context, profile *auth.ProfileStore, noProfile error) (*auth.Strategy, error) {
 		strategy, err := profile.Auto(ctx)
 		switch {
 		case errors.Is(err, auth.ErrNotAuthenticated):
@@ -239,34 +249,92 @@ func (autoCredentials) resolve(ctx context.Context, opts resolveOptions) (*resol
 // token of the user the call is for, and each distinct IdP token is
 // exchanged once while its CipherStash token lasts, so one client serves
 // many users without one user ever riding another's token;
-// auth.OAuth2TokenSource adapts a golang.org/x/oauth2 source. The
-// client key is resolved as
-// [AutoCredentials] resolves it: CS_CLIENT_ID and CS_CLIENT_KEY, else the
-// developer profile.
+// auth.OAuth2TokenSource adapts a golang.org/x/oauth2 source.
+//
+// The client key comes from CS_CLIENT_ID and CS_CLIENT_KEY when both are
+// set. Otherwise it is the key `stash auth login` saved for the workspace
+// crn names, which is the workspace the tokens are for. It is never the
+// key of the CLI's current workspace in its place. To choose the source
+// yourself, call [OIDCFederationCredentials.WithClientKey]:
+//
+//	creds := encrypt.OIDCFederation(crn, provider).
+//		WithClientKey(encrypt.ClientKeyFromValues(cfg.ClientID, encrypt.NewClientKey([]byte(cfg.ClientKey))))
+//	client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
 //
 // opts configure the federation strategy as they would
 // auth.ProfileStore.OIDC: auth.WithBaseURL pins the CTS
 // endpoint for these credentials alone (without it, CS_CTS_HOST overrides
 // the endpoint, else it is discovered), and auth.WithCacheCapacity
 // sets how many users' tokens are kept (1024 unless set).
-func OIDCFederation(crn string, provider auth.OIDCProvider, opts ...auth.StrategyOption) Credentials {
-	return &oidcCredentials{crn: crn, provider: provider, opts: opts}
+//
+// The token strategy runs in auth's credential guest. The guest mounts the
+// profile directory only when the client key source reads it. Client.Close
+// releases the guest.
+func OIDCFederation(crn string, provider auth.OIDCProvider, opts ...auth.StrategyOption) *OIDCFederationCredentials {
+	return &OIDCFederationCredentials{crn: crn, provider: provider, opts: opts}
 }
 
-type oidcCredentials struct {
+// OIDCFederationCredentials is the [Credentials] that [OIDCFederation]
+// returns.
+type OIDCFederationCredentials struct {
 	crn      string
 	provider auth.OIDCProvider
 	opts     []auth.StrategyOption
+	// key is the client key's source. Nil is the default: the environment,
+	// then the profile of the workspace crn names.
+	key ClientKeySource
 }
 
-// String names the credentials' kind and workspace; the provider is not
-// asked for anything to print it.
-func (c oidcCredentials) String() string {
-	return fmt.Sprintf("encrypt.OIDCFederation{crn: %s}", c.crn)
+// WithClientKey returns a copy of the credentials that reads the client
+// id and client key from key, and from nowhere else. The token still comes
+// from the identity provider through CTS.
+//
+// Read the key of the workspace that the tokens are for: ZeroKMS refuses a
+// request whose token and client key come from different workspaces. A nil
+// key is refused by NewClient with [ErrEncoding].
+func (c *OIDCFederationCredentials) WithClientKey(key ClientKeySource) *OIDCFederationCredentials {
+	if c == nil {
+		// NewClient refuses a nil *OIDCFederationCredentials.
+		return nil
+	}
+	if key == nil {
+		key = missingKeySource{}
+	}
+	out := *c
+	out.key = key
+	return &out
 }
 
-func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
-	return resolveWithStrategy(ctx, opts, func(ctx context.Context, profile *auth.ProfileStore, _ error) (*auth.Strategy, error) {
+// String names the credentials' kind and workspace, and the client key's
+// source when one was chosen. The provider is not asked for anything to
+// print it, and no key is printed.
+func (c *OIDCFederationCredentials) String() string {
+	switch {
+	case c == nil:
+		return "encrypt.OIDCFederation(nil)"
+	case c.key == nil:
+		return fmt.Sprintf("encrypt.OIDCFederation{crn: %s}", c.crn)
+	}
+	key := "nil"
+	if s, ok := c.key.(fmt.Stringer); ok {
+		key = s.String()
+	}
+	return fmt.Sprintf("encrypt.OIDCFederation{crn: %s, client_key: %s}", c.crn, key)
+}
+
+// clientKey is the client key's source, the default when none was chosen.
+func (c *OIDCFederationCredentials) clientKey() ClientKeySource {
+	if c.key == nil {
+		return envThenProfileKeySource{crn: c.crn}
+	}
+	return c.key
+}
+
+func (c *OIDCFederationCredentials) resolve(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
+	if c == nil {
+		return nil, errNilOIDCFederation
+	}
+	return resolveWithStrategy(ctx, opts, c.clientKey(), func(ctx context.Context, profile *auth.ProfileStore, _ error) (*auth.Strategy, error) {
 		strategy, err := profile.OIDC(ctx, c.crn, c.provider, c.opts...)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt: credentials: OIDC federation: %w", err)
@@ -274,6 +342,8 @@ func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*res
 		return strategy, nil
 	})
 }
+
+var errNilOIDCFederation = fmt.Errorf("%w: the credentials are a nil *OIDCFederationCredentials", ErrEncoding)
 
 // AccessKeyCredentials is [Credentials] from four values your program loads.
 // The client id and client key identify your application to ZeroKMS.
@@ -448,17 +518,27 @@ func credentialGuestError(err error) error {
 }
 
 // resolveWithStrategy opens the credential guest — over the profile when
-// there is one, with nothing mounted when there is not — asks strategy for
-// the token source (passing why there is no profile, when there is none),
-// then resolves the client key from the environment or
-// the profile. On success the guest and the strategy are the resolved
-// credentials' to close; on failure they are closed here.
+// key reads it and there is one, with nothing mounted otherwise — asks
+// strategy for the token source (passing why there is no profile, when
+// there is none), then reads the client key from key. On success the guest
+// and the strategy are the resolved credentials' to close; on failure they
+// are closed here, and key material key holds is wiped.
 func resolveWithStrategy(
 	ctx context.Context,
 	opts resolveOptions,
+	key ClientKeySource,
 	strategy func(ctx context.Context, profile *auth.ProfileStore, noProfile error) (*auth.Strategy, error),
 ) (_ *resolvedCredentials, err error) {
-	profile, err := openCredentialGuest(ctx, opts, auth.Resolve)
+	defer func() {
+		if err != nil {
+			discardClientKey(key)
+		}
+	}()
+	open := auth.OpenWithoutProfile
+	if key.usesProfile() {
+		open = auth.Resolve
+	}
+	profile, err := openCredentialGuest(ctx, opts, open)
 	// noProfile is why there is no profile to consult, when there is none:
 	// kept for the errors that would have consulted it, so a profile that
 	// exists but cannot be opened is not reported as "not logged in".
@@ -490,18 +570,13 @@ func resolveWithStrategy(
 		}
 	}()
 
-	clientID, key, err := clientKeyFromEnv()
+	clientID, clientKey, err := key.readClientKey(ctx, profile, noProfile)
 	if err != nil {
 		return nil, err
 	}
-	if key == nil {
-		if clientID, key, err = clientKeyFromProfile(ctx, profile, noProfile); err != nil {
-			return nil, err
-		}
-	}
 	return &resolvedCredentials{
 		ClientID:  clientID,
-		ClientKey: key,
+		ClientKey: clientKey,
 		Token:     token,
 		Close: func() error {
 			// The strategy lives in the profile's guest, which closing the

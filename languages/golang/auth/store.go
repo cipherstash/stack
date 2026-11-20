@@ -350,6 +350,21 @@ func (s *ProfileStore) WorkspaceStore(ctx context.Context, id string) (*ProfileS
 	return &ProfileStore{root: s.root, dir: string(out)}, nil
 }
 
+// WorkspaceStoreForCRN is [ProfileStore.WorkspaceStore] for the workspace
+// that crn names. The guest parses crn with the parser stack-auth's
+// strategies use, and a crn that is not a workspace CRN is ErrConfig. The
+// store is that workspace's whichever workspace is current, and whether or
+// not this machine has its profile data: reads from it then report
+// ErrNotFound. A store from [OpenWithoutProfile] checks crn, then reports
+// ErrNoProfile.
+func (s *ProfileStore) WorkspaceStoreForCRN(ctx context.Context, crn string) (*ProfileStore, error) {
+	out, err := s.callArgs(ctx, func(i *instance) api.Function { return i.authValidateCRN }, guest.BufArg([]byte(crn)))
+	if err != nil {
+		return nil, err
+	}
+	return s.WorkspaceStore(ctx, string(out))
+}
+
 // CurrentWorkspaceStore is [ProfileStore.WorkspaceStore] for the current
 // workspace, or ErrNoCurrentWorkspace.
 func (s *ProfileStore) CurrentWorkspaceStore(ctx context.Context) (*ProfileStore, error) {

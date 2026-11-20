@@ -187,9 +187,36 @@ Keep the credentials in an exported field of any struct you print or log.
 `ExampleAccessKeyCredentials` in the package tests is a complete program.
 
 `NewCredentials` takes a client id, a client key, and an `auth` strategy
-explicitly. `OIDCFederation` exchanges a token from an identity provider for a
-CipherStash token. No credentials take a raw token. The client
+explicitly. No credentials take a raw token. The client
 key is consumed by `NewClient` and wiped, whatever the outcome.
+
+`OIDCFederation` exchanges a token from an identity provider for a
+CipherStash token. Its client key comes from `CS_CLIENT_ID` and
+`CS_CLIENT_KEY` when both are set. Otherwise it is the key `stash auth login`
+saved for the workspace the CRN names. That is the workspace the tokens are
+for. ZeroKMS refuses a request whose token and client key come from
+different workspaces, so the key never comes from the CLI's current
+workspace in its place.
+
+To choose where the client key comes from, call `WithClientKey` with a
+`ClientKeySource`:
+
+| Source | Reads |
+|---|---|
+| `ClientKeyFromEnv()` | `CS_CLIENT_ID` and `CS_CLIENT_KEY`, and nothing else |
+| `ClientKeyFromProfile(crn)` | the `secretkey.json` of the workspace `crn` names, and nothing else |
+| `ClientKeyFromValues(clientID, key)` | nothing: the values your program loaded |
+
+```go
+creds := encrypt.OIDCFederation(cfg.WorkspaceCRN, provider).
+    WithClientKey(encrypt.ClientKeyFromValues(cfg.ClientID, encrypt.NewClientKey([]byte(cfg.ClientKey))))
+client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(creds))
+```
+
+`NewClient` still owns the federation strategy, and `Client.Close` releases
+it. A key from `ClientKeyFromValues` is for one client, as a key given to
+`NewCredentials` is. `ExampleOIDCFederationCredentials_WithClientKey` in the
+package tests is a complete program.
 
 ## The cipher
 

@@ -226,31 +226,60 @@ func checkCredentials(creds Credentials) error {
 			return fmt.Errorf("%w: the credentials are a nil *AccessKeyCredentials", ErrEncoding)
 		}
 		return c.validate()
+	case *OIDCFederationCredentials:
+		// As for *AccessKeyCredentials: a nil pointer passes NewClient's
+		// nil check.
+		if c == nil {
+			return errNilOIDCFederation
+		}
+		if c.key != nil {
+			return validateClientKeySource(c.key)
+		}
 	}
 	return nil
 }
 
-// consumeUnresolved is what NewClient owes a Credentials it refuses a
-// config without asking: explicit credentials hold their key from
-// construction, so it is wiped rather than handed back live, and they are
-// marked consumed, so a retry with a corrected config is refused with
-// ErrCredentialsConsumed rather than told the wiped values are missing.
-// Any other implementation has not been asked, and holds nothing of this
-// client's.
-// sameExplicit reports whether a and b are the same NewCredentials value.
-// It compares the concrete pointers: comparing the interfaces would panic
-// on an implementation that is not comparable, such as a func type.
+// sameExplicit reports whether a and b hold the same key from
+// construction: the same NewCredentials value, or the same
+// ClientKeyFromValues source. It compares the concrete pointers: comparing
+// the interfaces would panic on an implementation that is not comparable,
+// such as a func type.
 func sameExplicit(a, b Credentials) bool {
-	x, ok := a.(*explicitCredentials)
-	y, isExplicit := b.(*explicitCredentials)
-	return ok && isExplicit && x == y
+	x, y := heldKey(a), heldKey(b)
+	return x != nil && x == y
 }
 
+// consumeUnresolved is what NewClient owes a Credentials it refuses a
+// config without asking: NewCredentials and a ClientKeyFromValues source
+// hold their key from construction, so it is wiped rather than handed back
+// live, and they are marked consumed, so a retry with a corrected config is
+// refused with ErrCredentialsConsumed rather than told the wiped values are
+// missing. Any other implementation has not been asked, and holds nothing
+// of this client's.
 func consumeUnresolved(creds Credentials) {
-	if explicit, ok := creds.(*explicitCredentials); ok {
-		explicit.consumed.Store(true)
-		explicit.key.Wipe()
+	if held := heldKey(creds); held != nil {
+		held.discard()
 	}
+}
+
+// keyHolder is credentials, or a client key source in them, that hold a
+// key from construction.
+type keyHolder interface{ discard() }
+
+// heldKey is what in creds holds a key from construction, or nil.
+func heldKey(creds Credentials) keyHolder {
+	switch c := creds.(type) {
+	case *explicitCredentials:
+		return c
+	case *OIDCFederationCredentials:
+		if c == nil {
+			return nil
+		}
+		if values, ok := c.key.(*valuesKeySource); ok {
+			return values
+		}
+	}
+	return nil
 }
 
 // newClient wraps an instance and arms its cleanup. The cleanup takes the

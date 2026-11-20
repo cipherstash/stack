@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -181,23 +182,71 @@ func TestOIDCFederationThroughTheClientTransport(t *testing.T) {
 	}
 }
 
-func TestOIDCFederationResolvesTheKeyLikeAuto(t *testing.T) {
+// OIDCFederation's default client key is the environment's, else the
+// profile's key for the workspace its CRN names: the workspace its tokens
+// are for, never the CLI's current workspace in its place.
+func TestOIDCFederationReadsTheKeyOfItsWorkspace(t *testing.T) {
 	authGuestOrSkip(t)
-	cleanEnv(t, newProfile(t, loggedIn("profile-token")))
 	provider := auth.OIDCProviderFunc(func(context.Context) (string, error) { return "idp-token", nil })
-	resolved, err := OIDCFederation(testCRN, provider).resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
-	if err != nil {
-		t.Fatal(err)
+	resolveOIDC := func(t *testing.T, creds Credentials) (*resolvedCredentials, error) {
+		t.Helper()
+		resolved, err := creds.resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
+		if err == nil {
+			t.Cleanup(func() { _ = resolved.Close() })
+		}
+		return resolved, err
 	}
-	defer func() { _ = resolved.Close() }()
-	if resolved.ClientID != profileClientID || guest.KeyBytes(resolved.ClientKey) == nil {
-		t.Errorf("ClientID = %q, want the profile's", resolved.ClientID)
-	}
+	t.Run("the named workspace's key, with another workspace current", func(t *testing.T) {
+		dir := newProfile(t, loggedIn("profile-token"))
+		addWorkspaceKey(t, dir, testCRNWorkspace, namedClientID)
+		cleanEnv(t, dir)
+		resolved, err := resolveOIDC(t, OIDCFederation(testCRN, provider))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.ClientID != namedClientID {
+			t.Errorf("ClientID = %q, want the named workspace's %q", resolved.ClientID, namedClientID)
+		}
+	})
+	t.Run("the named workspace has no key: not the current one's", func(t *testing.T) {
+		cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+		resolved, err := resolveOIDC(t, OIDCFederation(testCRN, provider))
+		if err == nil {
+			t.Fatalf("resolved with ClientID %q; want no key, not the current workspace's", resolved.ClientID)
+		}
+		for _, want := range []error{ErrNoCredentials, auth.ErrNotFound} {
+			if !errors.Is(err, want) {
+				t.Errorf("error %v, want %v", err, want)
+			}
+		}
+		for _, name := range []string{envClientKey, testCRN} {
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("error %q does not name %s", err, name)
+			}
+		}
+	})
+	t.Run("the environment first", func(t *testing.T) {
+		dir := newProfile(t, loggedIn("profile-token"))
+		addWorkspaceKey(t, dir, testCRNWorkspace, namedClientID)
+		cleanEnv(t, dir)
+		t.Setenv(envClientID, testClientID)
+		t.Setenv(envClientKey, testClientKey)
+		resolved, err := resolveOIDC(t, OIDCFederation(testCRN, provider))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.ClientID != testClientID || string(guest.KeyBytes(resolved.ClientKey)) != testClientKey {
+			t.Error("the client key is not the environment's")
+		}
+	})
 	// No CRN is a configuration error from the strategy, before any
 	// provider or key is asked.
-	if _, err := OIDCFederation("", provider).resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport}); !errors.Is(err, auth.ErrConfig) {
-		t.Fatalf("OIDCFederation with no CRN: %v, want ErrConfig", err)
-	}
+	t.Run("no CRN", func(t *testing.T) {
+		cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+		if _, err := resolveOIDC(t, OIDCFederation("", provider)); !errors.Is(err, auth.ErrConfig) {
+			t.Fatalf("OIDCFederation with no CRN: %v, want ErrConfig", err)
+		}
+	})
 }
 
 // OIDCFederation's strategy options reach the strategy: WithBaseURL

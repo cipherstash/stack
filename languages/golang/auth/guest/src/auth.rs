@@ -76,10 +76,12 @@ fn parse_base_url(value: Option<String>) -> Result<Option<url::Url>, u32> {
         .transpose()
 }
 
+/// Parses a workspace CRN with the parser `AutoStrategy` uses, and returns
+/// the id of the workspace it names, as UTF-8 text.
 pub fn validate_crn(bytes: &[u8]) -> Result<Vec<u8>, u32> {
     let text = std::str::from_utf8(bytes).map_err(|_| malformed("the CRN is not UTF-8"))?;
-    let _: Crn = text.parse().map_err(|e| fail_auth(&AuthError::from(e)))?;
-    Ok(Vec::new())
+    let crn: Crn = text.parse().map_err(|e| fail_auth(&AuthError::from(e)))?;
+    Ok(crn.workspace_id.to_string().into_bytes())
 }
 
 // A CRN or access key that does not parse is a configuration error, the

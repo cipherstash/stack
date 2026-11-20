@@ -197,7 +197,8 @@ pub unsafe extern "C" fn sa_auth_new(ptr: *const u8, len: u32) -> u64 {
     export1(ptr, len, auth::create)
 }
 
-/// Validate a workspace CRN using the same Rust parser as AutoStrategy.
+/// Validate a workspace CRN using the same Rust parser as AutoStrategy, and
+/// return the id of the workspace it names.
 /// # Safety
 /// The input pair is validated against guest linear memory.
 #[no_mangle]
