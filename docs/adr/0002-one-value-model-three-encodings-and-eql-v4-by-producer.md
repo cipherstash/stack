@@ -154,7 +154,9 @@ bundle (see Consequences). Chosen.
   exhaustive.
 - Every variant exists in every build. `Date`, `Timestamp` and `Decimal` use
   vitaminc's own representation (the payloads in the table below), with
-  conversions to and from chrono and rust_decimal behind those features. A
+  conversions to and from chrono and rust_decimal behind those features.
+  *Amended 2026-11-19:* vitaminc 0.10 converts dates and timestamps to and
+  from jiff, behind its `jiff` feature, in place of chrono. A
   variant that appeared only with a feature would break any exhaustive
   handling outside `vitaminc-aead-value`, because features unify across a
   build and a crate can check only its own.

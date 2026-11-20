@@ -239,14 +239,12 @@ type ledgerPlain struct {
 	Amount  string `json:"amount"`
 }
 
-// isoDate is a Date as ISO 8601, with the signed six-digit year jiff reads
-// for years outside 0000 to 9999.
+// isoDate is a Date as ISO 8601. A year before 0000 has the signed
+// six-digit form jiff reads. Every date the engine admits has a year from
+// -9999 to 9999, so no other year needs a sign.
 func isoDate(d encrypt.Date) string {
-	switch {
-	case d.Year < 0:
+	if d.Year < 0 {
 		return fmt.Sprintf("-%06d-%02d-%02d", -d.Year, d.Month, d.Day)
-	case d.Year > 9999:
-		return fmt.Sprintf("+%06d-%02d-%02d", d.Year, d.Month, d.Day)
 	}
 	return fmt.Sprintf("%04d-%02d-%02d", d.Year, d.Month, d.Day)
 }

@@ -144,8 +144,9 @@ value outside them with an error that does not show it, and wipes its
 integers when dropped. It is not `Copy`. The `jiff` and `rust_decimal`
 features convert to and from jiff's `civil::Date` and `Timestamp` and
 rust_decimal's `Decimal`; the value converted to is the caller's, and is not
-wiped. Only an instant before jiff's own `Timestamp::MIN`, which jiff can
-make when it parses text with a UTC offset, is refused in a conversion. On `NumericEq`,
+wiped. One conversion can fail. jiff can make an instant before its own
+`Timestamp::MIN` when it parses text with a UTC offset, and converting
+that instant is refused. On `NumericEq`,
 `1.5 = 1.50` (the scale is normalised); on `TimestampEq`, an instant is truncated to the microsecond (the nanoseconds below it are dropped, not rounded), so two instants in the same microsecond are equal. Each opens as
 it was stored. Their ordered types order a date by its day, a timestamp by
 the microsecond (truncated, as on `TimestampEq`) and a decimal by value.

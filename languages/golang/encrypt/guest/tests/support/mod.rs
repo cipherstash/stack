@@ -12,8 +12,8 @@
 use stack_encrypt::dynamic::frame::{to_frame, Frame};
 use stack_encrypt::dynamic::frame::{FrameError, FrameWriteError};
 use stack_encrypt::dynamic::plaintext::{
-    visit_map, visit_seq, Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink,
-    Sink, SourceError,
+    visit_map, visit_seq, EncryptRef, Error as _, FixedType, Float, Int, Logical, MapSink,
+    Physical, SeqSink, Sink, SourceError,
 };
 use stack_encrypt::Controlled;
 use stack_encrypt::{DecodeError, Decrypt, Encrypt};
@@ -297,8 +297,8 @@ impl<O: Put> Sink for TreeSink<O> {
         })
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<O::Ok, DecodeError> {
-        let inner = value.visit(TreeSink(Root))?;
+    fn passthrough<P: ?Sized + EncryptRef>(self, value: &P) -> Result<O::Ok, DecodeError> {
+        let inner = value.visit_ref(TreeSink(Root))?;
         Ok(self.0.put(Tree::Passthrough(Box::new(inner))))
     }
 }
