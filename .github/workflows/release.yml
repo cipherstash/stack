@@ -497,6 +497,7 @@ jobs:
     # generated automatically by OIDC trusted publishing, are only accepted
     # from github-hosted runners — self-hosted runners are rejected with E422.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       id-token: write # npm OIDC trusted publishing
       contents: write # changesets commits and pushes the Version Packages branch
@@ -545,8 +546,10 @@ jobs:
 
       # REQUIRED BY `version:` BELOW, and nothing in this file says so without
       # this comment — which is why there is also a test. `pnpm run version` is
-      # `changeset version && node scripts/sync-skill-pins.mjs && node
-      # scripts/sync-lockstep-versions.mjs`, and that last script ends in
+      # `node scripts/with-lockstep-peers-hidden.mjs changeset version && node
+      # scripts/sync-skill-pins.mjs && node scripts/sync-lockstep-versions.mjs`
+      # (the first script runs `changeset version` itself; without it a minor
+      # of @cipherstash/auth is versioned as a major), and that last script ends in
       # `execFileSync('mise', ['run',
       # 'release:prepare_bindings_assets', …])`, which reaches
       # `packages/eql/tasks/build.sh` and two `cargo run -p eql-codegen` calls.

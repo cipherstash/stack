@@ -2,40 +2,43 @@
 //! and a decimal number, each held as the integers vitaminc's value model
 //! stores it as.
 //!
-//! The types the ecosystem offers (chrono's `NaiveDate` and
-//! `DateTime<Utc>`, rust_decimal's `Decimal`) keep their fields private,
-//! so their bytes cannot be wiped. A plaintext this crate copies, to seal
-//! it or to derive a term from it, must be wiped when it is dropped, so
-//! these types stand in for them. With the `chrono` and `rust_decimal`
-//! features each converts to and from its ecosystem type.
+//! The types the ecosystem offers (jiff's `civil::Date` and `Timestamp`,
+//! rust_decimal's `Decimal`) keep their fields private, so their bytes
+//! cannot be wiped. A plaintext this crate copies, to seal it or to derive
+//! a term from it, must be wiped when it is dropped, so these types stand
+//! in for them. With the `jiff` and `rust_decimal` features each converts
+//! to and from its ecosystem type.
 //!
-//! vitaminc-aead has a wipeable `Timestamp` of its own, and it is not
-//! reused: this crate hands each term of a type its own copy of the
-//! plaintext, so a target with several terms needs a `Clone` plaintext,
-//! and vitaminc's type is deliberately not `Clone`. It is also built only
-//! from a `DateTime<Utc>`, which would make chrono a dependency of every
-//! build. The types here are `Clone`, and a clone is wiped too.
+//! vitaminc-aead has wipeable `Date`, `Timestamp` and `Decimal` types of
+//! its own, and they are not reused: this crate hands each term of a type
+//! its own copy of the plaintext, so a target with several terms needs a
+//! `Clone` plaintext, and vitaminc's types are deliberately not `Clone`.
+//! They are also built only from jiff's and rust_decimal's types, which
+//! would make those crates a dependency of every build. The types here are
+//! `Clone`, and a clone is wiped too.
 //!
 //! | Type | Holds | Range |
 //! |---|---|---|
-//! | [`Date`] | an `i32` count of days since 1970-01-01, in the proleptic Gregorian calendar | years -262143 to 262142 |
-//! | [`Timestamp`] | an `i64` count of seconds since the Unix epoch and a `u32` of nanoseconds below one second, UTC, with no leap seconds | years -262143 to 262142 |
+//! | [`Date`] | an `i32` count of days since 1970-01-01, in the proleptic Gregorian calendar | `-009999-01-01` to `9999-12-31` |
+//! | [`Timestamp`] | an `i64` count of seconds since the Unix epoch and a `u32` of nanoseconds below one second, UTC, with no leap seconds | `-009999-01-02T01:59:59Z` to `9999-12-30T22:00:00.999999999Z` |
 //! | [`Decimal`] | an `i128` mantissa and a `u8` scale: the value is `mantissa × 10^-scale` | scale at most 28, mantissa below 2^96 in magnitude |
 //!
-//! The ranges are vitaminc's, which are chrono's and rust_decimal's: a
-//! value outside them has no encoding and is refused when the type is
-//! built, so a value of one of these types always encrypts. A refusal
-//! ([`RangeError`]) names what was out of range, never the value.
+//! The ranges are vitaminc's, which are jiff's and rust_decimal's. Every
+//! language's binding uses the same ranges, so a value one binding
+//! encrypts, every binding can decrypt. A value outside them has no
+//! encoding and is refused when the type is built, so a value of one of
+//! these types always encrypts. A refusal ([`RangeError`]) names what was
+//! out of range, never the value.
 //!
 //! # What wiping covers
 //!
 //! Each type implements [`Zeroize`] and wipes its integers when it is
 //! dropped ([`ZeroizeOnDrop`]). That covers every owned copy this crate
 //! makes. The integer a value describes itself to vitaminc's sink with is a
-//! `Copy` stack temporary, as it is for the primitive, chrono and
+//! `Copy` stack temporary, as it is for the primitive, jiff and
 //! rust_decimal sources, and is not wiped. Nor is a value the caller builds
-//! the type from, or converts it to: a `NaiveDate`, `DateTime<Utc>` or
-//! rust_decimal `Decimal` (with the `chrono` and `rust_decimal` features),
+//! the type from, or converts it to: a jiff `civil::Date` or `Timestamp`,
+//! or a rust_decimal `Decimal` (with the `jiff` and `rust_decimal` features),
 //! or the integers read through an accessor, are ordinary values the caller
 //! looks after.
 //!
@@ -78,20 +81,20 @@ const NANOS_PER_SECOND: u32 = 1_000_000_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum RangeError {
-    /// A day count outside chrono's date range, years -262143 to 262142.
-    #[error("the date is outside the representable range, years -262143 to 262142")]
+    /// A day count outside jiff's date range, `-009999-01-01` to
+    /// `9999-12-31`.
+    #[error("the date is outside the representable range, years -9999 to 9999")]
     Date,
-    /// An instant outside chrono's range, years -262143 to 262142.
-    #[error("the timestamp is outside the representable range, years -262143 to 262142")]
-    Timestamp,
-    /// Nanoseconds of one second or more: not a nanosecond field, and
-    /// chrono's representation of a leap second, which has no count of
-    /// seconds since the epoch.
+    /// An instant outside jiff's range, `-009999-01-02T01:59:59Z` to
+    /// `9999-12-30T22:00:00.999999999Z`.
     #[error(
-        "the timestamp's nanoseconds must be below one second (chrono holds a leap second \
-         this way, and it has no encoding)"
+        "the timestamp is outside the representable range, -009999-01-02T01:59:59Z to 9999-12-30T22:00:00.999999999Z"
     )]
-    LeapSecond,
+    Timestamp,
+    /// Nanoseconds of one second or more, which are not a nanosecond
+    /// field.
+    #[error("the timestamp's nanoseconds must be below one second")]
+    Nanoseconds,
     /// A decimal scale above 28.
     #[error("the decimal's scale is above 28")]
     DecimalScale,
@@ -104,8 +107,8 @@ pub enum RangeError {
 /// since 1970-01-01 in the proleptic Gregorian calendar.
 ///
 /// 1970-01-01 is day 0 and 1969-12-31 is day -1: the day count vitaminc's
-/// value model stores a date as, and the one a `NaiveDate` converts to with
-/// the `chrono` feature. See the [module documentation](self) for what
+/// value model stores a date as, and the one a jiff `civil::Date` converts
+/// to with the `jiff` feature. See the [module documentation](self) for what
 /// wiping covers.
 ///
 /// ```
@@ -125,7 +128,7 @@ impl Date {
     ///
     /// # Errors
     ///
-    /// [`RangeError::Date`] outside years -262143 to 262142.
+    /// [`RangeError::Date`] outside `-009999-01-01` to `9999-12-31`.
     pub fn from_days_since_epoch(days: i32) -> Result<Self, RangeError> {
         Logical::Date
             .admits(&Physical::Int(Int::I32(days)))
@@ -153,7 +156,7 @@ impl Date {
 ///
 /// let instant = Timestamp::new(1_700_000_000, 500)?;
 /// assert_eq!((instant.seconds(), instant.nanoseconds()), (1_700_000_000, 500));
-/// assert_eq!(Timestamp::new(0, 1_000_000_000).unwrap_err(), RangeError::LeapSecond);
+/// assert_eq!(Timestamp::new(0, 1_000_000_000).unwrap_err(), RangeError::Nanoseconds);
 /// # Ok::<(), RangeError>(())
 /// ```
 #[derive(Clone)]
@@ -169,11 +172,12 @@ impl Timestamp {
     ///
     /// # Errors
     ///
-    /// [`RangeError::LeapSecond`] for nanoseconds of one second or more,
-    /// and [`RangeError::Timestamp`] outside years -262143 to 262142.
+    /// [`RangeError::Nanoseconds`] for nanoseconds of one second or more,
+    /// and [`RangeError::Timestamp`] outside `-009999-01-02T01:59:59Z` to
+    /// `9999-12-30T22:00:00.999999999Z`.
     pub fn new(seconds: i64, nanoseconds: u32) -> Result<Self, RangeError> {
         if nanoseconds >= NANOS_PER_SECOND {
-            return Err(RangeError::LeapSecond);
+            return Err(RangeError::Nanoseconds);
         }
         let instant = Self {
             seconds,
@@ -197,7 +201,7 @@ impl Timestamp {
     }
 
     /// Nanoseconds since the epoch: the count vitaminc stores a timestamp
-    /// as, and the one a `DateTime<Utc>` encrypts to, so the two seal the
+    /// as, and the one a jiff `Timestamp` encrypts to, so the two seal the
     /// same leaf. Cannot overflow: an `i64` of seconds times 10^9 is far
     /// inside an `i128`.
     fn count(&self) -> i128 {
@@ -303,7 +307,7 @@ wiped!(
 );
 
 /// Each type describes itself to vitaminc as the logical type over an int
-/// it is, the same scalar the chrono and rust_decimal types describe, so a
+/// it is, the same scalar the jiff and rust_decimal types describe, so a
 /// value converted from one of those seals the same leaf. The owned form
 /// visits through the borrowed one and is then dropped, and wiped.
 ///
@@ -381,63 +385,67 @@ impl FromScalar for Decimal {
     }
 }
 
-/// Conversions to and from chrono's `NaiveDate` and `DateTime<Utc>`. The
-/// ranges are the same (vitaminc pins them to chrono's), so only a leap
-/// second, which a `DateTime<Utc>` can hold and a [`Timestamp`] cannot, is
-/// refused. The chrono value is outside this crate's care: it is not wiped.
-#[cfg(feature = "chrono")]
-mod chrono_conversions {
+/// Conversions to and from jiff's `civil::Date` and `Timestamp`. The
+/// ranges are the same (vitaminc pins them to jiff's), so every jiff date
+/// converts. A jiff `Timestamp` converts unless it is the instant jiff
+/// 1.0.0 can make up to a second before its own minimum, when it parses
+/// text with a UTC offset; that one is refused. The jiff value is outside
+/// this crate's care: it is not wiped.
+#[cfg(feature = "jiff")]
+mod jiff_conversions {
     use super::{Date, RangeError, Timestamp};
-    use chrono::{DateTime, NaiveDate, Utc};
-    use vitaminc_aead::plaintext::kinds::chrono as conv;
+    use jiff::civil::Date as CivilDate;
+    use vitaminc_aead::plaintext::kinds::jiff as conv;
     use vitaminc_aead::{Int, TimeUnit};
 
-    impl From<NaiveDate> for Date {
-        /// Every `NaiveDate` is in range: chrono's range is the one a
-        /// `Date` checks.
-        fn from(date: NaiveDate) -> Self {
+    impl From<CivilDate> for Date {
+        /// Every jiff date is in range: jiff's range is the one a `Date`
+        /// checks.
+        fn from(date: CivilDate) -> Self {
             Date {
                 days: conv::date_days(date),
             }
         }
     }
 
-    impl From<&Date> for NaiveDate {
+    impl From<&Date> for CivilDate {
         #[allow(
             clippy::expect_used,
-            reason = "a Date is only built in chrono's NaiveDate range (from_days_since_epoch checks it, and From<NaiveDate> starts inside it), and chrono has no unchecked constructor"
+            reason = "a Date is only built in jiff's civil::Date range (from_days_since_epoch checks it, and From<civil::Date> starts inside it), and jiff has no unchecked constructor"
         )]
         fn from(date: &Date) -> Self {
-            // A `Date` is only built in chrono's range, so the conversion
+            // A `Date` is only built in jiff's range, so the conversion
             // always succeeds. If the two ranges ever drifted apart, this
             // fails loudly rather than returning a wrong date.
-            conv::date(Int::I32(date.days)).expect("a Date is built in chrono's NaiveDate range")
+            conv::date(Int::I32(date.days)).expect("a Date is built in jiff's civil::Date range")
         }
     }
 
-    impl TryFrom<DateTime<Utc>> for Timestamp {
+    impl TryFrom<jiff::Timestamp> for Timestamp {
         type Error = RangeError;
 
         /// # Errors
         ///
-        /// [`RangeError::LeapSecond`] for a leap second, which chrono holds
-        /// as nanoseconds of one second or more.
-        fn try_from(instant: DateTime<Utc>) -> Result<Self, RangeError> {
-            Timestamp::new(instant.timestamp(), instant.timestamp_subsec_nanos())
+        /// [`RangeError::Timestamp`] for an instant before jiff's own
+        /// `Timestamp::MIN`. jiff 1.0.0 (jiff-core 1.0.0) can make one when
+        /// it parses text with a UTC offset. jiff 1.0.1 refuses that text.
+        fn try_from(instant: jiff::Timestamp) -> Result<Self, RangeError> {
+            let nanos = conv::timestamp_nanos(instant).ok_or(RangeError::Timestamp)?;
+            Timestamp::from_nanos(nanos).ok_or(RangeError::Timestamp)
         }
     }
 
-    impl From<&Timestamp> for DateTime<Utc> {
+    impl From<&Timestamp> for jiff::Timestamp {
         #[allow(
             clippy::expect_used,
-            reason = "a Timestamp is only built in chrono's DateTime<Utc> range (Timestamp::new checks it), and chrono has no unchecked constructor"
+            reason = "a Timestamp is only built in jiff's Timestamp range (Timestamp::new checks it), and jiff has no unchecked constructor"
         )]
         fn from(instant: &Timestamp) -> Self {
-            // A `Timestamp` is only built in chrono's range. If the two
+            // A `Timestamp` is only built in jiff's range. If the two
             // ranges ever drifted apart, this fails loudly rather than
             // returning a wrong instant.
             conv::timestamp(TimeUnit::Nanos, Int::I128(instant.count()))
-                .expect("a Timestamp is built in chrono's DateTime<Utc> range")
+                .expect("a Timestamp is built in jiff's Timestamp range")
         }
     }
 }
@@ -508,7 +516,10 @@ mod tests {
         fn map(self, _: Option<usize>) -> Result<Self::Map, Self::Error> {
             unreachable!("a plaintext here is a scalar")
         }
-        fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<Self::Ok, Self::Error> {
+        fn passthrough<P: ?Sized + vitaminc_aead::EncryptRef>(
+            self,
+            _: &P,
+        ) -> Result<Self::Ok, Self::Error> {
             unreachable!("a plaintext here is a scalar")
         }
     }
@@ -548,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn a_timestamp_is_its_nanosecond_count_and_refuses_a_leap_second() {
+    fn a_timestamp_is_its_nanosecond_count_and_refuses_a_whole_second_of_nanoseconds() {
         for (seconds, nanos) in [
             (0, 0),
             (1_700_000_000, 123_456_789),
@@ -573,11 +584,11 @@ mod tests {
 
         assert_eq!(
             Timestamp::new(0, 1_000_000_000).unwrap_err(),
-            RangeError::LeapSecond
+            RangeError::Nanoseconds
         );
         assert_eq!(
             Timestamp::new(0, u32::MAX).unwrap_err(),
-            RangeError::LeapSecond
+            RangeError::Nanoseconds
         );
         // The range's two edges, and one nanosecond past each.
         let edge = |nanos: i128| {
@@ -713,64 +724,53 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
-    fn chrono_values_convert_both_ways() {
-        use chrono::{DateTime, NaiveDate, Utc};
+    fn jiff_values_convert_both_ways() {
+        use jiff::civil::{date, Date as CivilDate};
 
-        for date in [
-            NaiveDate::from_ymd_opt(2024, 2, 29).unwrap(),
-            NaiveDate::from_ymd_opt(1969, 12, 31).unwrap(),
-            NaiveDate::from_ymd_opt(1, 1, 1).unwrap(),
-            NaiveDate::MIN,
-            NaiveDate::MAX,
+        for day in [
+            date(2024, 2, 29),
+            date(1969, 12, 31),
+            date(1, 1, 1),
+            CivilDate::MIN,
+            CivilDate::MAX,
         ] {
-            let ours = Date::from(date);
-            assert_eq!(NaiveDate::from(&ours), date);
-            // The same scalar chrono's own source describes.
-            assert_eq!(scalar(&ours), scalar(date));
+            let ours = Date::from(day);
+            assert_eq!(CivilDate::from(&ours), day);
+            // The same scalar jiff's own source describes.
+            assert_eq!(scalar(&ours), scalar(day));
         }
-        assert_eq!(
-            Date::from(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()).days_since_epoch(),
-            0
-        );
-        // The ends of the range a `Date` checks are chrono's ends: if the
+        assert_eq!(Date::from(date(1970, 1, 1)).days_since_epoch(), 0);
+        // The ends of the range a `Date` checks are jiff's ends: if the
         // two drift apart, the `expect` in the conversion fires here.
-        for (days, date) in [
-            (MIN_DATE_DAYS, NaiveDate::MIN),
-            (MAX_DATE_DAYS, NaiveDate::MAX),
+        for (days, day) in [
+            (MIN_DATE_DAYS, CivilDate::MIN),
+            (MAX_DATE_DAYS, CivilDate::MAX),
         ] {
             let ours = Date::from_days_since_epoch(days).unwrap();
-            assert_eq!(NaiveDate::from(&ours), date);
+            assert_eq!(CivilDate::from(&ours), day);
         }
 
         for instant in [
-            DateTime::from_timestamp(1_700_000_000, 123_456_789).unwrap(),
-            DateTime::from_timestamp(-1, 1).unwrap(),
-            chrono::NaiveDateTime::MIN.and_utc(),
-            chrono::NaiveDateTime::MAX.and_utc(),
+            jiff::Timestamp::new(1_700_000_000, 123_456_789).unwrap(),
+            jiff::Timestamp::new(-1, 1).unwrap(),
+            jiff::Timestamp::MIN,
+            jiff::Timestamp::MAX,
         ] {
             let ours = Timestamp::try_from(instant).unwrap();
-            assert_eq!(DateTime::<Utc>::from(&ours), instant);
+            assert_eq!(jiff::Timestamp::from(&ours), instant);
             assert_eq!(scalar(&ours), scalar(instant));
         }
         // The same for a `Timestamp`'s range.
         for (nanos, instant) in [
-            (MIN_TIMESTAMP_NANOS, chrono::NaiveDateTime::MIN.and_utc()),
-            (MAX_TIMESTAMP_NANOS, chrono::NaiveDateTime::MAX.and_utc()),
+            (MIN_TIMESTAMP_NANOS, jiff::Timestamp::MIN),
+            (MAX_TIMESTAMP_NANOS, jiff::Timestamp::MAX),
         ] {
             let ours =
                 read::<Timestamp>(Logical::Timestamp(TimeUnit::Nanos), Int::I128(nanos)).unwrap();
-            assert_eq!(DateTime::<Utc>::from(&ours), instant);
+            assert_eq!(jiff::Timestamp::from(&ours), instant);
         }
-        let leap = NaiveDate::from_ymd_opt(2016, 12, 31)
-            .and_then(|d| d.and_hms_nano_opt(23, 59, 59, 1_500_000_000))
-            .unwrap()
-            .and_utc();
-        assert_eq!(
-            Timestamp::try_from(leap).unwrap_err(),
-            RangeError::LeapSecond
-        );
     }
 
     #[cfg(feature = "rust_decimal")]

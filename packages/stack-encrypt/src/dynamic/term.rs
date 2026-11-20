@@ -41,7 +41,7 @@ use vitaminc_aead::plaintext::{
     Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError,
 };
-use vitaminc_aead::FromScalar;
+use vitaminc_aead::{EncryptRef, FromScalar};
 use vitaminc_normalize::{domain_of, normalize, NormalizeError};
 
 use serde::{Deserialize, Serialize, Serializer};
@@ -772,7 +772,7 @@ where
         Err(Refused(None))
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<T, Refused> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<T, Refused> {
         Err(Refused(None))
     }
 }
@@ -815,7 +815,7 @@ impl<T> Sink for NoContainer<T> {
         self.unreachable()
     }
 
-    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<T, Refused> {
+    fn passthrough<P: ?Sized + EncryptRef>(self, _: &P) -> Result<T, Refused> {
         self.unreachable()
     }
 }

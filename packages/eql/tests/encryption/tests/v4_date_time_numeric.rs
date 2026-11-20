@@ -6,7 +6,7 @@
 //! `v4_ore_block.rs` (block ORE).
 //!
 //! Each type must round-trip through both entry points, seal the leaf a
-//! chrono or rust_decimal value of the same instant, day or number seals
+//! jiff or rust_decimal value of the same instant, day or number seals
 //! (what any other producer writes for that kind), open a leaf such a value
 //! sealed, and refuse a value of another kind. The Go SDK's rows
 //! (`fixtures/v4_ledger_rows.json`) open here and are queried in
@@ -18,13 +18,13 @@ mod common;
 use stack_encrypt::AsProtectedRef as _;
 use std::str::FromStr;
 
-use chrono::{DateTime, NaiveDate, Utc};
 use eql_bindings::encryption::targets::{self as targets, TargetError};
 use eql_bindings::encryption::NativeCiphertextVisitor as NativeLeaf;
 use eql_bindings::v3::terms::Ciphertext;
 use eql_bindings::v4::plaintext::{Date, Decimal, Timestamp};
 use eql_bindings::v4::{date, numeric, timestamp};
 use eql_bindings::Identifier;
+use jiff::civil::Date as CivilDate;
 use serde::de::DeserializeOwned;
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::target::transcode::Reader;
@@ -53,12 +53,12 @@ fn refused<T>(result: Result<T, TargetError>) -> TargetError {
     }
 }
 
-fn day(text: &str) -> NaiveDate {
-    NaiveDate::from_str(text).unwrap()
+fn day(text: &str) -> CivilDate {
+    text.parse().unwrap()
 }
 
-fn instant(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text).unwrap().to_utc()
+fn instant(text: &str) -> jiff::Timestamp {
+    text.parse().unwrap()
 }
 
 fn number(text: &str) -> rust_decimal::Decimal {
@@ -102,7 +102,7 @@ async fn hm(
 }
 
 #[tokio::test]
-async fn dates_round_trip_and_seal_the_leaf_a_naive_date_seals() {
+async fn dates_round_trip_and_seal_the_leaf_a_jiff_date_seals() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for text in ["2024-02-29", "1969-12-31", "0001-01-01", "1970-01-01"] {
@@ -113,10 +113,10 @@ async fn dates_round_trip_and_seal_the_leaf_a_naive_date_seals() {
             .decrypt_as(stored.clone(), column().into())
             .await
             .unwrap();
-        assert_eq!(NaiveDate::from(&opened), theirs, "{text}");
+        assert_eq!(CivilDate::from(&opened), theirs, "{text}");
         assert!(
             same(&as_frame(&cipher, stored.c.clone()).await, &frame(theirs)),
-            "{text}: the leaf a NaiveDate seals"
+            "{text}: the leaf a jiff civil::Date seals"
         );
 
         let searchable: date::DateEq = keyset.encrypt_as(&value, column()).await.unwrap();
@@ -133,18 +133,18 @@ async fn dates_round_trip_and_seal_the_leaf_a_naive_date_seals() {
         .unwrap();
         assert!(same(&opened, &frame(theirs)), "{text}: by name");
     }
-    for edge in [NaiveDate::MIN, NaiveDate::MAX] {
+    for edge in [CivilDate::MIN, CivilDate::MAX] {
         let stored: date::DateEq = keyset
             .encrypt_as(&Date::from(edge), column())
             .await
             .unwrap();
         let opened: Date = cipher.decrypt_as(stored, column().into()).await.unwrap();
-        assert_eq!(NaiveDate::from(&opened), edge);
+        assert_eq!(CivilDate::from(&opened), edge);
     }
 }
 
 #[tokio::test]
-async fn timestamps_round_trip_to_the_nanosecond_and_seal_the_leaf_a_date_time_seals() {
+async fn timestamps_round_trip_to_the_nanosecond_and_seal_the_leaf_a_jiff_timestamp_seals() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for text in [
@@ -159,10 +159,10 @@ async fn timestamps_round_trip_to_the_nanosecond_and_seal_the_leaf_a_date_time_s
             .decrypt_as(stored.clone(), column().into())
             .await
             .unwrap();
-        assert_eq!(DateTime::<Utc>::from(&opened), theirs, "{text}");
+        assert_eq!(jiff::Timestamp::from(&opened), theirs, "{text}");
         assert!(
             same(&as_frame(&cipher, stored.c.clone()).await, &frame(theirs)),
-            "{text}: the leaf a DateTime<Utc> seals"
+            "{text}: the leaf a jiff Timestamp seals"
         );
 
         let searchable: timestamp::TimestampEq = keyset.encrypt_as(&value, column()).await.unwrap();
@@ -173,21 +173,18 @@ async fn timestamps_round_trip_to_the_nanosecond_and_seal_the_leaf_a_date_time_s
             .await
             .unwrap();
         assert_eq!(
-            DateTime::<Utc>::from(&opened),
+            jiff::Timestamp::from(&opened),
             theirs,
             "{text}: nanoseconds kept"
         );
     }
-    for edge in [
-        chrono::NaiveDateTime::MIN.and_utc(),
-        chrono::NaiveDateTime::MAX.and_utc(),
-    ] {
+    for edge in [jiff::Timestamp::MIN, jiff::Timestamp::MAX] {
         let stored: timestamp::TimestampEq = keyset
             .encrypt_as(&Timestamp::try_from(edge).unwrap(), column())
             .await
             .unwrap();
         let opened: Timestamp = cipher.decrypt_as(stored, column().into()).await.unwrap();
-        assert_eq!(DateTime::<Utc>::from(&opened), edge);
+        assert_eq!(jiff::Timestamp::from(&opened), edge);
     }
 }
 
@@ -606,7 +603,7 @@ fn postgres_stores_and_finds_date_timestamp_and_numeric_rows() {
             )
             .await
             .unwrap();
-        assert_eq!(NaiveDate::from(&opened), day("2024-02-29"));
+        assert_eq!(CivilDate::from(&opened), day("2024-02-29"));
         let created: Timestamp = cipher
             .decrypt_as(
                 serde_json::from_str::<timestamp::Timestamp>(&created).unwrap(),
@@ -713,12 +710,12 @@ mod go_ledger {
             .decrypt_as(parsed::<date::Date>(row, "opened"), column("opened").into())
             .await
             .unwrap();
-        assert_eq!(NaiveDate::from(&opened), day(&p.opened), "row {id} opened");
+        assert_eq!(CivilDate::from(&opened), day(&p.opened), "row {id} opened");
         let due: Date = cipher
             .decrypt_as(parsed::<date::DateEq>(row, "due"), column("due").into())
             .await
             .unwrap();
-        assert_eq!(NaiveDate::from(&due), day(&p.due), "row {id} due");
+        assert_eq!(CivilDate::from(&due), day(&p.due), "row {id} due");
         let created: Timestamp = cipher
             .decrypt_as(
                 parsed::<timestamp::Timestamp>(row, "created"),
@@ -727,7 +724,7 @@ mod go_ledger {
             .await
             .unwrap();
         assert_eq!(
-            DateTime::<Utc>::from(&created),
+            jiff::Timestamp::from(&created),
             instant(&p.created),
             "row {id} created"
         );
@@ -739,7 +736,7 @@ mod go_ledger {
             .await
             .unwrap();
         assert_eq!(
-            DateTime::<Utc>::from(&posted),
+            jiff::Timestamp::from(&posted),
             instant(&p.posted),
             "row {id} posted"
         );
@@ -835,7 +832,7 @@ fn postgres_stores_and_queries_ledger_rows_the_go_sdk_sealed() {
     .unwrap();
     let plaintext = |key: &str| queries[key]["plaintext"].as_str().unwrap().to_owned();
     let due = day(&plaintext("due"));
-    let posted = instant(&plaintext("posted")).timestamp_micros();
+    let posted = instant(&plaintext("posted")).as_microsecond();
     let amount = number(&plaintext("amount")).normalize();
     for (column_name, query_domain, expected) in [
         (
@@ -854,7 +851,7 @@ fn postgres_stores_and_queries_ledger_rows_the_go_sdk_sealed() {
             fixture
                 .rows
                 .iter()
-                .filter(|r| instant(&r.plaintext.posted).timestamp_micros() == posted)
+                .filter(|r| instant(&r.plaintext.posted).as_microsecond() == posted)
                 .map(|r| r.id)
                 .collect(),
         ),
@@ -929,13 +926,13 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
         .unwrap();
     let opened: Date = cipher.decrypt_as(some, column().into()).await.unwrap();
     assert_eq!(
-        NaiveDate::from(&opened),
+        CivilDate::from(&opened),
         day("2024-02-29"),
         "Some seals the plaintext's own leaf"
     );
     let opened: Option<Date> = cipher.decrypt_as(present, column().into()).await.unwrap();
     assert_eq!(
-        opened.as_ref().map(NaiveDate::from),
+        opened.as_ref().map(CivilDate::from),
         Some(day("2024-02-29")),
         "and an Option opens a value"
     );

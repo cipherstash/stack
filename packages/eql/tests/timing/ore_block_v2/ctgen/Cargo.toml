@@ -16,9 +16,9 @@ publish = false
 # EQL v4's `ore_block_v2` compares; the same version as the root Cargo.lock.
 # Since ore-rs 0.10 a value reaches the engines only through vitaminc-ore, as it
 # does in stack-encrypt.
-ore-rs = { version = "=0.11.0", default-features = false }
-vitaminc-ore = "=0.9.0"
-vitaminc-protected = "=0.9.0"
+ore-rs = { version = "=0.12.0", default-features = false }
+vitaminc-ore = "=0.10.0"
+vitaminc-protected = "=0.10.0"
 rand = "0.8"
 hex = "0.4"
 

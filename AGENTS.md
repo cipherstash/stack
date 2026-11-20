@@ -647,6 +647,26 @@ monorepo, which is where the silent failures are.
   tracked files the wrapper publishes, so a reformat does not ride along with
   an auth release.
 
+  **A minor of `@cipherstash/auth` needs `scripts/with-lockstep-peers-hidden.mjs`
+  to come out as a minor.** The wrapper pins its six platform packages as
+  exact-version optional `peerDependencies` (`workspace:*`). They are peers
+  and not `optionalDependencies` on purpose: Deno's resolver, and Supabase
+  Edge Runtime with it, treats a missing optional platform package as a fatal
+  graph error. Changesets gives a dependent a MAJOR bump when a peer leaves
+  its range on a minor, and reads `workspace:*` as "exactly the current
+  version", so a `minor` changeset planned 0.44.1 -> 1.0.0 for all seven
+  packages with no changeset asking for a major. A patch is exempt from that
+  rule, which is how 0.44.1 went out unnoticed. Inside a fixed group the rule
+  is a false positive, because the range and the version move together, so
+  the root `version` script runs `changeset version` through that wrapper: it
+  takes a fixed group's own `workspace:` peers out of the manifest while
+  Changesets plans, and puts them back. The committed and published manifests
+  are unchanged. `scripts/__tests__/with-lockstep-peers-hidden.test.mjs`
+  drives the real CLI both ways. `changeset status`, and so anything that
+  reads its plan, is NOT wrapped and still reports the major; the Version
+  Packages PR is what shows the real number, so read the auth version there
+  before merging it.
+
   **Check 3 is the one worth understanding before you touch a frozen package.**
   For a package this repo publishes, in-tree bytes differing from npm is an
   unreleased change — every pull request. For a frozen one it is a

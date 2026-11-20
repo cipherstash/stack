@@ -527,7 +527,7 @@ async fn a_record_stores_a_null_in_an_eql_field_as_its_plan_says() {
         &EqlTargets,
     )
     .unwrap();
-    let day = chrono::NaiveDate::from_ymd_opt(1990, 5, 17);
+    let day = Some(jiff::civil::date(1990, 5, 17));
     let rows = |dob, born| BTreeMap::from([("a_dob", dob), ("b_born", born)]);
     let source = vec![rows(day, day), rows(None, None)];
     let sealed = record::encrypt_with(&keyset, frame(&source), &plan, &EqlTargets)
