@@ -318,7 +318,7 @@ const results = await db
 
 ### Encrypted-JSONB Containment (`contains`)
 
-`contains(col, subDoc)` on a `types.Json` column is **exact** encrypted containment (jsonb `@>` semantics, no false positives). The needle is a ciphertext-free `query_json` term. Array containment is position-independent — `{ roles: ["admin"] }` matches any document whose `roles` array includes `"admin"`:
+`contains(col, subDoc)` on a `types.Json` column is encrypted containment with jsonb `@>` semantics for objects and scalars. The needle is a ciphertext-free `query_json` term. Array containment is position-independent — `{ roles: ["admin"] }` matches any document whose `roles` array includes `"admin"`:
 
 ```typescript
 const results = await db
@@ -326,6 +326,8 @@ const results = await db
   .from(usersTable)
   .where(await ops.contains(usersTable.profile, { roles: ["admin"] }))
 ```
+
+**Arrays of objects can return extra rows.** Each field of a needle element is matched on its own, not per array element, so `{ items: [{ a: 1, b: 2 }] }` also matches a document where `a: 1` and `b: 2` sit in different elements of `items` (#1231). If you need an exact match on an object inside an array, re-check the decrypted rows.
 
 An empty-object needle (`{}`) is rejected — `doc @> '{}'` holds for every document, so it would silently match every row. Omit the predicate if you want all rows.
 
@@ -664,7 +666,7 @@ All comparison/containment operators auto-encrypt their operands and are async; 
 | `notBetween(col, min, max)` | Negated range | order/range |
 | `inArray(col, values)` / `notInArray(col, values)` | Membership (single-batch encryption; empty list rejected) | equality |
 | `matches(col, needle)` | Fuzzy free-text token match (short needles rejected) | free-text (`TextMatch`, `TextSearch`) |
-| `contains(col, subDoc)` | Exact encrypted-JSONB containment (`{}` rejected) | `Json` |
+| `contains(col, subDoc)` | Encrypted-JSONB containment (`{}` rejected; arrays of objects can return extra rows) | `Json` |
 | `selector(col, path).eq/ne/gt/gte/lt/lte(value)` | JSONPath selector-with-constraint (dot-notation paths, scalar leaves) | `Json` |
 | `selector(col, path).asc()/desc()` | ORDER BY a scalar JSONPath leaf (missing paths are SQL NULL) | `Json` |
 

@@ -671,9 +671,9 @@ A `types.Json("metadata")` column encrypts a whole JSON document to a `public.eq
 
 `types.Json` carries no equality or ordering capability — `eq` / `gt` / `asc` on it throw. It supports two query patterns: containment and JSONPath selectors.
 
-### Containment (exact, `@>`)
+### Containment (`@>`)
 
-Pass a sub-object or sub-array to `encryptQuery` with `queryType: 'searchableJson'`; it matches documents that contain the needle with jsonb `@>` semantics — **exact** containment, no false positives. Array containment is a subset test regardless of element position: `{ roles: ['admin'] }` matches any document whose `roles` array includes `admin`.
+Pass a sub-object or sub-array to `encryptQuery` with `queryType: 'searchableJson'`; it matches documents that contain the needle with jsonb `@>` semantics for objects and scalars. Array containment is a subset test regardless of element position: `{ roles: ['admin'] }` matches any document whose `roles` array includes `admin`. **Arrays of objects can return extra rows:** each field of a needle element is matched on its own, not per array element, so `{ items: [{ a: 1, b: 2 }] }` also matches a document where `a: 1` and `b: 2` sit in different elements of `items` (#1231). If you need an exact match on an object inside an array, re-check the decrypted rows.
 
 ```typescript
 const events = encryptedTable("events", { metadata: types.Json("metadata") })
