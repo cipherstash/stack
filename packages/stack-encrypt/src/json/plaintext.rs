@@ -186,6 +186,12 @@ impl JsonPlaintext {
     pub fn value(&self) -> &Value {
         &self.0
     }
+
+    /// Move the document out, for an operation that consumes it and wipes
+    /// it itself. What is left behind is a JSON `null`.
+    pub(crate) fn into_value(mut self) -> Value {
+        std::mem::take(&mut self.0)
+    }
 }
 
 impl From<Value> for JsonPlaintext {

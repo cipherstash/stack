@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     column alone, so it cannot open such a document's parts.
   - The answers and the refusals are those of the structural
     `DecryptInto`, which stays for now.
+  - These two types now have a `decryption` method from two traits. Code
+    that imports both `DecryptInto` and `DecryptSource` and calls
+    `.decryption(..)` on one of them does not compile, because the call
+    is ambiguous. Name the trait:
+    `DecryptInto::decryption(extracted, column)`.
 
 - **EQL types as record fields** (#1658). An EQL v4 type can be a field
   of a Stack Encrypt `#[derive(EncryptTarget, DecryptSource)]` record

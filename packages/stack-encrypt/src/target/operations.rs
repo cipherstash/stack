@@ -1180,7 +1180,8 @@ pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
 /// every node under it, into a [`JsonDocument`]. The stored form of a JSON
 /// field; what [`JsonDocument`]'s own [`EncryptFrom<Value>`] runs. The
 /// document is consumed, so in the default [`Borrowed`] mode it is cloned
-/// once, as [`ciphertext`] clones its plaintext.
+/// once, as [`ciphertext`] clones its plaintext. In [`Owned`] mode it is
+/// moved, and wiped when it has been sealed or the context is refused.
 pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
     options: JsonOptions,
 ) -> Encryption<'s, serde_json::Value, JsonDocument, K, CallerContext, M> {
@@ -1199,7 +1200,12 @@ pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
                     )
                     .under_context(query, stored)
                 }
-                Err(e) => Pending::failed(cipher, e),
+                Err(e) => {
+                    // A document this description owns is wiped rather
+                    // than dropped.
+                    M::release(source, |value| drop(crate::json::PlainJson::protect(value)));
+                    Pending::failed(cipher, e)
+                }
             }
         }),
         shapes: contexts::caller_leaf(),
@@ -1354,8 +1360,9 @@ impl EncryptFrom<serde_json::Value> for JsonDocument {
 /// ```
 ///
 /// The plaintext is wiped when the document has been sealed, and when the
-/// context is refused. Sealing reads the document through one copy, which
-/// is wiped too.
+/// context is refused. `encrypt_into` moves the document into the sealing,
+/// with no copy. Sealing a borrowed plaintext, such as an element of a
+/// collection, reads the document through one copy, which is wiped too.
 impl EncryptTarget<JsonPlaintext> for JsonDocument {
     type ContextInput = RequiredContext<CallerContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
@@ -1364,6 +1371,15 @@ impl EncryptTarget<JsonPlaintext> for JsonDocument {
     {
         json_document(JsonOptions::default())
             .project(JsonPlaintext::value)
+            .accepting()
+    }
+    fn owned_encryption<'s, K: 'static>(
+    ) -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput, Owned>
+    where
+        JsonPlaintext: 's,
+    {
+        json_document::<K, Owned>(JsonOptions::default())
+            .project_owned(JsonPlaintext::into_value)
             .accepting()
     }
     fn indexes() -> Vec<super::IndexSpec> {

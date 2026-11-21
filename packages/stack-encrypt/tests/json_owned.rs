@@ -146,7 +146,10 @@ mod given_a_document {
         let doc = seal(&cipher, fixture()).await;
         let other = AeadContext::from(nonempty!("users").with("settings"));
         let opened = JsonPlaintext::decrypt_from_with_context(doc, &cipher, other).await;
-        assert!(opened.is_err(), "another column's context opens nothing");
+        assert!(
+            matches!(opened, Err(Error::Aead)),
+            "another column's context opens nothing: {opened:?}"
+        );
     }
 
     /// A plan field typed with the document lets a query use the JSON
@@ -365,6 +368,9 @@ mod given_the_rows_of_a_read {
         let nested = read(&cipher, &doc, "$.nested").await;
         let other = AeadContext::from(nonempty!("users").with("settings"));
         let opened = JsonPlaintext::decrypt_from_with_context(nested, &cipher, other).await;
-        assert!(opened.is_err(), "another column's context opens nothing");
+        assert!(
+            matches!(opened, Err(Error::Aead)),
+            "another column's context opens nothing: {opened:?}"
+        );
     }
 }

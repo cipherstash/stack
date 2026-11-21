@@ -147,7 +147,10 @@ mod given_the_entry_arrow_returned {
         let extracted = JsonTreeExtracted::from_selector(&hello, entry_of(&stored, &hello));
         let other = Identifier::for_column("users", "bio").unwrap();
         let opened = JsonPlaintext::decrypt_from_with_context(extracted, &cipher, other).await;
-        assert!(opened.is_err(), "another column's context opens nothing");
+        assert!(
+            matches!(opened, Err(Error::JsonNotALeaf)),
+            "another column's context opens nothing: {opened:?}"
+        );
     }
 }
 
@@ -231,7 +234,10 @@ mod given_the_rows_of_a_read {
         let rows = JsonTreeSubtree::from_key(&nested, sealed_root(&stored));
         let other = Identifier::for_column("users", "bio").unwrap();
         let opened = JsonPlaintext::decrypt_from_with_context(rows, &cipher, other).await;
-        assert!(opened.is_err(), "another column's context opens nothing");
+        assert!(
+            matches!(opened, Err(Error::Aead)),
+            "another column's context opens nothing: {opened:?}"
+        );
     }
 }
 
@@ -304,6 +310,9 @@ mod given_a_document_that_is_a_field_of_a_record {
         let extracted = JsonTreeExtracted::from_selector(&hello, entry_of(&stored, &hello));
         let column = Identifier::for_column("leads", "profile").unwrap();
         let opened = JsonPlaintext::decrypt_from_with_context(extracted, &cipher, column).await;
-        assert!(opened.is_err(), "the tenant and the row are missing");
+        assert!(
+            matches!(opened, Err(Error::JsonNotALeaf)),
+            "the tenant and the row are missing: {opened:?}"
+        );
     }
 }
