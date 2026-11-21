@@ -104,7 +104,9 @@
 //! (`tests/ui/field_reference_json_value_types.rs`); a member of another
 //! array (`tests/ui/field_reference_json_member_of_another_array.rs`);
 //! `elements` with no condition
-//! (`tests/ui/field_reference_elements_needs_a_condition.rs`); a JSON query
+//! (`tests/ui/field_reference_elements_needs_a_condition.rs`); a predicate
+//! variable that is not a scalar
+//! (`tests/ui/field_reference_predicate_var_takes_a_scalar.rs`); a JSON query
 //! of a field that stores no document
 //! (`tests/ui/field_reference_json_on_a_scalar_field.rs`); and a query of a
 //! record that lists a scope, with no scope
@@ -286,7 +288,7 @@ enum Body {
     },
     Predicate {
         text: Zeroizing<String>,
-        vars: Parsed,
+        vars: Vec<(Zeroizing<String>, Held)>,
         bound: Option<NonZeroU32>,
     },
     Children(Zeroizing<String>),
@@ -322,6 +324,7 @@ impl Body {
                 Input::elements(bound.map(NonZeroU32::get), predicates)
             }
             Body::Predicate { text, vars, bound } => {
+                let vars = variables(vars)?;
                 Input::predicate(options, &text, &vars.0, bound.map(NonZeroU32::get))
             }
             Body::Children(path) => Ok(Input::Node(node_path(&path)?)),
@@ -374,6 +377,11 @@ impl Condition {
 /// document was built that way or holds the decimal the `f32` prints as.
 /// So pass the `f64` the document holds: `f64::from(x)` for a document
 /// built from `x` through serde_json (`json!`, `to_value`).
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a JSON scalar",
+    label = "a `{Self}`",
+    note = "equality at a path and a predicate variable take a boolean, an integer, an `f64` or a string. There is no `f32`: pass `f64::from(x)`. To ask about an object or an array, use `contains`"
+)]
 pub trait JsonScalar: scalar_sealed::Sealed {
     /// The value as JSON: `None` for a NaN or an infinity, which no JSON
     /// number is.
@@ -383,6 +391,11 @@ pub trait JsonScalar: scalar_sealed::Sealed {
 
 /// A value an ordering at a path compares: a number or a string, the
 /// leaves the JSON index derives an ordering term for. Sealed.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a value an ordering compares",
+    label = "a `{Self}`",
+    note = "an ordering at a path takes an integer, an `f64` or a string; ask for a boolean or a null with equality at the path (`eq`, `is_null`)"
+)]
 pub trait JsonOrdered: JsonScalar {}
 
 mod scalar_sealed {
@@ -487,6 +500,26 @@ fn held(value: impl JsonScalar) -> Held {
     }
 }
 
+/// The predicate's variables as the one object `jsonb_path_match` takes,
+/// wiped when it drops. A name given twice is refused, as a repeated member
+/// of that object is, and so is a number JSON cannot hold: both before any
+/// key is requested.
+fn variables(vars: Vec<(Zeroizing<String>, Held)>) -> Result<Parsed, crate::refusal::Error> {
+    let mut object = Parsed::of(Value::Object(serde_json::Map::new()));
+    for (mut name, value) in vars {
+        let Value::Object(map) = &mut object.0 else {
+            unreachable!("built as an object")
+        };
+        if map.contains_key(name.as_str()) {
+            return Err(crate::refusal::Error::bad_source(
+                crate::refusal::Reason::JsonDuplicateKey,
+            ));
+        }
+        let _ = map.insert(std::mem::take(&mut *name), value.checked()?.take());
+    }
+    Ok(object)
+}
+
 /// A path's text, held in storage that is wiped on drop: a path names
 /// keys, which are plaintext.
 fn path_text(path: &str) -> Zeroizing<String> {
@@ -582,14 +615,14 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P, D> FieldReference<W, T, C, P, D
     /// Rows where the SQL/JSON path predicate `text` is true, as
     /// `jsonb_path_match` decides it over the plaintext:
     /// `"$.age >= $min && exists($.visits[*] ? (@.place == \"home\"))"`.
-    /// Name its variables with [`vars`](JsonFieldQuery::vars). The grammar and
+    /// Name its variables with [`var`](JsonFieldQuery::var). The grammar and
     /// what each construct compiles to are the dynamic interface's `match`
     /// operator's. The predicate is compiled when the query is encrypted,
     /// before any key is requested.
     pub fn predicate(self, text: &str) -> JsonFieldQuery<T, Predicate, C::Start> {
         self.json(Body::Predicate {
             text: path_text(text),
-            vars: Parsed::of(Value::Object(serde_json::Map::new())),
+            vars: Vec::new(),
             bound: None,
         })
     }
@@ -1017,20 +1050,31 @@ impl<T, A, S> JsonFieldQuery<T, ElementMatch<A>, S> {
 }
 
 impl<T, S> JsonFieldQuery<T, Predicate, S> {
-    /// The predicate's variables, one JSON object whose members the
-    /// predicate names as `$name`: the `vars` `jsonb_path_match` takes.
-    /// None by default. An object is required: anything else is refused
-    /// when the query is encrypted. A NaN or an infinity in `vars` is
-    /// `null` by the time this sees it, as in
-    /// [`FieldReference::contains`]: a predicate comparing with it compares
-    /// with `null`.
-    pub fn vars(mut self, vars: impl Into<JsonPlaintext>) -> Self {
+    /// One of the predicate's variables, which the predicate names as
+    /// `$name`: `predicate("$.age >= $min").var("min", 30)`. Together they
+    /// are the `vars` object `jsonb_path_match` takes. `value` is a scalar,
+    /// as a path's `eq` takes. A NaN or an infinity is refused when the
+    /// query is encrypted ([`TermError::JsonNumberNotFinite`]), and so is a
+    /// name given twice (`Error::Input`, with
+    /// [`Reason::JsonDuplicateKey`](crate::refusal::Reason::JsonDuplicateKey)),
+    /// each before any key is requested.
+    pub fn var(self, name: &str, value: impl JsonScalar) -> Self {
+        self.variable(name, held(value))
+    }
+
+    /// A predicate variable that is a JSON `null`, which the predicate
+    /// names as `$name`.
+    pub fn var_null(self, name: &str) -> Self {
+        self.variable(name, Held::Value(Parsed::of(Value::Null)))
+    }
+
+    fn variable(mut self, name: &str, value: Held) -> Self {
         if let Some(JsonInput {
-            body: Body::Predicate { vars: held, .. },
+            body: Body::Predicate { vars, .. },
             ..
         }) = self.0.value.as_mut()
         {
-            *held = Parsed::of(vars.into().into_value());
+            vars.push((path_text(name), value));
         }
         self
     }

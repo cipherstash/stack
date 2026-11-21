@@ -1101,6 +1101,12 @@ mod typed_paths {
                 .encrypt(&keyset)
                 .await
                 .map(drop),
+            EncryptedOrder::DOC
+                .predicate("$.lines[*].qty > $q")
+                .var("q", f64::NAN)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
         ];
         for refused in refused {
             assert!(
@@ -1331,7 +1337,8 @@ mod refusals {
             .map(drop);
         let vars = EncryptedCustomer::PROFILE
             .predicate("$.age >= $min")
-            .vars(json!([30]))
+            .var("min", 30)
+            .var("min", 31)
             .encrypt(&keyset)
             .await
             .map(drop);
@@ -1351,10 +1358,30 @@ mod refusals {
                 syntax,
                 Reason::JsonPredicateSyntax,
             ),
-            ("variables that are not an object", vars, Reason::JsonInput),
+            ("a variable named twice", vars, Reason::JsonDuplicateKey),
         ] {
             assert_eq!(reason_of(what, refused), reason, "{what}");
         }
+    }
+
+    /// A predicate variable named twice is refused, as a repeated member of
+    /// the variables object is, rather than one of the two being kept, and
+    /// no key is requested.
+    #[tokio::test]
+    async fn a_variable_named_twice_is_refused_before_any_key() {
+        let (cipher, generates) = counting().await;
+        let keyset = cipher.default_keyset();
+        let refused = EncryptedCustomer::PROFILE
+            .predicate("$.age >= $min")
+            .var("min", 30)
+            .var_null("min")
+            .encrypt(&keyset)
+            .await;
+        assert_eq!(
+            reason_of("a variable named twice", refused),
+            Reason::JsonDuplicateKey
+        );
+        assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
     }
 
     /// An input refusal reports the code and the payload the dynamic
@@ -1653,6 +1680,27 @@ mod as_the_data_plan_derives {
             .clone()
     }
 
+    /// `value` with every selector set (`sv`) sorted, so two needles
+    /// compare as sets.
+    fn sets(mut value: Value) -> Value {
+        fn sort(value: &mut Value) {
+            match value {
+                Value::Object(map) => {
+                    for (key, inner) in map.iter_mut() {
+                        if let (true, Value::Array(items)) = (key == "sv", &mut *inner) {
+                            items.sort_by_key(|item| item.to_string());
+                        }
+                        sort(inner);
+                    }
+                }
+                Value::Array(items) => items.iter_mut().for_each(sort),
+                _ => {}
+            }
+        }
+        sort(&mut value);
+        value
+    }
+
     fn one(operand: Operand) -> Value {
         match operand {
             Operand::One(bytes) => serde_json::from_slice(&bytes).unwrap(),
@@ -1835,7 +1883,7 @@ mod as_the_data_plan_derives {
         // compare as written.
         let typed = EncryptedCustomer::PROFILE
             .predicate("$.age >= $min && exists($.name)")
-            .vars(json!({"min": 30}))
+            .var("min", 30)
             .encrypt(&keyset)
             .await
             .unwrap();
@@ -1846,6 +1894,27 @@ mod as_the_data_plan_derives {
         )
         .await);
         assert_eq!(serde_json::to_value(&typed).unwrap(), data);
+
+        // Several variables, of each scalar kind and a `null`, in any order.
+        let predicate = "$.age >= $min && $.name == $name && $.vip == $vip && $.note == $none";
+        let typed = EncryptedCustomer::PROFILE
+            .predicate(predicate)
+            .var_null("none")
+            .var("name", "Ada")
+            .var("vip", true)
+            .var("min", 30.5)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let data = one(operand(
+            &keyset,
+            Op::Match,
+            json!({"predicate": predicate, "vars": json!({"min": 30.5, "name": "Ada", "vip": true, "none": null}).to_string()}),
+        )
+        .await);
+        // An equality leaf is a containment needle, whose selector set
+        // each derivation sends in its own random order: compare as sets.
+        assert_eq!(sets(serde_json::to_value(&typed).unwrap()), sets(data));
 
         let token = EncryptedCustomer::PROFILE
             .children("$.visits")

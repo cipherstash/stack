@@ -183,7 +183,7 @@ async fn the_plans_json_query_example_runs() {
         .unwrap();
     let adult: JsonTreePredicateQuery = EncryptedCustomer::PROFILE
         .predicate("$.age >= $min")
-        .vars(json!({"min": 18}))
+        .var("min", 18)
         .encrypt(&keyset)
         .await
         .unwrap();
@@ -327,7 +327,7 @@ async fn each_query_is_the_data_plans_operand() {
 
     let typed = EncryptedCustomer::PROFILE
         .predicate("$.age >= $min && exists($.name)")
-        .vars(json!({"min": 30}))
+        .var("min", 30)
         .encrypt(&keyset)
         .await
         .unwrap();

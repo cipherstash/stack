@@ -42,6 +42,11 @@ impl Parsed {
     pub(crate) fn of(value: Value) -> Self {
         Self(value)
     }
+
+    /// The document, moved out to a new owner, which wipes it in turn.
+    pub(crate) fn take(mut self) -> Value {
+        std::mem::take(&mut self.0)
+    }
 }
 
 /// The reason a JSON text refusal is reported with.
