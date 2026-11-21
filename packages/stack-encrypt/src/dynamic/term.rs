@@ -1274,12 +1274,15 @@ mod tests {
             ordered!(b"ab".to_vec(), bytes(b"ab"), "bytes");
             // A date, a timestamp and a decimal, as their `value` types.
             ordered!(
-                crate::value::Date::from_days_since_epoch(19_782).expect("in range"),
+                crate::value::Date::new(jiff::civil::date(2024, 2, 29)),
                 Tree::Typed(Logical::Date, Box::new(Tree::Int32(19_782))),
                 "date"
             );
             ordered!(
-                crate::value::Timestamp::new(1_700_000_000, 123_456_789).expect("in range"),
+                crate::value::Timestamp::new(
+                    jiff::Timestamp::new(1_700_000_000, 123_456_789).expect("in range")
+                )
+                .expect("in range"),
                 Tree::Typed(
                     Logical::Timestamp(vitaminc_aead::plaintext::TimeUnit::Nanos),
                     Box::new(Tree::Int128(1_700_000_000_123_456_789))
@@ -1287,7 +1290,7 @@ mod tests {
                 "timestamp"
             );
             ordered!(
-                crate::value::Decimal::new(-123_450, 2).expect("in range"),
+                crate::value::Decimal::new(rust_decimal::Decimal::new(-123_450, 2)),
                 Tree::Typed(
                     Logical::Decimal { scale: 2 },
                     Box::new(Tree::Int128(-123_450))

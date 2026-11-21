@@ -1353,9 +1353,9 @@ where
 /// | `f32`, `f64` | `F64`: an `f32` widens to it exactly, `-0.0` ties `0.0`, every NaN is one value after `+Infinity` |
 /// | `String` | `Text`: Unicode 16 NFC with case and accents folded |
 /// | `Vec<u8>` | `Bytes`, as they are |
-/// | [`value::Date`](crate::value::Date) | `Date`: the day |
-/// | [`value::Timestamp`](crate::value::Timestamp) | `Timestamp`: the instant truncated to the microsecond, so instants in one microsecond tie |
-/// | [`value::Decimal`](crate::value::Decimal) | `Decimal`: the number with its scale normalised, so `1.5` ties `1.50` |
+/// | `value::Date` | `Date`: the day |
+/// | `value::Timestamp` | `Timestamp`: the instant truncated to the microsecond, so instants in one microsecond tie |
+/// | `value::Decimal` | `Decimal`: the number with its scale normalised, so `1.5` ties `1.50` |
 ///
 /// A borrowed text or byte string is not a source: an order term takes
 /// its value by ownership (the visitor carries it), so pass a `String` or
@@ -1440,9 +1440,11 @@ orderable!(
     i16 => I16, i32 => I32, i64 => I64, i128 => I128,
     f32 => F64, f64 => F64,
     Vec<u8> => Bytes,
-    crate::value::Date => Date, crate::value::Timestamp => Timestamp,
-    crate::value::Decimal => Decimal,
 );
+#[cfg(feature = "jiff")]
+orderable!(crate::value::Date => Date, crate::value::Timestamp => Timestamp);
+#[cfg(feature = "rust_decimal")]
+orderable!(crate::value::Decimal => Decimal);
 // Text by hand: its order encoding is the ADR-0002 fold, which refuses a
 // code point Unicode 16 does not assign, and block ORE bounds its length.
 // A query of such text is refused before any key, where every other

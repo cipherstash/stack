@@ -95,3 +95,30 @@ pub fn index_of(name: &str) -> stack_encrypt::target::IndexSpec {
         .and_then(|key| IndexSpec::parse(key))
         .unwrap_or(IndexSpec::Equality)
 }
+
+/// The date `days` days after 1970-01-01, as the plaintext the `date`
+/// family takes.
+#[allow(dead_code)]
+pub fn date_of_days(days: i32) -> eql_bindings::v4::plaintext::Date {
+    let day = jiff::civil::date(1970, 1, 1)
+        .checked_add(jiff::Span::new().days(days))
+        .expect("a day in jiff's range");
+    eql_bindings::v4::plaintext::Date::new(day)
+}
+
+/// The instant `seconds` after the Unix epoch plus `nanoseconds`, as the
+/// plaintext the `timestamp` family takes.
+#[allow(dead_code)]
+pub fn timestamp_of(seconds: i64, nanoseconds: i32) -> eql_bindings::v4::plaintext::Timestamp {
+    let instant = jiff::Timestamp::new(seconds, nanoseconds).expect("an instant in jiff's range");
+    eql_bindings::v4::plaintext::Timestamp::new(instant).expect("an instant in range")
+}
+
+/// The number `mantissa × 10^-scale`, as the plaintext the `numeric`
+/// family takes.
+#[allow(dead_code)]
+pub fn decimal_of(mantissa: i128, scale: u32) -> eql_bindings::v4::plaintext::Decimal {
+    eql_bindings::v4::plaintext::Decimal::new(rust_decimal::Decimal::from_i128_with_scale(
+        mantissa, scale,
+    ))
+}

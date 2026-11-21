@@ -144,22 +144,27 @@ plaintext, or, for a date, a timestamp or a decimal, one of
 | `Boolean` | `bool` |
 | `Real`, `RealEq`, `RealOrd`, `RealOrdOpe`, `RealOrdOre` | `f32` |
 | `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `f64` |
-| `Date`, `DateEq` | `v4::plaintext::Date`: an `i32` of days since 1970-01-01 |
-| `Timestamp`, `TimestampEq` | `v4::plaintext::Timestamp`: `i64` Unix seconds and `u32` nanoseconds, UTC, no leap seconds |
-| `Numeric`, `NumericEq` | `v4::plaintext::Decimal`: an `i128` mantissa (below 2^96) and a `u8` scale (at most 28) |
+| `Date`, `DateEq` | `v4::plaintext::Date`: a calendar date, built from jiff's `civil::Date` |
+| `Timestamp`, `TimestampEq` | `v4::plaintext::Timestamp`: a UTC instant to the nanosecond, built from jiff's `Timestamp` |
+| `Numeric`, `NumericEq` | `v4::plaintext::Decimal`: a mantissa (below 2^96) and a scale (at most 28), built from rust_decimal's `Decimal` |
 
 A date, a timestamp and a decimal have no Rust standard type, and jiff's
-and rust_decimal's types cannot be wiped, so these three are this crate's
-own. Each is built range checked (vitaminc's ranges, which are jiff's and
-rust_decimal's: dates from `-009999-01-01` to `9999-12-31`, instants from
-`-009999-01-02T01:59:59Z` to `9999-12-30T22:00:00.999999999Z`), refusing a
-value outside them with an error that does not show it, and wipes its
-integers when dropped. It is not `Copy`. The `jiff` and `rust_decimal`
-features convert to and from jiff's `civil::Date` and `Timestamp` and
-rust_decimal's `Decimal`; the value converted to is the caller's, and is not
-wiped. One conversion can fail. jiff can make an instant before its own
-`Timestamp::MIN` when it parses text with a UTC offset, and converting
-that instant is refused. On `NumericEq`,
+and rust_decimal's types cannot be wiped. So these three are vitaminc's
+types, re-exported at `v4::plaintext`.
+
+- Each is built from the jiff or rust_decimal value: `Date::new`,
+  `Timestamp::new`, and `Decimal::new`. The ranges are jiff's and
+  rust_decimal's: dates from `-009999-01-01` to `9999-12-31`, instants from
+  `-009999-01-02T01:59:59Z` to `9999-12-30T22:00:00.999999999Z`.
+- Each stores the value as integers and wipes them when dropped. None is
+  `Copy` or `Clone`.
+- `to_jiff` and `to_decimal` return a jiff or rust_decimal value. That
+  value is the caller's. It is not wiped.
+- `Timestamp::new` can fail. When jiff 1.0.0 parses text with a UTC
+  offset, it can make an instant before its own `Timestamp::MIN`.
+  `Timestamp::new` refuses that instant (`OutOfRange`).
+
+On `NumericEq`,
 `1.5 = 1.50` (the scale is normalised); on `TimestampEq`, an instant is truncated to the microsecond (the nanoseconds below it are dropped, not rounded), so two instants in the same microsecond are equal. Each opens as
 it was stored. Their ordered types order a date by its day, a timestamp by
 the microsecond (truncated, as on `TimestampEq`) and a decimal by value.

@@ -71,7 +71,6 @@ fn pinned_part<T: serde::Serialize>(value: &T) -> Value {
 macro_rules! encrypt {
     ($keyset:expr, $value:expr, $ty:ty) => {{
         let out: $ty = $value
-            .clone()
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
@@ -100,12 +99,12 @@ async fn every_payload() -> BTreeMap<String, Value> {
     let mut out = BTreeMap::new();
     {
         use text::*;
-        let value = "Ada Lovelace".to_owned();
+        let value = || "Ada Lovelace".to_owned();
         record!(
             out,
             keyset,
             "",
-            value,
+            value(),
             [
                 Text,
                 TextEq,
@@ -122,7 +121,7 @@ async fn every_payload() -> BTreeMap<String, Value> {
                 TextOrdOpeQuery,
             ]
         );
-        record!(out, keyset, value, [
+        record!(out, keyset, value(), [
             TextSearchOreEqualityQuery => TextSearchOreQuery,
             TextSearchOreOrderQuery => TextSearchOreQuery,
             TextSearchOreMatchQuery => TextSearchOreQuery,

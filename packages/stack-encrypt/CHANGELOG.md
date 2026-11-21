@@ -212,6 +212,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A plaintext is read in place, and no longer needs `Clone`** (#1734).
+  One value that feeds a ciphertext and several terms is not copied.
+  - A sealed or indexed plaintext is bounded by `Encrypt + EncryptRef`,
+    where it was `Encrypt + Clone`. `EncryptRef` means `&T: Encrypt`.
+    vitaminc's types and its derive provide it. A type with only a
+    by-value `Encrypt` impl must add `impl Encrypt for &T`.
+    `stack_encrypt::EncryptRef` is a new re-export.
+  - `Encryption::zip` takes a borrowed description as its second
+    argument, and runs it first. The outputs keep their written order.
+  - `target::ShareSource` is removed. `target::ConsumeSource` stays for
+    `passthrough` only.
+  - `dynamic::ValueFrame` and `json::JsonPlaintext` are no longer `Clone`.
+- **`value::Date`, `value::Timestamp`, and `value::Decimal` are vitaminc's
+  types** (#1734). Stack Encrypt's own copies are removed. The stored
+  format is unchanged.
+  - Build a `Date` from a jiff `civil::Date`, a `Timestamp` from a jiff
+    `Timestamp`, and a `Decimal` from a rust_decimal `Decimal`, with
+    `new` or `From`. Read one back with `to_jiff` or `to_decimal`.
+  - These are removed: `Date::from_days_since_epoch`,
+    `Date::days_since_epoch`, `Timestamp::new(seconds, nanoseconds)`,
+    `Timestamp::seconds`, `Timestamp::nanoseconds`,
+    `Decimal::new(mantissa, scale)`, `Decimal::mantissa`,
+    `Decimal::scale`, and `value::RangeError`.
+  - `Timestamp::new` returns `value::OutOfRange` for an instant that jiff
+    1.0.0 can make before its own minimum. `Date::new` and `Decimal::new`
+    cannot fail.
+  - None of the three is `Clone`.
+  - The `jiff` and `rust_decimal` features are on by default, and the
+    `dynamic` feature turns both on. With one off, its types do not
+    exist. A build with `default-features = false` must name them.
 - **The tree entry points return a `Pending`** (#1705), so they can take
   audit metadata like every other call. `KeysetCipher::encrypt_tree`,
   `KeysetCipher::decrypt_tree`, and `StackCipher::decrypt` were

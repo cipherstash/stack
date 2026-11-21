@@ -63,19 +63,26 @@ default = []
 # The EQL v4 types as Stack Encrypt targets: `eql_bindings::v4`. Every
 # producible type implements `EncryptTarget` and `DecryptSource`, for a Rust
 # program that encrypts through `encrypt_into`. No `dynamic` layer.
+#
+# Turns on Stack Encrypt's `jiff` and `rust_decimal` features: the `date`,
+# `timestamp` and `numeric` families take vitaminc's `Date`, `Timestamp`
+# and `Decimal`, which exist only with them.
 stack-encrypt = [
   "dep:stack-encrypt",
+  "stack-encrypt/jiff",
+  "stack-encrypt/rust_decimal",
   "dep:base64",
   "dep:base85-simd",
   "dep:hex",
   "dep:zeroize",
   "dep:thiserror",
 ]
-# Conversions between jiff's `civil::Date` / `Timestamp` and
-# `v4::plaintext::Date` / `Timestamp`.
-jiff = ["stack-encrypt", "stack-encrypt/jiff"]
-# Conversions between rust_decimal's `Decimal` and `v4::plaintext::Decimal`.
-rust_decimal = ["stack-encrypt", "stack-encrypt/rust_decimal"]
+# Both are the `stack-encrypt` feature under an older name, kept so a
+# manifest that names one still resolves. `v4::plaintext::Date` and
+# `Timestamp` are built from jiff's types, and `Decimal` from rust_decimal's,
+# whenever `stack-encrypt` is on.
+jiff = ["stack-encrypt"]
+rust_decimal = ["stack-encrypt"]
 # The by-name dispatch a language binding needs (`encryption::targets`,
 # `v4::targets`): an EQL type named at run time, a `ValueFrame` plaintext,
 # and the target table a guest serializes. Turns on stack-encrypt's
@@ -87,7 +94,7 @@ targets = [
 ]
 
 [package.metadata.docs.rs]
-features = ["targets", "jiff", "rust_decimal"]
+features = ["targets"]
 
 [dev-dependencies]
 # Parity oracle: tests/catalog_parity.rs asserts the v3 domain inventory
@@ -96,3 +103,7 @@ features = ["targets", "jiff", "rust_decimal"]
 eql-domains = { path = "../eql-domains" }
 # `encoding`'s round-trip properties. The version eql-domains uses.
 proptest = "1"
+# The types `v4::plaintext::{Date, Timestamp, Decimal}` are built from, for
+# the tests and doc examples that build one.
+jiff = { version = "1.0.0", default-features = false }
+rust_decimal = { version = "1", default-features = false }

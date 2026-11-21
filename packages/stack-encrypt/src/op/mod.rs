@@ -621,22 +621,11 @@ macro_rules! ordered {
         impl Ordered for $ty {}
     )+};
 }
-ordered!(
-    u16,
-    u32,
-    u64,
-    u128,
-    i16,
-    i32,
-    i64,
-    i128,
-    f32,
-    f64,
-    String,
-    crate::value::Date,
-    crate::value::Timestamp,
-    crate::value::Decimal,
-);
+ordered!(u16, u32, u64, u128, i16, i32, i64, i128, f32, f64, String,);
+#[cfg(feature = "jiff")]
+ordered!(crate::value::Date, crate::value::Timestamp);
+#[cfg(feature = "rust_decimal")]
+ordered!(crate::value::Decimal);
 
 mod sealed {
     pub trait Sealed {}
@@ -1397,6 +1386,7 @@ mod tests {
 
     /// A date, a timestamp and a decimal are ordered, through every order
     /// index, and `Between` takes a pair of each.
+    #[cfg(all(feature = "jiff", feature = "rust_decimal"))]
     #[test]
     fn dates_timestamps_and_decimals_are_ordered() {
         use crate::value::{Date, Decimal, Timestamp};
@@ -1404,9 +1394,12 @@ mod tests {
         answers::<Lt, OreTerm<Date>>();
         answers::<Gte, OpeTerm<Timestamp>>();
         answers::<Between, RangeQuery<OreTerm<Decimal>>>();
-        let day = || Date::from_days_since_epoch(19_782).expect("in range");
-        let at = || Timestamp::new(1_700_000_000, 5).expect("in range");
-        let price = || Decimal::new(150, 2).expect("in range");
+        let day = || Date::new(jiff::civil::date(2024, 2, 29));
+        let at = || {
+            let instant = jiff::Timestamp::new(1_700_000_000, 5).expect("in range");
+            Timestamp::new(instant).expect("in range")
+        };
+        let price = || Decimal::new(rust_decimal::Decimal::new(150, 2));
         assert!(Supports::<Lt, Date>::prepare(&Ore, &day()).is_ok());
         assert!(Supports::<Lte, Timestamp>::prepare(&Ope, &at()).is_ok());
         assert!(Supports::<Gt, Decimal>::prepare(&OreBlock, &price()).is_ok());
