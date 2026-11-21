@@ -440,3 +440,55 @@ async fn a_path_declared_for_equality_is_the_data_plans_operand() {
         "{refused:?}"
     );
 }
+
+/// `predicate!` on a `JsonTreeDocument` field: the macro's query is the
+/// text form's for the same text and variables, as the EQL predicate type,
+/// and it checks an ordered path, a path declared for equality alone and an
+/// array's members alike.
+#[tokio::test]
+async fn the_predicate_macro_is_the_text_form() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let min: u32 = 30;
+    let from_macro: JsonTreePredicateQuery = stack_encrypt::predicate!(
+        NamedCustomer::PROFILE,
+        r#"$.age >= $min && $.name == "Ada" && exists($.visits[*] ? (@.place == $p && @.at > 10))"#,
+        min,
+        p = "home",
+    )
+    .encrypt(&keyset)
+    .await
+    .unwrap();
+    let from_text: JsonTreePredicateQuery = NamedCustomer::PROFILE
+        .predicate(
+            r#"$.age >= $min && $.name == "Ada" && exists($.visits[*] ? (@.place == $p && @.at > 10))"#,
+        )
+        .var("min", min)
+        .var("p", "home")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    // The equality leaf is a containment needle, whose selectors each
+    // derivation sends in a random order of its own: compare the trees
+    // with each selector set sorted.
+    let sorted = |query: &JsonTreePredicateQuery| {
+        fn sort(value: &mut Value) {
+            match value {
+                Value::Object(map) => {
+                    for (key, inner) in map.iter_mut() {
+                        if let (true, Value::Array(items)) = (key == "sv", &mut *inner) {
+                            items.sort_by_key(|item| item.to_string());
+                        }
+                        sort(inner);
+                    }
+                }
+                Value::Array(items) => items.iter_mut().for_each(sort),
+                _ => {}
+            }
+        }
+        let mut value = serde_json::to_value(query).unwrap();
+        sort(&mut value);
+        value
+    };
+    assert_eq!(sorted(&from_macro), sorted(&from_text));
+}

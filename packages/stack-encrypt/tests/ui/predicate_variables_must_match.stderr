@@ -1,0 +1,17 @@
+error: the predicate uses `$min` and no `min` was given: add `min = value`
+  --> tests/ui/predicate_variables_must_match.rs:22:52
+   |
+22 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age >= $min");
+   |                                                    ^^^^^^^^^^^^^^^
+
+error: `limit` was given and the predicate does not use it: it names no `$limit`
+  --> tests/ui/predicate_variables_must_match.rs:24:79
+   |
+24 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age >= $min", min = 30, limit = 5);
+   |                                                                               ^^^^^
+
+error: `min` is given twice: give each variable once
+  --> tests/ui/predicate_variables_must_match.rs:26:79
+   |
+26 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age >= $min", min = 30, min = 40);
+   |                                                                               ^^^

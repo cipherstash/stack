@@ -1627,13 +1627,17 @@ Base64.
   form's operand and to the data plan's, the compile-fail cases under
   `packages/stack-encrypt/tests/ui` hold the refusals, and the [JSON query
   example](#query-a-json-document) runs.
-- **Not done.** Checking a predicate's text at compile time (a
-  `predicate!` macro built on the typed paths), which a following pull
-  request adds. Until then the predicate text is checked when the query is
-  encrypted.
-- **Tracked in.** Issue #1459 is open until the predicate pull request
-  merges; #1687 refers to it. Issue #1677 is open for opening one child.
-  Issue #1486 is closed.
+- **Done** too: `predicate!(FIELD, "text", name = value, ..)` checks a
+  predicate's text at compile time, in the pull request stacked on #1687
+  (22 November 2026). It reads the text with the engine's parser, which
+  moved into `stack-encrypt-jsonpath`; refuses what the parser and the
+  index refuse whatever the variables hold; matches the variables with
+  the text's `$name`s; and checks each path, member and value through the
+  accessors the derive generated, found by the path's text. When the
+  program runs it is `predicate(text).var(..)`, so the operand is the text
+  form's and the data plan's `match` operand.
+- **Tracked in.** Issue #1459 closes with the `predicate!` pull request.
+  Issue #1677 is open for opening one child. Issue #1486 is closed.
 - **Finished when** these are all true:
   - the [JSON query example](#query-a-json-document) compiles;
   - a path, a member or a value type the field does not declare does not
