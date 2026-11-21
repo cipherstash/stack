@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-11-03
-revised: 2026-11-09
+revised: 2026-11-11
 extends: ADR-0003, ADR-0004
 ---
 
@@ -198,9 +198,11 @@ with a hand-written `EncryptTarget`, with the derive, and with a data plan.
 All three give the same descriptors and the same search term bytes, and each
 decrypts the records of the other two.
 
-The plan removes the structural traits, the `encrypt_as` and `decrypt_as`
-calls, and the helpers in `target::legacy`. They stay until plans, EQL, Go,
-and the guest have moved to the owned API.
+The plan removes the structural traits and the `encrypt_as` and
+`decrypt_as` calls. They stay until plans, EQL, Go, and the guest have moved
+to the owned API. The helpers in `target::legacy` were removed first. They
+were only a second way to call `encrypt_as` and `decrypt_as`, so their
+callers now call those methods.
 
 ### 6. The structural `Vec` decrypts through the wiping path
 

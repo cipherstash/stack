@@ -292,9 +292,9 @@ use eql_bindings::Identifier;
 let email = Identifier::for_column("members", "email")?;
 let age = Identifier::for_column("members", "age")?;
 
-// Not on `next` yet: the new traits for EQL types, and a borrowed value
-// and context. Today this needs `target::legacy::EncryptInto`, an owned
-// value, and an owned context.
+// Not on `next` yet: a borrowed value, and a context built with
+// `Scope::new`. Today this needs an owned value and an owned context:
+// `"alice@example.com".to_owned().encrypt_into_with_context(&keyset, email.clone())`.
 let by_email: TextEqQuery = "alice@example.com"
     .encrypt_into_with_context(&keyset, Scope::new(&email))
     .await?;
@@ -402,8 +402,8 @@ use stack_encrypt::json::JsonPlaintext;
 let column = Identifier::for_column("customers", "profile")?;
 
 // Not on `next` yet: the new traits for EQL types, and the public
-// `JsonPlaintext`. Today this needs `target::legacy::EncryptInto`, a
-// `serde_json::Value`, and an owned context.
+// `JsonPlaintext`. Today this needs `keyset.encrypt_as(&value, context)`,
+// a `serde_json::Value`, and an owned context.
 let profile: JsonPlaintext = json!({ "name": "Ada", "age": 35 }).into();
 let encrypted: JsonTreeDocument = profile
     .encrypt_into_with_context(&keyset, Scope::new(&column))
@@ -1867,7 +1867,7 @@ parameter named `aad`.
   `'static`, so `&str` does not meet it. A borrowed value needs its own
   bound, and the request borrows the value for as long as it runs.
 - **Done already.** Owned single values (#1404).
-- **Tracked in.** No issue. Issue #1468, open, a Vitamin C buffer type, is adjacent.
+- **Tracked in.** #1569. Issue #1468, open, a Vitamin C buffer type, is adjacent.
 - **Finished when** `keyset.encrypt("secret")` compiles, and a test shows
   that Stack Encrypt wipes its own copies of a borrowed value.
 
@@ -1987,8 +1987,8 @@ table.
 
 #### Remove the structural API
 
-- **What to build.** Remove `EncryptFrom`, `DecryptInto`, `encrypt_as`, and
-  the helpers in `target::legacy`. Remove the plan builder:
+- **What to build.** Remove `EncryptFrom`, `DecryptInto`, `encrypt_as` and
+  `decrypt_as`. Remove the plan builder:
   `plan/build.rs`, `plan/chain.rs`, `plan/value.rs`, and
   `plan/field_ref.rs`, with `pick!`, `FieldRef`, `Runs`, and `Opens`.
   `Plan::encryption` moves into `Planned` (ADR-0007, amended 9 November
@@ -2008,10 +2008,13 @@ table.
   and the checks read them. The dynamic path no longer uses the plan
   builder. Those functions do not yet build a `Planned`: they run the
   lowering themselves. That inversion, the builder, the chain, the old
-  traits and `Label` are still to be removed.
+  traits and `Label` are still to be removed. The helpers in
+  `target::legacy` are removed, in the fourth pull request for #1488.
+  Their callers use `encrypt_as` and `decrypt_as` until those go too.
 - **Tracked in.** Issue #1488 is open. Its first pull request is the
   lowering. Its second replaces `CipherScope` and `dynamic::Scope` with
-  `CipherRef`. The removals follow.
+  `CipherRef`. Its third hides `ExpectedContext`. Its fourth removes
+  `target::legacy`. The other removals follow.
 - **Finished when** the old API is gone, and every consumer uses the new
   API.
 

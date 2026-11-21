@@ -6,7 +6,6 @@ use serde_json::{json, Value};
 use stack_encrypt::nonempty;
 use stack_encrypt::sem::{OpeTerm, Orderable, OreBlockTerm, OreTerm, TermBytesError};
 
-use stack_encrypt::target::legacy::EncryptInto;
 use stack_encrypt::{KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
 
@@ -38,13 +37,12 @@ async fn block<T: Orderable>(
 async fn an_order_term_is_its_bytes_in_lowercase_hex() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let ore: OreTerm<u32> = 42u32
-        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
+    let ore: OreTerm<u32> = keyset
+        .encrypt_as(&42u32, nonempty!("users/age").into())
         .await
         .expect("ore term");
-    let ope: OpeTerm<String> = "alice"
-        .to_string()
-        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
+    let ope: OpeTerm<String> = keyset
+        .encrypt_as(&"alice".to_string(), nonempty!("users/name").into())
         .await
         .expect("ope term");
     let fixed = block(&keyset, 42i64).await;

@@ -15,7 +15,6 @@ use stack_encrypt::kms::{
 };
 use stack_encrypt::plan::{Field, Fields};
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::{
     all, nonempty, AuditMetadata, Ciphertext, Decrypt, DecryptInto, EncryptFrom, Equality, Error,
     Pending, Plan, StackCipher, StackCipherText,
@@ -295,20 +294,20 @@ async fn an_audited_call_that_requests_no_data_key_succeeds_and_sends_nothing() 
         .unwrap();
 
     // An absent value, and an empty list.
-    let absent: Option<EncryptedEmail> = None::<String>
-        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+    let absent: Option<EncryptedEmail> = keyset
+        .encrypt_as(&None::<String>, nonempty!("users/email").into())
         .audit(list_issues())
         .await
         .unwrap();
     assert!(absent.is_none());
-    let empty: Vec<EncryptedEmail> = Vec::<String>::new()
-        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+    let empty: Vec<EncryptedEmail> = keyset
+        .encrypt_as(&Vec::<String>::new(), nonempty!("users/email").into())
         .audit(list_issues())
         .await
         .unwrap();
     assert!(empty.is_empty());
-    let opened: Vec<String> = empty
-        .decrypt_into(&cipher, nonempty!("users/email"))
+    let opened: Vec<String> = cipher
+        .decrypt_as(empty, nonempty!("users/email").into())
         .audit(list_issues())
         .await
         .unwrap();
@@ -605,13 +604,16 @@ async fn a_derived_record_sends_its_metadata() {
     let (cipher, source) = cipher().await;
     let keyset = cipher.default_keyset();
 
-    let record: EncryptedEmail = String::from("bob@example.com")
-        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+    let record: EncryptedEmail = keyset
+        .encrypt_as(
+            &String::from("bob@example.com"),
+            nonempty!("users/email").into(),
+        )
         .audit(list_issues())
         .await
         .unwrap();
-    let email: String = record
-        .decrypt_into(&cipher, nonempty!("users/email"))
+    let email: String = cipher
+        .decrypt_as(record, nonempty!("users/email").into())
         .audit(list_issues())
         .await
         .unwrap();

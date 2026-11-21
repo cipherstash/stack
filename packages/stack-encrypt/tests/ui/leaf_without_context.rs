@@ -1,9 +1,8 @@
 //! A leaf, a record that hands the caller's context to one, and a column of
-//! either all need a `NonEmpty<_>` context: the context-free `encrypt_into`
-//! / `decrypt_from` pass `()`, which no leaf accepts.
+//! either all need a `NonEmpty<_>` context: a default context, or `()`, is
+//! not one, so no leaf accepts it.
 use stack_encrypt::sem::EqualityTerm;
 
-use stack_encrypt::target::legacy::{EncryptInto, DecryptFrom};
 use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
@@ -15,17 +14,18 @@ struct EncryptedAge {
 }
 
 async fn encrypt(cipher: &KeysetCipher<'_, FakeDataKeySource>) {
-    let _term: EqualityTerm = "alice".encrypt_into(cipher).await.unwrap();
-    let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
-    let _column: Vec<StackCipherText> = vec![1u32].encrypt_into(cipher).await.unwrap();
+    let _term: EqualityTerm = cipher.encrypt_as(&"alice", Default::default()).await.unwrap();
+    let _record: EncryptedAge = cipher.encrypt_as(&42u32, Default::default()).await.unwrap();
+    let _column: Vec<StackCipherText> =
+        cipher.encrypt_as(&vec![1u32], Default::default()).await.unwrap();
 }
 
 async fn decrypt(cipher: &StackCipher<FakeDataKeySource>, record: EncryptedAge) {
-    let _age = u32::decrypt_from(record, cipher).await.unwrap();
+    let _age: u32 = cipher.decrypt_as(record, Default::default()).await.unwrap();
 }
 
 async fn decrypt_leaf(cipher: &StackCipher<FakeDataKeySource>, record: EncryptedAge) {
-    let _age: u32 = record.decrypt_into(cipher, ()).await.unwrap();
+    let _age: u32 = cipher.decrypt_as(record, ().into()).await.unwrap();
 }
 
 fn main() {}
