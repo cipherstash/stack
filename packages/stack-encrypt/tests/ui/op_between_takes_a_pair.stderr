@@ -5,7 +5,7 @@ error[E0061]: this method takes 2 arguments but 1 argument was supplied
    |                                ^^^^^^^------- argument #2 of type `u32` is missing
    |
 note: method defined here
-  --> src/marker.rs
+  --> src/field_reference.rs
    |
    |     pub fn between<Q>(self, lo: Q, hi: Q) -> BetweenQuery<T, Q::Value, C::Start>
    |            ^^^^^^^
@@ -32,11 +32,11 @@ error[E0277]: the trait bound `(u32, u32): QueryInput` is not satisfied
              bool
              f32
            and $N others
-note: required by a bound in `Marker::<W, T, C, P>::lt`
-  --> src/marker.rs
+note: required by a bound in `FieldReference::<W, T, C, P>::lt`
+  --> src/field_reference.rs
    |
    |                   Q: QueryInput,
-   |                      ^^^^^^^^^^ required by this bound in `Marker::<W, T, C, P>::lt`
+   |                      ^^^^^^^^^^ required by this bound in `FieldReference::<W, T, C, P>::lt`
 ...
    | / operator_methods! {
    | |     /// Rows whose value equals `value` ([`op::Eq`](struct@Eq)).

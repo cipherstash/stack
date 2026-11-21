@@ -495,7 +495,7 @@ impl<T> Scope<T> {
 /// ```
 ///
 /// Pass the result to
-/// [`MarkedQuery::scope`](crate::marker::MarkedQuery::scope). You do not
+/// [`FieldQuery::scope`](crate::field_reference::FieldQuery::scope). You do not
 /// need to write this type's name: `Outer` is a [`Scope`] or another
 /// `Scopes`, and `Inner` is the [`Scope`] of the innermost record.
 ///

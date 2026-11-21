@@ -153,7 +153,7 @@ impl Identifier {
     /// The column a two-segment label names, table then column, or `None`
     /// for a label of any other length. One reading of a label for the
     /// by-name dispatch (`targets::Identifier::from_label`) and the typed
-    /// query of a field marker ([`query`]).
+    /// query of a field reference ([`query`]).
     pub(crate) fn column_of(label: &stack_encrypt::Label) -> Option<NonEmpty<Self>> {
         let mut segments = label.segments();
         let (Some(table), Some(column), None) = (segments.next(), segments.next(), segments.next())

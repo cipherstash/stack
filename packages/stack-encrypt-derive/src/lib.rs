@@ -124,12 +124,12 @@
 //! cryptographic map-entry context. Vitamin C still binds keys inside plaintext
 //! maps and preserves authenticated absence and empty-container markers.
 //!
-//! # Field markers
+//! # Field references
 //!
-//! A `struct` record also emits one marker per derived field, as an
+//! A `struct` record also emits one field reference per derived field, as an
 //! associated constant named after the field in upper case:
 //! `EncryptedUser::EMAIL` for a field `email` (`EncryptedDoc::TYPE` for
-//! `r#type`). A marker is the value a typed query of the field starts
+//! `r#type`). A field reference is the value a typed query of the field starts
 //! from. It has one method per operator the field's indexes answer,
 //! checked at compile time: one index (`Encrypted<EqualityTerm>`), several
 //! (`Encrypted<(EqualityTerm, MatchTerms)>`, each operator answered by the
@@ -137,27 +137,27 @@
 //! (`Option<Encrypted<EqualityTerm>>`).
 //!
 //! To query a field of a record that is itself a field, call `field` on
-//! the outer field's marker:
+//! the outer field's reference:
 //! `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)`. A nullable
 //! record field, `Option<EncryptedAddress>`, has the same method. If the
 //! inner record lists a scope, the query needs each record's scope,
 //! outermost first.
 //!
 //! `#[stash(query = String)]` on a field states the type its queries take,
-//! so each of its marker's methods takes that type alone. The derive checks
+//! so each of its field reference's methods takes that type alone. The derive checks
 //! it against the plaintext struct's field, which is that type or an
-//! `Option` of it. Without it, an equality marker takes any type its index
+//! `Option` of it. Without it, an equality field reference takes any type its index
 //! accepts, since the derive does not see the plaintext struct's field
-//! types otherwise. On a field whose marker has no operator method, such
+//! types otherwise. On a field whose field reference has no operator method, such
 //! as a record field or a `StackCipherText`, it does nothing beyond that
 //! check. A record that lists a caller scope
-//! gives its markers that scope's type, and the query takes it with
+//! gives its field references that scope's type, and the query takes it with
 //! `.scope(..)`, once; a record with none gives a query that is ready at
 //! once. No binding can be given. The query ends with `.encrypt(&keyset)`
 //! and derives under the context the derive sealed the field under, so it
-//! is the stored term. See `stack_encrypt::Marker`. The constant's name is
+//! is the stored term. See `stack_encrypt::FieldReference`. The constant's name is
 //! the field's in upper case, so a record cannot define another constant
-//! of that name; a tuple field has no name, so no marker.
+//! of that name; a tuple field has no name, so no field reference.
 //!
 //! Ciphertext and term operations compose before awaiting, preserving batched
 //! key requests. Terms alone need only their respective PRF or ordering trait.

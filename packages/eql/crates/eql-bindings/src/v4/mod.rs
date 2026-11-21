@@ -43,7 +43,7 @@
 //! domain. What separates the two on the wire is the envelope's
 //! [`SchemaVersion`], which refuses the other generation's `v`.
 
-/// Generated: the `op::Answers` impls through which a field marker of a
+/// Generated: the `op::Answers` impls through which a field reference of a
 /// derived record queries a producible type, each type's
 /// `op::LabelledTarget` impl and its query twin's assembly
 /// ([`crate::encryption::query`]). Needs only the `stack-encrypt` feature.

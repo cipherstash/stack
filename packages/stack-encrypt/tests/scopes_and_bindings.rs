@@ -612,9 +612,9 @@ mod a_bound_json_document {
     }
 }
 
-/// A query carries no binding. A typed query cannot be given one: a marker
+/// A query carries no binding. A typed query cannot be given one: a field reference
 /// takes the scope its record lists and nothing else
-/// (`tests/ui/marker_query_has_no_bind.rs`). A query from a plan that is
+/// (`tests/ui/field_query_has_no_bind.rs`). A query from a plan that is
 /// data takes its context as a value. A binding in that value is refused
 /// when the query is awaited, before any key is requested, rather than
 /// dropped.

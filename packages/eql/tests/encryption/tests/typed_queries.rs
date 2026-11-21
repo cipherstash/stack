@@ -1,4 +1,4 @@
-//! Rust queries an EQL v4 field through the field's marker on a derived
+//! Rust queries an EQL v4 field through its field reference on a derived
 //! record: `EncryptedUser::EMAIL.eq(v).encrypt(&keyset)`, answered through
 //! the `op::Answers` impls eql-codegen writes, with the type's query twin
 //! as the term. A record that lists a scope takes it with `.scope(..)`.
@@ -7,7 +7,7 @@
 //! (`stack_encrypt::dynamic::query_term`, which the Go SDK runs) on three
 //! things: which operators each type answers, the bytes of each query, and
 //! for `TextMatch`, how a decrypted row verifies and how many rows to fetch.
-//! A marker's query must also be the term of the row its record stored,
+//! A field query must also be the term of the row its record stored,
 //! under the same scope.
 
 mod common;
@@ -101,7 +101,7 @@ struct Columns {
 }
 
 /// A record with a field of each EQL type that answers an operator, in the
-/// table `users`. Its markers are the typed queries under test.
+/// table `users`. Its field references are the typed queries under test.
 #[derive(EncryptTarget)]
 #[stash(struct = Columns, scope = "users")]
 struct EncryptedColumns {
@@ -135,8 +135,8 @@ fn columns() -> Columns {
     }
 }
 
-/// A marker's query for one operator, as what the tests compare: the bytes
-/// it binds with its query domain, the column the marker names, and the
+/// A field query for one operator, as what the tests compare: the bytes
+/// it binds with its query domain, the column the field reference names, and the
 /// input the data path is given for the same query.
 struct Typed {
     bytes: (Vec<u8>, String),
@@ -144,26 +144,26 @@ struct Typed {
     input: ValueFrame,
 }
 
-/// The query `$marker.$operator($value)` under `$keyset`, with `$value` as
+/// The query `$field reference.$operator($value)` under `$keyset`, with `$value` as
 /// the data path's input.
 macro_rules! typed {
-    ($keyset:expr, $marker:expr, $operator:ident, $value:expr) => {{
-        let marker = $marker;
+    ($keyset:expr, $reference:expr, $operator:ident, $value:expr) => {{
+        let reference = $reference;
         let value = $value;
-        let query = marker
+        let query = reference
             .$operator(value.clone())
             .encrypt($keyset)
             .await
             .unwrap();
         Typed {
             bytes: typed_bytes(&query),
-            column: marker.name(),
+            column: reference.name(),
             input: frame(value),
         }
     }};
 }
 
-/// The marker query for each operator a type answers, for the value the
+/// The field query for each operator a type answers, for the value the
 /// row `columns()` holds: one arm per row of `ANSWERS`, so a type that
 /// starts answering an operator fails here until it has one, and an arm
 /// compiles only if the type implements `op::Answers` for it.
@@ -182,38 +182,38 @@ async fn typed_and_input(keyset: &Keyset<'_>, name: &str, operator: &str) -> Typ
         ("RealEq", "eq") => typed!(keyset, EncryptedColumns::REAL_EQ, eq, row.real_eq),
         ("DoubleEq", "eq") => typed!(keyset, EncryptedColumns::DOUBLE_EQ, eq, row.double_eq),
         ("TextMatch", "matches") => {
-            let marker = EncryptedColumns::TEXT_MATCH;
-            let query: MatchTwin<TextMatchQuery> = marker
+            let reference = EncryptedColumns::TEXT_MATCH;
+            let query: MatchTwin<TextMatchQuery> = reference
                 .matches(row.text_match.clone())
                 .encrypt(keyset)
                 .await
                 .unwrap();
             Typed {
                 bytes: typed_bytes(query.twin()),
-                column: marker.name(),
+                column: reference.name(),
                 input: frame(row.text_match),
             }
         }
         _ => panic!(
-            "{name} answers `{operator}` from a field marker: give it a field in \
+            "{name} answers `{operator}` from a field reference: give it a field in \
              `EncryptedColumns` and an arm here, with the input the data path is given"
         ),
     }
 }
 
-/// The operators each type answers from a field marker are exactly the
+/// The operators each type answers from a field reference are exactly the
 /// ones the data path answers for a field that names it, type by type, in
-/// order, for every type whose twin a marker's query assembles: one term,
+/// order, for every type whose twin a field query assembles: one term,
 /// from an equality or a match index. A producible type whose twin needs
 /// an order term, or several terms, is the one gap: the data path answers
-/// it and a marker answers nothing, and this holds the gap to exactly
+/// it and a field reference answers nothing, and this holds the gap to exactly
 /// those types, so a type with an equality or match twin cannot drop out
 /// unseen. The typed impls and `ANSWERS` are generated from one rule, so
 /// this is what holds that rule to the engine's.
 #[test]
-fn a_marker_answers_what_the_data_path_answers() {
+fn a_field_reference_answers_what_the_data_path_answers() {
     let mut gap = Vec::new();
-    // A document has no marker query: it is queried through a data plan,
+    // A document has no field query: it is queried through a data plan,
     // which tests/json_tree_data_plan.rs covers.
     for target in eql_targets::targets()
         .iter()
@@ -239,7 +239,7 @@ fn a_marker_answers_what_the_data_path_answers() {
         } else {
             assert!(
                 typed.is_empty(),
-                "{}: a marker answers nothing yet",
+                "{}: a field reference answers nothing yet",
                 target.name
             );
             if !data.is_empty() {
@@ -249,7 +249,7 @@ fn a_marker_answers_what_the_data_path_answers() {
     }
     // The gap today: every producible ordered type (OPE and block ORE), and
     // text search, whose twins carry an order term among their three. A type
-    // leaves this list when a marker's query assembles its twin, and its
+    // leaves this list when a field query assembles its twin, and its
     // answers are then held to the data path's above.
     assert_eq!(
         gap,
@@ -291,11 +291,11 @@ fn a_marker_answers_what_the_data_path_answers() {
     assert!(!ANSWERS.is_empty());
 }
 
-/// Every marker query binds the bytes the data path derives for the same
+/// Every field query binds the bytes the data path derives for the same
 /// column, operator and value, under the same query domain. The twin
-/// names the column the marker names: the record's scope, then the field.
+/// names the column the field reference names: the record's scope, then the field.
 #[tokio::test]
-async fn every_marker_query_is_the_data_paths_query() {
+async fn every_field_query_is_the_data_paths_query() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for (name, operators) in ANSWERS {
@@ -314,11 +314,11 @@ async fn every_marker_query_is_the_data_paths_query() {
     }
 }
 
-/// Every marker query carries the term of the row its record stored: the
+/// Every field query carries the term of the row its record stored: the
 /// `hm` of an exact type's field, and a filter the stored `bf` of a match
 /// type's field contains.
 #[tokio::test]
-async fn every_marker_query_is_the_term_of_the_row_its_record_stored() {
+async fn every_field_query_is_the_term_of_the_row_its_record_stored() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let stored: EncryptedColumns = columns().encrypt_into(&keyset).await.unwrap();
@@ -376,10 +376,10 @@ struct EncryptedUser {
     name: TextMatch,
 }
 
-/// The marker's `TextEq` query is the term of a value the type stored on
+/// The field reference's `TextEq` query is the term of a value the type stored on
 /// its own under the same column, as the data path's is.
 #[tokio::test]
-async fn a_marker_eq_query_matches_the_stored_term() {
+async fn a_field_reference_eq_query_matches_the_stored_term() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let column = Identifier::for_column("users", "email").unwrap();
@@ -403,10 +403,10 @@ async fn a_marker_eq_query_matches_the_stored_term() {
     assert_ne!(other.hm, stored.hm);
 }
 
-/// `verify` and `target_limit` on the marker's `TextMatch` query answer as
+/// `verify` and `target_limit` on the field reference's `TextMatch` query answer as
 /// the data path's `verify` and `target_limit` do for the same query.
 #[tokio::test]
-async fn a_marker_match_query_verifies_and_sizes_as_the_data_path_does() {
+async fn a_field_reference_match_query_verifies_and_sizes_as_the_data_path_does() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let plan = data_plan("TextMatch", "name");
@@ -461,14 +461,14 @@ async fn a_marker_match_query_verifies_and_sizes_as_the_data_path_does() {
     }
 }
 
-/// A marker query refuses what the data path refuses: match text that cuts
+/// A field query refuses what the data path refuses: match text that cuts
 /// no token is no query, by either path.
 ///
-/// A marker's label is its record's scope and its field's name, so it
+/// A field reference's label is its record's scope and its field's name, so it
 /// always names a column: the refusal of a label that names no column is
 /// the data path's alone (tests/targets.rs).
 #[tokio::test]
-async fn a_marker_query_refuses_what_the_data_path_refuses() {
+async fn a_field_query_refuses_what_the_data_path_refuses() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let short = EncryptedUser::NAME.matches("a").encrypt(&keyset).await;
@@ -513,13 +513,13 @@ struct EncryptedPerson {
     name: TextMatch,
 }
 
-/// A marker query given a scope with `.scope(..)` derives its term under
+/// A field query given a scope with `.scope(..)` derives its term under
 /// the column and the scope. A record stores its fields the same way under
 /// a scope. So the scoped query is the term of the row stored under that
 /// scope, and the twin stores the column alone, as the row does. For an
 /// exact type and for `TextMatch`.
 #[tokio::test]
-async fn a_scoped_marker_query_finds_a_value_stored_under_the_same_scope() {
+async fn a_scoped_field_query_finds_a_value_stored_under_the_same_scope() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let stored: EncryptedPerson = Person {
@@ -540,7 +540,7 @@ async fn a_scoped_marker_query_finds_a_value_stored_under_the_same_scope() {
     assert_eq!(query.hm, stored.email.hm, "the term of the stored row");
 
     // Another scope, or none, gives another term. The query with no scope
-    // is from the marker of a record that lists none, for the same column.
+    // is from the field reference of a record that lists none, for the same column.
     let other = EncryptedPerson::EMAIL
         .eq("bob@example.com")
         .scope(Scope::new(8i64))

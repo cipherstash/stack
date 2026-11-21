@@ -131,16 +131,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `dynamic::read_json` returns it. It gains `Clone`, `Zeroize`, a
     redacted `Debug`, `From<Value>` and `parse`.
   - ADR-0013 records the decision.
-- **Field markers** (#1486, #1590, #1596, #1600). `#[derive(EncryptTarget)]` on
-  a `struct = ..` record emits one `Marker` per derived field. It is an
+- **Field references** (#1486, #1590, #1596, #1600). `#[derive(EncryptTarget)]` on
+  a `struct = ..` record emits one `FieldReference` per derived field. It is an
   associated constant named after the field in upper case:
-  `EncryptedUser::EMAIL`. A marker is `Marker<W, T, C, P>`. `W` is where
-  the field sits: `marker::Root<R>` for a field of the record `R`, or
-  `marker::Nested<W>` for one reached through a record field. `T` is the
+  `EncryptedUser::EMAIL`. A field reference is `FieldReference<W, T, C, P>`. `W` is where
+  the field sits: `field_reference::Root<R>` for a field of the record `R`, or
+  `field_reference::Nested<W>` for one reached through a record field. `T` is the
   field's target type. `C` is the type of the scopes a query takes:
   `NoScope`, one `Scope<U>`, or `target::Scopes` for a field of a nested
   record.
-  `P` is the type a query takes: `marker::TakesAny`, or `marker::Takes<V>`
+  `P` is the type a query takes: `field_reference::TakesAny`, or `field_reference::Takes<V>`
   for a field marked `#[stash(query = V)]`.
   - Its methods are one per operator the field's indexes answer, checked
     at compile time through `Answers`: `eq`, `lt`, `lte`, `gt`, `gte`,
@@ -150,16 +150,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `op::OperatorAnswer`. An operator no index answers, or two answer, has
     no method. An `Option<..>` field has the methods a present value has.
   - `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)` is the
-    inner field's marker under the outer field's context. `field` accepts
-    only a marker of the inner record.
+    inner field's reference under the outer field's context. `field` accepts
+    only a field reference of the inner record.
   - A nullable record field, `Option<EncryptedAddress>`, has the same
-    `field` (`marker::Holds`). A row whose field is `None` stores nothing
+    `field` (`field_reference::Holds`). A row whose field is `None` stores nothing
     to match.
   - An inner record may list a scope of its own, such as
     `scope(field = "tenant")`. The query then takes one scope for each
     record that lists one, outermost first. The new `Scope::scope`
     chains them: `.scope(Scope::new(outer).scope(inner))`
-    (`marker::JoinScope`). The chain returns the new `target::Scopes`,
+    (`field_reference::JoinScope`). The chain returns the new `target::Scopes`,
     and any number of records can list a scope. Where one record lists a
     scope, `scope` takes that scope alone.
   - `#[stash(query = String)]` states the type a field's queries take. The
@@ -170,14 +170,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     scope gives a query that is ready at once. The query has no `bind`
     method, and ends with `.encrypt(&keyset)`. The output is the index's
     query term.
-  - A query from a marker derives under the declaration the derive wrote,
+  - A query from a field reference derives under the declaration the derive wrote,
     so it is the stored term. No plan is written by hand beside the
     record. A method takes its value by value, and a string literal as
     it is (`QueryInput`). The query's value is wiped when it is derived,
-    refused, or dropped. `assert_context!` takes a marker, and
-    `Marker::contexts()` is the record's contexts narrowed to the field.
-    A tuple field has no marker.
-- **Tuples of terms answer a query too** (#1596). The marker of a field
+    refused, or dropped. `assert_context!` takes a field reference, and
+    `FieldReference::contexts()` is the record's contexts narrowed to the field.
+    A tuple field has no field reference.
+- **Tuples of terms answer a query too** (#1596). The field reference of a field
   typed `Encrypted<(EqualityTerm, MatchTerms)>` answers `eq` and
   `matches`. The query uses the one term that answers the operator. `OreBlockTerm` implements `LabelledTarget`, so a block ORE field
   is queried under its label.
@@ -267,7 +267,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The structural API is removed** (#1661, #1662). Stack Encrypt had two
   ways to encrypt a record and two ways to query one. The owned API stays:
   `EncryptTarget`, `DecryptSource`, `EncryptInto`, `DecryptFrom`, field
-  markers, and `dynamic::Planned` for a plan that is data. These are gone:
+  field references, and `dynamic::Planned` for a plan that is data. These are gone:
   - The traits `EncryptFrom` and `DecryptInto`, the derives
     `#[derive(EncryptFrom)]` and `#[derive(DecryptInto)]`, and the calls
     `encrypt_as` and `decrypt_as`.
@@ -296,7 +296,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `cipher.encrypt(&value).context("a/b")` | `keyset.encrypt_tree(&value, &Label::parse("a/b")?)` |
   | `cipher.encrypt(&value).context(c).with((Equality, Ore))` | `value.encrypt_into_with_context::<Encrypted<(EqualityTerm, OreTerm<u32>)>, _>(&keyset, c)` |
   | `Plan::context("users").fields()..build()` and `.using(&plan)` | A derived record, `#[stash(struct = User, scope = "users")]`. A program whose declaration is data parses it with `dynamic::record::plan` and runs `dynamic::Planned::new(&plan, value)`. |
-  | `cipher.query(op::Eq, value).on(&plan)` | The field's marker: `EncryptedUser::EMAIL.eq(value).encrypt(&keyset)` |
+  | `cipher.query(op::Eq, value).on(&plan)` | The field's reference: `EncryptedUser::EMAIL.eq(value).encrypt(&keyset)` |
   | `cipher.open(record).using(&plan)` | `P::decrypt_from(record, &keyset)` |
   | `plan::all((a, b))` | `a.zip(b)` on two `Pending` values, or `Pending::all` |
   | A hand-written `impl EncryptFrom<S> for T` | `impl EncryptTarget<S> for T` with `type ContextInput = RequiredContext<CallerContext>`, and `DecryptSource` in place of `DecryptInto` |
@@ -304,10 +304,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   What has no replacement yet:
   - **A typed JSON query.** `cipher.query(op::Contains, ..)` and
     `op::AtPath(..)` on a plan were the only typed way to query a JSON
-    document. Until the document's field marker has methods for them, a
+    document. Until the document's field reference has methods for them, a
     JSON query goes through a plan that is data (`dynamic::query_term`, or
     `Planned` with a query plan).
-  - **Naming another index for a query** (`.via(index)`). A marker
+  - **Naming another index for a query** (`.via(index)`). A field reference
     answers through the index its field's type declares.
   - **A keyset chosen by name on a call** (`.keyset("tenant")`). Load the
     keyset first, with `cipher.keyset(..)`.
@@ -317,7 +317,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     record field implements `DecryptField` through `DecryptSource`.
   - A record that is generic over a lifetime needs `'a: 'static`, because
     `EncryptTarget` requires `Self: 'static`.
-  - A field whose type is a derived `plaintext = T` record has no marker
+  - A field whose type is a derived `plaintext = T` record has no field reference
     method, because the derive writes no `op::Answers` for the record.
     Implement `op::Answers` and `op::LabelledTarget` for the record by
     hand to query it.
@@ -329,7 +329,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Encrypted<(OreTerm<u32>, OpeTerm<u32>)>`. The refusal is
   `PlanError::DuplicateIndex` or `PlanError::IndexOverlap`, when the value
   is encrypted and before any key is requested. The plan builder refused
-  these sets, a plan that is data still does, and a marker has no method
+  these sets, a plan that is data still does, and a field reference has no method
   for an operator that two indexes answer. Used directly as a target,
   such a set was accepted before.
 

@@ -337,9 +337,9 @@ pub(crate) struct FieldAttrs {
     /// clear, not encrypted, and moved back when the record is decrypted.
     pub(crate) passthrough: bool,
     /// `#[stash(query = String)]`: with `struct = ..`, the type a query of
-    /// this field takes, so its marker's methods take that type alone. The
+    /// this field takes, so its field reference's methods take that type alone. The
     /// derive checks it against the plaintext field, which is that type or
-    /// an `Option` of it. On a field whose marker has no operator method
+    /// an `Option` of it. On a field whose field reference has no operator method
     /// (a record field, a ciphertext alone), only the check applies.
     pub(crate) query: Option<Type>,
 }

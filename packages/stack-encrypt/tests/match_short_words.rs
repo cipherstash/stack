@@ -73,7 +73,7 @@ async fn store(keyset: &Keyset<'_>, text: &str) -> MatchTerms<ShortWords> {
     stored.name.terms
 }
 
-/// A match query of `text` on a person's name, from the field's marker.
+/// A match query of `text` on a person's name, from the field reference.
 async fn query(keyset: &Keyset<'_>, text: &str) -> Result<MatchQuery<ShortWords>, Error> {
     EncryptedPerson::NAME.matches(text).encrypt(keyset).await
 }

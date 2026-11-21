@@ -354,7 +354,7 @@ escaped in the descriptor rather than read as two names.
 ### Querying an EQL v4 field from Rust
 
 A typed query starts from a field of a derived record. The record derive
-gives each field a marker, such as `EncryptedUser::EMAIL`, with a method for
+gives each field a field reference, such as `EncryptedUser::EMAIL`, with a method for
 each operator the field's EQL type answers. The term that comes back is the
 type's query twin, the value the `eql_v4.query_*` domain takes:
 
@@ -418,7 +418,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-| v4 type | Marker method | Operator | Query term |
+| v4 type | Field reference method | Operator | Query term |
 | --- | --- | --- | --- |
 | `TextEq` | `eq` | `op::Eq` | `TextEqQuery` |
 | `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`, `DoubleEq` | `eq` | `op::Eq` | `SmallintEqQuery`, `IntegerEqQuery`, `BigintEqQuery`, `RealEqQuery`, `DoubleEqQuery` |
@@ -429,20 +429,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 under `EqlMatch`: a filter can match a row that does not hold the query's
 text, so keep only the decrypted rows that verify. An exact query has no
 `verify`. An operator a type does not answer does not compile: `.lt(..)` on
-a `TextEq` field, or `.matches(..)` on an `IntegerEq` field. A marker names
+a `TextEq` field, or `.matches(..)` on an `IntegerEq` field. A field reference names
 its field's type and no index, so a query cannot send another index's term,
 such as the bare `Equality` term, which the type's SQL does not take. The
 ordered types (`IntegerOrd`, `TextOrd`, …) and the text search types answer
-nothing from a marker yet: their twins need an order term, or several terms
-at once, and a marker's query sends one index's term. Query them through
+nothing from a field reference yet: their twins need an order term, or several terms
+at once, and a field query sends one index's term. Query them through
 the data path (`stack_encrypt::dynamic::query_term`) for now.
 
-The query is derived under the marker's label: the record's scope, then the
+The query is derived under the field reference's label: the record's scope, then the
 field's name (or its `identity`). That is the column the field stores in
 `i`, so the query finds the values the record wrote, and the values the
 type wrote on its own with
 `value.encrypt_into_with_context(&keyset, Identifier::for_column("users", "email")?)`.
-A marker's label always has those two segments, so it always names a
+A field reference's label always has those two segments, so it always names a
 column. The derive accepts only plain label segments. So a column whose
 table or column name is not one, which `Identifier::for_column` accepts,
 cannot be a record field, and cannot be queried this way: for instance a
@@ -530,7 +530,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(stored.email.i.t, "members");
     assert_eq!(stored.email.i.c, "email");
 
-    // A query from the field's marker carries the stored equality term.
+    // A query from the field reference carries the stored equality term.
     let query = EncryptedMember::EMAIL
         .eq("alice@example.com")
         .encrypt(&keyset)

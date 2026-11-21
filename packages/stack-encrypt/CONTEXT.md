@@ -275,26 +275,27 @@ Case belongs to the match index's configuration, not to the operator.
 _Avoid_: query type, index (that is what answers the operator), `OpSpec`
 (the dynamic enum's old name)
 
-**Field marker**:
+**Field reference**:
 The value a typed query of a derived record's field starts from. The
 derive emits one per field, as an associated constant named after the field
-in upper case (`EncryptedUser::EMAIL`). A marker names the field, the
+in upper case (`EncryptedUser::EMAIL`). A field reference names the field, the
 context the derive sealed it under, and the field's target type. It also
 names the type of the scope the record's caller supplies. The target
-type's `Answers` impls give the marker one method per operator the
+type's `Answers` impls give the field reference one method per operator the
 field's index answers, checked at compile time.
 
-A query from a marker takes the record's scope once, by type. It takes no
+A query from a field reference takes the record's scope once, by type. It takes no
 binding. It derives under the declaration the derive wrote, so it is the
 stored term. No plan is written by hand beside the record.
 
-`Marker::contexts()` is the record's contexts narrowed to the field, and
-`assert_context!` takes a marker. A field of several indexes answers each
+`FieldReference::contexts()` is the record's contexts narrowed to the field, and
+`assert_context!` takes a field reference. A field of several indexes answers each
 operator through the one index that answers it. A nullable field answers
-what a present value answers. A record field's marker reaches the inner
-record's markers with `.field(..)`, under the outer field's context.
-`#[stash(query = T)]` gives a marker the type its queries take.
-_Avoid_: field handle (that is the dynamic form), column, accessor
+what a present value answers. A record field's reference reaches the inner
+record's field references with `.field(..)`, under the outer field's context.
+`#[stash(query = T)]` gives a field reference the type its queries take.
+_Avoid_: marker (its old name), field handle (that is the dynamic form),
+column, accessor
 
 **Planned**:
 A value under a plan that is data, `Planned::new(&plan, value)`. The
@@ -326,9 +327,9 @@ has one method per scalar operator and `op(..)` for any operator. Each is
 checked against the plan where it is called, then `.scope(..)` and
 `.encrypt(&keyset)` follow.
 
-The dynamic counterpart of a field marker. Neither has a `bind` method: a
+The dynamic counterpart of a field reference. Neither has a `bind` method: a
 binding is in no query context.
-_Avoid_: field marker (that is the typed form), column
+_Avoid_: field reference (that is the typed form), column
 
 **Query term**:
 The value a query sends to the server. It is not the stored term: equality

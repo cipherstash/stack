@@ -557,13 +557,13 @@ async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
         .await
         .unwrap();
     assert_eq!(row.email.terms, (email_hm, email_match));
-    // The field's marker is that query site: it derives the stored term.
-    let by_marker = EncryptedUser::EMAIL
+    // The field's reference is that query site: it derives the stored term.
+    let by_reference = EncryptedUser::EMAIL
         .eq(user().email)
         .encrypt(&generator)
         .await
         .unwrap();
-    assert_eq!(by_marker, row.email.terms.0);
+    assert_eq!(by_reference, row.email.terms.0);
 
     // Decryption rebuilds the plaintext field by field: one batched call.
     let recovered = User::decrypt_from(row, &cipher).await.unwrap();

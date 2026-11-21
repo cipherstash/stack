@@ -1,18 +1,18 @@
-//! Field markers: the value a typed query of a record field starts from.
+//! Field references: the value a typed query of a record field starts from.
 //!
-//! `#[derive(EncryptTarget)]` on a `struct = ..` record emits one marker
+//! `#[derive(EncryptTarget)]` on a `struct = ..` record emits one field reference
 //! per derived field, as an associated constant named after the field in
-//! upper case: `EncryptedUser::EMAIL` for a field `email`. A marker names
+//! upper case: `EncryptedUser::EMAIL` for a field `email`. A field reference names
 //! the field, the context the derive sealed it under (the record's scope,
 //! then the field's identity), the field's target type, whose [`Answers`]
 //! impls say which operators the field's indexes answer, and the scope the
-//! record's caller supplies, if it lists one. So a query from a marker uses
+//! record's caller supplies, if it lists one. So a query from a field reference uses
 //! the declaration the derive wrote, and never a plan written by hand
 //! beside it: the query term and the stored term come from one source.
 //!
-//! A marker has one method per operator the field's indexes answer, checked
+//! A field reference has one method per operator the field's indexes answer, checked
 //! at compile time through [`Answers`]: a field of `Encrypted<EqualityTerm>`
-//! has [`eq`](Marker::eq) and no `gt`, and the error names the index. A
+//! has [`eq`](FieldReference::eq) and no `gt`, and the error names the index. A
 //! field of several indexes, `Encrypted<(EqualityTerm, MatchTerms)>`, has
 //! a method for each operator one of its indexes answers. A nullable field,
 //! `Option<Encrypted<EqualityTerm>>`, has the methods a present value has.
@@ -25,9 +25,9 @@
 //! - `scope(field = "tenant")`: each row stores the scope in a field.
 //!
 //! A query cannot read a row, so you pass the scope to the query in both
-//! cases. Call [`scope`](MarkedQuery::scope) once, with a value of the
+//! cases. Call [`scope`](FieldQuery::scope) once, with a value of the
 //! scope's type. Until you do, the query has no
-//! [`encrypt`](MarkedQuery::encrypt) method. A query on a record that
+//! [`encrypt`](FieldQuery::encrypt) method. A query on a record that
 //! lists no scope needs none, so you can encrypt it at once.
 //!
 //! A binding, such as a row ID, is not part of any query context. The
@@ -66,7 +66,7 @@
 //! let user = User { email: "ada@example.com".into(), age: 36 };
 //! let stored: EncryptedUser = user.encrypt_into_with_context(&keyset, Scope::new(42u64)).await?;
 //!
-//! // The query from the marker, under the same scope, is the stored term.
+//! // The query from the field reference, under the same scope, is the stored term.
 //! let by_email = EncryptedUser::EMAIL
 //!     .eq("ada@example.com")
 //!     .scope(Scope::new(42u64))
@@ -85,35 +85,35 @@
 //!
 //! These do not compile: `EncryptedUser::EMAIL.gt("x")`, since
 //! `Encrypted<EqualityTerm>` answers no ordering
-//! (`tests/ui/marker_operator_not_answered.rs`); `.encrypt(&keyset)` with
+//! (`tests/ui/field_reference_operator_not_answered.rs`); `.encrypt(&keyset)` with
 //! no scope, `.scope(Scope::new("42"))` for a `u64` tenant, and a second
-//! `.scope(..)` (`tests/ui/marker_query_needs_its_scope.rs`); and
-//! `.bind(..)` on the query (`tests/ui/marker_query_has_no_bind.rs`).
+//! `.scope(..)` (`tests/ui/field_query_needs_its_scope.rs`); and
+//! `.bind(..)` on the query (`tests/ui/field_query_has_no_bind.rs`).
 //!
 //! # A field that is a record
 //!
 //! The type of a field can be another record, for example
 //! `address: EncryptedAddress`. To query a field of the inner record,
-//! start from the outer field's marker and call [`field`](Marker::field):
+//! start from the outer field's reference and call [`field`](FieldReference::field):
 //!
 //! ```text
 //! EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET).eq("Main St")
 //! ```
 //!
-//! `field` returns a marker of the inner field. The derive seals each
+//! `field` returns a field reference of the inner field. The derive seals each
 //! inner field under a context with these parts, in this order:
 //!
 //! 1. the inner field's own label, `addresses/street`
 //! 2. the outer field's label, `accounts/address`
 //! 3. the outer record's scope, if the outer record lists one
 //!
-//! A query from the returned marker uses the same context, so the query
-//! term matches the stored term. Call [`contexts`](Marker::contexts) on
-//! the returned marker to read that context.
+//! A query from the returned field reference uses the same context, so the query
+//! term matches the stored term. Call [`contexts`](FieldReference::contexts) on
+//! the returned field reference to read that context.
 //!
-//! `field` accepts only a marker of the record that is the field's type.
-//! A marker of any other record does not compile
-//! (`tests/ui/marker_field_of_another_record.rs`).
+//! `field` accepts only a field reference of the record that is the field's type.
+//! A field reference of any other record does not compile
+//! (`tests/ui/field_reference_of_another_record.rs`).
 //!
 //! For a record nested three deep, call `field` once for each level:
 //! `Outer::ACCOUNT.field(EncryptedAccount::ADDRESS).field(EncryptedAddress::STREET)`.
@@ -131,7 +131,7 @@
 //! The query then needs one scope for each record that lists one. Start
 //! with the outermost record's scope, and chain
 //! [`Scope::scope`] for each record further in. Pass the result to
-//! [`scope`](MarkedQuery::scope):
+//! [`scope`](FieldQuery::scope):
 //!
 //! ```text
 //! EncryptedCompany::OFFICE
@@ -145,7 +145,7 @@
 //! `scope` accepts.
 //!
 //! These mistakes do not compile
-//! (`tests/ui/marker_nested_query_needs_each_scope.rs`):
+//! (`tests/ui/field_reference_nested_query_needs_each_scope.rs`):
 //!
 //! - leaving out a scope
 //! - passing a scope of the wrong type
@@ -156,19 +156,19 @@
 //!
 //! # The type a query takes
 //!
-//! An equality marker takes a value of any type that the equality index
+//! An equality field reference takes a value of any type that the equality index
 //! accepts: `EMAIL.eq(42u64)` compiles on a text field and matches
 //! nothing, because the derive sees the record's field types and not the
 //! plaintext struct's. A field states its type with
-//! `#[stash(query = String)]`. Then each of its marker's methods takes that
+//! `#[stash(query = String)]`. Then each of its field reference's methods takes that
 //! type alone ([`Takes`]), and the derive checks it against the plaintext
-//! struct's field, which is that type or an `Option` of it. An order marker
+//! struct's field, which is that type or an `Option` of it. An order field reference
 //! fixes the type without the attribute, since `OreTerm<S>` names it.
 //!
-//! A nullable field's marker without the attribute also takes an `Option`,
+//! A nullable field's reference without the attribute also takes an `Option`,
 //! since the equality index accepts one. `NICK.eq(None::<String>)`
 //! compiles and derives a term that no stored row holds: a `None` field
-//! stores no term, and a marker query is never `IS NULL`. Mark the field
+//! stores no term, and a field query is never `IS NULL`. Mark the field
 //! `#[stash(query = String)]` to refuse it.
 use std::marker::PhantomData;
 
@@ -185,16 +185,16 @@ use crate::{KeysetCipher, Label, NonEmpty};
 
 /// A field of a derived record, as a value that a query starts from.
 ///
-/// A marker records the field's name and the context the derive sealed the
+/// A field reference records the field's name and the context the derive sealed the
 /// field under. The type parameters are:
 ///
 /// - `W`: where the field is. [`Root<R>`] is a field of the record `R`,
-///   and every marker the derive emits has it. [`Nested<W>`] is a field of
+///   and every field reference the derive emits has it. [`Nested<W>`] is a field of
 ///   a record that is itself a field, and [`field`](Self::field) returns
 ///   it.
 /// - `T`: the field's target type.
-/// - `C`: the scopes that a query from this marker needs.
-/// - `P`: the value type that a query from this marker accepts. `P` is
+/// - `C`: the scopes that a query from this field reference needs.
+/// - `P`: the value type that a query from this field reference accepts. `P` is
 ///   [`TakesAny`], or [`Takes<String>`] for a field marked
 ///   `#[stash(query = String)]`.
 ///
@@ -204,11 +204,11 @@ use crate::{KeysetCipher, Label, NonEmpty};
 /// - `Scope<u64>`, for a record that lists `scope(tenant: u64)`, or
 ///   `scope(field = "tenant")` where the field is a `u64`.
 /// - [`Scopes`], which lists two or more scopes with the outermost
-///   record's first. `field` returns a marker with `Scopes` when more
+///   record's first. `field` returns a field reference with `Scopes` when more
 ///   than one record lists a scope ([`JoinScope`]).
 ///
 /// See the [module docs](self).
-pub struct Marker<W, T, C = NoScope, P = TakesAny> {
+pub struct FieldReference<W, T, C = NoScope, P = TakesAny> {
     name: &'static str,
     scope: &'static str,
     identity: &'static str,
@@ -217,19 +217,19 @@ pub struct Marker<W, T, C = NoScope, P = TakesAny> {
     target: FieldTags<T, C, P>,
 }
 
-/// The types a marker is tagged with, and holds none of: the field's
+/// The types a field reference is tagged with, and holds none of: the field's
 /// target, its record's caller scope and its query type.
 type FieldTags<T, C, P> = PhantomData<fn() -> (T, C, P)>;
 
-impl<W: Copy, T, C, P> Clone for Marker<W, T, C, P> {
+impl<W: Copy, T, C, P> Clone for FieldReference<W, T, C, P> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<W: Copy, T, C, P> Copy for Marker<W, T, C, P> {}
-impl<W: Place, T, C, P> std::fmt::Debug for Marker<W, T, C, P> {
+impl<W: Copy, T, C, P> Copy for FieldReference<W, T, C, P> {}
+impl<W: Place, T, C, P> std::fmt::Debug for FieldReference<W, T, C, P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Marker")
+        f.debug_struct("FieldReference")
             .field("name", &self.name)
             .field("scope", &self.scope)
             .field("identity", &self.identity)
@@ -238,12 +238,12 @@ impl<W: Place, T, C, P> std::fmt::Debug for Marker<W, T, C, P> {
     }
 }
 
-impl<R, T, C, P> Marker<Root<R>, T, C, P> {
-    /// A marker for the field `name` of the record `R`, sealed under
+impl<R, T, C, P> FieldReference<Root<R>, T, C, P> {
+    /// A field reference for the field `name` of the record `R`, sealed under
     /// `scope` then `identity` by the record whose `contexts` function this
     /// is. For generated code: the derive emits the call with the segments
-    /// it has checked to be plain, and a record's markers are its
-    /// associated constants. A marker built by hand states nothing about
+    /// it has checked to be plain, and a record's field references are its
+    /// associated constants. A field reference built by hand states nothing about
     /// any stored value, and [`label`](Self::label) panics on a segment
     /// that is not plain.
     #[doc(hidden)]
@@ -264,7 +264,7 @@ impl<R, T, C, P> Marker<Root<R>, T, C, P> {
     }
 }
 
-impl<W: Place, T, C, P> Marker<W, T, C, P> {
+impl<W: Place, T, C, P> FieldReference<W, T, C, P> {
     /// The field's name in its record, as `contexts()` names it.
     pub fn name(&self) -> &'static str {
         self.name
@@ -287,14 +287,14 @@ impl<W: Place, T, C, P> Marker<W, T, C, P> {
         self.place.narrow((self.contexts)()).narrowed(self.name)
     }
 
-    /// Returns the marker of a field of the record that is this field's
+    /// Returns the field reference of a field of the record that is this field's
     /// type: `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)`.
     ///
     /// This field's type is a record `R`, or `Option<R>` ([`Holds`]).
-    /// `inner` must be a marker of `R`. A marker of another record does
+    /// `inner` must be a field reference of `R`. A field reference of another record does
     /// not compile.
     ///
-    /// A query from the returned marker uses the context that the derive
+    /// A query from the returned field reference uses the context that the derive
     /// sealed the inner field under. The parts are, in order:
     ///
     /// 1. the inner field's label
@@ -307,17 +307,17 @@ impl<W: Place, T, C, P> Marker<W, T, C, P> {
     /// `.scope(Scope::new(outer).scope(inner))`. If one record lists a
     /// scope, call `.scope(Scope::new(value))`.
     ///
-    /// The returned marker has the query type of `inner`.
+    /// The returned field reference has the query type of `inner`.
     pub fn field<R, U, C2, Q>(
         self,
-        inner: Marker<Root<R>, U, C2, Q>,
-    ) -> Marker<Nested<W>, U, C::Joined, Q>
+        inner: FieldReference<Root<R>, U, C2, Q>,
+    ) -> FieldReference<Nested<W>, U, C::Joined, Q>
     where
         T: Holds<R>,
         C: JoinScope<C2>,
         C2: ScopeInput,
     {
-        Marker {
+        FieldReference {
             name: inner.name,
             scope: inner.scope,
             identity: inner.identity,
@@ -333,7 +333,7 @@ impl<W: Place, T, C, P> Marker<W, T, C, P> {
         }
     }
 
-    fn query<Op, In>(self, value: In, wipe: fn(In)) -> MarkedQuery<T, Op, In, C::Start>
+    fn query<Op, In>(self, value: In, wipe: fn(In)) -> FieldQuery<T, Op, In, C::Start>
     where
         Op: Operator,
         In: Input<Op::Arity>,
@@ -341,10 +341,10 @@ impl<W: Place, T, C, P> Marker<W, T, C, P> {
     {
         let holders = holders(&self.place);
         let nested = holders.iter().filter(|holder| holder.scoped).count();
-        MarkedQuery {
+        FieldQuery {
             label: self.label(),
-            // One record lists each scope the marker needs.
-            // `holders` covers the records that are fields. If the marker
+            // One record lists each scope the field reference needs.
+            // `holders` covers the records that are fields. If the field reference
             // needs one more scope than those records list, the outermost
             // record lists that scope.
             root_scoped: C::COUNT > nested,
@@ -357,7 +357,7 @@ impl<W: Place, T, C, P> Marker<W, T, C, P> {
     }
 }
 
-/// The label of a field the derive emitted a marker for: its record's
+/// The label of a field the derive emitted a field reference for: its record's
 /// scope, then its identity.
 fn label(scope: &'static str, identity: &'static str) -> Label {
     Label::new([scope, identity]).unwrap_or_else(|_| {
@@ -394,12 +394,12 @@ fn labels(holders: &[Holder]) -> Vec<&Label> {
 /// Implemented by a field type that contains the record `R`.
 ///
 /// The types are `R` itself, and `Option<R>` for a nullable record field.
-/// [`Marker::field`] on a field of either type accepts a marker of `R`.
+/// [`FieldReference::field`] on a field of either type accepts a field reference of `R`.
 /// Sealed.
 #[diagnostic::on_unimplemented(
-    message = "`field` on a field of type `{Self}` does not accept a marker of `{R}`",
-    label = "this is a marker of `{R}`",
-    note = "for a field of type `EncryptedAddress` or `Option<EncryptedAddress>`, pass a marker such as `EncryptedAddress::STREET`"
+    message = "`field` on a field of type `{Self}` does not accept a field reference of `{R}`",
+    label = "this is a field reference of `{R}`",
+    note = "for a field of type `EncryptedAddress` or `Option<EncryptedAddress>`, pass a field reference such as `EncryptedAddress::STREET`"
 )]
 pub trait Holds<R>: holds_sealed::Sealed<R> {}
 mod holds_sealed {
@@ -410,13 +410,13 @@ impl<R> Holds<R> for R {}
 impl<R> holds_sealed::Sealed<R> for Option<R> {}
 impl<R> Holds<R> for Option<R> {}
 
-/// Works out which scopes a query needs after a call to [`Marker::field`].
+/// Works out which scopes a query needs after a call to [`FieldReference::field`].
 ///
-/// `Self` is the scope type of the outer marker. `Inner` is the scope type
-/// of the inner record's marker. [`Joined`](Self::Joined) is the scope
-/// type of the marker that `field` returns:
+/// `Self` is the scope type of the outer field reference. `Inner` is the scope type
+/// of the inner record's field reference. [`Joined`](Self::Joined) is the scope
+/// type of the field reference that `field` returns:
 ///
-/// - If the inner record lists no scope, `Joined` is the outer marker's
+/// - If the inner record lists no scope, `Joined` is the outer field reference's
 ///   scope type.
 /// - If only the inner record lists a scope, `Joined` is that scope.
 /// - If both list a scope, `Joined` is [`Scopes`] with the outer scopes
@@ -424,11 +424,11 @@ impl<R> Holds<R> for Option<R> {}
 ///
 /// Sealed.
 #[diagnostic::on_unimplemented(
-    message = "`field` does not accept a marker whose scope type is `{Inner}`",
-    label = "`field` accepts a marker whose scope type is `NoScope` or one `Scope<T>`"
+    message = "`field` does not accept a field reference whose scope type is `{Inner}`",
+    label = "`field` accepts a field reference whose scope type is `NoScope` or one `Scope<T>`"
 )]
 pub trait JoinScope<Inner>: join_sealed::Sealed<Inner> {
-    /// The scope type of the marker that `field` returns.
+    /// The scope type of the field reference that `field` returns.
     type Joined: ScopeInput;
 }
 mod join_sealed {
@@ -455,8 +455,8 @@ where
 }
 
 /// Where a marked field sits: [`Root`] for a field of the record the
-/// derive emitted the marker for, [`Nested`] for one that
-/// [`Marker::field`] reached through a record field. Sealed.
+/// derive emitted the field reference for, [`Nested`] for one that
+/// [`FieldReference::field`] reached through a record field. Sealed.
 pub trait Place: Copy + place_sealed::Sealed {
     /// The outermost record's contexts, narrowed to the record that holds
     /// the field.
@@ -471,8 +471,8 @@ mod place_sealed {
     pub trait Sealed {}
 }
 
-/// A field of the record `R` itself: where every marker the derive emits
-/// sits. [`Marker::field`] checks a marker's record through it.
+/// A field of the record `R` itself: where every field reference the derive emits
+/// sits. [`FieldReference::field`] checks a field reference's record through it.
 pub struct Root<R>(PhantomData<fn() -> R>);
 impl<R> Clone for Root<R> {
     fn clone(&self) -> Self {
@@ -489,7 +489,7 @@ impl<R> Place for Root<R> {
 }
 
 /// A field of a record that is itself the field named here, which sits at
-/// `W`: what [`Marker::field`] makes.
+/// `W`: what [`FieldReference::field`] makes.
 #[derive(Clone, Copy)]
 pub struct Nested<W> {
     name: &'static str,
@@ -513,7 +513,7 @@ impl<W: Place> Place for Nested<W> {
     }
 }
 
-/// The type a marker's queries take: [`TakesAny`], any type the field's
+/// The type a field reference's queries take: [`TakesAny`], any type the field's
 /// index accepts, or [`Takes<V>`], `V` alone. A field marked
 /// `#[stash(query = V)]` is `Takes<V>`. Sealed, for every `V`.
 pub trait QueryValue<V>: value_sealed::Sealed<V> {}
@@ -521,19 +521,19 @@ mod value_sealed {
     pub trait Sealed<V> {}
 }
 
-/// A marker whose queries take any type the field's index accepts: the
+/// A field reference whose queries take any type the field's index accepts: the
 /// default, where the record does not state the field's query type.
 #[derive(Debug)]
 pub enum TakesAny {}
 impl<V> value_sealed::Sealed<V> for TakesAny {}
 impl<V> QueryValue<V> for TakesAny {}
 
-/// A marker whose queries take `V` alone: a field marked
+/// A field reference whose queries take `V` alone: a field marked
 /// `#[stash(query = V)]`. A query value is copied from its borrowed form,
-/// so a marker of `Takes<String>` accepts `"ada"` as well as a `&String`.
+/// so a field reference of `Takes<String>` accepts `"ada"` as well as a `&String`.
 ///
 /// A value of another type is refused at compile time. Since `V` is the one
-/// type the marker accepts, the compiler reports it as a mismatch of the
+/// type the field reference accepts, the compiler reports it as a mismatch of the
 /// value's query form: "type mismatch resolving `<u64 as QueryInput>::Value
 /// == String`".
 pub struct Takes<V>(PhantomData<fn() -> V>);
@@ -564,7 +564,7 @@ fn wipe_pair<S: Zeroize>((mut lo, mut hi): (S, S)) {
     hi.zeroize();
 }
 
-/// What a marker's operator methods take: an owned scalar, moved into the
+/// What a field reference's operator methods take: an owned scalar, moved into the
 /// query, or a borrowed text or byte string, copied into it. A number is
 /// given by value, `AGE.between(18, 65)`, and a string literal as it is,
 /// `EMAIL.eq("ada@example.com")`. The query holds the owned value and
@@ -646,9 +646,9 @@ impl QueryInput for &Vec<u8> {
 /// dropped.
 macro_rules! operator_methods {
     ($($(#[$doc:meta])* $method:ident => $op:ident;)+) => {$(
-        impl<W: Place, T, C: ScopeInput, P> Marker<W, T, C, P> {
+        impl<W: Place, T, C: ScopeInput, P> FieldReference<W, T, C, P> {
             $(#[$doc])*
-            pub fn $method<Q>(self, value: Q) -> MarkedQuery<T, $op, Q::Value, C::Start>
+            pub fn $method<Q>(self, value: Q) -> FieldQuery<T, $op, Q::Value, C::Start>
             where
                 Q: QueryInput,
                 P: QueryValue<Q::Value>,
@@ -676,7 +676,7 @@ operator_methods! {
     matches => Matches;
 }
 
-impl<W: Place, T, C: ScopeInput, P> Marker<W, T, C, P> {
+impl<W: Place, T, C: ScopeInput, P> FieldReference<W, T, C, P> {
     /// Rows whose value is between `lo` and `hi`, inclusive
     /// ([`op::Between`](Between)): one term carrying both bounds, derived
     /// under one context.
@@ -690,19 +690,19 @@ impl<W: Place, T, C: ScopeInput, P> Marker<W, T, C, P> {
     }
 }
 
-/// A query for [`Between`] from a [`Marker`]: the input is the two bounds,
+/// A query for [`Between`] from a [`FieldReference`]: the input is the two bounds,
 /// low then high, of one type.
-pub type BetweenQuery<T, In, S = Ready> = MarkedQuery<T, Between, (In, In), S>;
+pub type BetweenQuery<T, In, S = Ready> = FieldQuery<T, Between, (In, In), S>;
 
 /// The types a query is tagged with, and holds none of: its target, its
 /// operator and its state.
 type Tags<T, Op, S> = PhantomData<fn() -> (T, Op, S)>;
 
-/// Implemented by each scope type a marker can have. The scope type
-/// decides which state a query from the marker starts in.
+/// Implemented by each scope type a field reference can have. The scope type
+/// decides which state a query from the field reference starts in.
 ///
 /// The types are [`NoScope`], [`Scope<U>`], and [`Scopes`].
-/// [`Marker::field`] returns a marker with `Scopes` when more than one
+/// [`FieldReference::field`] returns a field reference with `Scopes` when more than one
 /// record lists a scope ([`JoinScope`]). Sealed.
 pub trait ScopeInput: scope_sealed::Sealed {
     /// The state a query starts in: [`Ready`] if the query needs no
@@ -731,7 +731,7 @@ impl<O: ScopeInput, U> ScopeInput for Scopes<O, Scope<U>> {
     const COUNT: usize = O::COUNT + 1;
 }
 
-/// Implemented by each value that [`scope`](MarkedQuery::scope) accepts.
+/// Implemented by each value that [`scope`](FieldQuery::scope) accepts.
 ///
 /// The values are one [`Scope<U>`], and [`Scopes`], which lists two or
 /// more scopes with the outermost record's scope first. Sealed.
@@ -762,7 +762,7 @@ impl<O: GivenScopes, I: GivenScopes> GivenScopes for Scopes<O, I> {
 }
 
 /// The state of a query that needs the scopes `C` and does not have them
-/// yet. Call [`scope`](MarkedQuery::scope) to pass them. The query is then
+/// yet. Call [`scope`](FieldQuery::scope) to pass them. The query is then
 /// [`Ready`].
 ///
 /// `C` is one [`Scope<U>`], or [`Scopes`] when more than one record
@@ -773,11 +773,11 @@ pub struct Needs<C>(PhantomData<fn() -> C>);
 /// scope, or you have passed the scopes it needs.
 pub struct Ready;
 
-/// A query from a [`Marker`], for the operator `Op` with the input `In`, in
+/// A query from a [`FieldReference`], for the operator `Op` with the input `In`, in
 /// the state `S`: [`Needs`] its scope, or [`Ready`] for the keyset. It has
 /// no `bind` method: a binding is in no query context. The value is wiped
 /// when the query is derived, refused or dropped.
-pub struct MarkedQuery<T, Op, In, S = Ready> {
+pub struct FieldQuery<T, Op, In, S = Ready> {
     label: Label,
     /// The record fields between the outermost record and the queried
     /// field, outermost first.
@@ -792,7 +792,7 @@ pub struct MarkedQuery<T, Op, In, S = Ready> {
     marker: Tags<T, Op, S>,
 }
 
-impl<T, Op, In, S> Drop for MarkedQuery<T, Op, In, S> {
+impl<T, Op, In, S> Drop for FieldQuery<T, Op, In, S> {
     fn drop(&mut self) {
         if let Some(value) = self.value.take() {
             (self.wipe)(value);
@@ -800,18 +800,18 @@ impl<T, Op, In, S> Drop for MarkedQuery<T, Op, In, S> {
     }
 }
 
-impl<T, Op, In, S> std::fmt::Debug for MarkedQuery<T, Op, In, S> {
+impl<T, Op, In, S> std::fmt::Debug for FieldQuery<T, Op, In, S> {
     /// Names the query, its label and the fields that hold it; the value
     /// is plaintext.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MarkedQuery")
+        f.debug_struct("FieldQuery")
             .field("label", &self.label)
             .field("within", &labels(&self.holders))
             .finish_non_exhaustive()
     }
 }
 
-impl<T, Op, In, C> MarkedQuery<T, Op, In, Needs<C>>
+impl<T, Op, In, C> FieldQuery<T, Op, In, Needs<C>>
 where
     C: GivenScopes,
 {
@@ -825,11 +825,11 @@ where
     ///
     /// You can call `scope` once: a [`Ready`] query has no `scope`
     /// method. An empty scope compiles, and
-    /// [`encrypt`](MarkedQuery::encrypt) returns an error for it.
-    pub fn scope(mut self, scope: C) -> MarkedQuery<T, Op, In, Ready> {
+    /// [`encrypt`](FieldQuery::encrypt) returns an error for it.
+    pub fn scope(mut self, scope: C) -> FieldQuery<T, Op, In, Ready> {
         let mut scopes = Vec::new();
         scope.push_scopes(&mut scopes);
-        MarkedQuery {
+        FieldQuery {
             label: self.label.clone(),
             holders: std::mem::take(&mut self.holders),
             root_scoped: self.root_scoped,
@@ -841,7 +841,7 @@ where
     }
 }
 
-impl<T, Op, In, S> MarkedQuery<T, Op, In, S> {
+impl<T, Op, In, S> FieldQuery<T, Op, In, S> {
     /// Builds the context parts that extend the field's own label. The
     /// result is the context the derive seals a nested record's fields
     /// under.
@@ -883,7 +883,7 @@ impl<T, Op, In, S> MarkedQuery<T, Op, In, S> {
     }
 }
 
-impl<T, Op, In> MarkedQuery<T, Op, In, Ready>
+impl<T, Op, In> FieldQuery<T, Op, In, Ready>
 where
     Op: Operator,
     In: Input<Op::Arity>,
@@ -891,7 +891,7 @@ where
 {
     /// Derives the query term under `keyset`. The term is the one that the
     /// field's index sends for the operator. The context of the term is
-    /// the marker's label, extended by the outer fields' contexts and the
+    /// the field reference's label, extended by the outer fields' contexts and the
     /// scopes.
     ///
     /// The query is prepared ([`Supports::prepare`]) before any key is
@@ -944,8 +944,8 @@ mod tests {
         }
     }
 
-    fn query<In>(value: In, wipe: fn(In)) -> MarkedQuery<(), (), In> {
-        MarkedQuery {
+    fn query<In>(value: In, wipe: fn(In)) -> FieldQuery<(), (), In> {
+        FieldQuery {
             label: Label::parse("users/age").expect("a label"),
             holders: Vec::new(),
             root_scoped: false,

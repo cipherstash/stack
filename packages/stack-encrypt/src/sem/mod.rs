@@ -865,7 +865,7 @@ impl<O> MatchTerms<O> {
     ///
     /// An empty `query` returns `false`: containment of zero positions is
     /// vacuously true, which would turn an empty query into a match-every-row
-    /// query. A field marker's query already refuses to build such a query
+    /// query. A field query already refuses to build such a query
     /// ([`TermError::EmptyTermText`]); this guards any other (e.g.
     /// deserialized) source of an empty one. The stored side is the other
     /// way round: a value with no tokens is stored as the empty filter, and
@@ -973,7 +973,7 @@ impl<O> Eq for MatchTerms<O> {}
 /// The two are different types because they are different things, even
 /// where their bytes share an encoding: a query is never stored, and a
 /// stored filter is never sent as a query. A
-/// `MatchQuery` comes from a field marker's query ([`op::Matches`](struct@crate::op::Matches)),
+/// `MatchQuery` comes from a field query ([`op::Matches`](struct@crate::op::Matches)),
 /// never from a target.
 ///
 /// A Bloom filter can hold every bit of the query without the value holding
@@ -1086,7 +1086,7 @@ impl<O> Eq for MatchQuery<O> {}
 /// term the index would send for that value alone, which is how a query
 /// domain that carries a range serialises it.
 ///
-/// It comes only from a field marker's query: a range is never stored. Both ends
+/// It comes only from a field query: a range is never stored. Both ends
 /// are inclusive, and a range whose low bound is above its high bound is
 /// not refused: as SQL's `BETWEEN`, it matches nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1121,7 +1121,7 @@ impl<T> RangeQuery<T> {
 /// a match query's verifier, which a [`MatchQuery`] keeps to verify a row. Plaintext, so it is
 /// zeroized on drop and has no `Debug`.
 /// [`Supports::prepare`](crate::op::Supports::prepare) makes one; only a field
-/// marker's query can join it to a filter
+/// field query can join it to a filter
 /// ([`Supports::query`](crate::op::Supports::query) takes a token no caller
 /// can make), so one query's tokens never verify rows for another value's
 /// filter.
@@ -1143,7 +1143,7 @@ impl QueryTokens {
     /// ([`TermError::InvalidOptions`]), checked before the text is
     /// tokenised, or text that cuts no token ([`TermError::EmptyTermText`]),
     /// whose filter would match every row. The one rule for a match query:
-    /// a field marker's query and the `dynamic` path both apply it, so they cannot
+    /// a field query and the `dynamic` path both apply it, so they cannot
     /// disagree on what they refuse. The stored side keeps token-less text
     /// as the empty filter instead.
     pub(crate) fn of_query(text: &str, options: &MatchOptions) -> Result<Self, TermError> {
@@ -2159,7 +2159,7 @@ impl<K> KeysetCipher<'_, K> {
     /// [`Tokenizer::Ngram`]) is the empty filter, which no query matches,
     /// so a short value can be stored. A query is the other type,
     /// [`MatchQuery`], and comes from a query
-    /// (a marker's `matches(..)`), which refuses a query of such
+    /// (a field reference's `matches(..)`), which refuses a query of such
     /// text ([`TermError::EmptyTermText`]) because its filter would match
     /// every row; this method does not know which it is deriving and
     /// refuses nothing.

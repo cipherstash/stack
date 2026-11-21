@@ -9,7 +9,7 @@
 //! operators are answered by the [`Json`](struct@crate::target::Json)
 //! index, over a `serde_json::Value`.
 //!
-//! A typed query is a method of a field's [`Marker`](crate::Marker), one
+//! A typed query is a method of a field's [`FieldReference`](crate::FieldReference), one
 //! method for each operator the field's indexes answer. A query whose
 //! declaration is data names the operator by its wire name ([`Op`]), with
 //! the `dynamic` feature.
@@ -62,7 +62,7 @@
 //! ([`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap); two match
 //! indexes are one index twice,
 //! [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex)). Its
-//! marker has no method for the operator. A plan that is data refuses such
+//! field reference has no method for the operator. A plan that is data refuses such
 //! a field when it is parsed.
 //!
 //! Three traits connect an operator to an index:
@@ -169,7 +169,7 @@ pub struct Gt;
 pub struct Gte;
 
 /// A range: rows whose value is between the query's two bounds, inclusive
-/// at both ends. It takes a [`Pair`], as a marker's `between(lo, hi)` does,
+/// at both ends. It takes a [`Pair`], as a field reference's `between(lo, hi)` does,
 /// derives both bounds under one context, and sends them as one term
 /// ([`RangeQuery`]), so no statement can pair the
 /// low bound of one query with the high bound of another. One value is
@@ -510,7 +510,7 @@ pub trait Input<A: Arity>: Sized + 'static {
     type Terms<T: 'static>: 'static;
 
     /// Derive the index's term for each plaintext of the input under
-    /// `label`, as one pending. Only a field marker's query calls this.
+    /// `label`, as one pending. Only a field query calls this.
     #[doc(hidden)]
     fn derive<'a, 'p, I, K>(
         self,
@@ -777,7 +777,7 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     /// before the input is consumed; an index that refuses nothing and
     /// keeps nothing returns `Ok(())`.
     ///
-    /// A field marker's query calls this once, when it is encrypted, before
+    /// A field query calls this once, when it is encrypted, before
     /// any key is requested, and keeps the verifier until the term is
     /// derived. So a verifier exists only for an input the index accepted,
     /// and a refused query costs no key request. The refusals are the
@@ -798,7 +798,7 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
         Ok(())
     }
     /// The query term, from the verifier and the terms the index derived
-    /// for the input's plaintexts. Only a field marker's query calls this:
+    /// for the input's plaintexts. Only a field query calls this:
     /// `QueryToken` cannot be made outside this crate, so no caller can
     /// pair one query's tokens with another value's filter, or pass a
     /// stored term off as a query.
@@ -815,7 +815,7 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     ) -> Self::Query;
 }
 
-/// Proof that [`Supports::query`] is called by a field marker's query, and the
+/// Proof that [`Supports::query`] is called by a field query, and the
 /// context the query's terms were derived under. Only this crate can make
 /// one, so an index in another crate can implement [`Supports`] but no
 /// caller can turn a term into a query term by hand, or name a context its
@@ -957,7 +957,7 @@ orders!(Ore => OreTerm, block: false, Ope => OpeTerm, block: false, OreBlock => 
 /// the one term that answers the operator ([`OperatorAnswer`]), and an
 /// `Option` answers what a present value answers.
 ///
-/// To be queried from a field's marker, the type must also implement
+/// To be queried from a field reference, the type must also implement
 /// [`LabelledTarget`], whatever context it is sealed under: an `Answers`
 /// impl alone answers no query.
 #[diagnostic::on_unimplemented(
@@ -1210,7 +1210,7 @@ mod tests {
     use crate::sem::DefaultMatch;
 
     /// A match index's verifier is the query's tokens: a query built from
-    /// it verifies a row that holds them and no other. A field marker's
+    /// it verifies a row that holds them and no other. A field reference's
     /// query takes them through `prepare`, once.
     #[test]
     fn a_match_verifier_is_the_query_tokens() {

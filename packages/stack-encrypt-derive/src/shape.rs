@@ -74,7 +74,7 @@ pub(crate) struct ByField {
     /// context the caller passes.
     pub(crate) context: OwnContext,
     /// `#[stash(query = T)]`: the type a query of the field takes, for its
-    /// marker.
+    /// field reference.
     pub(crate) query: Option<Type>,
 }
 
@@ -456,7 +456,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     ));
                 }
             }
-            // A query type is for a field's marker, and only a derived
+            // A query type is for a field's reference, and only a derived
             // field of a `struct = ..` record has one.
             if let Some(query) = &attrs.query {
                 if prefix.is_none()
@@ -467,8 +467,8 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     return Err(syn::Error::new_spanned(
                         query,
                         "`query = ..` names the type a query of the field takes, for the \
-                         field's marker; only a sealed field of a `struct = ..` record has a \
-                         marker, so it does not apply to a `plaintext` record's field, or to a \
+                         field's reference; only a sealed field of a `struct = ..` record has a \
+                         field reference, so it does not apply to a `plaintext` record's field, or to a \
                          `context_field`, `passthrough` or `default` field",
                     ));
                 }

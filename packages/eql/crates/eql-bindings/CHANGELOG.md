@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and the binding again.
   - An EQL field of a record nested in another stores its own column too.
     The outer record's names come after it in the field's context.
-  - A query from the field's marker, such as `EncryptedMember::EMAIL.eq(..)`,
+  - A query from the field reference, such as `EncryptedMember::EMAIL.eq(..)`,
     gives the term stored in the row, for the types that answer it. For a
     record with a scope, pass the scope: `.scope(Scope::new(tenant))`.
   - A plan's query for an EQL type can carry a scope too. It gives the
@@ -168,12 +168,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `eql_v4.query_<family>_range_<ore|ope>` domains in the v4 SQL bundle. No
   range type derives Stack Encrypt's traits yet, because the ordered types
   they range over are not producible. There are no v3 range types.
-- **Rust queries an EQL v4 field through a field marker**
-  (`stack-encrypt` feature, #1238). On a derived record, the marker of a
+- **Rust queries an EQL v4 field through a field reference**
+  (`stack-encrypt` feature, #1238). On a derived record, the field reference of a
   field typed `TextEq`, `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`,
   `DoubleEq`, `DateEq`, `TimestampEq` or `NumericEq` has `eq`:
   `EncryptedMember::EMAIL.eq(v).encrypt(&keyset)` returns the type's query
-  twin (`TextEqQuery`, …). The marker of a field typed `TextMatch` has
+  twin (`TextEqQuery`, …). The field reference of a field typed `TextMatch` has
   `matches`, which
   returns a `MatchTwin<TextMatchQuery>`: the twin, which it serializes as,
   with `verify` and `target_limit` under `EqlMatch`. The query is the bytes
@@ -183,13 +183,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no `dynamic` layer and so not the `targets` feature, from each type's
   indexes, by the rule the data path answers an EQL type's operators
   with. A producible type whose twin carries an order term (`IntegerOrd`,
-  `TextOrd`, …) answers nothing from a marker yet: a marker's query sends
+  `TextOrd`, …) answers nothing from a field reference yet: a field query sends
   one index's term as the twin, and those twins need an order term, or
   several terms at once. The encryption tests hold that gap to exactly the
   ordered types, so query them through the data path for now. An operator
   a type does not answer does not
   compile. Each answering type is an
-  `op::LabelledTarget`. A marker's label names the column, table then
+  `op::LabelledTarget`. A field reference's label names the column, table then
   column. `eql_bindings::encryption::query` holds `TwinIndex`
   (Stack Encrypt's index, its query sent as the twin, for the twin's own
   plaintext only), `MatchTwin`, `QueryTwin` and `QueryLabelError`.
@@ -329,7 +329,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Write with `value.encrypt_into_with_context(&keyset, column)` and read
     with `P::decrypt_from_with_context(stored, &keyset, column)`, or
     `P::decrypt_from(stored, &keyset)` to open under the stored column.
-  - A typed query is a field marker of a derived record:
+  - A typed query is a field reference of a derived record:
     `EncryptedMember::EMAIL.eq("bob").encrypt(&keyset)` gives the
     `TextEqQuery`. `cipher.query(op::Eq, ..).on(&plan)` and `.via(..)` are
     gone.

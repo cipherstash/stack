@@ -1,8 +1,8 @@
 //! A target sealed under a context no label names (here an integer tenant
-//! id) is not a `LabelledTarget`: a query from a marker would derive under
-//! the marker's label and match nothing, so it does not compile, though the
+//! id) is not a `LabelledTarget`: a query from a field reference would derive under
+//! the field reference's label and match nothing, so it does not compile, though the
 //! type implements `Answers`.
-use stack_encrypt::marker::{Marker, Root};
+use stack_encrypt::field_reference::{FieldReference, Root};
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{equality, EncryptTarget, Encryption, IndexSpec, RequiredContext};
 use stack_encrypt::{op, Equality, NonEmpty};
@@ -27,6 +27,6 @@ impl op::Answers<op::Eq, String> for ByTenant {
 }
 
 fn main() {
-    let email = Marker::<Root<()>, ByTenant>::new("email", "users", "email", || unreachable!());
+    let email = FieldReference::<Root<()>, ByTenant>::new("email", "users", "email", || unreachable!());
     let _ = email.eq("bob");
 }

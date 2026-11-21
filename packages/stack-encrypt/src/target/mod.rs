@@ -146,7 +146,7 @@
 //! the same context: a `Vec<S>` encrypts into a `Vec` of [`EncryptTarget`]s.
 //! Encrypting a plaintext `Vec<T>` into `StackCipherText` instead follows
 //! Vitamin C's native sequence model, including its authenticated empty
-//! marker. The same distinction applies to `Option<Target>` versus a native
+//! field reference. The same distinction applies to `Option<Target>` versus a native
 //! encrypted option.
 //! Readers preserve marker ciphertext and map keys; changing a key changes the
 //! authenticated context when opening. Passthrough metadata and query terms are

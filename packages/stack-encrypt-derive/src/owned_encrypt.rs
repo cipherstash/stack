@@ -30,21 +30,21 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         value_derive(&input, &record, &derived)
     };
     let contexts = contexts_fn(&input, &record);
-    let markers = markers(&input, &record);
-    Ok(quote!(#emitted #decryptable #contexts #markers))
+    let field_references = field_references(&input, &record);
+    Ok(quote!(#emitted #decryptable #contexts #field_references))
 }
 
-/// The field markers of a `struct = ..` record: one associated constant
+/// The field references of a `struct = ..` record: one associated constant
 /// per derived field, named after the field in upper case
 /// (`EncryptedUser::EMAIL`), carrying the field's name, the record's scope,
 /// the field's identity, the record's `contexts`, the record itself
-/// (`Root<Self>`, which `Marker::field` checks a nested record's marker
+/// (`Root<Self>`, which `FieldReference::field` checks a nested record's field reference
 /// against), the type of the scope the caller supplies (`Scope<u64>` for
 /// `scope(tenant: u64)` or a stored `scope(field = ..)` of that type;
 /// `NoScope` for none), and the type a query takes (`Takes<String>` for
 /// `#[stash(query = String)]`; `TakesAny` without it). A tuple field has no
-/// name, so it has no marker.
-fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
+/// name, so it has no field reference.
+fn field_references(input: &DeriveInput, record: &Record) -> TokenStream {
     if !record.by_field {
         return TokenStream::new();
     }
@@ -70,10 +70,10 @@ fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
             return None;
         };
         let query_ty = match query {
-            Some(query) => quote!(#krate::marker::Takes<#query>),
-            None => quote!(#krate::marker::TakesAny),
+            Some(query) => quote!(#krate::field_reference::Takes<#query>),
+            None => quote!(#krate::field_reference::TakesAny),
         };
-        // The marker's name is the field's as `contexts()` and the label
+        // The field reference's name is the field's as `contexts()` and the label
         // spell it, `r#` included; the constant's name cannot carry it.
         let field_name = ident.to_string();
         let plain = field_name.strip_prefix("r#").unwrap_or(&field_name);
@@ -81,7 +81,7 @@ fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
         let ty = &field.ty;
         let OwnContext { prefix, field: identity } = context;
         let doc = format!(
-            "The marker of the field `{field_name}`: what a typed query of it starts from. Emitted by `#[derive(EncryptTarget)]`; see [`Marker`]({}::Marker).",
+            "The reference to the field `{field_name}`: what a typed query of it starts from. Emitted by `#[derive(EncryptTarget)]`; see [`FieldReference`]({}::FieldReference).",
             quote!(#krate)
         );
         // A public record may hold a private field type (a nested record);
@@ -90,8 +90,8 @@ fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
         Some(quote_spanned! {ty.span()=>
             #[doc = #doc]
             #[allow(dead_code, private_interfaces)]
-            pub const #const_name: #krate::Marker<#krate::marker::Root<Self>, #ty, #scope_ty, #query_ty> =
-                #krate::Marker::new(#field_name, #prefix, #identity, Self::contexts);
+            pub const #const_name: #krate::FieldReference<#krate::field_reference::Root<Self>, #ty, #scope_ty, #query_ty> =
+                #krate::FieldReference::new(#field_name, #prefix, #identity, Self::contexts);
         })
     });
     quote! {
@@ -329,7 +329,7 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
                     let check = query.as_ref().map(|query| {
                         quote_spanned! {query.span()=>
                             let _ = |__source: &#source| {
-                                fn __query_field<__V, __F: #krate::marker::QueryField<__V> + ?Sized>(_: &__F) {}
+                                fn __query_field<__V, __F: #krate::field_reference::QueryField<__V> + ?Sized>(_: &__F) {}
                                 __query_field::<#query, _>(&__source.#from);
                             };
                         }

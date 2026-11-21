@@ -1,9 +1,9 @@
-//! Querying an EQL v4 field from Rust, through a field marker.
+//! Querying an EQL v4 field from Rust, through a field reference.
 //!
 //! A typed query of an EQL type starts from a field of a derived record.
 //! `#[derive(EncryptTarget)]` on a `struct = ..` record gives each field a
-//! marker, an associated constant named after the field
-//! ([`stack_encrypt::marker`]). The marker has a method for each operator
+//! field reference, an associated constant named after the field
+//! ([`stack_encrypt::field_reference`]). The field reference has a method for each operator
 //! the field's type answers:
 //! `EncryptedMember::EMAIL.eq("bob@example.com").encrypt(&keyset)`. An EQL
 //! v4 type says which operators it answers through its [`op::Answers`]
@@ -11,7 +11,7 @@
 //! value of the `eql_v4.query_*` domain the SQL compares against the
 //! column.
 //!
-//! | type | marker method | operator | query term |
+//! | type | field reference method | operator | query term |
 //! |---|---|---|---|
 //! | `TextEq` | `eq` | [`op::Eq`](struct@op::Eq) | `TextEqQuery` |
 //! | `SmallintEq` | `eq` | [`op::Eq`](struct@op::Eq) | `SmallintEqQuery` |
@@ -27,28 +27,28 @@
 //! eql-codegen writes those impls from the catalog, by the rule Stack
 //! Encrypt's data path answers an EQL type's operators with: `Eq` through
 //! the equality index, `Matches` through the match index. Each type is also
-//! an [`op::LabelledTarget`], which is what lets its marker be queried. The
+//! an [`op::LabelledTarget`], which is what lets its field reference be queried. The
 //! ordered types (`IntegerOrd`, `TextOrdOre` and the rest) and the text
-//! search types answer nothing from a marker yet: their twins need an order
-//! term, or several terms at once, and a marker's query sends one index's
+//! search types answer nothing from a field reference yet: their twins need an order
+//! term, or several terms at once, and a field query sends one index's
 //! term. Query them through the data path
 //! (`stack_encrypt::dynamic::query_term`). An operator a type does not
-//! answer does not compile. A marker names its field's type and no index,
+//! answer does not compile. A field reference names its field's type and no index,
 //! so a query cannot send another index's term in place of the type's twin.
 //!
-//! The query is derived under the marker's label: the record's scope, then
+//! The query is derived under the field reference's label: the record's scope, then
 //! the field's name (or its `identity`). That is the column the field
-//! stores in `i`, so a marker of the field `email` of a record with
+//! stores in `i`, so a reference to the field `email` of a record with
 //! `scope = "users"` queries the values written under
 //! `Identifier::for_column("users", "email")`, by the record or by the
-//! type on its own. A marker's label always has those two segments, so it
+//! type on its own. A field reference's label always has those two segments, so it
 //! always names a column. The derive accepts only plain segments
 //! ([`Label`]): none may start with a digit or `-`, for instance, though
 //! `Identifier::for_column` takes such a name. A column whose table or
 //! column name is not a plain segment can be written by the type on its
 //! own, but it cannot be a record field, so it cannot be queried this way.
 //!
-//! A record can list a scope, such as a tenant. A query from its marker
+//! A record can list a scope, such as a tenant. A query from its field reference
 //! then takes the scope with `.scope(..)` before it can be encrypted. Its
 //! term is derived under the column and the scope, and matches the values
 //! the record stored under the same scope. The twin stores the column
@@ -211,7 +211,7 @@ pub trait QueryTwin<T>: Sized {
 /// index `I`, whose query term is sent as the type's query twin `Q`.
 ///
 /// It derives exactly what `I` derives, under the label of the field's
-/// marker and any scope the query carries, and checks and refuses what `I`
+/// field reference and any scope the query carries, and checks and refuses what `I`
 /// refuses, as well as a label that names no column; it then writes the
 /// term into the twin, with the column the label names. It answers for the
 /// twin's own plaintext
@@ -288,8 +288,8 @@ fn check_column(label: &Label) -> Result<(), Error> {
 /// any term was derived. It arrives as [`Error::Other`]; match it with
 /// `downcast_ref::<QueryLabelError>()`.
 ///
-/// The label of a derived record's field marker is the record's scope and
-/// the field's name, two segments, so a query from such a marker is never
+/// The label of a derived record's field reference is the record's scope and
+/// the field's name, two segments, so a query from such a field reference is never
 /// refused this way.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -316,7 +316,7 @@ impl fmt::Display for QueryLabelError {
 
 impl std::error::Error for QueryLabelError {}
 
-/// The column a query's label names. A marker's query calls `query` only
+/// The column a query's label names. A field query calls `query` only
 /// after `check_label` accepted the label (`Supports::query`), and every
 /// `Supports` impl here delegates `check_label` to [`check_column`], so the
 /// label is two segments; a label that is not would be a broken invariant,

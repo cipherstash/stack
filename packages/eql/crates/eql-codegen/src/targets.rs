@@ -325,7 +325,7 @@ fn answer_impls(r: &Row) -> TokenStream {
     );
     let labelled_doc = format!(
         " `{}` is sealed under the column a two-segment label names, so a field of this \
-         type is queried under its marker's label.",
+         type is queried under its field reference's label.",
         r.name
     );
     let mut out = quote! {
@@ -682,7 +682,7 @@ fn render_answers_from(rows: &[Row]) -> String {
     }
 
     let mod_doc =
-        " How a Stack Encrypt typed query, from a field's marker, queries a producible EQL v4 \
+        " How a Stack Encrypt typed query, from a field reference, queries a producible EQL v4 \
                    type: per type that answers an operator, its `op::Answers` impls, \
                    its `op::LabelledTarget` impl and its query twin's assembly \
                    (`crate::encryption::query`). Generated from the catalog, by the \

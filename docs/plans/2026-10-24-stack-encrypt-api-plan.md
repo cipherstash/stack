@@ -68,7 +68,7 @@ decision.
 | Dynamic interface | The engine's interface for languages other than Rust. It takes a declaration and values as data, not as Rust types |
 | EQL (Encrypt Query Language) | The PostgreSQL types and functions in `packages/eql` that store encrypted values and answer queries on them |
 | Executor | The combinators in `target/`: the one engine path that runs every declaration. The derive's generated code and `Planned` both compose them. The executor derives each field's context, requests the keys in one batch, and seals or opens every value |
-| Field marker | A constant the derive emits for each field of a record, such as `EncryptedMember::EMAIL`. It names the field, its plaintext type, its accessor, and its indexes. A typed query starts from it |
+| Field reference | A constant the derive emits for each field of a record, such as `EncryptedMember::EMAIL`. It names the field, its plaintext type, its accessor, and its indexes. A typed query starts from it |
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
 | Key tag | The HMAC ZeroKMS returns with a data key. A reader must present it to get the key again. Stack Encrypt binds it into every leaf's AAD |
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset. In Rust, `Keyset` is also the handle bound to one keyset, which encrypt and query calls take. Today `KeysetCipher` |
@@ -312,7 +312,7 @@ SELECT id, email, age FROM members WHERE age > $1::eql_v4.query_integer_ord;
 The context `Identifier::for_column("members", "email")` is the same as the
 context that the record derive gives the `email` field of
 `EncryptedMember`. So the query matches the stored values. A field of a
-record is queried through its marker instead, so that the operator is
+record is queried through its field reference instead, so that the operator is
 checked at compile time. See [Query a record field](#query-a-record-field).
 
 A match query works in the same way, on a field with a match index. Its
@@ -321,32 +321,32 @@ and checks each one.
 
 #### Query a record field
 
-The derive emits one marker for each field of a record, such as
-`EncryptedMember::EMAIL`. A marker names the field, the context the
+The derive emits one field reference for each field of a record, such as
+`EncryptedMember::EMAIL`. A field reference names the field, the context the
 derive sealed it under (the record's scope, then the field's identity),
 and the field's target type, whose `Answers` impls are the field's index
 list. It is the value a query starts from. The derive emits no plan: the
-marker is enough for a query, and a binding sends a plan of its own.
-Built on 10 November 2026 (pull request #1595): the marker has no
+field reference is enough for a query, and a binding sends a plan of its own.
+Built on 10 November 2026 (pull request #1595): the field reference has no
 plaintext type and no accessor, because the derive sees the record's
 field types and not the plaintext struct's, and a query value converts
 from the borrowed form a caller has (`&str` to `String`) through
-`ToOwned`. So an equality marker takes a value of any type its index
+`ToOwned`. So an equality field reference takes a value of any type its index
 accepts, unless the field states its query type with
 `#[stash(query = String)]`. A field whose type is several indexes, a
 nullable field, and a record field (through `.field(..)`) have operator
 methods too (#1596).
 
-A typed query starts from the marker, and has one method for each
+A typed query starts from the field reference, and has one method for each
 operator the field's indexes answer. A missing operator is a compile
 error: "no method named `gt`", with a message that names the field's
-indexes. A record that lists a caller scope gives its markers the
+indexes. A record that lists a caller scope gives its field references the
 scope's type, and the query has no `encrypt` until `.scope(..)` is given
 once, with a value of that type; a record with no caller scope gives a
 query that is ready at once. A binding cannot be given, because the
 query type has no `bind` method, so a query accepts its scope only, by
 type. The query ends with `encrypt(&keyset)`, and its output type is the
-EQL query type the marker fixes. Decided on 7 November 2026.
+EQL query type the field reference fixes. Decided on 7 November 2026.
 
 ```rust
 // On `next` since pull request #1595, with the index's query term as
@@ -364,7 +364,7 @@ let adults: IntegerOrdQuery = EncryptedMember::AGE
     .encrypt(&keyset)
     .await?;
 
-// error: `TextEq` has no order index, so the marker has no `gt`
+// error: `TextEq` has no order index, so the field reference has no `gt`
 EncryptedMember::EMAIL.gt("alice@example.com")
 // error: the query builder has no `bind`
 EncryptedMember::EMAIL.eq("alice@example.com").bind(row_id)
@@ -378,8 +378,8 @@ A chained scope is allowed on a query because a query has one field and
 one value, so a scope cannot mean anything else. The rule that no chain state offers context, in [One context argument, and paired entry points](#one-context-argument-and-paired-entry-points), was about `.extend(..)` after `.fields()` on a record. There, a part added late looked per-field
 and was not.
 
-A typed query lowers from its marker to the term combinator, under the
-marker's context. A dynamic query lowers a [query plan](#a-query-plan)
+A typed query lowers from its field reference to the term combinator, under the
+field reference's context. A dynamic query lowers a [query plan](#a-query-plan)
 to the same combinator through `Planned`. The equivalence suite checks
 that the two agree (ADR-0007, amended 9 November 2026).
 
@@ -447,8 +447,8 @@ let opened = JsonPlaintext::decrypt_from(encrypted, &keyset).await?;
 
 #### Query a JSON document
 
-A JSON query is a query on the document's field marker. The marker has
-one method for each kind of query. A scalar field's marker has one method
+A JSON query is a query on the document's field reference. The field reference has
+one method for each kind of query. A scalar field's reference has one method
 for each operator in the same way (see [Query a record
 field](#query-a-record-field)). A query needs two things from the field's
 declaration:
@@ -459,14 +459,14 @@ declaration:
   wildcard such as `[*]` expands. An order query on a path without order
   terms would find no rows, so Stack Encrypt refuses it.
 
-The marker carries both, so the query names only its kind and its
-values. The output type is the EQL query type, fixed by the marker.
+The field reference carries both, so the query names only its kind and its
+values. The output type is the EQL query type, fixed by the field reference.
 Decided on 7 November 2026.
 
 ```rust
 use eql_bindings::v4::json_tree::{JsonTreeElementsQuery, JsonTreeLeafQuery, JsonTreeQuery};
 
-// Not on `next` yet: field markers and their query methods. The method
+// Not on `next` yet: field references and their query methods. The method
 // names are proposals.
 let ada: JsonTreeQuery = EncryptedProfile::DOCUMENT
     .contains(json!({ "name": "Ada" }))
@@ -503,9 +503,9 @@ SELECT id FROM customers
 WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements);
 ```
 
-The kinds of JSON query, the marker method for each, and what each finds:
+The kinds of JSON query, the field reference method for each, and what each finds:
 
-| Query | Marker method | What it finds | EQL query type |
+| Query | Field reference method | What it finds | EQL query type |
 | --- | --- | --- | --- |
 | Containment | `contains(doc)`, `contained_by(doc)`, and `at(path).eq(v)` | Rows whose document contains the given document, or is contained by it. Equality of a scalar at a path is containment of a one-entry document, so `at(path).eq(v)` lowers to it | `JsonTreeQuery` |
 | Comparison at a path | `at(path).gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery` |
@@ -527,14 +527,14 @@ query as on a scalar one: `.contains(doc).scope(tenant)`.
 
 The engine already has one private input type for each JSON operator,
 in `stack_encrypt::dynamic`. `DocumentInput` is for containment, `AtInput`
-for a comparison at a path, and `ElementsInput` for element match. The marker
+for a comparison at a path, and `ElementsInput` for element match. The field reference
 methods build those same inputs, so the typed form and the dynamic form
 share one set of input rules. The operand types `Contains`, `AtPath`,
 `ElementMatch`, `Predicate`, and `Children` that the plan proposed earlier
 are retired, replaced by these methods, on 7 November 2026.
 
 A document encrypted straight into `JsonTreeDocument`, with no record,
-has no marker. It is queried through a [query plan](#a-query-plan), as any
+has no field reference. It is queried through a [query plan](#a-query-plan), as any
 value under a plan that is data.
 
 #### Encrypt a whole value as one ciphertext
@@ -789,9 +789,9 @@ operator, and the value. They are grouped differently.
 
 The result on the dynamic path is a `QueryTerm`: the operand bytes, and
 the EQL type they bind as, known at run time. A typed query returns the
-EQL query type instead, because its marker fixes it.
+EQL query type instead, because its field reference fixes it.
 
-A typed query from a field marker lowers to the term combinator
+A typed query from a field reference lowers to the term combinator
 directly, with no plan. The dynamic form lowers its query plan to the
 same combinator through `Planned`. [Query a record
 field](#query-a-record-field) shows the typed form.
@@ -1161,7 +1161,7 @@ NEW.body := eql_v4.label_tag(NEW.body, 'row_id', NEW.id::text);
   that, and the stored bytes are the same either way.
 - **`encrypt` or `encrypt_into`.** `encrypt_into` is for the case where
   the caller names the output type. `encrypt` is for the case where a
-  marker or a plan fixes it: a query from a marker, or a `Planned` value.
+  field reference or a plan fixes it: a query from a field reference, or a `Planned` value.
   `keyset.encrypt(value)` and `value.encrypt_into::<T>` follow this rule
   on `next` today.
 - **Rust is the superset.** The plain serialised plan is checked at run
@@ -1516,17 +1516,17 @@ Base64.
     (`packages/eql/tests/encryption/tests/record_fields.rs`).
   - `JsonTreeDocument` implements `EncryptTarget<JsonPlaintext>` and
     `DecryptSource<JsonPlaintext>`.
-  - A query from a field's marker works for the equality and match
+  - A query from a field reference works for the equality and match
     types, with the record's scope. A data plan's query for an EQL type
     takes a scope too. The order types do not implement `Answers` yet, so
-    a marker cannot query them (#1668).
+    a field reference cannot query them (#1668).
   - A data plan that names an EQL type takes a scope and a binding too.
     `TargetResolver` receives them after the field's label, and
     `TargetError::Extended` is removed. Under the same scope and binding,
     a data plan and a derived record write the same terms, and each
     opens the other's values. A Go struct with an `encrypt_into` field
     seals through `cipher.Scope(..).Bind(..)`.
-- **Tracked in.** Issue #1658 is open. Pull request #1659, open, closes it. Issue #1668 is open for order queries from a marker. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
+- **Tracked in.** Issue #1658 is open. Pull request #1659, open, closes it. Issue #1668 is open for order queries from a field reference. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
     the new API, including order queries;
@@ -1554,11 +1554,11 @@ Base64.
 #### Static JSON queries
 
 - **What to build.** One method for each kind of JSON query on a JSON
-  document's field marker. The methods are `contains` and `contained_by`;
+  document's field reference. The methods are `contains` and `contained_by`;
   `at(path)` with the comparison operators; `elements(path)` with its
   member conditions; `predicate`; and `children`. Each method builds the input type the
   dynamic interface already has for that operator, and `encrypt(&keyset)`
-  returns the EQL query type. The marker supplies the column and the
+  returns the EQL query type. The field reference supplies the column and the
   options. The dynamic parser keeps reading into the same input types, so
   there is one definition of each input.
 - **Names.** The method names above are proposals. The operand types
@@ -1579,36 +1579,36 @@ Base64.
   - an order query on a path the options do not order is refused before
     any key is fetched.
 
-#### Field markers and the encryption plan
+#### Field references and the encryption plan
 
 Decided on 7 November 2026, as difference six of the context artifact
 review.
 
-- **What to build.** The derive emits one marker for each field, as an
-  associated constant such as `EncryptedMember::EMAIL`. The marker has
+- **What to build.** The derive emits one field reference for each field, as an
+  associated constant such as `EncryptedMember::EMAIL`. The field reference has
   the field's name, its plaintext type, its accessor, and its index
   list. It is the value a query starts from. The index list is what lets
-  the marker offer one method per operator, resolved at compile time. A
-  query from a marker lowers to the term combinator under the marker's
+  the field reference offer one method per operator, resolved at compile time. A
+  query from a field reference lowers to the term combinator under the field reference's
   context. Typed Rust option factories, and the same options read from
   data in the dynamic interface.
 - **Why.** A query must use the same declaration as the stored values.
-  The caller must not write a second plan by hand. The marker holds the
+  The caller must not write a second plan by hand. The field reference holds the
   declaration the derive wrote, so the query term and the stored term
   come from one source.
 - **Done already.** `Answers` on a target type is the compile-time
-  lookup of the index for an operator; a marker's methods are bound by
-  it, so the marker's index list is its target type's `Answers` impls.
-  Pull request #1595 lands the markers, their query methods and
-  `assert_context!` over a marker (`src/marker.rs`, `tests/markers.rs`,
-  `tests/ui/marker_*.rs`). Pull request #1599 gives a field of several
+  lookup of the index for an operator; a field reference's methods are bound by
+  it, so the field reference's index list is its target type's `Answers` impls.
+  Pull request #1595 lands the field references, their query methods and
+  `assert_context!` over a field reference (`src/field_reference.rs`, `tests/field_references.rs`,
+  `tests/ui/field_reference_*.rs` and `tests/ui/field_query_*.rs`). Pull request #1599 gives a field of several
   indexes, a nullable field and a record field their operator methods,
   and a field its query type (`#[stash(query = ..)]`). The chain query
   `cipher.query(op, value).on(&plan)` is removed (#1662). It was the only
-  typed JSON query, so until the JSON marker methods exist (#1459) a JSON
+  typed JSON query, so until the JSON field reference methods exist (#1459) a JSON
   query goes through a query plan.
 - **No hand-built plan.** The review of 7 November 2026 gave a
-  hand-built plan the same markers, through `Plan::<Member>::scope(..)`
+  hand-built plan the same field references, through `Plan::<Member>::scope(..)`
   with `pick!`. That is withdrawn. No Rust program builds a plan by hand.
   A program whose declaration is data uses `Planned`. The builder is
   removed with the structural API (ADR-0007, amended 9 November 2026).
@@ -1622,15 +1622,15 @@ review.
 - **Tracked in.** Issues #1486 and #1596 are closed: pull requests #1595
   and #1599 are merged. Issue #1670 is open for the compile-time check.
 - **Finished when** these are all true:
-  - the [marker example](#query-a-record-field) compiles, with the
+  - the [field reference example](#query-a-record-field) compiles, with the
     index's query term as the output type; the EQL query types come
     with the EQL owned implementations;
   - the compile-fail cases in `tests/ui` cover an operator the field's
-    indexes do not answer (`marker_operator_not_answered`), a binding
-    on a query (`marker_query_has_no_bind`), and a missing, mistyped or
-    repeated scope (`marker_query_needs_its_scope`);
+    indexes do not answer (`field_reference_operator_not_answered`), a binding
+    on a query (`field_query_has_no_bind`), and a missing, mistyped or
+    repeated scope (`field_query_needs_its_scope`);
   - tests show that a query cannot run without its plan or its required
-    context (`tests/markers.rs`, `tests/planned.rs`).
+    context (`tests/field_references.rs`, `tests/planned.rs`).
 
 #### `Planned` and its serialised form
 
@@ -1776,7 +1776,7 @@ records only the work.
   errors, and is public only so that code the derives emit can name it.
   A caller passes a `NonEmpty<T>` or nothing. The chain is removed
   (#1662): a data plan runs as `Planned`, and a typed record runs through
-  the derives and its field markers.
+  the derives and its field references.
 - **Why.** The typed API already pairs its entry points (#1404). A value
   for the context reads the same on both layers. A builder state for the
   context, and a part added later in a chain, are the mistakes the context
@@ -1821,7 +1821,7 @@ Decided on 7 November 2026.
   interface has the same two forms. So `stashgen` can print a Go record's
   contexts. A Go call can show its context.
 - **Assertions for tests.** A `testing` feature of `stack-encrypt`, with
-  `assert_context!` over a field marker, a plan, or a prepared call. It
+  `assert_context!` over a field reference, a plan, or a prepared call. It
   compares the query context and the stored context, with types, against
   what the test states, and names the first part that differs. The Go
   module has the same in a testing package, such as `encrypttest`, so a
@@ -1834,7 +1834,7 @@ Decided on 7 November 2026.
   context cannot catch a change to it.
 - **Done.** `contexts()`, `context()`, `assert_context!`, and the Go
   `encrypttest` package (#1568), the scenarios that need `scope(..)` and
-  `bind(..)` (#1487), and the field-marker form (#1486).
+  `bind(..)` (#1487), and the field-reference form (#1486).
 - **Tracked in.** Issues #1568, #1487 and #1486 are closed.
 - **Finished when** these are all true:
   - a test pins the output of `contexts()` for each of the [context
@@ -2046,7 +2046,7 @@ table.
   request for #1488. The builder, the chain, `EncryptFrom`, `DecryptInto`,
   their derives, `encrypt_as` and `decrypt_as` are removed (#1661, #1662).
   EQL, the Go guest, the examples and every test use the owned API, field
-  markers or `Planned`.
+  field references or `Planned`.
   Every JSON target has the new traits over `JsonPlaintext` (#1658 for
   `JsonTreeDocument`, #1660 for the other five), so no target needs the
   old traits any more.
@@ -2083,7 +2083,7 @@ Decided on 7 November 2026, as area two of the query design review.
 
 - **What to build.** Each operator exists once, as its `op` type, such as
   `op::Eq` and `op::Between`. One macro generates the dynamic enum and
-  its wire names from those types. A marker's query method, the dynamic
+  its wire names from those types. A field query method, the dynamic
   handle's method, and a query plan's operator all resolve to the same
   type. So `eq`, `"eq"`, and `op::Eq` are three faces of one operator.
 - **The dynamic enum's name.** It is public, because a program building a
@@ -2170,7 +2170,7 @@ review. The rules are the query artifact's.
 - **Six rules.**
   1. A query runs on the field's own index, with that index's
      configuration. There is no default index and no `.via`. A query starts from the
-     field's marker, so the rule is true by construction.
+     field's reference, so the rule is true by construction.
   2. A field declares at most one index per operator. `(Equality, Ore)`
      is allowed, because they answer different operators. `(Ore, Ope)`,
      `(Ore, OreBlock)`, and two match indexes are refused when the plan is
@@ -2213,7 +2213,7 @@ review. The rules are the query artifact's.
      `check`, `verifier`, `admit`, `QueryToken`, `check_input`, and the
      second tokenisation go. This is the `!` commit. It closes #1318 and
      #1279, with #1279's `InvertedRange` item dropped.
-  3. Typed field markers with their index lists, the per-operator query
+  3. Typed field references with their index lists, the per-operator query
      methods, `Planned`, and the removal of `DefaultIndex`, `.via`,
      `PlanError::IndexOptions`, and `PlanError::MatchCase`.
   4. `FieldIndexes` on the dynamic plan. The dynamic path then shares
@@ -2228,7 +2228,7 @@ review. The rules are the query artifact's.
   `.via`. The `MatchConfig` documentation says a field and its query agree "by
   construction". That is true only for one-value plans today. Both
   are amended, not contradicted in silence.
-- **Tracked in.** Steps 1 and 2 are done: #1279, #1318, #1317 and #1233 are closed. They brought `prepare`, the `sem::query` rules and `Op`, and dropped `Matches`'s case parameter. The analyzer of "Match configuration: one analyzer" is its own work (#1673). Step 3 is done apart from its clean-up: the markers and `Planned` (#1486, closed), and the removal of `DefaultIndex` and `.via` (#1666). Issue #1671 is open to remove `PlanError::IndexOptions` and the other variants nothing raises, and to amend ADR-0009 and the `MatchConfig` documentation. Step 4 is issue #1672, open.
+- **Tracked in.** Steps 1 and 2 are done: #1279, #1318, #1317 and #1233 are closed. They brought `prepare`, the `sem::query` rules and `Op`, and dropped `Matches`'s case parameter. The analyzer of "Match configuration: one analyzer" is its own work (#1673). Step 3 is done apart from its clean-up: the field references and `Planned` (#1486, closed), and the removal of `DefaultIndex` and `.via` (#1666). Issue #1671 is open to remove `PlanError::IndexOptions` and the other variants nothing raises, and to amend ADR-0009 and the `MatchConfig` documentation. Step 4 is issue #1672, open.
 - **Finished when** these are all true:
   - every index's operators appear in one declaration, and a test shows
     the typed and dynamic lookups agree on every index;
@@ -2376,7 +2376,7 @@ renames.
 | The chain `Scope::new(..)`, `Bind::new(..)`, `Scope::new(..).bind(..)` | The caller-supplied context input. No separate type; `ContextExtension` from #1504 goes. A trait bound, `impl ContextParts`, names what an entry point accepts |
 | `JsonTreeDocument`, `JsonTreeQuery`, `JsonTreeLeafQuery`, `JsonTreeElementsQuery`, `JsonTreePredicateQuery` | Kept. The SQL domain `eql_v4_json_search` and the dynamic target `JsonSearch` are the other two names of the one stored type |
 | `Planned`, `Positioned<Vec<T>>`, `Claim`, `ResolvesClaims`, `#[derive(Scalar)]`, `Base64Ciphertext` | Confirmed. `Base64Ciphertext` is the text form of a bare `Ciphertext`, which keeps its header inside. EQL payloads instead carry a Base64 key header `h` beside a Base85 `c`, as the JSON tree does. There is no `Base85Ciphertext` target |
-| `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker. Confirmed |
+| `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's field reference. Confirmed |
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go. Confirmed |
 | `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |
 | `stack-kms` to `stack-zerokms` | Not decided. The crate rename is part of the crate layout question, which stays open |

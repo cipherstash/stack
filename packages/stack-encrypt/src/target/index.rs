@@ -50,7 +50,7 @@
 //!
 //! One term can be derived alone, with no ciphertext: [`Indexes::select`]
 //! picks an index out of a set by type, and [`Index::operation`] is its
-//! term alone. A field marker's query does not use `select`: the field's
+//! term alone. A field query does not use `select`: the field's
 //! target type names the index that answers each operator
 //! ([`Answers`](crate::op::Answers)).
 //!

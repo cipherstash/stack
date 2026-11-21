@@ -11,7 +11,7 @@
 //!   with `decrypt_from`;
 //! - each field writes the terms the type writes on its own, and each value
 //!   opens through the other path;
-//! - a query from the field's marker gives the stored term;
+//! - a query from the field reference gives the stored term;
 //! - the derive and a data plan write the same terms for a field of each
 //!   kind (equality, storage only, order, JSON document), and each opens
 //!   the other's value;
@@ -152,7 +152,7 @@ async fn an_eql_field_writes_what_the_type_writes_on_its_own() {
 }
 
 #[tokio::test]
-async fn a_query_from_the_field_marker_gives_the_stored_term() {
+async fn a_query_from_the_field_reference_gives_the_stored_term() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let stored: EncryptedMember = ada().encrypt_into(&keyset).await.unwrap();
@@ -441,7 +441,7 @@ async fn an_eql_field_stores_its_column_and_not_the_scope_or_the_binding() {
     assert_eq!(opened, "ada@example.com");
 
     // The term is derived under the column, then the tenant. A query from
-    // the field's marker under the same tenant gives the stored term, and
+    // the field's reference under the same tenant gives the stored term, and
     // names the column alone.
     let query = EncryptedTenanted::EMAIL
         .eq("ada@example.com")
@@ -798,7 +798,7 @@ async fn an_eql_field_of_a_nested_record_stores_its_own_column() {
     // names come after them in the context, and are not stored.
     assert_eq!(stored.member.email.i, *column("email").get());
 
-    // A query from the nested field's marker gives the stored term.
+    // A query from the nested field's reference gives the stored term.
     let query = EncryptedHolder::MEMBER
         .field(EncryptedPlain::EMAIL)
         .eq("ada@example.com")

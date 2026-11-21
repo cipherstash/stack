@@ -1,5 +1,5 @@
-//! A record field's marker reaches the markers of the record it holds and
-//! no other: a marker of another record would derive under a context no
+//! A record field's reference reaches the field references of the record it holds and
+//! no other: a field reference of another record would derive under a context no
 //! stored value has. A nullable record field is the same.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::EncryptTarget;
@@ -34,9 +34,9 @@ struct EncryptedAccount {
 
 fn main() {
     let _ = EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET);
-    // A marker of the outer record, not of the record the field holds.
+    // A field reference of the outer record, not of the record the field holds.
     let _ = EncryptedAccount::ADDRESS.field(EncryptedAccount::EMAIL);
     let _ = EncryptedAccount::SECOND.field(EncryptedAddress::STREET);
-    // A marker of the outer record, on a nullable record field.
+    // A field reference of the outer record, on a nullable record field.
     let _ = EncryptedAccount::SECOND.field(EncryptedAccount::EMAIL);
 }

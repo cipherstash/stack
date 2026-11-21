@@ -1,4 +1,4 @@
-//! A record that lists a caller scope gives its markers that scope's type:
+//! A record that lists a caller scope gives its field references that scope's type:
 //! a query from one has no `encrypt` until the scope is given, takes the
 //! scope's type and no other, and takes it once.
 use stack_encrypt::kms::FakeDataKeySource;

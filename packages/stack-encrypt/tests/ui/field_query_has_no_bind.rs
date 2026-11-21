@@ -1,4 +1,4 @@
-//! A query from a field marker takes the record's scope and no binding: a
+//! A query from a field reference takes the record's scope and no binding: a
 //! binding is in no query context, so the query type has no `bind` method,
 //! and `scope` takes the scope's type, which a `Bind` is not.
 use stack_encrypt::sem::EqualityTerm;

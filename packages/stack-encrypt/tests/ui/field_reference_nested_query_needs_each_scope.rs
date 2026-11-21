@@ -1,6 +1,6 @@
 //! A field of a record that lists a scope of its own, under a record that
 //! lists one too, takes both scopes together, outermost first: a query
-//! from its marker has no `encrypt` until both are given, takes each
+//! from its field reference has no `encrypt` until both are given, takes each
 //! scope's type and no other, and takes them once.
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::sem::EqualityTerm;

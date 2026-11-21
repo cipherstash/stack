@@ -1,12 +1,12 @@
 //! Operator-typed queries (`stack_encrypt::op`, ADR-0009): a query names an
-//! operator through the marker of a record field, the field's target type
+//! operator through the field reference of a record field, the field's target type
 //! names the index that answers it, and the term that comes back is the
 //! query term for that operator, which for a match index is not the stored
 //! term.
 //!
 //! The records at the top of the file give the fields the tests query: a
 //! field's type says which indexes it stores, and so which operators its
-//! marker has. `tests/markers.rs` states what a marker is and how it takes
+//! field reference has. `tests/field_references.rs` states what a field reference is and how it takes
 //! its scope; this file states what each operator sends, what it refuses,
 //! and how a probabilistic term is verified and sized.
 mod common;
@@ -15,8 +15,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use common::{stack_cipher, CountingSource};
+use stack_encrypt::field_reference::Root;
 use stack_encrypt::kms::IdentifiedBy;
-use stack_encrypt::marker::Root;
 use stack_encrypt::op::{self, Limit, Probabilistic, Stats};
 use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms, OpeTerm, OreTerm, RangeQuery,
@@ -27,7 +27,8 @@ use stack_encrypt::target::{
     NoScope, Scope,
 };
 use stack_encrypt::{
-    nonempty, DecryptFrom, EncryptInto, Encrypted, Equality, Error, Label, Marker, StackCipher,
+    nonempty, DecryptFrom, EncryptInto, Encrypted, Equality, Error, FieldReference, Label,
+    StackCipher,
 };
 use zeroize::Zeroize;
 
@@ -278,12 +279,15 @@ async fn counted_cipher() -> (StackCipher<CountingSource>, KeyRequests) {
     (cipher, requests)
 }
 
-/// A marker written by hand for the label `scope/identity`, of the target
+/// A field reference written by hand for the label `scope/identity`, of the target
 /// type `T` and the scope type `C`. No record declares it, so it states
 /// nothing about a stored value: the tests that use it are about what the
 /// index of `T` is told of the query's context.
-fn marker_of<T, C>(scope: &'static str, identity: &'static str) -> Marker<Root<()>, T, C> {
-    Marker::new(identity, scope, identity, || {
+fn field_reference_of<T, C>(
+    scope: &'static str,
+    identity: &'static str,
+) -> FieldReference<Root<()>, T, C> {
+    FieldReference::new(identity, scope, identity, || {
         unreachable!("a query does not read its record's contexts")
     })
 }
@@ -425,8 +429,8 @@ async fn a_target_with_several_terms_answers_through_the_term_that_answers() {
 }
 
 /// A target type that no record here encrypts into, queried through a
-/// marker written by hand, as an EQL type is queried under its column. It
-/// states that its terms are derived under the marker's label
+/// field reference written by hand, as an EQL type is queried under its column. It
+/// states that its terms are derived under the field reference's label
 /// (`op::LabelledTarget`) and names the index that answers `Eq` for it. A
 /// query derives through that index alone and never runs the target's own
 /// encryption.
@@ -548,7 +552,7 @@ impl op::Answers<op::Eq, String> for Column {
 async fn an_index_that_takes_no_extension_refuses_a_query_under_a_scope() {
     let (cipher, requests) = counted_cipher().await;
     let keyset = cipher.default_keyset();
-    let refused = marker_of::<Column, Scope<u64>>("users", "email")
+    let refused = field_reference_of::<Column, Scope<u64>>("users", "email")
         .eq("bob@example.com")
         .scope(Scope::new(7u64))
         .encrypt(&keyset)
@@ -559,7 +563,7 @@ async fn an_index_that_takes_no_extension_refuses_a_query_under_a_scope() {
     );
     assert_eq!(requests.total(), 0, "refused before any key is requested");
 
-    let term = marker_of::<Column, NoScope>("users", "email")
+    let term = field_reference_of::<Column, NoScope>("users", "email")
         .eq("bob@example.com")
         .encrypt(&keyset)
         .await
@@ -571,12 +575,12 @@ async fn an_index_that_takes_no_extension_refuses_a_query_under_a_scope() {
     assert_eq!(term, stored);
 }
 
-/// A `LabelledTarget` is queried through a marker though nothing is
+/// A `LabelledTarget` is queried through a field reference though nothing is
 /// encrypted into it, and its query term reads the context its terms were
-/// derived under from the token: the marker's label, and whether a scope
+/// derived under from the token: the field reference's label, and whether a scope
 /// extended it.
 #[tokio::test]
-async fn a_labelled_target_is_queried_under_the_markers_label() {
+async fn a_labelled_target_is_queried_under_the_field_references_label() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
     let stored: EqualityTerm = String::from("bob@example.com")
@@ -584,7 +588,7 @@ async fn a_labelled_target_is_queried_under_the_markers_label() {
         .await
         .unwrap();
 
-    let query = marker_of::<Tagged, NoScope>("users", "email")
+    let query = field_reference_of::<Tagged, NoScope>("users", "email")
         .eq("bob@example.com")
         .encrypt(&keyset)
         .await
@@ -598,7 +602,7 @@ async fn a_labelled_target_is_queried_under_the_markers_label() {
         }
     );
 
-    let query = marker_of::<Tagged, NoScope>("users", "name")
+    let query = field_reference_of::<Tagged, NoScope>("users", "name")
         .eq("bob@example.com")
         .encrypt(&keyset)
         .await
@@ -608,7 +612,7 @@ async fn a_labelled_target_is_queried_under_the_markers_label() {
     // Under a scope, the terms are derived under the label and the scope,
     // and the token says so: a term that records only the label must
     // refuse it.
-    let extended = marker_of::<Tagged, Scope<u64>>("users", "email")
+    let extended = field_reference_of::<Tagged, Scope<u64>>("users", "email")
         .eq("bob@example.com")
         .scope(Scope::new(7u64))
         .encrypt(&keyset)
@@ -630,7 +634,7 @@ async fn a_label_the_index_refuses_is_refused_before_any_keyset_or_term() {
     let (cipher, requests) = counted_cipher().await;
     let keyset = cipher.default_keyset();
     refused_as_not_a_column(
-        marker_of::<Tagged, NoScope>("orders", "email")
+        field_reference_of::<Tagged, NoScope>("orders", "email")
             .eq("bob@example.com")
             .encrypt(&keyset)
             .await,
@@ -639,7 +643,7 @@ async fn a_label_the_index_refuses_is_refused_before_any_keyset_or_term() {
 
     // A label the index takes derives the term, so the refusal above is
     // the label's.
-    let query = marker_of::<Tagged, NoScope>("users", "email")
+    let query = field_reference_of::<Tagged, NoScope>("users", "email")
         .eq("bob@example.com")
         .encrypt(&keyset)
         .await

@@ -1,10 +1,10 @@
-//! Field markers (#1486): the value a typed query of a derived record's
+//! Field references (#1486): the value a typed query of a derived record's
 //! field starts from. `#[derive(EncryptTarget)]` on a `struct = ..` record
 //! emits `EncryptedUser::EMAIL` for a field `email`. A query from the
-//! marker derives under the context the derive sealed the field under, so
-//! the query term is the stored term; the marker's operator methods exist
+//! field reference derives under the context the derive sealed the field under, so
+//! the query term is the stored term; the field reference's operator methods exist
 //! only where the field's indexes answer the operator; and a record that
-//! lists a caller scope gives its markers that scope's type, so the query
+//! lists a caller scope gives its field references that scope's type, so the query
 //! cannot run without it.
 #![cfg(feature = "testing")]
 
@@ -12,14 +12,14 @@ mod common;
 
 use std::sync::atomic::Ordering;
 
+use stack_encrypt::field_reference::{Nested, Root, Takes, TakesAny};
 use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::marker::{Nested, Root, Takes, TakesAny};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreBlockTerm, OreTerm};
 use stack_encrypt::target::{DecryptSource, EncryptTarget, NoScope, Scope, Scopes};
 use stack_encrypt::testing::{scope, stored_scope};
 use stack_encrypt::{
-    assert_context, nonempty, DecryptFrom, EncryptInto, Encrypted, Error, KeysetCipher, Marker,
-    PlanError, StackCipher, StackCipherText,
+    assert_context, nonempty, DecryptFrom, EncryptInto, Encrypted, Error, FieldReference,
+    KeysetCipher, PlanError, StackCipher, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -448,7 +448,7 @@ fn account() -> Account {
     }
 }
 
-mod a_marker {
+mod a_field_reference {
     use super::*;
 
     #[test]
@@ -476,7 +476,7 @@ mod a_marker {
             EncryptedUser::AGE.contexts().to_string(),
             "context: (users / age) / {tenant: u64}\n"
         );
-        // The marker's context is the record's entry for the field.
+        // The field reference's context is the record's entry for the field.
         assert_eq!(
             EncryptedUser::contexts().get("email"),
             EncryptedUser::EMAIL.contexts().single()
@@ -491,11 +491,12 @@ mod a_marker {
 
     #[test]
     fn carries_the_type_of_the_scope_its_caller_supplies() {
-        let scoped: Marker<Root<EncryptedUser>, Encrypted<EqualityTerm>, Scope<u64>> =
+        let scoped: FieldReference<Root<EncryptedUser>, Encrypted<EqualityTerm>, Scope<u64>> =
             EncryptedUser::EMAIL;
-        let stored: Marker<Root<StoredTenant>, Encrypted<EqualityTerm>, Scope<u64>> =
+        let stored: FieldReference<Root<StoredTenant>, Encrypted<EqualityTerm>, Scope<u64>> =
             StoredTenant::EMAIL;
-        let unscoped: Marker<Root<Renamed>, Encrypted<EqualityTerm>, NoScope> = Renamed::EMAIL;
+        let unscoped: FieldReference<Root<Renamed>, Encrypted<EqualityTerm>, NoScope> =
+            Renamed::EMAIL;
         assert_eq!(scoped.name(), stored.name());
         assert_eq!(unscoped.name(), "email");
     }
@@ -526,10 +527,10 @@ mod a_marker {
 
     #[test]
     fn is_a_plain_value() {
-        let marker = EncryptedUser::EMAIL;
-        let copy = marker;
-        assert_eq!(copy.name(), marker.name());
-        let shown = format!("{marker:?}");
+        let reference = EncryptedUser::EMAIL;
+        let copy = reference;
+        assert_eq!(copy.name(), reference.name());
+        let shown = format!("{reference:?}");
         assert!(
             shown.contains("\"email\"") && shown.contains("\"users\""),
             "{shown}"
@@ -538,7 +539,7 @@ mod a_marker {
     }
 }
 
-mod a_marker_query {
+mod a_field_query {
     use super::*;
 
     #[tokio::test]
@@ -735,7 +736,7 @@ mod a_marker_query {
     }
 }
 
-mod a_marker_of_several_indexes {
+mod a_field_reference_of_several_indexes {
     use super::*;
 
     #[tokio::test]
@@ -797,7 +798,7 @@ mod a_marker_of_several_indexes {
     }
 }
 
-mod a_nullable_marker {
+mod a_nullable_field_reference {
     use super::*;
 
     #[tokio::test]
@@ -842,7 +843,7 @@ mod a_nullable_marker {
     }
 }
 
-mod a_typed_marker {
+mod a_typed_field_reference {
     use super::*;
 
     type Email = Encrypted<(EqualityTerm, MatchTerms, OreTerm<String>)>;
@@ -850,15 +851,16 @@ mod a_typed_marker {
 
     #[test]
     fn carries_the_type_its_record_states() {
-        let email: Marker<Root<EncryptedPerson>, Email, Scope<u64>, Takes<String>> =
+        let email: FieldReference<Root<EncryptedPerson>, Email, Scope<u64>, Takes<String>> =
             EncryptedPerson::EMAIL;
-        let nick: Marker<
+        let nick: FieldReference<
             Root<EncryptedPerson>,
             Option<Encrypted<EqualityTerm>>,
             Scope<u64>,
             Takes<String>,
         > = EncryptedPerson::NICK;
-        let age: Marker<Root<EncryptedPerson>, Age, Scope<u64>, TakesAny> = EncryptedPerson::AGE;
+        let age: FieldReference<Root<EncryptedPerson>, Age, Scope<u64>, TakesAny> =
+            EncryptedPerson::AGE;
         assert_eq!(
             [email.name(), nick.name(), age.name()],
             ["email", "nick", "age"]
@@ -866,12 +868,12 @@ mod a_typed_marker {
     }
 }
 
-mod a_record_field_marker {
+mod a_record_field_reference {
     use super::*;
 
     #[test]
     fn reaches_the_inner_field_under_the_outer_fields_context() {
-        let street: Marker<Nested<Root<EncryptedAccount>>, Encrypted<EqualityTerm>> =
+        let street: FieldReference<Nested<Root<EncryptedAccount>>, Encrypted<EqualityTerm>> =
             EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET);
         assert_eq!(street.name(), "street");
         assert_eq!(street.label().to_string(), "addresses/street");
@@ -936,7 +938,7 @@ mod a_record_field_marker {
             .await
             .unwrap();
         assert_eq!(term, stored.address.street.terms);
-        // The inner record's own marker is the inner record alone, under
+        // The inner record's own field reference is the inner record alone, under
         // its own context: another term.
         let alone = EncryptedAddress::STREET
             .eq("1 Main St")
@@ -1031,7 +1033,7 @@ mod a_record_field_marker {
     }
 }
 
-mod a_record_field_marker_beside_bindings {
+mod a_record_field_reference_beside_bindings {
     use super::*;
 
     #[tokio::test]
@@ -1144,7 +1146,7 @@ mod a_record_field_marker_beside_bindings {
 }
 
 /// A record field under a text scope, which can be empty. Only its
-/// markers are used.
+/// field references are used.
 #[derive(Clone, Zeroize)]
 struct Site {
     address: Address,
@@ -1157,7 +1159,7 @@ struct UnderText {
     address: EncryptedAddress,
 }
 
-mod a_block_ore_marker {
+mod a_block_ore_field_reference {
     use super::*;
 
     #[tokio::test]
@@ -1190,13 +1192,16 @@ mod a_block_ore_marker {
     }
 }
 
-mod a_marker_of_a_record_with_its_own_scope {
+mod a_field_reference_of_a_record_with_its_own_scope {
     use super::*;
 
     #[test]
     fn takes_the_inner_records_scope_alone_under_a_record_with_none() {
-        let label: Marker<Nested<Root<EncryptedFloor>>, Encrypted<EqualityTerm>, Scope<u64>> =
-            EncryptedFloor::DESK.field(EncryptedDesk::LABEL);
+        let label: FieldReference<
+            Nested<Root<EncryptedFloor>>,
+            Encrypted<EqualityTerm>,
+            Scope<u64>,
+        > = EncryptedFloor::DESK.field(EncryptedDesk::LABEL);
         assert_eq!(label.label().to_string(), "desks/label");
         assert_eq!(
             EncryptedFloor::contexts().get("desk.label"),
@@ -1204,8 +1209,8 @@ mod a_marker_of_a_record_with_its_own_scope {
         );
     }
 
-    /// An equality field's marker that takes the scopes `C`.
-    type Scoped<W, C> = Marker<W, Encrypted<EqualityTerm>, C>;
+    /// An equality field reference that takes the scopes `C`.
+    type Scoped<W, C> = FieldReference<W, Encrypted<EqualityTerm>, C>;
 
     #[test]
     fn takes_both_scopes_outermost_first() {
@@ -1459,19 +1464,19 @@ mod a_marker_of_a_record_with_its_own_scope {
     }
 }
 
-mod a_marker_of_a_nullable_record {
+mod a_field_reference_of_a_nullable_record {
     use super::*;
 
     #[test]
     fn reaches_the_inner_field_as_a_present_record_does() {
-        let street: Marker<Nested<Root<EncryptedFloor>>, Encrypted<EqualityTerm>> =
+        let street: FieldReference<Nested<Root<EncryptedFloor>>, Encrypted<EqualityTerm>> =
             EncryptedFloor::LOBBY.field(EncryptedAddress::STREET);
         assert_eq!(street.label().to_string(), "addresses/street");
         assert_eq!(
             EncryptedFloor::contexts().get("lobby.street"),
             street.contexts().single()
         );
-        let hot: Marker<_, Encrypted<EqualityTerm>, Scope<u64>> =
+        let hot: FieldReference<_, Encrypted<EqualityTerm>, Scope<u64>> =
             EncryptedFloor::HOT.field(EncryptedDesk::LABEL);
         assert_eq!(
             EncryptedFloor::contexts().get("hot.label"),
@@ -1541,7 +1546,7 @@ mod a_marker_of_a_nullable_record {
         .await
         .unwrap();
         // The campus's scope, then the desk's; the floor between lists none.
-        let label: Marker<_, Encrypted<EqualityTerm>, Scopes<Scope<u32>, Scope<u64>>> =
+        let label: FieldReference<_, Encrypted<EqualityTerm>, Scopes<Scope<u32>, Scope<u64>>> =
             EncryptedPlaza::CAMPUS
                 .field(EncryptedCampus::FLOOR)
                 .field(EncryptedFloor::HOT)
@@ -1569,7 +1574,7 @@ mod a_marker_of_a_nullable_record {
 /// A binding is in no query context. Where a record stores or takes a
 /// binding beside a scope, at either level, a query takes the scopes alone
 /// and still derives the stored term.
-mod a_nested_marker_beside_a_binding {
+mod a_nested_field_reference_beside_a_binding {
     use super::*;
 
     async fn stored_gym(keyset: &KeysetCipher<'_, FakeDataKeySource>) -> EncryptedGym {
@@ -1588,20 +1593,20 @@ mod a_nested_marker_beside_a_binding {
 
     #[test]
     fn takes_the_scopes_alone_and_shows_the_record_contexts() {
-        let code: Marker<_, Encrypted<EqualityTerm>, Scopes<Scope<String>, Scope<u64>>> =
+        let code: FieldReference<_, Encrypted<EqualityTerm>, Scopes<Scope<String>, Scope<u64>>> =
             EncryptedGym::LOCKER.field(EncryptedLocker::CODE);
         assert_eq!(
             EncryptedGym::contexts().get("locker.code"),
             code.contexts().single()
         );
-        let spare: Marker<_, Encrypted<EqualityTerm>, Scopes<Scope<String>, Scope<u64>>> =
+        let spare: FieldReference<_, Encrypted<EqualityTerm>, Scopes<Scope<String>, Scope<u64>>> =
             EncryptedGym::SPARE.field(EncryptedLocker::CODE);
         assert_eq!(
             EncryptedGym::contexts().get("spare.code"),
             spare.contexts().single()
         );
         // A record that stores a binding and no scope adds no scope.
-        let tag: Marker<_, Encrypted<EqualityTerm>, Scope<String>> =
+        let tag: FieldReference<_, Encrypted<EqualityTerm>, Scope<String>> =
             EncryptedGym::TAG.field(EncryptedTag::LABEL);
         assert_eq!(
             EncryptedGym::contexts().get("tag.label"),

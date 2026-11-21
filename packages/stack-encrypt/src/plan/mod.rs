@@ -4,7 +4,7 @@
 //!
 //! A program does not build a plan in Rust. A record with static types
 //! derives `EncryptTarget` and `DecryptSource`, and queries a field through
-//! its marker ([`Marker`](crate::Marker)). A program whose declaration is
+//! its field reference ([`FieldReference`](crate::FieldReference)). A program whose declaration is
 //! data parses a plan with the `dynamic` feature
 //! (`dynamic::record::plan`) and runs it as a `dynamic::Planned` value.
 mod error;

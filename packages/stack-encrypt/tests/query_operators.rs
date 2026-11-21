@@ -1,5 +1,5 @@
 //! The query fixture: a query a binding names by operator derives the term
-//! the marker of the same field of a derived record derives, and a
+//! the field reference of the same field of a derived record derives, and a
 //! probabilistic term's two questions answer as the typed `MatchQuery`
 //! answers them (ADR-0009; ADR-0007, amended 2026-10-16).
 //! `tests/fixtures/query_operators.json` records each query's term, a page
@@ -52,7 +52,7 @@ struct User {
 
 /// The declaration every query runs on, as a derived record: the scope,
 /// the field names and the indexes of [`plan_json`], so each field's
-/// marker derives under the label the data plan gives the field.
+/// field reference derives under the label the data plan gives the field.
 #[derive(EncryptTarget)]
 #[stash(struct = User, scope = "users")]
 #[allow(dead_code)]
@@ -151,7 +151,7 @@ fn limit_json(limit: Limit) -> Json {
     limit.rows().map_or(Json::Null, |rows| json!(rows))
 }
 
-/// The term of the field's marker for the same query, as the operand's
+/// The term of the field's reference for the same query, as the operand's
 /// bytes: the proof that the data path derives what a Rust caller does.
 async fn typed_operand(
     keyset: &KeysetCipher<'_, DeterministicSource>,
@@ -275,7 +275,7 @@ async fn derived() -> Json {
         assert_eq!(
             term.operand(),
             &typed_operand(&keyset, field, operator, &input).await,
-            "{operator} on {field}: the data path derives the field marker's term"
+            "{operator} on {field}: the data path derives the field reference's term"
         );
         terms.push(json!({
             "field": field,

@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let stored: EncryptedUser = user.encrypt_into(&keyset).await?;
 
-    // Query the `email` column from the field's marker.
+    // Query the `email` column from the field reference.
     // A `TextEqQuery`: bind it as `$1::eql_v4.query_text_eq`.
     let query = EncryptedUser::EMAIL
         .eq("alice@example.com")

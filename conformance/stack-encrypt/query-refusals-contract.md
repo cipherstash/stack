@@ -83,9 +83,9 @@ checks that the case expects exactly that and continues.
 `typed` records how a typed Rust query answers the same query, for the
 queries it can spell (text on the text fields, a `uint32` range under ORE
 and an `int128` range under OPE): `before_keyset`, `after_keyset` or
-`none`. A typed query is a query from the field marker of a derived record.
+`none`. A typed query is a query from the field reference of a derived record.
 The Rust runner has one derived record whose fields have the corpus's
-labels, runs the marker's query for the case, and counts the keyset loads
+labels, runs the field query for the case, and counts the keyset loads
 and the key requests. The error code must equal the binding's.
 
 The two paths refuse the same inputs with the same codes at the same

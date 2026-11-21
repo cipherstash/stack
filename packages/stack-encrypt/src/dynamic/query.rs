@@ -1,6 +1,6 @@
 //! Queries named by operator, for a binding.
 //!
-//! A Rust caller queries a field through its marker,
+//! A Rust caller queries a field through its field reference,
 //! `EncryptedUser::NAME.matches("ali")`, and the compiler finds the index
 //! that answers the operator. A
 //! binding has no type to name: its plan arrives as data and its operator
@@ -1066,7 +1066,7 @@ where
 ///
 /// let term = query_term(&keyset, &plan, "age", Op::Lt, 40u32, &NoTargets)?.await?;
 ///
-/// // The typed query of the same field, from its marker, is the same term.
+/// // The typed query of the same field, from its field reference, is the same term.
 /// let typed = EncryptedUser::AGE.lt(40u32).encrypt(&keyset).await?;
 /// assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1400,19 +1400,19 @@ mod tests {
         )
     }
     use crate::dynamic::{record, NoTargets, TargetError};
-    use crate::marker::{Marker, Root};
+    use crate::field_reference::{FieldReference, Root};
     use crate::op::Probabilistic as _;
     use crate::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
     use crate::{Label, StackCipher};
     use stack_kms::FakeDataKeySource;
 
-    /// The marker of the field `name` of a record with `scope = "users"`,
+    /// The reference to the field `name` of a record with `scope = "users"`,
     /// whose target is `T`, as the derive emits it. A typed query starts
     /// from it, and derives under the label `users/<name>`, which is the
     /// label the data plan of [`users`] gives the field.
-    fn marker<T>(name: &'static str) -> Marker<Root<()>, T> {
-        Marker::new(name, "users", name, || {
-            unreachable!("these tests do not read a marker's contexts")
+    fn reference<T>(name: &'static str) -> FieldReference<Root<()>, T> {
+        FieldReference::new(name, "users", name, || {
+            unreachable!("these tests do not read a field reference's contexts")
         })
     }
 
@@ -1644,7 +1644,7 @@ mod tests {
         let term = query(&keyset, "email", Op::Eq, text("bob@example.com"))
             .await
             .unwrap();
-        let typed = marker::<EqualityTerm>("email")
+        let typed = reference::<EqualityTerm>("email")
             .eq("bob@example.com")
             .encrypt(&keyset)
             .await
@@ -1660,7 +1660,7 @@ mod tests {
     async fn an_ordering_derives_the_typed_paths_ore_term_and_reads_the_input_as_the_fields_kind() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let typed = marker::<OreTerm<u32>>("age")
+        let typed = reference::<OreTerm<u32>>("age")
             .lt(40u32)
             .encrypt(&keyset)
             .await
@@ -1676,7 +1676,7 @@ mod tests {
     async fn between_derives_both_bounds_under_one_context_as_the_typed_range() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let typed = marker::<OreTerm<u32>>("age")
+        let typed = reference::<OreTerm<u32>>("age")
             .between(18u32, 65)
             .encrypt(&keyset)
             .await
@@ -1705,7 +1705,7 @@ mod tests {
         .await;
         assert!(one.is_ok(), "(v, v) is one value: {one:?}");
 
-        let typed = marker::<OpeTerm<i64>>("score")
+        let typed = reference::<OpeTerm<i64>>("score")
             .between(-5i64, 5)
             .encrypt(&keyset)
             .await
@@ -1736,7 +1736,7 @@ mod tests {
     async fn matches_derives_the_typed_paths_filter() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let typed = marker::<MatchTerms>("name")
+        let typed = reference::<MatchTerms>("name")
             .matches("alice")
             .encrypt(&keyset)
             .await
@@ -1871,7 +1871,7 @@ mod tests {
     async fn verify_answers_as_the_typed_match_query() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let typed = marker::<MatchTerms>("name")
+        let typed = reference::<MatchTerms>("name")
             .matches("alice")
             .encrypt(&keyset)
             .await
@@ -2026,7 +2026,7 @@ mod tests {
     async fn target_limit_answers_as_the_typed_match_query() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let typed = marker::<MatchTerms>("name")
+        let typed = reference::<MatchTerms>("name")
             .matches("ali")
             .encrypt(&keyset)
             .await
@@ -2234,7 +2234,7 @@ mod tests {
             }
         };
 
-        let typed = marker::<OreTerm<i16>>("tiny")
+        let typed = reference::<OreTerm<i16>>("tiny")
             .lt(-8i16)
             .encrypt(&keyset)
             .await
@@ -2253,7 +2253,7 @@ mod tests {
             "70000 is no int16: {refused:?}"
         );
 
-        let typed = marker::<OpeTerm<i128>>("huge")
+        let typed = reference::<OpeTerm<i128>>("huge")
             .between(i128::MIN, i128::MAX)
             .encrypt(&keyset)
             .await

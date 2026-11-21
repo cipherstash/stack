@@ -1,7 +1,7 @@
 //! The shared query-refusal profile: what a query is refused for before any
 //! term exists, through the binding's check, the binding's derivation and,
-//! where a field marker of a derived record can spell the same query, the
-//! typed query from that marker. See
+//! where a field reference of a derived record can spell the same query, the
+//! typed query from that field reference. See
 //! conformance/stack-encrypt/query-refusals-contract.md.
 #![cfg(feature = "dynamic")]
 mod common;
@@ -53,9 +53,9 @@ struct Case {
     accepted: bool,
     expected_error: Option<ExpectedError>,
     /// How the typed query answers the same query, for the queries a field
-    /// marker can spell: refused before a keyset is asked for anything, or
+    /// field reference can spell: refused before a keyset is asked for anything, or
     /// not refused. The corpus has a third value, for a refusal after the
-    /// keyset was loaded. A marker query runs through a keyset the caller
+    /// keyset was loaded. A field query runs through a keyset the caller
     /// already holds, so it cannot be refused at that stage.
     typed: Option<Typed>,
 }
@@ -161,7 +161,7 @@ struct Conformance {
 }
 
 /// The same fields as a derived record, each under `conformance/<field>`
-/// with the indexes the corpus plan declares. Only its field markers are
+/// with the indexes the corpus plan declares. Only its field references are
 /// used: no record is sealed, so no field is read.
 #[derive(EncryptTarget)]
 #[allow(dead_code)]
@@ -176,7 +176,7 @@ struct Fields {
 }
 
 /// The typed query's answer: a `stack_encrypt::Error` code, or none. The
-/// query starts from the marker of `field`.
+/// query starts from the field reference of `field`.
 async fn typed(
     keyset: &KeysetCipher<'_, CountingSource>,
     field: &str,
@@ -212,14 +212,14 @@ async fn typed(
             hi.text.parse::<i128>().unwrap(),
         )
     };
-    // The marker's label is the context the corpus plan gives the field,
+    // The field reference's label is the context the corpus plan gives the field,
     // so the typed query and the binding's query are the same query.
     macro_rules! run {
-        ($marker:expr, $query:expr) => {{
+        ($reference:expr, $query:expr) => {{
             assert_eq!(
-                $marker.label().to_string(),
+                $reference.label().to_string(),
                 format!("conformance/{field}"),
-                "{field}: the marker's label"
+                "{field}: the field reference's label"
             );
             $query
                 .encrypt(keyset)
@@ -361,7 +361,7 @@ async fn shared_query_refusal_profile() {
             continue;
         };
         assert!(field.is_some(), "{}: a declared field", case.id);
-        // A marker query runs through a keyset the caller holds, here the
+        // A field query runs through a keyset the caller holds, here the
         // default one, so it has no keyset to load. The observation is that
         // it asks the key source for nothing, refused or not.
         let code = typed(&keyset, &case.field, operator, &case.input).await;
@@ -379,7 +379,7 @@ async fn shared_query_refusal_profile() {
                 assert_eq!(code.as_deref(), Some(expected.code.as_str()), "{}", case.id);
             }
             Refusal::AfterKeyset => panic!(
-                "{}: a marker query is prepared before its keyset is asked for anything",
+                "{}: a field query is prepared before its keyset is asked for anything",
                 case.id
             ),
         }

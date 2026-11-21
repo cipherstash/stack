@@ -2,7 +2,7 @@
 //! declaration runs through, and the bytes are theirs.
 //!
 //! A derived record, a target named by its type, and a query from a field
-//! marker each write what the combinators write when a test composes them
+//! field reference each write what the combinators write when a test composes them
 //! by hand: `indexed(..).under(label)` for a sealed field with terms,
 //! `ciphertext().under(label)` for a sealed field, an index's own operation
 //! for a term alone, `passthrough()` for a field carried as it is, and
@@ -197,7 +197,7 @@ async fn a_derived_record_is_the_hand_composed_combinators_field_for_field() {
 }
 
 #[tokio::test]
-async fn a_marker_query_derives_under_the_label_the_write_used() {
+async fn a_field_query_derives_under_the_label_the_write_used() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
     // The stored terms are the combinators', so a query that matches them

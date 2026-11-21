@@ -1,7 +1,7 @@
-//! Shapes a record's markers must compile in: a public record whose field
-//! is a private nested record (the marker's constant names that type), a
+//! Shapes a record's field references must compile in: a public record whose field
+//! is a private nested record (the field reference's constant names that type), a
 //! raw-identifier field, a generic record, a field of four indexes whose
-//! last answers equality, a nullable field with a query type, and a marker
+//! last answers equality, a nullable field with a query type, and a field reference
 //! reached through a record field.
 #![deny(warnings)]
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};

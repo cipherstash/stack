@@ -92,7 +92,7 @@ for a plain label segment, read by the Rust, derive and Go tests.
 
 Queries named by operator through the data path
 (`stack_encrypt::dynamic::query_term`, what a language binding calls), each
-term equal to the one a typed query from a field marker
+term equal to the one a typed query from a field reference
 (`EncryptedUser::AGE.lt(40u32)`) derives for the same query, with a page `verify`
 answered and fetch limits `target_limit` sized (ADR-0009; ADR-0007, amended
 2026-10-16). `tests/query_operators.rs` derives every entry and checks it
