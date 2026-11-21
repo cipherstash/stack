@@ -45,6 +45,10 @@ struct Source {
     observed: Arc<Observations>,
 }
 
+impl stack_kms::KeySourceKind for Source {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl DataKeySource for Source {
     async fn generate_keys(
         &self,

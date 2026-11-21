@@ -59,6 +59,10 @@ struct Counting {
     retrieve_calls: AtomicUsize,
 }
 
+impl stack_kms::KeySourceKind for Counting {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl DataKeySource for Counting {
     async fn generate_keys(
         &self,

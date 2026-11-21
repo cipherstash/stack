@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 
 - Requires stack-auth 0.44 and stack-profile 0.44.
+- A key source states which kind it is, with the new `KeySourceKind`
+  trait. `DataKeySource` and `IndexKeySource` require the kind
+  `OwnIdentity`, and `CredentialKeySource` requires the kind
+  `CredentialPerCall`. A type states one kind, so a key source of both
+  kinds does not compile. Before, only the docs said a key source is one
+  kind or the other. To migrate, add one impl to each key source of your
+  own, such as a test double:
+
+  ```rust
+  impl stack_kms::KeySourceKind for MyKeySource {
+      type Kind = stack_kms::OwnIdentity;
+  }
+  ```
+
+  `StackKms` needs no change: its kind is the kind of its auth strategy
+  (`stack_auth::StrategyKind`). The test doubles of this crate state
+  theirs. Re-exports `CredentialPerCall` beside `OwnIdentity`.
 
 ### Features
 

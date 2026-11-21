@@ -410,6 +410,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A key source of your own states its kind.** `kms::DataKeySource`,
+  `kms::IndexKeySource` and `kms::CredentialKeySource` each require
+  `kms::KeySourceKind`, so that a type cannot be both kinds of key source.
+  To migrate, add one impl to each key source you wrote, such as a test
+  double. A cipher built with `auth_strategy(..)` or over
+  `kms::StackKms`, `kms::FakeDataKeySource` or
+  `kms::FakeCredentialKeySource` needs no change.
+
+  ```rust
+  impl stack_encrypt::kms::KeySourceKind for MyKeySource {
+      // `kms::CredentialPerCall` for a `CredentialKeySource`.
+      type Kind = stack_encrypt::kms::OwnIdentity;
+  }
+  ```
+
 - **`.kms(source)` returns a builder in its own state** (#1708). This
   follows from telling the two kinds of key source apart in the types
   (`KeySource`). `StackCipher::builder().kms(source)` returns a

@@ -186,6 +186,10 @@ fn is_refusal(error: &Error, why: &str) -> bool {
 #[derive(Clone)]
 struct OwnIdentity(Source);
 
+impl stack_encrypt::kms::KeySourceKind for OwnIdentity {
+    type Kind = stack_encrypt::kms::OwnIdentity;
+}
+
 impl DataKeySource for OwnIdentity {
     async fn generate_keys(
         &self,
@@ -217,6 +221,10 @@ impl IndexKeySource for OwnIdentity {
     ) -> Result<(Uuid, IndexKey), stack_encrypt::kms::Error> {
         self.0.load(None, keyset_id).await
     }
+}
+
+impl stack_encrypt::kms::KeySourceKind for Source {
+    type Kind = stack_encrypt::kms::CredentialPerCall;
 }
 
 impl CredentialKeySource for Source {

@@ -260,6 +260,10 @@ const FIXED_TAG: &[u8] = b"fixed-key-tag";
 /// ciphertext sealed once can be pinned and opened by any later build.
 struct FixedKeySource(stack_kms::FakeDataKeySource);
 
+impl stack_kms::KeySourceKind for FixedKeySource {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl stack_kms::DataKeySource for FixedKeySource {
     async fn generate_keys(
         &self,

@@ -91,6 +91,10 @@ impl Observed {
     }
 }
 
+impl stack_kms::KeySourceKind for Observed {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl DataKeySource for Observed {
     async fn generate_keys(
         &self,
@@ -848,6 +852,10 @@ impl Reader {
     fn loads(&self) -> usize {
         self.loads.load(Ordering::Relaxed)
     }
+}
+
+impl stack_kms::KeySourceKind for Reader {
+    type Kind = stack_kms::OwnIdentity;
 }
 
 impl DataKeySource for Reader {
