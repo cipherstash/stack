@@ -199,6 +199,19 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
             shapes: Vec::new(),
         }
     }
+    /// Reject this declaration as [`failed`](Self::failed) does, but keep
+    /// the contexts of its leaves. [`contexts`](Self::contexts) then still
+    /// shows each field the declaration names, and running it yields
+    /// `error` without I/O. A set of indexes that is refused (two indexes
+    /// for one operator, say) uses this, so its field does not disappear
+    /// from `contexts()`. Hidden: generated code calls it.
+    #[doc(hidden)]
+    pub fn refused(self, error: Error) -> Self {
+        Self {
+            build: Box::new(move |_, cipher, _| Pending::failed(cipher, error)),
+            shapes: self.shapes,
+        }
+    }
     /// Build the destination from the completed output. `f` sees ciphertext
     /// and terms, never the plaintext.
     pub fn map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx, M>

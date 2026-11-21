@@ -595,11 +595,14 @@ async fn a_record_keeps_its_declared_context_type() {
 
 // --- Two outputs that declare the same index ---------------------------------
 
-/// A `plaintext` record whose two fields declare the equality index.
+/// A `plaintext` record whose two fields declare the equality index. Its
+/// first field is a valid ciphertext, which would need a data key: the
+/// refusal must stop that request too.
 #[allow(dead_code)] // never built: refusing it is the point
 #[derive(EncryptTarget)]
 #[stash(plaintext = String)]
 struct TwoEqualities {
+    c: StackCipherText,
     hm: EqualityTerm,
     again: EqualityTerm,
 }
@@ -627,11 +630,13 @@ async fn two_outputs_declaring_one_index_are_refused_before_any_request() {
 }
 
 /// A `plaintext` record with an ORE term and an OPE term: two indexes that
-/// answer the orderings.
+/// answer the orderings. Its first field is a valid ciphertext, as in
+/// [`TwoEqualities`].
 #[allow(dead_code)] // never built: refusing it is the point
 #[derive(EncryptTarget)]
 #[stash(plaintext = u32)]
 struct TwoOrders {
+    c: StackCipherText,
     ore: OreTerm<u32>,
     ope: OpeTerm<u32>,
 }
@@ -699,4 +704,25 @@ async fn a_field_declaring_one_index_twice_is_refused_before_any_request() {
         );
     }
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+}
+
+// --- A refused set of indexes keeps its contexts -----------------------------
+
+/// A refused set of indexes is refused when it runs, and its fields still
+/// show in `contexts()`: the declaration names them, and the refusal is
+/// reported when the call is awaited.
+#[test]
+fn a_refused_set_of_indexes_keeps_its_fields_contexts() {
+    // Refused by the derive: two fields whose indexes answer one operator.
+    assert_eq!(
+        TwoOrders::contexts().to_string(),
+        "c\n  context: {context: CallerContext}\n\
+         ore\n  context: {context: CallerContext}\n\
+         ope\n  context: {context: CallerContext}\n"
+    );
+    // Refused by the field's type: one index named twice.
+    assert_eq!(
+        TwoEqualitiesInAField::contexts().to_string(),
+        "email\n  context: users / email\n"
+    );
 }

@@ -328,7 +328,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   EqualityTerm)>`, or two indexes that answer one operator, such as
   `Encrypted<(OreTerm<u32>, OpeTerm<u32>)>`. The refusal is
   `PlanError::DuplicateIndex` or `PlanError::IndexOverlap`, when the value
-  is encrypted and before any key is requested. The plan builder refused
+  is encrypted and before any key is requested. The refused fields still
+  show in the record's `contexts()`. The plan builder refused
   these sets, a plan that is data still does, and a field reference has no method
   for an operator that two indexes answer. Used directly as a target,
   such a set was accepted before.

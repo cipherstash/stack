@@ -587,17 +587,20 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
             quote! {
                 type ContextInput = #input_type;
                 fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::ContextInput> where #source: #lifetime {
+                    #(#descriptions)*
+                    let __described = #body;
                     // The derive sees the fields' types, not the indexes
                     // they declare. Two fields that declare one index, or
                     // two indexes that answer one operator, are refused
-                    // here, before any key is requested.
+                    // here, before any key is requested. The refusal keeps
+                    // the fields' contexts, so `contexts()` still shows
+                    // them.
                     if let ::core::result::Result::Err(__error) = #krate::target::check_indexes(
                         &<Self as #krate::target::EncryptTarget<#source>>::indexes(),
                     ) {
-                        return #krate::target::Encryption::failed(__error);
+                        return __described.refused(__error);
                     }
-                    #(#descriptions)*
-                    #body
+                    __described
                 }
                 fn indexes() -> ::std::vec::Vec<#krate::target::IndexSpec> {
                     let mut __indexes = ::std::vec::Vec::new();

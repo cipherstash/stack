@@ -720,23 +720,29 @@ where
     where
         S: 's,
     {
+        let described = indexed(Terms::INDEXES).accepting();
         if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
-            return Encryption::failed(error);
+            // Refused with the leaves' contexts kept, so `contexts()`
+            // still shows the field.
+            return described.refused(error);
         }
-        indexed(Terms::INDEXES).accepting()
+        described
     }
     fn owned_encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput, Owned>
     where
         S: 's,
     {
+        let described =
+            indexed_beside(wiping_ciphertext::<S, K, Owned>(), Terms::INDEXES).accepting();
         if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
-            // The refused value is the description's to wipe.
-            return Encryption::from_build(Vec::new(), move |mut source: S, cipher, _| {
+            // The refused value is the description's to wipe. The leaves'
+            // contexts are kept, as in the borrowed form.
+            return Encryption::from_build(described.shapes(), move |mut source: S, cipher, _| {
                 zeroize::Zeroize::zeroize(&mut source);
                 super::Pending::failed(cipher, error)
             });
         }
-        indexed_beside(wiping_ciphertext::<S, K, Owned>(), Terms::INDEXES).accepting()
+        described
     }
     fn indexes() -> Vec<IndexSpec> {
         Terms::INDEXES.specs()
