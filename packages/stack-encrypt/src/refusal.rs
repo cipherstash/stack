@@ -28,24 +28,43 @@ use crate::target::IndexSpec;
 /// query ([`crate::Error::Input`]).
 ///
 /// The split that matters to a caller is malformed input versus something
-/// else: every variant but [`Cipher`](Error::Cipher) and
-/// [`Internal`](Error::Internal) is a statement about the value or the
-/// request, decided before any key is minted or retrieved. `Cipher` is the
-/// operation failing; `Internal` is this module's own bug. A binding maps
-/// them to its own status codes on those lines, and must not report
-/// `Internal` as the caller's fault. The record path's operations hand back
-/// the engine's [`Pending`](crate::Pending), whose failure is the crate's
+/// else. Every variant is a statement about the value or the request,
+/// decided before any key is minted or retrieved, except three:
+///
+/// - [`Cipher`](Error::Cipher): the operation failed.
+/// - [`Internal`](Error::Internal): this module's own bug.
+/// - [`Target`](Error::Target) holding
+///   [`TargetError::Other`](crate::dynamic::TargetError::Other): the target
+///   resolver failed for a reason of its own.
+///
+/// A binding maps them to its own status codes on those lines, and must not
+/// report `Internal` or a resolver's failure as the caller's fault: the
+/// caller cannot correct either by changing its input. As
+/// [`crate::Error`], those two are [`Error::Other`](crate::Error::Other)
+/// and every input refusal is [`Error::Input`](crate::Error::Input). The
+/// record path's operations hand back the engine's
+/// [`Pending`](crate::Pending), whose failure is the crate's
 /// [`Error`](crate::Error); a [`Plan`](crate::Error::Plan) failure there is
 /// again a statement about the caller's data.
 ///
-/// Each input error names the field it is about, where there is one, and
-/// says what was wrong with a [`Reason`]: both are in the message and in the
-/// [`ErrorPayload`](crate::ErrorPayload) (`field`, `reason`), so a binding's
-/// caller can tell a bad plan field from a bad record field without parsing
-/// text. A field is `None` where the error is about the whole plan, value or
-/// record, or where the function that raised it never sees a field
-/// ([`context`](crate::dynamic::context()), [`read`](crate::dynamic::read)); [`in_field`](Self::in_field) names
-/// it from the caller's side.
+/// Each input error names the field it is about, where there is one: in the
+/// message and in the [`ErrorPayload`](crate::ErrorPayload) (`field`), so a
+/// binding's caller can tell a bad plan field from a bad record field
+/// without parsing text. A field is `None` where the error is about the
+/// whole plan, value or record, or where the function that raised it never
+/// sees a field ([`context`](crate::dynamic::context()),
+/// [`read`](crate::dynamic::read)); [`in_field`](Self::in_field) names it
+/// from the caller's side.
+///
+/// Not every variant has a [`Reason`]. [`Context`](Error::Context),
+/// [`Plan`](Error::Plan), [`Source`](Error::Source),
+/// [`Record`](Error::Record) and [`Predicate`](Error::Predicate) do: it is
+/// in the message, in [`reason`](Self::reason) and in the payload
+/// (`reason`). The others carry their own payload fields instead:
+/// [`Term`](Error::Term) names the index it was asked for (`index`),
+/// [`UntypedIndex`](Error::UntypedIndex) the field (`field`), `Target` and
+/// `Cipher` carry the payload of the error they hold, and `Internal` carries
+/// none. A binding reads `reason` when it is there, and does not require it.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum Error {

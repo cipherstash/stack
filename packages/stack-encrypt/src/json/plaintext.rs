@@ -197,6 +197,11 @@ impl JsonPlaintext {
 impl From<Value> for JsonPlaintext {
     /// Take ownership of a document, so it is wiped when the
     /// `JsonPlaintext` is dropped.
+    ///
+    /// A `Value` holds no NaN or infinity: serde_json stores either as
+    /// `null` when it builds one (`json!`, `to_value`, `Value::from`), so
+    /// the document holds `null` where the float was. Check a computed
+    /// float before it goes into a document.
     fn from(value: Value) -> Self {
         Self(value)
     }

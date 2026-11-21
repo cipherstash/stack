@@ -530,7 +530,7 @@ mod values {
                 .map(drop),
             EncryptedReading::DOC
                 .at("$.score")
-                .eq(f32::INFINITY)
+                .eq(f64::INFINITY)
                 .encrypt(&keyset)
                 .await
                 .map(drop),
@@ -556,18 +556,33 @@ mod values {
         assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
     }
 
+    /// A query takes no `f32` (the UI case `field_reference_json_value_types`):
+    /// serde_json widens one when it builds a document, so the caller
+    /// passes the `f64` the document holds. `f64::from(x)` is that `f64`
+    /// for a document built from `x` through serde_json, and a decimal
+    /// `0.1` finds a document holding `0.1`.
     #[tokio::test]
-    async fn an_f32_is_the_number_its_shortest_form_names() {
+    async fn an_f32_is_queried_as_the_f64_the_document_holds() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let doc = reading(&keyset, json!({"score": 0.1})).await;
-        for (what, query) in [
-            ("f32", EncryptedReading::DOC.at("$.score").eq(0.1f32)),
-            ("f64", EncryptedReading::DOC.at("$.score").eq(0.1f64)),
-        ] {
-            let query = query.encrypt(&keyset).await.unwrap();
-            assert!(query.matches(doc.selector_set()), "{what}");
-        }
+        let widened = reading(&keyset, json!({"score": 0.1f32})).await;
+        let decimal = reading(&keyset, json!({"score": 0.1})).await;
+        let from_f32 = EncryptedReading::DOC
+            .at("$.score")
+            .eq(f64::from(0.1f32))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let tenth = EncryptedReading::DOC
+            .at("$.score")
+            .eq(0.1f64)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert!(from_f32.matches(widened.selector_set()));
+        assert!(!from_f32.matches(decimal.selector_set()));
+        assert!(tenth.matches(decimal.selector_set()));
+        assert!(!tenth.matches(widened.selector_set()));
     }
 
     #[tokio::test]
@@ -591,6 +606,28 @@ mod values {
 
 mod refusals {
     use super::*;
+
+    /// A containment document nested deeper than the index reads is
+    /// refused as the walk refuses it, before any key is requested.
+    #[tokio::test]
+    async fn a_document_nested_too_deep_is_refused_before_any_key() {
+        let (cipher, generates, _) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let mut deep = json!(1);
+        for _ in 0..200 {
+            deep = json!([deep]);
+        }
+        let refused = EncryptedCustomer::PROFILE
+            .contains(json!({ "visits": deep }))
+            .encrypt(&keyset)
+            .await
+            .map(drop);
+        assert!(
+            matches!(refused, Err(Error::Term(TermError::JsonTooDeep))),
+            "{refused:?}"
+        );
+        assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
+    }
 
     /// A counting cipher: what each refusal is checked to request.
     async fn counting() -> (

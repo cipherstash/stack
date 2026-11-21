@@ -93,8 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     condition has no `encrypt`. A NaN or an infinity, which no JSON number
     is, is refused with the new `TermError::JsonNumberNotFinite`
     (`stack_encrypt::json_number_not_finite`) before any key is requested,
-    rather than becoming `null`. An `f32` is the number its shortest
-    decimal form names, so `0.1f32` finds a stored `0.1`.
+    rather than becoming `null`. There is no `f32` value: serde_json widens
+    an `f32` when it builds a document, so the query takes the `f64` the
+    document holds (`f64::from(x)` for one built from `x`). A NaN or an
+    infinity inside a `serde_json::Value` (`contains`, `vars`) is already
+    `null`, and is queried as `null`.
   - **Refusals.** A path is JSONPath text, checked when the query is
     encrypted, before any key is requested, by the dynamic interface's
     rules: an ordering at a path the field does not order is

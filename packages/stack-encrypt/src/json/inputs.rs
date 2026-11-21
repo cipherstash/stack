@@ -476,8 +476,16 @@ pub(crate) fn derive<'a, K: 'static>(
     input: Input,
 ) -> Result<Pending<'a, Derived, K>, Error> {
     Ok(match input {
-        Input::Document(document) => terms(keyset, options, under, document.0.clone())
-            .map(|terms| Derived::Query(JsonQuery::of_terms(terms))),
+        Input::Document(document) => {
+            // Checked before the clone, which recurses once per level: a
+            // document a caller built deeper than the index reads is
+            // refused as the walk would refuse it, not cloned first.
+            if !super::text::nests_within(&document.0, super::MAX_DEPTH) {
+                return Err(term(TermError::JsonTooDeep));
+            }
+            terms(keyset, options, under, document.0.clone())
+                .map(|terms| Derived::Query(JsonQuery::of_terms(terms)))
+        }
         Input::EqAt(path, value) => terms(keyset, options, under, path.holding(value.0.clone()))
             .map(|terms| Derived::Query(JsonQuery::at_path(terms))),
         Input::Ordering(_, path, value) => {

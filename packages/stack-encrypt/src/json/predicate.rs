@@ -904,10 +904,28 @@ impl Compiler<'_> {
         }
     }
 
+    /// Whether `at` is a variable that holds an object or an array. Read
+    /// in place, so a container is refused before [`value`](Self::value)
+    /// clones it: a clone recurses once per level of the caller's value.
+    fn holds_a_container(&self, at: &ValueAt) -> bool {
+        matches!(
+            at,
+            ValueAt::Variable { name, .. }
+                if matches!(self.vars.get(name.as_str()), Some(Value::Object(_) | Value::Array(_)))
+        )
+    }
+
     /// The value of `at`, a scalar: what equality takes.
     fn scalar(&self, at: &ValueAt) -> Result<Parsed, Error> {
+        if self.holds_a_container(at) {
+            return Err(value_type(at));
+        }
         let value = self.value(at)?;
-        if matches!(value.0, Value::Object(_) | Value::Array(_)) {
+        // A variable was checked in place above; a literal, read from the
+        // predicate's own text, is checked once it is parsed.
+        if matches!(at, ValueAt::Literal { .. })
+            && matches!(value.0, Value::Object(_) | Value::Array(_))
+        {
             return Err(value_type(at));
         }
         Ok(value)
@@ -915,6 +933,9 @@ impl Compiler<'_> {
 
     /// The value of `at`, a number or a string: what an ordering takes.
     fn ordered(&self, at: &ValueAt) -> Result<Parsed, Error> {
+        if self.holds_a_container(at) {
+            return Err(value_type(at));
+        }
         let value = self.value(at)?;
         leaf(&value.0).map_err(|_| value_type(at))?;
         Ok(value)
@@ -1669,6 +1690,8 @@ mod tests {
                 ("$missing < $.age", JsonPredicateUnknownVariable, 0),
                 ("$.a == $doc", JsonPredicateValueType, 7),
                 ("$.a != $list", JsonPredicateValueType, 7),
+                ("$.age < $doc", JsonPredicateValueType, 8),
+                ("$list <= $.age", JsonPredicateValueType, 0),
                 ("$.age < true", JsonPredicateValueType, 8),
                 ("$.age < $flag", JsonPredicateValueType, 8),
                 ("$.age >= null", JsonPredicateValueType, 9),

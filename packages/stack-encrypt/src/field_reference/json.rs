@@ -276,6 +276,13 @@ impl Condition {
 
 /// A value that equality at a path compares: a boolean, a number or a
 /// string. Sealed.
+///
+/// There is no `f32`. serde_json widens an `f32` to the `f64` its bits
+/// name when it builds a document (`0.1f32` is stored as
+/// `0.10000000149011612`), and a query cannot know whether the stored
+/// document was built that way or holds the decimal the `f32` prints as.
+/// So pass the `f64` the document holds: `f64::from(x)` for a document
+/// built from `x` through serde_json (`json!`, `to_value`).
 pub trait JsonScalar: scalar_sealed::Sealed {
     /// The value as JSON: `None` for a NaN or an infinity, which no JSON
     /// number is.
@@ -334,20 +341,6 @@ impl JsonScalar for f64 {
 }
 impl JsonOrdered for f64 {}
 
-/// An `f32` is the number its shortest decimal form names, as it would be
-/// written in a document: `0.1f32` is `0.1`, not the `f64` the bits widen
-/// to, `0.10000000149011612`.
-impl scalar_sealed::Sealed for f32 {}
-impl JsonScalar for f32 {
-    fn into_json(self) -> Option<Value> {
-        if !self.is_finite() {
-            return None;
-        }
-        self.to_string().parse::<f64>().ok().map(Value::from)
-    }
-}
-impl JsonOrdered for f32 {}
-
 /// A value moved into a query: wiped when the query is encrypted, refused
 /// or dropped.
 fn held(value: impl JsonScalar) -> Held {
@@ -367,6 +360,13 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> FieldReference<W, T, C, P> {
     /// Rows whose document contains `document` (`col @> $1`): every member
     /// and element `document` holds is in the row's document. Exact, as
     /// PostgreSQL's `jsonb @>` is, across array elements included.
+    ///
+    /// A NaN or an infinity never reaches this query as a number: serde_json
+    /// stores either as `null` when it builds a `Value` (`json!`,
+    /// `to_value`, `Value::from`), so `json!({"score": f64::NAN})` asks for
+    /// rows whose `score` is `null`. The engine cannot tell. Check a
+    /// computed float before building the document, or query it with
+    /// [`at(path).eq`](ValueAt::eq), which refuses one.
     pub fn contains(
         self,
         document: impl Into<JsonPlaintext>,
@@ -377,7 +377,8 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> FieldReference<W, T, C, P> {
     /// Rows whose document is contained by `document` (`col <@ $1`): the
     /// row's document holds nothing `document` does not. The operand is
     /// the one [`contains`](Self::contains) derives; the SQL operator says
-    /// which way it compares.
+    /// which way it compares. A NaN or an infinity in `document` is `null`,
+    /// as in [`contains`](Self::contains).
     pub fn contained_by(
         self,
         document: impl Into<JsonPlaintext>,
@@ -618,7 +619,10 @@ impl<T, S> JsonFieldQuery<T, Predicate, S> {
     /// The predicate's variables, one JSON object whose members the
     /// predicate names as `$name`: the `vars` `jsonb_path_match` takes.
     /// None by default. An object is required: anything else is refused
-    /// when the query is encrypted.
+    /// when the query is encrypted. A NaN or an infinity in `vars` is
+    /// `null` by the time this sees it, as in
+    /// [`FieldReference::contains`]: a predicate comparing with it compares
+    /// with `null`.
     pub fn vars(mut self, vars: impl Into<JsonPlaintext>) -> Self {
         if let Some(JsonInput {
             body: Body::Predicate { vars: held, .. },

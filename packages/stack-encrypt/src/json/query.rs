@@ -381,7 +381,7 @@ impl<'de> Deserialize<'de> for JsonLeafQuery {
 /// bound in element order and then the probe, and the field's bounds, each
 /// a leaf operand. `gt` or `gte` is the lower bound, `lt` or `lte` the
 /// upper; equality is `gte` and `lte` at one value.
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct JsonElementsMember {
     pub(crate) t: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -403,7 +403,7 @@ pub(crate) struct JsonElementsMember {
 /// Serializes to the `eql_v4.query_json_elements` operand, `{"m": [member,
 /// …]}`, which `eql_v4.json_tree_element_match` takes. The tokens are
 /// capabilities over the column's documents, so it prints as its shape.
-#[derive(Clone, OpaqueDebug, PartialEq, Eq, Serialize)]
+#[derive(Clone, OpaqueDebug, Serialize)]
 pub struct JsonElementsQuery {
     m: Vec<JsonElementsMember>,
 }
@@ -434,7 +434,7 @@ impl JsonElementsQuery {
 /// Serializes to the `eql_v4.query_json_predicate` operand, which
 /// `eql_v4.json_tree_match` and `col @@ $1` evaluate. It prints as its
 /// shape.
-#[derive(Clone, OpaqueDebug, PartialEq, Serialize)]
+#[derive(Clone, OpaqueDebug, Serialize)]
 #[serde(transparent)]
 pub struct JsonPredicateQuery(pub(crate) Value);
 

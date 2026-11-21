@@ -1331,7 +1331,27 @@ mod tests {
             let op = op.expect("a typed JSON operator with a wire name");
             assert!(Json::OPERATORS.contains(&op), "{op} is not declared");
         }
-        assert_eq!(Json::OPERATORS.len(), 8 + 6);
+        // The whole declaration, each operator once: the eight above, then
+        // the six only the shared JSON inputs build.
+        assert_eq!(
+            Json::OPERATORS,
+            [
+                Op::Contains,
+                Op::ContainedBy,
+                Op::EqAt,
+                Op::LtAt,
+                Op::LteAt,
+                Op::GtAt,
+                Op::GteAt,
+                Op::BetweenAt,
+                Op::Selector,
+                Op::Subtree,
+                Op::Children,
+                Op::ChildCount,
+                Op::ElementMatch,
+                Op::Match,
+            ]
+        );
     }
 
     /// An accessor is held to its leaf's requirement: an exact term
