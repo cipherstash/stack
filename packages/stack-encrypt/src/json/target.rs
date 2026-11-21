@@ -2,7 +2,7 @@
 //! options, and queried from the field reference.
 //!
 //! A record field of such a type takes its options from the derive's
-//! field attribute, `#[stash(json(ordered = ["$.age"]))]`. The derive seals
+//! field attribute, `#[stash(json(ordered = { "$.age": u32 }))]`. The derive seals
 //! the field through [`JsonTarget`] under those options, and gives the
 //! field's reference the same options, so a query derives under the options
 //! the stored documents were sealed under. The field reference's JSON queries
@@ -156,16 +156,16 @@ impl<S: Zeroize, T: JsonTarget<S> + MaybeSend> JsonTarget<Option<S>> for Option<
     note = "the JSON queries (`contains`, `at`, `elements`, `predicate`, `children`) belong to a field whose type stores a JSON document, such as `JsonDocument` or `eql_bindings::v4::json_tree::JsonTreeDocument`"
 )]
 pub trait JsonQueries {
-    /// A containment needle: `contains`, `contained_by` and `at(path).eq`.
+    /// A containment needle: `contains`, `contained_by` and a path's `eq`.
     type Query: MaybeSend + 'static;
-    /// An ordering at a path: `at(path).lt` and the other comparisons, and
-    /// each bound of `at(path).between`.
+    /// An ordering at a path: a path's `lt` and the other comparisons, and
+    /// each bound of its `between`.
     type LeafQuery: MaybeSend + 'static;
-    /// An element-scoped predicate: `elements(path)`.
+    /// An element-scoped predicate: from `elements()`.
     type ElementsQuery: MaybeSend + 'static;
     /// A compiled jsonpath predicate: `predicate(text)`.
     type PredicateQuery: MaybeSend + 'static;
-    /// A path's selector, which `->` takes: `at(path).selector()`.
+    /// A path's selector, which `->` takes: a path's `selector()`.
     type Selector: MaybeSend + 'static;
     /// One node's token, which the child functions take: `children(path)`.
     type Token: MaybeSend + 'static;

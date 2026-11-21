@@ -1,6 +1,6 @@
 //! Parsing of the `#[stash(...)]` container and field attributes.
 
-use syn::punctuated::Punctuated;
+use stack_encrypt_jsonpath::JsonPath;
 use syn::{Attribute, Expr, Ident, LitBool, LitStr, Member, Path, Result, Token, Type};
 
 /// Container-level options, from `#[stash(...)]` on the struct itself.
@@ -343,10 +343,11 @@ pub(crate) struct FieldAttrs {
     /// an `Option` of it. On a field whose field reference has no operator method
     /// (a record field, a ciphertext alone), only the check applies.
     pub(crate) query: Option<Type>,
-    /// `#[stash(json(ordered = ["$.age"], sealed_root = false))]`: with
-    /// `struct = ..`, the JSON index's options of a field that stores a
-    /// document. The field is sealed under them and its field reference's JSON
-    /// queries derive under them.
+    /// `#[stash(json(ordered = { "$.age": u32 }, sealed_root = false))]`:
+    /// with `struct = ..`, the JSON index's options of a field that stores a
+    /// document. The field is sealed under them, its field reference's JSON
+    /// queries derive under them, and each ordered path gets a typed
+    /// accessor.
     pub(crate) json: Option<JsonAttr>,
 }
 
@@ -355,22 +356,45 @@ pub(crate) struct FieldAttrs {
 pub(crate) struct JsonAttr {
     /// Where `json` is written, for errors.
     pub(crate) span: proc_macro2::Span,
-    /// `ordered = ["$.age", ..]`: the paths whose leaves carry an ordering
-    /// term. JSONPath text, parsed by the engine when the field is sealed.
-    pub(crate) ordered: Vec<LitStr>,
+    /// `ordered = { "$.age": u32, .. }`: the paths whose leaves carry an
+    /// ordering term, each with the type of the values at it, in the order
+    /// written. Each path is parsed here, with the engine's grammar.
+    pub(crate) ordered: Vec<OrderedPath>,
+    /// `names = { "first-name": first_name, .. }`: the word a JSON key
+    /// gives an accessor name, for a key the naming rule cannot turn into
+    /// one, or whose word another key gives too.
+    pub(crate) names: Vec<(LitStr, Ident)>,
     /// `sealed_root = false`: turn off the sealed root, which is on by
     /// default.
     pub(crate) sealed_root: Option<LitBool>,
 }
+
+/// One entry of `ordered = { .. }`: a path and the type its values hold.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct OrderedPath {
+    /// The path as written, which the field's options are built from.
+    pub(crate) text: LitStr,
+    /// The path, parsed.
+    pub(crate) path: JsonPath,
+    /// The type of the values at the path.
+    pub(crate) ty: Type,
+}
+
+/// What `ordered` is now, for a field that still writes the list form.
+const ORDERED_IS_A_MAP: &str = "`ordered` maps each path to the type of the values at it: \
+     `ordered = { \"$.age\": u32, \"$.visits[*].place\": String }`. The type is a number \
+     type or `String`, and gives the path a typed accessor under `at()`";
 
 impl JsonAttr {
     fn parse(meta: &syn::meta::ParseNestedMeta<'_>) -> Result<Self> {
         let mut json = Self {
             span: syn::spanned::Spanned::span(&meta.path),
             ordered: Vec::new(),
+            names: Vec::new(),
             sealed_root: None,
         };
         let mut ordered = false;
+        let mut names = false;
         meta.parse_nested_meta(|inner| {
             if inner.path.is_ident("ordered") {
                 if ordered {
@@ -378,11 +402,23 @@ impl JsonAttr {
                 }
                 ordered = true;
                 let value = inner.value()?;
+                if value.peek(syn::token::Bracket) {
+                    return Err(value.error(ORDERED_IS_A_MAP));
+                }
                 let content;
-                syn::bracketed!(content in value);
-                json.ordered = Punctuated::<LitStr, Token![,]>::parse_terminated(&content)?
-                    .into_iter()
-                    .collect();
+                syn::braced!(content in value);
+                json.ordered = parse_ordered(&content)?;
+                return Ok(());
+            }
+            if inner.path.is_ident("names") {
+                if names {
+                    return Err(inner.error("`names` is given twice"));
+                }
+                names = true;
+                let value = inner.value()?;
+                let content;
+                syn::braced!(content in value);
+                json.names = parse_names(&content)?;
                 return Ok(());
             }
             if inner.path.is_ident("sealed_root") {
@@ -393,12 +429,81 @@ impl JsonAttr {
                 return Ok(());
             }
             Err(inner.error(
-                "unsupported `json(..)` option; expected `ordered = [\"$.path\", ..]` or \
-                 `sealed_root = false`",
+                "unsupported `json(..)` option; expected `ordered = { \"$.path\": Type, .. }`, \
+                 `names = { \"key\": name, .. }` or `sealed_root = false`",
             ))
         })?;
         Ok(json)
     }
+}
+
+/// The entries of `ordered = { .. }`: `"path": Type`, comma separated. Each
+/// path is parsed with the engine's grammar. A path that does not parse,
+/// names an array position, or repeats an earlier path is refused at its
+/// literal.
+fn parse_ordered(content: syn::parse::ParseStream<'_>) -> Result<Vec<OrderedPath>> {
+    let mut entries: Vec<OrderedPath> = Vec::new();
+    while !content.is_empty() {
+        let text: LitStr = content.parse()?;
+        let _: Token![:] = content.parse()?;
+        let ty: Type = content.parse()?;
+        let path = JsonPath::parse(&text.value()).map_err(|error| {
+            syn::Error::new(
+                text.span(),
+                format!(
+                    "{error}. A path starts with `$` and continues with `.name`, `[\"name\"]` or \
+                     `[*]` steps, as in `$.age` or `$.visits[*].place`"
+                ),
+            )
+        })?;
+        if path.names_a_position() {
+            return Err(syn::Error::new(
+                text.span(),
+                "an ordered path names no array position (`[2]`): an ordering compares the \
+                 value its selector reads, and a selector reads every element of an array \
+                 alike. Write `[*]` to order every element",
+            ));
+        }
+        if let Some(earlier) = entries.iter().find(|entry| entry.path == path) {
+            let mut error = syn::Error::new(
+                text.span(),
+                "this path is given twice in `ordered`; each path is ordered once",
+            );
+            error.combine(syn::Error::new(earlier.text.span(), "given here first"));
+            return Err(error);
+        }
+        entries.push(OrderedPath { text, path, ty });
+        if content.is_empty() {
+            break;
+        }
+        let _: Token![,] = content.parse()?;
+    }
+    Ok(entries)
+}
+
+/// The entries of `names = { .. }`: `"key": name`, comma separated.
+fn parse_names(content: syn::parse::ParseStream<'_>) -> Result<Vec<(LitStr, Ident)>> {
+    let mut names: Vec<(LitStr, Ident)> = Vec::new();
+    while !content.is_empty() {
+        let key: LitStr = content.parse()?;
+        let _: Token![:] = content.parse()?;
+        let name: Ident = content.parse()?;
+        if names
+            .iter()
+            .any(|(earlier, _)| earlier.value() == key.value())
+        {
+            return Err(syn::Error::new(
+                key.span(),
+                "this key is given twice in `names`; a key has one name",
+            ));
+        }
+        names.push((key, name));
+        if content.is_empty() {
+            break;
+        }
+        let _: Token![,] = content.parse()?;
+    }
+    Ok(names)
 }
 
 impl FieldAttrs {

@@ -127,7 +127,7 @@ impl JsonSelectorSet {
 
 /// The query term of [`op::Contains`](crate::op::Contains),
 /// [`op::ContainedBy`](crate::op::ContainedBy) and `AtPath<Eq>`: what a
-/// field reference's `contains`, `contained_by` and `at(path).eq` derive: the
+/// field reference's `contains`, `contained_by` and a path's `eq` derive: the
 /// [`JsonSelectorSet`] of the document the query asks about, and, for a
 /// document whose root is a scalar, the alternative set that matches a
 /// stored root array holding it. Serializes to the `query_json`
@@ -319,7 +319,7 @@ impl<'de> Deserialize<'de> for JsonQuery {
 /// path and the leaf ordering term of the value, which the SQL compares
 /// against the stored leaf's: `col -> $1 >= $2`. Serializes to the
 /// `query_json_leaf` operand, `{"s": "…", "op": "…"}`. A field reference's
-/// `at(path).between(lo, hi)` derives two, low then high.
+/// path's `between(lo, hi)` derives two, low then high.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonLeafQuery {
     s: Tag,

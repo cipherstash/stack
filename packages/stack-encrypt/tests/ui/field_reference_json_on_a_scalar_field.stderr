@@ -18,10 +18,16 @@ error[E0599]: the method `at` exists for struct `FieldReference<Root<EncryptedUs
 22 |     let _ = EncryptedUser::EMAIL.at("$.a");
    |                                  ^^
    |
+  ::: src/field_reference/json.rs
+   |
+   | pub enum TextPaths {}
+   | ------------------ doesn't satisfy `TextPaths: DocumentPaths`
+   |
   ::: src/target/index.rs
    |
    | pub struct Encrypted<Terms> {
    | --------------------------- doesn't satisfy `Encrypted<EqualityTerm>: JsonQueries`
    |
    = note: the following trait bounds were not satisfied:
+           `TextPaths: DocumentPaths`
            `Encrypted<EqualityTerm>: JsonQueries`

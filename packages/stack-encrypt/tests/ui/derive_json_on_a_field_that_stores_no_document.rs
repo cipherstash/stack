@@ -13,7 +13,7 @@ struct User {
 #[derive(EncryptTarget)]
 #[stash(struct = User, scope = "users")]
 struct EncryptedUser {
-    #[stash(json(ordered = ["$.a"]))]
+    #[stash(json(ordered = { "$.a": u32 }))]
     email: Encrypted<EqualityTerm>,
 }
 

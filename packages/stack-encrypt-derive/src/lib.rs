@@ -143,13 +143,15 @@
 //! inner record lists a scope, the query needs each record's scope,
 //! outermost first.
 //!
-//! `#[stash(json(ordered = ["$.age"]))]` on a field whose type stores a
-//! JSON document names the JSON index's options: the paths whose numbers
-//! and strings carry an ordering term, and `sealed_root = false` to turn
-//! the sealed root off. The field is sealed under them, and its field reference's
-//! JSON queries (`contains`, `at`, `elements`, `predicate`, `children`)
-//! derive under them. Without it the field takes the default options,
-//! which order no path.
+//! `#[stash(json(ordered = { "$.age": u32 }))]` on a field whose type stores
+//! a JSON document names the JSON index's options: the paths whose numbers
+//! and strings carry an ordering term, each with the type of its values,
+//! and `sealed_root = false` to turn the sealed root off. The field is
+//! sealed under them, and its field reference's JSON queries (`contains`,
+//! `at`, `elements`, `predicate`, `children`) derive under them. The derive
+//! parses each path at compile time and gives it a typed method:
+//! `PROFILE.at().age().gt(30)`. Without it the field takes the default
+//! options, which order no path.
 //!
 //! `#[stash(query = String)]` on a field states the type its queries take,
 //! so each of its field reference's methods takes that type alone. The derive checks
@@ -320,6 +322,7 @@ use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
 mod attrs;
+mod json_paths;
 mod owned_decrypt;
 mod owned_encrypt;
 mod shape;

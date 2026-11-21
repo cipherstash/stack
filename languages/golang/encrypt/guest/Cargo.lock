@@ -2155,6 +2155,7 @@ version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "stack-encrypt-jsonpath",
  "syn 3.0.4",
 ]
 

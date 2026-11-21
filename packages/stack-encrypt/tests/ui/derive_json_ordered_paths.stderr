@@ -1,0 +1,59 @@
+error: not a JSON path: expected `*`, a quoted name or a position after `[` at byte 9. A path starts with `$` and continues with `.name`, `["name"]` or `[*]` steps, as in `$.age` or `$.visits[*].place`
+  --> tests/ui/derive_json_ordered_paths.rs:18:30
+   |
+18 |     #[stash(json(ordered = { "$.visits[": u64 }))]
+   |                              ^^^^^^^^^^^
+
+error: not a JSON path: expected `$` at byte 0. A path starts with `$` and continues with `.name`, `["name"]` or `[*]` steps, as in `$.age` or `$.visits[*].place`
+  --> tests/ui/derive_json_ordered_paths.rs:25:30
+   |
+25 |     #[stash(json(ordered = { "age": u32 }))]
+   |                              ^^^^^
+
+error: an ordered path names no array position (`[2]`): an ordering compares the value its selector reads, and a selector reads every element of an array alike. Write `[*]` to order every element
+  --> tests/ui/derive_json_ordered_paths.rs:32:30
+   |
+32 |     #[stash(json(ordered = { "$.visits[2].at": u64 }))]
+   |                              ^^^^^^^^^^^^^^^^
+
+error: this path is given twice in `ordered`; each path is ordered once
+  --> tests/ui/derive_json_ordered_paths.rs:39:44
+   |
+39 |     #[stash(json(ordered = { "$.age": u32, "$[\"age\"]": u32 }))]
+   |                                            ^^^^^^^^^^^^
+
+error: given here first
+  --> tests/ui/derive_json_ordered_paths.rs:39:30
+   |
+39 |     #[stash(json(ordered = { "$.age": u32, "$[\"age\"]": u32 }))]
+   |                              ^^^^^^^
+
+error: the key "ship to" gives no accessor name: a key gives one from ASCII letters, digits, `_` and `-`. Name it with `names = { "ship to": word }` beside `ordered`
+  --> tests/ui/derive_json_ordered_paths.rs:46:30
+   |
+46 |     #[stash(json(ordered = { "$[\"ship to\"]": String }))]
+   |                              ^^^^^^^^^^^^^^^^
+
+error: this path gives the accessor `at().ship_to()`, which `$.ship_to` gives too. Name a key with `names = { "key": word }` beside `ordered`
+  --> tests/ui/derive_json_ordered_paths.rs:53:51
+   |
+53 |     #[stash(json(ordered = { "$.ship_to": String, "$.ship.to": String }))]
+   |                                                   ^^^^^^^^^^^
+
+error: the accessor's first path
+  --> tests/ui/derive_json_ordered_paths.rs:53:30
+   |
+53 |     #[stash(json(ordered = { "$.ship_to": String, "$.ship.to": String }))]
+   |                              ^^^^^^^^^^^
+
+error: `ordered` maps each path to the type of the values at it: `ordered = { "$.age": u32, "$.visits[*].place": String }`. The type is a number type or `String`, and gives the path a typed accessor under `at()`
+  --> tests/ui/derive_json_ordered_paths.rs:60:28
+   |
+60 |     #[stash(json(ordered = ["$.age"]))]
+   |                            ^
+
+error: expected `:`
+  --> tests/ui/derive_json_ordered_paths.rs:67:38
+   |
+67 |     #[stash(json(ordered = { "$.age" }))]
+   |                                      ^

@@ -36,7 +36,7 @@ struct Customer {
 #[stash(struct = Customer, scope = "customers")]
 struct EncryptedCustomer {
     name: stack_encrypt::StackCipherText,
-    #[stash(json(ordered = ["$.age", "$.visits[*].at", "$.visits[*].place"]))]
+    #[stash(json(ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String }))]
     profile: JsonDocument,
 }
 
@@ -46,16 +46,6 @@ struct EncryptedCustomer {
 #[allow(dead_code)] // only queried
 struct UnorderedCustomer {
     name: stack_encrypt::StackCipherText,
-    profile: JsonDocument,
-}
-
-/// Options that name a position, which an ordered path may not.
-#[derive(EncryptTarget)]
-#[stash(struct = Customer, scope = "customers")]
-#[allow(dead_code)] // only refused
-struct MisorderedCustomer {
-    name: stack_encrypt::StackCipherText,
-    #[stash(json(ordered = ["$.visits[2].at"]))]
     profile: JsonDocument,
 }
 
@@ -150,10 +140,12 @@ mod given_a_document_field {
             ("$.visits[*].place", json!("gym"), false),
         ] {
             let query = match value {
-                Value::Number(n) => EncryptedCustomer::PROFILE.at(path).eq(n.as_i64().unwrap()),
+                Value::Number(n) => EncryptedCustomer::PROFILE
+                    .at_text_path(path)
+                    .eq(n.as_i64().unwrap()),
                 Value::String(s) => {
                     let borrowed = EncryptedCustomer::PROFILE
-                        .at(path)
+                        .at_text_path(path)
                         .eq(&s)
                         .encrypt(&keyset)
                         .await
@@ -163,7 +155,7 @@ mod given_a_document_field {
                         holds,
                         "{path}, a `&String`"
                     );
-                    EncryptedCustomer::PROFILE.at(path).eq(s)
+                    EncryptedCustomer::PROFILE.at_text_path(path).eq(s)
                 }
                 _ => unreachable!(),
             }
@@ -179,20 +171,20 @@ mod given_a_document_field {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let older: JsonLeafQuery = EncryptedCustomer::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .gt(30)
             .encrypt(&keyset)
             .await
             .expect("derives");
         let selector = EncryptedCustomer::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .selector()
             .encrypt(&keyset)
             .await
             .expect("derives");
         assert_eq!(older.selector(), selector);
         let (low, high) = EncryptedCustomer::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .between(18, 65)
             .encrypt(&keyset)
             .await
@@ -206,7 +198,7 @@ mod given_a_document_field {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let visit = EncryptedCustomer::PROFILE
-            .elements("$.visits[*]")
+            .elements_text_path("$.visits[*]")
             .eq("place", "home")
             .encrypt(&keyset)
             .await
@@ -254,7 +246,7 @@ mod the_fields_options {
             .await
             .unwrap();
         let selector = EncryptedCustomer::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .selector()
             .encrypt(&keyset)
             .await
@@ -278,7 +270,7 @@ mod the_fields_options {
     #[allow(dead_code)] // only the profile is read
     struct OpenCustomer {
         name: stack_encrypt::StackCipherText,
-        #[stash(json(ordered = ["$.age"], sealed_root = false))]
+        #[stash(json(ordered = { "$.age": u32 }, sealed_root = false))]
         profile: JsonDocument,
     }
 
@@ -305,7 +297,7 @@ mod the_fields_options {
     #[allow(dead_code)] // only the profile is read
     struct TenantCustomer {
         name: stack_encrypt::StackCipherText,
-        #[stash(json(ordered = ["$.age"]))]
+        #[stash(json(ordered = { "$.age": u32 }))]
         profile: JsonDocument,
     }
 
@@ -327,7 +319,7 @@ mod the_fields_options {
             let age = entry(&seven.profile, &key);
             assert_eq!(age.is_some(), found, "tenant {tenant}");
             let selector = TenantCustomer::PROFILE
-                .at("$.age")
+                .at_text_path("$.age")
                 .selector()
                 .scope(Scope::new(tenant))
                 .encrypt(&keyset)
@@ -365,7 +357,7 @@ mod the_fields_options {
         let key = reference.children("$.age").encrypt(&keyset).await.unwrap();
         let age = entry(&account.customer.profile, &key).expect("the inner field's token");
         let selector = reference
-            .at("$.age")
+            .at_text_path("$.age")
             .selector()
             .encrypt(&keyset)
             .await
@@ -453,7 +445,7 @@ mod the_fields_options {
         let keyset = cipher.default_keyset();
         let stored: OwnOptionsCustomer = customer().encrypt_into(&keyset).await.unwrap();
         let older = OwnOptionsCustomer::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .gt(30)
             .encrypt(&keyset)
             .await;
@@ -484,11 +476,639 @@ mod the_fields_options {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let older = OwnOptionsLead::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .gt(30)
             .encrypt(&keyset)
             .await;
         assert!(older.is_ok(), "the type orders `$.age`: {older:?}");
+    }
+}
+
+/// A declared path's typed accessor derives the operand the text form
+/// derives for the same path and value, byte for byte: both build the same
+/// input, through the same code. The data plan's operands are held to the
+/// typed form in `as_the_data_plan_derives`.
+mod typed_paths {
+    use super::*;
+    use std::num::NonZeroU32;
+
+    fn json<T: serde::Serialize>(value: &T) -> Value {
+        serde_json::to_value(value).unwrap()
+    }
+
+    #[tokio::test]
+    async fn equality_at_a_path_is_the_text_forms() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let doc = stored(&keyset).await.profile;
+        let typed = EncryptedCustomer::PROFILE
+            .at()
+            .age()
+            .eq(35)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = EncryptedCustomer::PROFILE
+            .at_text_path("$.age")
+            .eq(35)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(typed, text, "one needle, compared as sets");
+        assert!(typed.matches(doc.selector_set()));
+        for place in ["home", "gym"] {
+            let owned = String::from(place);
+            let typed = [
+                EncryptedCustomer::PROFILE
+                    .at()
+                    .visits_place()
+                    .eq(place)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+                EncryptedCustomer::PROFILE
+                    .at()
+                    .visits_place()
+                    .eq(&owned)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+                EncryptedCustomer::PROFILE
+                    .at()
+                    .visits_place()
+                    .eq(owned.clone())
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+            ];
+            let text = EncryptedCustomer::PROFILE
+                .at_text_path("$.visits[*].place")
+                .eq(place)
+                .encrypt(&keyset)
+                .await
+                .unwrap();
+            for typed in typed {
+                assert_eq!(typed, text, "{place}");
+                assert_eq!(typed.matches(doc.selector_set()), place == "home");
+            }
+        }
+        let typed = EncryptedCustomer::PROFILE
+            .at()
+            .age()
+            .is_null()
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = EncryptedCustomer::PROFILE
+            .at_text_path("$.age")
+            .is_null()
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(typed, text);
+    }
+
+    #[tokio::test]
+    async fn the_orderings_and_the_selector_are_the_text_forms() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let reference = || EncryptedCustomer::PROFILE.at().age();
+        let text = || EncryptedCustomer::PROFILE.at_text_path("$.age");
+        let pairs = [
+            (
+                json(&reference().lt(30).encrypt(&keyset).await.unwrap()),
+                json(&text().lt(30).encrypt(&keyset).await.unwrap()),
+            ),
+            (
+                json(&reference().lte(30).encrypt(&keyset).await.unwrap()),
+                json(&text().lte(30).encrypt(&keyset).await.unwrap()),
+            ),
+            (
+                json(&reference().gt(30).encrypt(&keyset).await.unwrap()),
+                json(&text().gt(30).encrypt(&keyset).await.unwrap()),
+            ),
+            (
+                json(&reference().gte(30).encrypt(&keyset).await.unwrap()),
+                json(&text().gte(30).encrypt(&keyset).await.unwrap()),
+            ),
+            (
+                json(&reference().between(18, 65).encrypt(&keyset).await.unwrap()),
+                json(&text().between(18, 65).encrypt(&keyset).await.unwrap()),
+            ),
+        ];
+        for (typed, text) in &pairs {
+            assert_eq!(typed, text);
+        }
+        assert_ne!(
+            pairs[0].0,
+            json(&reference().lt(31).encrypt(&keyset).await.unwrap()),
+            "the operand carries the value"
+        );
+        assert_eq!(
+            reference().selector().encrypt(&keyset).await.unwrap(),
+            text().selector().encrypt(&keyset).await.unwrap()
+        );
+        // A path through an array, and a string.
+        let typed = EncryptedCustomer::PROFILE
+            .at()
+            .visits_place()
+            .gte("h")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = EncryptedCustomer::PROFILE
+            .at_text_path("$.visits[*].place")
+            .gte("h")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(json(&typed), json(&text));
+        let typed = EncryptedCustomer::PROFILE
+            .at()
+            .visits_at()
+            .between(10, 20)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = EncryptedCustomer::PROFILE
+            .at_text_path("$.visits[*].at")
+            .between(10, 20)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(json(&typed), json(&text));
+    }
+
+    #[tokio::test]
+    async fn an_element_predicate_is_the_text_forms() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let bound = NonZeroU32::new(8).unwrap();
+        let typed = EncryptedCustomer::PROFILE
+            .elements()
+            .visits()
+            .place()
+            .eq("home")
+            .and()
+            .at()
+            .between(10, 20)
+            .and()
+            .at()
+            .lt(30)
+            .and()
+            .at()
+            .lte(30)
+            .and()
+            .at()
+            .gt(1)
+            .and()
+            .place()
+            .gte("a")
+            .wildcard_bound(bound)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = EncryptedCustomer::PROFILE
+            .elements_text_path("$.visits[*]")
+            .eq("place", "home")
+            .between("at", 10, 20)
+            .lt("at", 30)
+            .lte("at", 30)
+            .gt("at", 1)
+            .gte("place", "a")
+            .wildcard_bound(bound)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(typed.len(), 6);
+        assert_eq!(json(&typed), json(&text));
+        // Each first condition starts the predicate the text form starts.
+        for (typed, text) in [
+            (
+                EncryptedCustomer::PROFILE
+                    .elements()
+                    .visits()
+                    .at()
+                    .lt(9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+                EncryptedCustomer::PROFILE
+                    .elements_text_path("$.visits[*]")
+                    .lt("at", 9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+            ),
+            (
+                EncryptedCustomer::PROFILE
+                    .elements()
+                    .visits()
+                    .at()
+                    .lte(9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+                EncryptedCustomer::PROFILE
+                    .elements_text_path("$.visits[*]")
+                    .lte("at", 9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+            ),
+            (
+                EncryptedCustomer::PROFILE
+                    .elements()
+                    .visits()
+                    .at()
+                    .gt(9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+                EncryptedCustomer::PROFILE
+                    .elements_text_path("$.visits[*]")
+                    .gt("at", 9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+            ),
+            (
+                EncryptedCustomer::PROFILE
+                    .elements()
+                    .visits()
+                    .at()
+                    .gte(9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+                EncryptedCustomer::PROFILE
+                    .elements_text_path("$.visits[*]")
+                    .gte("at", 9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+            ),
+            (
+                EncryptedCustomer::PROFILE
+                    .elements()
+                    .visits()
+                    .at()
+                    .between(1, 9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+                EncryptedCustomer::PROFILE
+                    .elements_text_path("$.visits[*]")
+                    .between("at", 1, 9)
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+            ),
+            (
+                EncryptedCustomer::PROFILE
+                    .elements()
+                    .visits()
+                    .place()
+                    .eq("work")
+                    .and()
+                    .place()
+                    .lte("x")
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+                EncryptedCustomer::PROFILE
+                    .elements_text_path("$.visits[*]")
+                    .eq("place", "work")
+                    .lte("place", "x")
+                    .encrypt(&keyset)
+                    .await
+                    .unwrap(),
+            ),
+        ] {
+            assert_eq!(json(&typed), json(&text));
+        }
+    }
+
+    /// A record whose keys are not all Rust identifiers: a camel-case key,
+    /// a keyword, a key named in `names`, quoted keys, and a nested array.
+    #[derive(Zeroize)]
+    struct Order {
+        doc: JsonPlaintext,
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(struct = Order, scope = "orders")]
+    struct EncryptedOrder {
+        #[stash(json(
+            ordered = {
+                "$.firstName": String,
+                "$.type": String,
+                "$[\"ship to\"].zip": String,
+                "$.lines[*][\"unit price\"]": f64,
+                "$.lines[*].qty": u32,
+                "$.lines[*].parts[*].sku": String,
+                "$[*]": i64,
+            },
+            names = { "ship to": ship_to, "unit price": unit_price },
+        ))]
+        doc: JsonDocument,
+    }
+
+    fn order() -> Value {
+        json!({
+            "firstName": "Ada",
+            "type": "retail",
+            "ship to": {"zip": "3000"},
+            "lines": [{"unit price": 2.5, "qty": 3, "parts": [{"sku": "a-1"}]}]
+        })
+    }
+
+    #[tokio::test]
+    async fn an_accessor_is_named_by_the_rule_and_reaches_its_path() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedOrder = Order {
+            doc: order().into(),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        let typed = [
+            EncryptedOrder::DOC
+                .at()
+                .first_name()
+                .eq("Ada")
+                .encrypt(&keyset)
+                .await
+                .unwrap(),
+            EncryptedOrder::DOC
+                .at()
+                .r#type()
+                .eq("retail")
+                .encrypt(&keyset)
+                .await
+                .unwrap(),
+            EncryptedOrder::DOC
+                .at()
+                .ship_to_zip()
+                .eq("3000")
+                .encrypt(&keyset)
+                .await
+                .unwrap(),
+            EncryptedOrder::DOC
+                .at()
+                .lines_unit_price()
+                .eq(2.5)
+                .encrypt(&keyset)
+                .await
+                .unwrap(),
+            EncryptedOrder::DOC
+                .at()
+                .lines_parts_sku()
+                .eq("a-1")
+                .encrypt(&keyset)
+                .await
+                .unwrap(),
+        ];
+        let text = [
+            ("$.firstName", json!("Ada")),
+            ("$.type", json!("retail")),
+            (r#"$["ship to"].zip"#, json!("3000")),
+            (r#"$.lines[*]["unit price"]"#, json!(2.5)),
+            ("$.lines[*].parts[*].sku", json!("a-1")),
+        ];
+        for (typed, (path, value)) in typed.into_iter().zip(text) {
+            let text = match &value {
+                Value::String(s) => EncryptedOrder::DOC.at_text_path(path).eq(s.as_str()),
+                Value::Number(n) => EncryptedOrder::DOC
+                    .at_text_path(path)
+                    .eq(n.as_f64().unwrap()),
+                _ => unreachable!(),
+            }
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+            assert_eq!(typed, text, "{path}");
+            assert!(typed.matches(stored.doc.selector_set()), "{path}");
+        }
+        // A quoted member, and an array inside an array.
+        let typed = EncryptedOrder::DOC
+            .elements()
+            .lines()
+            .unit_price()
+            .gt(1.0)
+            .and()
+            .qty()
+            .eq(3)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = EncryptedOrder::DOC
+            .elements_text_path("$.lines[*]")
+            .gt(r#"["unit price"]"#, 1.0)
+            .eq("qty", 3)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(json(&typed), json(&text));
+        let typed = EncryptedOrder::DOC
+            .elements()
+            .lines_parts()
+            .sku()
+            .eq("a-1")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = EncryptedOrder::DOC
+            .elements_text_path("$.lines[*].parts[*]")
+            .eq("sku", "a-1")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(json(&typed), json(&text));
+        // A path with no keys is `root`.
+        let typed = EncryptedOrder::DOC
+            .at()
+            .root()
+            .gt(1)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = EncryptedOrder::DOC
+            .at_text_path("$[*]")
+            .gt(1)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(json(&typed), json(&text));
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(struct = Customer, scope = "customers", scope(tenant: u64))]
+    #[allow(dead_code)] // only queried
+    struct TenantCustomer {
+        name: stack_encrypt::StackCipherText,
+        #[stash(json(ordered = { "$.age": u32, "$.visits[*].at": u64 }))]
+        profile: JsonDocument,
+    }
+
+    #[tokio::test]
+    async fn under_a_scope_a_typed_query_is_the_text_forms() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let typed = TenantCustomer::PROFILE
+            .at()
+            .age()
+            .gt(30)
+            .scope(Scope::new(7u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = TenantCustomer::PROFILE
+            .at_text_path("$.age")
+            .gt(30)
+            .scope(Scope::new(7u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let other = TenantCustomer::PROFILE
+            .at()
+            .age()
+            .gt(30)
+            .scope(Scope::new(8u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(json(&typed), json(&text));
+        assert_ne!(json(&typed), json(&other), "the scope is in the operand");
+        let typed = TenantCustomer::PROFILE
+            .elements()
+            .visits()
+            .at()
+            .gt(1)
+            .scope(Scope::new(7u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = TenantCustomer::PROFILE
+            .elements_text_path("$.visits[*]")
+            .gt("at", 1)
+            .scope(Scope::new(7u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(json(&typed), json(&text));
+    }
+
+    #[derive(Zeroize)]
+    struct Account {
+        customer: Customer,
+    }
+
+    #[derive(EncryptTarget)]
+    #[stash(struct = Account, scope = "accounts")]
+    struct EncryptedAccount {
+        customer: EncryptedCustomer,
+    }
+
+    #[tokio::test]
+    async fn through_an_outer_field_a_typed_query_is_the_text_forms() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let account: EncryptedAccount = Account {
+            customer: customer(),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+        let reference = EncryptedAccount::CUSTOMER.field(EncryptedCustomer::PROFILE);
+        let typed = reference.at().age().eq(35).encrypt(&keyset).await.unwrap();
+        let text = reference
+            .at_text_path("$.age")
+            .eq(35)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(typed, text);
+        assert!(typed.matches(account.customer.profile.selector_set()));
+        let flat = EncryptedCustomer::PROFILE
+            .at()
+            .age()
+            .eq(35)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert!(!flat.matches(account.customer.profile.selector_set()));
+        let typed = reference
+            .elements()
+            .visits()
+            .place()
+            .eq("home")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        let text = reference
+            .elements_text_path("$.visits[*]")
+            .eq("place", "home")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(json(&typed), json(&text));
+    }
+
+    #[tokio::test]
+    async fn a_number_json_cannot_hold_is_refused_before_any_key() {
+        let (cipher, generates, _) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let refused = [
+            EncryptedOrder::DOC
+                .at()
+                .lines_unit_price()
+                .eq(f64::NAN)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
+            EncryptedOrder::DOC
+                .at()
+                .lines_unit_price()
+                .lt(f64::INFINITY)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
+            EncryptedOrder::DOC
+                .at()
+                .lines_unit_price()
+                .between(0.0, f64::NAN)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
+            EncryptedOrder::DOC
+                .elements()
+                .lines()
+                .unit_price()
+                .gte(f64::NAN)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
+            EncryptedOrder::DOC
+                .elements()
+                .lines()
+                .qty()
+                .eq(1)
+                .and()
+                .unit_price()
+                .between(f64::NEG_INFINITY, 1.0)
+                .encrypt(&keyset)
+                .await
+                .map(drop),
+        ];
+        for refused in refused {
+            assert!(
+                matches!(refused, Err(Error::Term(TermError::JsonNumberNotFinite))),
+                "{refused:?}"
+            );
+        }
+        assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
     }
 }
 
@@ -505,7 +1125,7 @@ mod values {
     #[derive(EncryptTarget)]
     #[stash(struct = Reading, scope = "readings")]
     struct EncryptedReading {
-        #[stash(json(ordered = ["$.score"]))]
+        #[stash(json(ordered = { "$.score": f64 }))]
         doc: JsonDocument,
     }
 
@@ -523,25 +1143,25 @@ mod values {
         let keyset = cipher.default_keyset();
         let refused = [
             EncryptedReading::DOC
-                .at("$.score")
+                .at_text_path("$.score")
                 .eq(f64::NAN)
                 .encrypt(&keyset)
                 .await
                 .map(drop),
             EncryptedReading::DOC
-                .at("$.score")
+                .at_text_path("$.score")
                 .eq(f64::INFINITY)
                 .encrypt(&keyset)
                 .await
                 .map(drop),
             EncryptedReading::DOC
-                .at("$.score")
+                .at_text_path("$.score")
                 .gt(f64::NEG_INFINITY)
                 .encrypt(&keyset)
                 .await
                 .map(drop),
             EncryptedReading::DOC
-                .at("$.score")
+                .at_text_path("$.score")
                 .between(0.0, f64::NAN)
                 .encrypt(&keyset)
                 .await
@@ -568,13 +1188,13 @@ mod values {
         let widened = reading(&keyset, json!({"score": 0.1f32})).await;
         let decimal = reading(&keyset, json!({"score": 0.1})).await;
         let from_f32 = EncryptedReading::DOC
-            .at("$.score")
+            .at_text_path("$.score")
             .eq(f64::from(0.1f32))
             .encrypt(&keyset)
             .await
             .unwrap();
         let tenth = EncryptedReading::DOC
-            .at("$.score")
+            .at_text_path("$.score")
             .eq(0.1f64)
             .encrypt(&keyset)
             .await
@@ -593,7 +1213,7 @@ mod values {
         let absent = reading(&keyset, json!({"other": 1})).await;
         let number = reading(&keyset, json!({"score": 1})).await;
         let query = EncryptedReading::DOC
-            .at("$.score")
+            .at_text_path("$.score")
             .is_null()
             .encrypt(&keyset)
             .await
@@ -643,7 +1263,7 @@ mod refusals {
         let (cipher, generates) = counting().await;
         let keyset = cipher.default_keyset();
         let refused = EncryptedCustomer::PROFILE
-            .at("$.name")
+            .at_text_path("$.name")
             .gt("A")
             .encrypt(&keyset)
             .await;
@@ -652,34 +1272,13 @@ mod refusals {
             "{refused:?}"
         );
         let unordered = UnorderedCustomer::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .gt(30)
             .encrypt(&keyset)
             .await;
         assert!(
             matches!(unordered, Err(Error::Term(TermError::JsonPathNotOrdered))),
             "a field with no options orders no path: {unordered:?}"
-        );
-        assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
-    }
-
-    #[tokio::test]
-    async fn options_that_name_a_position_refuse_the_seal_and_the_query() {
-        let (cipher, generates) = counting().await;
-        let keyset = cipher.default_keyset();
-        let sealed: Result<MisorderedCustomer, _> = customer().encrypt_into(&keyset).await;
-        assert!(
-            matches!(sealed, Err(Error::Term(TermError::JsonOrderingAtPosition))),
-            "{:?}",
-            sealed.map(drop)
-        );
-        let queried = MisorderedCustomer::PROFILE
-            .contains(json!({"name": "Ada"}))
-            .encrypt(&keyset)
-            .await;
-        assert!(
-            matches!(queried, Err(Error::Term(TermError::JsonOrderingAtPosition))),
-            "{queried:?}"
         );
         assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
     }
@@ -700,7 +1299,7 @@ mod refusals {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let refused = EncryptedCustomer::PROFILE
-            .at("$.tags[1]")
+            .at_text_path("$.tags[1]")
             .eq("b")
             .encrypt(&keyset)
             .await;
@@ -715,7 +1314,7 @@ mod refusals {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let no_wildcard = EncryptedCustomer::PROFILE
-            .elements("$.visits")
+            .elements_text_path("$.visits")
             .eq("place", "home")
             .encrypt(&keyset)
             .await
@@ -768,7 +1367,7 @@ mod refusals {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let Err(refusal) = EncryptedCustomer::PROFILE
-            .elements("$.visits")
+            .elements_text_path("$.visits")
             .eq("place", "home")
             .encrypt(&keyset)
             .await
@@ -814,7 +1413,7 @@ mod under_a_scope {
     #[allow(dead_code)] // only the profile is read
     struct TenantCustomer {
         name: stack_encrypt::StackCipherText,
-        #[stash(json(ordered = ["$.age"]))]
+        #[stash(json(ordered = { "$.age": u32 }))]
         profile: JsonDocument,
     }
 
@@ -868,7 +1467,11 @@ mod in_a_nested_record {
         .await
         .unwrap();
         let reference = EncryptedAccount::CUSTOMER.field(EncryptedCustomer::PROFILE);
-        let older = reference.at("$.age").gt(30).encrypt(&keyset).await;
+        let older = reference
+            .at_text_path("$.age")
+            .gt(30)
+            .encrypt(&keyset)
+            .await;
         assert!(older.is_ok(), "the inner field's options travel: {older:?}");
         let needle = reference
             .contains(json!({"name": "Ada"}))
@@ -899,7 +1502,7 @@ mod a_nullable_field {
     #[derive(EncryptTarget, DecryptSource)]
     #[stash(struct = Lead, scope = "leads")]
     struct EncryptedLead {
-        #[stash(json(ordered = ["$.age"]))]
+        #[stash(json(ordered = { "$.age": u32 }))]
         profile: Option<JsonDocument>,
     }
 
@@ -923,7 +1526,7 @@ mod a_nullable_field {
             .unwrap();
         assert!(needle.matches(doc.selector_set()));
         let older = EncryptedLead::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .gt(30)
             .encrypt(&keyset)
             .await;
@@ -1083,7 +1686,7 @@ mod as_the_data_plan_derives {
         .unwrap();
         assert_eq!(typed, data, "one needle, compared as sets");
         let typed = EncryptedCustomer::PROFILE
-            .at("$.visits[*].place")
+            .at_text_path("$.visits[*].place")
             .eq("home")
             .encrypt(&keyset)
             .await
@@ -1096,6 +1699,14 @@ mod as_the_data_plan_derives {
         .await))
         .unwrap();
         assert_eq!(typed, data);
+        let declared = EncryptedCustomer::PROFILE
+            .at()
+            .visits_place()
+            .eq("home")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(declared, data, "the declared path's needle");
     }
 
     #[tokio::test]
@@ -1103,15 +1714,23 @@ mod as_the_data_plan_derives {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let typed = EncryptedCustomer::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .gte(18)
             .encrypt(&keyset)
             .await
             .unwrap();
         let data = one(operand(&keyset, Op::GteAt, json!({"path": "$.age", "json": "18"})).await);
         assert_eq!(serde_json::to_value(&typed).unwrap(), data);
+        let declared = EncryptedCustomer::PROFILE
+            .at()
+            .age()
+            .gte(18)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(serde_json::to_value(&declared).unwrap(), data);
         let (low, high) = EncryptedCustomer::PROFILE
-            .at("$.visits[*].at")
+            .at_text_path("$.visits[*].at")
             .between(10, 20)
             .encrypt(&keyset)
             .await
@@ -1133,8 +1752,26 @@ mod as_the_data_plan_derives {
             serde_json::to_value(&high).unwrap(),
             serde_json::from_slice::<Value>(&hi).unwrap()
         );
+        let (low, high) = EncryptedCustomer::PROFILE
+            .at()
+            .visits_at()
+            .between(10, 20)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                serde_json::to_value(&low).unwrap(),
+                serde_json::to_value(&high).unwrap()
+            ),
+            (
+                serde_json::from_slice::<Value>(&lo).unwrap(),
+                serde_json::from_slice::<Value>(&hi).unwrap()
+            ),
+            "the declared path's range"
+        );
         let selector = EncryptedCustomer::PROFILE
-            .at("$.age")
+            .at_text_path("$.age")
             .selector()
             .encrypt(&keyset)
             .await
@@ -1143,6 +1780,14 @@ mod as_the_data_plan_derives {
             selector.to_string(),
             text(operand(&keyset, Op::Selector, json!({"path": "$.age"})).await)
         );
+        let declared = EncryptedCustomer::PROFILE
+            .at()
+            .age()
+            .selector()
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(declared, selector);
     }
 
     #[tokio::test]
@@ -1150,7 +1795,7 @@ mod as_the_data_plan_derives {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let typed = EncryptedCustomer::PROFILE
-            .elements("$.visits[*]")
+            .elements_text_path("$.visits[*]")
             .eq("place", "home")
             .between("at", 10, 20)
             .wildcard_bound(NonZeroU32::new(8).unwrap())
@@ -1168,6 +1813,23 @@ mod as_the_data_plan_derives {
         .await);
         assert_eq!(serde_json::to_value(&typed).unwrap(), data);
         assert_eq!(typed.len(), 2);
+        let declared = EncryptedCustomer::PROFILE
+            .elements()
+            .visits()
+            .place()
+            .eq("home")
+            .and()
+            .at()
+            .between(10, 20)
+            .wildcard_bound(NonZeroU32::new(8).unwrap())
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&declared).unwrap(),
+            data,
+            "the declared array's predicate"
+        );
 
         // Selectors and orderings: deterministic leaves, so the trees
         // compare as written.

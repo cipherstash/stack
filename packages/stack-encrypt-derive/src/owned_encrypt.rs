@@ -32,7 +32,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let contexts = contexts_fn(&input, &record);
     let field_references = field_references(&input, &record);
     let json = json_options_fns(&input, &record);
-    Ok(quote!(#emitted #decryptable #contexts #field_references #json))
+    let paths = json_path_accessors(&input, &record)?;
+    Ok(quote!(#emitted #decryptable #contexts #field_references #json #paths))
 }
 
 /// The name of the function that builds the JSON options a field's
@@ -64,7 +65,7 @@ fn json_options_fns(input: &DeriveInput, record: &Record) -> TokenStream {
                 return None;
             };
             let fn_name = json_options_name(field);
-            let paths = &json.ordered;
+            let paths: Vec<_> = json.ordered.iter().map(|ordered| &ordered.text).collect();
             let count = paths.len();
             let sealed_root = json.sealed_root.as_ref().map(|sealed| {
                 quote!(options.sealed_root = #sealed;)
@@ -91,6 +92,36 @@ fn json_options_fns(input: &DeriveInput, record: &Record) -> TokenStream {
             #(#fns)*
         }
     }
+}
+
+/// The typed accessors of each document field whose `#[stash(json(..))]`
+/// declares ordered paths ([`crate::json_paths`]).
+fn json_path_accessors(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
+    if !record.by_field {
+        return Ok(TokenStream::new());
+    }
+    let mut items = TokenStream::new();
+    for field in &record.fields {
+        let Kind::Derived {
+            by_field: Some(ByField {
+                json: Some(json), ..
+            }),
+        } = &field.kind
+        else {
+            continue;
+        };
+        let syn::Member::Named(ident) = &field.member else {
+            continue;
+        };
+        items.extend(crate::json_paths::accessors(
+            &record.krate,
+            &input.vis,
+            &input.ident,
+            ident,
+            json,
+        )?);
+    }
+    Ok(items)
 }
 
 /// The field references of a `struct = ..` record: one associated constant
@@ -136,6 +167,15 @@ fn field_references(input: &DeriveInput, record: &Record) -> TokenStream {
             Some(query) => quote!(#krate::field_reference::Takes<#query>),
             None => quote!(#krate::field_reference::TakesAny),
         };
+        // A field that declares ordered paths has a type of its own for
+        // them, through which it has `at()` and `elements()`.
+        let paths_ty = json
+            .as_ref()
+            .filter(|json| !json.ordered.is_empty())
+            .map(|_| {
+                let paths = crate::json_paths::paths_type(name, ident);
+                quote!(, #paths)
+            });
         // The field reference's name is the field's as `contexts()` and the label
         // spell it, `r#` included; the constant's name cannot carry it.
         let field_name = ident.to_string();
@@ -153,7 +193,7 @@ fn field_references(input: &DeriveInput, record: &Record) -> TokenStream {
         Some(quote_spanned! {ty.span()=>
             #[doc = #doc]
             #[allow(dead_code, private_interfaces)]
-            pub const #const_name: #krate::FieldReference<#krate::field_reference::Root<Self>, #ty, #scope_ty, #query_ty> =
+            pub const #const_name: #krate::FieldReference<#krate::field_reference::Root<Self>, #ty, #scope_ty, #query_ty #paths_ty> =
                 #krate::FieldReference::new(#field_name, #prefix, #identity, Self::contexts)#json_options;
         })
     });

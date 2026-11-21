@@ -494,7 +494,7 @@ impl LeafArity for Pair {}
 /// the field's index is checked against the plaintext.
 ///
 /// No input of [`Pathed`] is implemented: a JSON query at a path is a
-/// document field's reference query, [`at(path)`](crate::field_reference::FieldReference::at),
+/// document field's reference query, [`at()`](crate::field_reference::FieldReference::at),
 /// which builds the JSON operators' own inputs. The arity decides how a
 /// query derives terms from the input, which is what
 /// [`derive`](Self::derive) does.

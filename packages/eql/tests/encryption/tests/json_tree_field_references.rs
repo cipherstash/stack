@@ -9,12 +9,15 @@
 //! PostgreSQL suite checks against `jsonb`, and to the document the record
 //! sealed:
 //!
-//! - `contains`, `contained_by` and `at(path).eq` derive the containment
+//! - `contains`, `contained_by` and `at().age().eq` derive the containment
 //!   needle (`JsonTreeQuery`), and find the documents that hold it;
 //! - the orderings at a path derive `JsonTreeLeafQuery`, with the path's
 //!   selector, and `between` the two bounds;
-//! - `elements(path)` derives `JsonTreeElementsQuery`, `predicate(text)`
-//!   `JsonTreePredicateQuery`, and `children(path)` the node's token;
+//! - `elements().visits()` derives `JsonTreeElementsQuery`,
+//!   `predicate(text)` `JsonTreePredicateQuery`, and `children(path)` the
+//!   node's token;
+//! - a declared path's typed accessor and the same path as text
+//!   (`at_text_path`, `elements_text_path`) derive the same operand;
 //! - an ordering at a path the field does not order is refused before any
 //!   key is requested.
 
@@ -46,7 +49,7 @@ struct Customer {
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = Customer, scope = "customers")]
 struct EncryptedCustomer {
-    #[stash(json(ordered = ["$.age", "$.visits[*].at", "$.visits[*].place"]))]
+    #[stash(json(ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String }))]
     profile: JsonTreeDocument,
 }
 
@@ -154,21 +157,27 @@ async fn the_plans_json_query_example_runs() {
         .await
         .unwrap();
     let older: JsonTreeLeafQuery = EncryptedCustomer::PROFILE
-        .at("$.age")
+        .at()
+        .age()
         .gt(30)
         .encrypt(&keyset)
         .await
         .unwrap();
     let (low, high): (JsonTreeLeafQuery, JsonTreeLeafQuery) = EncryptedCustomer::PROFILE
-        .at("$.age")
+        .at()
+        .age()
         .between(18, 65)
         .encrypt(&keyset)
         .await
         .unwrap();
     let home: JsonTreeElementsQuery = EncryptedCustomer::PROFILE
-        .elements("$.visits[*]")
-        .eq("place", "home")
-        .gt("at", 10)
+        .elements()
+        .visits()
+        .place()
+        .eq("home")
+        .and()
+        .at()
+        .gt(10)
         .encrypt(&keyset)
         .await
         .unwrap();
@@ -184,7 +193,8 @@ async fn the_plans_json_query_example_runs() {
         .await
         .unwrap();
     let age: JsonTreeSelector = EncryptedCustomer::PROFILE
-        .at("$.age")
+        .at()
+        .age()
         .selector()
         .encrypt(&keyset)
         .await
@@ -211,7 +221,7 @@ async fn the_plans_json_query_example_runs() {
 }
 
 /// Every field query derives the operand the data plan derives for the
-/// same declaration.
+/// same declaration, with the path typed or as text.
 #[tokio::test]
 async fn each_query_is_the_data_plans_operand() {
     let (cipher, _) = common::cipher().await;
@@ -234,7 +244,7 @@ async fn each_query_is_the_data_plans_operand() {
     );
 
     let typed = EncryptedCustomer::PROFILE
-        .at("$.visits[*].place")
+        .at_text_path("$.visits[*].place")
         .eq("home")
         .encrypt(&keyset)
         .await
@@ -247,11 +257,22 @@ async fn each_query_is_the_data_plans_operand() {
     .await);
     assert_eq!(
         needle(&typed),
+        serde_json::from_value::<JsonQuery>(wire.clone()).unwrap()
+    );
+    let declared = EncryptedCustomer::PROFILE
+        .at()
+        .visits_place()
+        .eq("home")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(
+        needle(&declared),
         serde_json::from_value::<JsonQuery>(wire).unwrap()
     );
 
     let typed = EncryptedCustomer::PROFILE
-        .at("$.visits[*].at")
+        .at_text_path("$.visits[*].at")
         .lte(20)
         .encrypt(&keyset)
         .await
@@ -263,9 +284,17 @@ async fn each_query_is_the_data_plans_operand() {
     )
     .await);
     assert_eq!(serde_json::to_value(&typed).unwrap(), wire);
+    let declared = EncryptedCustomer::PROFILE
+        .at()
+        .visits_at()
+        .lte(20)
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(&declared).unwrap(), wire);
 
     let typed = EncryptedCustomer::PROFILE
-        .elements("$.visits[*]")
+        .elements_text_path("$.visits[*]")
         .eq("place", "home")
         .between("at", 10, 20)
         .wildcard_bound(NonZeroU32::new(8).unwrap())
@@ -282,6 +311,19 @@ async fn each_query_is_the_data_plans_operand() {
     )
     .await);
     assert_eq!(serde_json::to_value(&typed).unwrap(), wire);
+    let declared = EncryptedCustomer::PROFILE
+        .elements()
+        .visits()
+        .place()
+        .eq("home")
+        .and()
+        .at()
+        .between(10, 20)
+        .wildcard_bound(NonZeroU32::new(8).unwrap())
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(&declared).unwrap(), wire);
 
     let typed = EncryptedCustomer::PROFILE
         .predicate("$.age >= $min && exists($.name)")
@@ -298,13 +340,21 @@ async fn each_query_is_the_data_plans_operand() {
     assert_eq!(serde_json::to_value(&typed).unwrap(), wire);
 
     let typed = EncryptedCustomer::PROFILE
-        .at("$.age")
+        .at_text_path("$.age")
         .selector()
         .encrypt(&keyset)
         .await
         .unwrap();
     let wire = text(data(&keyset, "selector", json!({"path": "$.age"})).await);
     assert_eq!(serde_json::to_value(&typed).unwrap(), json!(wire));
+    let declared = EncryptedCustomer::PROFILE
+        .at()
+        .age()
+        .selector()
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(&declared).unwrap(), json!(wire));
 
     let typed = EncryptedCustomer::PROFILE
         .children("$.visits")
@@ -322,7 +372,7 @@ async fn an_ordering_the_field_does_not_order_is_refused_before_any_key() {
     let (cipher, calls) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let refused = EncryptedCustomer::PROFILE
-        .at("$.name")
+        .at_text_path("$.name")
         .gt("A")
         .encrypt(&keyset)
         .await;

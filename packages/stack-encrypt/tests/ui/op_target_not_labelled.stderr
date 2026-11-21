@@ -20,11 +20,11 @@ help: the trait `LabelledTarget` is not implemented for `ByTenant`
              OpeTerm<S>
              Option<T>
            and $N others
-note: required by a bound in `FieldReference::<W, T, C, P>::eq`
+note: required by a bound in `FieldReference::<W, T, C, P, D>::eq`
   --> src/field_reference.rs
    |
    |                   T: Answers<$op, Q::Value> + LabelledTarget,
-   |                                               ^^^^^^^^^^^^^^ required by this bound in `FieldReference::<W, T, C, P>::eq`
+   |                                               ^^^^^^^^^^^^^^ required by this bound in `FieldReference::<W, T, C, P, D>::eq`
 ...
    | / operator_methods! {
    | |     /// Rows whose value equals `value` ([`op::Eq`](struct@Eq)).

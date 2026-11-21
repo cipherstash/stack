@@ -211,6 +211,11 @@ use crate::{KeysetCipher, Label, NonEmpty};
 /// - `P`: the value type that a query from this field reference accepts. `P` is
 ///   [`TakesAny`], or [`Takes<String>`] for a field marked
 ///   `#[stash(query = String)]`.
+/// - `D`: the paths a field that stores a JSON document declares, which
+///   [`at`](Self::at) and [`elements`](Self::elements) reach. The derive
+///   generates one type per field whose `#[stash(json(ordered = {..}))]`
+///   names paths ([`json::DocumentPaths`]). Every other field has
+///   [`json::TextPaths`].
 ///
 /// `C` is one of these:
 ///
@@ -222,7 +227,7 @@ use crate::{KeysetCipher, Label, NonEmpty};
 ///   than one record lists a scope ([`JoinScope`]).
 ///
 /// See the [module docs](self).
-pub struct FieldReference<W, T, C = NoScope, P = TakesAny> {
+pub struct FieldReference<W, T, C = NoScope, P = TakesAny, D = json::TextPaths> {
     name: &'static str,
     scope: &'static str,
     identity: &'static str,
@@ -233,20 +238,20 @@ pub struct FieldReference<W, T, C = NoScope, P = TakesAny> {
     /// seals under ([`JsonQueries::default_options`](crate::json::JsonQueries::default_options)).
     json: Option<FieldOptions>,
     place: W,
-    target: FieldTags<T, C, P>,
+    target: FieldTags<T, C, P, D>,
 }
 
 /// The types a field reference is tagged with, and holds none of: the field's
-/// target, its record's caller scope and its query type.
-type FieldTags<T, C, P> = PhantomData<fn() -> (T, C, P)>;
+/// target, its record's caller scope, its query type and its declared paths.
+type FieldTags<T, C, P, D> = PhantomData<fn() -> (T, C, P, D)>;
 
-impl<W: Copy, T, C, P> Clone for FieldReference<W, T, C, P> {
+impl<W: Copy, T, C, P, D> Clone for FieldReference<W, T, C, P, D> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<W: Copy, T, C, P> Copy for FieldReference<W, T, C, P> {}
-impl<W: Place, T, C, P> std::fmt::Debug for FieldReference<W, T, C, P> {
+impl<W: Copy, T, C, P, D> Copy for FieldReference<W, T, C, P, D> {}
+impl<W: Place, T, C, P, D> std::fmt::Debug for FieldReference<W, T, C, P, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FieldReference")
             .field("name", &self.name)
@@ -257,7 +262,7 @@ impl<W: Place, T, C, P> std::fmt::Debug for FieldReference<W, T, C, P> {
     }
 }
 
-impl<R, T, C, P> FieldReference<Root<R>, T, C, P> {
+impl<R, T, C, P, D> FieldReference<Root<R>, T, C, P, D> {
     /// A field reference for the field `name` of the record `R`, sealed under
     /// `scope` then `identity` by the record whose `contexts` function this
     /// is. For generated code: the derive emits the call with the segments
@@ -292,7 +297,7 @@ impl<R, T, C, P> FieldReference<Root<R>, T, C, P> {
     }
 }
 
-impl<W: Place, T, C, P> FieldReference<W, T, C, P> {
+impl<W: Place, T, C, P, D> FieldReference<W, T, C, P, D> {
     /// The field's name in its record, as `contexts()` names it.
     pub fn name(&self) -> &'static str {
         self.name
@@ -335,11 +340,13 @@ impl<W: Place, T, C, P> FieldReference<W, T, C, P> {
     /// `.scope(Scope::new(outer).scope(inner))`. If one record lists a
     /// scope, call `.scope(Scope::new(value))`.
     ///
-    /// The returned field reference has the query type of `inner`.
-    pub fn field<R, U, C2, Q>(
+    /// The returned field reference has the query type of `inner`, and the
+    /// paths `inner` declares, so a document field of a nested record has
+    /// its typed JSON queries.
+    pub fn field<R, U, C2, Q, E>(
         self,
-        inner: FieldReference<Root<R>, U, C2, Q>,
-    ) -> FieldReference<Nested<W>, U, C::Joined, Q>
+        inner: FieldReference<Root<R>, U, C2, Q, E>,
+    ) -> FieldReference<Nested<W>, U, C::Joined, Q, E>
     where
         T: Holds<R>,
         C: JoinScope<C2>,
@@ -684,7 +691,7 @@ impl QueryInput for &Vec<u8> {
 /// dropped.
 macro_rules! operator_methods {
     ($($(#[$doc:meta])* $method:ident => $op:ident;)+) => {$(
-        impl<W: Place, T, C: ScopeInput, P> FieldReference<W, T, C, P> {
+        impl<W: Place, T, C: ScopeInput, P, D> FieldReference<W, T, C, P, D> {
             $(#[$doc])*
             pub fn $method<Q>(self, value: Q) -> FieldQuery<T, $op, Q::Value, C::Start>
             where
@@ -714,7 +721,7 @@ operator_methods! {
     matches => Matches;
 }
 
-impl<W: Place, T, C: ScopeInput, P> FieldReference<W, T, C, P> {
+impl<W: Place, T, C: ScopeInput, P, D> FieldReference<W, T, C, P, D> {
     /// Rows whose value is between `lo` and `hi`, inclusive
     /// ([`op::Between`](Between)): one term carrying both bounds, derived
     /// under one context.

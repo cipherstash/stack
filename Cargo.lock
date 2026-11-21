@@ -3498,6 +3498,7 @@ dependencies = [
  "quote",
  "serde_json",
  "stack-encrypt",
+ "stack-encrypt-jsonpath",
  "syn 3.0.9",
  "tokio",
  "zeroize",

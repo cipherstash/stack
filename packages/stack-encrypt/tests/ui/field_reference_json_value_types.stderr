@@ -1,10 +1,151 @@
-error[E0277]: the trait bound `bool: JsonOrdered` is not satisfied
-  --> tests/ui/field_reference_json_value_types.rs:23:55
+error[E0277]: this path holds `u32`, and `&str` is not one
+  --> tests/ui/field_reference_json_value_types.rs:30:54
    |
-23 |     let _ = EncryptedCustomer::PROFILE.at("$.age").gt(true);
-   |                                                    -- ^^^^ the trait `JsonOrdered` is not implemented for `bool`
-   |                                                    |
-   |                                                    required by a bound introduced by this call
+30 |     let _ = EncryptedCustomer::PROFILE.at().age().gt("thirty");
+   |                                                   -- ^^^^^^^^ a `&str`
+   |                                                   |
+   |                                                   required by a bound introduced by this call
+   |
+   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+help: the trait `PathValue<u32>` is not implemented for `&str`
+      but trait `PathValue<std::string::String>` is implemented for it
+  --> src/field_reference/json.rs
+   |
+   | impl PathValue<String> for &str {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `std::string::String`, found `u32`
+note: required by a bound in `DeclaredPath::<W, T, C, P, V>::gt`
+  --> src/field_reference/json.rs
+   |
+   |     pub fn gt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gt>, C::Start> {
+   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V>::gt`
+
+error[E0277]: this path holds `u32`, and `i64` is not one
+  --> tests/ui/field_reference_json_value_types.rs:31:54
+   |
+31 |     let _ = EncryptedCustomer::PROFILE.at().age().eq(30i64);
+   |                                                   -- ^^^^^ a `i64`
+   |                                                   |
+   |                                                   required by a bound introduced by this call
+   |
+   = help: the trait `PathValue<u32>` is not implemented for `i64`
+   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+help: the following other types implement trait `PathValue<V>`
+  --> src/field_reference/json.rs
+   |
+   | impl PathValue<String> for &str {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&str`
+   | impl path_value_sealed::Sealed<String> for &String {}
+   | impl PathValue<String> for &String {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&std::string::String`
+note: required by a bound in `DeclaredPath::<W, T, C, P, V>::eq`
+  --> src/field_reference/json.rs
+   |
+   |     pub fn eq(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Eq>, C::Start> {
+   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V>::eq`
+
+error[E0277]: this path holds `f64`, and `f32` is not one
+  --> tests/ui/field_reference_json_value_types.rs:32:56
+   |
+32 |     let _ = EncryptedCustomer::PROFILE.at().score().eq(0.1f32);
+   |                                                     -- ^^^^^^ a `f32`
+   |                                                     |
+   |                                                     required by a bound introduced by this call
+   |
+   = help: the trait `PathValue<f64>` is not implemented for `f32`
+   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+help: the following other types implement trait `PathValue<V>`
+  --> src/field_reference/json.rs
+   |
+   | impl PathValue<String> for &str {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&str`
+   | impl path_value_sealed::Sealed<String> for &String {}
+   | impl PathValue<String> for &String {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&std::string::String`
+note: required by a bound in `DeclaredPath::<W, T, C, P, V>::eq`
+  --> src/field_reference/json.rs
+   |
+   |     pub fn eq(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Eq>, C::Start> {
+   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V>::eq`
+
+error[E0277]: this path holds `std::string::String`, and `{integer}` is not one
+  --> tests/ui/field_reference_json_value_types.rs:33:71
+   |
+33 |     let _ = EncryptedCustomer::PROFILE.elements().visits().place().eq(1);
+   |                                                                    -- ^ a `{integer}`
+   |                                                                    |
+   |                                                                    required by a bound introduced by this call
+   |
+   = help: the trait `PathValue<std::string::String>` is not implemented for `{integer}`
+   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+help: the following other types implement trait `PathValue<V>`
+  --> src/field_reference/json.rs
+   |
+   | impl PathValue<String> for &str {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&str`
+   | impl path_value_sealed::Sealed<String> for &String {}
+   | impl PathValue<String> for &String {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&std::string::String`
+note: required by a bound in `ElementMember::<ArrayElements<W, T, C, P, A>, V>::eq`
+  --> src/field_reference/json.rs
+   |
+   |                       value: impl PathValue<V>,
+   |                                   ^^^^^^^^^^^^ required by this bound in `ElementMember::<ArrayElements<W, T, C, P, A>, V>::eq`
+...
+   | / element_conditions! {
+   | |     /// The member equals `value`, as the ordering terms compare: text
+   | |     /// case- and accent-folded, numbers as 64-bit floats. Exact equality
+   | |     /// of any element is a path's `eq` ([`DeclaredPath::eq`], [`ValueAt::eq`]).
+   | |     eq => Eq;
+   | |     -- required by a bound in this associated function
+...  |
+   | |     gte => Gte;
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `element_conditions` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this path holds `u64`, and `&str` is not one
+  --> tests/ui/field_reference_json_value_types.rs:34:68
+   |
+34 |     let _ = EncryptedCustomer::PROFILE.elements().visits().at().gt("noon");
+   |                                                                 -- ^^^^^^ a `&str`
+   |                                                                 |
+   |                                                                 required by a bound introduced by this call
+   |
+   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+help: the trait `PathValue<u64>` is not implemented for `&str`
+      but trait `PathValue<std::string::String>` is implemented for it
+  --> src/field_reference/json.rs
+   |
+   | impl PathValue<String> for &str {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `std::string::String`, found `u64`
+note: required by a bound in `ElementMember::<ArrayElements<W, T, C, P, A>, V>::gt`
+  --> src/field_reference/json.rs
+   |
+   |                       value: impl PathValue<V>,
+   |                                   ^^^^^^^^^^^^ required by this bound in `ElementMember::<ArrayElements<W, T, C, P, A>, V>::gt`
+...
+   | / element_conditions! {
+   | |     /// The member equals `value`, as the ordering terms compare: text
+   | |     /// case- and accent-folded, numbers as 64-bit floats. Exact equality
+   | |     /// of any element is a path's `eq` ([`DeclaredPath::eq`], [`ValueAt::eq`]).
+...  |
+   | |     gt => Gt;
+   | |     -- required by a bound in this associated function
+   | |     /// The member is at or above `value`.
+   | |     gte => Gte;
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `element_conditions` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `bool: JsonOrdered` is not satisfied
+  --> tests/ui/field_reference_json_value_types.rs:36:65
+   |
+36 |     let _ = EncryptedCustomer::PROFILE.at_text_path("$.age").gt(true);
+   |                                                              -- ^^^^ the trait `JsonOrdered` is not implemented for `bool`
+   |                                                              |
+   |                                                              required by a bound introduced by this call
    |
    = help: the following other types implement trait `JsonOrdered`:
              &std::string::String
@@ -23,12 +164,12 @@ note: required by a bound in `ValueAt::<W, T, C, P>::gt`
    |                                 ^^^^^^^^^^^ required by this bound in `ValueAt::<W, T, C, P>::gt`
 
 error[E0277]: the trait bound `serde_json::Value: JsonScalar` is not satisfied
-  --> tests/ui/field_reference_json_value_types.rs:24:55
+  --> tests/ui/field_reference_json_value_types.rs:39:13
    |
-24 |     let _ = EncryptedCustomer::PROFILE.at("$.age").eq(serde_json::json!({"a": 1}));
-   |                                                    -- ^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `JsonScalar` is not implemented for `serde_json::Value`
-   |                                                    |
-   |                                                    required by a bound introduced by this call
+39 |         .eq(serde_json::json!({"a": 1}));
+   |          -- ^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `JsonScalar` is not implemented for `serde_json::Value`
+   |          |
+   |          required by a bound introduced by this call
    |
    = help: the following other types implement trait `JsonScalar`:
              &std::string::String
@@ -47,12 +188,12 @@ note: required by a bound in `ValueAt::<W, T, C, P>::eq`
    |                                 ^^^^^^^^^^ required by this bound in `ValueAt::<W, T, C, P>::eq`
 
 error[E0277]: the trait bound `bool: JsonOrdered` is not satisfied
-  --> tests/ui/field_reference_json_value_types.rs:25:73
+  --> tests/ui/field_reference_json_value_types.rs:42:19
    |
-25 |     let _ = EncryptedCustomer::PROFILE.elements("$.visits[*]").gt("at", false);
-   |                                                                --       ^^^^^ the trait `JsonOrdered` is not implemented for `bool`
-   |                                                                |
-   |                                                                required by a bound introduced by this call
+42 |         .gt("at", false);
+   |          --       ^^^^^ the trait `JsonOrdered` is not implemented for `bool`
+   |          |
+   |          required by a bound introduced by this call
    |
    = help: the following other types implement trait `JsonOrdered`:
              &std::string::String
@@ -73,7 +214,7 @@ note: required by a bound in `Elements::<W, T, C, P>::gt`
    | / element_conditions! {
    | |     /// The member equals `value`, as the ordering terms compare: text
    | |     /// case- and accent-folded, numbers as 64-bit floats. Exact equality
-   | |     /// of any element is [`at(path).eq`](ValueAt::eq).
+   | |     /// of any element is a path's `eq` ([`DeclaredPath::eq`], [`ValueAt::eq`]).
 ...  |
    | |     gt => Gt;
    | |     -- required by a bound in this associated function
@@ -84,12 +225,12 @@ note: required by a bound in `Elements::<W, T, C, P>::gt`
    = note: this error originates in the macro `element_conditions` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `f32: JsonScalar` is not satisfied
-  --> tests/ui/field_reference_json_value_types.rs:26:55
+  --> tests/ui/field_reference_json_value_types.rs:43:65
    |
-26 |     let _ = EncryptedCustomer::PROFILE.at("$.age").eq(0.1f32);
-   |                                                    -- ^^^^^^ the trait `JsonScalar` is not implemented for `f32`
-   |                                                    |
-   |                                                    required by a bound introduced by this call
+43 |     let _ = EncryptedCustomer::PROFILE.at_text_path("$.age").eq(0.1f32);
+   |                                                              -- ^^^^^^ the trait `JsonScalar` is not implemented for `f32`
+   |                                                              |
+   |                                                              required by a bound introduced by this call
    |
    = help: the following other types implement trait `JsonScalar`:
              f64

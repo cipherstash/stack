@@ -1,24 +1,45 @@
 //! The JSON queries of a field that stores a JSON document.
 //!
-//! A field whose type stores a document ([`JsonQueries`]) has one field reference
-//! method for each kind of JSON query:
+//! A field whose type stores a document ([`JsonQueries`]) has one field
+//! reference method for each kind of JSON query:
 //!
 //! | Field reference method | What it finds | Returns |
 //! | --- | --- | --- |
 //! | [`contains(doc)`](FieldReference::contains), [`contained_by(doc)`](FieldReference::contained_by) | Rows whose document contains `doc`, or is contained by it (`@>`, `<@`) | [`JsonQueries::Query`] |
-//! | [`at(path)`](FieldReference::at)`.eq(v)` | Rows with the scalar `v` at the path: containment of a one-entry document | [`JsonQueries::Query`] |
-//! | `at(path).lt(v)`, `.lte`, `.gt`, `.gte` | Rows where the value at an ordered path compares with `v` | [`JsonQueries::LeafQuery`] |
-//! | `at(path).between(lo, hi)` | Rows where the value at an ordered path lies between the bounds, both included | a pair of [`JsonQueries::LeafQuery`], low then high |
-//! | `at(path).selector()` | The path's selector, which `->` and `ORDER BY` take | [`JsonQueries::Selector`] |
-//! | [`elements(path)`](FieldReference::elements)`.eq(member, v).gt(member, v)` | Rows where one element of the array satisfies every condition together | [`JsonQueries::ElementsQuery`] |
+//! | [`at()`](FieldReference::at)`.age().eq(v)` | Rows with the scalar `v` at the path: containment of a one-entry document | [`JsonQueries::Query`] |
+//! | `at().age().lt(v)`, `.lte`, `.gt`, `.gte` | Rows where the value at the path compares with `v` | [`JsonQueries::LeafQuery`] |
+//! | `at().age().between(lo, hi)` | Rows where the value at the path lies between the bounds, both included | a pair of [`JsonQueries::LeafQuery`], low then high |
+//! | `at().age().selector()` | The path's selector, which `->` and `ORDER BY` take | [`JsonQueries::Selector`] |
+//! | [`elements()`](FieldReference::elements)`.visits().place().eq(v).and().at().gt(v)` | Rows where one element of the array satisfies every condition together | [`JsonQueries::ElementsQuery`] |
 //! | [`predicate(text)`](FieldReference::predicate) | Rows where a SQL/JSON path predicate is true | [`JsonQueries::PredicateQuery`] |
 //! | [`children(path)`](FieldReference::children) | The node's token, which `json_tree_children` and `json_tree_child_count` take | [`JsonQueries::Token`] |
 //!
-//! The field reference supplies the field's column and its JSON options, which the
-//! derive's `#[stash(json(..))]` attribute names, so a query derives under
-//! the context and the options the stored documents were sealed under. A
-//! scope the record lists is passed with [`scope`](JsonFieldQuery::scope), as
-//! for any field query.
+//! The field reference supplies the field's column and its JSON options,
+//! which the derive's `#[stash(json(..))]` attribute names, so a query
+//! derives under the context and the options the stored documents were
+//! sealed under. A scope the record lists is passed with
+//! [`scope`](JsonFieldQuery::scope), as for any field query.
+//!
+//! # Declared paths
+//!
+//! The attribute names each ordered path and the type of the values at it:
+//! `ordered = { "$.age": u32, "$.visits[*].place": String }`. The derive
+//! parses every path when it compiles the record, and generates one method
+//! for each:
+//!
+//! - under [`at()`](FieldReference::at), one per path, named after the
+//!   path's keys: `$.age` is `age()`, `$.visits[*].at` is `visits_at()`.
+//!   Each returns a [`DeclaredPath`] of the path's type.
+//! - under [`elements()`](FieldReference::elements), one per array whose
+//!   elements have an ordered member: `$.visits[*]` is `visits()`. That
+//!   array's members are methods in turn, named after the keys below the
+//!   array: `place()`, `at()`. Each returns an [`ElementMember`] of the
+//!   member's type. [`and()`](JsonFieldQuery::and) after a condition gives
+//!   the same array's members again.
+//!
+//! So the compiler refuses a path or a member the field does not declare,
+//! a value of another type, and a member of another array. The
+//! `stack-encrypt-derive` attribute reference gives the naming rule.
 //!
 //! For example, a customer's profile is stored under `customers/profile`,
 //! ordering the age and each visit's time and place:
@@ -39,7 +60,7 @@
 //! #[derive(EncryptTarget)]
 //! #[stash(struct = Customer, scope = "customers")]
 //! struct EncryptedCustomer {
-//!     #[stash(json(ordered = ["$.age", "$.visits[*].at", "$.visits[*].place"]))]
+//!     #[stash(json(ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String }))]
 //!     profile: JsonDocument,
 //! }
 //!
@@ -60,38 +81,49 @@
 //! assert!(ada.matches(stored.profile.selector_set()));
 //!
 //! // `(col -> $1) > $2`, with the selector the operand carries.
-//! let older = EncryptedCustomer::PROFILE.at("$.age").gt(30).encrypt(&keyset).await?;
-//! let age = EncryptedCustomer::PROFILE.at("$.age").selector().encrypt(&keyset).await?;
+//! let older = EncryptedCustomer::PROFILE.at().age().gt(30).encrypt(&keyset).await?;
+//! let age = EncryptedCustomer::PROFILE.at().age().selector().encrypt(&keyset).await?;
 //! assert_eq!(older.selector(), age);
 //!
 //! // One visit that is at home and after 10.
 //! let home = EncryptedCustomer::PROFILE
-//!     .elements("$.visits[*]")
-//!     .eq("place", "home")
-//!     .gt("at", 10)
+//!     .elements()
+//!     .visits()
+//!     .place().eq("home")
+//!     .and().at().gt(10)
 //!     .encrypt(&keyset)
 //!     .await?;
 //! assert_eq!(home.len(), 2);
-//!
-//! // `$.name` is not ordered, so an ordering there is refused before any
-//! // key is requested.
-//! assert!(EncryptedCustomer::PROFILE.at("$.name").gt("A").encrypt(&keyset).await.is_err());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! # }).unwrap();
 //! ```
 //!
-//! These do not compile: a JSON query of a field that stores no document
-//! (`tests/ui/field_reference_json_on_a_scalar_field.rs`); an ordering of a boolean
-//! or equality with a document (`tests/ui/field_reference_json_value_types.rs`);
+//! These do not compile: a path or a member the field does not declare
+//! (`tests/ui/field_reference_json_undeclared_path.rs`); a value of another
+//! type, at a path or for a member, or an `f32`
+//! (`tests/ui/field_reference_json_value_types.rs`); a member of another
+//! array (`tests/ui/field_reference_json_member_of_another_array.rs`);
 //! `elements` with no condition
-//! (`tests/ui/field_reference_elements_needs_a_condition.rs`); and a query of a
+//! (`tests/ui/field_reference_elements_needs_a_condition.rs`); a JSON query
+//! of a field that stores no document
+//! (`tests/ui/field_reference_json_on_a_scalar_field.rs`); and a query of a
 //! record that lists a scope, with no scope
 //! (`tests/ui/field_reference_json_query_needs_its_scope.rs`).
 //!
-//! A path is JSONPath text. It is checked when the query is encrypted,
-//! before any key is requested, by the rules the dynamic interface's JSON
-//! operators apply, through the same code. A refusal comes in one of two
-//! classes:
+//! # Paths as text
+//!
+//! A filter built at run time, from a user's input, names its paths as
+//! text: [`at_text_path("$.age")`](FieldReference::at_text_path) and
+//! [`elements_text_path("$.visits[*]")`](FieldReference::elements_text_path),
+//! whose conditions name each member as text (`.eq("place", "home")`). So do
+//! [`children`](FieldReference::children) and a field that declares no paths.
+//! A typed query and a text query derive the same operand for the same path
+//! and value.
+//!
+//! A path given as text is JSONPath, and is checked when the query is
+//! encrypted, before any key is requested, by the rules the dynamic
+//! interface's JSON operators apply, through the same code. A refusal comes
+//! in one of two classes:
 //!
 //! - [`crate::Error::Term`], the JSON index's own refusals: an ordering at
 //!   a path the field does not order
@@ -101,18 +133,23 @@
 //!   ([`TermError::JsonNumberNotFinite`]).
 //! - [`crate::Error::Input`], the input's own shape, holding the dynamic
 //!   interface's error and its [`Reason`](crate::refusal::Reason): a
-//!   position where the operand is a selector (`at("$.tags[1]").eq(..)`,
-//!   `JsonPathPosition`), an `elements` path with no wildcard
+//!   position where the operand is a selector (`at_text_path("$.tags[1]").eq(..)`,
+//!   `JsonPathPosition`), an `elements_text_path` path with no wildcard
 //!   (`JsonPathNoWildcard`), a `children` path with one
 //!   (`JsonPathWildcard`), or a predicate the grammar does not read
 //!   (`JsonPredicateSyntax` and the rest). Its code and its
 //!   [`ErrorPayload`](crate::ErrorPayload) are the ones the dynamic
 //!   interface reports for the same input.
 //!
+//! A typed path can meet only the value refusals: the derive refused every
+//! other mistake when it compiled the record.
+//!
 //! A value is typed: [`JsonScalar`] for equality, [`JsonOrdered`] (a number
-//! or a string) for an ordering, and a whole document for containment. The
-//! query holds each value in storage that is wiped when the query is
-//! encrypted, refused or dropped.
+//! or a string) for an ordering, and a whole document for containment. A
+//! declared path takes the type it declares ([`PathValue`]). The query holds
+//! each value in storage that is wiped when the query is encrypted, refused
+//! or dropped.
+use std::marker::PhantomData;
 use std::num::NonZeroU32;
 
 use serde_json::Value;
@@ -133,9 +170,63 @@ use crate::KeysetCipher;
 /// [`ValueAt::selector`]. A type tag, with no values.
 pub enum Selector {}
 
-/// The kind of a JSON query from a field reference that holds an element-scoped
-/// predicate: [`FieldReference::elements`]. A type tag, with no values.
-pub enum ElementMatch {}
+/// The kind of a JSON query from a field reference that holds an
+/// element-scoped predicate on the array `A`: an array the field declares,
+/// from [`FieldReference::elements`], or [`TextPaths`] for an array named as
+/// text, from [`FieldReference::elements_text_path`]. A type tag, with no
+/// values. A typed array's conditions and a text array's are different
+/// types, so one query does not mix them.
+pub struct ElementMatch<A = TextPaths>(std::convert::Infallible, PhantomData<fn() -> A>);
+
+/// The paths of a field that declares none: a field reference's default.
+/// A document field with no `#[stash(json(ordered = {..}))]` paths names its
+/// paths as text, with [`at_text_path`](FieldReference::at_text_path) and
+/// [`elements_text_path`](FieldReference::elements_text_path). A type tag,
+/// with no values.
+pub enum TextPaths {}
+
+/// The paths a document field declares, as types: implemented by the type
+/// the derive generates for each field whose `#[stash(json(ordered = {..}))]`
+/// names paths, and the fifth type parameter of that field's reference.
+///
+/// [`At`](Self::At) has one method per declared path and
+/// [`Elements`](Self::Elements) one per declared array; each is generic over
+/// the field reference's own parameters, so a field reached through an
+/// outer record ([`FieldReference::field`]) has the same methods. For
+/// generated code: write a field's paths in its attribute.
+#[diagnostic::on_unimplemented(
+    message = "this field declares no JSON paths, so its reference has no typed `at()` or `elements()`",
+    label = "a field reference whose paths are `{Self}`",
+    note = "declare the paths on the field, as `#[stash(json(ordered = {{ \"$.age\": u32 }}))]`, or name a path as text with `at_text_path(\"$.age\")` or `elements_text_path(\"$.visits[*]\")`"
+)]
+pub trait DocumentPaths: Sized {
+    /// What [`FieldReference::at`] returns: one method per declared path.
+    type At<W, T, C, P>;
+    /// What [`FieldReference::elements`] returns: one method per declared
+    /// array whose elements have an ordered member.
+    type Elements<W, T, C, P>;
+    /// The accessors of the declared paths.
+    #[doc(hidden)]
+    fn at<W, T, C, P>(reference: FieldReference<W, T, C, P, Self>) -> Self::At<W, T, C, P>;
+    /// The accessors of the declared arrays.
+    #[doc(hidden)]
+    fn elements<W, T, C, P>(
+        reference: FieldReference<W, T, C, P, Self>,
+    ) -> Self::Elements<W, T, C, P>;
+}
+
+/// One array a document field declares, as a type: implemented by the type
+/// the derive generates for the array, whose methods are the array's
+/// ordered members. [`and`](JsonFieldQuery::and) uses it to give the members
+/// of the array an element predicate is on, so a condition on a member of
+/// another array cannot be written. For generated code.
+pub trait ElementArray {
+    /// The array's members, with the predicate `Q` they add a condition to.
+    type Members<Q>;
+    /// The members of this array, adding to `query`.
+    #[doc(hidden)]
+    fn members<Q>(query: Q) -> Self::Members<Q>;
+}
 
 /// The kind of a JSON query from a field reference that holds a jsonpath predicate:
 /// [`FieldReference::predicate`]. A type tag, with no values.
@@ -341,6 +432,52 @@ impl JsonScalar for f64 {
 }
 impl JsonOrdered for f64 {}
 
+/// A type a declared path holds: the type an entry of
+/// `#[stash(json(ordered = {..}))]` names. A number or a string, the leaves
+/// the JSON index derives an ordering term for: `i8` to `i64`, `u8` to
+/// `u64`, `f64` and `String`. Sealed.
+///
+/// There is no `f32`, for the reason [`JsonScalar`] gives: declare `f64` and
+/// query with `f64::from(x)`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a type an ordered path can hold",
+    label = "the type an `ordered = {{..}}` entry declares",
+    note = "an ordered path holds a number or a string: declare `i8` to `i64`, `u8` to `u64`, `f64` or `String`. For a float held as `f32`, declare `f64` and query with `f64::from(x)`"
+)]
+pub trait JsonPathType: JsonOrdered + path_type_sealed::Sealed {}
+
+mod path_type_sealed {
+    pub trait Sealed {}
+}
+
+macro_rules! path_types {
+    ($($ty:ty),+) => {$(
+        impl path_type_sealed::Sealed for $ty {}
+        impl JsonPathType for $ty {}
+    )+};
+}
+path_types!(i8, i16, i32, i64, u8, u16, u32, u64, f64, String);
+
+/// A value a declared path of type `V` takes: a `V`, or for a `String` path
+/// a `&str` or a `&String` too. Sealed.
+#[diagnostic::on_unimplemented(
+    message = "this path holds `{V}`, and `{Self}` is not one",
+    label = "a `{Self}`",
+    note = "a declared path takes the type its `ordered = {{..}}` entry names; a `String` path takes a `&str` or a `&String` too"
+)]
+pub trait PathValue<V>: JsonOrdered + path_value_sealed::Sealed<V> {}
+
+mod path_value_sealed {
+    pub trait Sealed<V> {}
+}
+
+impl<V: JsonPathType> path_value_sealed::Sealed<V> for V {}
+impl<V: JsonPathType> PathValue<V> for V {}
+impl path_value_sealed::Sealed<String> for &str {}
+impl PathValue<String> for &str {}
+impl path_value_sealed::Sealed<String> for &String {}
+impl PathValue<String> for &String {}
+
 /// A value moved into a query: wiped when the query is encrypted, refused
 /// or dropped.
 fn held(value: impl JsonScalar) -> Held {
@@ -356,7 +493,7 @@ fn path_text(path: &str) -> Zeroizing<String> {
     Zeroizing::new(path.to_owned())
 }
 
-impl<W: Place, T: JsonQueries, C: ScopeInput, P> FieldReference<W, T, C, P> {
+impl<W: Place, T: JsonQueries, C: ScopeInput, P, D> FieldReference<W, T, C, P, D> {
     /// Rows whose document contains `document` (`col @> $1`): every member
     /// and element `document` holds is in the row's document. Exact, as
     /// PostgreSQL's `jsonb @>` is, across array elements included.
@@ -366,7 +503,8 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> FieldReference<W, T, C, P> {
     /// `to_value`, `Value::from`), so `json!({"score": f64::NAN})` asks for
     /// rows whose `score` is `null`. The engine cannot tell. Check a
     /// computed float before building the document, or query it with
-    /// [`at(path).eq`](ValueAt::eq), which refuses one.
+    /// a path's `eq` ([`DeclaredPath::eq`], [`ValueAt::eq`]), which refuses
+    /// one.
     pub fn contains(
         self,
         document: impl Into<JsonPlaintext>,
@@ -386,26 +524,57 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> FieldReference<W, T, C, P> {
         self.json(Body::Document(Parsed::of(document.into().into_value())))
     }
 
-    /// A query of the value at `path`: equality with
-    /// [`eq`](ValueAt::eq), an ordering with [`lt`](ValueAt::lt) and the other
-    /// comparisons, or the path's [`selector`](ValueAt::selector).
-    pub fn at(self, path: &str) -> ValueAt<W, T, C, P> {
+    /// The paths the field declares, one method each: `at().age()` for
+    /// `$.age`. Each returns a [`DeclaredPath`], whose methods are the
+    /// queries of the value at the path: equality, the orderings, and the
+    /// path's selector. A field that declares no paths has no `at()`: name
+    /// its path as text with [`at_text_path`](Self::at_text_path).
+    pub fn at(self) -> D::At<W, T, C, P>
+    where
+        D: DocumentPaths,
+    {
+        D::at(self)
+    }
+
+    /// The arrays the field declares whose elements have an ordered member,
+    /// one method each: `elements().visits()` for `$.visits[*]`. An
+    /// array's methods are its members (`place()`), and a condition on one
+    /// starts an element-scoped predicate: rows where some one element
+    /// satisfies every condition together, which two orderings at the same
+    /// wildcard path cannot say. A field that declares no paths has no
+    /// `elements()`: name its array as text with
+    /// [`elements_text_path`](Self::elements_text_path).
+    pub fn elements(self) -> D::Elements<W, T, C, P>
+    where
+        D: DocumentPaths,
+    {
+        D::elements(self)
+    }
+
+    /// A query of the value at `path`, JSONPath text checked when the
+    /// query is encrypted: for a path a program builds at run time, from a
+    /// user's filter. Equality with [`eq`](ValueAt::eq), an ordering with
+    /// [`lt`](ValueAt::lt) and the other comparisons, or the path's
+    /// [`selector`](ValueAt::selector). A path the field declares has a
+    /// method under [`at`](Self::at), which the compiler checks.
+    pub fn at_text_path(self, path: &str) -> ValueAt<W, T, C, P> {
         ValueAt {
-            reference: self,
+            reference: self.untyped(),
             path: path_text(path),
         }
     }
 
-    /// An element-scoped predicate on the array of elements at `path`, a
-    /// path with a wildcard (`$.visits[*]`): rows where some one element
-    /// satisfies every condition together, which two orderings at the same
-    /// wildcard path cannot say. Give each condition with
-    /// [`eq`](Elements::eq), [`lt`](Elements::lt) and the other
-    /// comparisons, on a member of the element (`"place"`,
-    /// `"address.city"`) whose full path the field orders.
-    pub fn elements(self, path: &str) -> Elements<W, T, C, P> {
+    /// An element-scoped predicate on the array of elements at `path`,
+    /// JSONPath text with a wildcard (`$.visits[*]`) checked when the query
+    /// is encrypted: for an array a program names at run time. Give each
+    /// condition with [`eq`](Elements::eq), [`lt`](Elements::lt) and the
+    /// other comparisons, on a member of the element named as text
+    /// (`"place"`, `"address.city"`) whose full path the field orders. An
+    /// array the field declares has a method under
+    /// [`elements`](Self::elements), which the compiler checks.
+    pub fn elements_text_path(self, path: &str) -> Elements<W, T, C, P> {
         Elements {
-            reference: self,
+            reference: self.untyped(),
             path: path_text(path),
         }
     }
@@ -432,14 +601,29 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> FieldReference<W, T, C, P> {
         self.json(Body::Children(path_text(path)))
     }
 
+    /// This field reference with its declared paths forgotten: what a query
+    /// of one path holds, once the path is chosen.
+    fn untyped(self) -> FieldReference<W, T, C, P> {
+        FieldReference {
+            name: self.name,
+            scope: self.scope,
+            identity: self.identity,
+            contexts: self.contexts,
+            json: self.json,
+            place: self.place,
+            target: PhantomData,
+        }
+    }
+
     fn json<Op>(self, body: Body) -> JsonFieldQuery<T, Op, C::Start> {
         let options = self.json;
         JsonFieldQuery(self.held_query(JsonInput { options, body }, drop))
     }
 }
 
-/// A query of the value at a path, from [`FieldReference::at`]: one of the methods
-/// below makes it a query.
+/// A query of the value at a path named as text, from
+/// [`FieldReference::at_text_path`]: one of the methods below makes it a
+/// query.
 pub struct ValueAt<W, T, C, P> {
     reference: FieldReference<W, T, C, P>,
     path: Zeroizing<String>,
@@ -491,8 +675,11 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> ValueAt<W, T, C, P> {
         low: V,
         high: V,
     ) -> JsonFieldQuery<T, AtPath<Between>, C::Start> {
-        self.reference
-            .json(Body::Between(self.path, held(low), held(high)))
+        self.range(held(low), held(high))
+    }
+
+    fn range(self, low: Held, high: Held) -> JsonFieldQuery<T, AtPath<Between>, C::Start> {
+        self.reference.json(Body::Between(self.path, low, high))
     }
 
     /// The path's selector, which `col -> $1` and an `ORDER BY` over
@@ -512,9 +699,98 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> ValueAt<W, T, C, P> {
     }
 }
 
-/// An element-scoped predicate before its first condition, from
-/// [`FieldReference::elements`]. Each method adds a condition and makes it a query,
-/// to which more conditions can be added.
+/// One path a document field declares, holding values of type `V`: what a
+/// method under [`FieldReference::at`] returns. One of the methods below
+/// makes it a query. Each takes the path's type ([`PathValue`]), and derives
+/// the operand [`at_text_path`](FieldReference::at_text_path) derives for the
+/// same path and value.
+pub struct DeclaredPath<W, T, C, P, V> {
+    reference: FieldReference<W, T, C, P>,
+    path: &'static str,
+    value: PhantomData<fn() -> V>,
+}
+
+impl<W, T, C, P, V> DeclaredPath<W, T, C, P, V> {
+    /// The path `path` of the field `reference`, as the derive declared it.
+    /// For generated code: the derive checked the path when it compiled the
+    /// record.
+    #[doc(hidden)]
+    pub fn new<D>(reference: FieldReference<W, T, C, P, D>, path: &'static str) -> Self
+    where
+        W: Place,
+        T: JsonQueries,
+        C: ScopeInput,
+    {
+        Self {
+            reference: reference.untyped(),
+            path,
+            value: PhantomData,
+        }
+    }
+}
+
+impl<W: Place, T: JsonQueries, C: ScopeInput, P, V: JsonPathType> DeclaredPath<W, T, C, P, V> {
+    /// The same query, with the path as text: one code path for both.
+    fn text(self) -> ValueAt<W, T, C, P> {
+        ValueAt {
+            reference: self.reference,
+            path: path_text(self.path),
+        }
+    }
+
+    /// Rows with `value` at the path: containment of the document that
+    /// holds it there, so exact. At a path with a wildcard, rows where any
+    /// element holds it.
+    pub fn eq(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Eq>, C::Start> {
+        self.text().eq(value)
+    }
+
+    /// Rows with a JSON `null` at the path. A row with no node at the path
+    /// does not match: that is `SQL NULL`, not a JSON `null`.
+    pub fn is_null(self) -> JsonFieldQuery<T, AtPath<Eq>, C::Start> {
+        self.text().is_null()
+    }
+
+    /// Rows where the value at the path is below `value`.
+    pub fn lt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Lt>, C::Start> {
+        self.text().lt(value)
+    }
+
+    /// Rows where the value at the path is at or below `value`.
+    pub fn lte(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Lte>, C::Start> {
+        self.text().lte(value)
+    }
+
+    /// Rows where the value at the path is above `value`.
+    pub fn gt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gt>, C::Start> {
+        self.text().gt(value)
+    }
+
+    /// Rows where the value at the path is at or above `value`.
+    pub fn gte(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gte>, C::Start> {
+        self.text().gte(value)
+    }
+
+    /// Rows where the value at the path is between `low` and `high`, both
+    /// included. The query returns the two operands, low then high.
+    pub fn between(
+        self,
+        low: impl PathValue<V>,
+        high: impl PathValue<V>,
+    ) -> JsonFieldQuery<T, AtPath<Between>, C::Start> {
+        self.text().range(held(low), held(high))
+    }
+
+    /// The path's selector, which `col -> $1` and an `ORDER BY` over
+    /// `eql_v4.ord_term(col -> $1)` take.
+    pub fn selector(self) -> JsonFieldQuery<T, Selector, C::Start> {
+        self.text().selector()
+    }
+}
+
+/// An element-scoped predicate on an array named as text, before its first
+/// condition, from [`FieldReference::elements_text_path`]. Each method adds
+/// a condition and makes it a query, to which more conditions can be added.
 pub struct Elements<W, T, C, P> {
     reference: FieldReference<W, T, C, P>,
     path: Zeroizing<String>,
@@ -542,12 +818,36 @@ macro_rules! element_conditions {
                 }
             )+
         }
+        impl<W: Place, T: JsonQueries, C: ScopeInput, P, A, V: JsonPathType>
+            ElementMember<ArrayElements<W, T, C, P, A>, V>
+        {
+            $(
+                $(#[$doc])*
+                pub fn $method(
+                    self,
+                    value: impl PathValue<V>,
+                ) -> JsonFieldQuery<T, ElementMatch<A>, C::Start> {
+                    self.query.first(self.member, Condition::One(Compare::$compare, held(value)))
+                }
+            )+
+        }
+        impl<T, A, S, V: JsonPathType> ElementMember<JsonFieldQuery<T, ElementMatch<A>, S>, V> {
+            $(
+                $(#[$doc])*
+                pub fn $method(
+                    self,
+                    value: impl PathValue<V>,
+                ) -> JsonFieldQuery<T, ElementMatch<A>, S> {
+                    self.query.condition(self.member, Condition::One(Compare::$compare, held(value)))
+                }
+            )+
+        }
     };
 }
 element_conditions! {
     /// The member equals `value`, as the ordering terms compare: text
     /// case- and accent-folded, numbers as 64-bit floats. Exact equality
-    /// of any element is [`at(path).eq`](ValueAt::eq).
+    /// of any element is a path's `eq` ([`DeclaredPath::eq`], [`ValueAt::eq`]).
     eq => Eq;
     /// The member is below `value`.
     lt => Lt;
@@ -570,11 +870,11 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> Elements<W, T, C, P> {
         self.first(member, Condition::Between(held(low), held(high)))
     }
 
-    fn first(
+    fn first<A>(
         self,
         member: &str,
         condition: Condition,
-    ) -> JsonFieldQuery<T, ElementMatch, C::Start> {
+    ) -> JsonFieldQuery<T, ElementMatch<A>, C::Start> {
         self.reference.json(Body::Elements {
             path: self.path,
             bound: None,
@@ -583,12 +883,113 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> Elements<W, T, C, P> {
     }
 }
 
+/// An element-scoped predicate on an array a document field declares, `A`,
+/// before its first condition: the receiver of the array's member methods,
+/// from a method under [`FieldReference::elements`]. A condition on a member
+/// makes it a query. It has no `encrypt`, since a predicate with no
+/// condition is true of no element.
+pub struct ArrayElements<W, T, C, P, A> {
+    reference: FieldReference<W, T, C, P>,
+    path: &'static str,
+    array: PhantomData<fn() -> A>,
+}
+
+impl<W: Place, T: JsonQueries, C: ScopeInput, P, A> ArrayElements<W, T, C, P, A> {
+    /// The array at `path`, a path with a wildcard, of the field
+    /// `reference`, as the derive declared it. For generated code: the
+    /// derive checked the path when it compiled the record.
+    #[doc(hidden)]
+    pub fn new<D>(reference: FieldReference<W, T, C, P, D>, path: &'static str) -> Self {
+        Self {
+            reference: reference.untyped(),
+            path,
+            array: PhantomData,
+        }
+    }
+
+    /// The query of the first condition, as the text form makes it.
+    fn first(
+        self,
+        member: &str,
+        condition: Condition,
+    ) -> JsonFieldQuery<T, ElementMatch<A>, C::Start> {
+        Elements {
+            reference: self.reference,
+            path: path_text(self.path),
+        }
+        .first(member, condition)
+    }
+}
+
+/// One ordered member of the elements of a declared array, holding values of
+/// type `V`: what a member method of the array returns. `Q` is the
+/// predicate the member's condition goes into: the array before its first
+/// condition ([`ArrayElements`]), or the query its earlier conditions made.
+/// One of the methods below adds the condition, and each takes the
+/// member's type ([`PathValue`]).
+pub struct ElementMember<Q, V> {
+    query: Q,
+    member: &'static str,
+    value: PhantomData<fn() -> V>,
+}
+
+impl<Q, V> ElementMember<Q, V> {
+    /// The member `member`, a path relative to an element (`place`,
+    /// `address.city`), adding to `query`. For generated code: the derive
+    /// checked the member when it compiled the record.
+    #[doc(hidden)]
+    pub fn new(query: Q, member: &'static str) -> Self {
+        Self {
+            query,
+            member,
+            value: PhantomData,
+        }
+    }
+}
+
+impl<W: Place, T: JsonQueries, C: ScopeInput, P, A, V: JsonPathType>
+    ElementMember<ArrayElements<W, T, C, P, A>, V>
+{
+    /// The member lies between `low` and `high`, both included.
+    pub fn between(
+        self,
+        low: impl PathValue<V>,
+        high: impl PathValue<V>,
+    ) -> JsonFieldQuery<T, ElementMatch<A>, C::Start> {
+        self.query
+            .first(self.member, Condition::Between(held(low), held(high)))
+    }
+}
+
+impl<T, A, S, V: JsonPathType> ElementMember<JsonFieldQuery<T, ElementMatch<A>, S>, V> {
+    /// The member lies between `low` and `high`, both included.
+    pub fn between(
+        self,
+        low: impl PathValue<V>,
+        high: impl PathValue<V>,
+    ) -> JsonFieldQuery<T, ElementMatch<A>, S> {
+        self.query
+            .condition(self.member, Condition::Between(held(low), held(high)))
+    }
+}
+
 impl<T, S> JsonFieldQuery<T, ElementMatch, S> {
     /// The member lies between `low` and `high`, both included.
     pub fn between<V: JsonOrdered>(self, member: &str, low: V, high: V) -> Self {
         self.condition(member, Condition::Between(held(low), held(high)))
     }
+}
 
+impl<T, A: ElementArray, S> JsonFieldQuery<T, ElementMatch<A>, S> {
+    /// The members of the array the predicate is on, to add another
+    /// condition: `place().eq("home").and().at().gt(15)`. Every condition
+    /// holds of one element together.
+    pub fn and(self) -> A::Members<Self> {
+        A::members(self)
+    }
+}
+
+impl<T, A, S> JsonFieldQuery<T, ElementMatch<A>, S> {
     /// How many elements of each array the predicate reads: 64 unless
     /// named. A row whose array is longer is refused by the database, as a
     /// subtree read of it is.
@@ -743,11 +1144,6 @@ json_encrypt! {
         Derived::Leaf(query) => T::leaf_query(query),
         _ => Err(mismatched()),
     };
-    /// Derives the element-scoped predicate.
-    ElementMatch => ElementsQuery, |derived| match derived {
-        Derived::Elements(query) => T::elements_query(query),
-        _ => Err(mismatched()),
-    };
     /// Derives the compiled predicate.
     Predicate => PredicateQuery, |derived| match derived {
         Derived::Predicate(query) => T::predicate_query(query),
@@ -763,6 +1159,23 @@ json_encrypt! {
         Derived::Node(key) => T::token(key),
         _ => Err(mismatched()),
     };
+}
+
+impl<T: JsonQueries, A> JsonFieldQuery<T, ElementMatch<A>, Ready> {
+    /// Derives the element-scoped predicate.
+    ///
+    /// The query is checked under the field's options before any key is
+    /// requested, and its values are wiped when it is derived, refused or
+    /// dropped. The operand is derived locally: it requests no key.
+    pub fn encrypt<'a, K: 'static>(
+        mut self,
+        keyset: &'a KeysetCipher<'_, K>,
+    ) -> Pending<'a, T::ElementsQuery, K> {
+        self.derive_json(keyset).try_map(|derived| match derived {
+            Derived::Elements(query) => T::elements_query(query),
+            _ => Err(mismatched()),
+        })
+    }
 }
 
 impl<T: JsonQueries> JsonFieldQuery<T, AtPath<Between>, Ready> {
