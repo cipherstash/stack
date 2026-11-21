@@ -128,15 +128,27 @@ pub use errors::{
 /// `stack-kms` and `stack-encrypt`.
 pub use stack_auth::{diagnostic, ErrorPayload};
 
+/// The type of a credential that comes with a call
+/// ([`CredentialKeySource`]): a secret string, wiped when it is dropped and
+/// hidden from `Debug`. Re-exported so that a caller needs no direct
+/// dependency on `stack-auth` to pass one.
+pub use stack_auth::SecretToken;
+
+/// The identity of a key source that has one of its own
+/// ([`DataKeySource`] and [`IndexKeySource`]). It is stack-auth's type, for
+/// a strategy of that kind, re-exported so that code generic over the two
+/// kinds of key source needs no direct dependency on `stack-auth`.
+pub use stack_auth::OwnIdentity;
+
 // Key material
 pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
 
 // Key source abstractions (production = `StackKms`; tests = `FakeDataKeySource`)
 #[cfg(feature = "test-support")]
 pub use key_source::DeterministicSource;
+pub use key_source::{CredentialKeySource, DataKeySource, IndexKeySource};
 #[cfg(feature = "test-support")]
-pub use key_source::FakeDataKeySource;
-pub use key_source::{DataKeySource, IndexKeySource};
+pub use key_source::{FakeCredentialKeySource, FakeDataKeySource};
 
 // Key providers
 #[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
