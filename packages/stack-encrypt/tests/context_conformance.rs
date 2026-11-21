@@ -727,6 +727,15 @@ async fn a_grouped_extension_remains_one_part_when_appended() {
     assert!(record::plan(declaration.as_protected_ref()).is_err());
 }
 
+/// A record the removed plan chain sealed when a second `.extend` replaced
+/// the first: `Plan::context("users/age").with::<u32, _>(Equality)`, with
+/// `cipher.encrypt(&34u32).using(&plan).extend(1u64).extend(7u64)`, under
+/// `common::deterministic_cipher([0; 32])`, at commit ec5fd0e7f. Only `7u64`
+/// reached the seal. These are that record's leaf and equality term, as
+/// the chain wrote them; they are not written by the code under test.
+const REPLACED_LEAF: &str = "0100000000000000000000000000000000f2c2e54086e30829efc462f540035d3120004d72641c8d0692287864f195f7e003480692820f81bfac6106517248ce1a594f02355d714d08cb4a7ef900203813b660d141239b24b8f630b78a68f6267d36c94bfe";
+const REPLACED_EQUALITY: &str = "02888fdba7c9f668583e99961d61818d41c2a0d38f91646971848763240f3178";
+
 #[tokio::test]
 async fn replacement_context_records_keep_their_original_read_and_query_context() {
     let cipher = common::deterministic_cipher([0; 32]).await;
@@ -739,10 +748,33 @@ async fn replacement_context_records_keep_their_original_read_and_query_context(
             extension,
         )
     };
-    // The removed chain of an earlier release replaced its extension on each
-    // `extend`, so only the last part reached the seal. Writing with that
-    // surviving part reproduces the context of the records it stored.
-    let old: Encrypted<EqualityTerm> = keyset
+    let leaf = SealedValue::from_bytes(&unhex(REPLACED_LEAF)).expect("the frozen leaf decodes");
+    let stored = EqualityTerm::try_from(unhex(REPLACED_EQUALITY).as_slice())
+        .expect("the frozen term decodes");
+
+    // A query with both parts appends them now, so it succeeds and misses
+    // the old rows.
+    let current = query(DeclaredContext::from(1u64).with(7u64)).await.unwrap();
+    assert_ne!(
+        current, stored,
+        "the changed query succeeds but silently misses old rows"
+    );
+    // A query with the last part alone finds them, and the record opens
+    // under that context.
+    let compatible = query(DeclaredContext::from(7u64)).await.unwrap();
+    assert_eq!(compatible, stored);
+    let value: u32 = cipher
+        .run_decryption(open(
+            CipherText::Single(leaf),
+            DeclaredContext::from(7u64).under(label()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(value, 34);
+
+    // Writing with the last part alone reproduces the stored term today, so
+    // a caller can keep adding rows that old queries find.
+    let rewritten: Encrypted<EqualityTerm> = keyset
         .run(
             indexed::<u32, _, Borrowed, _>(Equality).under(label()),
             &34u32,
@@ -750,19 +782,5 @@ async fn replacement_context_records_keep_their_original_read_and_query_context(
         )
         .await
         .unwrap();
-    let current = query(DeclaredContext::from(1u64).with(7u64)).await.unwrap();
-    assert_ne!(
-        current, old.terms,
-        "the changed query succeeds but silently misses old rows"
-    );
-    let compatible = query(DeclaredContext::from(7u64)).await.unwrap();
-    assert_eq!(compatible, old.terms);
-    let value: u32 = cipher
-        .run_decryption(open(
-            old.ciphertext,
-            DeclaredContext::from(7u64).under(label()),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(value, 34);
+    assert_eq!(rewritten.terms, stored);
 }
