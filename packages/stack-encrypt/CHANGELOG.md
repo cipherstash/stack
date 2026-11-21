@@ -335,6 +335,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   these sets, a plan that is data still does, and a field reference has no method
   for an operator that two indexes answer. Used directly as a target,
   such a set was accepted before.
+  - A tuple of terms now has two or three terms. There are three
+    families of operators (equality, match and the orderings), and
+    `OreTerm`, `OpeTerm` and `OreBlockTerm` all answer the orderings, so
+    every tuple of four or five terms holds two that answer one operator.
+    `TermSet`, `Answers` and `LabelledTarget` are no longer implemented
+    for those tuples, so a field such as `Encrypted<(EqualityTerm,
+    MatchTerms, OreTerm<String>, OpeTerm<String>)>` is a compile error
+    rather than a refusal every time it is encrypted. To migrate, keep
+    one ordering term. A tuple of four or five indexes passed to
+    `indexed` is unchanged.
 
 - **A data plan field that names an EQL type takes a scope and a
   binding** (#1658). `dynamic::TargetResolver` now receives them:

@@ -748,17 +748,11 @@ mod given_encrypted_terms_as_a_target {
     fn the_terms_name_their_indexes() {
         assert_eq!(
             Indexes::<String>::specs(
-                &<(
-                    MatchTerms<Words>,
-                    OpeTerm<String>,
-                    OreTerm<String>,
-                    EqualityTerm
-                ) as TermSet<String>>::INDEXES
+                &<(MatchTerms<Words>, OpeTerm<String>, EqualityTerm) as TermSet<String>>::INDEXES
             ),
             [
                 IndexSpec::Match(Words::options()),
                 IndexSpec::Ope,
-                IndexSpec::Ore,
                 IndexSpec::Equality
             ]
         );

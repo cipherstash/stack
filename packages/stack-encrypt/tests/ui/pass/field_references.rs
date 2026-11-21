@@ -4,7 +4,7 @@
 //! last answers equality, a nullable field with a query type, and a field reference
 //! reached through a record field.
 #![deny(warnings)]
-use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::EncryptTarget;
 use stack_encrypt::{Encrypted, StackCipherText};
 use zeroize::Zeroize;
@@ -58,7 +58,7 @@ pub struct Note {
 #[derive(EncryptTarget)]
 #[stash(struct = Note, scope = "notes")]
 pub struct EncryptedNote {
-    body: Encrypted<(MatchTerms, OreTerm<String>, OpeTerm<String>, EqualityTerm)>,
+    body: Encrypted<(MatchTerms, OreTerm<String>, EqualityTerm)>,
     #[stash(query = String)]
     title: Option<Encrypted<EqualityTerm>>,
     blob: StackCipherText,

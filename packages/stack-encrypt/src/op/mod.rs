@@ -1109,8 +1109,10 @@ impl Answer for No {}
 
 /// The one term of a tuple of terms that answers an operator, given the
 /// tuple of their answers ([`OperatorAnswer`]). Implemented for each tuple
-/// of two to five terms and each list of answers with exactly one
-/// [`Yes`], so a tuple where none answers, or two do, has no impl.
+/// of two or three terms and each list of answers with exactly one
+/// [`Yes`], so a tuple where none answers, or two do, has no impl. A tuple
+/// of terms has at most three, as [`TermSet`](crate::target::TermSet)
+/// says.
 #[diagnostic::on_unimplemented(
     message = "the terms `{Self}` do not answer the operator through exactly one term",
     label = "their answers are `{Answers}`",
@@ -1156,17 +1158,6 @@ macro_rules! answered_by {
 answered_by! {
     (A, B): (Yes, No) => A, (No, Yes) => B;
     (A, B, C): (Yes, No, No) => A, (No, Yes, No) => B, (No, No, Yes) => C;
-    (A, B, C, D):
-        (Yes, No, No, No) => A,
-        (No, Yes, No, No) => B,
-        (No, No, Yes, No) => C,
-        (No, No, No, Yes) => D;
-    (A, B, C, D, E):
-        (Yes, No, No, No, No) => A,
-        (No, Yes, No, No, No) => B,
-        (No, No, Yes, No, No) => C,
-        (No, No, No, Yes, No) => D,
-        (No, No, No, No, Yes) => E;
 }
 
 /// A tuple of terms answers `Op` through the one term that answers it
@@ -1199,8 +1190,6 @@ mod term_tuples {
     tuple_answers! {
         (A, B);
         (A, B, C);
-        (A, B, C, D);
-        (A, B, C, D, E);
     }
 }
 

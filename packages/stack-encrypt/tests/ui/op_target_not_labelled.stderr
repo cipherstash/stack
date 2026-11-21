@@ -13,12 +13,12 @@ help: the trait `LabelledTarget` is not implemented for `ByTenant`
    = help: the following other types implement trait `LabelledTarget`:
              (A, B)
              (A, B, C)
-             (A, B, C, D)
-             (A, B, C, D, E)
              (CipherText<SealedValue, PassthroughFrame>, T)
              Encrypted<T>
              EqualityTerm
              JsonDocument
+             MatchTerms<O>
+             OpeTerm<S>
            and $N others
 note: required by a bound in `FieldReference::<W, T, C, P>::eq`
   --> src/field_reference.rs

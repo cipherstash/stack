@@ -736,9 +736,9 @@ fn every_target_declares_the_indexes_its_terms_answer() {
     );
 }
 
-/// Five terms over text: equality, two match terms under different options,
-/// ORE and OPE.
-type FiveTerms = (EqualityTerm, M, OreTerm<String>, OpeTerm<String>, W);
+/// Three terms over text: equality, and two match terms under different
+/// options.
+type TwoMatches = (EqualityTerm, M, W);
 
 /// A record whose one field names the equality index twice.
 #[derive(EncryptTarget)]
@@ -758,11 +758,11 @@ async fn a_target_that_names_an_index_twice_is_refused_before_any_key_request() 
     let keyset = cipher.default_keyset();
     let context = || nonempty!("t").with("v");
 
-    let five: Result<Encrypted<FiveTerms>, _> = String::from("Hello World")
+    let two_matches: Result<Encrypted<TwoMatches>, _> = String::from("Hello World")
         .encrypt_into_with_context(&keyset, context())
         .await;
     assert_eq!(
-        plan_error(five),
+        plan_error(two_matches),
         PlanError::DuplicateIndex {
             at: "the value".into(),
             index: "match"

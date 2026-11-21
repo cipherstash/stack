@@ -477,7 +477,7 @@ impl Index<serde_json::Value> for Json {
 }
 
 /// A non-empty set of indexes over `S`: one [`Index`], or a tuple of two to
-/// four of them.
+/// five of them.
 ///
 /// Not implemented for `()`. An indexed field with no index would be a
 /// ciphertext-only field that says otherwise; that field is [`ciphertext`]
@@ -772,7 +772,7 @@ where
 }
 
 /// The terms of a set of indexes, named from the terms' side: one term type,
-/// or a tuple of two to five, each naming the index that derives it. This is
+/// or a tuple of two or three, each naming the index that derives it. This is
 /// what lets [`Encrypted<Terms>`] be a target with no value in hand: its type
 /// says which indexes to run.
 ///
@@ -782,6 +782,11 @@ where
 ///
 /// A match term names its configuration in its type (`MatchTerms<O>`), so
 /// the index it names is `Match<O>`, the configuration included.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a set of terms over `{S}`",
+    label = "expected one term, or a tuple of two or three terms over `{S}`",
+    note = "a value holds at most one term for each family of operators (equality, match and the orderings), so a tuple of terms has at most three"
+)]
 pub trait TermSet<S>: Sized + 'static {
     /// The indexes that derive these terms.
     type Indexes: Indexes<S, Terms = Self>;
@@ -820,6 +825,11 @@ where
 
 /// A tuple of terms names the tuple of their indexes. Each element must be
 /// one term (its set is one index), as a tuple of indexes holds indexes.
+///
+/// A tuple has at most three terms. A value holds at most one term for each
+/// family of operators: equality, match, and the orderings. Four terms
+/// would include two that answer one family, which [`check_indexes`]
+/// refuses every time, so there is no impl for four or five.
 macro_rules! tuple_of_terms {
     ($(($($name:ident),+),)+) => {$(
         impl<S, $($name),+> TermSet<S> for ($($name,)+)
@@ -837,8 +847,6 @@ mod term_tuples {
     tuple_of_terms! {
         (A, B),
         (A, B, C),
-        (A, B, C, D),
-        (A, B, C, D, E),
     }
 }
 

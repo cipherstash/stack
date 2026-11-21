@@ -14,10 +14,6 @@ error[E0277]: the terms `(EqualityTerm, MatchTerms)` do not answer the operator 
              `(A, B, C)` implements `AnsweredBy<(No, No, Yes)>`
              `(A, B, C)` implements `AnsweredBy<(No, Yes, No)>`
              `(A, B, C)` implements `AnsweredBy<(Yes, No, No)>`
-             `(A, B, C, D)` implements `AnsweredBy<(No, No, No, Yes)>`
-             `(A, B, C, D)` implements `AnsweredBy<(No, No, Yes, No)>`
-             `(A, B, C, D)` implements `AnsweredBy<(No, Yes, No, No)>`
-           and $N others
    = note: required for `(EqualityTerm, MatchTerms)` to implement `Answers<stack_encrypt::op::Gt, _>`
    = note: 1 redundant requirement hidden
    = note: required for `Encrypted<(EqualityTerm, MatchTerms)>` to implement `Answers<stack_encrypt::op::Gt, _>`
@@ -56,10 +52,6 @@ error[E0277]: the terms `(OreTerm<u32>, OpeTerm<u32>)` do not answer the operato
              `(A, B, C)` implements `AnsweredBy<(No, No, Yes)>`
              `(A, B, C)` implements `AnsweredBy<(No, Yes, No)>`
              `(A, B, C)` implements `AnsweredBy<(Yes, No, No)>`
-             `(A, B, C, D)` implements `AnsweredBy<(No, No, No, Yes)>`
-             `(A, B, C, D)` implements `AnsweredBy<(No, No, Yes, No)>`
-             `(A, B, C, D)` implements `AnsweredBy<(No, Yes, No, No)>`
-           and $N others
    = note: required for `(OreTerm<u32>, OpeTerm<u32>)` to implement `Answers<stack_encrypt::op::Lt, _>`
    = note: 1 redundant requirement hidden
    = note: required for `Encrypted<(OreTerm<u32>, OpeTerm<u32>)>` to implement `Answers<stack_encrypt::op::Lt, _>`
