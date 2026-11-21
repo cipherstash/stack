@@ -250,4 +250,60 @@ mod tests {
         assert_eq!(raw_len(br#"a\"b\\""#), 6);
         assert_eq!(raw_len(b"ab"), 2, "an unterminated string runs to the end");
     }
+
+    /// Each escape decodes to the character JSON gives it, a surrogate
+    /// pair to its one code point, and the boundaries refuse what they
+    /// should: a control character, a lone or reversed surrogate, a short
+    /// or non-hex `\u`.
+    #[test]
+    fn each_escape_decodes_and_each_boundary_holds() {
+        let decoded = |raw: &str| {
+            let mut rest = raw.as_bytes();
+            let mut out = String::new();
+            decode(&mut rest, &mut out).map(|()| (out, rest.len()))
+        };
+        for (raw, expected) in [
+            (r#"\"""#, "\""),
+            (r#"\\""#, "\\"),
+            (r#"\/""#, "/"),
+            (r#"\b""#, "\u{8}"),
+            (r#"\f""#, "\u{c}"),
+            (r#"\n""#, "\n"),
+            (r#"\r""#, "\r"),
+            (r#"\t""#, "\t"),
+            (r#"\u0041""#, "A"),
+            (r#"\u00e9""#, "\u{e9}"),
+            (r#"\u00E9""#, "\u{e9}"),
+            (r#"\uffff""#, "\u{ffff}"),
+            (r#"\ud83d\ude00""#, "\u{1f600}"),
+            (r#"\ud800\udc00""#, "\u{10000}"),
+            (r#"\udbff\udfff""#, "\u{10ffff}"),
+            ("\u{20}~\"", " ~"),
+        ] {
+            assert_eq!(decoded(raw), Ok((expected.to_owned(), 0)), "{raw:?}");
+        }
+        for raw in [
+            "\u{1f}\"",
+            r#"\ud83d""#,
+            r#"\ud83d\u0041""#,
+            r#"\ud83d\ue000""#,
+            r#"\udc00""#,
+            r#"\u12""#,
+            r#"\u12g4""#,
+            r#"\x""#,
+            r#"\"#,
+        ] {
+            assert_eq!(decoded(raw).ok(), None, "{raw:?}");
+        }
+        assert_eq!(decoded(r#"ab" tail"#), Ok(("ab".to_owned(), 5)));
+    }
+
+    #[test]
+    fn an_escaped_backslash_does_not_escape_the_quote_after_it() {
+        assert_eq!(raw_len(br#"a\\"b"#), 3);
+        assert_eq!(raw_len(br#"a\\\"b""#), 6);
+        assert_eq!(string_end(br#""a\\" rest"#), Some(4));
+        assert_eq!(string_end(b"\""), None, "an opening quote alone");
+        assert_eq!(string_end(b"\"\""), Some(1));
+    }
 }

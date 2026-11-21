@@ -477,6 +477,23 @@ mod tests {
         assert!(!path("$").names_a_position());
     }
 
+    /// The payload stack-encrypt reports a refusal with: the reason and
+    /// the offset, and nothing of the text.
+    #[cfg(feature = "diagnostics")]
+    #[test]
+    fn a_refusal_reports_its_reason_and_offset_as_its_payload() {
+        use stack_auth::ErrorPayload;
+        let payload = JsonPath::parse("$.secret[x]").unwrap_err().payload();
+        assert_eq!(
+            payload.get("reason"),
+            Some(&serde_json::json!(
+                "expected `*`, a quoted name or a position after `[`"
+            ))
+        );
+        assert_eq!(payload.get("at"), Some(&serde_json::json!(9)));
+        assert_eq!(payload.len(), 2, "{payload:?}");
+    }
+
     /// A refusal names its reason and offset, never the text: a key in it
     /// can be customer data.
     #[test]

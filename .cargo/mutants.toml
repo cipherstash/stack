@@ -150,7 +150,7 @@ exclude_re = [
   # bits with a low nibble below 16: the bits never overlap, so `^` is `|`.
   'stack-encrypt/src/json/mod\.rs:\d+:\d+: replace \| with \^ in unhex$',
   # `JsonPath::root` is `Self::default()`.
-  'stack-encrypt/src/json/path\.rs:\d+:\d+: replace JsonPath::root -> Self with Default::default\(\)$',
+  'stack-encrypt-jsonpath/src/path\.rs:\d+:\d+: replace JsonPath::root -> Self with Default::default\(\)$',
   # A document always has a root, so its terms are never empty: `false` is
   # the value `is_empty` returns. The `true` replacement is still caught.
   'stack-encrypt/src/json/derive\.rs:\d+:\d+: replace JsonTerms::is_empty -> bool with false$',
