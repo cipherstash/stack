@@ -47,7 +47,6 @@
 //! ```
 //! use serde_json::json;
 //! use stack_encrypt::json::{JsonDocument, JsonPlaintext};
-//! use stack_encrypt::kms::FakeDataKeySource;
 //! use stack_encrypt::target::EncryptTarget;
 //! use stack_encrypt::{EncryptInto, StackCipher};
 //! use zeroize::Zeroize;
@@ -65,7 +64,10 @@
 //! }
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let stored: EncryptedCustomer = Customer {
 //!     profile: json!({"name": "Ada", "age": 35, "visits": [{"place": "home", "at": 15}]}).into(),
