@@ -174,7 +174,6 @@ pub(crate) use derive::MAX_DEPTH;
 pub(crate) use derive::{seal_pending, terms_pending};
 pub(crate) use plain::PlainJson;
 pub(crate) use shuffle::Randomness;
-pub(crate) use stack_encrypt_jsonpath::json_string::{string_end, string_text};
 
 /// A sixteen-byte tag: a selector or a token.
 pub type Tag = [u8; 16];

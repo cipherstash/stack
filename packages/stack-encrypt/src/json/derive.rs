@@ -60,7 +60,11 @@ const ENTRY_AAD_DOMAIN: &[u8] = b"stack-encrypt/json/entry/v1";
 /// where the value is lost, to the write, where the caller still holds it.
 /// The bound is the same under either root option, so the option never
 /// changes which documents the index accepts.
-pub(crate) const MAX_DEPTH: usize = 127;
+///
+/// The value is the grammar crate's, so a predicate's paths, which
+/// `predicate!` reads at compile time with that crate, are read to the
+/// same depth.
+pub(crate) const MAX_DEPTH: usize = stack_encrypt_jsonpath::MAX_DEPTH;
 
 /// The largest number the index gives an array element's position, a
 /// node's ordinal or a node's child count: PostgreSQL's `integer`, which is

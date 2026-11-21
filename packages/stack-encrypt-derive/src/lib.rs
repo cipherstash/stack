@@ -325,6 +325,7 @@ mod attrs;
 mod json_paths;
 mod owned_decrypt;
 mod owned_encrypt;
+mod predicate;
 mod shape;
 
 /// Derive the owned `EncryptTarget` declaration for a record struct. See
@@ -355,4 +356,39 @@ pub fn derive_decrypt_source(input: TokenStream) -> TokenStream {
     owned_decrypt::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+/// `stack_encrypt::predicate!`, given the path `stack-encrypt` is reached by:
+/// `predicate_with_crate!($crate; reference, "text", variables…)`. Called
+/// by that macro, which passes its `$crate`, and by nothing else.
+#[doc(hidden)]
+#[proc_macro]
+pub fn predicate_with_crate(input: TokenStream) -> TokenStream {
+    let location = predicate_location(&input);
+    predicate::expand(input.into(), location)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// The line and column of the predicate literal, the second argument after
+/// the crate path: what makes the names of an expansion's checks unique in
+/// the crate, so the compiler names one by its name alone. `(0, 0)` when
+/// the literal is not found, which costs only that.
+fn predicate_location(input: &TokenStream) -> (usize, usize) {
+    use proc_macro::TokenTree;
+    let mut after_crate = false;
+    let mut commas = 0;
+    for token in input.clone() {
+        match token {
+            TokenTree::Punct(punct) if !after_crate && punct.as_char() == ';' => {
+                after_crate = true;
+            }
+            TokenTree::Punct(punct) if after_crate && punct.as_char() == ',' => commas += 1,
+            TokenTree::Literal(literal) if after_crate && commas == 1 => {
+                return (literal.span().line(), literal.span().column());
+            }
+            _ => {}
+        }
+    }
+    (0, 0)
 }
