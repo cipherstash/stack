@@ -64,7 +64,7 @@ func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(cph.keyset, ""))
+	opts, err := cph.dataKeyCall().marshal()
 	if err != nil {
 		return nil, err
 	}

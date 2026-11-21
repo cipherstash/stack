@@ -237,6 +237,104 @@ cannot use different ones.
 client; `Client.Keyset(encrypt.KeysetName(..))` or `Client.Keyset(id)` any
 other, loaded on first use. `Cipher.KeysetID(ctx)` resolves it.
 
+### Audit metadata
+
+ZeroKMS logs every data-key request with the identity that made it. To
+provide additional context for that log, give the cipher audit metadata:
+
+```go
+metadata := encrypt.NewAuditMetadata().
+	Text("purpose", "list issues").
+	Text("request_id", requestID)
+people, err := users.Decrypt(ctx, cipher.Audit(metadata), rows)
+```
+
+Every `Encrypt` and `Decrypt` through that cipher sends the facts to
+ZeroKMS. So does every read of an encrypted JSON document. Audit metadata is
+optional: a cipher without it sends none.
+
+`Audit` adds to the facts the cipher has. A fact replaces one that has the
+same key. So a program can state its service once, and add a request ID for
+each request:
+
+```go
+service := cipher.Audit(encrypt.NewAuditMetadata().Text("service", "billing"))
+request := service.Audit(encrypt.NewAuditMetadata().Text("request_id", requestID))
+```
+
+To decrypt rows from any keyset, with metadata, pass `client.Audit(..)`
+where a `Decrypter` is taken:
+
+```go
+metadata := encrypt.NewAuditMetadata().Text("purpose", "export")
+people, err := users.Decrypt(ctx, client.Audit(metadata), rows)
+```
+
+> **Take care**
+>
+> - ZeroKMS does not verify the facts. No key depends on them, so do not
+>   use them for access control.
+> - ZeroKMS writes the facts to its logs. Do not send plaintext, anything
+>   derived from plaintext, or secrets. An IP address or a user agent is
+>   personal data. The SDK sends only what you pass.
+
+A decrypt does not need the facts the encrypt sent. A decrypt can send
+other facts, or none.
+
+A query sends no audit metadata. A query term is derived from the index key
+of the keyset, so a query asks ZeroKMS for no data key. A query through a
+cipher that has metadata still works.
+
+#### The values of a fact
+
+Each method adds one fact, and its parameter type is the type of the value.
+So the compiler refuses a value of another type.
+
+| Method | Value |
+|---|---|
+| `Text(key, value)` | a `string` |
+| `Bool(key, value)` | a `bool` |
+| `Int(key, value)` | an `int` |
+| `Int64(key, value)` | an `int64` |
+| `Float(key, value)` | a `float64` |
+| `Time(key, value)` | a `time.Time` |
+| `Null(key)` | no value, sent as null |
+| `TextList(key, values...)` | a list of `string` values |
+| `List(key, list)` | an `AuditList`, for a list of other values |
+| `Map(key, metadata)` | a nested `AuditMetadata` |
+
+Convert a value of another type yourself. For a named type such as
+`type ID string`, write `string(id)`. For a `[]byte`, send text, such as its
+hex form. ZeroKMS reads an integer as an `int64`, so there is no method for a
+`uint64`: convert it, or send it as text.
+
+Each method returns new metadata and leaves its own unchanged. A later fact
+replaces an earlier one that has the same key.
+
+ZeroKMS records each value as you give it, with two exceptions:
+
+- A time is sent as RFC 3339 text in UTC, such as `"2026-11-20T10:00:00Z"`.
+  The text keeps the instant to the nanosecond, and not the zone that the
+  time was in.
+- A float that is not finite is sent as null.
+
+The compiler cannot check three things, because they depend on the value.
+The first call through the cipher refuses each one with `ErrEncoding`:
+
+- a key or a text that is not valid UTF-8;
+- a time outside the years 0 to 9999, because RFC 3339 has no form for it;
+- maps and lists nested more than 32 levels deep.
+
+Printing an `AuditMetadata` shows its keys and never a value.
+
+`go test` compiles the examples in this section: see `ExampleCipher_Audit`
+and `ExampleClient_Audit`. The example program in `encrypt/example` runs a
+decrypt with audit metadata.
+
+In the Rust crate this is `AuditMetadata::new().with(key, value)` and
+`.audit(..)`. In the ZeroKMS protocol it is the unverified context of a key
+request.
+
 ## Reading
 
 `users.Decrypt` takes a `Decrypter`: the `*Cipher`, which refuses a row

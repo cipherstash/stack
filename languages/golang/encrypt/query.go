@@ -145,7 +145,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	if err != nil {
 		return QueryTerm{}, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(cph.keyset, ""))
+	opts, err := cph.termCall().marshal()
 	if err != nil {
 		return QueryTerm{}, err
 	}

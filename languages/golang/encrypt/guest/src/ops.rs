@@ -52,8 +52,8 @@ use stack_encrypt::target::IndexSpec;
 use stack_encrypt::CipherRef;
 use stack_encrypt::ErrorPayload;
 use stack_encrypt::{
-    AsProtectedRef, CipherText, Controlled, KeysetCipher, Label, Node, Protected, ProtectedRef,
-    SealedValue, StackCipherText,
+    AsProtectedRef, AuditMetadata, CipherText, Controlled, KeysetCipher, Label, Node, Protected,
+    ProtectedRef, SealedValue, StackCipherText,
 };
 use stack_kms::{DataKeySource, IndexKeySource};
 
@@ -181,10 +181,15 @@ fn parse_term(value: Frame<'_>, kind: u32) -> Result<IndexSpec, u32> {
 /// "one call per 500" past it. Everything else about the shape — the plan
 /// grammar, the one-context rule, why terms ride as passthrough — is
 /// [`dynamic::record`]'s to state.
+///
+/// `audit` is the audit metadata from the options object's `audit` key
+/// (see [`crate::options`]). The engine sends it with every
+/// `generate_keys` request of the call. Empty metadata sends nothing.
 pub async fn encrypt_record<K>(
     cipher: &KeysetCipher<'_, K>,
     source: &Bytes,
     plan: &Bytes,
+    audit: AuditMetadata,
 ) -> Result<Vec<u8>, u32>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
@@ -193,6 +198,7 @@ where
     let tree =
         dynamic::record::encrypt_with(cipher, checked_plaintext(source)?, &plan, &resolver())
             .map_err(|e| fail_dynamic(&e))?
+            .audit(audit)
             .await
             .map_err(|e| fail_error(&e))?;
     encode_tree(tree)
@@ -215,11 +221,16 @@ where
 /// per 500 keyed leaves and, through a client reference, per keyset the leaves
 /// were sealed under. The output buffer contains plaintext — the ABI layer's
 /// ownership rules govern its wiping.
+///
+/// `audit` is the audit metadata from the options object's `audit` key
+/// (see [`crate::options`]). The engine sends it with every
+/// `retrieve_keys` request of the call. Empty metadata sends nothing.
 pub async fn decrypt_record<'a, K>(
     scope: impl Into<CipherRef<'a, K>>,
     record: &[u8],
     plan: &Bytes,
     expected: Option<Label>,
+    audit: AuditMetadata,
 ) -> Result<Vec<u8>, u32>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
@@ -228,6 +239,7 @@ where
     let value =
         dynamic::record::decrypt_with(scope, decode_tree(record)?, &plan, expected, &resolver())
             .map_err(|e| fail_dynamic(&e))?
+            .audit(audit)
             .await
             .map_err(|e| fail_error(&e))?;
     encode_frame(value)
@@ -295,13 +307,16 @@ where
 /// request under `keyset`, which the host names as it named it to prepare
 /// the read, and the rows open through that keyset only: a document sealed
 /// under another is refused before any key is retrieved. One batched key
-/// request for every row.
+/// request for every row, sent with `audit`: the audit metadata from the
+/// options object's `audit` key (see [`crate::options`]). Empty metadata
+/// sends nothing.
 pub async fn json_open<K>(
     keyset: &KeysetCipher<'_, K>,
     rows: &Bytes,
     plan: &Bytes,
     field: &[u8],
     request: &Bytes,
+    audit: AuditMetadata,
 ) -> Result<Vec<u8>, u32>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
@@ -316,6 +331,7 @@ where
         &resolver(),
     )
     .map_err(|e| fail_dynamic(&e))?
+    .audit(audit)
     .await
     .map_err(|e| fail_error(&e))?;
     encode_frame(opened)
@@ -949,8 +965,13 @@ mod tests {
             ("notes", text("likes cats")),
         ]));
         validate::record(&protect(&source), &protect(&plan)).expect("the source fits");
-        let sealed =
-            block_on(encrypt_record(&keyset, &protect(&source), &protect(&plan))).expect("seals");
+        let sealed = block_on(encrypt_record(
+            &keyset,
+            &protect(&source),
+            &protect(&plan),
+            AuditMetadata::new(),
+        ))
+        .expect("seals");
 
         // The stored tree carries the EQL JSON under "eql": the v4 envelope
         // with the column as its i and a stack-encrypt ciphertext.
@@ -981,8 +1002,14 @@ mod tests {
 
         // Opens back through the EQL type's own decryption.
         validate::record_tree(&sealed, &protect(&plan), None).expect("the tree fits");
-        let opened =
-            block_on(decrypt_record(&cipher, &sealed, &protect(&plan), None)).expect("opens");
+        let opened = block_on(decrypt_record(
+            &cipher,
+            &sealed,
+            &protect(&plan),
+            None,
+            AuditMetadata::new(),
+        ))
+        .expect("opens");
         let Tree::Object(values) = Tree::from_frame(&opened).expect("a value") else {
             panic!("an object")
         };
