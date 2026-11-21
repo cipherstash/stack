@@ -12,7 +12,10 @@ use crate::oidc_refresher::{JwtDigest, JwtRefresher, OidcFederation, OidcProvide
 use crate::token_store::{NoStore, TokenStore};
 use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
-use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken, Token};
+use crate::{
+    ensure_trailing_slash, AuthError, AuthStrategy, CredentialAuthStrategy, SecretToken,
+    ServiceToken, Token,
+};
 use cache::JwtCache;
 
 /// How many distinct provider JWTs a strategy keeps a CTS token for unless
@@ -34,14 +37,34 @@ pub(crate) const DEFAULT_CACHE_CAPACITY: usize = 1024;
 /// strategy helps encrypt under a lock context is bound to the identity in
 /// *that caller's* JWT, not to whichever user federated first.
 ///
+/// A server whose request handlers already hold the JWT needs no provider.
+/// It builds the strategy with
+/// [`credential_per_call`](OidcFederationStrategy::credential_per_call), and
+/// hands the JWT in with each call:
+/// [`CredentialAuthStrategy::get_token_with_credential`], which Stack KMS
+/// and Stack Encrypt use to make a key request with one caller's credential.
+///
+/// A strategy is built one way or the other, and has one source for the
+/// JWT of a call:
+///
+/// - A strategy with a provider asks the provider. It has no method that
+///   takes a JWT from the caller, so the JWT of a call is never one of two.
+/// - A strategy built with `credential_per_call` takes the JWT with the
+///   call. It has no `get_token`, so a call cannot forget its JWT.
+///
+/// This type holds that rule. Code built on it, such as Stack KMS and
+/// Stack Encrypt, gets the rule from the two traits and adds no check of
+/// its own.
+///
 /// How the provider names the caller is the host's affair. In Rust it reads
 /// the caller from whatever carries it (a task-local, a request extension);
-/// the Go binding passes the provider the `ctx` of the `Token` call; the
-/// JavaScript wrappers call `getJwt` on their own side of the boundary, in
-/// the `getToken()` caller's async context, and hand the JWT to
-/// [`get_token_for_jwt`](Self::get_token_for_jwt) — because a callback run
-/// through a napi `ThreadsafeFunction` would execute in the async context of
-/// the call that created the strategy instead, and lose the request.
+/// the Go binding passes the provider the `ctx` of the `Token` call. The
+/// JavaScript bindings have no provider on the Rust side: they build the
+/// strategy with `credential_per_call`, call `getJwt` on their own side of
+/// the boundary, in the `getToken()` caller's async context, and hand the
+/// JWT in with the call. A callback run through a napi `ThreadsafeFunction`
+/// would execute in the async context of the call that created the strategy
+/// instead, and lose the request.
 ///
 /// The cache is keyed on the whole JWT, never on claims read from it (the
 /// client cannot verify a JWT, so a forged one naming another user's `sub`
@@ -98,6 +121,25 @@ pub(crate) const DEFAULT_CACHE_CAPACITY: usize = 1024;
 ///     Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
 /// });
 /// let strategy = OidcFederationStrategy::new(crn, provider).unwrap();
+/// ```
+///
+/// A strategy with a provider takes no JWT from the caller. This does not
+/// compile:
+///
+/// ```compile_fail,E0599
+/// use stack_auth::{
+///     AuthError, CredentialAuthStrategy, OidcFederationStrategy, OidcProviderFn, SecretToken,
+/// };
+/// use cts_common::Crn;
+///
+/// let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap();
+/// let provider = OidcProviderFn::new(|| async {
+///     Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
+/// });
+/// let strategy = OidcFederationStrategy::new(crn, provider).unwrap();
+///
+/// let jwt = SecretToken::new("another.users.jwt".to_string());
+/// let token = (&strategy).get_token_with_credential(jwt);
 /// ```
 pub struct OidcFederationStrategy<P, S = NoStore> {
     provider: P,
@@ -173,7 +215,10 @@ impl<S: TokenStore> TokenStore for BoundStore<S> {
     }
 }
 
-impl<P: OidcProvider> OidcFederationStrategy<P> {
+// No bound on `P`: these constructors also build a strategy with no provider
+// ([`CredentialPerCall`](crate::CredentialPerCall)). What a strategy can do
+// follows from `P`, in the two trait impls below.
+impl<P> OidcFederationStrategy<P> {
     /// Create a new `OidcFederationStrategy` for the given workspace CRN and
     /// OIDC provider.
     ///
@@ -294,6 +339,28 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
             cache_capacity: DEFAULT_CACHE_CAPACITY,
             clock: system_clock(),
         }
+    }
+}
+
+impl OidcFederationStrategy<crate::CredentialPerCall> {
+    /// Create an `OidcFederationStrategy` that takes its JWT with each
+    /// call, and has no provider callback.
+    ///
+    /// Use this constructor when the caller holds the JWT, as a request
+    /// handler holds the JWT of the user who signed in. Each call hands
+    /// its JWT in
+    /// ([`CredentialAuthStrategy::get_token_with_credential`](crate::CredentialAuthStrategy::get_token_with_credential)).
+    /// The strategy has no [`get_token`](AuthStrategy::get_token), so a
+    /// call that brings no JWT does not compile.
+    ///
+    /// The workspace CRN is used as [`new`](Self::new) uses it. This is
+    /// `new` with [`CredentialPerCall`](crate::CredentialPerCall) where the
+    /// provider would be, and that type has an example. For the other
+    /// constructors, such as
+    /// [`with_detected_workspace`](Self::with_detected_workspace), pass
+    /// `CredentialPerCall` as the provider.
+    pub fn credential_per_call(workspace_crn: Crn) -> Result<Self, AuthError> {
+        Self::new(workspace_crn, crate::CredentialPerCall)
     }
 }
 
@@ -448,18 +515,16 @@ impl<P, S: TokenStore> Drop for InFlight<'_, P, S> {
 impl<P, S: TokenStore> OidcFederationStrategy<P, S> {
     /// The CTS token for `jwt`: the one cached for it, or a fresh exchange.
     ///
-    /// This is [`get_token`](AuthStrategy::get_token) without the provider
-    /// call — the entry for a caller that already holds the user's JWT. The
-    /// language bindings use it so the JWT can be fetched on the caller's own
-    /// side of the boundary: a Node callback run through a napi
-    /// `ThreadsafeFunction` executes in the async context of the call that
-    /// created the strategy, not of the `getToken()` caller, so a `getJwt`
-    /// that reads the request from `AsyncLocalStorage` cannot run there; run
-    /// from the JavaScript wrapper and handed in here, it can. Both entries
-    /// share one cache: the same JWT reaches the same engine either way.
+    /// Private, so that each kind of strategy has one source for `jwt`.
+    /// A strategy with a provider reaches this from
+    /// [`get_token`](AuthStrategy::get_token), with the JWT its provider
+    /// returned. A strategy with no provider reaches it from
+    /// [`get_token_with_credential`](CredentialAuthStrategy::get_token_with_credential),
+    /// with the JWT of the call. No caller can hand a JWT to a strategy
+    /// that has a provider.
     ///
     /// The token is checked against the strategy's workspace like every other.
-    pub async fn get_token_for_jwt(&self, jwt: SecretToken) -> Result<ServiceToken, AuthError> {
+    async fn token_for_jwt(&self, jwt: SecretToken) -> Result<ServiceToken, AuthError> {
         let engine = self.engine_for(jwt)?;
         let in_flight = InFlight {
             strategy: self,
@@ -486,7 +551,32 @@ impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P,
         // Ask who this call is for before anything else: the JWT is the key
         // to the right cached token, and only its owner may receive it.
         let jwt = self.provider.fetch().await?;
-        self.get_token_for_jwt(jwt).await
+        self.token_for_jwt(jwt).await
+    }
+}
+
+/// A strategy with no provider takes its JWT with each call. A strategy with
+/// a provider is an [`AuthStrategy`], which has the other kind already.
+impl<S: TokenStore> crate::StrategyKind for &OidcFederationStrategy<crate::CredentialPerCall, S> {
+    type Kind = crate::CredentialPerCall;
+}
+
+/// The credential is a provider JWT, and it comes with the call. This is the
+/// cache and the exchange that [`get_token`](AuthStrategy::get_token) uses
+/// for a strategy with a provider, for the JWT handed in.
+///
+/// Only a strategy with no provider has it, and it is the only way to hand
+/// a JWT to a strategy. A strategy with a provider would otherwise have two
+/// sources for one call's JWT, and a call that forgot its own would be made
+/// with the provider's.
+impl<S: TokenStore> CredentialAuthStrategy
+    for &OidcFederationStrategy<crate::CredentialPerCall, S>
+{
+    async fn get_token_with_credential(
+        self,
+        credential: SecretToken,
+    ) -> Result<ServiceToken, AuthError> {
+        self.token_for_jwt(credential).await
     }
 }
 
@@ -603,7 +693,7 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
     }
 }
 
-impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
+impl<P, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
     /// Build the [`OidcFederationStrategy`].
     ///
     /// Resolves the base URL in priority order: an explicit [`base_url`]
@@ -1547,10 +1637,7 @@ mod tests {
         }
     }
 
-    fn strategy_over<P: OidcProvider>(
-        cts: &CountingCts,
-        provider: P,
-    ) -> OidcFederationStrategyBuilder<P> {
+    fn strategy_over<P>(cts: &CountingCts, provider: P) -> OidcFederationStrategyBuilder<P> {
         OidcFederationStrategy::builder(crn_with_workspace(WS), provider)
             .transport(cts.clone())
             .base_url("https://cts.example.com/".parse().expect("url"))
@@ -1578,59 +1665,43 @@ mod tests {
         assert_eq!(strategy.pending_jwts(), 0, "promoted into the cache");
     }
 
-    /// `get_token_for_jwt` is `get_token` minus the provider call, and the two
-    /// share one cache: each JWT handed in gets its own token, and a JWT the
-    /// provider later names finds the engine the direct call created (and
-    /// vice versa), so neither entry exchanges a JWT the other has cached.
+    /// A strategy with no provider issues the token for the JWT handed in
+    /// with the call. Two callers interleaved each get their own token, and
+    /// each JWT is exchanged once.
     #[tokio::test]
-    async fn get_token_for_jwt_serves_each_jwt_and_shares_the_cache_with_get_token() {
+    async fn a_strategy_with_no_provider_issues_the_token_of_the_jwt_handed_in() {
         let cts = CountingCts::new();
-        let (current, calls, provider) = switchable_provider();
-        let strategy = strategy_over(&cts, provider).build().expect("builder");
+        let strategy = strategy_over(&cts, crate::CredentialPerCall)
+            .build()
+            .expect("builder");
 
-        let a = strategy
-            .get_token_for_jwt(SecretToken::new("jwt-a"))
-            .await
-            .expect("A");
-        let b = strategy
-            .get_token_for_jwt(SecretToken::new("jwt-b"))
-            .await
-            .expect("B");
-        assert_eq!(subject(&a), "CS|jwt-a");
-        assert_eq!(subject(&b), "CS|jwt-b");
-        assert_eq!(cts.exchanges(), 2);
-        assert_eq!(strategy.cached_jwts(), 2);
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            0,
-            "the provider is not consulted when the caller holds the JWT"
-        );
+        for (jwt, expected) in [
+            ("jwt-a", "CS|jwt-a"),
+            ("jwt-b", "CS|jwt-b"),
+            ("jwt-a", "CS|jwt-a"),
+            ("jwt-b", "CS|jwt-b"),
+        ] {
+            let token = (&strategy)
+                .get_token_with_credential(SecretToken::new(jwt))
+                .await
+                .expect("the token for this JWT");
+            assert_eq!(subject(&token), expected);
+        }
+        assert_eq!(cts.exchanges(), 2, "one exchange per JWT");
+    }
 
-        // The provider path finds the engines the direct calls created ...
-        act_as(&current, "jwt-a");
-        assert_eq!(
-            subject(&(&strategy).get_token().await.expect("A via provider")),
-            "CS|jwt-a"
-        );
-        assert_eq!(cts.exchanges(), 2, "served from the shared cache");
+    /// `credential_per_call` builds the strategy from a workspace CRN alone,
+    /// and makes no request. That a call with no JWT does not compile is
+    /// shown in the docs of `CredentialPerCall`.
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn credential_per_call_builds_a_strategy_with_no_provider() {
+        let crn: Crn = format!("crn:ap-southeast-2.aws:{WS}").parse().expect("crn");
+        let strategy: OidcFederationStrategy<crate::CredentialPerCall> =
+            OidcFederationStrategy::credential_per_call(crn).expect("no request is made");
 
-        // ... and the direct path finds one the provider path created.
-        act_as(&current, "jwt-c");
-        assert_eq!(
-            subject(&(&strategy).get_token().await.expect("C via provider")),
-            "CS|jwt-c"
-        );
-        assert_eq!(
-            subject(
-                &strategy
-                    .get_token_for_jwt(SecretToken::new("jwt-c"))
-                    .await
-                    .expect("C directly")
-            ),
-            "CS|jwt-c"
-        );
-        assert_eq!(cts.exchanges(), 3, "C was exchanged once");
-        assert_eq!(strategy.cached_jwts(), 3);
+        assert_eq!(strategy.cached_jwts(), 0);
+        assert_eq!(strategy.pending_jwts(), 0);
     }
 
     /// A refused exchange leaves nothing in the cache: a caller presenting
