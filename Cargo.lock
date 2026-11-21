@@ -3470,6 +3470,7 @@ dependencies = [
  "sha2 0.11.0",
  "stack-auth",
  "stack-encrypt-derive",
+ "stack-encrypt-jsonpath",
  "stack-kms",
  "temp-env",
  "thiserror 1.0.69",
@@ -3499,6 +3500,18 @@ dependencies = [
  "stack-encrypt",
  "syn 3.0.9",
  "tokio",
+ "zeroize",
+]
+
+[[package]]
+name = "stack-encrypt-jsonpath"
+version = "0.3.0"
+dependencies = [
+ "miette",
+ "serde",
+ "serde_json",
+ "stack-auth",
+ "thiserror 1.0.69",
  "zeroize",
 ]
 

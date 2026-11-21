@@ -144,6 +144,7 @@ mod target;
 mod text;
 
 pub use derive::JsonTerms;
+pub(crate) use path::IndexPath;
 pub use path::{JsonPath, JsonPathError, Segment};
 pub use plaintext::JsonPlaintext;
 pub(crate) use query::JsonElementsMember;
@@ -173,7 +174,7 @@ pub(crate) use derive::MAX_DEPTH;
 pub(crate) use derive::{seal_pending, terms_pending};
 pub(crate) use plain::PlainJson;
 pub(crate) use shuffle::Randomness;
-pub(crate) use text::{string_end, string_text};
+pub(crate) use stack_encrypt_jsonpath::json_string::{string_end, string_text};
 
 /// A sixteen-byte tag: a selector or a token.
 pub type Tag = [u8; 16];

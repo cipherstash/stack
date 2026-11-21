@@ -41,8 +41,8 @@ use super::inputs::{
     Derived, Input, Parsed, Predicate, Under,
 };
 use super::{
-    parse_text, string_end, string_text, JsonOptions, JsonPath, JsonPredicateQuery, Segment,
-    MAX_DEPTH,
+    parse_text, string_end, string_text, IndexPath, JsonOptions, JsonPath, JsonPredicateQuery,
+    Segment, MAX_DEPTH,
 };
 use crate::refusal::{Error, Reason};
 use crate::{KeysetCipher, Pending};

@@ -949,6 +949,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The JSON path grammar is its own crate, `stack-encrypt-jsonpath`**
+  (#1687). `JsonPath`, `Segment` and `JsonPathError` moved there unchanged,
+  so that the derive can parse a field's declared paths at compile time
+  with the engine's own grammar. `stack_encrypt::json` re-exports all
+  three at the same paths, and `JsonPathError` keeps its code, help and
+  payload. The JSON text parser decodes strings with the same decoder as a
+  path's quoted names, which also moved. No stored byte changes: the
+  selector and token encodings of a path stay in this crate.
 - **A data plan lowers to the combinators directly** (#1488, first part).
   `dynamic::planned::compose` and `opening` build each field's combinator
   from the parsed plan, and the dynamic entry points run them:

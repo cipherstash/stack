@@ -23,7 +23,7 @@ use vitaminc_protected::{AsProtectedRef, Controlled, Protected};
 use zeroize::Zeroizing;
 
 use super::cascade::{self, ChildrenDigest};
-use super::path::{key_step_len, push_key, JsonPath, Segment, ARRAY_STEP};
+use super::path::{key_step_len, push_key, IndexPath, JsonPath, Segment, ARRAY_STEP};
 use super::plain::{
     insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
     PlainJson,

@@ -19,8 +19,8 @@ use zeroize::Zeroizing;
 
 use super::predicate::Node;
 use super::{
-    wipe_value, JsonElementsMember, JsonElementsQuery, JsonLeafQuery, JsonOptions, JsonPath,
-    JsonPredicateQuery, JsonQuery, JsonSelector, JsonSubtreeKey,
+    wipe_value, IndexPath, JsonElementsMember, JsonElementsQuery, JsonLeafQuery, JsonOptions,
+    JsonPath, JsonPredicateQuery, JsonQuery, JsonSelector, JsonSubtreeKey,
 };
 use crate::refusal::{Error, Reason};
 use crate::sem::TermError;
