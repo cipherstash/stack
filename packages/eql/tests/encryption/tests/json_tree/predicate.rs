@@ -79,7 +79,7 @@ fn answers(
 /// `match`'s operand for `predicate` under `vars`.
 fn compiled(
     runtime: &tokio::runtime::Runtime,
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     plan: &record::Plan,
     predicate: &str,
     vars: &Value,

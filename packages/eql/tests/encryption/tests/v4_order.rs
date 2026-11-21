@@ -58,7 +58,7 @@ const ORDERED: &[&str] = &[
 /// The stored JSON the named type writes for `value`, through the by-name
 /// dispatch a Go plan reaches.
 async fn stored(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> serde_json::Value {
@@ -71,7 +71,7 @@ async fn stored(
 
 /// The query operand the named type's twin derives for `value`.
 async fn query(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> serde_json::Value {
@@ -176,7 +176,7 @@ async fn each_ordered_type_stores_its_catalog_terms() {
 /// says: each entry's group is its rank, so equal groups must store one
 /// term and a lower group a lower term.
 async fn sorts_as(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     values: Vec<(usize, ValueFrame, &str)>,
 ) {

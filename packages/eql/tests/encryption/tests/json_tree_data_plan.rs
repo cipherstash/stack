@@ -424,7 +424,7 @@ fn input(entries: &[(&str, Value)]) -> ValueFrame {
 
 /// The data path's term for one operator and input on `profile`.
 async fn data_term(
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     plan: &record::Plan,
     operator: &str,
     entries: &[(&str, Value)],
@@ -521,7 +521,7 @@ fn a_document_field_answers_the_json_operators() {
 /// A document sealed through the plan, as the engine's document: what an
 /// operand is decided against here, with no database.
 async fn sealed(
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     plan: &record::Plan,
     document: &Value,
 ) -> JsonDocument {
@@ -914,7 +914,7 @@ fn extracted_row(doc: &stack_encrypt::json::JsonDocument, selector: &str) -> Opt
 }
 
 async fn open(
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     plan: &record::Plan,
     request: Value,
     groups: Vec<Vec<String>>,

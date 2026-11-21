@@ -40,7 +40,7 @@ fn fixture() -> Value {
     json!({"hello": "world-1", "nested": {"deep": "constant", "list": [{"x": 1}, {"x": 2}]}, "number": 1})
 }
 
-type Cipher = stack_encrypt::StackCipher<common::Observed>;
+type Cipher = stack_encrypt::StackCipher<common::RecordingKeySource>;
 
 /// Seal `value` as the EQL type under the identifier, laid out by the
 /// `json_tree` layout with the same ordered paths as [`plan`].

@@ -68,7 +68,7 @@ fn number(text: &str) -> rust_decimal::Decimal {
 /// What a stored `c` opens to as a frame, without any EQL type: the leaf
 /// as another producer would read it.
 async fn as_frame(
-    cipher: &stack_encrypt::StackCipher<common::Observed>,
+    cipher: &stack_encrypt::StackCipher<common::RecordingKeySource>,
     c: Ciphertext,
 ) -> ValueFrame {
     let native = c.read(NativeLeaf).unwrap();
@@ -76,7 +76,7 @@ async fn as_frame(
 }
 
 async fn by_name<T: DeserializeOwned>(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> T {
@@ -89,7 +89,7 @@ async fn by_name<T: DeserializeOwned>(
 
 /// The `hm` of `name` over `value`, through the by-name query dispatch.
 async fn hm(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> String {
@@ -1029,7 +1029,7 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
 }
 
 fn refused_null(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
 ) -> TargetError {
     let null = stack_encrypt::Protected::new([0x00u8]);

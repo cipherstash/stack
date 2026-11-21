@@ -30,8 +30,8 @@ use stack_encrypt::{ContextPiece, Encrypt, Error, KeysetCipher, NonEmpty, StackC
 use stack_encrypt::{DecryptSource, EncryptInto, EncryptTarget};
 use zeroize::Zeroize;
 
-type Cipher = StackCipher<common::Observed>;
-type Keyset<'k> = KeysetCipher<'k, common::Observed>;
+type Cipher = StackCipher<common::RecordingKeySource>;
+type Keyset<'k> = KeysetCipher<'k, common::RecordingKeySource>;
 
 /// A Rust value as the engine's runtime plaintext: its frame.
 fn frame<T: Encrypt>(value: T) -> ValueFrame {

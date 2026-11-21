@@ -42,7 +42,7 @@ fn frame<T: Encrypt>(value: T) -> ValueFrame {
 /// JSON text a driver binds: its order term (`ob` or `op`) is what `between`
 /// compares a bound against.
 async fn stored(
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> String {
@@ -58,7 +58,7 @@ async fn stored(
 /// CLLW OPE one): what a range holds under `lo` and `hi`, the same value the
 /// single-bound query domain holds under `ob` or `op`.
 async fn bound(
-    keyset: &KeysetCipher<'_, common::Observed>,
+    keyset: &KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     index: &str,
     value: ValueFrame,

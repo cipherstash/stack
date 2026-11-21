@@ -66,7 +66,7 @@ fn column(table: &str, column: &str) -> NonEmpty<Identifier> {
 }
 
 async fn email_query(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
 ) -> TextEqQuery {
     "alan@example.com"
@@ -77,7 +77,7 @@ async fn email_query(
 }
 
 async fn age_query(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     age: i32,
 ) -> IntegerOrdOreQuery {
     age.encrypt_into_with_context(keyset, column("customers", "age"))

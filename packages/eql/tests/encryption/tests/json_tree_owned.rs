@@ -20,7 +20,7 @@ use stack_encrypt::{
 };
 use zeroize::Zeroize;
 
-type Cipher = stack_encrypt::StackCipher<common::Observed>;
+type Cipher = stack_encrypt::StackCipher<common::RecordingKeySource>;
 
 fn column() -> NonEmpty<Identifier> {
     Identifier::for_column("users", "profile").unwrap()

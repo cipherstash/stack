@@ -71,7 +71,7 @@ fn assert_v4_envelope<T: Serialize>(stored: &T, keys: &[&str]) {
 /// What the stored ciphertext opens to as a frame: the leaf a plain Go
 /// field of the same kind seals, read back as the engine's runtime value.
 async fn as_frame(
-    cipher: &stack_encrypt::StackCipher<common::Observed>,
+    cipher: &stack_encrypt::StackCipher<common::RecordingKeySource>,
     c: Ciphertext,
 ) -> ValueFrame {
     let native = c.read(NativeLeaf).unwrap();
@@ -81,7 +81,7 @@ async fn as_frame(
 /// The other direction: the `c` a plain field of `value`'s kind gets when
 /// its frame is sealed, as a Go SDK field without an EQL type is.
 async fn sealed_from_frame(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     value: ValueFrame,
 ) -> Ciphertext {
     match keyset.encrypt_tree(value, column()).await.unwrap() {
@@ -102,7 +102,7 @@ fn stored_as<T: DeserializeOwned>(c: Ciphertext) -> T {
 
 /// Run one named target over `value` and read the stored JSON back as `T`.
 async fn by_name<T: DeserializeOwned>(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> T {
@@ -211,7 +211,7 @@ async fn integers_round_trip_and_seal_the_leaf_their_frame_seals() {
 /// The `hm` the named type stores for `value`, and the one its query twin
 /// derives.
 async fn eq_terms(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     value: ValueFrame,
 ) -> (serde_json::Value, serde_json::Value) {

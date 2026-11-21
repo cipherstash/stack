@@ -45,7 +45,7 @@ fn index(key: &str) -> IndexSpec {
 
 /// The stored JSON the named type writes for `text`.
 async fn stored(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     name: &str,
     text: &str,
 ) -> serde_json::Value {
@@ -58,7 +58,7 @@ async fn stored(
 
 /// The `TextSearch` query for `text` through the index `key`.
 async fn query(
-    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    keyset: &stack_encrypt::KeysetCipher<'_, common::RecordingKeySource>,
     key: &str,
     text: &str,
 ) -> Result<serde_json::Value, stack_encrypt::Error> {
