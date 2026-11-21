@@ -175,8 +175,13 @@ select a different leaf encoding.
 | Other integer widths | Admitted | Refused | Admitted |
 | float32, float64, decimal, date, timestamp | Admitted | Refused | Admitted |
 | string | Admitted | Admitted | Admitted |
-| bytes | Admitted | Refused | Admitted |
+| bytes | Admitted | Refused | Refused |
 | array, object, json | Refused | Refused | Refused |
+
+An index is admitted only over a kind one of its operators answers. The
+scheme defines an order term for bytes, but no ordering operator is answered
+over bytes, so the term would be stored and never queried. The order indexes
+are refused on bytes as `index_not_admitted`.
 
 The corpus explicitly tests all 21 kinds against all five scalar indexes.
 `array` and `object` may still be sealed without indexes. A `json` field requires

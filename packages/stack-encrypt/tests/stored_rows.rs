@@ -20,6 +20,10 @@
 //! `STACK_ENCRYPT_REFREEZE_ORDER_TERMS=1`. That run asserts nothing else
 //! moved before it rewrites anything.
 //!
+//! One declaration the file records is no longer accepted: an order index
+//! on a `bytes` field. The file keeps it, and the check opens the rows
+//! under the plan with those indexes removed ([`todays_plan`]).
+//!
 //! The schema and the rules are in `tests/fixtures/README.md`.
 #![cfg(feature = "dynamic")]
 
@@ -187,8 +191,86 @@ fn without_order_terms(json: &Json) -> Json {
     }
 }
 
-/// Copy every order term of `resealed` over the one in the same place in
-/// `stored`. The two have the same shape, which the caller has asserted.
+/// The outputs a frozen plan declares that no build admits any more: an
+/// order index on a `bytes` field. The plan the rows were stored under
+/// declares two (`blob` with `ore`, and the index-only `blob_ope`); a
+/// declaration now refuses them, because no ordering is answered over
+/// bytes.
+const RETIRED_ON_BYTES: [&str; 3] = ["ore", "ope", "ore_block"];
+
+/// Whether `output` of a field of the frozen plan is retired.
+fn retired(field: &Json, output: &Json) -> bool {
+    field.get("type") == Some(&json!("bytes"))
+        && output
+            .as_str()
+            .is_some_and(|o| RETIRED_ON_BYTES.contains(&o))
+}
+
+/// Whether every output of a field of the frozen plan is retired: the field
+/// held an order term on bytes and nothing else.
+fn emptied(field: &Json) -> bool {
+    field
+        .get("outputs")
+        .and_then(Json::as_array)
+        .is_some_and(|outputs| outputs.iter().all(|output| retired(field, output)))
+}
+
+/// The frozen plan as a build declares it today: without an order index on
+/// a `bytes` field. This is what a user whose plan declared one does:
+/// remove the index. The rows stored under the old declaration must still
+/// open under this one.
+///
+/// A field left with no output is removed, which is the plan the rows are
+/// opened under. With `holding_source`, it is kept as ciphertext instead:
+/// the frozen source still carries that field's value, and sealing refuses
+/// a source field the plan does not declare.
+fn todays_plan(frozen: &Json, holding_source: bool) -> Json {
+    let mut plan = frozen.clone();
+    let fields = plan.as_object_mut().expect("a plan is an object");
+    fields.retain(|_, field| {
+        if !field.is_object() || field.get("type") != Some(&json!("bytes")) {
+            return true;
+        }
+        let was = field.clone();
+        let outputs = field["outputs"].as_array_mut().expect("outputs");
+        outputs.retain(|output| !retired(&was, output));
+        if outputs.is_empty() && holding_source {
+            outputs.push(json!("c"));
+        }
+        !outputs.is_empty()
+    });
+    plan
+}
+
+/// A row without what the frozen plan's retired indexes stored: the order
+/// terms of its `bytes` fields, and each field that held nothing else.
+fn without_retired(row: &Json, frozen_plan: &Json) -> Json {
+    // A batch is stored as a sequence of rows.
+    if let Some(rows) = row.get("seq").and_then(Json::as_array) {
+        let rows: Vec<Json> = rows
+            .iter()
+            .map(|row| without_retired(row, frozen_plan))
+            .collect();
+        return json!({ "seq": rows });
+    }
+    let mut row = row.clone();
+    let fields = row["map"].as_array_mut().expect("a row is a map");
+    fields.retain_mut(|pair| {
+        let field = &frozen_plan[pair[0].as_str().expect("a key")];
+        if emptied(field) {
+            return false;
+        }
+        if let Some(outputs) = pair[1].get_mut("map").and_then(Json::as_array_mut) {
+            outputs.retain(|output| !retired(field, &output[0]));
+        }
+        true
+    });
+    row
+}
+
+/// Copy every order term of `resealed` over the one under the same key in
+/// `stored`. An entry of `stored` that `resealed` does not hold (a retired
+/// term) stays as it was frozen.
 fn refreeze_order_terms(stored: &mut Json, resealed: &Json) {
     let Some(object) = stored.as_object_mut() else {
         return;
@@ -203,11 +285,15 @@ fn refreeze_order_terms(stored: &mut Json, resealed: &Json) {
             }
         }
         "map" => {
-            for (index, pair) in value.as_array_mut().expect("a list").iter_mut().enumerate() {
+            let theirs = theirs.as_array().expect("a list");
+            for pair in value.as_array_mut().expect("a list") {
+                let Some(their) = theirs.iter().find(|their| their[0] == pair[0]) else {
+                    continue;
+                };
                 if is_order_term(pair) {
-                    pair[1] = theirs[index][1].clone();
+                    pair[1] = their[1].clone();
                 } else {
-                    refreeze_order_terms(&mut pair[1], &theirs[index][1]);
+                    refreeze_order_terms(&mut pair[1], &their[1]);
                 }
             }
         }
@@ -285,13 +371,21 @@ async fn every_frozen_row_opens_and_seals_as_it_did() {
         "the deterministic source names the keyset it named"
     );
 
-    let cases = fixture["cases"].as_array_mut().expect("a list of cases");
-    assert!(!cases.is_empty());
-    for case in cases {
+    let frozen = fixture["cases"].as_array_mut().expect("a list of cases");
+    assert!(!frozen.is_empty());
+    for case in frozen {
         let name = case["name"].as_str().expect("a name");
-        let plan = plan_of(&case["plan"]);
+        // The row is opened as it was frozen, retired order terms and all,
+        // under the plan a build accepts today: opening ignores a stored
+        // term, and an index-only field, the plan does not declare.
+        let plan = plan_of(&todays_plan(&case["plan"], false));
+        // The frozen source is sealed again under the same plan, with a
+        // field that lost its last index held as ciphertext so the source
+        // still fits. Neither side of the comparison keeps that field.
+        let sealing = plan_of(&todays_plan(&case["plan"], true));
         let source = Protected::new(unhex(case["source"].as_str().expect("hex")));
         let stored = &case["stored"];
+        let kept = without_retired(stored, &case["plan"]);
 
         let opened = open(&cipher, node_of_json(stored), &plan, expected_of(case)).await;
         assert_eq!(
@@ -300,11 +394,13 @@ async fn every_frozen_row_opens_and_seals_as_it_did() {
             "{name}: the frozen row opens to what it opened to"
         );
 
-        let resealed =
-            json_of_node(seal(&cipher, source.as_protected_ref().as_deref(), &plan).await);
+        let resealed = without_retired(
+            &json_of_node(seal(&cipher, source.as_protected_ref().as_deref(), &sealing).await),
+            &case["plan"],
+        );
         assert_eq!(
             without_order_terms(&resealed),
-            without_order_terms(stored),
+            without_order_terms(&kept),
             "{name}: sealing the source today stores the same shape, terms and passthroughs"
         );
         if refreeze {
@@ -312,7 +408,7 @@ async fn every_frozen_row_opens_and_seals_as_it_did() {
         } else {
             assert_eq!(
                 skeleton(&resealed),
-                skeleton(stored),
+                skeleton(&kept),
                 "{name}: only ORE or OPE terms moved. If that is deliberate, re-freeze them \
                  with STACK_ENCRYPT_REFREEZE_ORDER_TERMS=1 and say so in the CHANGELOG \
                  (tests/fixtures/README.md)"

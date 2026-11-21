@@ -51,7 +51,7 @@
     },
     "data": {
       "kind": "bytes",
-      "outputs": ["c", "eq", "ore"]
+      "outputs": ["c", "eq"]
     }
   },
   "cases": [
@@ -216,7 +216,7 @@
       }
     },
     {
-      "id": "lt-on-bytes-order-index",
+      "id": "lt-on-bytes",
       "field": "data",
       "operator": "lt",
       "input": {
@@ -773,7 +773,7 @@
       }
     },
     {
-      "id": "lte-on-bytes-order-index",
+      "id": "lte-on-bytes",
       "field": "data",
       "operator": "lte",
       "input": {
@@ -789,7 +789,7 @@
       }
     },
     {
-      "id": "gt-on-bytes-order-index",
+      "id": "gt-on-bytes",
       "field": "data",
       "operator": "gt",
       "input": {
@@ -805,7 +805,7 @@
       }
     },
     {
-      "id": "gte-on-bytes-order-index",
+      "id": "gte-on-bytes",
       "field": "data",
       "operator": "gte",
       "input": {
@@ -821,7 +821,7 @@
       }
     },
     {
-      "id": "between-on-bytes-order-index",
+      "id": "between-on-bytes",
       "field": "data",
       "operator": "between",
       "input": {
@@ -846,7 +846,7 @@
       }
     },
     {
-      "id": "matches-on-bytes-order-index",
+      "id": "matches-on-bytes",
       "field": "data",
       "operator": "matches",
       "input": {

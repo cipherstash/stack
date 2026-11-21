@@ -8,7 +8,6 @@ import (
 	"math"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"testing"
 	"time"
 
@@ -26,7 +25,6 @@ type valueCase struct {
 	Frame         *string           `json:"frame"`
 	Companion     *conformanceInput `json:"companion"`
 	EqualQuery    *conformanceInput `json:"equal_query"`
-	Unanswered    []string          `json:"unanswered"`
 	ExpectedError *struct {
 		Code   string `json:"code"`
 		Reason string `json:"reason"`
@@ -122,13 +120,6 @@ func TestValueConformance(t *testing.T) {
 			if !record.Kind(c.Kind).Known() || c.Kind == "" || len(c.Outputs) == 0 || c.Outputs[0] != "c" {
 				t.Fatal("unsupported declaration")
 			}
-			// An unanswered index must be one the case declares, or the
-			// entry checks nothing.
-			for _, u := range c.Unanswered {
-				if !slices.Contains(c.Outputs[1:], u) {
-					t.Fatalf("unanswered %s is not a declared index", u)
-				}
-			}
 			isNull := c.Input.Type == "null"
 			if (c.Frame == nil) != isNull {
 				t.Fatal("a frame is frozen for every value, and for no null")
@@ -183,14 +174,6 @@ func TestValueConformance(t *testing.T) {
 						operator = "lt"
 					}
 					term, err := cipher.QueryTerm(ctx, plan, "value", operator, value)
-					unanswered := false
-					for _, u := range c.Unanswered {
-						unanswered = unanswered || u == o
-					}
-					if unanswered {
-						assertConformanceDiagnostic(t, err, "stack_encrypt::dynamic_source", "operator_not_answered", "value")
-						continue
-					}
 					if err != nil || len(term.Terms) != 1 || !bytes.Equal(term.Terms[0], row.Terms[record.Output(o)]) {
 						t.Fatalf("%s: stored/query term mismatch: %v", o, err)
 					}

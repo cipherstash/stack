@@ -93,19 +93,21 @@ requirements 1 to 4: it stores no record, so no data key is generated, no
 term exists to compare and no ciphertext is opened; its row reads back as
 null.
 
-`unanswered` lists stored indexes no query operator answers for the kind. A
-query of such an index is refused as `operator_not_answered` in both
-runners. Today that is the order index on `bytes`: the declaration admits
-it and the engine stores an order term, but no dynamic operator reads it.
+Every index a case declares is one a query operator answers for the kind,
+because a declaration admits no other. An order index on `bytes` is the
+case that shows it: the scheme defines an order term for bytes, but no
+ordering operator is answered over them, so a stored term would let anyone
+who holds two rows compare them without a key, and no query could use it.
+Both paths refuse it. The typed Rust path declares an order index over
+`Ordered`, the trait its operators need, and `Vec<u8>` is not `Ordered`,
+so the declaration does not compile. The dynamic path, which both runners
+use, refuses the declaration as `index_not_admitted`
+(`v1/record-declarations-v1.cases.json`, cases `type-bytes-ore`,
+`type-bytes-ope` and `type-bytes-ore_block`).
 
-This is a leak, not only a gap. Anyone who holds the stored rows can
-compare the order terms without a key. No query uses them.
-
-The typed Rust path has the same fault. An order index needs only
-`Orderable`, but its operators need `Ordered`, and `Vec<u8>` is not
-`Ordered`. The fix is to refuse an order index on `bytes` when it is
-declared, at compile time on the typed path. Data that Go rc.3 stored must
-stay readable. Until then, this entry keeps the behaviour visible.
+A row stored under an earlier declaration of such an index still opens
+once the index is removed from the plan: opening ignores a stored term the
+plan does not declare.
 
 `expected_error` cases are refused before any pending operation, with the
 structured diagnostic `code`, `reason` and `field`, and no key call. They

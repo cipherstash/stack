@@ -1,7 +1,8 @@
 //! A single operation in owned mode asks nothing of the plaintext beyond the
 //! operation's own capability: no `Clone`, so a value that is moved and
 //! wiped can be sealed or indexed.
-use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, Orderable, OreTerm};
+use stack_encrypt::op::Ordered;
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
 use stack_encrypt::target::{
     ciphertext, equality, matching, ope, ore, CallerContext, Owned, Pending,
 };
@@ -26,15 +27,15 @@ fn search<'a, S: AsRef<str>>(
 ) -> Pending<'a, MatchTerms, FakeDataKeySource> {
     keyset.run(matching::<_, _, Owned, _>(), value, CallerContext::from(nonempty!("column")))
 }
-// Bounded only by the order terms' own trait: `Orderable` does not imply
-// `Clone`, so `Clone` returning to either constructor's bounds fails this
-// file.
+// Bounded only by the order operations' own trait: `Ordered` does not
+// imply `Clone`, so `Clone` returning to either constructor's bounds fails
+// this file.
 fn order<'a, S>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, OreTerm<S>, FakeDataKeySource>
 where
-    S: Orderable,
+    S: Ordered,
 {
     keyset.run(ore::<_, _, Owned>(), value, CallerContext::from(nonempty!("column")))
 }
@@ -43,7 +44,7 @@ fn order_preserving<'a, S>(
     value: S,
 ) -> Pending<'a, OpeTerm<S>, FakeDataKeySource>
 where
-    S: Orderable,
+    S: Ordered,
 {
     keyset.run(ope::<_, _, Owned>(), value, CallerContext::from(nonempty!("column")))
 }
