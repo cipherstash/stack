@@ -33,7 +33,7 @@ use stack_encrypt::target::{
 };
 use stack_encrypt::{
     nonempty, CipherText, Decrypt, DecryptFrom, Encrypt, EncryptInto, Equality, Error,
-    KeysetCipher, Label, Match, NonEmpty, Ope, Ore, Pending, PlanError, StackCipherText,
+    KeysetCipher, Label, Match, NonEmpty, Ope, Ore, OreBlock, Pending, PlanError, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -335,7 +335,7 @@ async fn a_pinned_identity_keys_the_field_for_the_write_the_query_and_the_read()
         totp: "s".into(),
         attempts: 21,
     };
-    let record: EncryptedSecret = secret.encrypt_into(&keyset).await.unwrap();
+    let record: EncryptedSecret = secret.clone().encrypt_into(&keyset).await.unwrap();
     assert_eq!(
         sent.lock().unwrap().generated(),
         ["users/totp_secret", "users/value"]
@@ -367,6 +367,12 @@ async fn a_pinned_identity_keys_the_field_for_the_write_the_query_and_the_read()
         .await
         .unwrap();
     assert_eq!(totp, "s");
+
+    // The derived reader opens each field under its pinned identity too.
+    let record: EncryptedSecret = secret.encrypt_into(&keyset).await.unwrap();
+    let opened = Secret::decrypt_from(record, &keyset).await.unwrap();
+    assert_eq!(opened.totp, "s");
+    assert_eq!(opened.attempts, 21);
 }
 
 /// A target that says it holds ciphertext and then opens nothing.
@@ -688,6 +694,8 @@ async fn a_typed_integer_target_is_the_indexes_bytes_for_every_index_set() {
     same_field_bytes::<_, (EqualityTerm, OreTerm<u32>), _>(7u32, (Equality, Ore)).await;
     same_field_bytes::<_, (EqualityTerm, OpeTerm<u32>), _>(7u32, (Equality, Ope)).await;
     same_field_bytes::<_, (OreTerm<u32>, EqualityTerm), _>(7u32, (Ore, Equality)).await;
+    same_field_bytes::<_, OreBlockTerm<u32>, _>(7u32, OreBlock).await;
+    same_field_bytes::<_, (EqualityTerm, OreBlockTerm<u32>), _>(7u32, (Equality, OreBlock)).await;
 }
 
 #[test]
@@ -865,6 +873,16 @@ async fn a_second_part_appends_to_the_first() {
         .run_decryption(open(email.ciphertext, extended("email", parts())))
         .await;
     assert!(back.is_ok(), "{back:?}");
+
+    // The second part alone does not open it: the first part is needed.
+    let (((email, _), _), _) = keyset.run(hand_composed(), &user(), parts()).await.unwrap();
+    let last_alone: Result<String, _> = cipher
+        .run_decryption(open(
+            email.ciphertext,
+            extended("email", DeclaredContext::from(7u64)),
+        ))
+        .await;
+    assert!(matches!(last_alone, Err(Error::Aead)), "{last_alone:?}");
 }
 
 /// An extension reaches the write, the query and the open of one value:
@@ -1186,6 +1204,8 @@ async fn every_operation_honours_the_keyset_it_runs_through() {
 
     // The record opens through its own keyset, and through the client,
     // which opens a leaf from any keyset. Another keyset refuses it.
+    let row: EncryptedUser = user.clone().encrypt_into(&tenant).await.unwrap();
+    assert_eq!(User::decrypt_from(row, &tenant).await.unwrap(), user);
     let row: EncryptedUser = user.clone().encrypt_into(&tenant).await.unwrap();
     assert_eq!(User::decrypt_from(row, &cipher).await.unwrap(), user);
     let row: EncryptedUser = user.clone().encrypt_into(&tenant).await.unwrap();

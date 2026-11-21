@@ -127,7 +127,13 @@ fn outputs<'t>(record: &'t StackCipherText, name: &str) -> &'t [(String, StackCi
 
 /// The equality term a stored record holds for `email`.
 fn stored_term(record: &StackCipherText) -> Vec<u8> {
-    let (_, CipherText::Passthrough(term)) = outputs(record, "email")
+    stored_eq_term(record, "email")
+}
+
+/// The equality term a stored record holds for `field`, found by its
+/// output key, not by its position.
+fn stored_eq_term(record: &StackCipherText, field: &str) -> Vec<u8> {
+    let (_, CipherText::Passthrough(term)) = outputs(record, field)
         .iter()
         .find(|(key, _)| key == "eq")
         .expect("the term")
@@ -670,16 +676,9 @@ async fn a_pinned_identity_keys_the_field_for_the_write_the_query_and_the_read()
         .unwrap()
         .await
         .unwrap();
-    let (_, CipherText::Passthrough(stored)) = &outputs(&record, "2fa_secret")[1] else {
-        panic!("the term follows the ciphertext")
-    };
     assert_eq!(
         term.operand(),
-        &Operand::One(
-            vitaminc_aead_frame::serde::from_slice::<&[u8]>(&stored.0)
-                .unwrap()
-                .to_vec()
-        )
+        &Operand::One(stored_eq_term(&record, "2fa_secret"))
     );
     let back = record::decrypt(&cipher, record, &plan, None)
         .unwrap()
@@ -713,17 +712,7 @@ async fn a_pinned_identity_keys_the_field_for_the_write_the_query_and_the_read()
         .unwrap()
         .await
         .unwrap();
-    let (_, CipherText::Passthrough(stored)) = &outputs(&record, "0")[1] else {
-        panic!("the term follows the ciphertext")
-    };
-    assert_eq!(
-        term.operand(),
-        &Operand::One(
-            vitaminc_aead_frame::serde::from_slice::<&[u8]>(&stored.0)
-                .unwrap()
-                .to_vec()
-        )
-    );
+    assert_eq!(term.operand(), &Operand::One(stored_eq_term(&record, "0")));
     let back = record::decrypt(&cipher, record, &readings, Some(label("reading")))
         .unwrap()
         .await

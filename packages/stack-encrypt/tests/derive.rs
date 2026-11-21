@@ -204,7 +204,13 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let doubled: Doubled = 9u32
+    let mut doubled: Doubled = 9u32
+        .encrypt_into_with_context(&keyset, nonempty!("doubled"))
+        .await
+        .unwrap();
+    // The unmarked field holds another value under the same context, so the
+    // value the record opens to says which field was read.
+    doubled.shadow = 5u32
         .encrypt_into_with_context(&keyset, nonempty!("doubled"))
         .await
         .unwrap();
@@ -953,6 +959,33 @@ async fn a_context_field_record_refuses_a_mismatched_expected_context_before_any
         .unwrap();
     let other = NonEmpty::from(Label::parse("tenants/globex/email").unwrap());
     let refused = String::decrypt_from_with_context(derived, &cipher, other).await;
+    assert!(
+        matches!(refused, Err(Error::ContextMismatch { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
+}
+
+/// A batch of `context_field` rows, one of them stored under another
+/// tenant, is refused before any key is requested: no row is opened.
+#[tokio::test]
+async fn a_batch_of_context_field_rows_refuses_a_mismatched_row_before_any_key_request() {
+    let (cipher, _, retrieves) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let acme: ScopedEmail = email()
+        .encrypt_into_with_context(&keyset, scope())
+        .await
+        .unwrap();
+    let globex: ScopedEmail = email()
+        .encrypt_into_with_context(
+            &keyset,
+            NonEmpty::from(Label::parse("tenants/globex/email").unwrap()),
+        )
+        .await
+        .unwrap();
+    let refused =
+        Vec::<String>::decrypt_from_with_context(vec![acme, globex], &cipher, scope()).await;
     assert!(
         matches!(refused, Err(Error::ContextMismatch { .. })),
         "{refused:?}"
