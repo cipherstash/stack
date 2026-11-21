@@ -58,6 +58,10 @@ impl RecordingSource {
     }
 }
 
+impl stack_encrypt::kms::KeySourceKind for RecordingSource {
+    type Kind = stack_encrypt::kms::OwnIdentity;
+}
+
 impl DataKeySource for RecordingSource {
     async fn generate_keys(
         &self,

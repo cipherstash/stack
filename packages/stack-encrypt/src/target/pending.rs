@@ -1758,6 +1758,10 @@ mod tests {
         }
     }
 
+    impl stack_kms::KeySourceKind for CountingSource {
+        type Kind = stack_kms::OwnIdentity;
+    }
+
     impl DataKeySource for CountingSource {
         async fn generate_keys(
             &self,

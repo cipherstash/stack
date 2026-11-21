@@ -81,6 +81,10 @@ fn vitur(status: u16) -> ViturRequestError {
 #[derive(Default)]
 struct Failing(FakeDataKeySource);
 
+impl stack_kms::KeySourceKind for Failing {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl DataKeySource for Failing {
     async fn generate_keys(
         &self,

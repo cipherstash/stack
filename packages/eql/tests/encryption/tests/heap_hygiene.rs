@@ -438,6 +438,10 @@ impl Stalling {
     }
 }
 
+impl stack_kms::KeySourceKind for Stalling {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl DataKeySource for Stalling {
     async fn generate_keys(
         &self,

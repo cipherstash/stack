@@ -263,6 +263,10 @@ async fn sealed_value_keyset_id_is_authenticated() {
 /// saturated length field that `from_bytes` no longer inverts.
 struct OversizedTagSource(FakeDataKeySource);
 
+impl stack_kms::KeySourceKind for OversizedTagSource {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl DataKeySource for OversizedTagSource {
     async fn generate_keys(
         &self,

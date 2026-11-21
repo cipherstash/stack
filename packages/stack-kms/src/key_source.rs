@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 use std::future::Future;
 
-use stack_auth::SecretToken;
+use stack_auth::{CredentialPerCall, OwnIdentity, SecretToken};
 use uuid::Uuid;
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
@@ -18,6 +18,174 @@ use crate::errors::Error;
 use crate::key::{DataKey, DataKeyWithTag, IndexKey};
 use crate::maybe_send::MaybeSend;
 use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
+
+/// Which of the two kinds a key source is.
+///
+/// A key source makes every request as itself, or as the caller whose
+/// credential comes with the call. It is never both: a key source that had
+/// both would make a call that forgot its credential as itself, and nobody
+/// would know. This trait is what stops a type from being both. A type
+/// implements it once, so it has one [`Kind`](Self::Kind):
+///
+/// - [`OwnIdentity`], for a key source with an identity of its own.
+///   [`DataKeySource`] and [`IndexKeySource`] require this kind.
+/// - [`CredentialPerCall`], for a key source that takes a credential with
+///   each call. [`CredentialKeySource`] requires this kind.
+///
+/// Every key source states its kind, in one impl beside the traits of that
+/// kind. [`StackKms`](crate::StackKms) does not choose: its kind is the kind
+/// of its auth strategy ([`stack_auth::StrategyKind`]).
+///
+/// Code built on a key source, such as Stack Encrypt, reads the kind from
+/// which of the traits the key source has. It adds no rule of its own.
+///
+// The examples wrap the test doubles, so they are in the docs only with
+// `test-support`.
+#[cfg_attr(
+    feature = "test-support",
+    doc = r#"# Example
+
+A key source of your own with an identity of its own. This one counts the
+keyset loads of the key source it wraps:
+
+```
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use stack_kms::{
+    DataKey, DataKeySource, DataKeyWithTag, Error, FakeDataKeySource, GenerateKeyPayload,
+    IdentifiedBy, IndexKey, IndexKeySource, KeySourceKind, OwnIdentity, RetrieveKeyPayload,
+    UnverifiedContext,
+};
+use uuid::Uuid;
+
+#[derive(Default)]
+struct Counted {
+    inner: FakeDataKeySource,
+    loads: AtomicUsize,
+}
+
+impl KeySourceKind for Counted {
+    type Kind = OwnIdentity;
+}
+
+impl DataKeySource for Counted {
+    async fn generate_keys(
+        &self,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, Error> {
+        self.inner.generate_keys(payloads, keyset_id, unverified_context).await
+    }
+
+    async fn retrieve_keys(
+        &self,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, Error> {
+        self.inner.retrieve_keys(payloads, keyset_id, unverified_context).await
+    }
+}
+
+impl IndexKeySource for Counted {
+    async fn load_index_key(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), Error> {
+        self.loads.fetch_add(1, Ordering::Relaxed);
+        self.inner.load_index_key(keyset_id).await
+    }
+}
+
+# async fn example() -> Result<(), Error> {
+let source = Counted::default();
+let (keyset_id, _index_key) = source.load_index_key(None).await?;
+# let _ = keyset_id;
+assert_eq!(source.loads.load(Ordering::Relaxed), 1);
+# Ok(())
+# }
+# tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(example()).unwrap();
+```
+
+A key source of both kinds does not compile. `Both` says it has an identity
+of its own, so it cannot also take a credential with each call:
+
+```compile_fail,E0271
+use std::borrow::Cow;
+
+use stack_kms::{
+    CredentialKeySource, DataKey, DataKeyWithTag, Error, FakeCredentialKeySource,
+    GenerateKeyPayload, IdentifiedBy, IndexKey, KeySourceKind, OwnIdentity, RetrieveKeyPayload,
+    SecretToken, UnverifiedContext,
+};
+use uuid::Uuid;
+
+#[derive(Default)]
+struct Both {
+    inner: FakeCredentialKeySource,
+}
+
+impl KeySourceKind for Both {
+    type Kind = OwnIdentity;
+}
+
+impl CredentialKeySource for Both {
+    async fn generate_keys_with_credential(
+        &self,
+        credential: &SecretToken,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, Error> {
+        self.inner
+            .generate_keys_with_credential(credential, payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn retrieve_keys_with_credential(
+        &self,
+        credential: &SecretToken,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, Error> {
+        self.inner
+            .retrieve_keys_with_credential(credential, payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn load_index_key_with_credential(
+        &self,
+        credential: &SecretToken,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), Error> {
+        self.inner.load_index_key_with_credential(credential, keyset_id).await
+    }
+}
+```"#
+)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not say which kind of key source it is",
+    label = "this key source has no `KeySourceKind`",
+    note = "a key source with an identity of its own (`DataKeySource`, `IndexKeySource`) implements `KeySourceKind` with `type Kind = OwnIdentity`",
+    note = "a key source that takes a credential with each call (`CredentialKeySource`) implements `KeySourceKind` with `type Kind = CredentialPerCall`"
+)]
+pub trait KeySourceKind {
+    /// [`OwnIdentity`] or [`CredentialPerCall`].
+    type Kind;
+}
+
+/// A ZeroKMS client is the kind of key source that its auth strategy is a
+/// kind of strategy. stack-auth decides that, and a strategy is one kind.
+impl<C, Conn> KeySourceKind for crate::StackKms<C, Conn>
+where
+    C: stack_auth::AuthStrategyBounds,
+    &'static C: stack_auth::StrategyKind,
+{
+    type Kind = <&'static C as stack_auth::StrategyKind>::Kind;
+}
 
 /// The slice of ZeroKMS data-key functionality required to encrypt and decrypt:
 /// generating fresh data keys and re-deriving them for stored ciphertexts.
@@ -31,15 +199,16 @@ use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
 /// (see [`MaybeSend`] for why).
 ///
 /// A source that implements this trait has an identity of its own, and
-/// makes every request as that identity. A source that takes a credential
-/// with each call implements [`CredentialKeySource`] instead, and not this
-/// trait.
+/// makes every request as that identity: it states the kind
+/// [`OwnIdentity`] ([`KeySourceKind`]). A source that takes a credential
+/// with each call implements [`CredentialKeySource`] instead, and cannot
+/// implement this trait.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a key source with an identity of its own",
     label = "this makes a key request with no credential",
     note = "if `{Self}` takes a credential with each call (`CredentialKeySource`), pass one: in Stack Encrypt, call `.with_credential(..)` before `.await`"
 )]
-pub trait DataKeySource {
+pub trait DataKeySource: KeySourceKind<Kind = OwnIdentity> {
     /// Generate one fresh data key per payload, in payload order.
     fn generate_keys(
         &self,
@@ -74,7 +243,7 @@ pub trait DataKeySource {
     label = "this loads a keyset with no credential",
     note = "if `{Self}` takes a credential with each call (`CredentialKeySource`), pass one: in Stack Encrypt, call `.with_credential(..)` before `.await`"
 )]
-pub trait IndexKeySource {
+pub trait IndexKeySource: KeySourceKind<Kind = OwnIdentity> {
     /// Load the index key for a keyset — identified by id or name, or the
     /// client's default keyset when `keyset_id` is `None`. Returns the
     /// resolved keyset id alongside the key, so callers pinning `None` or a
@@ -103,7 +272,8 @@ pub trait IndexKeySource {
 /// `credential` added. An implementation must make the request with that
 /// credential, or fail. It must never fall back to another identity.
 ///
-/// A key source is one kind or the other, never both:
+/// A key source is one kind or the other, never both. [`KeySourceKind`]
+/// holds that: a type states one kind, and each trait requires its own.
 ///
 /// - A source with an identity of its own (an access key, a saved login)
 ///   implements [`DataKeySource`] and [`IndexKeySource`], and not this
@@ -126,7 +296,7 @@ pub trait IndexKeySource {
     label = "this passes a credential to a key source that has an identity of its own",
     note = "a key source with an identity of its own makes every request as that identity. To make each request as its caller, build the key source over an auth strategy that takes a credential with each call, such as `OidcFederationStrategy::credential_per_call`"
 )]
-pub trait CredentialKeySource {
+pub trait CredentialKeySource: KeySourceKind<Kind = CredentialPerCall> {
     /// [`DataKeySource::generate_keys`], made with `credential`.
     fn generate_keys_with_credential(
         &self,
@@ -407,6 +577,10 @@ mod fake {
         }
     }
 
+    impl KeySourceKind for FakeDataKeySource {
+        type Kind = OwnIdentity;
+    }
+
     impl IndexKeySource for FakeDataKeySource {
         async fn load_index_key(
             &self,
@@ -529,6 +703,10 @@ mod fake {
         }
     }
 
+    impl KeySourceKind for FakeCredentialKeySource {
+        type Kind = CredentialPerCall;
+    }
+
     impl CredentialKeySource for FakeCredentialKeySource {
         async fn generate_keys_with_credential(
             &self,
@@ -638,6 +816,10 @@ mod deterministic {
             hasher.update(salt);
             hasher.finalize().into()
         }
+    }
+
+    impl super::KeySourceKind for DeterministicSource {
+        type Kind = super::OwnIdentity;
     }
 
     impl DataKeySource for DeterministicSource {
