@@ -1,0 +1,65 @@
+error[E0277]: this path is not ordered: declare it under `ordered` to compare it
+  --> tests/ui/field_reference_json_equality_path.rs:25:52
+   |
+25 |     let _ = EncryptedCustomer::PROFILE.at().name().gt("A");
+   |                                                    ^^ an ordering of a path declared under `paths`
+   |
+   = help: the trait `OrderedPathKind` is not implemented for `EqualityPath`
+   = note: a path under `paths = {..}` is compared with `eq` and `is_null`; one under `ordered = {..}` with the orderings too, and its values carry an ordering term
+help: the trait `OrderedPathKind` is implemented for `OrderedPath`
+  --> src/field_reference/json.rs
+   |
+   | impl OrderedPathKind for OrderedPath {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `DeclaredPath::<W, T, C, P, V, O>::gt`
+  --> src/field_reference/json.rs
+   |
+   |     pub fn gt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gt>, C::Start>
+   |            -- required by a bound in this associated function
+   |     where
+   |         O: OrderedPathKind,
+   |            ^^^^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V, O>::gt`
+
+error[E0277]: this path is not ordered: declare it under `ordered` to compare it
+  --> tests/ui/field_reference_json_equality_path.rs:26:52
+   |
+26 |     let _ = EncryptedCustomer::PROFILE.at().name().between("A", "M");
+   |                                                    ^^^^^^^ an ordering of a path declared under `paths`
+   |
+   = help: the trait `OrderedPathKind` is not implemented for `EqualityPath`
+   = note: a path under `paths = {..}` is compared with `eq` and `is_null`; one under `ordered = {..}` with the orderings too, and its values carry an ordering term
+help: the trait `OrderedPathKind` is implemented for `OrderedPath`
+  --> src/field_reference/json.rs
+   |
+   | impl OrderedPathKind for OrderedPath {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `DeclaredPath::<W, T, C, P, V, O>::between`
+  --> src/field_reference/json.rs
+   |
+   |     pub fn between(
+   |            ------- required by a bound in this associated function
+...
+   |         O: OrderedPathKind,
+   |            ^^^^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V, O>::between`
+
+error[E0277]: this path holds `bool`, and `&str` is not one
+  --> tests/ui/field_reference_json_equality_path.rs:28:54
+   |
+28 |     let _ = EncryptedCustomer::PROFILE.at().vip().eq("yes");
+   |                                                   -- ^^^^^ a `&str`
+   |                                                   |
+   |                                                   required by a bound introduced by this call
+   |
+   = note: a declared path takes the type its `ordered = {..}` or `paths = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+help: the trait `PathValue<bool>` is not implemented for `&str`
+      but trait `PathValue<std::string::String>` is implemented for it
+  --> src/field_reference/json.rs
+   |
+   | impl PathValue<String> for &str {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `std::string::String`, found `bool`
+note: required by a bound in `DeclaredPath::<W, T, C, P, V, O>::eq`
+  --> src/field_reference/json.rs
+   |
+   |     pub fn eq(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Eq>, C::Start> {
+   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V, O>::eq`

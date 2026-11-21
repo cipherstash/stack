@@ -57,6 +57,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Three more records derive** (#1661). The owned derives did not accept
 
+- **Typed JSON queries from a field reference** (#1459, #1687). A field
+  whose type stores a JSON document (`JsonDocument`, or EQL's
+  `JsonTreeDocument`) has one field reference method for each kind of JSON
+  query, in place of the operator methods:
+
+  | Field reference method | Returns, for `JsonDocument` |
+  | --- | --- |
+  | `contains(doc)`, `contained_by(doc)`, `at().age().eq(v)` | `JsonQuery` |
+  | `at().age().lt(v)`, `.lte`, `.gt`, `.gte` | `JsonLeafQuery` |
+  | `at().age().between(lo, hi)` | `(JsonLeafQuery, JsonLeafQuery)`, low then high |
+  | `at().age().is_null()` | `JsonQuery` |
+  | `at().age().selector()` | `JsonSelector` |
+  | `elements().visits().place().eq(v).and().at().gt(v)` | `JsonElementsQuery` |
+  | `predicate(text).var(name, v)` | `JsonPredicateQuery` |
+  | `children(path)` | `JsonSubtreeKey`, which holds the node's one token |
+
+  `EncryptedCustomer::PROFILE.at().age().gt(30).encrypt(&keyset)` derives
+  under the field's column and options, as a scalar field's query does,
+  and takes a scope with `.scope(..)`. Each query derives the operand the
+  dynamic interface derives for the same declaration: the field reference
+  and the data plan read one definition of each input, which no longer
+  needs the `dynamic` feature.
+  - **Typed paths.** `#[stash(json(ordered = { "$.age": u32,
+    "$.visits[*].place": String }, sealed_root = false))]` on the field
+    names the JSON index's options and the type of the values at each
+    ordered path. The derive seals the field under them, and the field
+    queries under them. It parses each path at compile time with the
+    engine's grammar (`stack-encrypt-jsonpath`): a path that does not
+    parse, has no `$`, names an array position or is given twice is a
+    compile error at the path, and a type other than an integer type,
+    `f64` or `String` (`JsonPathType`) is one at the type. Each path gets
+    a method under `at()`, returning a `DeclaredPath` of its type, and
+    each array whose elements have an ordered member gets one under
+    `elements()`, whose methods are the members (`ElementMember`). A
+    path, member or array the field does not declare has no method, a
+    value of another type does not compile (`PathValue`), and `and()`
+    after a condition gives the same array's members, so a member of
+    another array cannot be given. A method is named after the path's
+    keys (`$.visits[*].at` is `visits_at()`); `names = { "key": word }`
+    names a key the rule cannot. `paths = { "$.name": String, "$.vip":
+    bool }` declares a path for equality alone: its type is any
+    `JsonScalarType` (a `JsonPathType` or `bool`), it adds nothing to the
+    field's options, so no stored or derived byte changes, and its
+    `DeclaredPath` (kind `EqualityPath`, where an `ordered` path's is
+    `OrderedPath`) has `eq`, `is_null` and `selector`; an ordering of it
+    does not compile (`OrderedPathKind`). A path under both keys is a
+    compile error. An element-scoped condition compares ordering terms,
+    so `elements()` has ordered members only. The field reference has a fifth type
+    parameter, the field's paths (`DocumentPaths`); a field that declares
+    none has `TextPaths`. A field reached through an outer record
+    (`field`) keeps its paths.
+  - **Paths as text.** `at_text_path(path)` and `elements_text_path(path)`
+    take JSONPath text, for a filter built at run time, and check it when
+    the query is encrypted, before any key is requested, by the dynamic
+    interface's rules: an ordering at a path the field does not order is
+    `TermError::JsonPathNotOrdered`. They derive the operand the typed
+    method derives for the same path and value. A field with no declared
+    paths has only these. A document type that seals under other options
+    when its field names none says so with `JsonQueries::default_options`,
+    which its field queries under.
+  - **Typed values.** An ordering at a text path takes a number or a
+    string (`field_reference::json::JsonOrdered`), equality there a scalar
+    (`JsonScalar`), and containment a document. A boolean ordering, or
+    equality with an object, does not compile. An element predicate with
+    no condition has no `encrypt`. A NaN or an infinity, which no JSON
+    number is, is refused with the new `TermError::JsonNumberNotFinite`
+    (`stack_encrypt::json_number_not_finite`) before any key is requested,
+    rather than becoming `null`. There is no `f32` value: serde_json widens
+    an `f32` when it builds a document, so the query takes the `f64` the
+    document holds (`f64::from(x)` for one built from `x`). A NaN or an
+    infinity inside a `serde_json::Value` given to `contains` is already
+    `null`, and is queried as `null`.
+  - **Predicate variables.** `predicate(text).var("min", 30)` names one
+    variable, which the predicate reads as `$min`; `var_null(name)` names
+    a JSON `null`. A value is a `JsonScalar`. A NaN or an infinity is
+    refused with `TermError::JsonNumberNotFinite`, and a name given twice
+    with `Error::Input` and `Reason::JsonDuplicateKey`, each before any
+    key is requested. The predicate text is checked when the query is
+    encrypted.
+  - **Refusals.** A refusal of the input's own shape (an
+    `elements_text_path` path with no wildcard, a predicate the grammar
+    does not read) is the new `Error::Input`, below.
+  - **New public items.** `json::JsonTarget`, which seals a document under
+    options; `json::JsonQueries`, which converts each operand into the
+    field type's query type; `json::JsonElementsQuery` and
+    `json::JsonPredicateQuery`, the typed element and predicate operands;
+    and `field_reference::json`, the query types: `DeclaredPath`,
+    `ArrayElements`, `ElementMember`, `DocumentPaths`, `ElementArray`,
+    `TextPaths`, `JsonPathType` and `PathValue` among them.
+
+- **A value passed by value is sealed without a copy** (#1687). Sealing
+  a value took a copy of it when the target had no owned form of its own.
+  Both copies were wiped, so nothing leaked, but the copy was not needed.
+  - A `JsonDocument` field marked `#[stash(json(..))]` moves the document
+    out of the `JsonPlaintext` into the seal
+    (`JsonTarget::json_owned_encryption`), as `encrypt_into` already did.
+  - A derived `plaintext = T` record with exactly one field derived from
+    the plaintext has its own `owned_encryption`. It moves the value into
+    the owned form of that field's target. So a record whose one field is a
+    `StackCipherText` seals the value with no copy. When the record's
+    context cannot be stored, or its indexes are refused, the value is
+    wiped. A record with two or more such fields is unchanged.
+  - Three items for generated and binding code, hidden from the docs:
+    `Encryption::storing` in `Owned` mode (requires `S: Zeroize`, and
+    wipes the value when the context cannot be stored),
+    `Encryption::refused_wiping` (requires `S: Zeroize`), and
+    `Encryption::over_json_plaintext`, which turns an owned description of
+    a `serde_json::Value` into one of a `JsonPlaintext` by moving the
+    document across. No item returns the document to its caller.
+  - The stored bytes do not change. A target with search terms keeps its
+    behaviour.
+
+- **`Error::Input`: a refusal of the caller's input** (#1459). A field
+  field reference's JSON query whose input has the wrong shape, and a data plan run
+  through `dynamic::Planned` whose source does not fit it, now fail with
+  `Error::Input`, which holds the dynamic interface's error. Its message,
+  code (`stack_encrypt::dynamic_source`, `stack_encrypt::dynamic_predicate`
+  and the rest) and payload (`reason`, and `field`, `construct` and `at`
+  where it has them) are that error's, so a refusal reports the same way
+  on both paths. They used to be `Error::Other`, whose code
+  (`stack_encrypt::other`) a caller could not tell from an engine fault.
+  The error type is now public without the `dynamic` feature too, as
+  `stack_encrypt::refusal::Error` and `refusal::Reason` (the same types as
+  `dynamic::Error` and `dynamic::Reason`). This module's own bug
+  (`Internal`) and a target resolver's own failure stay `Error::Other`.
 - **Two more records derive** (#1661). The owned derives did not accept
   these shapes, and the removed derives did:
   - A `plaintext = T` record can have a `struct = ..` record as a field.
@@ -193,8 +318,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them. The caller's scope and bindings are the one context argument,
   after the plan's own. A query takes scopes alone, and refuses a binding
   before any key is requested, as `PlanError::BindInQuery`. A refused
-  term keeps its kind (`Error::Term`); other dynamic refusals are
-  `Error::Other`. `Planned::contexts()` shows every field's context with
+  term keeps its kind (`Error::Term`); a refusal of the caller's input is
+  `Error::Input`. `Planned::contexts()` shows every field's context with
   a placeholder for the caller's scope and one for the caller's binding,
   before any value is encrypted.
 - **Query plans and the dynamic field handle** (#1486). `Plan::query(field,
@@ -266,6 +391,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     jiff has no leap seconds, so the error now says only what is wrong:
     `Timestamp::new` was given nanoseconds of one second or more.
 
+- **An index run over a `ValueFrame` refuses a value as `Error::Input`**
+  (#1459). An `IndexSpec` run directly over a `ValueFrame` it has no term
+  for (a boolean under equality, a container under ORE) failed with the
+  dynamic `Error::Term` boxed in `Error::Other`. It is now in
+  `Error::Input`, matched as `Error::Input(refusal)` with
+  `refusal.as_ref()` the `dynamic::Error::Term`, and its code is
+  `stack_encrypt::dynamic_term` rather than `stack_encrypt::other`.
 - **The structural API is removed** (#1661, #1662). Stack Encrypt had two
   ways to encrypt a record and two ways to query one. The owned API stays:
   `EncryptTarget`, `DecryptSource`, `EncryptInto`, `DecryptFrom`, field
@@ -303,12 +435,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `plan::all((a, b))` | `a.zip(b)` on two `Pending` values, or `Pending::all`. Both wipe the plaintext a decrypt recovered if a later item fails. |
   | A hand-written `impl EncryptFrom<S> for T` | `impl EncryptTarget<S> for T` with `type ContextInput = RequiredContext<CallerContext>`, and `DecryptSource` in place of `DecryptInto` |
 
+  A typed JSON query, `cipher.query(op::Contains, ..).on(&plan)` and
+  `op::AtPath(..)`, is the document field's reference query: see "Typed JSON
+  queries from a field reference", above.
+
   What has no replacement yet:
-  - **A typed JSON query.** `cipher.query(op::Contains, ..)` and
-    `op::AtPath(..)` on a plan were the only typed way to query a JSON
-    document. Until the document's field reference has methods for them, a
-    JSON query goes through a plan that is data (`dynamic::query_term`, or
-    `Planned` with a query plan).
   - **Naming another index for a query** (`.via(index)`). A field reference
     answers through the index its field's type declares.
   - **A keyset chosen by name on a call** (`.keyset("tenant")`). Load the
@@ -331,6 +462,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target that calls `open` for its own plaintext type is unaffected. A
   caller that opens a type that is not `Zeroize` wraps it in one that is,
   or implements `Zeroize` for it.
+- **The JSON index answers no typed operator through `Supports`** (#1459).
+  `Json`'s `Supports` impls for `op::Contains`, `op::ContainedBy` and
+  `op::AtPath`, `JsonDocument`'s `Answers` and `LabelledTarget` impls, the
+  `Input` impls of a path and a value, and `json::AtPathTerms` are
+  removed. Only the removed query chain reached them; a field reference's
+  JSON queries replace them. The operator types stay: the dynamic `Op`
+  enum is generated from them.
 
 - **A set of terms holds one index for each operator.**
   `Encrypted<Terms>` and a derived `plaintext = T` record now refuse a set
@@ -848,6 +986,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The JSON path grammar is its own crate, `stack-encrypt-jsonpath`**
+  (#1687). `JsonPath`, `Segment` and `JsonPathError` moved there unchanged,
+  so that the derive can parse a field's declared paths at compile time
+  with the engine's own grammar. `stack_encrypt::json` re-exports all
+  three at the same paths, and `JsonPathError` keeps its code, help and
+  payload. The JSON text parser decodes strings with the same decoder as a
+  path's quoted names, which also moved. No stored byte changes: the
+  selector and token encodings of a path stay in this crate.
 - **A data plan lowers to the combinators directly** (#1488, first part).
   `dynamic::planned::compose` and `opening` build each field's combinator
   from the parsed plan, and the dynamic entry points run them:

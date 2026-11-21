@@ -20,6 +20,11 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full", "extra-traits"] }
+# The JSONPath grammar stack-encrypt reads paths with, so a field's declared
+# paths are parsed here, at compile time, exactly as the engine parses them.
+# No features: the engine's error reporting (miette, ErrorPayload) is not
+# built into the compiler's process.
+stack-encrypt-jsonpath = { path = "../stack-encrypt-jsonpath", version = "0.3.0" }
 
 # The dev-dependencies below are used only by the crate-level doctests.
 # `cargo-udeps` cannot see into rustdoc, so it reports them as unused.

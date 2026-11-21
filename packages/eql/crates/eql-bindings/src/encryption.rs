@@ -114,7 +114,7 @@ use stack_encrypt::sem::{
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{
     self, AeadContext, CallerContext, ContextFromField, DecryptSource, EncryptTarget, IndexSpec,
-    RequiredContext,
+    Owned, RequiredContext,
 };
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, Decryptable, Decryption, Describe,
@@ -260,6 +260,10 @@ impl Reader for Ciphertext {
 // The canonical ciphertext, read into EQL's `c`. The declaration requires the
 // AEAD (authenticated encryption) half of the context, as Stack Encrypt's own
 // `StackCipherText` does.
+//
+// The borrowed form clones the plaintext to seal it. The owned form is Stack
+// Encrypt's own owned form of `StackCipherText`: it moves the value into the
+// seal, with no copy, and wipes it when the context is refused.
 impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Ciphertext {
     type ContextInput = RequiredContext<AeadContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
@@ -267,6 +271,12 @@ impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Ciphertext {
         S: 's,
     {
         target::ciphertext().accepting().transcode()
+    }
+    fn owned_encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput, Owned>
+    where
+        S: 's,
+    {
+        <StackCipherText as EncryptTarget<S>>::owned_encryption().transcode()
     }
 }
 

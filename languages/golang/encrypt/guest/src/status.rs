@@ -155,6 +155,10 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // children asked for as a scalar, or an altered entry. The client
         // cannot tell which, so neither STATUS_AUTH nor a claim of either.
         stack_encrypt::Error::JsonNotALeaf => STATUS_ENCODING,
+        // A refusal of the caller's input, reported through the crate's
+        // error by a path whose failure can only be that: the dynamic
+        // refusal it holds is classified as the dynamic path classifies it.
+        stack_encrypt::Error::Input(refusal) => status_for_dynamic(refusal),
         _ => STATUS_INTERNAL,
     }
 }
@@ -418,6 +422,21 @@ mod tests {
             status_for_error(&stack_encrypt::Error::Plan(
                 stack_encrypt::PlanError::NoContext
             )),
+            STATUS_ENCODING
+        );
+    }
+
+    /// A refusal of the caller's input that arrives in the crate's error is
+    /// classified as the dynamic path classifies it.
+    #[test]
+    fn an_input_refusal_is_the_callers_input() {
+        use stack_encrypt::refusal::{Error, Reason};
+        let refused = Error::Source {
+            field: None,
+            reason: Reason::JsonPathNoWildcard,
+        };
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::Input(Box::new(refused))),
             STATUS_ENCODING
         );
     }

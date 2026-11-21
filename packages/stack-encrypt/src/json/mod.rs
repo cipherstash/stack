@@ -133,19 +133,28 @@ use crate::target::{DecryptField, DecryptSource, Decryptable, Decryption};
 
 mod cascade;
 mod derive;
+pub(crate) mod inputs;
 mod path;
 mod plain;
 mod plaintext;
+pub(crate) mod predicate;
 mod query;
 mod shuffle;
+mod target;
 mod text;
 
 pub use derive::JsonTerms;
+pub(crate) use path::IndexPath;
 pub use path::{JsonPath, JsonPathError, Segment};
 pub use plaintext::JsonPlaintext;
+pub(crate) use query::JsonElementsMember;
 pub use query::{
-    AtPathTerms, JsonLeafQuery, JsonQuery, JsonSelector, JsonSelectorSet, JsonSubtreeKey,
+    JsonElementsQuery, JsonLeafQuery, JsonPredicateQuery, JsonQuery, JsonSelector, JsonSelectorSet,
+    JsonSubtreeKey,
 };
+#[doc(hidden)]
+pub use target::{seal_field, seal_field_owned, FieldOptions};
+pub use target::{JsonQueries, JsonTarget};
 pub use text::{parse_text, to_text, JsonTextError};
 
 /// Wipe a JSON value's plaintext in place: every string (object keys too)
@@ -161,12 +170,11 @@ pub fn wipe_value(value: &mut serde_json::Value) {
 
 /// The deepest a document nests: the data plan refuses a path with more
 /// steps, which names no node.
-#[cfg(feature = "dynamic")]
 pub(crate) use derive::MAX_DEPTH;
 pub(crate) use derive::{seal_pending, terms_pending};
 pub(crate) use plain::PlainJson;
 pub(crate) use shuffle::Randomness;
-pub(crate) use text::{string_end, string_text};
+pub(crate) use stack_encrypt_jsonpath::json_string::{string_end, string_text};
 
 /// A sixteen-byte tag: a selector or a token.
 pub type Tag = [u8; 16];
@@ -201,7 +209,8 @@ pub struct JsonOptions {
     /// whole document from the root's token.
     pub sealed_root: bool,
     /// The paths whose number and string leaves carry an ordering term
-    /// `op`, and so answer `op::AtPath(op::Lt)` and the other orderings.
+    /// `op`, and so answer a field reference's `at().age().lt(v)` and the other
+    /// orderings, and the dynamic interface's `lt_at` and the rest.
     /// None by default: an ordering term reveals the order of the leaf
     /// across every row that holds one, and costs about eighty bytes a
     /// leaf, so a path pays for it only when asked. A wildcard step covers

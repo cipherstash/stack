@@ -16,9 +16,10 @@
 //!                                                 one element satisfies both
 //! ```
 //!
-//! `Op::Match`'s documentation runs one through the data plan. The
-//! grammar and the compilation are documented with the operator, in
-//! the [`json_query`](super::json_query) module docs. This module holds the
+//! The dynamic interface's `match` operator and a field reference's
+//! `predicate` both compile through it. The grammar and the compilation are
+//! documented with the operator, in the dynamic interface's JSON operators
+//! (`stack_encrypt::dynamic`, with the `dynamic` feature). This module holds the
 //! parser ([`parse`]), which reads the text into an [`Ast`] and refuses
 //! what the grammar does not read at the byte where it stops, and the
 //! compiler ([`compile`]), which binds the values and maps each comparison
@@ -35,20 +36,22 @@
 use serde_json::Value;
 use zeroize::Zeroizing;
 
-use super::json_query::{
-    derive_input, eql, json_reason, leaf, member_of, ordered_path_of, Bounds, Compare, Input,
-    Parsed, Predicate, Under,
+use super::inputs::{
+    derive as derive_input, json_reason, leaf, member_of, ordered_path_of, Bounds, Compare,
+    Derived, Input, Parsed, Predicate, Under,
 };
-use super::query::{Op, Operand};
-use super::{Error, Reason};
-use crate::json::{parse_text, string_end, string_text, JsonOptions, JsonPath, Segment, MAX_DEPTH};
+use super::{
+    parse_text, string_end, string_text, IndexPath, JsonOptions, JsonPath, JsonPredicateQuery,
+    Segment, MAX_DEPTH,
+};
+use crate::refusal::{Error, Reason};
 use crate::{KeysetCipher, Pending};
 
 /// How deeply a predicate may nest parentheses, `!` and `exists`. The
 /// parser descends once per level, so the bound keeps a hostile predicate
 /// from overflowing the stack; the SQL evaluates the compiled tree by
 /// recursion too.
-pub(super) const MAX_NESTING: usize = 32;
+pub(crate) const MAX_NESTING: usize = 32;
 
 // The constructs a refusal names, in the grammar's own words.
 const C_TEXT: &str = "text the grammar does not read";
@@ -787,12 +790,12 @@ fn parse(text: &str) -> Result<Ast, Refusal> {
 /// A predicate compiled: a tree of the inputs of the operators whose
 /// operands are its leaves.
 #[derive(PartialEq)]
-pub(super) enum Node {
+pub(crate) enum Node {
     And(Vec<Node>),
     Or(Vec<Node>),
     Not(Box<Node>),
-    /// One leaf: an operator and the input it derives from, checked.
-    Leaf(Op, Input),
+    /// One leaf: the input of the operator that derives it, checked.
+    Leaf(Input),
 }
 
 impl std::fmt::Debug for Node {
@@ -802,7 +805,7 @@ impl std::fmt::Debug for Node {
             Node::Or(children) => f.debug_tuple("Or").field(children).finish(),
             Node::Not(child) => f.debug_tuple("Not").field(child).finish(),
             // The input holds the predicate's values: the operator alone.
-            Node::Leaf(op, _) => f.debug_tuple("Leaf").field(op).finish(),
+            Node::Leaf(input) => write!(f, "Leaf({})", input.variant()),
         }
     }
 }
@@ -827,7 +830,7 @@ struct Compiler<'c> {
 /// the leaves' own operators make of their inputs, such as
 /// [`TermError::JsonPathNotOrdered`](crate::sem::TermError::JsonPathNotOrdered) for an ordering at a path the field
 /// does not order.
-pub(super) fn compile(
+pub(crate) fn compile(
     text: &str,
     vars: &Value,
     options: &JsonOptions,
@@ -865,7 +868,7 @@ impl Compiler<'_> {
             ),
             Ast::Not(inner) => Node::Not(Box::new(self.node(*inner, !negated)?)),
             Ast::Compare(comparison) => self.comparison(comparison, negated)?,
-            Ast::Exists { path, filter: None } => Node::Leaf(Op::Selector, Input::Path(path.path)),
+            Ast::Exists { path, filter: None } => Node::Leaf(Input::Selector(path.path)),
             Ast::Exists {
                 path,
                 filter: Some(conditions),
@@ -901,10 +904,28 @@ impl Compiler<'_> {
         }
     }
 
+    /// Whether `at` is a variable that holds an object or an array. Read
+    /// in place, so a container is refused before [`value`](Self::value)
+    /// clones it: a clone recurses once per level of the caller's value.
+    fn holds_a_container(&self, at: &ValueAt) -> bool {
+        matches!(
+            at,
+            ValueAt::Variable { name, .. }
+                if matches!(self.vars.get(name.as_str()), Some(Value::Object(_) | Value::Array(_)))
+        )
+    }
+
     /// The value of `at`, a scalar: what equality takes.
     fn scalar(&self, at: &ValueAt) -> Result<Parsed, Error> {
+        if self.holds_a_container(at) {
+            return Err(value_type(at));
+        }
         let value = self.value(at)?;
-        if matches!(value.0, Value::Object(_) | Value::Array(_)) {
+        // A variable was checked in place above; a literal, read from the
+        // predicate's own text, is checked once it is parsed.
+        if matches!(at, ValueAt::Literal { .. })
+            && matches!(value.0, Value::Object(_) | Value::Array(_))
+        {
             return Err(value_type(at));
         }
         Ok(value)
@@ -912,6 +933,9 @@ impl Compiler<'_> {
 
     /// The value of `at`, a number or a string: what an ordering takes.
     fn ordered(&self, at: &ValueAt) -> Result<Parsed, Error> {
+        if self.holds_a_container(at) {
+            return Err(value_type(at));
+        }
         let value = self.value(at)?;
         leaf(&value.0).map_err(|_| value_type(at))?;
         Ok(value)
@@ -926,15 +950,10 @@ impl Compiler<'_> {
             at,
         } = comparison;
         let wild = !path.path.is_positional();
-        let (compare, operator) = match op {
+        let compare = match op {
             // `==`: containment of the value at the path, exact; at a
             // wildcard, of any element.
-            PredicateOp::Eq => {
-                return Ok(Node::Leaf(
-                    Op::EqAt,
-                    Input::At(path.path, self.scalar(&value)?),
-                ))
-            }
+            PredicateOp::Eq => return Ok(Node::Leaf(Input::EqAt(path.path, self.scalar(&value)?))),
             // `!=` over several elements is true when one differs, which
             // containment cannot say.
             PredicateOp::Ne if wild => {
@@ -949,14 +968,14 @@ impl Compiler<'_> {
             PredicateOp::Ne => {
                 let value = self.scalar(&value)?;
                 return Ok(Node::And(vec![
-                    Node::Leaf(Op::Selector, Input::Path(path.path.clone())),
-                    Node::Not(Box::new(Node::Leaf(Op::EqAt, Input::At(path.path, value)))),
+                    Node::Leaf(Input::Selector(path.path.clone())),
+                    Node::Not(Box::new(Node::Leaf(Input::EqAt(path.path, value)))),
                 ]));
             }
-            PredicateOp::Lt => (Compare::Lt, Op::LtAt),
-            PredicateOp::Lte => (Compare::Lte, Op::LteAt),
-            PredicateOp::Gt => (Compare::Gt, Op::GtAt),
-            PredicateOp::Gte => (Compare::Gte, Op::GteAt),
+            PredicateOp::Lt => Compare::Lt,
+            PredicateOp::Lte => Compare::Lte,
+            PredicateOp::Gt => Compare::Gt,
+            PredicateOp::Gte => Compare::Gte,
         };
         Ok(if wild {
             // An ordering at a wildcard: some element's field, which is
@@ -975,10 +994,7 @@ impl Compiler<'_> {
                 return Err(Refusal::unsupported(C_ELEMENTS_THEMSELVES, at).into());
             }
             let predicate = self.member(&base, member, compare, value)?;
-            Node::Leaf(
-                Op::ElementMatch,
-                Input::Elements(self.bound, vec![predicate]),
-            )
+            Node::Leaf(Input::Elements(self.bound, vec![predicate]))
         } else {
             // An ordering at one node: a node there whose leaf compares.
             // jsonpath answers false of an absent path, which the selector
@@ -991,14 +1007,14 @@ impl Compiler<'_> {
             // rows hold null at the path, so it is sent only there.
             let value = self.ordered(&value)?;
             let path = ordered_path_of(self.options, path.path)?;
-            let mut leaves = vec![Node::Leaf(Op::Selector, Input::Path(path.clone()))];
+            let mut leaves = vec![Node::Leaf(Input::Selector(path.clone()))];
             if negated {
-                leaves.push(Node::Not(Box::new(Node::Leaf(
-                    Op::EqAt,
-                    Input::At(path.clone(), Parsed(Value::Null)),
-                ))));
+                leaves.push(Node::Not(Box::new(Node::Leaf(Input::EqAt(
+                    path.clone(),
+                    Parsed(Value::Null),
+                )))));
             }
-            leaves.push(Node::Leaf(operator, Input::At(path, value)));
+            leaves.push(Node::Leaf(Input::Ordering(compare, path, value)));
             Node::And(leaves)
         })
     }
@@ -1059,10 +1075,10 @@ impl Compiler<'_> {
                         at
                     },
                 );
-                return Ok(Node::Leaf(
-                    Op::EqAt,
-                    Input::At(JsonPath::of(full), self.scalar(&only.value)?),
-                ));
+                return Ok(Node::Leaf(Input::EqAt(
+                    JsonPath::of(full),
+                    self.scalar(&only.value)?,
+                )));
             }
         }
         let mut predicates = Vec::with_capacity(conditions.len());
@@ -1081,10 +1097,7 @@ impl Compiler<'_> {
             let value = self.ordered(&condition.value)?;
             predicates.push(self.member(&base, condition.path.path, compare, value)?);
         }
-        Ok(Node::Leaf(
-            Op::ElementMatch,
-            Input::Elements(self.bound, predicates),
-        ))
+        Ok(Node::Leaf(Input::Elements(self.bound, predicates)))
     }
 }
 
@@ -1160,7 +1173,7 @@ enum Shape {
 
 impl Shape {
     /// The shape of `node`, its leaves pushed to `leaves` in order.
-    fn of(node: Node, leaves: &mut Vec<(Op, Input)>) -> Result<Self, Error> {
+    fn of(node: Node, leaves: &mut Vec<Input>) -> Result<Self, Error> {
         Ok(match node {
             Node::And(children) => Shape::And(
                 children
@@ -1175,18 +1188,18 @@ impl Shape {
                     .collect::<Result<_, _>>()?,
             ),
             Node::Not(child) => Shape::Not(Box::new(Self::of(*child, leaves)?)),
-            Node::Leaf(op, input) => {
-                let shape = match op {
-                    Op::EqAt => Shape::Leaf("contains", None),
-                    Op::Selector => Shape::Leaf("exists", None),
-                    Op::LtAt => Shape::Leaf("cmp", Some("lt")),
-                    Op::LteAt => Shape::Leaf("cmp", Some("lte")),
-                    Op::GtAt => Shape::Leaf("cmp", Some("gt")),
-                    Op::GteAt => Shape::Leaf("cmp", Some("gte")),
-                    Op::ElementMatch => Shape::Leaf("elements", None),
+            Node::Leaf(input) => {
+                let shape = match &input {
+                    Input::EqAt(..) => Shape::Leaf("contains", None),
+                    Input::Selector(_) => Shape::Leaf("exists", None),
+                    Input::Ordering(Compare::Lt, ..) => Shape::Leaf("cmp", Some("lt")),
+                    Input::Ordering(Compare::Lte, ..) => Shape::Leaf("cmp", Some("lte")),
+                    Input::Ordering(Compare::Gt, ..) => Shape::Leaf("cmp", Some("gt")),
+                    Input::Ordering(Compare::Gte, ..) => Shape::Leaf("cmp", Some("gte")),
+                    Input::Elements(..) => Shape::Leaf("elements", None),
                     _ => return Err(Error::Internal),
                 };
-                leaves.push((op, input));
+                leaves.push(input);
                 shape
             }
         })
@@ -1217,12 +1230,15 @@ impl Shape {
 }
 
 /// A leaf's operand as JSON: the EQL value's, or a selector's text.
-fn operand_value(operand: Operand) -> Result<Value, crate::Error> {
+fn operand_value(operand: Derived) -> Result<Value, crate::Error> {
+    let json = |value: Result<Value, serde_json::Error>| {
+        value.map_err(|error| crate::Error::Other(Box::new(error)))
+    };
     match operand {
-        Operand::One(bytes) => {
-            serde_json::from_slice(&bytes).map_err(|error| crate::Error::Other(Box::new(error)))
-        }
-        Operand::Text(text) => Ok(Value::String(text)),
+        Derived::Query(query) => json(serde_json::to_value(&query)),
+        Derived::Leaf(leaf) => json(serde_json::to_value(&leaf)),
+        Derived::Elements(elements) => json(serde_json::to_value(&elements)),
+        Derived::Selector(selector) => Ok(Value::String(selector.to_string())),
         _ => Err(crate::Error::Other(
             "a predicate leaf derives one operand".into(),
         )),
@@ -1232,22 +1248,23 @@ fn operand_value(operand: Operand) -> Result<Value, crate::Error> {
 /// Derive a compiled predicate's operand: each leaf by its own operator's
 /// derivation ([`derive_input`]), all in one pending, put back into the
 /// tree.
-pub(super) fn derive<'a, K: 'static>(
+pub(crate) fn derive<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     under: &Under<'_>,
     options: &JsonOptions,
     node: Node,
-) -> Result<Pending<'a, Operand, K>, Error> {
+) -> Result<Pending<'a, JsonPredicateQuery, K>, Error> {
     let mut leaves = Vec::new();
     let shape = Shape::of(node, &mut leaves)?;
     let operands = leaves
         .into_iter()
-        .map(|(op, input)| {
-            derive_input(keyset, under, options, op, input).map(|p| p.try_map(operand_value))
-        })
+        .map(|input| derive_input(keyset, under, options, input).map(|p| p.try_map(operand_value)))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Pending::all(keyset, operands)
-        .try_map(move |operands| eql(&shape.fill(&mut operands.into_iter())?).map(Operand::One)))
+    Ok(Pending::all(keyset, operands).try_map(move |operands| {
+        shape
+            .fill(&mut operands.into_iter())
+            .map(JsonPredicateQuery)
+    }))
 }
 
 #[cfg(test)]
@@ -1282,9 +1299,11 @@ mod tests {
             Node::And(children) => format!("and({})", list(children)),
             Node::Or(children) => format!("or({})", list(children)),
             Node::Not(child) => format!("not({})", written(child)),
-            Node::Leaf(op, Input::At(path, value)) => format!("{}({path}, {})", op.name(), value.0),
-            Node::Leaf(op, Input::Path(path)) => format!("{}({path})", op.name()),
-            Node::Leaf(op, Input::Elements(bound, predicates)) => {
+            Node::Leaf(input @ (Input::EqAt(path, value) | Input::Ordering(_, path, value))) => {
+                format!("{}({path}, {})", input.name(), value.0)
+            }
+            Node::Leaf(input @ Input::Selector(path)) => format!("{}({path})", input.name()),
+            Node::Leaf(input @ Input::Elements(bound, predicates)) => {
                 let members: Vec<String> = predicates
                     .iter()
                     .map(|p| match &p.bounds {
@@ -1296,9 +1315,9 @@ mod tests {
                         }
                     })
                     .collect();
-                format!("{}({bound}, [{}])", op.name(), members.join("; "))
+                format!("{}({bound}, [{}])", input.name(), members.join("; "))
             }
-            Node::Leaf(op, _) => op.name().to_owned(),
+            Node::Leaf(input) => input.name().to_owned(),
         }
     }
 
@@ -1671,6 +1690,8 @@ mod tests {
                 ("$missing < $.age", JsonPredicateUnknownVariable, 0),
                 ("$.a == $doc", JsonPredicateValueType, 7),
                 ("$.a != $list", JsonPredicateValueType, 7),
+                ("$.age < $doc", JsonPredicateValueType, 8),
+                ("$list <= $.age", JsonPredicateValueType, 0),
                 ("$.age < true", JsonPredicateValueType, 8),
                 ("$.age < $flag", JsonPredicateValueType, 8),
                 ("$.age >= null", JsonPredicateValueType, 9),

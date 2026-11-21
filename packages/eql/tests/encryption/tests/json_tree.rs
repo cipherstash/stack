@@ -4,8 +4,9 @@
 //! (`JsonTreeDocument`, `JsonTreeExtracted`, `JsonTreeSubtree`), as a
 //! `JsonPlaintext`. A query's operand derives through a data plan that
 //! names the type `JsonSearch` under the same column and options
-//! ([`contains`], [`contained_by`], [`gte_at`]), since an EQL type has no
-//! typed JSON query. The unit tests need no database; the PostgreSQL test
+//! ([`contains`], [`contained_by`], [`gte_at`]), the path a language SDK
+//! takes. A record field's reference derives the same operands
+//! (`tests/json_tree_field_references.rs`). The unit tests need no database; the PostgreSQL test
 //! installs nothing itself (`mise run test:encryption:postgres` installs the
 //! v4 bundle built from the tree) and is the oracle the design asks for:
 //! `@>` and `<@` over the encrypted column against PostgreSQL's own
@@ -61,9 +62,9 @@ const ORDERED: [&str; 2] = ["$.hello", "$.number"];
 /// The plan a query derives through: a data plan with one `json` field,
 /// `profile`, that names the EQL type `JsonSearch` under `users/profile`.
 /// That context is the identifier [`seal`] stores (the same two parts), so
-/// a query's selectors are the stored document's. An EQL type has no typed
-/// JSON query: a Rust program derives one through a data plan, as a
-/// language SDK does.
+/// a query's selectors are the stored document's. A document sealed on its
+/// own, with no record, has no field reference, so it is queried through a data
+/// plan, as a language SDK queries one.
 fn plan() -> record::Plan {
     let wire = json!({
         "profile": {

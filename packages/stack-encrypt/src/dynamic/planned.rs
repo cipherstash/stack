@@ -198,19 +198,18 @@ impl Zeroize for ValueFrame {
     }
 }
 
-/// A dynamic refusal as the owned path reports it. A cipher error is
-/// already the crate's and passes through, so a refused term keeps its
-/// kind. A binding on a query is the crate's own refusal,
-/// [`PlanError::BindInQuery`], as the typed query reports it. Every other
-/// dynamic refusal is boxed as [`crate::Error::Other`], with its message.
+/// A dynamic refusal as the owned path reports it. A binding on a query is
+/// the crate's own refusal, [`PlanError::BindInQuery`], as the typed query
+/// reports it. Every other refusal is as [`Error::into_crate`] reports it: a
+/// cipher error passes through, and a refusal of the input is
+/// [`crate::Error::Input`].
 fn wrap(error: Error) -> crate::Error {
     match error {
-        Error::Cipher(error) => error,
         Error::Plan {
             reason: Reason::BindInQuery,
             ..
         } => PlanError::BindInQuery.into(),
-        other => crate::Error::Other(Box::new(other)),
+        other => other.into_crate(),
     }
 }
 

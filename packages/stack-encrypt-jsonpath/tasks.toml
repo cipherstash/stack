@@ -1,0 +1,8 @@
+# Tasks for stack-encrypt-jsonpath, the JSONPath grammar stack-encrypt and its
+# derive share. Included from the root mise.toml.
+
+# Rustdoc with warnings as errors, which the root `doc` task fans out to.
+["doc:stack-encrypt-jsonpath"]
+description = "Build docs for stack-encrypt-jsonpath with all features (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc -p stack-encrypt-jsonpath --no-deps --all-features"

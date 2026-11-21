@@ -2,16 +2,16 @@ error[E0308]: mismatched types
   --> tests/ui/field_reference_of_another_record.rs:38:45
    |
 38 |     let _ = EncryptedAccount::ADDRESS.field(EncryptedAccount::EMAIL);
-   |                                       ----- ^^^^^^^^^^^^^^^^^^^^^^^ expected `FieldReference<Root<...>, _, _, _>`, found `FieldReference<Root<...>, ...>`
+   |                                       ----- ^^^^^^^^^^^^^^^^^^^^^^^ expected `FieldReference<Root<...>, _, _, _, _>`, found `FieldReference<Root<...>, ...>`
    |                                       |
    |                                       arguments to this method are incorrect
    |
-   = note: expected struct `FieldReference<Root<EncryptedAddress>, _, _, _>`
-              found struct `FieldReference<Root<EncryptedAccount>, Encrypted<EqualityTerm>, NoScope, TakesAny>`
+   = note: expected struct `FieldReference<Root<EncryptedAddress>, _, _, _, _>`
+              found struct `FieldReference<Root<EncryptedAccount>, Encrypted<EqualityTerm>, NoScope, TakesAny, TextPaths>`
 note: method defined here
   --> src/field_reference.rs
    |
-   |     pub fn field<R, U, C2, Q>(
+   |     pub fn field<R, U, C2, Q, E>(
    |            ^^^^^
 
 error[E0277]: `field` on a field of type `Option<EncryptedAddress>` does not accept a field reference of `EncryptedAccount`
@@ -30,11 +30,11 @@ help: the trait `Holds<EncryptedAccount>` is not implemented for `Option<Encrypt
    | impl<R> Holds<R> for Option<R> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `EncryptedAddress`, found `EncryptedAccount`
-note: required by a bound in `FieldReference::<W, T, C, P>::field`
+note: required by a bound in `FieldReference::<W, T, C, P, D>::field`
   --> src/field_reference.rs
    |
-   |     pub fn field<R, U, C2, Q>(
+   |     pub fn field<R, U, C2, Q, E>(
    |            ----- required by a bound in this associated function
 ...
    |         T: Holds<R>,
-   |            ^^^^^^^^ required by this bound in `FieldReference::<W, T, C, P>::field`
+   |            ^^^^^^^^ required by this bound in `FieldReference::<W, T, C, P, D>::field`

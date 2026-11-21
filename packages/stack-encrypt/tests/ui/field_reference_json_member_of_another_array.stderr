@@ -1,0 +1,26 @@
+error[E0599]: no method named `total` found for struct `EncryptedCustomerProfileElementsVisits<Q>` in the current scope
+  --> tests/ui/field_reference_json_member_of_another_array.rs:30:10
+   |
+13 |   #[derive(EncryptTarget)]
+   |            ------------- method `total` not found for this struct
+...
+24 |       let _ = EncryptedCustomer::PROFILE
+   |  _____________-
+25 | |         .elements()
+26 | |         .visits()
+27 | |         .place()
+28 | |         .eq("home")
+29 | |         .and()
+30 | |         .total();
+   | |         -^^^^^ method not found in `EncryptedCustomerProfileElementsVisits<JsonFieldQuery<JsonDocument, stack_encrypt::field_reference::json::ElementMatch<EncryptedCustomerProfileElementsVisits>>>`
+   | |_________|
+   |
+
+error[E0599]: no method named `place` found for struct `EncryptedCustomerProfileElementsOrders<Q>` in the current scope
+  --> tests/ui/field_reference_json_member_of_another_array.rs:31:60
+   |
+13 | #[derive(EncryptTarget)]
+   |          ------------- method `place` not found for this struct
+...
+31 |     let _ = EncryptedCustomer::PROFILE.elements().orders().place();
+   |                                                            ^^^^^ method not found in `EncryptedCustomerProfileElementsOrders<ArrayElements<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny, EncryptedCustomerProfileElementsOrders>>`

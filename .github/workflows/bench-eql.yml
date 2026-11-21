@@ -67,6 +67,7 @@ on:
       - "conformance/stack-encrypt/**"
       - "packages/stack-encrypt/**"
       - "packages/stack-encrypt-derive/**"
+      - "packages/stack-encrypt-jsonpath/**"
       - "packages/stack-kms/**"
       - "packages/stack-auth/**"
       - "packages/stack-profile/**"

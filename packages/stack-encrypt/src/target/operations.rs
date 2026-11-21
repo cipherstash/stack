@@ -454,6 +454,57 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
         self.shapes = contexts::substitute(self.shapes, &Shape::under(own.get().clone()));
         self.needing(move |cx: C| cx.extend(own).into())
     }
+    /// [`refused`](Self::refused), for the owned form of a derived record.
+    /// A description refused here wipes a plaintext that was passed by value.
+    /// `refused` drops it as it is, because `S` need not be `Zeroize`.
+    ///
+    /// **This method is for generated code.** The derive emits it when a
+    /// record's indexes are refused, in the owned form of a record that
+    /// moves its plaintext into its one field.
+    #[doc(hidden)]
+    pub fn refused_wiping(self, error: Error) -> Self
+    where
+        S: zeroize::Zeroize,
+    {
+        Self {
+            build: Box::new(move |source, cipher, _| {
+                M::release(source, |value| {
+                    drop(vitaminc_protected::Protected::new(value))
+                });
+                Pending::failed(cipher, error)
+            }),
+            shapes: self.shapes,
+        }
+    }
+    /// The body of [`storing`](Encryption::storing). `refused` is given the
+    /// source when the context cannot be stored, before the description has
+    /// seen it.
+    fn storing_refusing<C, U: 'static, F>(
+        self,
+        store: F,
+        refused: fn(M::Source),
+    ) -> Encryption<'s, S, U, K, StoredContext<C>, M>
+    where
+        Ctx: From<CallerContext>,
+        C: MaybeSend + 'static,
+        F: FnOnce(T, C) -> U + MaybeSend + 'static,
+    {
+        let Self { build, shapes } = self;
+        Encryption {
+            build: Box::new(
+                move |source, cipher, cx: StoredContext<C>| match cx.into_parts() {
+                    Ok((stored, context)) => {
+                        build(source, cipher, context.into()).map(move |value| store(value, stored))
+                    }
+                    Err(error) => {
+                        refused(source);
+                        Pending::failed(cipher, error)
+                    }
+                },
+            ),
+            shapes,
+        }
+    }
 }
 
 impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
@@ -493,7 +544,9 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// A field whose type cannot store the field's own context fails here,
     /// before any key is requested
     /// ([`PlanError::ContextNotStorable`](crate::PlanError::ContextNotStorable)).
-    /// The plaintext is borrowed, so the refusal drops no plaintext.
+    /// The plaintext is borrowed, so the refusal drops no plaintext. The
+    /// [`Owned`] form of this method wipes the plaintext it is handed when
+    /// the context is refused.
     ///
     /// **This method is for generated code.** The derive emits it at the
     /// root of a `#[stash(context_field)]` record.
@@ -504,18 +557,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
         C: MaybeSend + 'static,
         F: FnOnce(T, C) -> U + MaybeSend + 'static,
     {
-        let Self { build, shapes } = self;
-        Encryption {
-            build: Box::new(
-                move |source, cipher, cx: StoredContext<C>| match cx.into_parts() {
-                    Ok((stored, context)) => {
-                        build(source, cipher, context.into()).map(move |value| store(value, stored))
-                    }
-                    Err(error) => Pending::failed(cipher, error),
-                },
-            ),
-            shapes,
-        }
+        self.storing_refusing(store, drop)
     }
     /// Takes the context from a field of the plaintext. The caller then
     /// supplies no context.
@@ -738,6 +780,33 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
             shapes,
         }
     }
+    /// [`storing`](Encryption::storing) for a plaintext passed by value.
+    ///
+    /// A context that cannot be stored is refused before the description
+    /// runs, as in the borrowed form. The refusal wipes the plaintext. That
+    /// is why `S` must be `Zeroize`: a `serde_json::Value` cannot be the
+    /// source here. Convert it to a [`JsonPlaintext`] first, with
+    /// [`over_json_plaintext`](Encryption::over_json_plaintext).
+    ///
+    /// **This method is for generated and binding code.** The derive emits
+    /// it at the root of the owned form of a `#[stash(context_field)]`
+    /// record with one field, and `eql-bindings` seals a JSON tree document
+    /// through it.
+    #[doc(hidden)]
+    pub fn storing<C, U: 'static, F>(
+        self,
+        store: F,
+    ) -> Encryption<'s, S, U, K, StoredContext<C>, Owned>
+    where
+        Ctx: From<CallerContext>,
+        C: MaybeSend + 'static,
+        F: FnOnce(T, C) -> U + MaybeSend + 'static,
+        S: zeroize::Zeroize,
+    {
+        self.storing_refusing(store, |source| {
+            drop(vitaminc_protected::Protected::new(source))
+        })
+    }
     /// Divide a plaintext passed by value between two descriptions, under the
     /// one context this description is given. The key requests of both
     /// descriptions are made in one batch. This is the owned form of
@@ -792,6 +861,24 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
             }),
             shapes,
         }
+    }
+}
+
+impl<'s, T: 'static, K: 'static, Ctx: 's> Encryption<'s, serde_json::Value, T, K, Ctx, Owned> {
+    /// The same description, over a [`JsonPlaintext`] passed by value. The
+    /// document is moved out of the `JsonPlaintext` and handed to this
+    /// description, with no copy. This description then owns the document,
+    /// and must wipe it: [`json_document`] and [`json_terms`] do.
+    ///
+    /// Nothing here returns the document to the caller, so no caller can
+    /// take an unwiped `serde_json::Value` out of a `JsonPlaintext`.
+    ///
+    /// **This method is for generated and binding code.** `eql-bindings`
+    /// seals a JSON tree document through it. A JSON target in this crate
+    /// moves its document in the same way.
+    #[doc(hidden)]
+    pub fn over_json_plaintext(self) -> Encryption<'s, JsonPlaintext, T, K, Ctx, Owned> {
+        self.project_owned(JsonPlaintext::into_value)
     }
 }
 
@@ -1206,7 +1293,7 @@ impl EncryptTarget<JsonPlaintext> for JsonDocument {
         JsonPlaintext: 's,
     {
         json_document::<K, Owned>(JsonOptions::default())
-            .project_owned(JsonPlaintext::into_value)
+            .over_json_plaintext()
             .accepting()
     }
     fn indexes() -> Vec<super::IndexSpec> {

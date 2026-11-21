@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `JsonTreeDocument` field is queried from its field reference** (#1459,
+  #1687). As a field of a derived record, a `JsonTreeDocument` (and an
+  `Option<JsonTreeDocument>`) has Stack Encrypt's JSON field queries,
+  which return the EQL query types a parameter binds as:
+  `EncryptedCustomer::PROFILE.contains(doc)` gives a `JsonTreeQuery`,
+  `at().age().gt(v)` a `JsonTreeLeafQuery`, `elements().visits()..` a
+  `JsonTreeElementsQuery`, `predicate(text).var(name, v)` a
+  `JsonTreePredicateQuery`, `at().age().selector()` a `JsonTreeSelector`
+  and `children(path)` a `JsonTreeToken`. A field marked
+  `#[stash(json(ordered = { "$.age": u32 }))]` is sealed under those
+  options, so its orderings compare, and each declared path has a typed
+  method that the compiler checks; `at_text_path(path)` and
+  `elements_text_path(path)` take a path built at run time. Each operand
+  is the one a data plan naming `JsonSearch` derives for the same column
+  and options. `JsonTreeDocument` implements `JsonTarget` and
+  `JsonQueries`.
+
+- **A value passed by value is sealed without a copy** (#1687). Sealing
+  took a copy of the value when the type had no owned form of its own.
+  Both copies were wiped, so nothing leaked, but the copy was not needed.
+  - `JsonTreeDocument` overrides `EncryptTarget::owned_encryption` and
+    `JsonTarget::json_owned_encryption`. `encrypt_into`, and a derived
+    record's `JsonTreeDocument` field, move the document out of the
+    `JsonPlaintext` into the seal.
+  - A data plan field that names `JsonSearch` moves the document it parses
+    into the seal.
+  - `Ciphertext` (`c`) has an owned form, which moves the value into the
+    seal and wipes it when the context is refused. So the 11 storage-only
+    v4 types (`Integer`, `Bigint`, `Smallint`, `Boolean`, `Date`,
+    `Timestamp`, `Numeric`, `Real`, `Double`, `Text` and `Json`) seal with
+    no copy, through `encrypt_into` and through a data plan.
+  - A data plan field that names an EQL type runs the type's owned form.
+    A type with search terms guards the value and wipes it, as before.
+  - The stored bytes do not change. Needs the Stack Encrypt in this
+    repository, which adds the owned `Encryption::storing` and
+    `Encryption::over_json_plaintext`.
+
 - **The parts of a `JsonSearch` document decrypt through the owned API**
   (#1660). `JsonTreeExtracted`, the entry `->` returns, implements
   `DecryptSource<JsonPlaintext>`. `JsonTreeSubtree`, the rows of a subtree
@@ -335,8 +372,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     gone.
   - A JSON document is a `JsonPlaintext`, not a `serde_json::Value`.
     `JsonTreeDocument`, `JsonTreeExtracted` and `JsonTreeSubtree` open to
-    it. A typed JSON query has no replacement yet: derive the operand
-    through a data plan that names `JsonSearch` (`EqlTargets`).
+    it. A typed JSON query is a document field's reference query (above).
   - `JsonTree` no longer implements `stack_encrypt::target::Layout`, which
     is removed. `JsonTree::encryption()`, `index()` and `specs()` are its
     own methods, and `index()` returns the index by value.
