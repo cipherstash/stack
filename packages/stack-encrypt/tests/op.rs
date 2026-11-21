@@ -691,10 +691,7 @@ async fn operator_queries_settle_together_under_the_scope_of_the_write() {
 #[tokio::test]
 async fn an_operator_query_runs_under_the_keyset_it_is_given() {
     let cipher = stack_cipher().await;
-    let tenant = cipher
-        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
-        .await
-        .unwrap();
+    let tenant = cipher.keyset(IdentifiedBy::Name("tenant".to_string().into()));
     let stored: EncryptedPerson = person().encrypt_into(&tenant).await.unwrap();
     let under_tenant = EncryptedPerson::EMAIL
         .eq("bob@example.com")

@@ -12,7 +12,7 @@
 //! Go caller can distinguish a bad token from a tampered ciphertext without
 //! parsing strings; 11 is a term-derivation failure (a caller-input
 //! condition, e.g. match text that yields no tokens); 12 is a keyset-scoped
-//! open refusing a leaf whose keyset id is not the scope's — a host's own
+//! open refusing a leaf whose keyset id is not the caller's — a host's own
 //! constraint, checked before the leaf is authenticated and so not a
 //! statement about tampering.
 //!

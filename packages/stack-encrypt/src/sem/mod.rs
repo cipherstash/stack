@@ -22,7 +22,7 @@
 //!   bounds' terms as one [`RangeQuery`].
 //!
 //! Every term type here is built on exactly one thing the cipher exposes
-//! publicly — its PRF ([`KeysetCipher::prf`], keyed by the index key of the
+//! publicly — its PRF ([`KeysetCipher::with_prf`], keyed by the index key of the
 //! keyset the handle is bound to). These core implementations own term
 //! generation; downstream storage types can wrap the supported operations or
 //! consume their native output with a visitor (see [`target`](crate::target)).
@@ -661,8 +661,20 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = equality(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = equality(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            // Normalized now, so the source is read and wiped during the
+            // build. The PRF runs when the pending has loaded the keyset.
+            None => match normalized(source) {
+                Ok(normalized) => cipher.deferred(move |keyset| {
+                    equality_of_normalized(&keyset.prf, normalized, context).map_err(Error::from)
+                }),
+                Err(error) => Pending::ready(cipher, Err(error.into())),
+            },
+        }
     }
 }
 
@@ -1315,6 +1327,25 @@ fn bloom_positions(
         .map_err(TermError::from_prf)
 }
 
+/// The match term of `text`, through a keyset that is not loaded
+/// yet. The pending keeps a copy of the text, wiped on drop, and derives
+/// the term when it has loaded the keyset.
+fn match_deferred<'a, K, O>(
+    cipher: &'a KeysetCipher<'_, K>,
+    text: &str,
+    context: Context<'_>,
+    options: MatchOptions,
+) -> Pending<'a, MatchTerms<O>, K>
+where
+    O: MatchConfig,
+{
+    let text = Zeroizing::new(text.to_owned());
+    let context = context.into_owned();
+    cipher.deferred(move |keyset| {
+        match_term(&keyset.prf, &text, context, options).map_err(Error::from)
+    })
+}
+
 /// A match term of any text source, generated under `O`'s options. Under
 /// the local HMAC backend, derived during the synchronous build — the
 /// returned [`Pending`] carries no requests (tokenize makes the one
@@ -1336,9 +1367,14 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term =
-            match_term(cipher.prf(), source.as_ref(), context, O::options()).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = match_term(&keyset.prf, source.as_ref(), context, O::options())
+                    .map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            None => match_deferred(cipher, source.as_ref(), context, O::options()),
+        }
     }
 }
 
@@ -2031,8 +2067,14 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ore(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = ore(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            None => cipher
+                .deferred(move |keyset| ore(&keyset.prf, source, context).map_err(Error::from)),
+        }
     }
 }
 
@@ -2055,8 +2097,14 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ope(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = ope(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            None => cipher
+                .deferred(move |keyset| ope(&keyset.prf, source, context).map_err(Error::from)),
+        }
     }
 }
 
@@ -2079,8 +2127,15 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ore_block(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = ore_block(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            None => cipher.deferred(move |keyset| {
+                ore_block(&keyset.prf, source, context).map_err(Error::from)
+            }),
+        }
     }
 }
 
@@ -2150,8 +2205,16 @@ impl<K> KeysetCipher<'_, K> {
     where
         T: Encrypt,
     {
-        let term = equality(self.prf(), value, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term = equality(&keyset.prf, value, descriptor.into_prf_context());
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => match normalized(value) {
+                Ok(normalized) => self.equality_term_normalized(normalized, descriptor),
+                Err(error) => Pending::ready(self, Err(error.into())),
+            },
+        }
     }
 
     /// Generate a match (full-text) term for `text` under the field
@@ -2195,8 +2258,19 @@ impl<K> KeysetCipher<'_, K> {
         normalized: Normalized,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, EqualityTerm, K> {
-        let term = equality_of_normalized(self.prf(), normalized, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term =
+                    equality_of_normalized(&keyset.prf, normalized, descriptor.into_prf_context());
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                self.deferred(move |keyset| {
+                    equality_of_normalized(&keyset.prf, normalized, context).map_err(Error::from)
+                })
+            }
+        }
     }
 
     /// [`match_terms`](Self::match_terms) under runtime options, for the
@@ -2215,8 +2289,13 @@ impl<K> KeysetCipher<'_, K> {
     where
         O: MatchConfig + MaybeSend,
     {
-        let term = match_term(self.prf(), text, descriptor.into_prf_context(), options);
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term = match_term(&keyset.prf, text, descriptor.into_prf_context(), options);
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => match_deferred(self, text, descriptor.into_prf_context(), options),
+        }
     }
 
     /// Generate an order-revealing (CLLW ORE) term for a range-queryable value
@@ -2235,8 +2314,21 @@ impl<K> KeysetCipher<'_, K> {
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, OreClww8VariableV1, K> {
-        let term = ore(self.prf(), value, descriptor.into_prf_context()).map(OreTerm::into_inner);
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term =
+                    ore(&keyset.prf, value, descriptor.into_prf_context()).map(OreTerm::into_inner);
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                self.deferred(move |keyset| {
+                    ore(&keyset.prf, value, context)
+                        .map(OreTerm::into_inner)
+                        .map_err(Error::from)
+                })
+            }
+        }
     }
 
     /// Generate an order-preserving (CLLW OPE) term: ciphertexts compare with
@@ -2248,8 +2340,21 @@ impl<K> KeysetCipher<'_, K> {
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, OpeClww8VariableV1, K> {
-        let term = ope(self.prf(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner);
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term =
+                    ope(&keyset.prf, value, descriptor.into_prf_context()).map(OpeTerm::into_inner);
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                self.deferred(move |keyset| {
+                    ope(&keyset.prf, value, context)
+                        .map(OpeTerm::into_inner)
+                        .map_err(Error::from)
+                })
+            }
+        }
     }
 
     /// Generate a block ORE term: ore-rs's 6-bit block ORE, the scheme
@@ -2263,8 +2368,18 @@ impl<K> KeysetCipher<'_, K> {
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, OreBlockTerm<T>, K> {
-        let term = ore_block(self.prf(), value, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term = ore_block(&keyset.prf, value, descriptor.into_prf_context());
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                self.deferred(move |keyset| {
+                    ore_block(&keyset.prf, value, context).map_err(Error::from)
+                })
+            }
+        }
     }
 }
 

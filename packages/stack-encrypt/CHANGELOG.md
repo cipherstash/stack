@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A credential with each call** (#1708). A server that decrypts as the end
+  user who signed in had to build its cipher inside the first request,
+  because `init` needs a token and a server starting up has no user. It also
+  had to tell the auth strategy which user each call was for through a
+  task-local variable. Both are gone.
+  - Call `.with_credential(credential)` on a call before you await it:
+    `keyset.decrypt(stored).with_credential(jwt).await?`. Every request the
+    call makes is then made with that credential, so ZeroKMS serves and
+    logs it as that caller. The credential is a `kms::SecretToken`. For a
+    `stack_auth::OidcFederationStrategy` it is a JWT, most often the end
+    user's.
+  - Every `Pending` has `.with_credential(..)`. So it works for scalars,
+    trees, values and records sealed through the conversion traits, terms,
+    queries and `dynamic`.
+  - `.with_credential(..)` returns a `WithCredential` call. You can await
+    it, or call `.audit(..)` on it and await that. So attach the credential
+    last, to the whole call: `a.zip(b).with_credential(jwt)`, or
+    `Pending::all(&keyset, calls).with_credential(jwt)`.
+    `a.with_credential(jwt).zip(b)` does not compile. One call therefore
+    has one credential.
+    `.audit(..)` and `.with_credential(..)` go in either order.
+  - A cipher and a keyset hold no credential.
+  - A key source is one of two kinds (`KeySource`), and a call can neither
+    forget a credential nor have one ignored:
+    - A key source that takes a credential with each call
+      (`kms::CredentialKeySource`) has no request without one. A call
+      through its cipher is not a future until `.with_credential(..)`, so
+      `keyset.decrypt(stored).await` does not compile. A ZeroKMS client
+      over `OidcFederationStrategy::credential_per_call(crn)` is this
+      kind.
+    - A key source with an identity of its own makes every request as that
+      identity. A call through its cipher is awaited as it is, and has no
+      `.with_credential(..)`. An access key, a saved login, and an
+      `OidcFederationStrategy` built with a provider callback are this
+      kind.
+  - `init` is the same call for every auth strategy. With an access key or
+    a saved login it loads the default keyset, as before, so wrong
+    credentials still fail at startup. With a key source that takes a
+    credential with each call, `init` has no credential to load the keyset
+    with. It then makes no request and returns the cipher. So a server
+    builds its cipher at startup:
+    `StackCipher::builder().auth_strategy(strategy).key_provider(provider).init().await?`.
+    `init` has a type parameter that says which kind the key source is.
+    You never write it: the compiler works it out.
+  - `default_keyset()` still makes no request and cannot fail. On such a
+    cipher it returns a handle on a keyset that is not loaded yet. Every
+    call on the handle works as usual: the first call that is awaited loads
+    the default keyset, with its own credential, beside its key request.
+    Callers that arrive together make one load between them. A load that
+    fails leaves the cipher as it was, and the next call tries again.
+  - A keyset's index key is still loaded once and kept for every caller,
+    with the credential of the call that needed it first. Data key requests
+    are made as each caller; that one load is not. This changes what the
+    ZeroKMS log shows, not what a caller can reach: a keyset is granted to
+    a client, and a cipher has one client.
+  - A call loads the keyset it works under, and no other. With such a key
+    source, a call on a keyset selected by id or by name does not load the
+    default keyset.
+  - The JSON queries, typed and `dynamic`, and the `dynamic` reads work
+    through a keyset that is not loaded yet too. A query operand is derived
+    when it is awaited. A read (`json_open`) builds its key requests from a
+    key derived under the keyset, so it is built when it is awaited. It
+    still merges with other calls (`zip`, `all`).
+  - This needs the `stack-kms` and `stack-auth` of this change:
+    `kms::CredentialKeySource`, `StackKms::generate_keys_with_credential`,
+    `retrieve_keys_with_credential` and `load_keyset_with_credential`, and
+    in `stack-auth`, `CredentialAuthStrategy` and
+    `OidcFederationStrategy::credential_per_call` (a strategy with no
+    provider callback).
+  - For tests, `kms::FakeCredentialKeySource` is a key source that takes a
+    credential with each call and records it: `credentials_seen()` lists
+    the credential of each request. A test of a request handler built on it
+    does not compile if the handler forgets its caller's credential.
 - **Audit metadata for ZeroKMS key requests** (#1705). ZeroKMS logs every
   key request with the identity that made it. An `AuditMetadata` adds
   facts about the call to that log, such as its purpose or a request id.
@@ -336,6 +409,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apply when the pending is awaited, not when the term is described.
 
 ### Breaking
+
+- **`.kms(source)` returns a builder in its own state** (#1708). This
+  follows from telling the two kinds of key source apart in the types
+  (`KeySource`). `StackCipher::builder().kms(source)` returns a
+  `StackCipherBuilder<WithKeySource<K>>`. It returned a
+  `StackCipherBuilder<K>`. To migrate, change code that names the
+  builder's type. Code that chains `.kms(..).init()` is unchanged.
+
+- **`StackCipher::keyset` makes no request and returns the handle**
+  (#1708). It was `async` and returned a `Result`. Selecting a keyset now
+  loads nothing, as `default_keyset` loads nothing: the first call on the
+  handle that is awaited loads the keyset. So that load can be made with
+  the credential of the call. To migrate:
+  - Change `cipher.keyset(by).await?` to `cipher.keyset(by)`.
+  - A keyset that ZeroKMS does not know, or has disabled, now fails the
+    first call on the handle, with the same `Error::Kms`. To fail where the
+    keyset is selected, await `keyset.keyset_id()` there.
+  - A handle is still one keyset. Calls built through a handle before its
+    keyset is loaded all run under the keyset the first of them loads. A
+    name is resolved once for the handle.
+
+- **`KeysetCipher::keyset_id` and `keyset_name` return a `Pending`, and
+  `with_prf` replaces `prf`** (#1708). They read the loaded keyset. A
+  handle on a keyset that is not loaded yet loads it when the call is
+  awaited, so each can make a request, and can take a credential. To
+  migrate:
+  - Change `keyset.keyset_id()` to `keyset.keyset_id().await?`, and
+    `keyset_name()` in the same way. `keyset_name` now returns an owned
+    `Option<String>`.
+  - Change `keyset.prf()` to `keyset.with_prf(|prf| ..)`. The closure
+    returns a `Result`, and the method returns a `Pending` of its value.
+  - With the keyset loaded, each call makes no request and does not fail.
+    The default keyset is loaded by `init` with an access key or a saved
+    login.
+
+- **`CipherRef` is `Clone` and no longer `Copy`** (#1708). A reference to
+  a keyset selected by name, and not loaded yet, keeps the name. Call
+  `.clone()` where a `CipherRef` was copied. Code that passes `&cipher` or
+  `&keyset` to an entry point does not change. `CipherRef::keyset_id()`
+  returns `None` for a keyset that is not loaded yet, unless it was
+  selected by its id.
 
 - **The tree entry points return a `Pending`** (#1705), so they can take
   audit metadata like every other call. `KeysetCipher::encrypt_tree`,

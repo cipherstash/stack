@@ -1449,18 +1449,20 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             None => Decryption::ready(None),
         }
     }
-    /// Execute under a scope. A [`KeysetCipher`] scope refuses a leaf from any
-    /// other keyset; a [`StackCipher`] scope opens leaves from any.
-    pub(super) fn open_in<'a>(self, scope: impl Into<CipherRef<'a, K>>) -> Pending<'a, T, K> {
-        let scope: CipherRef<'a, K> = scope.into();
+    /// Run this opening through `cipher_ref`. Through a [`KeysetCipher`],
+    /// a leaf from any other keyset is refused. Through a [`StackCipher`],
+    /// leaves from any keyset are opened.
+    ///
+    /// The opening builds its pending through the client, which opens
+    /// leaves from any keyset. So the pending is then confined to the
+    /// keyset of `cipher_ref`, when it has one.
+    pub(super) fn open_in<'a>(self, cipher_ref: impl Into<CipherRef<'a, K>>) -> Pending<'a, T, K> {
+        let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
         let pending = match self.inner {
-            Opening::Failed(error) => return Pending::failed(scope, error),
-            Opening::Open(open) => open(scope.cipher()),
+            Opening::Failed(error) => return Pending::failed(cipher_ref, error),
+            Opening::Open(open) => open(cipher_ref.cipher()),
         };
-        match scope.keyset_id() {
-            Some(id) => pending.scoped_to(id),
-            None => pending,
-        }
+        pending.confined_to(cipher_ref.keyset())
     }
 }
 /// The canonical opening operation: retrieve the tree's keys and decode `P`

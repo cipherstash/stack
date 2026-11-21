@@ -170,16 +170,24 @@ async fn term<K: Source>(
     operator: &str,
     input: Value,
 ) -> QueryTerm {
+    term_pending(keyset, plan, operator, &input).await.unwrap()
+}
+
+/// A query term for the `profile` field, not yet awaited.
+fn term_pending<'a, K: Send + Sync + 'static>(
+    keyset: &'a KeysetCipher<'_, K>,
+    plan: &record::Plan,
+    operator: &str,
+    input: &Value,
+) -> Pending<'a, QueryTerm, K> {
     dynamic::query_term(
         keyset,
         plan,
         "profile",
         Op::parse(operator).unwrap(),
-        json_frame(&input),
+        json_frame(input),
         &Documents,
     )
-    .unwrap()
-    .await
     .unwrap()
 }
 
@@ -189,17 +197,24 @@ async fn seal<K: Source>(
     plan: &record::Plan,
     document: &Value,
 ) -> JsonDocument {
+    let row = seal_pending(keyset, plan, document).await.unwrap();
+    stored(&row, "profile")
+}
+
+/// A row with `document` in its `profile` field, not yet sealed.
+fn seal_pending<'a, K: Send + Sync + 'static>(
+    keyset: &'a KeysetCipher<'_, K>,
+    plan: &record::Plan,
+    document: &Value,
+) -> Pending<'a, stack_encrypt::StackCipherText, K> {
     let text = document.to_string();
-    let row = record::encrypt_with(
+    record::encrypt_with(
         keyset,
         frame(BTreeMap::from([("profile", text.as_str())])),
         plan,
         &Documents,
     )
     .unwrap()
-    .await
-    .unwrap();
-    stored(&row, "profile")
 }
 
 /// The document a sealed row stores for `field`.
@@ -257,26 +272,40 @@ async fn open<K: Source>(
     request: Value,
     groups: Vec<Vec<String>>,
 ) -> Result<Vec<Vec<Value>>, stack_encrypt::Error> {
-    let opened = dynamic::json_open(
+    let opened = open_pending(keyset, plan, &request, &groups).await?;
+    Ok(opened_values(&opened))
+}
+
+/// A read of the `profile` field over `groups`, not yet awaited.
+fn open_pending<'a, K: Send + Sync + 'static>(
+    keyset: &'a KeysetCipher<'_, K>,
+    plan: &record::Plan,
+    request: &Value,
+    groups: &Vec<Vec<String>>,
+) -> Pending<'a, ValueFrame, K> {
+    dynamic::json_open(
         keyset,
         plan,
         "profile",
-        json_frame(&request),
-        frame(&groups),
+        json_frame(request),
+        frame(groups),
         &Documents,
     )
     .unwrap()
-    .await?;
+}
+
+/// The values a read opened, one list for each group of rows.
+fn opened_values(opened: &ValueFrame) -> Vec<Vec<Value>> {
     let groups: Vec<Vec<bytes::Bytes>> =
         dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
-    Ok(groups
+    groups
         .into_iter()
         .map(|g| {
             g.into_iter()
                 .map(|b| serde_json::from_slice(&b.0).unwrap())
                 .collect()
         })
-        .collect())
+        .collect()
 }
 
 /// A byte string read out of a frame.
@@ -701,19 +730,398 @@ async fn reads_open_against_the_request_that_prepared_them() {
     );
 }
 
-/// Rows that are not the read's are refused whichever way they differ:
-/// rows of a document sealed under another keyset (refused before any key
-/// is retrieved, since the read opens through the keyset that derived it),
-/// an entry of another field of the plan, and rows of a selector read
-/// handed over as a subtree read's, or the reverse.
+/// A read made with a credential sends that credential with its key
+/// request. Each group of rows opens through the client, and the groups
+/// are gathered into one call, which is made with the credential the call
+/// was given.
+#[tokio::test]
+async fn a_read_opens_with_the_credential_of_the_call() {
+    let cipher = StackCipher::builder()
+        .kms(stack_kms::FakeCredentialKeySource::new())
+        .init()
+        .await
+        .unwrap();
+    let alice = || stack_kms::SecretToken::new("alice.jwt");
+    let keyset = cipher.default_keyset();
+    let plan = plan();
+    let row = seal_pending(
+        &keyset,
+        &plan,
+        &json!({"name": "Alice", "visits": [{"at": 3}]}),
+    )
+    .with_credential(alice())
+    .await
+    .unwrap();
+    let doc = stored(&row, "profile");
+    // The first call loads the default keyset, and then requests its key.
+    assert_eq!(cipher.kms().credentials_seen(), ["alice.jwt"; 2]);
+
+    let name = match term_pending(&keyset, &plan, "selector", &json!({"path": "$.name"}))
+        .with_credential(alice())
+        .await
+        .unwrap()
+        .operand()
+    {
+        Operand::Text(text) => text.clone(),
+        other => panic!("{other:?}"),
+    };
+    let names = open_pending(
+        &keyset,
+        &plan,
+        &json!({"operation": "selector", "path": "$.name"}),
+        &vec![extracted(&doc, &name)],
+    )
+    .with_credential(alice())
+    .await
+    .unwrap();
+    assert_eq!(opened_values(&names), [vec![json!("Alice")]]);
+
+    let ats = match term_pending(
+        &keyset,
+        &plan,
+        "subtree",
+        &json!({"path": "$.visits[*].at"}),
+    )
+    .with_credential(alice())
+    .await
+    .unwrap()
+    .operand()
+    {
+        Operand::TextList(tokens) => tokens.clone(),
+        other => panic!("{other:?}"),
+    };
+    let opened = open_pending(
+        &keyset,
+        &plan,
+        &json!({"operation": "subtree", "path": "$.visits[*].at"}),
+        &vec![subtree(&doc, &ats)],
+    )
+    .with_credential(alice())
+    .await
+    .unwrap();
+    assert_eq!(opened_values(&opened), [vec![json!(3)]]);
+
+    // The keyset's load, then the seal and the two reads: one key request
+    // each. The two query terms are derived locally, and request nothing.
+    assert_eq!(cipher.kms().credentials_seen(), ["alice.jwt"; 4]);
+}
+
+/// One key store behind several ciphers, as several processes share one
+/// ZeroKMS. It takes a credential with each call, so each cipher over it
+/// starts with no keyset loaded.
+#[derive(Clone)]
+struct Shared(std::sync::Arc<stack_kms::FakeCredentialKeySource>);
+
+impl Shared {
+    fn new() -> Self {
+        Self(std::sync::Arc::new(
+            stack_kms::FakeCredentialKeySource::new(),
+        ))
+    }
+
+    /// How many requests were made so far.
+    fn requests(&self) -> usize {
+        self.0.credentials_seen().len()
+    }
+
+    async fn cipher(&self) -> StackCipher<Shared> {
+        StackCipher::builder()
+            .kms(self.clone())
+            .init()
+            .await
+            .unwrap()
+    }
+}
+
+impl stack_kms::CredentialKeySource for Shared {
+    async fn generate_keys_with_credential(
+        &self,
+        credential: &stack_kms::SecretToken,
+        payloads: Vec<stack_kms::GenerateKeyPayload<'_>>,
+        keyset_id: Option<uuid::Uuid>,
+        context: Option<std::borrow::Cow<'_, stack_kms::UnverifiedContext>>,
+    ) -> Result<Vec<stack_kms::DataKeyWithTag>, stack_kms::Error> {
+        self.0
+            .generate_keys_with_credential(credential, payloads, keyset_id, context)
+            .await
+    }
+
+    async fn retrieve_keys_with_credential(
+        &self,
+        credential: &stack_kms::SecretToken,
+        payloads: Vec<stack_kms::RetrieveKeyPayload<'_>>,
+        keyset_id: Option<uuid::Uuid>,
+        context: Option<&stack_kms::UnverifiedContext>,
+    ) -> Result<Vec<stack_kms::DataKey>, stack_kms::Error> {
+        self.0
+            .retrieve_keys_with_credential(credential, payloads, keyset_id, context)
+            .await
+    }
+
+    async fn load_index_key_with_credential(
+        &self,
+        credential: &stack_kms::SecretToken,
+        keyset_id: Option<stack_kms::IdentifiedBy>,
+    ) -> Result<(uuid::Uuid, stack_kms::IndexKey), stack_kms::Error> {
+        self.0
+            .load_index_key_with_credential(credential, keyset_id)
+            .await
+    }
+}
+
+/// A query operand built through a default keyset that the cipher has not
+/// loaded yet is derived when it is awaited, which loads the keyset. It is
+/// the operand a loaded keyset derives: a selector, a path's token, a
+/// read's tokens, and an element match.
+#[tokio::test]
+async fn query_operands_built_before_the_keyset_is_loaded_match_those_built_after() {
+    let store = Shared::new();
+    let credential = || stack_kms::SecretToken::new("alice.jwt");
+    let plan = plan();
+    let inputs = [
+        ("selector", json!({"path": "$.name"})),
+        ("children", json!({"path": "$.visits"})),
+        ("subtree", json!({"path": "$.visits[*].at"})),
+        (
+            "element_match",
+            json!({
+                "path": "$.visits[*]",
+                "wildcard_bound": 2,
+                "predicates": [{"member": "at", "op": "gte", "json": "3"}]
+            }),
+        ),
+    ];
+
+    // A cipher that has loaded its keyset derives each operand at once.
+    let loaded = store.cipher().await;
+    let loaded = loaded.default_keyset();
+    let _ = loaded
+        .keyset_id()
+        .with_credential(credential())
+        .await
+        .unwrap();
+
+    for (operator, input) in inputs {
+        // A cipher of its own for each, so each operand is the first call.
+        let cipher = store.cipher().await;
+        let keyset = cipher.default_keyset();
+        let before = store.requests();
+        let pending = term_pending(&keyset, &plan, operator, &input);
+        assert_eq!(
+            store.requests(),
+            before,
+            "{operator}: building asks nothing"
+        );
+        let early = pending.with_credential(credential()).await.unwrap();
+        assert_eq!(
+            store.requests(),
+            before + 1,
+            "{operator}: awaiting loads the keyset, and requests no key"
+        );
+
+        let late = term_pending(&loaded, &plan, operator, &input)
+            .with_credential(credential())
+            .await
+            .unwrap();
+        assert_eq!(early.encoding(), late.encoding(), "{operator}");
+        match (early.operand(), late.operand()) {
+            (Operand::Text(early), Operand::Text(late)) => assert_eq!(early, late, "{operator}"),
+            (Operand::TextList(early), Operand::TextList(late)) => {
+                assert_eq!(early, late, "{operator}")
+            }
+            // An element match holds its members' terms beside the read's
+            // tokens. The tokens are derived from the path alone.
+            (Operand::One(early), Operand::One(late)) => {
+                let tokens = |bytes: &[u8]| {
+                    serde_json::from_slice::<Value>(bytes).unwrap()["m"][0]["t"].clone()
+                };
+                assert_eq!(tokens(early), tokens(late), "{operator}");
+                assert!(tokens(early).is_array(), "{operator}");
+            }
+            (early, late) => panic!("{operator}: {early:?} and {late:?}"),
+        }
+    }
+}
+
+/// A read opens its rows with a key derived under the keyset's index key,
+/// and its key requests are built from that key. Through a keyset that
+/// the cipher has not loaded yet, the read is built when it is awaited: it
+/// loads the keyset, and then requests its key. It merges with other
+/// calls like any read, and the merged call is built when it is awaited.
+#[tokio::test]
+async fn a_read_built_before_the_keyset_is_loaded_opens_when_it_is_awaited() {
+    let store = Shared::new();
+    let credential = || stack_kms::SecretToken::new("alice.jwt");
+    let plan = plan();
+    let document = json!({"name": "Alice", "visits": [{"at": 3}]});
+
+    // One process seals a document and prepares two reads of it.
+    let writer = store.cipher().await;
+    let writer = writer.default_keyset();
+    let row = seal_pending(&writer, &plan, &document)
+        .with_credential(credential())
+        .await
+        .unwrap();
+    let doc = stored(&row, "profile");
+    let name = match term_pending(&writer, &plan, "selector", &json!({"path": "$.name"}))
+        .with_credential(credential())
+        .await
+        .unwrap()
+        .operand()
+    {
+        Operand::Text(text) => text.clone(),
+        other => panic!("{other:?}"),
+    };
+    let ats = match term_pending(
+        &writer,
+        &plan,
+        "subtree",
+        &json!({"path": "$.visits[*].at"}),
+    )
+    .with_credential(credential())
+    .await
+    .unwrap()
+    .operand()
+    {
+        Operand::TextList(tokens) => tokens.clone(),
+        other => panic!("{other:?}"),
+    };
+    let selector_read = || {
+        (
+            json!({"operation": "selector", "path": "$.name"}),
+            vec![extracted(&doc, &name)],
+        )
+    };
+    let subtree_read = || {
+        (
+            json!({"operation": "subtree", "path": "$.visits[*].at"}),
+            vec![subtree(&doc, &ats)],
+        )
+    };
+
+    // Another process, which has loaded no keyset, opens each read.
+    for (read, expected) in [
+        (selector_read(), json!("Alice")),
+        (subtree_read(), json!(3)),
+    ] {
+        let cipher = store.cipher().await;
+        let keyset = cipher.default_keyset();
+        let before = store.requests();
+        let (request, groups) = read;
+        let pending = open_pending(&keyset, &plan, &request, &groups);
+        assert_eq!(store.requests(), before, "building asks nothing");
+        let opened = pending.with_credential(credential()).await.unwrap();
+        assert_eq!(
+            store.requests(),
+            before + 2,
+            "the keyset's load, then the data key"
+        );
+        assert_eq!(opened_values(&opened), [vec![expected]]);
+    }
+
+    // Rows that are not a read's are still refused at once, by the call
+    // itself, before any pending exists: here a selector group of two.
+    let cipher = store.cipher().await;
+    let keyset = cipher.default_keyset();
+    let (request, _) = selector_read();
+    let two_rows = vec![extracted(&doc, &name), extracted(&doc, &name)]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<String>>();
+    let refused = dynamic::json_open(
+        &keyset,
+        &plan,
+        "profile",
+        json_frame(&request),
+        frame(vec![two_rows]),
+        &Documents,
+    );
+    assert!(
+        matches!(refused, Err(dynamic::Error::Source { .. })),
+        "{:?}",
+        refused.map(|_| ())
+    );
+
+    // Merged with another call before it is built: one load, then one
+    // request for the data keys of both reads.
+    let cipher = store.cipher().await;
+    let keyset = cipher.default_keyset();
+    let before = store.requests();
+    let open = |read: (Value, Vec<Vec<String>>)| open_pending(&keyset, &plan, &read.0, &read.1);
+    let merged = open(selector_read()).zip(open(subtree_read()));
+    assert_eq!(store.requests(), before, "merging asks nothing");
+    let (names, visits) = merged.with_credential(credential()).await.unwrap();
+    assert_eq!(opened_values(&names), [vec![json!("Alice")]]);
+    assert_eq!(opened_values(&visits), [vec![json!(3)]]);
+    assert_eq!(
+        store.requests(),
+        before + 2,
+        "the keyset's load, then one request for both reads' data keys"
+    );
+
+    // The same in a column, on a cipher of its own, beside a read of a
+    // keyset selected by name on a third.
+    let cipher = store.cipher().await;
+    let keyset = cipher.default_keyset();
+    let open = |read: (Value, Vec<Vec<String>>)| open_pending(&keyset, &plan, &read.0, &read.1);
+    let gathered = Pending::all(&keyset, vec![open(selector_read()), open(subtree_read())])
+        .with_credential(credential())
+        .await
+        .unwrap();
+    let gathered: Vec<_> = gathered.iter().map(opened_values).collect();
+    assert_eq!(gathered, [[vec![json!("Alice")]], [vec![json!(3)]]]);
+}
+
+/// A read through a keyset selected by name, which no call has loaded, is
+/// built when it is awaited too.
+#[tokio::test]
+async fn a_read_through_a_selected_keyset_is_built_when_it_is_awaited() {
+    let (cipher, _, _) = common::counting_cipher().await;
+    let tenant = || cipher.keyset(stack_kms::IdentifiedBy::Name("tenant".to_string().into()));
+    let plan = plan();
+    let doc = seal(
+        &tenant(),
+        &plan,
+        &json!({"name": "Alice", "visits": [{"at": 3}]}),
+    )
+    .await;
+    let name = match term(&tenant(), &plan, "selector", json!({"path": "$.name"}))
+        .await
+        .operand()
+    {
+        Operand::Text(text) => text.clone(),
+        other => panic!("{other:?}"),
+    };
+
+    // A second cipher over its own key store has not loaded the keyset.
+    let (other, _, _) = common::counting_cipher().await;
+    let early = other.keyset(stack_kms::IdentifiedBy::Name("tenant".to_string().into()));
+    let pending = open_pending(
+        &early,
+        &plan,
+        &json!({"operation": "selector", "path": "$.name"}),
+        &vec![extracted(&doc, &name)],
+    );
+    // Its key store never minted the document's key, so the read is
+    // refused at the key request. It was built: the refusal is the key's.
+    assert!(pending.await.is_err());
+
+    let opened = open(
+        &tenant(),
+        &plan,
+        json!({"operation": "selector", "path": "$.name"}),
+        vec![extracted(&doc, &name)],
+    )
+    .await
+    .unwrap();
+    assert_eq!(opened, [vec![json!("Alice")]]);
+}
+
 #[tokio::test]
 async fn rows_that_are_not_the_reads_are_refused() {
     let (cipher, _, retrieves) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
-    let other_keyset = cipher
-        .keyset(stack_kms::IdentifiedBy::Name("other".to_string().into()))
-        .await
-        .unwrap();
+    let other_keyset = cipher.keyset(stack_kms::IdentifiedBy::Name("other".to_string().into()));
     let plan = plan();
     let document = json!({"name": "Alice", "age": 34, "visits": [{"at": 3}]});
     let mine = seal(&keyset, &plan, &document).await;

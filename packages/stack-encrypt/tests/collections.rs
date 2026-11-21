@@ -141,10 +141,7 @@ async fn elements_are_authenticated_on_their_own_not_as_a_sequence() {
 async fn a_foreign_keyset_element_is_refused_before_retrieval() {
     let (cipher, _, retrieves) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
-    let other = cipher
-        .keyset(stack_encrypt::kms::IdentifiedBy::Uuid(uuid::Uuid::new_v4()))
-        .await
-        .unwrap();
+    let other = cipher.keyset(stack_encrypt::kms::IdentifiedBy::Uuid(uuid::Uuid::new_v4()));
     let column: Vec<Ciphertext> = vec![1i32, 2].encrypt_into(&keyset).await.unwrap();
     assert!(matches!(
         Vec::<i32>::decrypt_from(column, &other).await,

@@ -2074,17 +2074,17 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 /// [`decrypt_with`]. This runs under [`NoTargets`], so such a plan is
 /// refused ([`Error::Target`]).
 pub fn decrypt<'a, K: 'static>(
-    scope: impl Into<CipherRef<'a, K>>,
+    cipher_ref: impl Into<CipherRef<'a, K>>,
     record: StackCipherText,
     plan: &Plan,
     expected: Option<Label>,
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
-    decrypt_with(scope, record, plan, expected, &NoTargets)
+    decrypt_with(cipher_ref, record, plan, expected, &NoTargets)
 }
 
 /// [`decrypt`], opening each target field's EQL value (the [`EQL_KEY`]
 /// node) through `resolver`: the type's own decryption, under the field's
-/// column, zipped into the record's pending and confined to the scope's
+/// column, zipped into the record's pending and confined to the caller's
 /// keyset as every other leaf is.
 ///
 /// # Errors
@@ -2092,17 +2092,17 @@ pub fn decrypt<'a, K: 'static>(
 /// As [`decrypt`], plus [`Error::Target`] for a stored value that is not
 /// the type, or a name the resolver refuses.
 pub fn decrypt_with<'a, K: 'static>(
-    scope: impl Into<CipherRef<'a, K>>,
+    cipher_ref: impl Into<CipherRef<'a, K>>,
     record: StackCipherText,
     plan: &Plan,
     expected: Option<Label>,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
-    let scope: CipherRef<'a, K> = scope.into();
+    let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
     let rows = record_rows(record, plan)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
-    let (cipher, keyset) = (scope.cipher(), scope.keyset_id());
+    let cipher = cipher_ref.cipher();
     let mut pendings = Vec::new();
     let mut targets = |row: StoredRow| -> Result<(Absent, FieldValues, usize), Error> {
         let fields = plan
@@ -2111,14 +2111,14 @@ pub fn decrypt_with<'a, K: 'static>(
         let mut count = 0;
         for (field, stored) in fields.zip(row.targets) {
             let name = field.target().unwrap_or_default();
-            // Confined to the scope's keyset, as the lowered plan's leaves
+            // Confined to the caller's keyset, as the lowered plan's leaves
             // are: a target value sealed under another keyset is refused
             // before any key is retrieved.
             pendings.push(confine(
                 resolver
                     .decrypt(name, cipher, field.label(), &extend, &stored)
                     .map_err(|error| Error::Target(name_target(error, &field.name)))?,
-                keyset,
+                &cipher_ref,
             ));
             count += 1;
         }
@@ -2130,7 +2130,7 @@ pub fn decrypt_with<'a, K: 'static>(
             let eql = Pending::all(cipher, pendings);
             confine(
                 cipher.run_decryption(opening::<K>(plan, values, expected, extend, &absent)),
-                keyset,
+                &cipher_ref,
             )
             .zip(eql)
             .try_map(move |(values, eql)| {
@@ -2160,7 +2160,7 @@ pub fn decrypt_with<'a, K: 'static>(
                 });
                 opens.push(confine(
                     cipher.run_decryption(Decryption::all(rows)),
-                    keyset,
+                    &cipher_ref,
                 ));
                 positions.push(at);
             }
@@ -2184,17 +2184,15 @@ pub fn decrypt_with<'a, K: 'static>(
     })
 }
 
-/// A pending confined to `keyset` when the caller's scope is one keyset:
-/// the client opens leaves from any of its keysets, a keyset cipher
-/// refuses a foreign one before any key is retrieved.
+/// A pending the client built, confined to the keyset the caller ran it
+/// through, when the caller ran it through one: the client opens leaves
+/// from any of its keysets, and a keyset cipher refuses a foreign one
+/// before any key is retrieved.
 fn confine<'a, T: 'a, K>(
     pending: Pending<'a, T, K>,
-    keyset: Option<uuid::Uuid>,
+    cipher_ref: &CipherRef<'a, K>,
 ) -> Pending<'a, T, K> {
-    match keyset {
-        Some(keyset) => pending.scoped_to(keyset),
-        None => pending,
-    }
+    pending.confined_to(cipher_ref.keyset())
 }
 
 /// Check a source against a plan without encrypting it — everything
@@ -5529,7 +5527,7 @@ mod tests {
         }
     }
 
-    mod given_a_keyset_scope {
+    mod given_a_keyset {
         use super::*;
 
         fn named(name: &str) -> IdentifiedBy {
@@ -5539,8 +5537,16 @@ mod tests {
         #[tokio::test]
         async fn refuses_a_leaf_from_another_keyset_before_any_key_is_retrieved() {
             let cipher = cipher().await;
-            let acme = cipher.keyset(named("acme")).await.expect("acme");
-            let globex = cipher.keyset(named("globex")).await.expect("globex");
+            let acme = cipher
+                .keyset(named("acme"))
+                .loaded(&crate::OwnIdentity)
+                .await
+                .expect("acme");
+            let globex = cipher
+                .keyset(named("globex"))
+                .loaded(&crate::OwnIdentity)
+                .await
+                .expect("globex");
             let plan = the_plan();
 
             let sealed = seal(&acme, row(34), &plan).await;
@@ -5552,7 +5558,7 @@ mod tests {
                 matches!(
                     err,
                     Some(crate::Error::ForeignKeyset { expected, found })
-                        if expected == globex.keyset_id() && found == acme.keyset_id()
+                        if expected == globex.keyset_id().await.unwrap() && found == acme.keyset_id().await.unwrap()
                 ),
                 "another tenant's keyset refuses the leaf, naming both keysets: {err:?}"
             );
@@ -5587,7 +5593,10 @@ mod tests {
             assert!(any.contains("keyset_id: None"), "{any}");
             let keyset = cipher.default_keyset();
             let one = format!("{:?}", CipherRef::from(&keyset));
-            assert!(one.contains(&format!("{:?}", keyset.keyset_id())), "{one}");
+            assert!(
+                one.contains(&format!("{:?}", keyset.keyset_id().await.unwrap())),
+                "{one}"
+            );
         }
     }
 
@@ -7099,7 +7108,7 @@ mod tests {
             assert_eq!(u32_of(&fields[0].1), 1, "seal_mixed's age");
             assert_eq!(text_of(&fields[1].1), "a@x");
 
-            // Through a keyset scope, the target's pending is confined to it
+            // Through a keyset, the target's pending is confined to it
             // like every other leaf's.
             let record = seal_mixed(&keyset, &plan).await;
             let opened = decrypt_with(
@@ -7371,16 +7380,24 @@ mod tests {
         }
 
         /// The resolver opens a target value through the client, which opens
-        /// every keyset's values; `confine` is what holds it to the scope's
+        /// every keyset's values; `confine` is what holds it to the caller's
         /// keyset. A plan of one target field, so no lowered leaf can cause
         /// the refusal instead: this fails if `confine` stops calling
-        /// `scoped_to`, and one tenant's cipher opens another's column.
+        /// `confined_to`, and one tenant's cipher opens another's column.
         #[tokio::test]
         async fn a_keyset_scope_refuses_a_target_value_from_another_keyset() {
             let cipher = cipher().await;
             let named = |n: &str| IdentifiedBy::Name(n.to_string().into());
-            let acme = cipher.keyset(named("acme")).await.expect("acme");
-            let globex = cipher.keyset(named("globex")).await.expect("globex");
+            let acme = cipher
+                .keyset(named("acme"))
+                .loaded(&crate::OwnIdentity)
+                .await
+                .expect("acme");
+            let globex = cipher
+                .keyset(named("globex"))
+                .loaded(&crate::OwnIdentity)
+                .await
+                .expect("globex");
             let plan = plan_with(
                 obj(vec![("email", target_spec(label("email"), TEXT_EQ))]),
                 &FakeEql,
@@ -7403,7 +7420,7 @@ mod tests {
                 0,
                 "refused before any key was retrieved"
             );
-            // acme's own scope, and the client, still open it.
+            // acme's own keyset, and the client, still open it.
             let sealed = encrypt_with(&acme, obj(vec![("email", s("a@x"))]), &plan, &FakeEql)
                 .unwrap()
                 .await

@@ -1000,15 +1000,13 @@ async fn zip_settles_several_operations_in_one_request() {
 #[tokio::test]
 async fn zip_runs_under_one_keyset_and_refuses_two() {
     let (cipher, generates, _) = counting_cipher().await;
-    let tenant = cipher
-        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
-        .await
-        .unwrap();
+    let tenant = cipher.keyset(IdentifiedBy::Name("tenant".to_string().into()));
     let default = cipher.default_keyset();
 
     let (a, b) = seal_doc(&tenant).zip(seal_doc(&tenant)).await.unwrap();
-    assert_eq!(leaf_keyset(&a), tenant.keyset_id());
-    assert_eq!(leaf_keyset(&b), tenant.keyset_id());
+    let id = tenant.keyset_id().await.unwrap();
+    assert_eq!(leaf_keyset(&a), id);
+    assert_eq!(leaf_keyset(&b), id);
     generates.store(0, Ordering::SeqCst);
 
     let refused = seal_doc(&tenant).zip(seal_doc(&default)).await;
@@ -1016,7 +1014,7 @@ async fn zip_runs_under_one_keyset_and_refuses_two() {
     assert_eq!(
         generates.load(Ordering::SeqCst),
         0,
-        "refused before any request"
+        "refused before any key is generated"
     );
 }
 
@@ -1172,13 +1170,10 @@ async fn a_declaration_is_an_encryption_and_a_decryption_held_by_value() {
 #[tokio::test]
 async fn every_operation_honours_the_keyset_it_runs_through() {
     let cipher = stack_cipher().await;
-    let tenant = cipher
-        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
-        .await
-        .unwrap();
+    let tenant = cipher.keyset(IdentifiedBy::Name("tenant".to_string().into()));
     let default = cipher.default_keyset();
-    let id = tenant.keyset_id();
-    assert_ne!(id, default.keyset_id());
+    let id = tenant.keyset_id().await.unwrap();
+    assert_ne!(id, default.keyset_id().await.unwrap());
     let user = user();
 
     let indexed: Encrypted<EqualityTerm> = 34u32
