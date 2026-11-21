@@ -1658,3 +1658,75 @@ mod a_nested_field_reference_beside_a_binding {
         assert_eq!(term, tag.label.terms);
     }
 }
+
+/// A field whose type is a derived `plaintext = T` record. The derive writes
+/// no `op::Answers` for such a record, so its field reference has no
+/// operator method until the record's author writes `op::Answers` and
+/// `op::LabelledTarget` by hand. Written here, the query derives the term
+/// the record stored, under the field's label.
+mod a_field_typed_as_a_derived_plaintext_record {
+    use super::*;
+    use stack_encrypt::op::{self, Answers, LabelledTarget};
+
+    /// A ciphertext and its equality term, as a record of one plaintext.
+    #[derive(EncryptTarget, DecryptSource)]
+    #[stash(plaintext = String)]
+    struct EmailTerms {
+        c: StackCipherText,
+        hm: EqualityTerm,
+    }
+
+    /// The record answers equality as its one equality term does, for the
+    /// same inputs and through the same index.
+    impl<In> Answers<op::Eq, In> for EmailTerms
+    where
+        EqualityTerm: Answers<op::Eq, In>,
+        In: op::Input<<op::Eq as op::Operator>::Arity>,
+    {
+        type Via = <EqualityTerm as Answers<op::Eq, In>>::Via;
+    }
+
+    /// Its term is derived under the context the field is sealed under,
+    /// which is the field's label.
+    impl LabelledTarget for EmailTerms {}
+
+    #[derive(Clone, Zeroize)]
+    struct Contact {
+        email: String,
+    }
+
+    #[derive(EncryptTarget, DecryptSource)]
+    #[stash(struct = Contact, scope = "contacts")]
+    struct EncryptedContact {
+        email: EmailTerms,
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_term() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedContact = Contact {
+            email: "ada@example.com".into(),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
+
+        let term = EncryptedContact::EMAIL
+            .eq("ada@example.com")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.email.hm);
+        let other = EncryptedContact::EMAIL
+            .eq("bob@example.com")
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_ne!(other, stored.email.hm);
+
+        // The record still opens.
+        let opened: Contact = Contact::decrypt_from(stored, &keyset).await.unwrap();
+        assert_eq!(opened.email, "ada@example.com");
+    }
+}
