@@ -833,6 +833,10 @@ impl Shared {
     }
 }
 
+impl stack_kms::KeySourceKind for Shared {
+    type Kind = stack_kms::CredentialPerCall;
+}
+
 impl stack_kms::CredentialKeySource for Shared {
     async fn generate_keys_with_credential(
         &self,

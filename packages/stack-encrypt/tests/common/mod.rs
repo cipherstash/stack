@@ -121,6 +121,10 @@ impl<S> CountingSource<S> {
     }
 }
 
+impl<S> stack_kms::KeySourceKind for CountingSource<S> {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl<S: DataKeySource + Sync> DataKeySource for CountingSource<S> {
     async fn generate_keys(
         &self,
@@ -226,6 +230,10 @@ impl RecordingSource {
     pub fn sent(&self) -> Arc<Mutex<SentDescriptors>> {
         self.sent.clone()
     }
+}
+
+impl stack_kms::KeySourceKind for RecordingSource {
+    type Kind = stack_kms::OwnIdentity;
 }
 
 impl DataKeySource for RecordingSource {
