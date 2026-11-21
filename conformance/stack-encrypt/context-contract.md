@@ -15,15 +15,15 @@ context field.
 
 Caller input has two distinct purposes:
 
-- A **base label** supplies a missing base for a query or a contextless Rust plan.
+- A **base label** supplies a missing base for a query or a contextless plan.
   For a record storing its own context, an expected label checks that stored
   value. It does not replace or extend it. A caller label on a plan with a
   literal base is refused.
 - A **scope** appends to the resolved field context for encryption,
-  decryption and search. Each call appends in order. Rust
-  `.extend(7u64).extend(nonempty!("eu"))` and Go
+  decryption and search. Each part appends in order. Rust
+  `DeclaredContext::default().with(7u64).with(nonempty!("eu"))` and Go
   `.Scope(uint64(7)).Scope("eu")` produce `((label)/7u64)/eu`.
-  Rust `.extend(())` and Go `.Scope()` append nothing. A Rust
+  Rust `DeclaredContext::from(())` and Go `.Scope()` append nothing. A Rust
   `DeclaredContext` containing several parts appends all of those parts.
   Go `Extend` is the deprecated name of `Scope`. Earlier text called a
   scope an extension.
@@ -44,14 +44,16 @@ Caller input has two distinct purposes:
   (`v1/record-bindings-v1.cases.json`) specifies this, and both languages
   are required to run it.
 
-Grouping is significant. Rust `.extend(NonEmpty::from(7u64).with("eu"))` adds
-one composite part, producing `(label)/(7u64/eu)`. This has different AAD and
+Grouping is significant. Rust
+`DeclaredContext::from(NonEmpty::from(7u64).with("eu"))` adds one composite
+part, producing `(label)/(7u64/eu)`. This has different AAD and
 terms from separate scopes. Nested `ContextPiece` values are supported by
 Rust's lower-level context APIs; the dynamic record grammar and Go `Scope`
 accept scalar parts only. Their refusal of a grouped part is part of the
 supported API boundary, not permission to flatten it.
 
-Previously, repeated Rust chain extensions replaced earlier parts. Records
+Previously, repeated `.extend` calls on the Rust chain, which is now
+removed, replaced earlier parts. Records
 written by those chains still require the
 **last extension alone** when opening them; callers must explicitly retain that
 old context when reading and querying old records. A query using repeated

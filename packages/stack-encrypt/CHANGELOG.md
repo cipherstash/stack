@@ -21,11 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     cannot record a value above `i64::MAX` exactly. A float that is not
     finite is sent as `null`.
   - Every `Pending` has `.audit(..)`. So it works for scalars, trees,
-    targets, records, and `dynamic::record`. So does `all(..)`.
+    targets, records, and `dynamic::record`, and for a batch made with
+    `zip` or `Pending::all`.
   - `.audit(..)` returns an `Audited` call. You can only await an
     `Audited` call. So attach the metadata last, to the whole call:
-    `a.zip(b).audit(m)`, or `all((a, b)).audit(m)`. Neither
-    `a.audit(m).zip(b)` nor `all((a.audit(m), b))` compiles. A call
+    `a.zip(b).audit(m)`, or `Pending::all(&keyset, vec![a, b]).audit(m)`.
+    Neither `a.audit(m).zip(b)` nor
+    `Pending::all(&keyset, vec![a.audit(m), b])` compiles. A call
     therefore sends one map, with every key request that it makes.
   - A call that requests no data key sends no metadata, and still
     succeeds. A query term is one such call. So is a call over an empty
@@ -267,12 +269,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The structural API is removed** (#1661, #1662). Stack Encrypt had two
   ways to encrypt a record and two ways to query one. The owned API stays:
   `EncryptTarget`, `DecryptSource`, `EncryptInto`, `DecryptFrom`, field
-  field references, and `dynamic::Planned` for a plan that is data. These are gone:
+  references, and `dynamic::Planned` for a plan that is data. These are gone:
   - The traits `EncryptFrom` and `DecryptInto`, the derives
     `#[derive(EncryptFrom)]` and `#[derive(DecryptInto)]`, and the calls
     `encrypt_as` and `decrypt_as`.
-  - The plan builder and the chain: `Plan`, `Plan::context`, `Plan::fields`,
-    `Plan::value`, `build()`, `plan::pick`, `FieldRef`, `FieldsBuilder`,
+  - The plan builder and the chain: `plan::Plan`, `Plan::context`,
+    `Plan::fields`, `Plan::value`, `build()`, `plan::pick`, `FieldRef`, `FieldsBuilder`,
     `FieldValues`, `Fields`, `Field`, `FieldSchema`, `ValuePlan`, `Typed`,
     `Stored`, `Laid`, `Runs`, `Opens`, `cipher.encrypt(&value)` with
     `.context`, `.with`, `.fields`, `.using`, `.extend` and `.keyset`,

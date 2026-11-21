@@ -266,7 +266,8 @@ async fn a_context_field_record_refuses_an_empty_stored_context_before_any_reque
         .await
         .unwrap();
 
-    // The stored context is not authenticated: a row can hold an empty one.
+    // The stored context is read from the row, which is untrusted input
+    // until the open checks it. So a row can hold an empty one.
     let emptied = Scoped {
         i: String::new(),
         ..sealed

@@ -53,8 +53,8 @@ struct Case {
     accepted: bool,
     expected_error: Option<ExpectedError>,
     /// How the typed query answers the same query, for the queries a field
-    /// field reference can spell: refused before a keyset is asked for anything, or
-    /// not refused. The corpus has a third value, for a refusal after the
+    /// reference can spell: refused before a keyset is asked for anything,
+    /// or not refused. The corpus has a third value, for a refusal after the
     /// keyset was loaded. A field query runs through a keyset the caller
     /// already holds, so it cannot be refused at that stage.
     typed: Option<Typed>,

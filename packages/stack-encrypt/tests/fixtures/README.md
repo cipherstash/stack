@@ -11,9 +11,12 @@ chain lowered to open and reproduce the same record. The fixture holds both reco
 under a deterministic key source so they open in any process built from the
 same seed. `tests/record_lowering.rs` opens each record with the other
 author and checks that both derive the terms it holds. That cross-opening
-is the proof that `dynamic::record` is a lowering into the combinators and
-not a second executor (ADR-0007, amended 2026-10-06). A Go test reads the
-same file later, once the Go SDK's generated code is the third author.
+checks that the two authors are compatible: they derive the same terms and
+each opens the other's records. It does not by itself show how
+`dynamic::record` runs. ADR-0007 (amended 2026-10-06) records the design
+that it runs through the same engine and is not a second executor. A Go
+test reads the same file later, once the Go SDK's generated code is the
+third author.
 Typed code over bare `u32` or `String` fields seals the same leaves too: every
 leaf is tagged with its type (vitaminc ADR 0001), whoever wrote it.
 

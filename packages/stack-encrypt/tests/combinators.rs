@@ -2,8 +2,8 @@
 //! declaration runs through, and the bytes are theirs.
 //!
 //! A derived record, a target named by its type, and a query from a field
-//! field reference each write what the combinators write when a test composes them
-//! by hand: `indexed(..).under(label)` for a sealed field with terms,
+//! reference each write what the combinators write when a test composes
+//! them by hand: `indexed(..).under(label)` for a sealed field with terms,
 //! `ciphertext().under(label)` for a sealed field, an index's own operation
 //! for a term alone, `passthrough()` for a field carried as it is, and
 //! `project` and `zip` to make a record of them. The tests run the
@@ -13,7 +13,8 @@
 //!
 //! The rest of the file holds what follows from one engine: a caller's
 //! context extends every field, `Pending::zip` and `Pending::all` settle
-//! several operations in one ZeroKMS request, nothing is requested before
+//! several operations with at most one ZeroKMS request of each kind (one
+//! generate request and one retrieve request), nothing is requested before
 //! an await, and every operation runs under the keyset it is given.
 mod common;
 

@@ -2046,7 +2046,7 @@ table.
   request for #1488. The builder, the chain, `EncryptFrom`, `DecryptInto`,
   their derives, `encrypt_as` and `decrypt_as` are removed (#1661, #1662).
   EQL, the Go guest, the examples and every test use the owned API, field
-  field references or `Planned`.
+  references or `Planned`.
   Every JSON target has the new traits over `JsonPlaintext` (#1658 for
   `JsonTreeDocument`, #1660 for the other five), so no target needs the
   old traits any more.
