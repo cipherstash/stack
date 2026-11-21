@@ -16,7 +16,7 @@ error: an ordered path names no array position (`[2]`): an ordering compares the
 32 |     #[stash(json(ordered = { "$.visits[2].at": u64 }))]
    |                              ^^^^^^^^^^^^^^^^
 
-error: this path is given twice in `ordered`; each path is ordered once
+error: this path is given twice in `ordered`; each path is declared once
   --> tests/ui/derive_json_ordered_paths.rs:39:44
    |
 39 |     #[stash(json(ordered = { "$.age": u32, "$[\"age\"]": u32 }))]
@@ -28,13 +28,13 @@ error: given here first
 39 |     #[stash(json(ordered = { "$.age": u32, "$[\"age\"]": u32 }))]
    |                              ^^^^^^^
 
-error: the key "ship to" gives no accessor name: a key gives one from ASCII letters, digits, `_` and `-`. Name it with `names = { "ship to": word }` beside `ordered`
+error: the key "ship to" gives no accessor name: a key gives one from ASCII letters, digits, `_` and `-`. Name it with `names = { "ship to": word }` in the field's `json(..)`
   --> tests/ui/derive_json_ordered_paths.rs:46:30
    |
 46 |     #[stash(json(ordered = { "$[\"ship to\"]": String }))]
    |                              ^^^^^^^^^^^^^^^^
 
-error: this path gives the accessor `at().ship_to()`, which `$.ship_to` gives too. Name a key with `names = { "key": word }` beside `ordered`
+error: this path gives the accessor `at().ship_to()`, which `$.ship_to` gives too. Name a key with `names = { "key": word }` in the field's `json(..)`
   --> tests/ui/derive_json_ordered_paths.rs:53:51
    |
 53 |     #[stash(json(ordered = { "$.ship_to": String, "$.ship.to": String }))]

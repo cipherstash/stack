@@ -1,7 +1,9 @@
 //! The typed accessors of a document field's declared paths.
 //!
-//! A field's `#[stash(json(ordered = { "$.age": u32, .. }))]` names its
-//! ordered paths and their types. The derive generates, for the field
+//! A field's `#[stash(json(ordered = { "$.age": u32, .. }, paths = {
+//! "$.name": String, .. }))]` names its declared paths and their types:
+//! `ordered` ones, whose values carry an ordering term, and `paths` ones,
+//! compared with equality alone. The derive generates, for the field
 //! `profile` of the record `EncryptedCustomer`:
 //!
 //! - `EncryptedCustomerProfilePaths`, the type of the field's paths: the
@@ -38,7 +40,7 @@ use stack_encrypt_jsonpath::{JsonPath, Segment};
 use syn::spanned::Spanned;
 use syn::{Ident, Path, Result, Visibility};
 
-use crate::attrs::{JsonAttr, OrderedPath};
+use crate::attrs::{JsonAttr, TypedPath};
 
 /// The type of a field's declared paths, which the field reference's type
 /// names: `<Record><Field>Paths`.
@@ -55,7 +57,7 @@ pub(crate) fn accessors(
     field: &Ident,
     json: &JsonAttr,
 ) -> Result<TokenStream> {
-    if json.ordered.is_empty() {
+    if json.ordered.is_empty() && json.paths.is_empty() {
         return Ok(TokenStream::new());
     }
     let names = Names::new(json);
@@ -73,24 +75,29 @@ pub(crate) fn accessors(
     };
     let constant = field_name.to_uppercase();
 
-    // Each declared type is one a path can hold, checked at the type.
-    let types = json.ordered.iter().map(|ordered| {
-        let ty = &ordered.ty;
-        quote_spanned! {ty.span()=>
-            let _ = declared::<#ty>;
+    // Each declared type is one a path can hold, checked at the type: an
+    // ordered path's a type an ordering compares, and an unordered path's
+    // a type equality compares.
+    let types = json.ordered.iter().chain(&json.paths).map(|entry| {
+        let ty = &entry.ty;
+        if entry.ordered {
+            quote_spanned! {ty.span()=> let _ = ordered::<#ty>; }
+        } else {
+            quote_spanned! {ty.span()=> let _ = unordered::<#ty>; }
         }
     });
     let checks = quote! {
         const _: () = {
-            fn declared<V: #json_mod::JsonPathType>() {}
+            fn ordered<V: #json_mod::JsonPathType>() {}
+            fn unordered<V: #json_mod::JsonScalarType>() {}
             #(#types)*
         };
     };
 
-    // One method under `at()` per path.
+    // One method under `at()` per path, ordered or not.
     let mut at_methods = Vec::new();
-    let mut at_names: Vec<(String, &OrderedPath)> = Vec::new();
-    for ordered in &json.ordered {
+    let mut at_names: Vec<(String, &TypedPath)> = Vec::new();
+    for ordered in json.ordered.iter().chain(&json.paths) {
         let name = names.accessor(keys(ordered.path.segments()), ordered)?;
         if let Some((_, earlier)) = at_names.iter().find(|(seen, _)| *seen == name) {
             return Err(collision(ordered, earlier, &format!("at().{name}()")));
@@ -98,12 +105,23 @@ pub(crate) fn accessors(
         let method = method_ident(&name, ordered.text.span())?;
         let text = &ordered.text;
         let ty = &ordered.ty;
+        let (order, compares) = if ordered.ordered {
+            (
+                quote!(#json_mod::OrderedPath),
+                "Equality and the orderings compare it",
+            )
+        } else {
+            (
+                quote!(#json_mod::EqualityPath),
+                "Equality compares it; it is not ordered",
+            )
+        };
         let doc = format!(
-            "The value at `{}`, which holds a `{}`.",
+            "The value at `{}`, which holds a `{}`. {compares}.",
             text.value(),
             quote!(#ty)
         );
-        let output = quote_spanned!(ty.span()=> #json_mod::DeclaredPath<W, T, C, P, #ty>);
+        let output = quote_spanned!(ty.span()=> #json_mod::DeclaredPath<W, T, C, P, #ty, #order>);
         at_methods.push(quote! {
             #[doc = #doc]
             pub fn #method(self) -> #output {
@@ -141,7 +159,7 @@ pub(crate) fn accessors(
     let mut element_methods = Vec::new();
     let mut array_items = Vec::new();
     let mut array_types = Vec::new();
-    let mut array_names: Vec<(String, &OrderedPath)> = Vec::new();
+    let mut array_names: Vec<(String, &TypedPath)> = Vec::new();
     for array in &arrays {
         let name = names.accessor(keys(array.path.segments()), array.first)?;
         if let Some((_, earlier)) = array_names.iter().find(|(seen, _)| *seen == name) {
@@ -167,7 +185,7 @@ pub(crate) fn accessors(
         array_names.push((name, array.first));
 
         let mut member_methods = Vec::new();
-        let mut member_names: Vec<(String, &OrderedPath)> = Vec::new();
+        let mut member_names: Vec<(String, &TypedPath)> = Vec::new();
         for (member, ordered) in &array.members {
             let name = names.accessor(keys(member), ordered)?;
             if let Some((_, earlier)) = member_names.iter().find(|(seen, _)| *seen == name) {
@@ -304,9 +322,9 @@ pub(crate) fn accessors(
 struct Array<'a> {
     path: JsonPath,
     /// The first entry that names it, where an error about it is reported.
-    first: &'a OrderedPath,
+    first: &'a TypedPath,
     /// Each member's steps below the element, with its entry.
-    members: Vec<(Vec<Segment>, &'a OrderedPath)>,
+    members: Vec<(Vec<Segment>, &'a TypedPath)>,
 }
 
 /// The keys of `segments`, in order: the wildcards left out. Ordered paths
@@ -341,7 +359,7 @@ impl<'a> Names<'a> {
 
     /// The accessor name of a path, an array or a member with these keys,
     /// reported at `ordered`'s literal when a key gives no word.
-    fn accessor(&self, keys: Vec<&str>, ordered: &OrderedPath) -> Result<String> {
+    fn accessor(&self, keys: Vec<&str>, ordered: &TypedPath) -> Result<String> {
         if keys.is_empty() {
             return Ok("root".to_owned());
         }
@@ -353,7 +371,7 @@ impl<'a> Names<'a> {
                     format!(
                         "the key {key:?} gives no accessor name: a key gives one from ASCII \
                          letters, digits, `_` and `-`. Name it with `names = {{ {key:?}: word }}` \
-                         beside `ordered`"
+                         in the field's `json(..)`"
                     ),
                 ));
             };
@@ -402,18 +420,18 @@ fn method_ident(name: &str, span: Span) -> Result<Ident> {
         span,
         format!(
             "this path gives the accessor name `{name}`, which is not a Rust identifier. Name \
-             the key that starts it with `names = {{ \"key\": word }}` beside `ordered`"
+             the key that starts it with `names = {{ \"key\": word }}` in the field's `json(..)`"
         ),
     ))
 }
 
 /// Two entries that give one accessor name, reported at the later.
-fn collision(later: &OrderedPath, earlier: &OrderedPath, accessor: &str) -> syn::Error {
+fn collision(later: &TypedPath, earlier: &TypedPath, accessor: &str) -> syn::Error {
     let mut error = syn::Error::new(
         later.text.span(),
         format!(
             "this path gives the accessor `{accessor}`, which `{}` gives too. Name a key with \
-             `names = {{ \"key\": word }}` beside `ordered`",
+             `names = {{ \"key\": word }}` in the field's `json(..)`",
             earlier.text.value()
         ),
     );

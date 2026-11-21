@@ -96,7 +96,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     after a condition gives the same array's members, so a member of
     another array cannot be given. A method is named after the path's
     keys (`$.visits[*].at` is `visits_at()`); `names = { "key": word }`
-    names a key the rule cannot. The field reference has a fifth type
+    names a key the rule cannot. `paths = { "$.name": String, "$.vip":
+    bool }` declares a path for equality alone: its type is any
+    `JsonScalarType` (a `JsonPathType` or `bool`), it adds nothing to the
+    field's options, so no stored or derived byte changes, and its
+    `DeclaredPath` (kind `EqualityPath`, where an `ordered` path's is
+    `OrderedPath`) has `eq`, `is_null` and `selector`; an ordering of it
+    does not compile (`OrderedPathKind`). A path under both keys is a
+    compile error. An element-scoped condition compares ordering terms,
+    so `elements()` has ordered members only. The field reference has a fifth type
     parameter, the field's paths (`DocumentPaths`); a field that declares
     none has `TextPaths`. A field reached through an outer record
     (`field`) keeps its paths.

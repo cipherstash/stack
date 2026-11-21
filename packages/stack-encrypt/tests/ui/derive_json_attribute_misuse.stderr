@@ -1,4 +1,4 @@
-error: unsupported `json(..)` option; expected `ordered = { "$.path": Type, .. }`, `names = { "key": name, .. }` or `sealed_root = false`
+error: unsupported `json(..)` option; expected `ordered = { "$.path": Type, .. }`, `paths = { "$.path": Type, .. }`, `names = { "key": name, .. }` or `sealed_root = false`
   --> tests/ui/derive_json_attribute_misuse.rs:16:44
    |
 16 |     #[stash(json(ordered = { "$.a": u32 }, depth = 3))]

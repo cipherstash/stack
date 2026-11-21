@@ -299,11 +299,14 @@ column, accessor
 
 **Declared path**:
 A path into a JSON document field that the field's
-`#[stash(json(ordered = { "$.age": u32 }))]` names, with the type of the
-values at it. The derive parses it at compile time and gives it a method
-under the field reference's `at()`, and, for a member of an array, one under
-`elements()` (`DeclaredPath`, `ElementMember`). A path given as text at run
-time (`at_text_path`) is not a declared path.
+`#[stash(json(ordered = { "$.age": u32 }, paths = { "$.name": String }))]`
+names, with the type of the values at it. An `ordered` path's values carry
+an ordering term; a `paths` path is compared with equality alone and adds
+nothing to the field's options. The derive parses it at compile time and
+gives it a method under the field reference's `at()`, and, for an ordered
+member of an array, one under `elements()` (`DeclaredPath`,
+`ElementMember`). A path given as text at run time (`at_text_path`) is not
+a declared path.
 _Avoid_: typed path (that is the target-directed form), static path
 
 **Planned**:

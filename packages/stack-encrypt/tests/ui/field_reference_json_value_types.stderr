@@ -6,7 +6,7 @@ error[E0277]: this path holds `u32`, and `&str` is not one
    |                                                   |
    |                                                   required by a bound introduced by this call
    |
-   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+   = note: a declared path takes the type its `ordered = {..}` or `paths = {..}` entry names; a `String` path takes a `&str` or a `&String` too
 help: the trait `PathValue<u32>` is not implemented for `&str`
       but trait `PathValue<std::string::String>` is implemented for it
   --> src/field_reference/json.rs
@@ -14,11 +14,11 @@ help: the trait `PathValue<u32>` is not implemented for `&str`
    | impl PathValue<String> for &str {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `std::string::String`, found `u32`
-note: required by a bound in `DeclaredPath::<W, T, C, P, V>::gt`
+note: required by a bound in `DeclaredPath::<W, T, C, P, V, O>::gt`
   --> src/field_reference/json.rs
    |
-   |     pub fn gt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gt>, C::Start> {
-   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V>::gt`
+   |     pub fn gt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gt>, C::Start>
+   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V, O>::gt`
 
 error[E0277]: this path holds `u32`, and `i64` is not one
   --> tests/ui/field_reference_json_value_types.rs:31:54
@@ -29,7 +29,7 @@ error[E0277]: this path holds `u32`, and `i64` is not one
    |                                                   required by a bound introduced by this call
    |
    = help: the trait `PathValue<u32>` is not implemented for `i64`
-   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+   = note: a declared path takes the type its `ordered = {..}` or `paths = {..}` entry names; a `String` path takes a `&str` or a `&String` too
 help: the following other types implement trait `PathValue<V>`
   --> src/field_reference/json.rs
    |
@@ -38,11 +38,11 @@ help: the following other types implement trait `PathValue<V>`
    | impl path_value_sealed::Sealed<String> for &String {}
    | impl PathValue<String> for &String {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&std::string::String`
-note: required by a bound in `DeclaredPath::<W, T, C, P, V>::eq`
+note: required by a bound in `DeclaredPath::<W, T, C, P, V, O>::eq`
   --> src/field_reference/json.rs
    |
    |     pub fn eq(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Eq>, C::Start> {
-   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V>::eq`
+   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V, O>::eq`
 
 error[E0277]: this path holds `f64`, and `f32` is not one
   --> tests/ui/field_reference_json_value_types.rs:32:56
@@ -53,7 +53,7 @@ error[E0277]: this path holds `f64`, and `f32` is not one
    |                                                     required by a bound introduced by this call
    |
    = help: the trait `PathValue<f64>` is not implemented for `f32`
-   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+   = note: a declared path takes the type its `ordered = {..}` or `paths = {..}` entry names; a `String` path takes a `&str` or a `&String` too
 help: the following other types implement trait `PathValue<V>`
   --> src/field_reference/json.rs
    |
@@ -62,11 +62,11 @@ help: the following other types implement trait `PathValue<V>`
    | impl path_value_sealed::Sealed<String> for &String {}
    | impl PathValue<String> for &String {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&std::string::String`
-note: required by a bound in `DeclaredPath::<W, T, C, P, V>::eq`
+note: required by a bound in `DeclaredPath::<W, T, C, P, V, O>::eq`
   --> src/field_reference/json.rs
    |
    |     pub fn eq(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Eq>, C::Start> {
-   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V>::eq`
+   |                                 ^^^^^^^^^^^^ required by this bound in `DeclaredPath::<W, T, C, P, V, O>::eq`
 
 error[E0277]: this path holds `std::string::String`, and `{integer}` is not one
   --> tests/ui/field_reference_json_value_types.rs:33:71
@@ -77,7 +77,7 @@ error[E0277]: this path holds `std::string::String`, and `{integer}` is not one
    |                                                                    required by a bound introduced by this call
    |
    = help: the trait `PathValue<std::string::String>` is not implemented for `{integer}`
-   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+   = note: a declared path takes the type its `ordered = {..}` or `paths = {..}` entry names; a `String` path takes a `&str` or a `&String` too
 help: the following other types implement trait `PathValue<V>`
   --> src/field_reference/json.rs
    |
@@ -112,7 +112,7 @@ error[E0277]: this path holds `u64`, and `&str` is not one
    |                                                                 |
    |                                                                 required by a bound introduced by this call
    |
-   = note: a declared path takes the type its `ordered = {..}` entry names; a `String` path takes a `&str` or a `&String` too
+   = note: a declared path takes the type its `ordered = {..}` or `paths = {..}` entry names; a `String` path takes a `&str` or a `&String` too
 help: the trait `PathValue<u64>` is not implemented for `&str`
       but trait `PathValue<std::string::String>` is implemented for it
   --> src/field_reference/json.rs

@@ -167,11 +167,11 @@ fn field_references(input: &DeriveInput, record: &Record) -> TokenStream {
             Some(query) => quote!(#krate::field_reference::Takes<#query>),
             None => quote!(#krate::field_reference::TakesAny),
         };
-        // A field that declares ordered paths has a type of its own for
-        // them, through which it has `at()` and `elements()`.
+        // A field that declares paths, ordered or not, has a type of its
+        // own for them, through which it has `at()` and `elements()`.
         let paths_ty = json
             .as_ref()
-            .filter(|json| !json.ordered.is_empty())
+            .filter(|json| !json.ordered.is_empty() || !json.paths.is_empty())
             .map(|_| {
                 let paths = crate::json_paths::paths_type(name, ident);
                 quote!(, #paths)

@@ -526,6 +526,11 @@ Paths are typed, from the attribute. Decided by Dan on 21 November 2026:
   engine's grammar, from the `stack-encrypt-jsonpath` crate that
   `stack-encrypt` and its derive share. A path that does not parse, names
   an array position, or is given twice does not compile.
+- `paths = { "$.name": String, .. }` names a path compared with equality
+  alone, and its type: a number, a string or a boolean. It adds nothing to
+  the field's options, so the field stores no ordering term for it, and
+  an ordering of it does not compile. A path given under both keys does
+  not compile. Decided by Dan on 22 November 2026.
 - The derive gives each path a method under `at()`, and each array whose
   elements have an ordered member a method under `elements()`, whose
   methods are the members. The names come from the path's keys
@@ -1617,7 +1622,8 @@ Base64.
   `#[stash(json(..))]`, decided on 16 November 2026. Pull request #1687
   types the paths: `ordered = { "$.age": u32, .. }`, parsed at compile time
   through `stack-encrypt-jsonpath`, with a typed method per path, array
-  and member (21 November 2026). Tests hold every typed query to the text
+  and member (21 November 2026), and `paths = { "$.name": String, .. }`
+  for a path compared with equality alone (22 November 2026). Tests hold every typed query to the text
   form's operand and to the data plan's, the compile-fail cases under
   `packages/stack-encrypt/tests/ui` hold the refusals, and the [JSON query
   example](#query-a-json-document) runs.

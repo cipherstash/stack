@@ -386,3 +386,57 @@ async fn an_ordering_the_field_does_not_order_is_refused_before_any_key() {
         "no key requested"
     );
 }
+
+/// The plan's example with the name declared for equality alone: a
+/// `paths` entry, which adds nothing to the field's options.
+#[derive(EncryptTarget)]
+#[stash(struct = Customer, scope = "customers")]
+struct NamedCustomer {
+    #[stash(json(
+        ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String },
+        paths = { "$.name": String },
+    ))]
+    profile: JsonTreeDocument,
+}
+
+/// A path declared for equality derives the data plan's operand, whose
+/// options do not name it, finds the stored document, and is not ordered.
+#[tokio::test]
+async fn a_path_declared_for_equality_is_the_data_plans_operand() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: NamedCustomer = Customer {
+        profile: profile().into(),
+    }
+    .encrypt_into(&keyset)
+    .await
+    .unwrap();
+    let typed: JsonTreeQuery = NamedCustomer::PROFILE
+        .at()
+        .name()
+        .eq("Ada")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    let wire = one(data(
+        &keyset,
+        "eq_at",
+        json!({"path": "$.name", "json": "\"Ada\""}),
+    )
+    .await);
+    assert_eq!(
+        needle(&typed),
+        serde_json::from_value::<JsonQuery>(wire).unwrap()
+    );
+    assert!(needle(&typed).matches(index_document(&stored.profile).selector_set()));
+    let refused = NamedCustomer::PROFILE
+        .at_text_path("$.name")
+        .gt("A")
+        .encrypt(&keyset)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, Error::Term(TermError::JsonPathNotOrdered)),
+        "{refused:?}"
+    );
+}

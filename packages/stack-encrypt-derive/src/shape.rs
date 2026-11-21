@@ -78,7 +78,7 @@ pub(crate) struct ByField {
     pub(crate) query: Option<Type>,
     /// `#[stash(json(..))]`: the JSON index's options the field is sealed
     /// and queried under.
-    pub(crate) json: Option<JsonAttr>,
+    pub(crate) json: Option<Box<JsonAttr>>,
 }
 
 impl Field {
@@ -608,7 +608,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                     from,
                                     context,
                                     query: attrs.query,
-                                    json: attrs.json,
+                                    json: attrs.json.map(Box::new),
                                 }),
                             }
                         }

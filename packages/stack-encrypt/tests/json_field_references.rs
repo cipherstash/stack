@@ -1929,3 +1929,196 @@ mod as_the_data_plan_derives {
         );
     }
 }
+
+/// Paths declared under `paths = {..}`: typed, with equality, and no
+/// ordering term.
+mod given_paths_declared_without_an_ordering {
+    use super::*;
+
+    /// `EncryptedCustomer` with three more paths declared for equality: a
+    /// string, a boolean and an array's elements.
+    #[derive(EncryptTarget)]
+    #[stash(struct = Customer, scope = "customers")]
+    #[allow(dead_code)] // only the profile is read
+    struct DeclaredCustomer {
+        name: stack_encrypt::StackCipherText,
+        #[stash(json(
+            ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String },
+            paths = { "$.name": String, "$.vip": bool, "$.tags[*]": String },
+        ))]
+        profile: JsonDocument,
+    }
+
+    fn customer_with(profile: Value) -> Customer {
+        Customer {
+            name: "Ada".into(),
+            profile: profile.into(),
+        }
+    }
+
+    /// The stored document without its ciphertexts (`c`), whose nonces are
+    /// random under any key source: its header, its selectors, its
+    /// ordering terms and its tags, which the field's options decide.
+    #[cfg(feature = "test-support")]
+    fn derived(document: &JsonDocument) -> Value {
+        fn strip(value: &mut Value) {
+            match value {
+                Value::Object(map) => {
+                    let _ = map.remove("c");
+                    map.values_mut().for_each(strip);
+                }
+                Value::Array(items) => items.iter_mut().for_each(strip),
+                _ => {}
+            }
+        }
+        let mut value = serde_json::to_value(document).unwrap();
+        strip(&mut value);
+        value
+    }
+
+    /// A `paths` entry adds no ordering: under the deterministic key source
+    /// and one seed, the record seals the same document, every byte but
+    /// the ciphertexts', and derives the same queries, as the record
+    /// without the entries. The permutations repeat only under one seed,
+    /// which the `test-support` feature gives the cipher.
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn an_entry_changes_no_stored_or_derived_byte() {
+        let document = json!({"name": "Ada", "age": 35, "vip": true, "tags": ["a"],
+            "visits": [{"place": "home", "at": 15}]});
+        let without = common::deterministic_cipher([3; 32]).await;
+        let with = common::deterministic_cipher([3; 32]).await;
+        let (without, with) = (without.default_keyset(), with.default_keyset());
+        let plain: EncryptedCustomer = customer_with(document.clone())
+            .encrypt_into(&without)
+            .await
+            .unwrap();
+        let declared: DeclaredCustomer = customer_with(document).encrypt_into(&with).await.unwrap();
+        assert_eq!(
+            derived(&plain.profile),
+            derived(&declared.profile),
+            "the stored document"
+        );
+        assert!(
+            derived(&plain.profile).to_string().contains("\"op\""),
+            "the comparison reads the ordering terms"
+        );
+        let plain_name = EncryptedCustomer::PROFILE
+            .at_text_path("$.name")
+            .eq("Ada")
+            .encrypt(&without)
+            .await
+            .unwrap();
+        let declared_name = DeclaredCustomer::PROFILE
+            .at()
+            .name()
+            .eq("Ada")
+            .encrypt(&with)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&plain_name).unwrap(),
+            serde_json::to_value(&declared_name).unwrap(),
+            "equality at the declared path"
+        );
+        let plain_age = EncryptedCustomer::PROFILE
+            .at()
+            .age()
+            .gt(30)
+            .encrypt(&without)
+            .await
+            .unwrap();
+        let declared_age = DeclaredCustomer::PROFILE
+            .at()
+            .age()
+            .gt(30)
+            .encrypt(&with)
+            .await
+            .unwrap();
+        assert_eq!(plain_age, declared_age, "an ordering at an ordered path");
+        // An ordering at a `paths` path is refused when the query is
+        // encrypted, as at any path the field does not order.
+        let refused = DeclaredCustomer::PROFILE
+            .at_text_path("$.name")
+            .gt("A")
+            .encrypt(&with)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(refused, Error::Term(TermError::JsonPathNotOrdered)),
+            "{refused:?}"
+        );
+    }
+
+    /// Each accessor derives what the text form derives, and finds the
+    /// stored document: a string, a boolean, an element, a `null` and the
+    /// selector.
+    #[tokio::test]
+    async fn each_accessor_is_the_text_form() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: DeclaredCustomer =
+            customer_with(json!({"name": "Ada", "vip": true, "tags": ["a", "b"], "note": null}))
+                .encrypt_into(&keyset)
+                .await
+                .unwrap();
+        let typed = [
+            DeclaredCustomer::PROFILE.at().name().eq("Ada"),
+            DeclaredCustomer::PROFILE.at().name().eq("Ada".to_owned()),
+            DeclaredCustomer::PROFILE.at().vip().eq(true),
+            DeclaredCustomer::PROFILE.at().tags().eq("b"),
+        ];
+        let text = [
+            DeclaredCustomer::PROFILE.at_text_path("$.name").eq("Ada"),
+            DeclaredCustomer::PROFILE.at_text_path("$.name").eq("Ada"),
+            DeclaredCustomer::PROFILE.at_text_path("$.vip").eq(true),
+            DeclaredCustomer::PROFILE.at_text_path("$.tags[*]").eq("b"),
+        ];
+        for (typed, text) in typed.into_iter().zip(text) {
+            let typed = typed.encrypt(&keyset).await.unwrap();
+            let text = text.encrypt(&keyset).await.unwrap();
+            assert_eq!(typed, text);
+            assert!(typed.matches(stored.profile.selector_set()));
+        }
+        let missing = DeclaredCustomer::PROFILE
+            .at()
+            .vip()
+            .eq(false)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert!(!missing.matches(stored.profile.selector_set()));
+        let null = DeclaredCustomer::PROFILE
+            .at()
+            .name()
+            .is_null()
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(
+            null,
+            DeclaredCustomer::PROFILE
+                .at_text_path("$.name")
+                .is_null()
+                .encrypt(&keyset)
+                .await
+                .unwrap()
+        );
+        let selector = DeclaredCustomer::PROFILE
+            .at()
+            .name()
+            .selector()
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(
+            selector,
+            DeclaredCustomer::PROFILE
+                .at_text_path("$.name")
+                .selector()
+                .encrypt(&keyset)
+                .await
+                .unwrap()
+        );
+    }
+}

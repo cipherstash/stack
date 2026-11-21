@@ -22,27 +22,42 @@
 //!
 //! # Declared paths
 //!
-//! The attribute names each ordered path and the type of the values at it:
-//! `ordered = { "$.age": u32, "$.visits[*].place": String }`. The derive
-//! parses every path when it compiles the record, and generates one method
-//! for each:
+//! The attribute names each path the field declares and the type of the
+//! values at it, under one of two keys:
+//!
+//! - `ordered = { "$.age": u32, "$.visits[*].place": String }`: paths whose
+//!   numbers and strings carry an ordering term, so they are compared with
+//!   equality and the orderings. A number type or `String`
+//!   ([`JsonPathType`]).
+//! - `paths = { "$.name": String, "$.vip": bool }`: paths compared with
+//!   equality alone. They add nothing to the field's options, so the field
+//!   stores no ordering term for them. A boolean, a number type or `String`
+//!   ([`JsonScalarType`]).
+//!
+//! The derive parses every path when it compiles the record, and generates
+//! one method for each:
 //!
 //! - under [`at()`](FieldReference::at), one per path, named after the
 //!   path's keys: `$.age` is `age()`, `$.visits[*].at` is `visits_at()`.
-//!   Each returns a [`DeclaredPath`] of the path's type.
+//!   Each returns a [`DeclaredPath`] of the path's type, whose orderings
+//!   (`lt`, `gt`, `between` and the rest) compile for an `ordered` path
+//!   only.
 //! - under [`elements()`](FieldReference::elements), one per array whose
 //!   elements have an ordered member: `$.visits[*]` is `visits()`. That
 //!   array's members are methods in turn, named after the keys below the
 //!   array: `place()`, `at()`. Each returns an [`ElementMember`] of the
 //!   member's type. [`and()`](JsonFieldQuery::and) after a condition gives
-//!   the same array's members again.
+//!   the same array's members again. A member under `paths` has none: an
+//!   element-scoped condition compares ordering terms, even for equality.
 //!
 //! So the compiler refuses a path or a member the field does not declare,
-//! a value of another type, and a member of another array. The
-//! `stack-encrypt-derive` attribute reference gives the naming rule.
+//! a value of another type, an ordering of a path declared for equality,
+//! and a member of another array. The `stack-encrypt-derive` attribute
+//! reference gives the naming rule.
 //!
 //! For example, a customer's profile is stored under `customers/profile`,
-//! ordering the age and each visit's time and place:
+//! ordering the age and each visit's time and place, and declaring the name
+//! for equality:
 //!
 //! ```
 //! use serde_json::json;
@@ -59,7 +74,10 @@
 //! #[derive(EncryptTarget)]
 //! #[stash(struct = Customer, scope = "customers")]
 //! struct EncryptedCustomer {
-//!     #[stash(json(ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String }))]
+//!     #[stash(json(
+//!         ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String },
+//!         paths = { "$.name": String },
+//!     ))]
 //!     profile: JsonDocument,
 //! }
 //!
@@ -82,6 +100,10 @@
 //!     .await?;
 //! assert!(ada.matches(stored.profile.selector_set()));
 //!
+//! // `col @> $1` at a path declared for equality alone.
+//! let named = EncryptedCustomer::PROFILE.at().name().eq("Ada").encrypt(&keyset).await?;
+//! assert!(named.matches(stored.profile.selector_set()));
+//!
 //! // `(col -> $1) > $2`, with the selector the operand carries.
 //! let older = EncryptedCustomer::PROFILE.at().age().gt(30).encrypt(&keyset).await?;
 //! let age = EncryptedCustomer::PROFILE.at().age().selector().encrypt(&keyset).await?;
@@ -101,7 +123,9 @@
 //! ```
 //!
 //! These do not compile: a path or a member the field does not declare
-//! (`tests/ui/field_reference_json_undeclared_path.rs`); a value of another
+//! (`tests/ui/field_reference_json_undeclared_path.rs`); an ordering of a
+//! path declared under `paths`
+//! (`tests/ui/field_reference_json_equality_path.rs`); a value of another
 //! type, at a path or for a member, or an `f32`
 //! (`tests/ui/field_reference_json_value_types.rs`); a member of another
 //! array (`tests/ui/field_reference_json_member_of_another_array.rs`);
@@ -201,7 +225,7 @@ pub enum TextPaths {}
 #[diagnostic::on_unimplemented(
     message = "this field declares no JSON paths, so its reference has no typed `at()` or `elements()`",
     label = "a field reference whose paths are `{Self}`",
-    note = "declare the paths on the field, as `#[stash(json(ordered = {{ \"$.age\": u32 }}))]`, or name a path as text with `at_text_path(\"$.age\")` or `elements_text_path(\"$.visits[*]\")`"
+    note = "declare the paths on the field, as `#[stash(json(ordered = {{ \"$.age\": u32 }}, paths = {{ \"$.name\": String }}))]`, or name a path as text with `at_text_path(\"$.age\")` or `elements_text_path(\"$.visits[*]\")`"
 )]
 pub trait DocumentPaths: Sized {
     /// What [`FieldReference::at`] returns: one method per declared path.
@@ -448,6 +472,23 @@ impl JsonScalar for f64 {
 impl JsonOrdered for f64 {}
 
 /// A type a declared path holds: the type an entry of
+/// `#[stash(json(paths = {..}))]` names, which equality compares: a boolean,
+/// `i8` to `i64`, `u8` to `u64`, `f64` and `String`. Sealed.
+///
+/// There is no `f32`, for the reason [`JsonScalar`] gives: declare `f64` and
+/// query with `f64::from(x)`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a type a declared path can hold",
+    label = "the type a `paths = {{..}}` entry declares",
+    note = "a declared path holds a boolean, a number or a string: declare `bool`, `i8` to `i64`, `u8` to `u64`, `f64` or `String`. For a float held as `f32`, declare `f64` and query with `f64::from(x)`"
+)]
+pub trait JsonScalarType: JsonScalar + scalar_type_sealed::Sealed {}
+
+mod scalar_type_sealed {
+    pub trait Sealed {}
+}
+
+/// A type an ordered path holds: the type an entry of
 /// `#[stash(json(ordered = {..}))]` names. A number or a string, the leaves
 /// the JSON index derives an ordering term for: `i8` to `i64`, `u8` to
 /// `u64`, `f64` and `String`. Sealed.
@@ -457,9 +498,9 @@ impl JsonOrdered for f64 {}
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a type an ordered path can hold",
     label = "the type an `ordered = {{..}}` entry declares",
-    note = "an ordered path holds a number or a string: declare `i8` to `i64`, `u8` to `u64`, `f64` or `String`. For a float held as `f32`, declare `f64` and query with `f64::from(x)`"
+    note = "an ordered path holds a number or a string: declare `i8` to `i64`, `u8` to `u64`, `f64` or `String`. For a boolean, declare the path under `paths = {{..}}`, which equality compares. For a float held as `f32`, declare `f64` and query with `f64::from(x)`"
 )]
-pub trait JsonPathType: JsonOrdered + path_type_sealed::Sealed {}
+pub trait JsonPathType: JsonOrdered + JsonScalarType + path_type_sealed::Sealed {}
 
 mod path_type_sealed {
     pub trait Sealed {}
@@ -469,29 +510,59 @@ macro_rules! path_types {
     ($($ty:ty),+) => {$(
         impl path_type_sealed::Sealed for $ty {}
         impl JsonPathType for $ty {}
+        impl scalar_type_sealed::Sealed for $ty {}
+        impl JsonScalarType for $ty {}
     )+};
 }
 path_types!(i8, i16, i32, i64, u8, u16, u32, u64, f64, String);
+impl scalar_type_sealed::Sealed for bool {}
+impl JsonScalarType for bool {}
 
 /// A value a declared path of type `V` takes: a `V`, or for a `String` path
 /// a `&str` or a `&String` too. Sealed.
 #[diagnostic::on_unimplemented(
     message = "this path holds `{V}`, and `{Self}` is not one",
     label = "a `{Self}`",
-    note = "a declared path takes the type its `ordered = {{..}}` entry names; a `String` path takes a `&str` or a `&String` too"
+    note = "a declared path takes the type its `ordered = {{..}}` or `paths = {{..}}` entry names; a `String` path takes a `&str` or a `&String` too"
 )]
-pub trait PathValue<V>: JsonOrdered + path_value_sealed::Sealed<V> {}
+pub trait PathValue<V>: JsonScalar + path_value_sealed::Sealed<V> {}
 
 mod path_value_sealed {
     pub trait Sealed<V> {}
 }
 
-impl<V: JsonPathType> path_value_sealed::Sealed<V> for V {}
-impl<V: JsonPathType> PathValue<V> for V {}
+impl<V: JsonScalarType> path_value_sealed::Sealed<V> for V {}
+impl<V: JsonScalarType> PathValue<V> for V {}
 impl path_value_sealed::Sealed<String> for &str {}
 impl PathValue<String> for &str {}
 impl path_value_sealed::Sealed<String> for &String {}
 impl PathValue<String> for &String {}
+
+/// The kind of a declared path that an entry of `ordered = {..}` names:
+/// its leaves carry an ordering term, and its accessor has equality and the
+/// orderings. A type tag, with no values.
+pub enum OrderedPath {}
+
+/// The kind of a declared path that an entry of `paths = {..}` names: its
+/// accessor has equality (`eq`, `is_null`) and the selector, and its leaves
+/// carry only what any leaf carries, with no ordering term. A type tag,
+/// with no values.
+pub enum EqualityPath {}
+
+/// A declared path's kind that has the orderings: [`OrderedPath`]. Sealed.
+#[diagnostic::on_unimplemented(
+    message = "this path is not ordered: declare it under `ordered` to compare it",
+    label = "an ordering of a path declared under `paths`",
+    note = "a path under `paths = {{..}}` is compared with `eq` and `is_null`; one under `ordered = {{..}}` with the orderings too, and its values carry an ordering term"
+)]
+pub trait OrderedPathKind: ordered_path_kind_sealed::Sealed {}
+
+mod ordered_path_kind_sealed {
+    pub trait Sealed {}
+}
+
+impl ordered_path_kind_sealed::Sealed for OrderedPath {}
+impl OrderedPathKind for OrderedPath {}
 
 /// A value moved into a query: wiped when the query is encrypted, refused
 /// or dropped.
@@ -729,23 +800,30 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P> ValueAt<W, T, C, P> {
         compare: Compare,
         value: impl JsonOrdered,
     ) -> JsonFieldQuery<T, Op, C::Start> {
+        self.ordering_of(compare, held(value))
+    }
+
+    fn ordering_of<Op>(self, compare: Compare, value: Held) -> JsonFieldQuery<T, Op, C::Start> {
         self.reference
-            .json(Body::Ordering(compare, self.path, held(value)))
+            .json(Body::Ordering(compare, self.path, value))
     }
 }
 
 /// One path a document field declares, holding values of type `V`: what a
-/// method under [`FieldReference::at`] returns. One of the methods below
-/// makes it a query. Each takes the path's type ([`PathValue`]), and derives
-/// the operand [`at_text_path`](FieldReference::at_text_path) derives for the
-/// same path and value.
-pub struct DeclaredPath<W, T, C, P, V> {
+/// method under [`FieldReference::at`] returns. `O` is [`OrderedPath`] for a
+/// path under `ordered = {..}` and [`EqualityPath`] for one under
+/// `paths = {..}`. One of the methods below makes it a query. Each takes
+/// the path's type ([`PathValue`]), and derives the operand
+/// [`at_text_path`](FieldReference::at_text_path) derives for the same path
+/// and value. The orderings are refused at compile time on an unordered
+/// path.
+pub struct DeclaredPath<W, T, C, P, V, O = OrderedPath> {
     reference: FieldReference<W, T, C, P>,
     path: &'static str,
-    value: PhantomData<fn() -> V>,
+    value: PhantomData<fn() -> (V, O)>,
 }
 
-impl<W, T, C, P, V> DeclaredPath<W, T, C, P, V> {
+impl<W, T, C, P, V, O> DeclaredPath<W, T, C, P, V, O> {
     /// The path `path` of the field `reference`, as the derive declared it.
     /// For generated code: the derive checked the path when it compiled the
     /// record.
@@ -764,7 +842,9 @@ impl<W, T, C, P, V> DeclaredPath<W, T, C, P, V> {
     }
 }
 
-impl<W: Place, T: JsonQueries, C: ScopeInput, P, V: JsonPathType> DeclaredPath<W, T, C, P, V> {
+impl<W: Place, T: JsonQueries, C: ScopeInput, P, V: JsonScalarType, O>
+    DeclaredPath<W, T, C, P, V, O>
+{
     /// The same query, with the path as text: one code path for both.
     fn text(self) -> ValueAt<W, T, C, P> {
         ValueAt {
@@ -786,33 +866,53 @@ impl<W: Place, T: JsonQueries, C: ScopeInput, P, V: JsonPathType> DeclaredPath<W
         self.text().is_null()
     }
 
-    /// Rows where the value at the path is below `value`.
-    pub fn lt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Lt>, C::Start> {
-        self.text().lt(value)
+    /// Rows where the value at the path is below `value`. An ordered path
+    /// only.
+    pub fn lt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Lt>, C::Start>
+    where
+        O: OrderedPathKind,
+    {
+        self.text().ordering_of(Compare::Lt, held(value))
     }
 
-    /// Rows where the value at the path is at or below `value`.
-    pub fn lte(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Lte>, C::Start> {
-        self.text().lte(value)
+    /// Rows where the value at the path is at or below `value`. An ordered
+    /// path only.
+    pub fn lte(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Lte>, C::Start>
+    where
+        O: OrderedPathKind,
+    {
+        self.text().ordering_of(Compare::Lte, held(value))
     }
 
-    /// Rows where the value at the path is above `value`.
-    pub fn gt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gt>, C::Start> {
-        self.text().gt(value)
+    /// Rows where the value at the path is above `value`. An ordered path
+    /// only.
+    pub fn gt(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gt>, C::Start>
+    where
+        O: OrderedPathKind,
+    {
+        self.text().ordering_of(Compare::Gt, held(value))
     }
 
-    /// Rows where the value at the path is at or above `value`.
-    pub fn gte(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gte>, C::Start> {
-        self.text().gte(value)
+    /// Rows where the value at the path is at or above `value`. An ordered
+    /// path only.
+    pub fn gte(self, value: impl PathValue<V>) -> JsonFieldQuery<T, AtPath<Gte>, C::Start>
+    where
+        O: OrderedPathKind,
+    {
+        self.text().ordering_of(Compare::Gte, held(value))
     }
 
     /// Rows where the value at the path is between `low` and `high`, both
-    /// included. The query returns the two operands, low then high.
+    /// included. The query returns the two operands, low then high. An
+    /// ordered path only.
     pub fn between(
         self,
         low: impl PathValue<V>,
         high: impl PathValue<V>,
-    ) -> JsonFieldQuery<T, AtPath<Between>, C::Start> {
+    ) -> JsonFieldQuery<T, AtPath<Between>, C::Start>
+    where
+        O: OrderedPathKind,
+    {
         self.text().range(held(low), held(high))
     }
 

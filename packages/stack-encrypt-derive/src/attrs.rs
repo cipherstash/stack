@@ -359,7 +359,11 @@ pub(crate) struct JsonAttr {
     /// `ordered = { "$.age": u32, .. }`: the paths whose leaves carry an
     /// ordering term, each with the type of the values at it, in the order
     /// written. Each path is parsed here, with the engine's grammar.
-    pub(crate) ordered: Vec<OrderedPath>,
+    pub(crate) ordered: Vec<TypedPath>,
+    /// `paths = { "$.name": String, .. }`: paths given a type and no
+    /// ordering term, in the order written: each gets a typed accessor
+    /// under `at()` for equality, and adds nothing to the field's options.
+    pub(crate) paths: Vec<TypedPath>,
     /// `names = { "first-name": first_name, .. }`: the word a JSON key
     /// gives an accessor name, for a key the naming rule cannot turn into
     /// one, or whose word another key gives too.
@@ -369,15 +373,19 @@ pub(crate) struct JsonAttr {
     pub(crate) sealed_root: Option<LitBool>,
 }
 
-/// One entry of `ordered = { .. }`: a path and the type its values hold.
+/// One entry of `ordered = { .. }` or `paths = { .. }`: a path and the type
+/// its values hold.
 #[cfg_attr(test, derive(Debug))]
-pub(crate) struct OrderedPath {
+pub(crate) struct TypedPath {
     /// The path as written, which the field's options are built from.
     pub(crate) text: LitStr,
     /// The path, parsed.
     pub(crate) path: JsonPath,
     /// The type of the values at the path.
     pub(crate) ty: Type,
+    /// Whether the entry is under `ordered`: its leaves carry an ordering
+    /// term, and its accessor has the orderings.
+    pub(crate) ordered: bool,
 }
 
 /// What `ordered` is now, for a field that still writes the list form.
@@ -390,10 +398,12 @@ impl JsonAttr {
         let mut json = Self {
             span: syn::spanned::Spanned::span(&meta.path),
             ordered: Vec::new(),
+            paths: Vec::new(),
             names: Vec::new(),
             sealed_root: None,
         };
         let mut ordered = false;
+        let mut paths = false;
         let mut names = false;
         meta.parse_nested_meta(|inner| {
             if inner.path.is_ident("ordered") {
@@ -407,7 +417,18 @@ impl JsonAttr {
                 }
                 let content;
                 syn::braced!(content in value);
-                json.ordered = parse_ordered(&content)?;
+                json.ordered = parse_typed_paths(&content, true, &json.paths)?;
+                return Ok(());
+            }
+            if inner.path.is_ident("paths") {
+                if paths {
+                    return Err(inner.error("`paths` is given twice"));
+                }
+                paths = true;
+                let value = inner.value()?;
+                let content;
+                syn::braced!(content in value);
+                json.paths = parse_typed_paths(&content, false, &json.ordered)?;
                 return Ok(());
             }
             if inner.path.is_ident("names") {
@@ -430,19 +451,27 @@ impl JsonAttr {
             }
             Err(inner.error(
                 "unsupported `json(..)` option; expected `ordered = { \"$.path\": Type, .. }`, \
-                 `names = { \"key\": name, .. }` or `sealed_root = false`",
+                 `paths = { \"$.path\": Type, .. }`, `names = { \"key\": name, .. }` or \
+                 `sealed_root = false`",
             ))
         })?;
         Ok(json)
     }
 }
 
-/// The entries of `ordered = { .. }`: `"path": Type`, comma separated. Each
-/// path is parsed with the engine's grammar. A path that does not parse,
-/// names an array position, or repeats an earlier path is refused at its
-/// literal.
-fn parse_ordered(content: syn::parse::ParseStream<'_>) -> Result<Vec<OrderedPath>> {
-    let mut entries: Vec<OrderedPath> = Vec::new();
+/// The entries of `ordered = { .. }` (`ordered`) or `paths = { .. }`:
+/// `"path": Type`, comma separated. Each path is parsed with the engine's
+/// grammar. A path that does not parse, names an array position, repeats
+/// an earlier path, or is one of `other`, the entries of the other key, is
+/// refused at its literal.
+fn parse_typed_paths(
+    content: syn::parse::ParseStream<'_>,
+    ordered: bool,
+    other: &[TypedPath],
+) -> Result<Vec<TypedPath>> {
+    let key = if ordered { "ordered" } else { "paths" };
+    let other_key = if ordered { "paths" } else { "ordered" };
+    let mut entries: Vec<TypedPath> = Vec::new();
     while !content.is_empty() {
         let text: LitStr = content.parse()?;
         let _: Token![:] = content.parse()?;
@@ -459,20 +488,41 @@ fn parse_ordered(content: syn::parse::ParseStream<'_>) -> Result<Vec<OrderedPath
         if path.names_a_position() {
             return Err(syn::Error::new(
                 text.span(),
-                "an ordered path names no array position (`[2]`): an ordering compares the \
-                 value its selector reads, and a selector reads every element of an array \
-                 alike. Write `[*]` to order every element",
+                if ordered {
+                    "an ordered path names no array position (`[2]`): an ordering compares the \
+                     value its selector reads, and a selector reads every element of an array \
+                     alike. Write `[*]` to order every element"
+                } else {
+                    "a declared path names no array position (`[2]`): a query reads every \
+                     element of an array alike. Write `[*]` for every element"
+                },
             ));
         }
         if let Some(earlier) = entries.iter().find(|entry| entry.path == path) {
             let mut error = syn::Error::new(
                 text.span(),
-                "this path is given twice in `ordered`; each path is ordered once",
+                format!("this path is given twice in `{key}`; each path is declared once"),
             );
             error.combine(syn::Error::new(earlier.text.span(), "given here first"));
             return Err(error);
         }
-        entries.push(OrderedPath { text, path, ty });
+        if let Some(earlier) = other.iter().find(|entry| entry.path == path) {
+            let mut error = syn::Error::new(
+                text.span(),
+                format!(
+                    "this path is given in `{other_key}` too; declare a path once: under \
+                     `ordered` to compare it, or under `paths` for equality alone"
+                ),
+            );
+            error.combine(syn::Error::new(earlier.text.span(), "given here first"));
+            return Err(error);
+        }
+        entries.push(TypedPath {
+            text,
+            path,
+            ty,
+            ordered,
+        });
         if content.is_empty() {
             break;
         }
