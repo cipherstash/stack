@@ -625,6 +625,130 @@ fn a_late_failure_in_all_of_decrypts_leaves_no_plaintext_on_the_heap() {
     });
 }
 
+/// Three stored leaves a hand-written target opens with `Decryption::zip`,
+/// the third sealed from a `bool` so that it fails after its key arrived.
+/// No derive or `DecryptFrom` builds the pair: the target's own
+/// description does, through `target::open`.
+struct ThreeLeaves {
+    first: stack_encrypt::StackCipherText,
+    second: stack_encrypt::StackCipherText,
+    third: stack_encrypt::StackCipherText,
+}
+
+#[derive(zeroize::Zeroize)]
+struct ThreeTexts {
+    first: String,
+    second: String,
+    third: String,
+}
+
+impl stack_encrypt::target::DecryptSource<ThreeTexts> for ThreeLeaves {
+    type ContextInput = stack_encrypt::target::RequiredContext<stack_encrypt::target::AeadContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> stack_encrypt::target::Decryption<ThreeTexts, K> {
+        use stack_encrypt::target::open;
+        let context = context.into_inner();
+        open::<String, K>(self.first, context.clone())
+            .zip(open::<String, K>(self.second, context.clone()))
+            .zip(open::<String, K>(self.third, context))
+            .map(|((first, second), third)| ThreeTexts {
+                first,
+                second,
+                third,
+            })
+    }
+}
+
+/// A hand-written target that joins its leaves with `Decryption::zip`,
+/// whose last leaf fails after its key arrived. The plaintext the first
+/// two recovered is wiped, not dropped as it is.
+#[test]
+fn a_late_failure_in_a_hand_written_zip_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::target::AeadContext;
+    use stack_encrypt::{DecryptFrom, EncryptInto, StackCipherText};
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let context = || AeadContext::from(nonempty!("notes"));
+    let leaves = rt.block_on(async {
+        let first: StackCipherText = marked("first")
+            .encrypt_into_with_context(&keyset, context())
+            .await
+            .unwrap();
+        let second: StackCipherText = marked("second")
+            .encrypt_into_with_context(&keyset, context())
+            .await
+            .unwrap();
+        let third: StackCipherText = true
+            .encrypt_into_with_context(&keyset, context())
+            .await
+            .unwrap();
+        ThreeLeaves {
+            first,
+            second,
+            third,
+        }
+    });
+    watched("late type failure in a hand-written zip", || {
+        let result = rt.block_on(async {
+            ThreeTexts::decrypt_from_with_context(leaves, &keyset, context()).await
+        });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+}
+
+/// A column a hand-written target opens with `Decryption::all`, one scalar
+/// ciphertext per row.
+struct Column(Vec<stack_encrypt::Ciphertext>);
+
+impl stack_encrypt::target::DecryptSource<Vec<String>> for Column {
+    type ContextInput =
+        stack_encrypt::target::OptionalContext<stack_encrypt::target::ScalarContext>;
+    fn decryption<K: 'static>(
+        self,
+        context: Self::ContextInput,
+    ) -> stack_encrypt::target::Decryption<Vec<String>, K> {
+        use stack_encrypt::target::{AllowsNoContext, DecryptSource, Decryption};
+        let _ = context;
+        Decryption::all(self.0.into_iter().map(|row| {
+            <stack_encrypt::Ciphertext as DecryptSource<String>>::decryption(
+                row,
+                AllowsNoContext::omitted(),
+            )
+        }))
+    }
+}
+
+/// A hand-written target that collects its rows with `Decryption::all`,
+/// whose last row fails after its key arrived. The plaintext the first two
+/// rows recovered is wiped, not dropped as it is.
+#[test]
+fn a_late_failure_in_a_hand_written_all_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::DecryptFrom;
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let column = rt.block_on(async {
+        Column(vec![
+            keyset.encrypt(marked("first")).await.unwrap(),
+            keyset.encrypt(marked("second")).await.unwrap(),
+            keyset.encrypt(true).await.unwrap(),
+        ])
+    });
+    watched("late type failure in a hand-written all", || {
+        let result = rt.block_on(async { Vec::<String>::decrypt_from(column, &keyset).await });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+}
+
 #[test]
 fn a_query_term_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();

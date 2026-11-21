@@ -1232,11 +1232,17 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     /// A description whose opening is `open`: a crate-internal target
     /// that builds its own key requests (the JSON index's documents) runs
     /// through here, as [`open`] does for a native tree.
+    ///
+    /// The output is recovered plaintext, so the pending is marked as one
+    /// that can be wiped, as [`open`]'s is. A [`zip`](Self::zip) or an
+    /// [`all`](Self::all) this description is part of then wipes the output
+    /// when a later item fails.
     pub(crate) fn from_open<F>(open: F) -> Self
     where
         F: for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K> + MaybeSend + 'static,
+        T: zeroize::Zeroize,
     {
-        Self::open(Box::new(open))
+        Self::open(Box::new(move |cipher| open(cipher).wiping()))
     }
     /// A description whose output is already known: a defaulted field, or
     /// an absent optional.
@@ -1258,6 +1264,12 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     }
     /// Open both, retrieving their keys in one batch. A failed side fails
     /// the pair, the left one first, without executing the other.
+    ///
+    /// When the right side fails after the left side recovered plaintext,
+    /// the left side's plaintext is wiped before the error is returned, if
+    /// the left side is an [`open`] or a target's own decryption. A
+    /// description built with [`ready`](Self::ready) or [`map`](Self::map)
+    /// is not wiped: its output is dropped as it is.
     pub fn zip<U: 'static>(self, other: Decryption<U, K>) -> Decryption<(T, U), K> {
         match (self.inner, other.inner) {
             (Opening::Failed(error), _) | (_, Opening::Failed(error)) => Decryption::failed(error),
@@ -1292,6 +1304,11 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     /// column fails with that error, and the descriptions after it are never
     /// built. A `Vec<T>` whose rows validate a stored context does not go on
     /// validating rows once one has been refused.
+    ///
+    /// When an item fails after the items before it recovered plaintext,
+    /// each of those items that is an [`open`] or a target's own decryption
+    /// is wiped before the error is returned, as [`zip`](Self::zip) does for
+    /// its left side.
     pub fn all<I>(items: I) -> Decryption<Vec<T>, K>
     where
         I: IntoIterator<Item = Self>,
@@ -1361,13 +1378,17 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
 }
 /// The canonical opening operation: retrieve the tree's keys and decode `P`
 /// through its own Vitamin C `Decrypt` implementation, under `context`.
-pub fn open<P: crate::Decrypt + Send + 'static, K: 'static>(
+///
+/// `P` is recovered plaintext, so it must be `Zeroize`: a
+/// [`Decryption::zip`] or [`Decryption::all`] that holds this opening wipes
+/// its output when a later item fails after this one's key arrived.
+pub fn open<P: crate::Decrypt + zeroize::Zeroize + Send + 'static, K: 'static>(
     tree: StackCipherText,
     context: impl Into<AeadContext>,
 ) -> Decryption<P, K> {
     let context = context.into();
     Decryption::open(Box::new(move |cipher| match context.validated() {
-        Ok(ctx) => open_native(tree, cipher, ctx),
+        Ok(ctx) => open_native(tree, cipher, ctx).wiping(),
         Err(e) => Pending::failed(cipher, e),
     }))
 }

@@ -324,6 +324,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Implement `op::Answers` and `op::LabelledTarget` for the record by
     hand to query it.
 
+- **`target::open` requires its plaintext to be `Zeroize`** (#1666). Its
+  output is recovered plaintext, and a `Decryption::zip` or
+  `Decryption::all` that holds it now wipes it when a later leaf fails. A
+  `DecryptSource<P>` already requires `P: Zeroize`, so a hand-written
+  target that calls `open` for its own plaintext type is unaffected. A
+  caller that opens a type that is not `Zeroize` wraps it in one that is,
+  or implements `Zeroize` for it.
+
 - **A set of terms holds one index for each operator.**
   `Encrypted<Terms>` and a derived `plaintext = T` record now refuse a set
   that names one index twice, such as `Encrypted<(EqualityTerm,
@@ -875,6 +883,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     marked, so a batch nested in another batch is wiped too.
   - A `Pending` from `Pending::ready`, `Pending::request` or `map` is not
     marked. Its output is dropped as before.
+  - `Decryption::zip` and `Decryption::all` wipe in the same way. A
+    hand-written `DecryptSource` that joined its leaves with them dropped
+    the plaintext of the earlier leaves unwiped when a later leaf failed,
+    because only the outer `Pending` was marked. Now `target::open` and
+    every target's own opening mark the leaf they return. A description
+    from `Decryption::ready` or `Decryption::map` is not marked.
 
 - **A derived record wipes an owned plaintext when a caller's part is
   empty.** An empty scope or binding is refused where a field is given

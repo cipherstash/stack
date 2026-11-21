@@ -410,7 +410,11 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// Mark this pending's output as plaintext that can be wiped in place.
     /// [`zip`](Self::zip) and [`all`](Self::all) then wipe it if a later
     /// operation in the same batch fails after it was recovered. Every
-    /// [`DecryptFrom`](super::DecryptFrom) call marks the pending it returns.
+    /// [`DecryptFrom`](super::DecryptFrom) call marks the pending it returns,
+    /// and so does each leaf a [`Decryption`](super::Decryption) opens
+    /// ([`open`](super::open) and the targets' own openings), so that a
+    /// [`Decryption::zip`](super::Decryption::zip) or
+    /// [`Decryption::all`](super::Decryption::all) written by hand wipes too.
     pub(crate) fn wiping(mut self) -> Self
     where
         T: zeroize::Zeroize,
