@@ -14,7 +14,9 @@
 
 // One context per target, threaded through the declaration tree:
 // packages/stack-encrypt/docs/adr/0004-one-context-per-target-threaded-through-the-declaration-tree.md.
-use super::context::{AeadContext, CallerContext, DeclaredContext, Extends, StoredParts};
+use super::context::{
+    AeadContext, CallerContext, DeclaredContext, Extends, StoredContext, StoredParts,
+};
 use super::conversion::{DecryptSource, EncryptTarget};
 use super::core::{encrypt_native, open_native, Term};
 use super::index::{Index, IndexSpec, Json};
@@ -358,9 +360,49 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// its own cannot be run under `()`. Available wherever a
     /// [`CallerContext`] can become what the subtree needs: a leaf of either
     /// kind, or a record whose own contexts a caller's extends.
+    ///
+    /// A part the caller passed empty is refused here, before the subtree
+    /// runs. In [`Owned`] mode that refusal drops the plaintext without
+    /// wiping it, because `S` need not be `Zeroize`. A derived record wipes
+    /// it instead.
     pub fn under(
+        self,
+        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+    ) -> Encryption<'s, S, T, K, DeclaredContext, M>
+    where
+        Ctx: From<CallerContext>,
+    {
+        self.under_refusing(own, drop)
+    }
+    /// [`under`](Self::under), for a field of a derived `struct = ..`
+    /// record. A context that is refused here wipes a plaintext that was
+    /// passed by value. `under` drops it as it is.
+    ///
+    /// **This method is for generated code.** The derive emits it for each
+    /// sealed field, in the borrowed form and in the owned form. The
+    /// plaintext is `Zeroize`, as the source of every
+    /// [`EncryptTarget`] is.
+    #[doc(hidden)]
+    pub fn under_field(
+        self,
+        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+    ) -> Encryption<'s, S, T, K, DeclaredContext, M>
+    where
+        Ctx: From<CallerContext>,
+        S: zeroize::Zeroize,
+    {
+        self.under_refusing(own, |source| {
+            M::release(source, |value| {
+                drop(vitaminc_protected::Protected::new(value))
+            })
+        })
+    }
+    /// The body of [`under`](Self::under). `refused` is given the source
+    /// when the context is refused, before the subtree has seen it.
+    fn under_refusing(
         mut self,
         own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+        refused: fn(M::Source),
     ) -> Encryption<'s, S, T, K, DeclaredContext, M>
     where
         Ctx: From<CallerContext>,
@@ -372,7 +414,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
             build: Box::new(move |source, cipher, cx: DeclaredContext| {
                 match cx.checked_under(own) {
                     Ok(context) => build(source, cipher, context.into()),
-                    Err(error) => Pending::failed(cipher, error),
+                    Err(error) => {
+                        refused(source);
+                        Pending::failed(cipher, error)
+                    }
                 }
             }),
             shapes,
@@ -465,6 +510,45 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
         let Self { build, shapes } = self;
         Encryption {
             build: Box::new(move |source, cipher, cx| build(select(source), cipher, cx)),
+            shapes,
+        }
+    }
+    /// Store the context this description runs under, for a record that
+    /// writes its context into the row (`#[stash(context_field)]`).
+    ///
+    /// The result takes a [`StoredContext`]: the context to store, and the
+    /// context to run under. `store` builds the output from this
+    /// description's output and the context to store.
+    ///
+    /// - On its own, the record stores the context the caller passes, and
+    ///   runs under it.
+    /// - As a field of a `struct = ..` record, it stores the field's own
+    ///   context, and runs under the scopes and bindings of the record too.
+    ///
+    /// A field whose type cannot store the field's own context fails here,
+    /// before any key is requested
+    /// ([`PlanError::ContextNotStorable`](crate::PlanError::ContextNotStorable)).
+    /// The plaintext is borrowed, so the refusal drops no plaintext.
+    ///
+    /// **This method is for generated code.** The derive emits it at the
+    /// root of a `#[stash(context_field)]` record.
+    #[doc(hidden)]
+    pub fn storing<C, U: 'static, F>(self, store: F) -> Encryption<'s, S, U, K, StoredContext<C>>
+    where
+        Ctx: From<CallerContext>,
+        C: MaybeSend + 'static,
+        F: FnOnce(T, C) -> U + MaybeSend + 'static,
+    {
+        let Self { build, shapes } = self;
+        Encryption {
+            build: Box::new(
+                move |source, cipher, cx: StoredContext<C>| match cx.into_parts() {
+                    Ok((stored, context)) => {
+                        build(source, cipher, context.into()).map(move |value| store(value, stored))
+                    }
+                    Err(error) => Pending::failed(cipher, error),
+                },
+            ),
             shapes,
         }
     }

@@ -183,18 +183,19 @@ pub mod transcode;
 mod tuples;
 
 pub(crate) use self::core::{bind_pending, seal_pending};
-/// The check that a `#[stash(context_field)]` record runs on decrypt.
-///
-/// `ExpectedContext` is not part of the API. Only the derives and the EQL
-/// types name it, and a caller passes a `NonEmpty<T>` or nothing. The type
-/// is public only because the derives emit code in other crates that
-/// names it. The definition is hidden too.
-#[doc(hidden)]
-pub use context::ExpectedContext;
 pub use context::{
-    AeadContext, Bind, BindPart, CallerContext, CheckedInput, DeclaredContext, Extends, NoBind,
-    NoScope, Parts, Scope, ScopePart, Scopes, StoredParts,
+    AeadContext, Bind, BindPart, CallerContext, CheckedInput, ContextFromField, DeclaredContext,
+    Extends, NoBind, NoScope, Parts, Scope, ScopePart, Scopes, StoredParts,
 };
+/// The inputs of a `#[stash(context_field)]` record: the context it stores
+/// on encrypt, and the check it runs on decrypt.
+///
+/// `StoredContext` and `ExpectedContext` are not part of the API. Only the
+/// derives and the EQL types name them, and a caller passes a `NonEmpty<T>`
+/// or nothing. They are public only because the derives emit code in other
+/// crates that names them. The definitions are hidden too.
+#[doc(hidden)]
+pub use context::{ExpectedContext, StoredContext};
 pub use conversion::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
 pub use index::{
     indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock,

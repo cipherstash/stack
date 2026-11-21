@@ -8,10 +8,9 @@ use crate::v4::plaintext::Date;
 use crate::v4::plaintext::Decimal;
 use crate::v4::plaintext::JsonPlaintext;
 use crate::v4::plaintext::Timestamp;
-use crate::Identifier;
 use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::target::IndexSpec;
-use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
+use stack_encrypt::target::{CallerContext, IndexSpec};
+use stack_encrypt::{KeysetCipher, Pending};
 /// Every EQL type a plan may name as a target, in
 /// `eql-domains::CATALOG` order: one per stored scalar domain, then
 /// one per document family's stored type
@@ -638,238 +637,239 @@ pub const TARGETS: &[Target] = &[
 pub(crate) const DOCUMENT_FAMILIES: &[&str] = &["json_tree"];
 /// Run the named type's own encryption plan for one field, or refuse
 /// the name: the type is not producible (`TargetError::Unproducible`)
-/// or does not exist (`TargetError::Unknown`).
+/// or does not exist (`TargetError::Unknown`). `context` is the
+/// field's context: its column, then the scopes and the bindings.
 pub(crate) fn encrypt_named<'a, K: 'static>(
     name: &str,
     keyset: &'a KeysetCipher<'_, K>,
-    column: NonEmpty<Identifier>,
+    context: CallerContext,
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
         "Integer" => run_target::<super::integer::Integer, Option<i32>, K>(
-            "Integer", keyset, column, plaintext,
+            "Integer", keyset, context, plaintext,
         ),
         "IntegerEq" => run_target::<super::integer::IntegerEq, Option<i32>, K>(
             "IntegerEq",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "IntegerOrdOre" => run_target::<super::integer::IntegerOrdOre, i32, K>(
             "IntegerOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "IntegerOrd" => run_target::<super::integer::IntegerOrd, i32, K>(
             "IntegerOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "IntegerOrdOpe" => run_target::<super::integer::IntegerOrdOpe, i32, K>(
             "IntegerOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "Smallint" => run_target::<super::smallint::Smallint, Option<i16>, K>(
-            "Smallint", keyset, column, plaintext,
+            "Smallint", keyset, context, plaintext,
         ),
         "SmallintEq" => run_target::<super::smallint::SmallintEq, Option<i16>, K>(
             "SmallintEq",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "SmallintOrdOre" => run_target::<super::smallint::SmallintOrdOre, i16, K>(
             "SmallintOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "SmallintOrd" => run_target::<super::smallint::SmallintOrd, i16, K>(
             "SmallintOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "SmallintOrdOpe" => run_target::<super::smallint::SmallintOrdOpe, i16, K>(
             "SmallintOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
-        "Bigint" => {
-            run_target::<super::bigint::Bigint, Option<i64>, K>("Bigint", keyset, column, plaintext)
-        }
+        "Bigint" => run_target::<super::bigint::Bigint, Option<i64>, K>(
+            "Bigint", keyset, context, plaintext,
+        ),
         "BigintEq" => run_target::<super::bigint::BigintEq, Option<i64>, K>(
-            "BigintEq", keyset, column, plaintext,
+            "BigintEq", keyset, context, plaintext,
         ),
         "BigintOrdOre" => run_target::<super::bigint::BigintOrdOre, i64, K>(
             "BigintOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "BigintOrd" => {
-            run_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", keyset, column, plaintext)
+            run_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", keyset, context, plaintext)
         }
         "BigintOrdOpe" => run_target::<super::bigint::BigintOrdOpe, i64, K>(
             "BigintOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "Date" => {
-            run_target::<super::date::Date, Option<Date>, K>("Date", keyset, column, plaintext)
+            run_target::<super::date::Date, Option<Date>, K>("Date", keyset, context, plaintext)
         }
         "DateEq" => {
-            run_target::<super::date::DateEq, Option<Date>, K>("DateEq", keyset, column, plaintext)
+            run_target::<super::date::DateEq, Option<Date>, K>("DateEq", keyset, context, plaintext)
         }
         "DateOrdOre" => {
-            run_target::<super::date::DateOrdOre, Date, K>("DateOrdOre", keyset, column, plaintext)
+            run_target::<super::date::DateOrdOre, Date, K>("DateOrdOre", keyset, context, plaintext)
         }
         "DateOrd" => {
-            run_target::<super::date::DateOrd, Date, K>("DateOrd", keyset, column, plaintext)
+            run_target::<super::date::DateOrd, Date, K>("DateOrd", keyset, context, plaintext)
         }
         "DateOrdOpe" => {
-            run_target::<super::date::DateOrdOpe, Date, K>("DateOrdOpe", keyset, column, plaintext)
+            run_target::<super::date::DateOrdOpe, Date, K>("DateOrdOpe", keyset, context, plaintext)
         }
         "Timestamp" => run_target::<super::timestamp::Timestamp, Option<Timestamp>, K>(
             "Timestamp",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TimestampEq" => run_target::<super::timestamp::TimestampEq, Option<Timestamp>, K>(
             "TimestampEq",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TimestampOrdOre" => run_target::<super::timestamp::TimestampOrdOre, Timestamp, K>(
             "TimestampOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TimestampOrd" => run_target::<super::timestamp::TimestampOrd, Timestamp, K>(
             "TimestampOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TimestampOrdOpe" => run_target::<super::timestamp::TimestampOrdOpe, Timestamp, K>(
             "TimestampOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "Numeric" => run_target::<super::numeric::Numeric, Option<Decimal>, K>(
-            "Numeric", keyset, column, plaintext,
+            "Numeric", keyset, context, plaintext,
         ),
         "NumericEq" => run_target::<super::numeric::NumericEq, Option<Decimal>, K>(
             "NumericEq",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "NumericOrdOre" => run_target::<super::numeric::NumericOrdOre, Decimal, K>(
             "NumericOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "NumericOrd" => run_target::<super::numeric::NumericOrd, Decimal, K>(
             "NumericOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "NumericOrdOpe" => run_target::<super::numeric::NumericOrdOpe, Decimal, K>(
             "NumericOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "Text" => {
-            run_target::<super::text::Text, Option<String>, K>("Text", keyset, column, plaintext)
+            run_target::<super::text::Text, Option<String>, K>("Text", keyset, context, plaintext)
         }
         "TextEq" => run_target::<super::text::TextEq, Option<String>, K>(
-            "TextEq", keyset, column, plaintext,
+            "TextEq", keyset, context, plaintext,
         ),
         "TextMatch" => {
-            run_target::<super::text::TextMatch, String, K>("TextMatch", keyset, column, plaintext)
+            run_target::<super::text::TextMatch, String, K>("TextMatch", keyset, context, plaintext)
         }
         "TextOrdOre" => run_target::<super::text::TextOrdOre, String, K>(
             "TextOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TextOrd" => {
-            run_target::<super::text::TextOrd, String, K>("TextOrd", keyset, column, plaintext)
+            run_target::<super::text::TextOrd, String, K>("TextOrd", keyset, context, plaintext)
         }
         "TextOrdOpe" => run_target::<super::text::TextOrdOpe, String, K>(
             "TextOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TextSearchOre" => run_target::<super::text::TextSearchOre, String, K>(
             "TextSearchOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TextSearch" => run_target::<super::text::TextSearch, String, K>(
             "TextSearch",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "Boolean" => run_target::<super::boolean::Boolean, Option<bool>, K>(
-            "Boolean", keyset, column, plaintext,
+            "Boolean", keyset, context, plaintext,
         ),
         "Real" => {
-            run_target::<super::real::Real, Option<f32>, K>("Real", keyset, column, plaintext)
+            run_target::<super::real::Real, Option<f32>, K>("Real", keyset, context, plaintext)
         }
         "RealEq" => {
-            run_target::<super::real::RealEq, Option<f32>, K>("RealEq", keyset, column, plaintext)
+            run_target::<super::real::RealEq, Option<f32>, K>("RealEq", keyset, context, plaintext)
         }
         "RealOrdOre" => {
-            run_target::<super::real::RealOrdOre, f32, K>("RealOrdOre", keyset, column, plaintext)
+            run_target::<super::real::RealOrdOre, f32, K>("RealOrdOre", keyset, context, plaintext)
         }
         "RealOrd" => {
-            run_target::<super::real::RealOrd, f32, K>("RealOrd", keyset, column, plaintext)
+            run_target::<super::real::RealOrd, f32, K>("RealOrd", keyset, context, plaintext)
         }
         "RealOrdOpe" => {
-            run_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", keyset, column, plaintext)
+            run_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", keyset, context, plaintext)
         }
-        "Double" => {
-            run_target::<super::double::Double, Option<f64>, K>("Double", keyset, column, plaintext)
-        }
+        "Double" => run_target::<super::double::Double, Option<f64>, K>(
+            "Double", keyset, context, plaintext,
+        ),
         "DoubleEq" => run_target::<super::double::DoubleEq, Option<f64>, K>(
-            "DoubleEq", keyset, column, plaintext,
+            "DoubleEq", keyset, context, plaintext,
         ),
         "DoubleOrdOre" => run_target::<super::double::DoubleOrdOre, f64, K>(
             "DoubleOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "DoubleOrd" => {
-            run_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", keyset, column, plaintext)
+            run_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", keyset, context, plaintext)
         }
         "DoubleOrdOpe" => run_target::<super::double::DoubleOrdOpe, f64, K>(
             "DoubleOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "Json" => run_target::<super::json::Json, Option<JsonPlaintext>, K>(
-            "Json", keyset, column, plaintext,
+            "Json", keyset, context, plaintext,
         ),
         _ => Err(refuse(name)),
     }
@@ -879,216 +879,220 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
 pub(crate) fn decrypt_named<'a, K: 'static>(
     name: &str,
     opener: Opener<'a, K>,
-    column: NonEmpty<Identifier>,
+    context: CallerContext,
     stored: &[u8],
 ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     match name {
         "Integer" => open_target::<super::integer::Integer, Option<i32>, K>(
-            "Integer", opener, column, stored,
+            "Integer", opener, context, stored,
         ),
         "IntegerEq" => open_target::<super::integer::IntegerEq, Option<i32>, K>(
             "IntegerEq",
             opener,
-            column,
+            context,
             stored,
         ),
         "IntegerOrdOre" => open_target::<super::integer::IntegerOrdOre, i32, K>(
             "IntegerOrdOre",
             opener,
-            column,
+            context,
             stored,
         ),
         "IntegerOrd" => {
-            open_target::<super::integer::IntegerOrd, i32, K>("IntegerOrd", opener, column, stored)
+            open_target::<super::integer::IntegerOrd, i32, K>("IntegerOrd", opener, context, stored)
         }
         "IntegerOrdOpe" => open_target::<super::integer::IntegerOrdOpe, i32, K>(
             "IntegerOrdOpe",
             opener,
-            column,
+            context,
             stored,
         ),
         "Smallint" => open_target::<super::smallint::Smallint, Option<i16>, K>(
-            "Smallint", opener, column, stored,
+            "Smallint", opener, context, stored,
         ),
         "SmallintEq" => open_target::<super::smallint::SmallintEq, Option<i16>, K>(
             "SmallintEq",
             opener,
-            column,
+            context,
             stored,
         ),
         "SmallintOrdOre" => open_target::<super::smallint::SmallintOrdOre, i16, K>(
             "SmallintOrdOre",
             opener,
-            column,
+            context,
             stored,
         ),
         "SmallintOrd" => open_target::<super::smallint::SmallintOrd, i16, K>(
             "SmallintOrd",
             opener,
-            column,
+            context,
             stored,
         ),
         "SmallintOrdOpe" => open_target::<super::smallint::SmallintOrdOpe, i16, K>(
             "SmallintOrdOpe",
             opener,
-            column,
+            context,
             stored,
         ),
         "Bigint" => {
-            open_target::<super::bigint::Bigint, Option<i64>, K>("Bigint", opener, column, stored)
+            open_target::<super::bigint::Bigint, Option<i64>, K>("Bigint", opener, context, stored)
         }
         "BigintEq" => open_target::<super::bigint::BigintEq, Option<i64>, K>(
-            "BigintEq", opener, column, stored,
+            "BigintEq", opener, context, stored,
         ),
         "BigintOrdOre" => open_target::<super::bigint::BigintOrdOre, i64, K>(
             "BigintOrdOre",
             opener,
-            column,
+            context,
             stored,
         ),
         "BigintOrd" => {
-            open_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", opener, column, stored)
+            open_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", opener, context, stored)
         }
         "BigintOrdOpe" => open_target::<super::bigint::BigintOrdOpe, i64, K>(
             "BigintOrdOpe",
             opener,
-            column,
+            context,
             stored,
         ),
-        "Date" => open_target::<super::date::Date, Option<Date>, K>("Date", opener, column, stored),
+        "Date" => {
+            open_target::<super::date::Date, Option<Date>, K>("Date", opener, context, stored)
+        }
         "DateEq" => {
-            open_target::<super::date::DateEq, Option<Date>, K>("DateEq", opener, column, stored)
+            open_target::<super::date::DateEq, Option<Date>, K>("DateEq", opener, context, stored)
         }
         "DateOrdOre" => {
-            open_target::<super::date::DateOrdOre, Date, K>("DateOrdOre", opener, column, stored)
+            open_target::<super::date::DateOrdOre, Date, K>("DateOrdOre", opener, context, stored)
         }
         "DateOrd" => {
-            open_target::<super::date::DateOrd, Date, K>("DateOrd", opener, column, stored)
+            open_target::<super::date::DateOrd, Date, K>("DateOrd", opener, context, stored)
         }
         "DateOrdOpe" => {
-            open_target::<super::date::DateOrdOpe, Date, K>("DateOrdOpe", opener, column, stored)
+            open_target::<super::date::DateOrdOpe, Date, K>("DateOrdOpe", opener, context, stored)
         }
         "Timestamp" => open_target::<super::timestamp::Timestamp, Option<Timestamp>, K>(
             "Timestamp",
             opener,
-            column,
+            context,
             stored,
         ),
         "TimestampEq" => open_target::<super::timestamp::TimestampEq, Option<Timestamp>, K>(
             "TimestampEq",
             opener,
-            column,
+            context,
             stored,
         ),
         "TimestampOrdOre" => open_target::<super::timestamp::TimestampOrdOre, Timestamp, K>(
             "TimestampOrdOre",
             opener,
-            column,
+            context,
             stored,
         ),
         "TimestampOrd" => open_target::<super::timestamp::TimestampOrd, Timestamp, K>(
             "TimestampOrd",
             opener,
-            column,
+            context,
             stored,
         ),
         "TimestampOrdOpe" => open_target::<super::timestamp::TimestampOrdOpe, Timestamp, K>(
             "TimestampOrdOpe",
             opener,
-            column,
+            context,
             stored,
         ),
         "Numeric" => open_target::<super::numeric::Numeric, Option<Decimal>, K>(
-            "Numeric", opener, column, stored,
+            "Numeric", opener, context, stored,
         ),
         "NumericEq" => open_target::<super::numeric::NumericEq, Option<Decimal>, K>(
             "NumericEq",
             opener,
-            column,
+            context,
             stored,
         ),
         "NumericOrdOre" => open_target::<super::numeric::NumericOrdOre, Decimal, K>(
             "NumericOrdOre",
             opener,
-            column,
+            context,
             stored,
         ),
         "NumericOrd" => open_target::<super::numeric::NumericOrd, Decimal, K>(
             "NumericOrd",
             opener,
-            column,
+            context,
             stored,
         ),
         "NumericOrdOpe" => open_target::<super::numeric::NumericOrdOpe, Decimal, K>(
             "NumericOrdOpe",
             opener,
-            column,
+            context,
             stored,
         ),
         "Text" => {
-            open_target::<super::text::Text, Option<String>, K>("Text", opener, column, stored)
+            open_target::<super::text::Text, Option<String>, K>("Text", opener, context, stored)
         }
         "TextEq" => {
-            open_target::<super::text::TextEq, Option<String>, K>("TextEq", opener, column, stored)
+            open_target::<super::text::TextEq, Option<String>, K>("TextEq", opener, context, stored)
         }
         "TextMatch" => {
-            open_target::<super::text::TextMatch, String, K>("TextMatch", opener, column, stored)
+            open_target::<super::text::TextMatch, String, K>("TextMatch", opener, context, stored)
         }
         "TextOrdOre" => {
-            open_target::<super::text::TextOrdOre, String, K>("TextOrdOre", opener, column, stored)
+            open_target::<super::text::TextOrdOre, String, K>("TextOrdOre", opener, context, stored)
         }
         "TextOrd" => {
-            open_target::<super::text::TextOrd, String, K>("TextOrd", opener, column, stored)
+            open_target::<super::text::TextOrd, String, K>("TextOrd", opener, context, stored)
         }
         "TextOrdOpe" => {
-            open_target::<super::text::TextOrdOpe, String, K>("TextOrdOpe", opener, column, stored)
+            open_target::<super::text::TextOrdOpe, String, K>("TextOrdOpe", opener, context, stored)
         }
         "TextSearchOre" => open_target::<super::text::TextSearchOre, String, K>(
             "TextSearchOre",
             opener,
-            column,
+            context,
             stored,
         ),
         "TextSearch" => {
-            open_target::<super::text::TextSearch, String, K>("TextSearch", opener, column, stored)
+            open_target::<super::text::TextSearch, String, K>("TextSearch", opener, context, stored)
         }
         "Boolean" => open_target::<super::boolean::Boolean, Option<bool>, K>(
-            "Boolean", opener, column, stored,
+            "Boolean", opener, context, stored,
         ),
-        "Real" => open_target::<super::real::Real, Option<f32>, K>("Real", opener, column, stored),
+        "Real" => open_target::<super::real::Real, Option<f32>, K>("Real", opener, context, stored),
         "RealEq" => {
-            open_target::<super::real::RealEq, Option<f32>, K>("RealEq", opener, column, stored)
+            open_target::<super::real::RealEq, Option<f32>, K>("RealEq", opener, context, stored)
         }
         "RealOrdOre" => {
-            open_target::<super::real::RealOrdOre, f32, K>("RealOrdOre", opener, column, stored)
+            open_target::<super::real::RealOrdOre, f32, K>("RealOrdOre", opener, context, stored)
         }
-        "RealOrd" => open_target::<super::real::RealOrd, f32, K>("RealOrd", opener, column, stored),
+        "RealOrd" => {
+            open_target::<super::real::RealOrd, f32, K>("RealOrd", opener, context, stored)
+        }
         "RealOrdOpe" => {
-            open_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", opener, column, stored)
+            open_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", opener, context, stored)
         }
         "Double" => {
-            open_target::<super::double::Double, Option<f64>, K>("Double", opener, column, stored)
+            open_target::<super::double::Double, Option<f64>, K>("Double", opener, context, stored)
         }
         "DoubleEq" => open_target::<super::double::DoubleEq, Option<f64>, K>(
-            "DoubleEq", opener, column, stored,
+            "DoubleEq", opener, context, stored,
         ),
         "DoubleOrdOre" => open_target::<super::double::DoubleOrdOre, f64, K>(
             "DoubleOrdOre",
             opener,
-            column,
+            context,
             stored,
         ),
         "DoubleOrd" => {
-            open_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", opener, column, stored)
+            open_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", opener, context, stored)
         }
         "DoubleOrdOpe" => open_target::<super::double::DoubleOrdOpe, f64, K>(
             "DoubleOrdOpe",
             opener,
-            column,
+            context,
             stored,
         ),
         "Json" => open_target::<super::json::Json, Option<JsonPlaintext>, K>(
-            "Json", opener, column, stored,
+            "Json", opener, context, stored,
         ),
         _ => Err(refuse(name)),
     }
@@ -1102,167 +1106,167 @@ pub(crate) fn query_named<'a, K: 'static>(
     name: &str,
     index: &IndexSpec,
     keyset: &'a KeysetCipher<'_, K>,
-    column: NonEmpty<Identifier>,
+    context: CallerContext,
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
         "IntegerEq" => run_target::<super::integer::IntegerEqQuery, Option<i32>, K>(
             "IntegerEq",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "IntegerOrdOre" => run_target::<super::integer::IntegerOrdOreQuery, i32, K>(
             "IntegerOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "IntegerOrd" => run_target::<super::integer::IntegerOrdQuery, i32, K>(
             "IntegerOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "IntegerOrdOpe" => run_target::<super::integer::IntegerOrdOpeQuery, i32, K>(
             "IntegerOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "SmallintEq" => run_target::<super::smallint::SmallintEqQuery, Option<i16>, K>(
             "SmallintEq",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "SmallintOrdOre" => run_target::<super::smallint::SmallintOrdOreQuery, i16, K>(
             "SmallintOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "SmallintOrd" => run_target::<super::smallint::SmallintOrdQuery, i16, K>(
             "SmallintOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "SmallintOrdOpe" => run_target::<super::smallint::SmallintOrdOpeQuery, i16, K>(
             "SmallintOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "BigintEq" => run_target::<super::bigint::BigintEqQuery, Option<i64>, K>(
-            "BigintEq", keyset, column, plaintext,
+            "BigintEq", keyset, context, plaintext,
         ),
         "BigintOrdOre" => run_target::<super::bigint::BigintOrdOreQuery, i64, K>(
             "BigintOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "BigintOrd" => run_target::<super::bigint::BigintOrdQuery, i64, K>(
             "BigintOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "BigintOrdOpe" => run_target::<super::bigint::BigintOrdOpeQuery, i64, K>(
             "BigintOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "DateEq" => run_target::<super::date::DateEqQuery, Option<Date>, K>(
-            "DateEq", keyset, column, plaintext,
+            "DateEq", keyset, context, plaintext,
         ),
         "DateOrdOre" => run_target::<super::date::DateOrdOreQuery, Date, K>(
             "DateOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "DateOrd" => {
-            run_target::<super::date::DateOrdQuery, Date, K>("DateOrd", keyset, column, plaintext)
+            run_target::<super::date::DateOrdQuery, Date, K>("DateOrd", keyset, context, plaintext)
         }
         "DateOrdOpe" => run_target::<super::date::DateOrdOpeQuery, Date, K>(
             "DateOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TimestampEq" => run_target::<super::timestamp::TimestampEqQuery, Option<Timestamp>, K>(
             "TimestampEq",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TimestampOrdOre" => run_target::<super::timestamp::TimestampOrdOreQuery, Timestamp, K>(
             "TimestampOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TimestampOrd" => run_target::<super::timestamp::TimestampOrdQuery, Timestamp, K>(
             "TimestampOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TimestampOrdOpe" => run_target::<super::timestamp::TimestampOrdOpeQuery, Timestamp, K>(
             "TimestampOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "NumericEq" => run_target::<super::numeric::NumericEqQuery, Option<Decimal>, K>(
             "NumericEq",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "NumericOrdOre" => run_target::<super::numeric::NumericOrdOreQuery, Decimal, K>(
             "NumericOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "NumericOrd" => run_target::<super::numeric::NumericOrdQuery, Decimal, K>(
             "NumericOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "NumericOrdOpe" => run_target::<super::numeric::NumericOrdOpeQuery, Decimal, K>(
             "NumericOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TextEq" => run_target::<super::text::TextEqQuery, Option<String>, K>(
-            "TextEq", keyset, column, plaintext,
+            "TextEq", keyset, context, plaintext,
         ),
         "TextMatch" => run_target::<super::text::TextMatchQuery, String, K>(
             "TextMatch",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TextOrdOre" => run_target::<super::text::TextOrdOreQuery, String, K>(
             "TextOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
-        "TextOrd" => {
-            run_target::<super::text::TextOrdQuery, String, K>("TextOrd", keyset, column, plaintext)
-        }
+        "TextOrd" => run_target::<super::text::TextOrdQuery, String, K>(
+            "TextOrd", keyset, context, plaintext,
+        ),
         "TextOrdOpe" => run_target::<super::text::TextOrdOpeQuery, String, K>(
             "TextOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "TextSearchOre" => match index.key() {
@@ -1271,19 +1275,19 @@ pub(crate) fn query_named<'a, K: 'static>(
                 super::text::TextSearchOreQuery,
                 String,
                 K,
-            >("TextSearchOre", keyset, column, plaintext),
+            >("TextSearchOre", keyset, context, plaintext),
             "ore_block" => run_projected::<
                 super::text::TextSearchOreOrderQuery,
                 super::text::TextSearchOreQuery,
                 String,
                 K,
-            >("TextSearchOre", keyset, column, plaintext),
+            >("TextSearchOre", keyset, context, plaintext),
             "match" => run_projected::<
                 super::text::TextSearchOreMatchQuery,
                 super::text::TextSearchOreQuery,
                 String,
                 K,
-            >("TextSearchOre", keyset, column, plaintext),
+            >("TextSearchOre", keyset, context, plaintext),
             _ => Err(no_index("TextSearchOre", index)),
         },
         "TextSearch" => match index.key() {
@@ -1292,58 +1296,58 @@ pub(crate) fn query_named<'a, K: 'static>(
                 super::text::TextSearchQuery,
                 String,
                 K,
-            >("TextSearch", keyset, column, plaintext),
+            >("TextSearch", keyset, context, plaintext),
             "ope" => run_projected::<
                 super::text::TextSearchOrderQuery,
                 super::text::TextSearchQuery,
                 String,
                 K,
-            >("TextSearch", keyset, column, plaintext),
+            >("TextSearch", keyset, context, plaintext),
             "match" => run_projected::<
                 super::text::TextSearchMatchQuery,
                 super::text::TextSearchQuery,
                 String,
                 K,
-            >("TextSearch", keyset, column, plaintext),
+            >("TextSearch", keyset, context, plaintext),
             _ => Err(no_index("TextSearch", index)),
         },
         "RealEq" => run_target::<super::real::RealEqQuery, Option<f32>, K>(
-            "RealEq", keyset, column, plaintext,
+            "RealEq", keyset, context, plaintext,
         ),
         "RealOrdOre" => run_target::<super::real::RealOrdOreQuery, f32, K>(
             "RealOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "RealOrd" => {
-            run_target::<super::real::RealOrdQuery, f32, K>("RealOrd", keyset, column, plaintext)
+            run_target::<super::real::RealOrdQuery, f32, K>("RealOrd", keyset, context, plaintext)
         }
         "RealOrdOpe" => run_target::<super::real::RealOrdOpeQuery, f32, K>(
             "RealOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "DoubleEq" => run_target::<super::double::DoubleEqQuery, Option<f64>, K>(
-            "DoubleEq", keyset, column, plaintext,
+            "DoubleEq", keyset, context, plaintext,
         ),
         "DoubleOrdOre" => run_target::<super::double::DoubleOrdOreQuery, f64, K>(
             "DoubleOrdOre",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "DoubleOrd" => run_target::<super::double::DoubleOrdQuery, f64, K>(
             "DoubleOrd",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         "DoubleOrdOpe" => run_target::<super::double::DoubleOrdOpeQuery, f64, K>(
             "DoubleOrdOpe",
             keyset,
-            column,
+            context,
             plaintext,
         ),
         _ => Err(refuse_query(name)),

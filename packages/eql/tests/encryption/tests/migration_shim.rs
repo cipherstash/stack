@@ -18,7 +18,7 @@ use std::cmp::Ordering;
 use eql_bindings::v4::integer::{IntegerOrdOre, IntegerOrdOreQuery};
 use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::Identifier;
-use stack_encrypt::target::{EncryptTarget, Encryption, NoCallerContext, RequiredContext, Zeroize};
+use stack_encrypt::target::{AcceptsContext, EncryptTarget, Encryption, NoCallerContext, Zeroize};
 use stack_encrypt::{DecryptFrom, EncryptInto, Error, NonEmpty};
 
 /// A value decrypted from EQL v3, with the column it was stored in.
@@ -39,7 +39,8 @@ struct Shim<T>(T);
 impl<P, T> EncryptTarget<V3Plaintext<P>> for Shim<T>
 where
     P: Zeroize,
-    T: EncryptTarget<P, ContextInput = RequiredContext<NonEmpty<Identifier>>>,
+    T: EncryptTarget<P>,
+    T::ContextInput: AcceptsContext<Value = NonEmpty<Identifier>>,
 {
     type ContextInput = NoCallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, V3Plaintext<P>, Self, K, NoCallerContext>

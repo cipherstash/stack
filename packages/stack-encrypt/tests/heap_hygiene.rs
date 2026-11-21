@@ -662,6 +662,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: Option<&stack_encrypt::dynamic::TargetOptions>,
         _: &'a stack_encrypt::KeysetCipher<'_, K>,
         _: &stack_encrypt::Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
         unreachable!("a check seals nothing")
@@ -671,6 +672,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &str,
         _: &'a stack_encrypt::StackCipher<K>,
         _: &stack_encrypt::Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
     ) -> Result<stack_encrypt::Pending<'a, ValueFrame, K>, stack_encrypt::dynamic::TargetError>
     {
@@ -682,6 +684,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
         _: &stack_encrypt::target::IndexSpec,
         _: &'a stack_encrypt::KeysetCipher<'_, K>,
         _: &stack_encrypt::Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
         unreachable!("a document's operators are the engine's")

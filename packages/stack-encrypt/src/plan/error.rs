@@ -251,6 +251,25 @@ pub enum PlanError {
         help("Give the scope or binding a value. An empty part would put every row under one context.")
     )]
     EmptyPart,
+    /// A field's type stores the field's own context in the row, and
+    /// cannot store this one. The own context is the declared part: the
+    /// record's scope and the field's name. An EQL type stores it as a
+    /// table and a column, so the own context must be two text parts.
+    ///
+    /// The scopes and bindings of the record are not stored, so they never
+    /// cause this error. Refused before any key is requested.
+    #[error("field {field:?}: its type cannot store the field's own context")]
+    #[diagnostic(
+        code(stack_encrypt::plan_context_not_storable),
+        help("A field type that stores its context, such as an EQL type, stores the field's own context: the record's scope and the field's name. Declare the field in a `struct = ..` record with a `scope = \"..\"`, which gives it an own context of two text parts, or give the field a type that does not store its context.")
+    )]
+    ContextNotStorable {
+        /// The field's own context, as it renders: the record's scope and
+        /// the field's name, `members/email`. A context that no record
+        /// built for a field has no own part. This is then the whole query
+        /// context that the type was given.
+        field: String,
+    },
     /// A field was declared both as a typed target (`encrypt_into`) and with
     /// a data verb. A field is one or the other: the target's type decides
     /// its layout and its queries.
@@ -277,7 +296,8 @@ impl crate::ErrorPayload for PlanError {
             | Self::NotInPlan { field }
             | Self::NotInValue { field }
             | Self::NoSuchField { field }
-            | Self::TargetWithVerbs { field } => payload([("field", field.as_str().into())]),
+            | Self::TargetWithVerbs { field }
+            | Self::ContextNotStorable { field } => payload([("field", field.as_str().into())]),
             Self::SharedIdentity {
                 identity,
                 first,

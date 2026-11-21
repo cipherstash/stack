@@ -253,7 +253,8 @@ The field is then stored as one EQL column, such as
 
 Go records already do this through the dynamic interface. A field there
 names its EQL type, such as `"target": "TextEq"`, and the engine runs that
-type for the field. The Rust record derive does not support it yet.
+type for the field. The Rust record derive does the same (#1658). The
+field's column is the record's scope and the field's name.
 
 ```rust
 use eql_bindings::v4::{integer::IntegerOrd, text::TextEq};
@@ -265,8 +266,6 @@ struct Member {
     age: i32,
 }
 
-// Not on `next` yet in Rust: EQL types as fields of a derived record.
-// Go records do this today through the dynamic interface.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = Member, scope = "members")]
 struct EncryptedMember {
@@ -401,9 +400,8 @@ use stack_encrypt::json::JsonPlaintext;
 
 let column = Identifier::for_column("customers", "profile")?;
 
-// Not on `next` yet: the new traits for EQL types, and the public
-// `JsonPlaintext`. Today this needs `keyset.encrypt_as(&value, context)`,
-// a `serde_json::Value`, and an owned context.
+// Not on `next` yet: a context built with `Scope::new`. Today this
+// passes the column itself: `.encrypt_into_with_context(&keyset, column.clone())`.
 let profile: JsonPlaintext = json!({ "name": "Ada", "age": 35 }).into();
 let encrypted: JsonTreeDocument = profile
     .encrypt_into_with_context(&keyset, Scope::new(&column))
@@ -1483,31 +1481,51 @@ Base64.
 #### EQL types as fields
 
 - **What to build.** EQL types such as `TextEq` and `JsonTreeDocument` as
-  field types of the Rust record derive. In Rust today, an EQL type works
-  only on its own, through the older structural API, with a
-  `NonEmpty<Identifier>` context. The EQL types do derive the structural
-  `EncryptFrom` and `DecryptInto`. A record still cannot use them as
-  fields.
-  A record with a `TextEq` field, built against `next` on 7 November 2026,
-  fails with three errors. `NonEmpty<Identifier>` and
-  `ExpectedContext<Identifier>` do not implement `From<CallerContext>`, and
-  the record derive gives each field a `CallerContext`.
-- **The smallest fix.** Convert a `CallerContext` of two parts into an
-  `Identifier`, with the table first and the column second. `Identifier`
-  already gives the same context as that pair, so the stored bytes do not
-  change.
+  field types of the Rust record derive.
+- **How it works.** The record derive gives each field a context of its
+  own: the record's scope, then the field's name. A field type that stores
+  its context stores that own context, as the type it stores. The stored
+  type implements `target::ContextFromField`. `Identifier` takes an own
+  context of two parts, the table first and the column second, and gives
+  the same context as that pair, so the stored bytes do not change.
+- **What `i` stores.** The declared names only: the table and the column.
+  A record can also list a scope or a binding, supplied by the caller or
+  stored in the row. The terms of an EQL field derive under the query
+  context: the column, then the scope. The ciphertext is sealed under the
+  stored context: the column, then the scope, then the binding. A field
+  of any other type works the same way. `i` does not store the scope or
+  the binding, so the reader supplies them again, and a query supplies
+  the scope. An EQL field of a record nested in another stores its own
+  column in the same way.
 - **Why.** This gives the [EQL field example](#store-a-field-as-an-eql-type)
   and the [JSON example](#encrypt-a-json-document).
-- **Done already.** The dynamic interface supports EQL fields, so Go
-  records use them today. A field there names its EQL type, and the engine
-  looks the type up by name through `eql-bindings` (the `TargetResolver`
-  in `dynamic/record.rs`). `Identifier` already gives the same context as
-  the `(table, column)` pair that a record derive builds.
-- **Tracked in.** Issue #1486 is open, in part. No dedicated issue. Pull request #1504 defers the EQL owned implementations. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release must come first.
+- **Done already.** In #1658:
+  - A Rust record with EQL fields encrypts and decrypts through the new
+    API, with or without a scope and a binding, and when it is nested in
+    another record.
+  - For a field of each kind (equality, storage only, order, and a JSON
+    document), a record with no scope writes the terms that a data plan
+    writes for the same declaration. A data plan is the path Go takes.
+    Each path opens the other's values
+    (`packages/eql/tests/encryption/tests/record_fields.rs`).
+  - `JsonTreeDocument` implements `EncryptTarget<JsonPlaintext>` and
+    `DecryptSource<JsonPlaintext>`.
+  - A query from a field's marker works for the equality and match
+    types, with the record's scope. A plan's query for an EQL type takes
+    a scope too, through the plan chain that #1488 removes. The order
+    types do not implement `Answers` yet, so a marker cannot query them.
+  - A data plan that names an EQL type takes a scope and a binding too.
+    `TargetResolver` receives them after the field's label, and
+    `TargetError::Extended` is removed. Under the same scope and binding,
+    a data plan and a derived record write the same terms, and each
+    opens the other's values. A Go struct with an `encrypt_into` field
+    seals through `cipher.Scope(..).Bind(..)`.
+- **Tracked in.** Issue #1658. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
-    the new API;
-  - it writes the same bytes as a Go record with the same declaration.
+    the new API, including order queries;
+  - it writes the same terms as a Go record with the same declaration,
+    with and without a scope.
 
 #### A ready-made EQL resolver
 

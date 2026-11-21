@@ -14,7 +14,9 @@
 //!   (selectors, ordering terms, the containment selector set) for the same
 //!   document under the same column, and each opens what the other sealed;
 //! - text that is not a document is refused before any key is requested,
-//!   naming the field and a code, never a byte of the text.
+//!   naming the field and a code, never a byte of the text;
+//! - a document sealed under a scope and a binding is found by a query
+//!   under the scope, and read under the scope and the binding.
 
 mod common;
 
@@ -1048,6 +1050,116 @@ async fn reads_open_against_the_request_that_prepared_them() {
 /// The stored document a sealed row holds for `profile`.
 fn stored_of(row: &stack_encrypt::StackCipherText) -> JsonTreeDocument {
     stored(row)
+}
+
+/// [`plan`], as a binding sends it for a caller that added a tenant as a
+/// scope and, for a seal or a read, a row ID as a binding. The scope
+/// extends the field's context, and `"bind"` carries the binding. A query
+/// takes no binding.
+fn scoped_plan(tenant: u64, row: Option<u64>) -> record::Plan {
+    let mut wire = json!({
+        "profile": {
+            "context": [["users", "profile"], tenant],
+            "type": "json",
+            "null": "sql",
+            "target": {
+                "name": "JsonSearch",
+                "options": {"ordered": ["$.age", "$.visits[*].at"]}
+            }
+        }
+    });
+    if let Some(row) = row {
+        wire["bind"] = json!([row]);
+    }
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &EqlTargets,
+    )
+    .unwrap()
+}
+
+/// A document sealed under a tenant and a row, through the resolver a
+/// language SDK installs. Its `i` is the column alone. A query under the
+/// tenant finds it, and a query under another tenant, or none, does not. A
+/// read finds its entry under the tenant, and opens it under the tenant and
+/// the row.
+#[tokio::test]
+async fn a_scoped_document_is_found_and_read_under_its_scope() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let sealing = scoped_plan(7, Some(9));
+    let text = json!({"name": "Alice", "age": 34, "visits": [{"at": 3}, {"at": 1}]}).to_string();
+    let sealed = record::encrypt_with(
+        &keyset,
+        frame(BTreeMap::from([("profile", text.as_str())])),
+        &sealing,
+        &EqlTargets,
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    let stored = stored_of(&sealed);
+    assert_eq!(stored.i, *column().get(), "`i` is the column alone");
+    let document = engine_document(&stored);
+
+    // A containment query.
+    let alice = json!(json!({"name": "Alice"}).to_string());
+    let contains = |plan: record::Plan| {
+        let (keyset, alice) = (&keyset, alice.clone());
+        async move {
+            containment(one(&data_term(
+                keyset,
+                &plan,
+                "contains",
+                &[("json", alice)],
+            )
+            .await))
+        }
+    };
+    assert!(
+        contains(scoped_plan(7, None))
+            .await
+            .matches(document.selector_set()),
+        "the tenant's query finds the tenant's document"
+    );
+    for (other, whose) in [
+        (scoped_plan(8, None), "another tenant"),
+        (plan(), "no tenant"),
+    ] {
+        assert!(
+            !contains(other).await.matches(document.selector_set()),
+            "{whose}"
+        );
+    }
+
+    // A read: `->` by selector, then the entry opened.
+    let name = data_term(
+        &keyset,
+        &scoped_plan(7, None),
+        "selector",
+        &[("path", json!("$.name"))],
+    )
+    .await;
+    let dynamic::Operand::Text(name) = name.operand() else {
+        panic!("a selector is text")
+    };
+    let entry = extracted_row(&document, name).expect("the tenant's selector names an entry");
+    let request = || json!({"operation": "selector", "path": "$.name"});
+    let names = open(&keyset, &sealing, request(), vec![vec![entry.clone()]])
+        .await
+        .unwrap();
+    assert_eq!(names, [vec![json!("Alice")]]);
+    for (other, whose) in [
+        (scoped_plan(7, Some(10)), "another row"),
+        (scoped_plan(7, None), "no row"),
+        (scoped_plan(8, Some(9)), "another tenant"),
+        (plan(), "no tenant"),
+    ] {
+        let refused = open(&keyset, &other, request(), vec![vec![entry.clone()]]).await;
+        assert!(refused.is_err(), "{whose}");
+    }
 }
 
 /// A document is queried by a JSON operator, which the engine derives

@@ -499,6 +499,9 @@ keeps every ciphertext openable and orphans every stored term. Moving a row
 ID from a scope to a binding, or a tenant the other way, is a search-index
 migration.
 
-An EQL type refuses a binding, as it refuses an extension: its stored
-context is its table and column, and nothing else.
+An EQL type takes a scope and a binding, as any other field type does.
+Its `i` stores its table and column, and nothing a caller supplies: the
+scope and the binding come after the column in its context, and are not
+stored. An earlier version of this record said that an EQL type refuses
+both. That refusal was removed on 15 November 2026.
 

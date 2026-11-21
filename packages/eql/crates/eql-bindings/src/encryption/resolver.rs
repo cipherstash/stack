@@ -5,10 +5,10 @@
 //! documentation on `EqlTargets`.
 
 use stack_encrypt::dynamic::{self, TargetDescriptor, TargetOptions, TargetResolver, ValueFrame};
-use stack_encrypt::target::IndexSpec;
+use stack_encrypt::target::{DeclaredContext, IndexSpec};
 use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 
-use super::targets::{self, decrypt, encrypt_with, query, Target, TargetError};
+use super::targets::{self, decrypt_under, encrypt_under, query_under, Target, TargetError};
 
 /// Gives Stack Encrypt every EQL type that this crate defines.
 ///
@@ -19,8 +19,12 @@ use super::targets::{self, decrypt, encrypt_with, query, Target, TargetError};
 /// is that resolver.
 ///
 /// `EqlTargets` lists every type in [`targets`](super::targets::targets).
-/// For a type that a plan names, `EqlTargets` calls [`encrypt_with`],
-/// [`decrypt`], or [`query`].
+/// For a type that a plan names, `EqlTargets` runs the type as
+/// [`encrypt_with`](super::targets::encrypt_with),
+/// [`decrypt`](super::targets::decrypt) and
+/// [`query`](super::targets::query) do, under the field's label and then
+/// the scopes and the bindings of the plan. The EQL value stores the
+/// label's column alone.
 ///
 /// Pass `&EqlTargets` wherever the dynamic interface accepts a resolver,
 /// such as `stack_encrypt::dynamic::record::plan_with`.
@@ -55,9 +59,12 @@ impl TargetResolver for EqlTargets {
         options: Option<&TargetOptions>,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
+        parts: &DeclaredContext,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, dynamic::TargetError> {
-        Ok(encrypt_with(name, options, keyset, label, plaintext)?)
+        Ok(encrypt_under(
+            name, options, keyset, label, parts, plaintext,
+        )?)
     }
 
     fn decrypt<'a, K: 'static>(
@@ -65,9 +72,10 @@ impl TargetResolver for EqlTargets {
         name: &str,
         cipher: &'a StackCipher<K>,
         label: &Label,
+        parts: &DeclaredContext,
         stored: &[u8],
     ) -> Result<Pending<'a, ValueFrame, K>, dynamic::TargetError> {
-        Ok(decrypt(name, cipher, label, stored)?)
+        Ok(decrypt_under(name, cipher, label, parts, stored)?)
     }
 
     fn query<'a, K: 'static>(
@@ -76,9 +84,10 @@ impl TargetResolver for EqlTargets {
         index: &IndexSpec,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
+        scopes: &DeclaredContext,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, dynamic::TargetError> {
-        Ok(query(name, index, keyset, label, plaintext)?)
+        Ok(query_under(name, index, keyset, label, scopes, plaintext)?)
     }
 }
 

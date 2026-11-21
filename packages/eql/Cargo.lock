@@ -1224,6 +1224,7 @@ dependencies = [
  "tokio",
  "uuid",
  "vitaminc-aead 0.10.0",
+ "zeroize",
 ]
 
 [[package]]

@@ -89,6 +89,7 @@ impl TargetResolver for Fixed {
         _: Option<&TargetOptions>,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
@@ -98,6 +99,7 @@ impl TargetResolver for Fixed {
         _: &str,
         _: &'a StackCipher<K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: &[u8],
     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         unreachable!("check_record runs no cipher")
@@ -108,6 +110,7 @@ impl TargetResolver for Fixed {
         _: &stack_encrypt::target::IndexSpec,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
+        _: &stack_encrypt::target::DeclaredContext,
         _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")

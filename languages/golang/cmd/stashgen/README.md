@@ -443,7 +443,7 @@ Put the column on the left of `@@` (`WHERE name @@ $1::eql_v4.query_text_match`)
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.
 
 A field with `encrypt_into` is stored under its table and column, which is what an EQL value records in its `i`.
-A cipher extended with a tenant part (`cipher.Extend(...)`) has no column for the extended label, so it refuses a struct with an `encrypt_into` field; use `index=` columns for a tenant-extended struct until that rule is settled.
+A cipher with a scope or a binding (`cipher.Scope(tenant).Bind(rowID)`) seals a struct with an `encrypt_into` field as it seals any other. The scope and the binding come after the column in the field's context, and `i` still holds the table and the column alone. Open the value through a cipher with the same scope and binding, and query it through a cipher with the same scope.
 
 ## When stashgen stops
 

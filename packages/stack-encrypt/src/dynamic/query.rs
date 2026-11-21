@@ -616,9 +616,9 @@ impl OperatorEntry {
     }
 }
 
-/// Refuse a plan whose context is a field of each record: a term derives
-/// under a context, and such a plan has none until a record names it, so a
-/// binding sends the plan under the context its query names.
+/// Refuse a plan a query cannot derive under. One is a plan with a
+/// binding: a term derives under the query context, which holds no
+/// binding. The other is a plan [`names_its_context`] refuses.
 /// [`verify`] and [`target_limit`] derive nothing and take such a plan.
 fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
     if !plan.bindings().is_empty() {
@@ -627,6 +627,17 @@ fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
             reason: Reason::BindInQuery,
         });
     }
+    names_its_context(plan, field)
+}
+
+/// Refuse a plan whose context is a field of each record: a term derives
+/// under a context, and such a plan has none until a record names it, so a
+/// binding sends the plan under the context its query names.
+///
+/// A read is checked by this alone. It takes a plan with a binding: the
+/// entries it opens were sealed under the binding, so the reader supplies
+/// it again.
+fn names_its_context(plan: &Plan, field: &str) -> Result<(), Error> {
     match plan.context_field() {
         Some(_) => Err(Error::Plan {
             field: Some(field.to_owned()),
@@ -784,7 +795,7 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// use stack_encrypt::dynamic::{check_query, frame, record, Op, Reason, ValueFrame};
 /// use stack_encrypt::AsProtectedRef;
 /// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
-/// # use stack_encrypt::target::IndexSpec;
+/// # use stack_encrypt::target::{DeclaredContext, IndexSpec};
 /// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 /// # /// A host whose `JsonSearch` names the compiled predicate's domain.
 /// # struct Documents;
@@ -798,12 +809,13 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// #         .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
 /// #     }
 /// #     fn encrypt<'a, K: 'static>(&self, _: &str, _: Option<&TargetOptions>,
-/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: ValueFrame,
+/// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: &DeclaredContext, _: ValueFrame,
 /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
-/// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label, _: &[u8],
+/// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label,
+/// #         _: &DeclaredContext, _: &[u8],
 /// #     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> { unreachable!() }
 /// #     fn query<'a, K: 'static>(&self, _: &str, _: &IndexSpec, _: &'a KeysetCipher<'_, K>,
-/// #         _: &Label, _: ValueFrame,
+/// #         _: &Label, _: &DeclaredContext, _: ValueFrame,
 /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
 /// # }
 /// // A document field that orders `$.age`.
@@ -877,6 +889,7 @@ fn json_input(field: &str) -> Error {
 /// derives, bound as the type its target names for it.
 fn json_term<'a, K: 'static>(
     cipher: &'a KeysetCipher<'_, K>,
+    plan: &Plan,
     answer: Answer<'_>,
     operator: Op,
     input: impl Encrypt,
@@ -893,14 +906,12 @@ fn json_term<'a, K: 'static>(
         })
     })?;
     let index = answer.index.clone();
-    let derived = super::json_query::derive(
-        cipher,
-        answer.field.label(),
-        json_options(&answer)?,
-        operator,
-        &input,
-    )
-    .map_err(|error| error.in_field(field))?;
+    // Under the field's label, then the plan's scopes, as the document's
+    // terms were derived when it was sealed.
+    let under = super::json_query::Under::new(answer.field.label(), plan.declared_context());
+    let derived =
+        super::json_query::derive(cipher, &under, json_options(&answer)?, operator, &input)
+            .map_err(|error| error.in_field(field))?;
     Ok(derived.map(move |operand| QueryTerm {
         operator,
         index,
@@ -924,7 +935,7 @@ pub fn check_json_open(
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<(), Error> {
     let _ = answer(plan, field, Op::Selector, resolver)?;
-    has_context(plan, field)?;
+    names_its_context(plan, field)?;
     let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
     let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
     super::json_query::check_open(&request, &rows).map_err(|error| error.in_field(field))
@@ -947,6 +958,16 @@ pub fn check_json_open(
 /// one value per concrete path the read named that the row has, in
 /// document order. One key request for every row.
 ///
+/// The read runs under the contexts the document was sealed under. The
+/// selector or the read key derives under the field's column, then the
+/// plan's scopes, as a query's term does. Every entry opens under the
+/// plan's bindings too. So a read takes a plan with a binding, where a
+/// query refuses one, and every row of one call opens under that binding.
+/// For example, a document sealed for the tenant 7 and the row 9 is read
+/// through a plan with the scope 7 and the binding 9. A plan with another
+/// tenant derives a selector that names no entry. A plan with another row,
+/// or none, finds the entry and does not open it.
+///
 /// [`JsonSelector::open`]: crate::json::JsonSelector::open
 /// [`JsonSubtreeKey::open`]: crate::json::JsonSubtreeKey::open
 ///
@@ -955,7 +976,8 @@ pub fn check_json_open(
 /// As [`query_term`] refuses a field that does not answer the read's
 /// operator, and a plan whose context comes from a field of each record
 /// ([`Reason::QueryContextField`]): a read names no record, so it has no
-/// context to derive under. [`Error::Source`] names the field for a
+/// context to derive under. A plan with a binding is not refused.
+/// [`Error::Source`] names the field for a
 /// request or rows that do not parse ([`Reason::JsonInput`]). A row that
 /// is not one the read asked for fails the pending
 /// ([`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)), as does a
@@ -978,17 +1000,14 @@ where
 {
     // Answering `selector` is what makes a field a document field.
     let answer = answer(plan, field, Op::Selector, resolver)?;
-    has_context(plan, field)?;
+    names_its_context(plan, field)?;
     let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
     let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
-    super::json_query::open(
-        cipher,
-        answer.field.label(),
-        json_options(&answer)?,
-        &request,
-        &rows,
-    )
-    .map_err(|error| error.in_field(field))
+    // Under the field's label, then the plan's scopes and bindings, as
+    // the document was sealed.
+    let under = super::json_query::Under::new(answer.field.label(), plan.declared_context());
+    super::json_query::open(cipher, &under, json_options(&answer)?, &request, &rows)
+        .map_err(|error| error.in_field(field))
 }
 
 /// Derive the query term for one field of a plan, an operator and its
@@ -1005,8 +1024,11 @@ where
 /// operator ([`Op::answered_by`]) under the field's context, by the
 /// derivation its stored terms came from; a range derives one term per
 /// bound under that one context. A field that names an EQL type runs the
-/// type's query twin through `resolver`. Nothing is requested: the pending
-/// settles without I/O, as a typed query's does.
+/// type's query twin through `resolver`. A document's operand derives
+/// under the field's column, then the plan's scopes, as the document's
+/// terms did when it was sealed. So a query through a plan with the scope
+/// 7 finds the documents sealed under the scope 7, and no others. Nothing
+/// is requested: the pending settles without I/O, as a typed query's does.
 ///
 /// # Examples
 ///
@@ -1072,7 +1094,7 @@ pub fn query_term<'a, K: 'static>(
     let answer = answer(plan, field, operator, resolver)?;
     has_context(plan, field)?;
     if operator.is_json() {
-        return json_term(cipher, answer, operator, input);
+        return json_term(cipher, plan, answer, operator, input);
     }
     let input = read_input(&answer, operator, input)?;
     // Prepared once, here: the derivation below refuses nothing a query
@@ -2634,6 +2656,7 @@ mod tests {
             _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
@@ -2643,6 +2666,7 @@ mod tests {
             _: &str,
             _: &'a crate::StackCipher<K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: &[u8],
         ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
@@ -2653,6 +2677,7 @@ mod tests {
             _: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"bf":[1,5,2047]}"#.to_vec())))
@@ -2792,6 +2817,7 @@ mod tests {
             _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
@@ -2801,6 +2827,7 @@ mod tests {
             _: &str,
             _: &'a crate::StackCipher<K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: &[u8],
         ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
@@ -2811,6 +2838,7 @@ mod tests {
             _: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
+            _: &crate::target::DeclaredContext,
             _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"hm":"00"}"#.to_vec())))

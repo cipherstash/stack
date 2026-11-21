@@ -175,6 +175,9 @@ mod tests {
             },
             PlanError::EmptyIndexes => PlanError::EmptyIndexes,
             PlanError::EmptyPart => PlanError::EmptyPart,
+            PlanError::ContextNotStorable { .. } => PlanError::ContextNotStorable {
+                field: "users/email".into(),
+            },
             PlanError::NotInPlan { .. } => PlanError::NotInPlan { field: field() },
             PlanError::NotInValue { .. } => PlanError::NotInValue { field: field() },
             PlanError::FieldType { .. } => PlanError::FieldType {
@@ -248,10 +251,6 @@ mod tests {
                 reason: "block ORE".into(),
             },
             TargetError::NoQuery { .. } => TargetError::NoQuery { name: target() },
-            TargetError::Extended { .. } => TargetError::Extended {
-                name: name(),
-                label: "users/email".into(),
-            },
             TargetError::ContextField { .. } => TargetError::ContextField {
                 name: name(),
                 context_field: "tenant".into(),
@@ -650,19 +649,19 @@ mod tests {
                 json!({ "target": "TextEq", "reason": "block ORE" }),
             ),
             (
-                Box::new(TargetError::Extended {
+                Box::new(TargetError::ContextField {
                     name: name(),
-                    label: "users/email".into(),
+                    context_field: "tenant".into(),
                 }),
-                json!({ "field": "email", "label": "users/email" }),
+                json!({ "field": "email", "context_field": "tenant" }),
             ),
             // Before the lowering names the field, there is none to give.
             (
-                Box::new(TargetError::Extended {
+                Box::new(TargetError::ContextField {
                     name: String::new(),
-                    label: "users/email".into(),
+                    context_field: "tenant".into(),
                 }),
-                json!({ "label": "users/email" }),
+                json!({ "context_field": "tenant" }),
             ),
             (
                 Box::new(TargetError::Kind {

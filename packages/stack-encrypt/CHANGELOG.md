@@ -53,6 +53,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The builder state is `WithAuthStrategy<C, P>`, behind the `http`
     feature.
   - Needs stack-auth 0.44.0 and stack-kms 0.2.0.
+
+- **A field type that stores its context can be a record field** (#1658).
+  A derived `struct = ..` record gives each field a context of its own:
+  the record's scope, then the field's name. A type that stores its
+  context in the row (`#[stash(context_field)]`), such as an EQL type that
+  stores a table and a column, stores that own context. The stored type
+  implements the new trait `target::ContextFromField`.
+  - `ContextFromField::from_field` builds the stored context from the
+    field's own context, or returns `None` when the type cannot store it.
+  - The scopes and the bindings that the record lists, and the names of a
+    record that holds this one, come after the own context, as they do
+    for a field of any other type. The search terms derive under the own
+    context and the scopes. The data key and the AAD derive under the
+    bindings too. The field does not store them, so the reader supplies
+    them again.
+  - On decrypt, the stored context must equal the field's own, as a
+    standalone decrypt with an expected context checks it.
+  - An own context that the type cannot store is refused before any key
+    is requested, on encrypt and on decrypt, with the new
+    `PlanError::ContextNotStorable`
+    (`stack_encrypt::plan_context_not_storable`), which names that
+    context (`members/email`).
+  - The encrypt input of a `context_field` record is the hidden type
+    `target::StoredContext<T>`, in place of
+    `RequiredContext<NonEmpty<T>>`. A caller passes a `NonEmpty<T>`.
+    Generic code names the input as
+    `ContextInput: AcceptsContext<Value = NonEmpty<T>>`.
+
 - **`json::JsonPlaintext`, a JSON document as one ciphertext** (#1636).
   `JsonPlaintext` holds a `serde_json::Value` and wipes it when it is
   dropped. Build one with `JsonPlaintext::from(value)` or
@@ -213,6 +241,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **`RangeError::LeapSecond` is renamed `RangeError::Nanoseconds`.**
     jiff has no leap seconds, so the error now says only what is wrong:
     `Timestamp::new` was given nanoseconds of one second or more.
+
+- **A data plan field that names an EQL type takes a scope and a
+  binding** (#1658). `dynamic::TargetResolver` now receives them:
+  `encrypt` and `decrypt` take `parts: &DeclaredContext` after the label,
+  and `query` takes `scopes: &DeclaredContext`. A resolver runs the type
+  under the label, then those parts (`parts.clone().under(label)`), as
+  the lowering runs a field with outputs.
+  - Such a plan was refused with `TargetError::Extended`, at build time
+    for an extended plan and at `with_bindings` and a scoped call. That
+    variant and its code `stack_encrypt::target_extended` are removed.
+  - The EQL value stores the label's column alone. Whoever reads it
+    supplies the scopes and the bindings again.
+  - `Plan::contexts()` and `Planned::contexts()` show a target field
+    under the same parts as a field with outputs.
+  - A document field's JSON operators and reads run under the same
+    parts. `dynamic::query_term` derives a JSON operand under the label,
+    then the plan's scopes, so a query finds the documents sealed under
+    the same scopes. `dynamic::json_open` derives its selector or read
+    key under them too, and opens each entry under the plan's bindings
+    as well.
+  - `dynamic::json_open` and `check_json_open` take a plan with a
+    binding, where they refused one (`Reason::BindInQuery`): the entries
+    were sealed under it. A query still refuses a binding.
 
 - **`target::legacy` is removed** (#1488). It held two traits,
   implemented for every type, that gave the structural API a second
@@ -767,6 +818,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     plan and dynamic modules still implement these traits.
 
 ### Fixed
+
+- **A derived record wipes an owned plaintext when a caller's part is
+  empty.** An empty scope or binding is refused where a field is given
+  its context, before the field's own target runs. The plaintext of that
+  field was then dropped without being wiped. The derive now emits the
+  hidden `Encryption::under_field`, which wipes it. `Encryption::under`
+  is unchanged: its plaintext need not be `Zeroize`.
 
 - The docs of `dynamic::read` said the engine never calls it. `dynamic::query_term`
   does: it reads a query's input as the field's kind.

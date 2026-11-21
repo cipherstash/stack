@@ -321,7 +321,7 @@ pub enum Error {
     /// A plan field names an EQL type as its target and the name, the
     /// field's label or type, or the value does not fit: the build holds no
     /// EQL types, no type has the name, the engine cannot produce it yet,
-    /// the plan is extended, or the value is of another kind. Decided when
+    /// the label is not a column, or the value is of another kind. Decided when
     /// the plan is built or the value is read, before any key is touched
     /// — save [`TargetError::Other`], which is the resolver's own failure.
     #[error(transparent)]

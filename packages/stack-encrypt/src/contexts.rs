@@ -754,9 +754,10 @@ pub trait SuppliedContext: sealed::Sealed {
 mod sealed {
     use crate::target::{
         AeadContext, CallerContext, DeclaredContext, DeclaredScopes, NoCallerContext,
-        OptionalContext, RequiredContext,
+        OptionalContext, RequiredContext, StoredContext,
     };
     pub trait Sealed {}
+    impl<T> Sealed for StoredContext<T> {}
     impl Sealed for NoCallerContext {}
     impl Sealed for DeclaredScopes {}
     impl Sealed for DeclaredContext {}
@@ -784,6 +785,12 @@ impl SuppliedContext for DeclaredContext {
 impl<C: PartsShape> SuppliedContext for RequiredContext<C> {
     fn supplies() -> CallerShape {
         C::parts_shape()
+    }
+}
+/// A record that stores its context takes it as a `NonEmpty<T>`.
+impl<T> SuppliedContext for crate::target::StoredContext<T> {
+    fn supplies() -> CallerShape {
+        NonEmpty::<T>::parts_shape()
     }
 }
 impl<C: PartsShape> SuppliedContext for OptionalContext<C> {
@@ -1154,13 +1161,13 @@ impl LeafShape {
 }
 
 /// One named leaf under a context known when the declaration is written,
-/// and extended by nothing: a data plan's EQL field, sealed under its label
-/// by the resolver.
+/// then the context it is handed: a data plan's EQL field, which the
+/// resolver runs under its label and the plan's parts.
 #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
-pub(crate) fn known_leaf(name: &str, piece: ContextPiece<'static>) -> LeafShape {
+pub(crate) fn leaf_under(name: &str, piece: ContextPiece<'static>) -> LeafShape {
     LeafShape {
         name: Some(Arc::from(name)),
-        shape: Shape::Known(piece),
+        shape: Shape::under(piece),
     }
 }
 

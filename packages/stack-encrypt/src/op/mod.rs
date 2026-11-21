@@ -772,8 +772,8 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     /// (`.extend(..)`) when `extended` is true: for an index whose query term
     /// records the context it was derived under, a context it cannot record.
     /// An EQL query value stores the column it queries, so its index refuses
-    /// a label that names no column, and any extension, which the column
-    /// cannot hold. Run when the query is awaited, before [`prepare`](Self::prepare)
+    /// a label that names no column. It takes a scope: the stored value does
+    /// not store one either. Run when the query is awaited, before [`prepare`](Self::prepare)
     /// and before any keyset is resolved; every index in this crate takes
     /// any context and returns `Ok(())`.
     fn check_label(&self, _label: &Label, _extended: bool) -> Result<(), Error> {

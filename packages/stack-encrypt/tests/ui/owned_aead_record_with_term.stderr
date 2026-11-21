@@ -7,13 +7,22 @@ error[E0277]: the trait bound `RequiredContext<CallerContext>: From<RequiredCont
 12 |     hm: EqualityTerm,
    |         ------------ required by a bound introduced by this call
    |
-help: the trait `From<RequiredContext<AeadContext>>` is not implemented for `RequiredContext<CallerContext>`
-      but trait `From<RequiredContext<NonEmpty<_>>>` is implemented for it
+help: the following other types implement trait `From<T>`
   --> src/target/input.rs
    |
-   | impl<'c, T: IntoContext<'c>> From<RequiredContext<NonEmpty<T>>> for RequiredContext<CallerContext> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: for that trait implementation, expected `NonEmpty<_>`, found `AeadContext`
+   | impl<C: From<CallerContext>> From<CallerContext> for RequiredContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RequiredContext<C>` implements `From<CallerContext>`
+...
+   | impl From<RequiredContext<CallerContext>> for RequiredContext<super::AeadContext> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RequiredContext<AeadContext>` implements `From<RequiredContext<CallerContext>>`
+...
+   | impl From<super::AeadContext> for RequiredContext<super::AeadContext> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RequiredContext<AeadContext>` implements `From<AeadContext>`
+   |
+  ::: src/target/context.rs
+   |
+   | impl<S: ScopePart, B: BindPart> From<Parts<S, B>> for super::input::RequiredContext<Parts<S, B>> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RequiredContext<Parts<S, B>>` implements `From<Parts<S, B>>`
    = note: required for `RequiredContext<AeadContext>` to implement `Into<RequiredContext<CallerContext>>`
 note: required by a bound in `Encryption::<'s, S, T, K, Ctx, M>::accepting`
   --> src/target/operations.rs

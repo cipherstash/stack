@@ -6,6 +6,7 @@
 //! | [`RequiredContext<C>`] | Refused | `C` | The caller supplies the context, or the part of it that the declaration selects. |
 //! | [`OptionalContext<C>`] | Allowed | `C` | For an opaque scalar. A context left out is the empty context. |
 //! | [`DeclaredScopes`] | Allowed | Refused | A derived `struct = ..` record. Each field has its own context. A record that contains it, or a plan, passes that field's context. |
+//! | The encrypt input of a `#[stash(context_field)]` record | Refused | `NonEmpty<T>` | The record stores the context passed. |
 //! | The decrypt input of a `#[stash(context_field)]` record | Allowed | `NonEmpty<T>` | A context left out opens under the stored context, unchecked. A context passed is checked against the stored one. |
 //!
 //! A trait bound decides whether a method is available ([`AllowsNoContext`]
@@ -13,7 +14,7 @@
 //! example, `RequiredContext<u64>` stays required, although `u64` has a
 //! default of zero.
 
-use super::context::{CallerContext, DeclaredContext, ExpectedContext};
+use super::context::{CallerContext, DeclaredContext, ExpectedContext, StoredContext};
 use crate::{ContextPiece, IntoContext, NonEmpty};
 
 mod sealed {
@@ -144,33 +145,12 @@ impl<C: From<CallerContext>> From<CallerContext> for RequiredContext<C> {
         Self::supplied(C::from(context))
     }
 }
+
 // A record that derives terms gives its ciphertext fields the AEAD part of the
 // context it requires.
 impl From<RequiredContext<CallerContext>> for RequiredContext<super::AeadContext> {
     fn from(context: RequiredContext<CallerContext>) -> Self {
         Self::supplied(context.into_inner().into())
-    }
-}
-// A record that stores its context (`context_field`) requires the
-// `NonEmpty<T>` it stores. It runs its fields under the caller context built
-// from that value.
-impl<'c, T: IntoContext<'c>> From<RequiredContext<NonEmpty<T>>> for RequiredContext<CallerContext> {
-    fn from(context: RequiredContext<NonEmpty<T>>) -> Self {
-        Self::supplied(context.into_inner().into())
-    }
-}
-impl<'c, T: IntoContext<'c>> From<RequiredContext<NonEmpty<T>>>
-    for RequiredContext<super::AeadContext>
-{
-    fn from(context: RequiredContext<NonEmpty<T>>) -> Self {
-        Self::supplied(context.into_inner().into())
-    }
-}
-// A record that stores its context takes the `NonEmpty<T>` it stores from its
-// structural trait as the required input.
-impl<T> From<NonEmpty<T>> for RequiredContext<NonEmpty<T>> {
-    fn from(context: NonEmpty<T>) -> Self {
-        Self::supplied(context)
     }
 }
 // The contexts of the structural declarations, wrapped as the required input
@@ -196,8 +176,23 @@ impl<C: Into<CallerContext>> From<RequiredContext<C>> for CallerContext {
     }
 }
 
-/// The input of a record that stores its context: the context the caller
-/// expects, or none.
+/// The encrypt input of a record that stores its context: the context the
+/// caller passes, which the record stores. The context is required.
+///
+/// As a field of a `struct = ..` record, the record stores the field's own
+/// context instead, and runs under the scopes and bindings of the record
+/// too ([`ContextFromField`](super::ContextFromField)).
+impl<T> sealed::Sealed for StoredContext<T> {}
+impl<T> ContextInput for StoredContext<T> {}
+impl<'c, T: Clone + IntoContext<'c>> AcceptsContext for StoredContext<T> {
+    type Value = NonEmpty<T>;
+    fn supplied(value: NonEmpty<T>) -> Self {
+        Self::from(value)
+    }
+}
+
+/// The decrypt input of a record that stores its context: the context the
+/// caller expects, or none.
 ///
 /// - If the caller passes a `NonEmpty<T>`, the stored context must equal it. A
 ///   different stored context is refused before any key is retrieved.

@@ -113,7 +113,8 @@ use stack_encrypt::sem::{
 };
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{
-    self, AeadContext, CallerContext, DecryptSource, EncryptTarget, IndexSpec, RequiredContext,
+    self, AeadContext, CallerContext, ContextFromField, DecryptSource, EncryptTarget, IndexSpec,
+    RequiredContext,
 };
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
@@ -197,6 +198,34 @@ impl<'a> IntoContext<'a> for Identifier {
 impl<'a> IntoContext<'a> for &'a Identifier {
     fn into_context(self) -> ContextPiece<'a> {
         self.to_context()
+    }
+}
+
+/// An EQL type can be a field of a derived `struct = ..` record. The record
+/// gives the field a context of its own: the record's scope, then the
+/// field's name, such as `("members", "email")`. The EQL type stores that
+/// pair in `i` as its column: table `members`, column `email`.
+///
+/// `i` holds those two declared names, and nothing a caller supplies. A
+/// record can also list a scope or a binding, such as a tenant or a row ID.
+/// They come after the column, as they do for a field of any other type.
+/// The field's terms derive under the column and the scope. Its
+/// ciphertext is sealed under the column, the scope and the binding. None
+/// of that is stored in `i`, so the reader supplies the scope and the
+/// binding again. The names of a record that holds this one as a field
+/// come after the column as a scope does.
+///
+/// With no scope and no binding, the field writes the terms that the type
+/// writes on its own under `Identifier::for_column("members", "email")`.
+impl ContextFromField for Identifier {
+    fn from_field(own: &ContextPiece<'_>) -> Option<NonEmpty<Self>> {
+        let ContextPiece::List(parts) = own else {
+            return None;
+        };
+        let [ContextPiece::Text(table), ContextPiece::Text(column)] = parts.as_slice() else {
+            return None;
+        };
+        Self::for_column(table.as_ref(), column.as_ref()).ok()
     }
 }
 

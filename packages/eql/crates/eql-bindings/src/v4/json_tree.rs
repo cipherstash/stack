@@ -23,10 +23,13 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
-    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSelector,
-    JsonSubtree, JsonSubtreeKey,
+    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonQuery,
+    JsonSelector, JsonSubtree, JsonSubtreeKey,
 };
-use stack_encrypt::target::{AeadContext, ExpectedContext, IndexSpec, Json, Layout};
+use stack_encrypt::target::{
+    AeadContext, DecryptSource, EncryptTarget, ExpectedContext, IndexSpec, Json, Layout,
+    StoredContext,
+};
 use stack_encrypt::{
     DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption, Error, NonEmpty,
 };
@@ -482,6 +485,21 @@ impl JsonTree {
     }
 }
 
+impl JsonTree {
+    /// Seal a document under these options, and write its column to `i`.
+    ///
+    /// On its own, the document stores the column the caller passes, and
+    /// seals under it. As a field of a record, it stores the field's own
+    /// column, and seals under the scopes and bindings of the record too.
+    pub(crate) fn sealing<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, Value, JsonTreeDocument, K, StoredContext<Identifier>> {
+        Layout::<Value>::encryption::<K>(&self.index)
+            .storing(|document, column: Identifier| (column, document))
+            .try_map(|(column, document)| JsonTreeDocument::envelope(column, &document))
+    }
+}
+
 /// A document seals as the JSON index lays it out under the layout's
 /// options, under the column it is stored in: the [`Identifier`] is the
 /// context the data key is minted under and every selector derives
@@ -492,10 +510,7 @@ impl Layout<Value> for JsonTree {
     fn encryption<'s, K: 'static>(
         &self,
     ) -> Encryption<'s, Value, JsonTreeDocument, K, NonEmpty<Identifier>> {
-        Layout::<Value>::encryption::<K>(&self.index)
-            .accepting::<NonEmpty<Identifier>>()
-            .map_with_context(|document, i: NonEmpty<Identifier>| (i, document))
-            .try_map(|(i, document)| JsonTreeDocument::envelope(i.into_inner(), &document))
+        self.sealing().accepting()
     }
     fn index(&self) -> &Json {
         &self.index
@@ -524,14 +539,76 @@ impl EncryptFrom<Value> for JsonTreeDocument {
 impl DecryptInto<Value> for JsonTreeDocument {
     type Context = ExpectedContext<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
-        let column = match context.validate(self.i.clone()) {
-            Ok(column) => column,
+        self.open(context)
+    }
+}
+
+impl JsonTreeDocument {
+    /// Open the document, once its stored column has passed the caller's
+    /// check. The check runs before any key is requested.
+    ///
+    /// On its own, the document opens under the stored column. As a field
+    /// of a record, it opens under the scopes and bindings of the record
+    /// too.
+    fn open<K: 'static>(self, context: ExpectedContext<Identifier>) -> Decryption<Value, K> {
+        let context = match context.decryption_context(self.i.clone()) {
+            Ok(context) => context,
             Err(error) => return Decryption::failed(error),
         };
         match self.document() {
-            Ok(document) => document.decryption(AeadContext::from(column)),
+            Ok(document) => document.decryption(AeadContext::from(context)),
             Err(error) => Decryption::failed(error),
         }
+    }
+}
+
+/// A [`JsonPlaintext`] seals into a document as a `serde_json::Value` does,
+/// under the default options ([`JsonTree::default`]), with the column as
+/// its context.
+///
+/// The code below is executed by `cargo test -p eql-encryption-tests --test
+/// json_example`. It is not one of this crate's doctests, for the reason
+/// the [encryption example](crate::encryption#example) gives: the test key
+/// source and the runtime it needs stay in the encryption test crate.
+#[doc = concat!("```rust,ignore\n", include_str!("../encryption/json_example.rs"), "\n```")]
+///
+/// It can be a field of a derived `struct = ..` record. The field's column
+/// is then the record's scope and the field's name. A scope or a binding
+/// that the record lists is not stored in the document: the reader supplies
+/// it again.
+impl EncryptTarget<JsonPlaintext> for JsonTreeDocument {
+    type ContextInput = StoredContext<Identifier>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
+    where
+        JsonPlaintext: 's,
+    {
+        JsonTree::default().sealing().project(JsonPlaintext::value)
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        JsonTree::default().specs()
+    }
+}
+
+/// Decrypts to the plaintext document, under the stored column.
+///
+/// - `decrypt_from_with_context(document, &keyset, column)` checks that the
+///   stored column is `column`. The check runs before any key is
+///   requested.
+/// - `decrypt_from(document, &keyset)` opens the document under the column
+///   it stores, without that check.
+impl DecryptSource<JsonPlaintext> for JsonTreeDocument {
+    type ContextInput = ExpectedContext<Identifier>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<JsonPlaintext, K> {
+        self.open(context).map(JsonPlaintext::from)
+    }
+}
+
+/// The same as [`DecryptSource<JsonPlaintext>`]. A field of a derived
+/// record opens through this trait, as every other EQL type does.
+impl DecryptInto<JsonPlaintext> for JsonTreeDocument {
+    type Context = ExpectedContext<Identifier>;
+    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<JsonPlaintext, K> {
+        self.open(context).map(JsonPlaintext::from)
     }
 }
 
@@ -544,7 +621,7 @@ where
     Ctx: Into<<Self as DecryptInto<P>>::Context>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(self.decryption(context.into()))
+        Some(<Self as DecryptInto<P>>::decryption(self, context.into()))
     }
 }
 
