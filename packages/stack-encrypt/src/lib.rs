@@ -257,7 +257,8 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! A wrong context loses data silently: a query under the wrong context
 //! matches nothing, and gives no error. So every declaration and every call
 //! can show the context it uses, before any key is requested. A derived
-//! record has `contexts()`, a [`Plan`] has [`Plan::contexts`], and a
+//! record has `contexts()`, a plan that is data has
+//! `dynamic::record::Plan::contexts` (with the `dynamic` feature), and a
 //! prepared call has [`Pending::context`](target::Pending::context). The
 //! `testing` feature adds `assert_context!`, which pins a context in a
 //! test. See [`contexts`] for the rendering. A field with a binding shows
@@ -565,19 +566,13 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! attribute. The [`target`] module describes the traits a hand-written
 //! target implements, and how the context of a record field is built.
 //!
-//! The older structural plans and derives (`#[derive(EncryptFrom,
-//! DecryptInto)]`) encrypt a borrowed plaintext into a [`StackCipherText`].
-//! A `StackCipherText` is a tree of sealed leaves. The low-level entry
-//! points of the structural API are [`KeysetCipher::encrypt_tree`] and
-//! [`KeysetCipher::decrypt_tree`]. A declaration runs through
-//! [`KeysetCipher::encrypt_as`] and [`KeysetCipher::decrypt_as`]. The
-//! structural API is separate from the owned scalar API.
+//! A [`StackCipherText`] is a tree of sealed leaves, one for each field of
+//! the value. [`KeysetCipher::encrypt_tree`] seals a whole value as a tree,
+//! under one context, and [`KeysetCipher::decrypt_tree`] opens it. A derived
+//! record's ciphertext fields are trees of the same leaves.
 //!
-//! The owned derives also implement the structural traits. So an owned
-//! record can be a field of a structural record, or a typed field of a plan.
-//!
-//! A struct sealed through the structural API, or as an owned record, is one
-//! ciphertext per field. A struct in an [`OpaqueBlob`] is one ciphertext.
+//! A struct sealed as a tree, or as a derived record, is one ciphertext per
+//! field. A struct in an [`OpaqueBlob`] is one ciphertext.
 //!
 //! # What is authenticated
 //!
@@ -601,7 +596,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # Relationship to vitaminc
 //!
 //! A `KeysetCipher` seals through a vitaminc `Cipher`; everything vitaminc
-//! can encrypt remains available through the structural engine. Its data model, AAD derivations and
+//! can encrypt remains available through [`KeysetCipher::encrypt_tree`]. Its data model, AAD derivations and
 //! the leaf wire format are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
 //! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
 //! carries is *not* that nonce: it identifies the data key, and is sent back to
@@ -638,9 +633,9 @@ mod codes;
 pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
+pub mod field_reference;
 pub mod json;
 pub mod keyset;
-pub mod marker;
 pub mod op;
 pub mod plan;
 pub mod sem;
@@ -660,9 +655,11 @@ pub use contexts::{
     SuppliedContext,
 };
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
+pub use field_reference::{
+    BetweenQuery, FieldQuery, FieldReference, Needs, QueryInput, Ready, ScopeInput,
+};
 pub use keyset::KeysetCipher;
-pub use marker::{BetweenQuery, MarkedQuery, Marker, Needs, QueryInput, Ready, ScopeInput};
-pub use plan::{all, Plan, PlanError};
+pub use plan::PlanError;
 // stack-kms is a public dependency: `StackCipher` is generic over its
 // `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is
 // versioned on its own (release-plz.toml), so a caller reaches it through
@@ -675,10 +672,9 @@ pub use stack_kms as kms;
 /// crate, so a binding encodes an error from any of them the same way.
 pub use stack_kms::{diagnostic, ErrorPayload};
 pub use target::{
-    CallerContext, CipherRef, DecryptField, DecryptFrom, DecryptInto, DecryptSource, Decryptable,
-    Decryption, EncryptFrom, EncryptInto, EncryptTarget, Encrypted, Encryption, Equality, Index,
-    IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request,
-    Responses, TermSet,
+    CallerContext, CipherRef, DecryptField, DecryptFrom, DecryptSource, Decryptable, Decryption,
+    EncryptInto, EncryptTarget, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Json,
+    Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request, Responses, TermSet,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
@@ -702,11 +698,10 @@ pub use vitaminc_prf::IntoPrfContext;
 #[allow(deprecated)]
 pub use vitaminc_prf::PrfContext;
 
-// The nonempty proof used by searchable targets and legacy declarations,
-// built with `nonempty!`
+// The nonempty proof used by searchable targets, built with `nonempty!`
 // (a literal, checked at compile time) or `NonEmpty::new` (a runtime value,
 // checked once); `MaybeEmpty` is what a context type of your own implements
-// to be wrapped. `#[derive(EncryptFrom)]` names these through this crate.
+// to be wrapped. `#[derive(EncryptTarget)]` names these through this crate.
 pub use vitaminc_protected::{nonempty, nonempty_bytes, EmptyError, MaybeEmpty, NonEmpty};
 
 // And the wrapper plaintext comes back in (`ValueFrame::into_inner`, a

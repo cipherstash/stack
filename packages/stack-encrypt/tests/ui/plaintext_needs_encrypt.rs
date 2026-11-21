@@ -1,11 +1,23 @@
-use stack_encrypt::{EncryptFrom, StackCipherText, StackCipher, nonempty};
+//! A plaintext is sealed through Vitamin C's `Encrypt`. A type that only
+//! implements `Serialize` is not a plaintext: there is no Serde fallback.
+use stack_encrypt::target::EncryptTarget;
+use stack_encrypt::{nonempty, EncryptInto, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
-#[derive(Clone, serde::Serialize)]
-struct SerdeOnly { value: String }
-#[derive(EncryptFrom)]
-struct Target { c: StackCipherText }
-fn wrong(cipher:&StackCipher<FakeDataKeySource>) {
-    let keyset=cipher.default_keyset();
-    let _=keyset.encrypt_as::<_,Target>(&SerdeOnly {value:"x".into()},nonempty!("column").into());
+
+#[derive(Clone, serde::Serialize, zeroize::Zeroize)]
+struct SerdeOnly {
+    value: String,
 }
+
+#[derive(EncryptTarget)]
+struct Target {
+    c: StackCipherText,
+}
+
+fn wrong(cipher: &StackCipher<FakeDataKeySource>) {
+    let keyset = cipher.default_keyset();
+    let plaintext = SerdeOnly { value: "x".into() };
+    let _ = plaintext.encrypt_into_with_context::<Target, _>(&keyset, nonempty!("column"));
+}
+
 fn main() {}

@@ -1,21 +1,36 @@
 //! Operator-typed queries (`stack_encrypt::op`, ADR-0009): a query names an
-//! operator, the plan finds the index that answers it, and the term that
-//! comes back is the query term for that operator, which for a match index
-//! is not the stored term.
+//! operator through the field reference of a record field, the field's target type
+//! names the index that answers it, and the term that comes back is the
+//! query term for that operator, which for a match index is not the stored
+//! term.
+//!
+//! The records at the top of the file give the fields the tests query: a
+//! field's type says which indexes it stores, and so which operators its
+//! field reference has. `tests/field_references.rs` states what a field reference is and how it takes
+//! its scope; this file states what each operator sends, what it refuses,
+//! and how a probabilistic term is verified and sized.
 mod common;
 
-use common::{loads_counting_cipher, stack_cipher};
-use stack_encrypt::kms::FakeDataKeySource;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use common::{stack_cipher, CountingSource};
+use stack_encrypt::field_reference::Root;
+use stack_encrypt::kms::IdentifiedBy;
 use stack_encrypt::op::{self, Limit, Probabilistic, Stats};
-use stack_encrypt::plan::{Field, FieldSchema, Fields, PlanError};
 use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms, OpeTerm, OreTerm, RangeQuery,
     TermError, Tokenizer,
 };
 use stack_encrypt::target::{
-    CallerContext, ConsumeSource, EncryptFrom, Encrypted, Encryption, Index, IndexSpec,
+    CallerContext, ConsumeSource, DecryptSource, EncryptTarget, Encryption, Index, IndexSpec,
+    NoScope, Scope,
 };
-use stack_encrypt::{Equality, Error, Label, Match, NonEmpty, Ope, Ore, OreBlock, Plan};
+use stack_encrypt::{
+    nonempty, DecryptFrom, EncryptInto, Encrypted, Equality, Error, FieldReference, Label,
+    StackCipher,
+};
+use zeroize::Zeroize;
 
 /// A match configuration that keeps case: its index cuts stored text and
 /// queries as written, so `Nguyen` and `nguyen` are different tokens.
@@ -40,31 +55,50 @@ impl MatchConfig for ZeroGram {
     }
 }
 
-#[derive(Clone)]
+/// A match configuration with the smallest filter allowed, so a long value
+/// sets nearly every bit and false positives are easy to find.
+struct Tiny;
+impl MatchConfig for Tiny {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            m: 32,
+            ..Default::default()
+        }
+    }
+}
+
+/// Whole words, as the v1 match indexer's standard tokenizer splits them.
+struct Words;
+impl MatchConfig for Words {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: stack_encrypt::sem::Tokenizer::Standard,
+            ..Default::default()
+        }
+    }
+}
+
+/// EQL v4's filter size and slices (`k = 6`, `m = 2048`; its match types
+/// also turn on short words, which this prior's arithmetic does not need),
+/// with a notes column's prior.
+struct Notes;
+impl MatchConfig for Notes {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            k: 6,
+            m: 2048,
+            ..Default::default()
+        }
+    }
+    fn expected_tokens() -> Option<u32> {
+        Some(200)
+    }
+}
+
+#[derive(Clone, Zeroize)]
 struct Person {
     email: String,
     name: String,
-}
-
-impl Fields for Person {
-    fn field_names(&self) -> Vec<&str> {
-        vec!["email", "name"]
-    }
-    fn schema() -> Option<Vec<FieldSchema>> {
-        Some(vec![
-            FieldSchema::of::<String>("email"),
-            FieldSchema::of::<String>("name"),
-        ])
-    }
-}
-impl Field<String> for Person {
-    fn field(&self, name: &str) -> Option<&String> {
-        match name {
-            "email" => Some(&self.email),
-            "name" => Some(&self.name),
-            _ => None,
-        }
-    }
 }
 
 fn person() -> Person {
@@ -74,50 +108,217 @@ fn person() -> Person {
     }
 }
 
-fn people_plan() -> Plan<Person, FakeDataKeySource> {
-    Plan::context("people")
-        .fields()
-        .encrypt_index::<String>("email", (Equality, Match))
-        .encrypt_index::<String>("name", Match::<Exact>::new())
-        .build()
-        .expect("a valid plan")
+/// A person: the email under the equality index and the default match
+/// index, the name under a match index that keeps case.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Person, scope = "people")]
+struct EncryptedPerson {
+    email: Encrypted<(EqualityTerm, MatchTerms)>,
+    name: Encrypted<MatchTerms<Exact>>,
 }
 
-fn plan_error<T>(result: Result<T, Error>) -> PlanError {
-    match result {
-        Err(Error::Plan(error)) => error,
-        Err(other) => panic!("expected a plan error, got {other:?}"),
-        Ok(_) => panic!("expected a plan error, got a value"),
+/// The same person under the same labels, in a record whose caller
+/// supplies a tenant scope on every call.
+#[derive(EncryptTarget)]
+#[stash(struct = Person, scope = "people", scope(tenant: u64))]
+#[allow(dead_code)]
+struct TenantPerson {
+    email: Encrypted<(EqualityTerm, MatchTerms)>,
+    name: Encrypted<MatchTerms<Exact>>,
+}
+
+#[derive(Clone, Zeroize)]
+struct Contact {
+    email: String,
+    bio: String,
+    phone: String,
+}
+
+fn contact() -> Contact {
+    Contact {
+        email: "bob@example.com".into(),
+        bio: "bob builds bridges".into(),
+        phone: "555 0100".into(),
     }
+}
+
+/// A record whose fields are each one term: two terms alone, with no
+/// ciphertext, and one beside its ciphertext.
+#[derive(EncryptTarget)]
+#[stash(struct = Contact, scope = "contacts")]
+struct EncryptedContact {
+    email: EqualityTerm,
+    bio: MatchTerms,
+    phone: Encrypted<EqualityTerm>,
+}
+
+#[derive(Clone, Zeroize)]
+struct Note {
+    body: String,
+}
+
+fn note(body: &str) -> Note {
+    Note { body: body.into() }
+}
+
+/// A note under a 32-bit filter.
+#[derive(EncryptTarget)]
+#[stash(struct = Note, scope = "notes")]
+struct TinyNote {
+    body: Encrypted<MatchTerms<Tiny>>,
+}
+
+/// A note cut into whole words.
+#[derive(EncryptTarget)]
+#[stash(struct = Note, scope = "notes")]
+struct WordNote {
+    body: Encrypted<MatchTerms<Words>>,
+}
+
+/// A note whose index declares a prior.
+#[derive(EncryptTarget)]
+#[stash(struct = Note, scope = "notes")]
+#[allow(dead_code)]
+struct PriorNote {
+    body: Encrypted<MatchTerms<Notes>>,
+}
+
+/// A note under options the match index cannot use.
+#[derive(EncryptTarget)]
+#[stash(struct = Note, scope = "notes")]
+#[allow(dead_code)]
+struct ZeroGramNote {
+    body: Encrypted<MatchTerms<ZeroGram>>,
+}
+
+#[derive(Clone, Zeroize)]
+struct Profile {
+    age: u32,
+    surname: String,
+    score: f64,
+}
+
+fn profile(age: u32) -> Profile {
+    Profile {
+        age,
+        surname: "Nguyen".into(),
+        score: 1.5,
+    }
+}
+
+/// A profile whose order index is ORE: an integer beside an equality
+/// term, text and a float.
+#[derive(EncryptTarget)]
+#[stash(struct = Profile, scope = "profiles")]
+#[allow(dead_code)]
+struct OreProfile {
+    age: Encrypted<(EqualityTerm, OreTerm<u32>)>,
+    surname: Encrypted<OreTerm<String>>,
+    score: Encrypted<OreTerm<f64>>,
+}
+
+/// The same profile under the same labels, whose order index is OPE.
+#[derive(EncryptTarget)]
+#[stash(struct = Profile, scope = "profiles")]
+#[allow(dead_code)]
+struct OpeProfile {
+    age: Encrypted<(EqualityTerm, OpeTerm<u32>)>,
+    surname: Encrypted<OpeTerm<String>>,
+    score: Encrypted<OpeTerm<f64>>,
+}
+
+#[derive(Clone, Zeroize)]
+struct Member {
+    age: u32,
+    balance: i64,
+}
+
+/// A member whose fields are each one order term: an OPE term beside its
+/// ciphertext, and an ORE term alone, of a signed integer.
+#[derive(EncryptTarget)]
+#[stash(struct = Member, scope = "members")]
+struct EncryptedMember {
+    age: Encrypted<OpeTerm<u32>>,
+    balance: OreTerm<i64>,
+}
+
+/// The requests a cipher has sent its key source.
+struct KeyRequests {
+    loads: Arc<AtomicUsize>,
+    generates: Arc<AtomicUsize>,
+    retrieves: Arc<AtomicUsize>,
+}
+
+impl KeyRequests {
+    /// Keyset loads, data keys generated and data keys retrieved.
+    fn total(&self) -> usize {
+        [&self.loads, &self.generates, &self.retrieves]
+            .into_iter()
+            .map(|count| count.load(Ordering::SeqCst))
+            .sum()
+    }
+}
+
+/// A cipher that counts the requests it sends its key source. The count
+/// starts after the cipher has loaded its default keyset.
+async fn counted_cipher() -> (StackCipher<CountingSource>, KeyRequests) {
+    let source = CountingSource::new();
+    let loads = source.loads();
+    let (generates, retrieves) = source.counters();
+    let cipher = StackCipher::builder()
+        .kms(source)
+        .init()
+        .await
+        .expect("build cipher");
+    loads.store(0, Ordering::SeqCst);
+    let requests = KeyRequests {
+        loads,
+        generates,
+        retrieves,
+    };
+    (cipher, requests)
+}
+
+/// A field reference written by hand for the label `scope/identity`, of the target
+/// type `T` and the scope type `C`. No record declares it, so it states
+/// nothing about a stored value: the tests that use it are about what the
+/// index of `T` is told of the query's context.
+fn field_reference_of<T, C>(
+    scope: &'static str,
+    identity: &'static str,
+) -> FieldReference<Root<()>, T, C> {
+    FieldReference::new(identity, scope, identity, || {
+        unreachable!("a query does not read its record's contexts")
+    })
 }
 
 #[tokio::test]
 async fn an_eq_query_is_the_stored_equality_term() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let mut row = cipher.encrypt(&person()).using(&plan).await.unwrap();
-    let email: Encrypted<(EqualityTerm, MatchTerms)> = row.take("email").unwrap();
+    let keyset = cipher.default_keyset();
+    let row: EncryptedPerson = person().encrypt_into(&keyset).await.unwrap();
 
-    let query: EqualityTerm = cipher
-        .query(op::Eq, "bob@example.com")
-        .on(&plan.field("email").unwrap())
+    let query: EqualityTerm = EncryptedPerson::EMAIL
+        .eq("bob@example.com")
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert_eq!(query, email.terms.0, "HMAC equality sends what it stores");
+    assert_eq!(
+        query, row.email.terms.0,
+        "HMAC equality sends what it stores"
+    );
 }
 
 #[tokio::test]
 async fn a_matches_query_is_a_filter_over_the_query_value_that_the_stored_filter_holds() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let mut row = cipher.encrypt(&person()).using(&plan).await.unwrap();
-    let email: Encrypted<(EqualityTerm, MatchTerms)> = row.take("email").unwrap();
-    let stored = email.terms.1;
-    let email_plan = plan.field("email").unwrap();
+    let keyset = cipher.default_keyset();
+    let row: EncryptedPerson = person().encrypt_into(&keyset).await.unwrap();
+    let stored = row.email.terms.1;
 
-    let query: MatchQuery = cipher
-        .query(op::Matches, "BOB")
-        .on(&email_plan)
+    let query: MatchQuery = EncryptedPerson::EMAIL
+        .matches("BOB")
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert!(stored.matches(&query), "a case-folding index matches BOB");
@@ -128,251 +329,120 @@ async fn a_matches_query_is_a_filter_over_the_query_value_that_the_stored_filter
 
     // The query's filter is the filter the index would store for the same
     // text, under the same label.
-    let mut same_text = cipher
-        .encrypt(&Person {
-            email: "BOB".into(),
-            name: "x".into(),
-        })
-        .using(&plan)
-        .await
-        .unwrap();
-    let as_stored: Encrypted<(EqualityTerm, MatchTerms)> = same_text.take("email").unwrap();
-    assert_eq!(query.to_bytes(), as_stored.terms.1.to_bytes());
-    assert_eq!(query.positions(), as_stored.terms.1.positions());
+    let same_text: EncryptedPerson = Person {
+        email: "BOB".into(),
+        name: "x".into(),
+    }
+    .encrypt_into(&keyset)
+    .await
+    .unwrap();
+    let as_stored = same_text.email.terms.1;
+    assert_eq!(query.to_bytes(), as_stored.to_bytes());
+    assert_eq!(query.positions(), as_stored.positions());
     assert_eq!(query.clone(), query);
 
-    let elsewhere: MatchQuery = cipher
-        .query(op::Matches, "zzz")
-        .on(&email_plan)
+    let elsewhere: MatchQuery = EncryptedPerson::EMAIL
+        .matches("zzz")
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert!(!stored.matches(&elsewhere));
     assert_ne!(elsewhere, query);
 }
 
+/// A field's match index is its type's, so a query on the field is cut
+/// under the field's own configuration and no other.
 #[tokio::test]
-async fn a_match_index_with_its_own_configuration_is_named_with_via() {
+async fn a_match_field_with_its_own_configuration_is_queried_under_it() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let mut row = cipher.encrypt(&person()).using(&plan).await.unwrap();
-    let name: Encrypted<MatchTerms<Exact>> = row.take("name").unwrap();
-    let name_plan = plan.field("name").unwrap();
+    let keyset = cipher.default_keyset();
+    let row: EncryptedPerson = person().encrypt_into(&keyset).await.unwrap();
+    let name = row.name.terms;
 
-    let exact = |value: &'static str| {
-        cipher
-            .query(op::Matches, value)
-            .via(Match::<Exact>::new())
-            .on(&name_plan)
-    };
-    let hit: MatchQuery<Exact> = exact("Nguyen").await.unwrap();
-    assert!(name.terms.matches(&hit));
-    let miss: MatchQuery<Exact> = exact("nguyen").await.unwrap();
+    let hit: MatchQuery<Exact> = EncryptedPerson::NAME
+        .matches("Nguyen")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert!(name.matches(&hit));
+    let miss: MatchQuery<Exact> = EncryptedPerson::NAME
+        .matches("nguyen")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
     assert!(
-        !name.terms.matches(&miss),
+        !name.matches(&miss),
         "a case-sensitive index does not fold the query"
     );
-
-    // The operator's default index is the default configuration, which
-    // this field does not declare.
-    assert_eq!(
-        plan_error(cipher.query(op::Matches, "Nguyen").on(&name_plan).await),
-        PlanError::IndexOptions {
-            field: "name".into(),
-            declared: IndexSpec::Match(Exact::options()),
-            asked: IndexSpec::Match(MatchOptions::default()),
-        }
-    );
-}
-
-#[tokio::test]
-async fn an_operator_the_field_has_no_index_for_is_refused_when_awaited() {
-    let cipher = stack_cipher().await;
-    let plan = people_plan();
-    assert_eq!(
-        plan_error(
-            cipher
-                .query(op::Eq, "Alice")
-                .on(&plan.field("name").unwrap())
-                .await
-        ),
-        PlanError::IndexNotDeclared {
-            field: "name".into(),
-            index: "eq"
-        }
-    );
-}
-
-#[tokio::test]
-async fn a_one_value_plan_answers_from_its_indexes_by_type() {
-    let cipher = stack_cipher().await;
-    let plan = Plan::context("users/email")
-        .with::<String, _>((Equality, Match))
-        .build()
-        .unwrap();
-    let stored: Encrypted<(EqualityTerm, MatchTerms)> = cipher
-        .encrypt(&"bob@example.com".to_owned())
-        .using(&plan)
-        .await
-        .unwrap();
-
-    let eq = cipher
-        .query(op::Eq, "bob@example.com")
-        .on(&plan)
-        .await
-        .unwrap();
-    assert_eq!(eq, stored.terms.0);
-    let matches = cipher
-        .query(op::Matches, "example")
-        .on(&plan)
-        .await
-        .unwrap();
-    assert!(stored.terms.1.matches(&matches));
-
-    let exact_plan = Plan::context("users/name")
-        .with::<String, _>(Match::<Exact>::new())
-        .build()
-        .unwrap();
-    let name: Encrypted<MatchTerms<Exact>> = cipher
-        .encrypt(&"Alice".to_owned())
-        .using(&exact_plan)
-        .await
-        .unwrap();
-    let query = cipher
-        .query(op::Matches, "Ali")
-        .via(Match::<Exact>::new())
-        .on(&exact_plan)
-        .await
-        .unwrap();
-    assert!(name.terms.matches(&query));
 }
 
 #[tokio::test]
 async fn a_target_answers_an_operator_through_the_index_it_names() {
     let cipher = stack_cipher().await;
-    let eq_plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<EqualityTerm>()
-        .build()
-        .unwrap();
-    let stored: EqualityTerm = cipher
-        .encrypt(&"bob@example.com".to_owned())
-        .using(&eq_plan)
-        .await
-        .unwrap();
-    let query = cipher
-        .query(op::Eq, "bob@example.com")
-        .on(&eq_plan)
-        .await
-        .unwrap();
-    assert_eq!(query, stored);
+    let keyset = cipher.default_keyset();
+    let stored: EncryptedContact = contact().encrypt_into(&keyset).await.unwrap();
 
-    let match_plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<MatchTerms>()
-        .build()
-        .unwrap();
-    let stored: MatchTerms = cipher
-        .encrypt(&"bob@example.com".to_owned())
-        .using(&match_plan)
+    let query = EncryptedContact::EMAIL
+        .eq("bob@example.com")
+        .encrypt(&keyset)
         .await
         .unwrap();
-    let query = cipher
-        .query(op::Matches, "bob")
-        .on(&match_plan)
+    assert_eq!(query, stored.email);
+
+    let query = EncryptedContact::BIO
+        .matches("bob")
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert!(stored.matches(&query));
+    assert!(stored.bio.matches(&query));
 }
 
 #[tokio::test]
 async fn a_target_with_several_terms_answers_through_the_term_that_answers() {
     let cipher = stack_cipher().await;
-    let plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<Encrypted<(EqualityTerm, MatchTerms)>>()
-        .build()
-        .unwrap();
-    let stored = cipher
-        .encrypt(&"bob@example.com".to_owned())
-        .using(&plan)
-        .await
-        .unwrap();
-    let eq = cipher
-        .query(op::Eq, "bob@example.com")
-        .via(Equality)
-        .on(&plan)
-        .await
-        .unwrap();
-    assert_eq!(eq, stored.terms.0);
-    let matches = cipher
-        .query(op::Matches, "bob")
-        .via(Match)
-        .on(&plan)
-        .await
-        .unwrap();
-    assert!(stored.terms.1.matches(&matches));
+    let keyset = cipher.default_keyset();
+    let stored: EncryptedPerson = person().encrypt_into(&keyset).await.unwrap();
+    let (equality, matching) = &stored.email.terms;
 
-    // Each operator has one term that answers it, so `via` is optional.
-    let eq = cipher
-        .query(op::Eq, "bob@example.com")
-        .on(&plan)
+    // Each operator has one term that answers it.
+    let eq = EncryptedPerson::EMAIL
+        .eq("bob@example.com")
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert_eq!(eq, stored.terms.0);
-    let matches = cipher.query(op::Matches, "bob").on(&plan).await.unwrap();
-    assert!(stored.terms.1.matches(&matches));
-
-    // An index the target does not declare is refused when awaited.
-    let one_term = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<Encrypted<EqualityTerm>>()
-        .build()
+    assert_eq!(&eq, equality);
+    let matches = EncryptedPerson::EMAIL
+        .matches("bob")
+        .encrypt(&keyset)
+        .await
         .unwrap();
-    assert_eq!(
-        plan_error(
-            cipher
-                .query(op::Matches, "bob")
-                .via(Match)
-                .on(&one_term)
-                .await
-        ),
-        PlanError::IndexNotDeclared {
-            field: "the value".into(),
-            index: "match"
-        }
-    );
-    let eq = cipher.query(op::Eq, "bob").on(&one_term).await;
-    assert!(eq.is_ok(), "one term answers what the term answers");
+    assert!(matching.matches(&matches));
+
+    // One term answers what the term answers.
+    let one_term: EncryptedContact = contact().encrypt_into(&keyset).await.unwrap();
+    let eq = EncryptedContact::PHONE
+        .eq("555 0100")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(eq, one_term.phone.terms);
 }
 
-/// A target sealed under a context of its own, a `NonEmpty<Label>` rather
-/// than the caller's context, as an EQL type is sealed under its column. The
-/// label names that context, so the type opts in to queries on its plan
-/// (`op::LabelledTarget`); it accepts no `CallerContext`, so no plan can
-/// encrypt into it.
+/// A target type that no record here encrypts into, queried through a
+/// field reference written by hand, as an EQL type is queried under its column. It
+/// states that its terms are derived under the field reference's label
+/// (`op::LabelledTarget`) and names the index that answers `Eq` for it. A
+/// query derives through that index alone and never runs the target's own
+/// encryption.
 struct Tagged;
-
-impl EncryptFrom<String> for Tagged {
-    type Context = NonEmpty<Label>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
-    where
-        String: 's,
-    {
-        <EqualityTerm as EncryptFrom<String>>::encryption()
-            .accepting::<NonEmpty<Label>>()
-            .map(|_| Tagged)
-    }
-    fn indexes() -> Vec<IndexSpec> {
-        vec![IndexSpec::Equality]
-    }
-}
 
 impl op::LabelledTarget for Tagged {}
 
 /// The equality index, its query term sent with the context it was derived
 /// under, as an EQL query value stores its column: what a query term that
-/// records its context reads from the token. A label of other than two
-/// segments names no column, and is refused before any term exists.
+/// records its context reads from the token. The index serves the table
+/// `users` alone. A label under another table names none of its columns,
+/// and is refused before any term exists.
 #[derive(Clone, Copy, Debug, Default)]
 struct Labelled;
 
@@ -404,7 +474,7 @@ impl op::Supports<op::Eq, String> for Labelled {
         <Equality as op::Supports<op::Eq, String>>::prepare(&Equality, value)
     }
     fn check_label(&self, label: &Label, _: bool) -> Result<(), Error> {
-        if label.segments().len() == 2 {
+        if label.segments().next() == Some("users") {
             Ok(())
         } else {
             Err(Error::Other("not a column".into()))
@@ -433,21 +503,6 @@ fn refused_as_not_a_column<T: std::fmt::Debug>(result: Result<T, Error>) {
 /// A target whose index refuses an extended context: what an EQL column
 /// is, stored under its table and column alone.
 struct Column;
-
-impl EncryptFrom<String> for Column {
-    type Context = NonEmpty<Label>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
-    where
-        String: 's,
-    {
-        <EqualityTerm as EncryptFrom<String>>::encryption()
-            .accepting::<NonEmpty<Label>>()
-            .map(|_| Column)
-    }
-    fn indexes() -> Vec<IndexSpec> {
-        vec![IndexSpec::Equality]
-    }
-}
 
 impl op::LabelledTarget for Column {}
 
@@ -489,57 +544,53 @@ impl op::Answers<op::Eq, String> for Column {
     type Via = Unextendable;
 }
 
-/// A chain checked and then extended is checked again when it is prepared:
-/// the label check is about the context, which a later `.extend(..)`
-/// changes, so a kept verifier does not carry a stale acceptance.
+/// The label check is about the whole context of the query. A scope
+/// extends that context, so an index that takes no extension refuses a
+/// query under a scope, before any key is requested, and derives its term
+/// for the same label with no scope.
 #[tokio::test]
-async fn a_chain_extended_after_its_check_is_checked_again() {
-    use stack_encrypt::plan::Operation;
-    let cipher = stack_cipher().await;
-    let plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<Column>()
-        .build()
-        .unwrap();
-    let mut query = cipher.query(op::Eq, "bob@example.com").on(&plan);
-    query.check().unwrap();
-    let refused = query.extend(7u64).await;
+async fn an_index_that_takes_no_extension_refuses_a_query_under_a_scope() {
+    let (cipher, requests) = counted_cipher().await;
+    let keyset = cipher.default_keyset();
+    let refused = field_reference_of::<Column, Scope<u64>>("users", "email")
+        .eq("bob@example.com")
+        .scope(Scope::new(7u64))
+        .encrypt(&keyset)
+        .await;
     assert!(
         matches!(&refused, Err(Error::Other(reason)) if reason.to_string() == "no extension"),
         "{refused:?}"
     );
-    // Unextended, the checked chain derives its term.
-    let mut query = cipher.query(op::Eq, "bob@example.com").on(&plan);
-    query.check().unwrap();
-    assert!(query.await.is_ok());
+    assert_eq!(requests.total(), 0, "refused before any key is requested");
+
+    let term = field_reference_of::<Column, NoScope>("users", "email")
+        .eq("bob@example.com")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    let stored: EqualityTerm = String::from("bob@example.com")
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("email"))
+        .await
+        .unwrap();
+    assert_eq!(term, stored);
 }
 
-/// A `LabelledTarget` is queried through its plan though nothing can be
-/// encrypted through it, and its query term reads the context its terms
-/// were derived under from the token: the plan's label or the call's, and
-/// whether the call extended it.
+/// A `LabelledTarget` is queried through a field reference though nothing is
+/// encrypted into it, and its query term reads the context its terms were
+/// derived under from the token: the field reference's label, and whether a scope
+/// extended it.
 #[tokio::test]
-async fn a_labelled_target_is_queried_under_the_plans_label() {
+async fn a_labelled_target_is_queried_under_the_field_references_label() {
     let cipher = stack_cipher().await;
-    let eq_plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<EqualityTerm>()
-        .build()
-        .unwrap();
-    let stored: EqualityTerm = cipher
-        .encrypt(&"bob@example.com".to_owned())
-        .using(&eq_plan)
+    let keyset = cipher.default_keyset();
+    let stored: EqualityTerm = String::from("bob@example.com")
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("email"))
         .await
         .unwrap();
 
-    let plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<Tagged>()
-        .build()
-        .unwrap();
-    let query = cipher
-        .query(op::Eq, "bob@example.com")
-        .on(&plan)
+    let query = field_reference_of::<Tagged, NoScope>("users", "email")
+        .eq("bob@example.com")
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert_eq!(
@@ -551,265 +602,125 @@ async fn a_labelled_target_is_queried_under_the_plans_label() {
         }
     );
 
-    let unlabelled = Plan::value::<String>()
-        .encrypt_into::<Tagged>()
-        .build()
-        .unwrap();
-    let query = cipher
-        .query(op::Eq, "bob@example.com")
-        .context("users/name")
-        .on(&unlabelled)
+    let query = field_reference_of::<Tagged, NoScope>("users", "name")
+        .eq("bob@example.com")
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert_eq!(query.label, "users/name");
 
-    // Extended, the terms are derived under the label and the extension, and
-    // the token says so: a term that records only the label must refuse it.
-    let extended = cipher
-        .query(op::Eq, "bob@example.com")
-        .extend(7u64)
-        .on(&plan)
+    // Under a scope, the terms are derived under the label and the scope,
+    // and the token says so: a term that records only the label must
+    // refuse it.
+    let extended = field_reference_of::<Tagged, Scope<u64>>("users", "email")
+        .eq("bob@example.com")
+        .scope(Scope::new(7u64))
+        .encrypt(&keyset)
         .await
         .unwrap();
-    let stored_extended: EqualityTerm = cipher
-        .encrypt(&"bob@example.com".to_owned())
-        .extend(7u64)
-        .using(&eq_plan)
+    let stored_extended: EqualityTerm = String::from("bob@example.com")
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("email").with(7u64))
         .await
         .unwrap();
     assert!(extended.extended);
-    assert_eq!(
-        extended.label, "users/email",
-        "the label, before the extension"
-    );
+    assert_eq!(extended.label, "users/email", "the label, before the scope");
     assert_eq!(extended.term, stored_extended);
 }
 
-/// A context the index refuses is refused when the query is awaited,
-/// before the named keyset is loaded or any term is derived.
+/// A context the index refuses is refused when the query is encrypted,
+/// before any keyset or key is requested and before any term is derived.
 #[tokio::test]
 async fn a_label_the_index_refuses_is_refused_before_any_keyset_or_term() {
-    let (cipher, loads) = loads_counting_cipher().await;
-    let plan = Plan::value::<String>()
-        .context("users")
-        .encrypt_into::<Tagged>()
-        .build()
-        .unwrap();
+    let (cipher, requests) = counted_cipher().await;
+    let keyset = cipher.default_keyset();
     refused_as_not_a_column(
-        cipher
-            .query(op::Eq, "bob@example.com")
-            .keyset("tenant")
-            .on(&plan)
+        field_reference_of::<Tagged, NoScope>("orders", "email")
+            .eq("bob@example.com")
+            .encrypt(&keyset)
             .await,
     );
-    assert_eq!(
-        loads.load(std::sync::atomic::Ordering::SeqCst),
-        0,
-        "refused before the named keyset is loaded"
-    );
-    // A label the index takes loads the keyset, so the count above is the
-    // refusal's.
-    let plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<Tagged>()
-        .build()
-        .unwrap();
-    cipher
-        .query(op::Eq, "bob@example.com")
-        .keyset("tenant")
-        .on(&plan)
+    assert_eq!(requests.total(), 0, "refused before any key is requested");
+
+    // A label the index takes derives the term, so the refusal above is
+    // the label's.
+    let query = field_reference_of::<Tagged, NoScope>("users", "email")
+        .eq("bob@example.com")
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert_eq!(loads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(query.label, "users/email");
 }
 
 #[tokio::test]
-async fn operator_queries_settle_together_and_extend_like_the_write() {
+async fn operator_queries_settle_together_under_the_scope_of_the_write() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let mut row = cipher
-        .encrypt(&person())
-        .using(&plan)
-        .extend(7u64)
+    let keyset = cipher.default_keyset();
+    let row: TenantPerson = person()
+        .encrypt_into_with_context(&keyset, Scope::new(7u64))
         .await
         .unwrap();
-    let email: Encrypted<(EqualityTerm, MatchTerms)> = row.take("email").unwrap();
-    let email_plan = plan.field("email").unwrap();
+    let (equality, matching) = &row.email.terms;
 
-    let (eq, matches) = stack_encrypt::all((
-        cipher
-            .query(op::Eq, "bob@example.com")
-            .on(&email_plan)
-            .extend(7u64),
-        cipher
-            .query(op::Matches, "bob")
-            .on(&email_plan)
-            .extend(7u64),
-    ))
-    .await
-    .unwrap();
-    assert_eq!(eq, email.terms.0);
-    assert!(email.terms.1.matches(&matches));
+    let (eq, matches) = TenantPerson::EMAIL
+        .eq("bob@example.com")
+        .scope(Scope::new(7u64))
+        .encrypt(&keyset)
+        .zip(
+            TenantPerson::EMAIL
+                .matches("bob")
+                .scope(Scope::new(7u64))
+                .encrypt(&keyset),
+        )
+        .await
+        .unwrap();
+    assert_eq!(&eq, equality);
+    assert!(matching.matches(&matches));
 
-    let unextended = cipher
-        .query(op::Eq, "bob@example.com")
-        .on(&email_plan)
+    // The same label with no scope is another context.
+    let unscoped = EncryptedPerson::EMAIL
+        .eq("bob@example.com")
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert_ne!(
-        unextended, email.terms.0,
-        "the query is derived under the extended label"
+        &unscoped, equality,
+        "the query is derived under the label and the scope"
     );
 }
 
 #[tokio::test]
-async fn a_query_chain_debugs_without_its_value() {
+async fn an_operator_query_runs_under_the_keyset_it_is_given() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let email_plan = plan.field("email").unwrap();
-    let secret = "bob@example.com";
-    let shown = format!("{:?}", cipher.query(op::Eq, secret).on(&email_plan));
-    assert_eq!(shown, "QueryOp { .. }");
-}
-
-/// A match index the field declares under other options is refused by
-/// the plan before the query's text is cut, and a plan with no context is
-/// refused before the index is looked at.
-#[tokio::test]
-async fn an_undeclared_index_is_refused_before_the_query_is_prepared() {
-    let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let refused = plan_error(
-        cipher
-            .query(op::Matches, "Bob")
-            .via(Match::<Exact>::new())
-            .on(&plan.field("email").unwrap())
-            .await,
-    );
-    assert!(
-        matches!(refused, PlanError::IndexOptions { ref field, .. } if field == "email"),
-        "the plan's refusal: {refused:?}"
-    );
-
-    let no_context: Plan<Person, FakeDataKeySource> = Plan::fields()
-        .encrypt::<String>("email")
-        .encrypt_index::<String>("name", Match::<Exact>::new())
-        .build()
-        .unwrap();
-    let refused = plan_error(
-        cipher
-            .query(op::Matches, "Bob")
-            .via(Match::<Exact>::new())
-            .on(&no_context.field("name").unwrap())
-            .await,
-    );
-    assert_eq!(refused, PlanError::NoContext);
-}
-
-#[tokio::test]
-async fn a_query_names_its_context_before_or_after_the_index() {
-    let cipher = stack_cipher().await;
-    let plan: Plan<Person, FakeDataKeySource> = Plan::fields()
-        .encrypt_index::<String>("email", Match)
-        .encrypt::<String>("name")
-        .build()
-        .unwrap();
-    let email_plan = plan.field("email").unwrap();
-    let before = cipher
-        .query(op::Matches, "bob")
-        .context("people")
-        .via(Match)
-        .on(&email_plan)
+    let tenant = cipher
+        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
         .await
         .unwrap();
-    let after = cipher
-        .query(op::Matches, "bob")
-        .via(Match)
-        .context("people")
-        .on(&email_plan)
+    let stored: EncryptedPerson = person().encrypt_into(&tenant).await.unwrap();
+    let under_tenant = EncryptedPerson::EMAIL
+        .eq("bob@example.com")
+        .encrypt(&tenant)
         .await
         .unwrap();
-    assert_eq!(before, after);
-}
-
-#[tokio::test]
-async fn a_refused_operator_query_loads_no_keyset() {
-    let (cipher, loads) = loads_counting_cipher().await;
-    let plan: Plan<Person, common::CountingSource> = Plan::context("people")
-        .fields()
-        .encrypt::<String>("email")
-        .encrypt_index::<String>("name", Match::<Exact>::new())
-        .build()
+    assert_eq!(under_tenant, stored.email.terms.0);
+    let under_default = EncryptedPerson::EMAIL
+        .eq("bob@example.com")
+        .encrypt(&cipher.default_keyset())
+        .await
         .unwrap();
-    let refused = cipher
-        .query(op::Eq, "Alice")
-        .on(&plan.field("name").unwrap())
-        .keyset("tenant")
-        .await;
-    assert_eq!(
-        plan_error(refused),
-        PlanError::IndexNotDeclared {
-            field: "name".into(),
-            index: "eq"
-        }
+    assert_ne!(
+        under_default, stored.email.terms.0,
+        "another keyset, another key"
     );
-    assert_eq!(
-        loads.load(std::sync::atomic::Ordering::SeqCst),
-        0,
-        "refused before the named keyset is loaded"
-    );
-}
-
-#[tokio::test]
-async fn an_operator_query_runs_under_the_keyset_it_names() {
-    let cipher = stack_cipher().await;
-    let plan = Plan::context("users/email")
-        .with::<String, _>(Equality)
-        .build()
-        .unwrap();
-    let stored: Encrypted<EqualityTerm> = cipher
-        .encrypt(&"bob@example.com".to_owned())
-        .using(&plan)
-        .keyset("tenant")
-        .await
-        .unwrap();
-    let under_tenant = cipher
-        .query(op::Eq, "bob@example.com")
-        .on(&plan)
-        .keyset("tenant")
-        .await
-        .unwrap();
-    assert_eq!(under_tenant, stored.terms);
-    let under_default = cipher
-        .query(op::Eq, "bob@example.com")
-        .on(&plan)
-        .await
-        .unwrap();
-    assert_ne!(under_default, stored.terms, "another keyset, another key");
-}
-
-/// A match configuration with the smallest filter allowed, so a long value
-/// sets nearly every bit and false positives are easy to find.
-struct Tiny;
-impl MatchConfig for Tiny {
-    fn options() -> MatchOptions {
-        MatchOptions {
-            m: 32,
-            ..Default::default()
-        }
-    }
 }
 
 #[tokio::test]
 async fn verify_keeps_every_real_match_and_folds_case_as_the_index_does() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let email_plan = plan.field("email").unwrap();
-    let name_plan = plan.field("name").unwrap();
+    let keyset = cipher.default_keyset();
 
-    let query = cipher
-        .query(op::Matches, "BOB@Example")
-        .on(&email_plan)
+    let query = EncryptedPerson::EMAIL
+        .matches("BOB@Example")
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert!(query.verify("bob@example.com"));
@@ -817,10 +728,9 @@ async fn verify_keeps_every_real_match_and_folds_case_as_the_index_does() {
     assert!(!query.verify("alice@example.com"));
     assert!(query.clone().verify("bob@example.com"));
 
-    let exact = cipher
-        .query(op::Matches, "Nguyen")
-        .via(Match::<Exact>::new())
-        .on(&name_plan)
+    let exact = EncryptedPerson::NAME
+        .matches("Nguyen")
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert!(exact.verify("Alice Nguyen"));
@@ -837,17 +747,16 @@ async fn verify_keeps_every_real_match_and_folds_case_as_the_index_does() {
 #[tokio::test]
 async fn a_match_query_is_cut_in_nfc_and_refuses_text_with_no_normal_form() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let email_plan = plan.field("email").unwrap();
+    let keyset = cipher.default_keyset();
 
-    let query = cipher
-        .query(op::Matches, "Rene\u{301}e")
-        .on(&email_plan)
+    let query = EncryptedPerson::EMAIL
+        .matches("Rene\u{301}e")
+        .encrypt(&keyset)
         .await
         .unwrap();
-    let precomposed = cipher
-        .query(op::Matches, "Ren\u{e9}e")
-        .on(&email_plan)
+    let precomposed = EncryptedPerson::EMAIL
+        .matches("Ren\u{e9}e")
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert_eq!(query, precomposed, "one string, one filter");
@@ -858,9 +767,9 @@ async fn a_match_query_is_cut_in_nfc_and_refuses_text_with_no_normal_form() {
         "a value with no normal form verifies against nothing"
     );
 
-    let refused = cipher
-        .query(op::Matches, "Ren\u{378}e")
-        .on(&email_plan)
+    let refused = EncryptedPerson::EMAIL
+        .matches("Ren\u{378}e")
+        .encrypt(&keyset)
         .await;
     assert!(
         matches!(
@@ -876,37 +785,29 @@ async fn a_match_query_is_cut_in_nfc_and_refuses_text_with_no_normal_form() {
 #[tokio::test]
 async fn verify_drops_a_row_the_filter_matched_by_chance() {
     let cipher = stack_cipher().await;
-    let plan = Plan::context("notes/body")
-        .with::<String, _>(Match::<Tiny>::new())
-        .build()
-        .unwrap();
+    let keyset = cipher.default_keyset();
     let value = "the quick brown fox jumps over the lazy dog and keeps running";
-    let stored: Encrypted<MatchTerms<Tiny>> = cipher
-        .encrypt(&value.to_owned())
-        .using(&plan)
-        .await
-        .unwrap();
+    let stored: TinyNote = note(value).encrypt_into(&keyset).await.unwrap();
+    let stored = stored.body.terms;
 
-    let real = cipher
-        .query(op::Matches, "lazy dog")
-        .via(Match::<Tiny>::new())
-        .on(&plan)
+    let real = TinyNote::BODY
+        .matches("lazy dog")
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert!(stored.terms.matches(&real) && real.verify(value));
+    assert!(stored.matches(&real) && real.verify(value));
 
     // The value holds no digit, so no query with one is in it; a 32-bit
     // filter this full holds some of their filters anyway.
     let mut false_positive = None;
     for i in 0..1000 {
         let digits = format!("{i:04}");
-        let query = cipher
-            .query(op::Matches, &digits)
-            .via(Match::<Tiny>::new())
-            .on(&plan)
+        let query = TinyNote::BODY
+            .matches(&digits)
+            .encrypt(&keyset)
             .await
             .unwrap();
-        if stored.terms.matches(&query) {
+        if stored.matches(&query) {
             false_positive = Some(query);
             break;
         }
@@ -921,10 +822,10 @@ async fn verify_drops_a_row_the_filter_matched_by_chance() {
 #[tokio::test]
 async fn a_match_query_debugs_without_its_tokens() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let query = cipher
-        .query(op::Matches, "needle")
-        .on(&plan.field("email").unwrap())
+    let keyset = cipher.default_keyset();
+    let query = EncryptedPerson::EMAIL
+        .matches("needle")
+        .encrypt(&keyset)
         .await
         .unwrap();
     let shown = format!("{query:?}");
@@ -937,48 +838,31 @@ async fn a_match_query_debugs_without_its_tokens() {
     }
 }
 
-/// Whole words, as the v1 match indexer's standard tokenizer splits them.
-struct Words;
-impl MatchConfig for Words {
-    fn options() -> MatchOptions {
-        MatchOptions {
-            tokenizer: stack_encrypt::sem::Tokenizer::Standard,
-            ..Default::default()
-        }
-    }
-}
-
 /// A Bloom match asks for the query's tokens, in any order and anywhere;
 /// it is not a substring test, and `verify` must not become one, or it
 /// would drop rows the index rightly returned.
 #[tokio::test]
 async fn verify_is_a_token_test_not_a_substring_test() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let query = cipher
-        .query(op::Matches, "abcd")
-        .on(&plan.field("email").unwrap())
+    let keyset = cipher.default_keyset();
+    let query = EncryptedPerson::EMAIL
+        .matches("abcd")
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert!(query.verify("abc bcd"), "both 3-grams, never adjacent");
     assert!(!query.verify("abc"), "one 3-gram of two");
 
-    let words = Plan::context("notes/body")
-        .with::<String, _>(Match::<Words>::new())
-        .build()
-        .unwrap();
-    let stored: Encrypted<MatchTerms<Words>> = cipher
-        .encrypt(&"Hello, big World!".to_owned())
-        .using(&words)
+    let stored: WordNote = note("Hello, big World!")
+        .encrypt_into(&keyset)
         .await
         .unwrap();
-    let query = cipher
-        .query(op::Matches, "world hello")
-        .via(Match::<Words>::new())
-        .on(&words)
+    let query = WordNote::BODY
+        .matches("world hello")
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert!(stored.terms.matches(&query));
+    assert!(stored.body.terms.matches(&query));
     assert!(query.verify("Hello, big World!"));
     assert!(
         !query.verify("worldly hello"),
@@ -986,36 +870,11 @@ async fn verify_is_a_token_test_not_a_substring_test() {
     );
 }
 
-/// EQL v4's filter size and slices (`k = 6`, `m = 2048`; its match types
-/// also turn on short words, which this prior's arithmetic does not need),
-/// with a notes column's prior.
-struct Notes;
-impl MatchConfig for Notes {
-    fn options() -> MatchOptions {
-        MatchOptions {
-            k: 6,
-            m: 2048,
-            ..Default::default()
-        }
-    }
-    fn expected_tokens() -> Option<u32> {
-        Some(200)
-    }
-}
-
 #[tokio::test]
 async fn target_limit_sizes_the_fetch_from_the_query_and_the_prior() {
     let cipher = stack_cipher().await;
-    let plan = Plan::context("notes/body")
-        .with::<String, _>(Match::<Notes>::new())
-        .build()
-        .unwrap();
-    let query = |text: &'static str| {
-        cipher
-            .query(op::Matches, text)
-            .via(Match::<Notes>::new())
-            .on(&plan)
-    };
+    let keyset = cipher.default_keyset();
+    let query = |text: &'static str| PriorNote::BODY.matches(text).encrypt(&keyset);
     let stats = Stats::declared(1_000_000);
 
     let short = query("ali").await.unwrap();
@@ -1041,11 +900,10 @@ async fn target_limit_sizes_the_fetch_from_the_query_and_the_prior() {
 #[tokio::test]
 async fn target_limit_without_a_prior_needs_a_measured_column() {
     let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let email_plan = plan.field("email").unwrap();
-    let query = cipher
-        .query(op::Matches, "bob")
-        .on(&email_plan)
+    let keyset = cipher.default_keyset();
+    let query = EncryptedPerson::EMAIL
+        .matches("bob")
+        .encrypt(&keyset)
         .await
         .unwrap();
 
@@ -1062,17 +920,15 @@ async fn target_limit_without_a_prior_needs_a_measured_column() {
         "alice@example.org",
         "carol.smith@example.net",
     ] {
-        let mut row = cipher
-            .encrypt(&Person {
-                email: email.into(),
-                name: "x".repeat(4),
-            })
-            .using(&plan)
-            .await
-            .unwrap();
-        let stored: Encrypted<(EqualityTerm, MatchTerms)> = row.take("email").unwrap();
+        let row: EncryptedPerson = Person {
+            email: email.into(),
+            name: "x".repeat(4),
+        }
+        .encrypt_into(&keyset)
+        .await
+        .unwrap();
         *histogram
-            .entry(stored.terms.1.positions().len() as u32)
+            .entry(row.email.terms.1.positions().len() as u32)
             .or_default() += 1;
     }
     // The pass rate the histogram gives this query, over a large table.
@@ -1102,102 +958,96 @@ async fn target_limit_without_a_prior_needs_a_measured_column() {
 #[tokio::test]
 async fn a_short_match_value_stores_as_the_empty_filter_and_no_query_finds_it() {
     let cipher = stack_cipher().await;
-    let plan = Plan::context("users/name")
-        .with::<String, _>((Equality, Match))
-        .build()
+    let keyset = cipher.default_keyset();
+    let query = EncryptedPerson::EMAIL
+        .matches("alice")
+        .encrypt(&keyset)
+        .await
         .unwrap();
-    let query = cipher.query(op::Matches, "alice").on(&plan).await.unwrap();
+    let short_person = |email: &str| Person {
+        email: email.into(),
+        name: "Alice Nguyen".into(),
+    };
 
     for short in ["Al", "", " "] {
-        let stored: Encrypted<(EqualityTerm, MatchTerms)> = cipher
-            .encrypt(&short.to_owned())
-            .using(&plan)
+        let stored: EncryptedPerson = short_person(short)
+            .encrypt_into(&keyset)
             .await
             .unwrap_or_else(|error| panic!("{short:?} stores: {error}"));
+        let filter = &stored.email.terms.1;
         assert!(
-            stored.terms.1.positions().is_empty(),
+            filter.positions().is_empty(),
             "{short:?} is stored as the empty filter"
         );
         assert!(
-            !stored.terms.1.matches(&query),
+            !filter.matches(&query),
             "{short:?}: the empty filter holds none of a query's positions"
         );
         assert!(!query.verify(short));
-        let back: String = cipher.open(stored).using(&plan).await.unwrap();
-        assert_eq!(back, short, "{short:?} opens as written");
+        let back = Person::decrypt_from(stored, &keyset).await.unwrap();
+        assert_eq!(back.email, short, "{short:?} opens as written");
     }
 
     // The equality term still finds it: only the match term is empty.
-    let stored: Encrypted<(EqualityTerm, MatchTerms)> =
-        cipher.encrypt(&"Al".to_owned()).using(&plan).await.unwrap();
-    let eq = cipher.query(op::Eq, "Al").on(&plan).await.unwrap();
-    assert_eq!(eq, stored.terms.0);
+    let stored: EncryptedPerson = short_person("Al").encrypt_into(&keyset).await.unwrap();
+    let eq = EncryptedPerson::EMAIL
+        .eq("Al")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(eq, stored.email.terms.0);
 }
 
 /// A query with no tokens would match every row, so it is the one query
-/// value the library refuses: when the query is awaited, before a term
-/// exists and before any keyset is loaded.
+/// value the library refuses: when the query is encrypted, before a term
+/// exists and before any keyset or key is requested.
 #[tokio::test]
 async fn a_match_query_with_no_tokens_is_refused_before_any_term_or_keyset() {
-    let (cipher, loads) = loads_counting_cipher().await;
-    let plan: Plan<Person, common::CountingSource> = Plan::context("people")
-        .fields()
-        .encrypt_index::<String>("email", (Equality, Match))
-        .encrypt_index::<String>("name", Match::<Exact>::new())
-        .build()
-        .unwrap();
-    let email_plan = plan.field("email").unwrap();
+    let (cipher, requests) = counted_cipher().await;
+    let keyset = cipher.default_keyset();
 
     for text in ["", "  ", "bo"] {
-        let refused = cipher
-            .query(op::Matches, text)
-            .on(&email_plan)
-            .keyset("tenant")
-            .await;
+        let refused = EncryptedPerson::EMAIL.matches(text).encrypt(&keyset).await;
         assert!(
             matches!(refused, Err(Error::Term(TermError::EmptyTermText))),
             "{text:?}: {refused:?}"
         );
     }
-    // Through `via`, under another configuration, and in a batch.
-    let refused = cipher
-        .query(op::Matches, "Al")
-        .via(Match::<Exact>::new())
-        .on(&plan.field("name").unwrap())
+    // Under another configuration, and in a batch.
+    let refused = EncryptedPerson::NAME.matches("Al").encrypt(&keyset).await;
+    assert!(matches!(
+        refused,
+        Err(Error::Term(TermError::EmptyTermText))
+    ));
+    let refused = EncryptedPerson::EMAIL
+        .eq("bob@example.com")
+        .encrypt(&keyset)
+        .zip(EncryptedPerson::EMAIL.matches("bo").encrypt(&keyset))
         .await;
     assert!(matches!(
         refused,
         Err(Error::Term(TermError::EmptyTermText))
     ));
-    let refused = stack_encrypt::all((
-        cipher.query(op::Eq, "bob@example.com").on(&email_plan),
-        cipher.query(op::Matches, "bo").on(&email_plan),
-    ))
-    .await;
-    assert!(matches!(
-        refused,
-        Err(Error::Term(TermError::EmptyTermText))
-    ));
-    assert_eq!(
-        loads.load(std::sync::atomic::Ordering::SeqCst),
-        0,
-        "refused before the named keyset is loaded"
-    );
+    assert_eq!(requests.total(), 0, "refused before any key is requested");
     assert_eq!(
         TermError::EmptyTermText.to_string(),
         "the query's text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
     );
 
     // The same text is a fine equality query, and a fine stored value.
-    assert!(cipher.query(op::Eq, "").on(&email_plan).await.is_ok());
-    let row = cipher
-        .encrypt(&Person {
-            email: "bo".into(),
-            name: "Al".into(),
-        })
-        .using(&plan)
-        .await;
-    assert!(row.is_ok(), "short values store: {row:?}");
+    assert!(EncryptedPerson::EMAIL.eq("").encrypt(&keyset).await.is_ok());
+    let row: Result<EncryptedPerson, Error> = Person {
+        email: "bo".into(),
+        name: "Al".into(),
+    }
+    .encrypt_into(&keyset)
+    .await;
+    assert!(row.is_ok(), "short values store: {:?}", row.err());
+    assert_eq!(
+        requests.total(),
+        1,
+        "storing a row asks for its data keys, so the count above is the refusals'"
+    );
 }
 
 /// A match query under options the index cannot use is refused with
@@ -1206,126 +1056,69 @@ async fn a_match_query_with_no_tokens_is_refused_before_any_term_or_keyset() {
 #[tokio::test]
 async fn a_match_query_under_invalid_options_is_refused_not_tokenised() {
     let cipher = stack_cipher().await;
-    let plan = Plan::context("users/name")
-        .with::<String, _>(Match::<ZeroGram>::new())
-        .build()
-        .unwrap();
-    let refused = cipher
-        .query(op::Matches, "alice")
-        .via(Match::<ZeroGram>::new())
-        .on(&plan)
-        .await;
+    let keyset = cipher.default_keyset();
+    let refused = ZeroGramNote::BODY.matches("alice").encrypt(&keyset).await;
     assert!(
         matches!(refused, Err(Error::Term(TermError::InvalidOptions(_)))),
         "{refused:?}"
     );
-    let stored = cipher.encrypt(&"alice".to_owned()).using(&plan).await;
+    let stored: Result<ZeroGramNote, Error> = note("alice").encrypt_into(&keyset).await;
     assert!(
         matches!(stored, Err(Error::Term(TermError::InvalidOptions(_)))),
-        "{stored:?}"
+        "{:?}",
+        stored.err()
     );
 }
 
 /// An ordering query sends the index's own term for the value: this
 /// crate's ORE is CLLW, whose ciphertext has no left half to send alone,
-/// so what is sent is what is stored, as for an HMAC. The ordering
-/// operators default to ORE; OPE is named with `via`, on a plan that
-/// declares it (a plan declares one order index).
+/// so what is sent is what is stored, as for an HMAC. The field's type
+/// names its order index: an `OreTerm` field sends an ORE term and an
+/// `OpeTerm` field an OPE term.
 #[tokio::test]
 async fn an_ordering_query_is_the_index_term_of_the_value() {
     let cipher = stack_cipher().await;
-    let plan = Plan::context("users/age")
-        .with::<u32, _>((Equality, Ore))
-        .build()
-        .unwrap();
-    let stored: Encrypted<(EqualityTerm, OreTerm<u32>)> =
-        cipher.encrypt(&34u32).using(&plan).await.unwrap();
+    let keyset = cipher.default_keyset();
+    let stored: OreProfile = profile(34).encrypt_into(&keyset).await.unwrap();
+    let stored = &stored.age.terms.1;
 
-    let lt: OreTerm<u32> = cipher.query(op::Lt, &34u32).on(&plan).await.unwrap();
-    let lte = cipher.query(op::Lte, &34u32).on(&plan).await.unwrap();
-    let gt = cipher.query(op::Gt, &34u32).on(&plan).await.unwrap();
-    let gte = cipher.query(op::Gte, &34u32).on(&plan).await.unwrap();
+    let lt: OreTerm<u32> = OreProfile::AGE.lt(34u32).encrypt(&keyset).await.unwrap();
+    let lte = OreProfile::AGE.lte(34u32).encrypt(&keyset).await.unwrap();
+    let gt = OreProfile::AGE.gt(34u32).encrypt(&keyset).await.unwrap();
+    let gte = OreProfile::AGE.gte(34u32).encrypt(&keyset).await.unwrap();
     for (name, term) in [("Lt", &lt), ("Lte", &lte), ("Gt", &gt), ("Gte", &gte)] {
-        assert_eq!(term, &stored.terms.1, "{name} sends the ORE term");
+        assert_eq!(term, stored, "{name} sends the ORE term");
     }
-    let above = cipher.query(op::Lt, &35u32).on(&plan).await.unwrap();
-    let below = cipher.query(op::Lt, &33u32).on(&plan).await.unwrap();
+    let above = OreProfile::AGE.lt(35u32).encrypt(&keyset).await.unwrap();
+    let below = OreProfile::AGE.lt(33u32).encrypt(&keyset).await.unwrap();
     assert!(
-        below < stored.terms.1 && stored.terms.1 < above,
+        &below < stored && stored < &above,
         "ORE terms order as the values"
     );
 
-    let ope_plan = Plan::context("users/age")
-        .with::<u32, _>((Equality, Ope))
-        .build()
-        .unwrap();
-    let stored_ope: Encrypted<(EqualityTerm, OpeTerm<u32>)> =
-        cipher.encrypt(&34u32).using(&ope_plan).await.unwrap();
-    let ope: OpeTerm<u32> = cipher
-        .query(op::Gte, &34u32)
-        .via(Ope)
-        .on(&ope_plan)
-        .await
-        .unwrap();
-    assert_eq!(ope, stored_ope.terms.1, "OPE is named with via");
-    let ope_above = cipher
-        .query(op::Gt, &35u32)
-        .via(Ope)
-        .on(&ope_plan)
-        .await
-        .unwrap();
+    let stored_ope: OpeProfile = profile(34).encrypt_into(&keyset).await.unwrap();
+    let ope: OpeTerm<u32> = OpeProfile::AGE.gte(34u32).encrypt(&keyset).await.unwrap();
+    assert_eq!(
+        ope, stored_ope.age.terms.1,
+        "an OPE field sends the OPE term"
+    );
+    let ope_above = OpeProfile::AGE.gt(35u32).encrypt(&keyset).await.unwrap();
     assert!(
         ope.as_bytes() < ope_above.as_bytes(),
         "OPE terms order as bytes"
     );
 
-    // A typed target answers the orderings through the index it names.
-    let typed = Plan::value::<u32>()
-        .context("users/balance")
-        .encrypt_into::<Encrypted<OpeTerm<u32>>>()
-        .build()
+    // A field of one term answers the orderings through the index it names.
+    let stored: EncryptedMember = Member { age: 5, balance: 0 }
+        .encrypt_into(&keyset)
+        .await
         .unwrap();
-    let stored = cipher.encrypt(&5u32).using(&typed).await.unwrap();
-    let query = cipher.query(op::Lte, &5u32).on(&typed).await.unwrap();
-    assert_eq!(query, stored.terms);
-}
-
-/// A field declares at most one index per operator (#1233): `(Ore, Ope)`
-/// would store a second order term that no query uses, and that tells
-/// anyone who reads the column how its values order. Both spellings of a
-/// plan refuse it when the plan is built, before any key is requested, and
-/// so does a typed target that declares both. `(Equality, Ore)` answer
-/// different operators and are allowed.
-#[test]
-fn a_field_declares_one_index_per_operator() {
-    let overlap = |at: &str, first: &'static str, second: &'static str| PlanError::IndexOverlap {
-        at: at.into(),
-        first,
-        second,
-        operator: stack_encrypt::op::Op::Lt,
-    };
-    let with = Plan::context("users/age")
-        .with::<u32, _>((Ore, Ope))
-        .build();
-    assert_eq!(plan_error(with), overlap("the value", "ore", "ope"));
-    let typed = Plan::value::<u32>()
-        .context("users/age")
-        .encrypt_into::<Encrypted<(OreTerm<u32>, OpeTerm<u32>)>>()
-        .build();
-    assert_eq!(plan_error(typed), overlap("the value", "ore", "ope"));
-    let field: Result<Plan<Person, FakeDataKeySource>, _> = Plan::context("users")
-        .fields()
-        .encrypt_index::<String>("name", (Equality, Ore, OreBlock))
-        .build();
-    assert_eq!(plan_error(field), overlap("name", "ore", "ore_block"));
-    assert_eq!(
-        overlap("name", "ore", "ore_block").to_string(),
-        "field \"name\" declares two indexes that answer lt: ore and ore_block"
-    );
-    assert!(Plan::context("users/age")
-        .with::<u32, _>((Equality, Ore))
-        .build()
-        .is_ok());
+    let query = EncryptedMember::AGE
+        .lte(5u32)
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(query, stored.age.terms);
 }
 
 /// `Between` is one term carrying both bounds, inclusive, derived under
@@ -1334,62 +1127,49 @@ fn a_field_declares_one_index_per_operator() {
 #[tokio::test]
 async fn a_between_query_is_one_term_carrying_both_bounds() {
     let cipher = stack_cipher().await;
-    let plan = Plan::context("users/age")
-        .with::<u32, _>(Ore)
-        .build()
-        .unwrap();
+    let keyset = cipher.default_keyset();
 
-    let range: RangeQuery<OreTerm<u32>> = cipher
-        .query(op::Between, &(18u32, 65))
-        .on(&plan)
+    let range: RangeQuery<OreTerm<u32>> = OreProfile::AGE
+        .between(18u32, 65)
+        .encrypt(&keyset)
         .await
         .unwrap();
-    let lo = cipher.query(op::Gte, &18u32).on(&plan).await.unwrap();
-    let hi = cipher.query(op::Lte, &65u32).on(&plan).await.unwrap();
+    let lo = OreProfile::AGE.gte(18u32).encrypt(&keyset).await.unwrap();
+    let hi = OreProfile::AGE.lte(65u32).encrypt(&keyset).await.unwrap();
     assert_eq!(range.lo(), &lo);
     assert_eq!(range.hi(), &hi);
     assert_eq!(range.clone().into_bounds(), (lo, hi));
 
     // A stored value inside the range orders between the bounds.
-    let inside: Encrypted<OreTerm<u32>> = cipher.encrypt(&30u32).using(&plan).await.unwrap();
-    let outside: Encrypted<OreTerm<u32>> = cipher.encrypt(&70u32).using(&plan).await.unwrap();
-    assert!(range.lo() <= &inside.terms && &inside.terms <= range.hi());
-    assert!(&outside.terms > range.hi());
+    let inside: OreProfile = profile(30).encrypt_into(&keyset).await.unwrap();
+    let outside: OreProfile = profile(70).encrypt_into(&keyset).await.unwrap();
+    let (inside, outside) = (&inside.age.terms.1, &outside.age.terms.1);
+    assert!(range.lo() <= inside && inside <= range.hi());
+    assert!(outside > range.hi());
 
     // Inclusive at both ends: one value is `(v, v)`.
-    let one = cipher
-        .query(op::Between, &(40u32, 40))
-        .on(&plan)
+    let one = OreProfile::AGE
+        .between(40u32, 40)
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert_eq!(one.lo(), one.hi());
     assert_ne!(one, range);
 
-    // OPE is a plan's own index, named with via, and a typed target answers
-    // through its index. A plan declares one order index: `(Ore, Ope)` is
-    // refused when it is built (`a_field_declares_one_index_per_operator`).
-    let ope_plan = Plan::context("users/age")
-        .with::<u32, _>(Ope)
-        .build()
-        .unwrap();
-    let ope: RangeQuery<OpeTerm<u32>> = cipher
-        .query(op::Between, &(18u32, 65))
-        .via(Ope)
-        .on(&ope_plan)
+    // An OPE field's range carries OPE terms, and a field of one term
+    // answers a range through the index it names.
+    let ope: RangeQuery<OpeTerm<u32>> = OpeProfile::AGE
+        .between(18u32, 65)
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert!(ope.lo().as_bytes() < ope.hi().as_bytes());
-    let typed = Plan::value::<u32>()
-        .context("users/age")
-        .encrypt_into::<Encrypted<OreTerm<u32>>>()
-        .build()
-        .unwrap();
-    let typed_range = cipher
-        .query(op::Between, &(1u32, 2))
-        .on(&typed)
+    let alone = EncryptedMember::BALANCE
+        .between(1i64, 2)
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert!(typed_range.lo() < typed_range.hi());
+    assert!(alone.lo() < alone.hi());
 }
 
 /// A range whose low bound is above its high bound is not refused, as
@@ -1398,137 +1178,70 @@ async fn a_between_query_is_one_term_carrying_both_bounds() {
 #[tokio::test]
 async fn an_inverted_range_is_a_query_like_any_other() {
     let cipher = stack_cipher().await;
-    let plan = Plan::context("users/age")
-        .with::<u32, _>(Ore)
-        .build()
-        .unwrap();
-    let inverted = cipher
-        .query(op::Between, &(65u32, 18))
-        .on(&plan)
+    let keyset = cipher.default_keyset();
+    let inverted = OreProfile::AGE
+        .between(65u32, 18)
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert!(inverted.lo() > inverted.hi(), "the bounds as given");
-    let one = cipher
-        .query(op::Between, &(18u32, 18))
-        .on(&plan)
+    let one = OreProfile::AGE
+        .between(18u32, 18)
+        .encrypt(&keyset)
         .await
         .unwrap();
     assert_eq!(one.lo(), one.hi());
 }
 
-/// A field of a fields plan answers the orderings over its declared index,
-/// under the field's own label, and refuses an index it does not declare.
-/// An index-only field needs no sealing, so it can hold the integer types
-/// the cipher does not seal on its own.
+/// A field answers the orderings through the index its type names, under
+/// the field's own label. A field that is a term alone needs no sealing,
+/// so it can hold the integer types the cipher does not seal on its own.
 #[tokio::test]
 async fn a_field_answers_the_orderings_through_its_declared_index() {
-    #[derive(Clone)]
-    struct Member {
-        age: u32,
-        balance: i64,
-    }
-    impl Fields for Member {
-        fn field_names(&self) -> Vec<&str> {
-            vec!["age", "balance"]
-        }
-        fn schema() -> Option<Vec<FieldSchema>> {
-            Some(vec![
-                FieldSchema::of::<u32>("age"),
-                FieldSchema::of::<i64>("balance"),
-            ])
-        }
-    }
-    impl Field<u32> for Member {
-        fn field(&self, name: &str) -> Option<&u32> {
-            (name == "age").then_some(&self.age)
-        }
-    }
-    impl Field<i64> for Member {
-        fn field(&self, name: &str) -> Option<&i64> {
-            (name == "balance").then_some(&self.balance)
-        }
-    }
     let cipher = stack_cipher().await;
-    let plan: Plan<Member, FakeDataKeySource> = Plan::context("members")
-        .fields()
-        .encrypt_index::<u32>("age", Ope)
-        .index::<i64>("balance", Ore)
-        .build()
-        .unwrap();
-    let mut row = cipher
-        .encrypt(&Member {
-            age: 34,
-            balance: -250,
-        })
-        .using(&plan)
-        .await
-        .unwrap();
-    let age: Encrypted<OpeTerm<u32>> = row.take("age").unwrap();
-    let balance: OreTerm<i64> = row.take("balance").unwrap();
-    let age_plan = plan.field("age").unwrap();
-    let balance_plan = plan.field("balance").unwrap();
+    let keyset = cipher.default_keyset();
+    let row: EncryptedMember = Member {
+        age: 34,
+        balance: -250,
+    }
+    .encrypt_into(&keyset)
+    .await
+    .unwrap();
+    let age = &row.age.terms;
+    let balance = &row.balance;
 
-    let query = cipher
-        .query(op::Lte, &34u32)
-        .via(Ope)
-        .on(&age_plan)
+    let query = EncryptedMember::AGE
+        .lte(34u32)
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert_eq!(query, age.terms);
-    let range = cipher
-        .query(op::Between, &(30u32, 40))
-        .via(Ope)
-        .on(&age_plan)
+    assert_eq!(&query, age);
+    let range = EncryptedMember::AGE
+        .between(30u32, 40)
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert!(
-        range.lo().as_bytes() <= age.terms.as_bytes()
-            && age.terms.as_bytes() <= range.hi().as_bytes()
-    );
+    assert!(range.lo().as_bytes() <= age.as_bytes() && age.as_bytes() <= range.hi().as_bytes());
 
     // A signed value, ordered as a signed value.
-    let owed = cipher
-        .query(op::Lt, &-250i64)
-        .on(&balance_plan)
+    let owed = EncryptedMember::BALANCE
+        .lt(-250i64)
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert_eq!(owed, balance);
-    let zero = cipher
-        .query(op::Gte, &0i64)
-        .on(&balance_plan)
+    assert_eq!(&owed, balance);
+    let zero = EncryptedMember::BALANCE
+        .gte(0i64)
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert!(balance < zero, "a negative balance is below zero");
-    let overdrawn = cipher
-        .query(op::Between, &(-1_000i64, -1))
-        .on(&balance_plan)
+    assert!(balance < &zero, "a negative balance is below zero");
+    let overdrawn = EncryptedMember::BALANCE
+        .between(-1_000i64, -1)
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert!(overdrawn.lo() <= &balance && &balance <= overdrawn.hi());
-
-    // The default index for an ordering is ORE, which the age field lacks.
-    assert_eq!(
-        plan_error(cipher.query(op::Lt, &34u32).on(&age_plan).await),
-        PlanError::IndexNotDeclared {
-            field: "age".into(),
-            index: "ore"
-        }
-    );
-    assert_eq!(
-        plan_error(cipher.query(op::Between, &(1u32, 2)).on(&age_plan).await),
-        PlanError::IndexNotDeclared {
-            field: "age".into(),
-            index: "ore"
-        }
-    );
-    // And a value of another type than the field declares.
-    assert_eq!(
-        plan_error(cipher.query(op::Lt, &34u64).via(Ope).on(&age_plan).await),
-        PlanError::FieldType {
-            field: "age".into(),
-            expected: "u32"
-        }
-    );
+    assert!(overdrawn.lo() <= balance && balance <= overdrawn.hi());
 }
 
 /// Text orders by its order key, ADR-0002's fold: the orderings are
@@ -1537,16 +1250,9 @@ async fn a_field_answers_the_orderings_through_its_declared_index() {
 #[tokio::test]
 async fn text_orders_by_its_folded_key() {
     let cipher = stack_cipher().await;
-    let plan = Plan::context("users/surname")
-        .with::<String, _>(Ore)
-        .build()
-        .unwrap();
-    let ope_plan = Plan::context("users/surname")
-        .with::<String, _>(Ope)
-        .build()
-        .unwrap();
-    let lt = |text: &str| cipher.query(op::Lt, text).on(&plan);
-    let ope = |text: &str| cipher.query(op::Lt, text).via(Ope).on(&ope_plan);
+    let keyset = cipher.default_keyset();
+    let lt = |text: &str| OreProfile::SURNAME.lt(text).encrypt(&keyset);
+    let ope = |text: &str| OpeProfile::SURNAME.lt(text).encrypt(&keyset);
     let cafe: OreTerm<String> = lt("cafe").await.unwrap();
     for text in ["Caf\u{e9}", "CAF\u{c9}", "cafe\u{301}"] {
         assert_eq!(lt(text).await.unwrap(), cafe, "{text:?}");
@@ -1565,11 +1271,7 @@ async fn text_orders_by_its_folded_key() {
     let zoe: OreTerm<String> = lt("Zoe").await.unwrap();
     assert!(alice < zoe);
 
-    let between = |lo: &str, hi: &str| {
-        cipher
-            .query(op::Between, &(lo.to_owned(), hi.to_owned()))
-            .on(&plan)
-    };
+    let between = |lo: &str, hi: &str| OreProfile::SURNAME.between(lo, hi).encrypt(&keyset);
     let tie = between("A", "a").await.unwrap();
     assert_eq!(tie.lo(), tie.hi(), "one folded value");
     assert!(between("a", "B").await.is_ok());
@@ -1588,16 +1290,9 @@ async fn text_orders_by_its_folded_key() {
 #[tokio::test]
 async fn floats_order_by_their_order_key() {
     let cipher = stack_cipher().await;
-    let plan = Plan::context("users/score")
-        .with::<f64, _>(Ore)
-        .build()
-        .unwrap();
-    let ope_plan = Plan::context("users/score")
-        .with::<f64, _>(Ope)
-        .build()
-        .unwrap();
-    let lt = |value: f64| cipher.query(op::Lt, &value).on(&plan);
-    let ope = |value: f64| cipher.query(op::Lt, &value).via(Ope).on(&ope_plan);
+    let keyset = cipher.default_keyset();
+    let lt = |value: f64| OreProfile::SCORE.lt(value).encrypt(&keyset);
+    let ope = |value: f64| OpeProfile::SCORE.lt(value).encrypt(&keyset);
     let zero: OreTerm<f64> = lt(0.0).await.unwrap();
     assert_eq!(lt(-0.0).await.unwrap(), zero, "-0.0 is 0.0");
     let nan: OreTerm<f64> = lt(f64::NAN).await.unwrap();
@@ -1621,7 +1316,7 @@ async fn floats_order_by_their_order_key() {
     let low: OreTerm<f64> = lt(-1.5).await.unwrap();
     assert!(low < zero && zero < nan);
 
-    let between = |lo: f64, hi: f64| cipher.query(op::Between, &(lo, hi)).on(&plan);
+    let between = |lo: f64, hi: f64| OreProfile::SCORE.between(lo, hi).encrypt(&keyset);
     let from_nan = between(f64::NAN, f64::INFINITY).await.unwrap();
     assert!(from_nan.lo() > from_nan.hi(), "NaN sorts last");
     let one = between(0.0, -0.0).await.unwrap();

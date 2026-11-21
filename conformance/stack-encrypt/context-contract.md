@@ -10,21 +10,20 @@ are added; their absence is not conformance evidence.
 
 A field's base is a plain label: the record's declared label followed by the
 field's identity. A context-field record obtains the record label from each
-row's stored field. A Rust plan built without a context can instead take that
-label from the call. Go generated types declare either a literal context or a
-context field; they do not expose Rust's contextless saved-plan builder.
+row's stored field. Go generated types declare either a literal context or a
+context field.
 
 Caller input has two distinct purposes:
 
-- A **base label** supplies a missing base for a query or a contextless Rust plan.
+- A **base label** supplies a missing base for a query or a contextless plan.
   For a record storing its own context, an expected label checks that stored
   value. It does not replace or extend it. A caller label on a plan with a
   literal base is refused.
 - A **scope** appends to the resolved field context for encryption,
-  decryption and search. Each call appends in order. Rust
-  `.extend(7u64).extend(nonempty!("eu"))` and Go
+  decryption and search. Each part appends in order. Rust
+  `DeclaredContext::default().with(7u64).with(nonempty!("eu"))` and Go
   `.Scope(uint64(7)).Scope("eu")` produce `((label)/7u64)/eu`.
-  Rust `.extend(())` and Go `.Scope()` append nothing. A Rust
+  Rust `DeclaredContext::from(())` and Go `.Scope()` append nothing. A Rust
   `DeclaredContext` containing several parts appends all of those parts.
   Go `Extend` is the deprecated name of `Scope`. Earlier text called a
   scope an extension.
@@ -45,14 +44,16 @@ Caller input has two distinct purposes:
   (`v1/record-bindings-v1.cases.json`) specifies this, and both languages
   are required to run it.
 
-Grouping is significant. Rust `.extend(NonEmpty::from(7u64).with("eu"))` adds
-one composite part, producing `(label)/(7u64/eu)`. This has different AAD and
+Grouping is significant. Rust
+`DeclaredContext::from(NonEmpty::from(7u64).with("eu"))` adds one composite
+part, producing `(label)/(7u64/eu)`. This has different AAD and
 terms from separate scopes. Nested `ContextPiece` values are supported by
 Rust's lower-level context APIs; the dynamic record grammar and Go `Scope`
 accept scalar parts only. Their refusal of a grouped part is part of the
 supported API boundary, not permission to flatten it.
 
-Previously, repeated Rust chain extensions replaced earlier parts. Records
+Previously, repeated `.extend` calls on the Rust chain, which is now
+removed, replaced earlier parts. Records
 written by those chains still require the
 **last extension alone** when opening them; callers must explicitly retain that
 old context when reading and querying old records. A query using repeated
@@ -80,9 +81,9 @@ the public all-zero deterministic-provider test seed.
 `v1/record-contexts-v1.expected.rust-native.json` is keyed by exactly those case IDs. It pins the
 resolved context frame, the field context frame sent in a plan, descriptor,
 AAD, PRF bytes, one Rust ciphertext and equality term. Rust checks actual descriptors sent to the key provider, fresh typed and
-dynamic writes, queries, opens, and frozen ciphertexts. The typed chain calls
-`extend` repeatedly, including a final no-op, so replacement behavior cannot
-regress unnoticed.
+dynamic writes, queries, opens, and frozen ciphertexts. The typed side runs
+the engine's combinators under a declared context with one part for each
+part of the case, so a later part cannot replace an earlier one unnoticed.
 
 Go observes the actual plan buffer at the `se_encrypt_record` WASM boundary
 through a test-only function wrapper. It compares the field context in those
@@ -109,14 +110,16 @@ Cases cover unrestricted reads, matching expectations, late mismatches, empty
 batches, changed stored labels with and without matching expectations, and
 missing/empty stored contexts late in a batch. A two-row ciphertext-tampering
 case reaches AEAD after retrieval in both languages and returns no partial
-plaintext. Typed Rust opening and generated Go opening exercise the boundary
-cases too, except that an absent member cannot be represented by a generated Go
-struct and is tested at the raw-tree boundary.
+plaintext. Generated Go opening exercises the boundary cases too, except that
+an absent member cannot be represented by a generated Go struct and is tested
+at the raw-tree boundary. Typed Rust opening, through the combinators, holds
+no expected context, so it runs the cases that need none: the unrestricted
+read and the three tampering cases.
 
 The separate `queries` array specifies a caller `context`, an `outcome` and
 whether the query `matches` the stored term for `tenants/acme`. Missing and
 invalid contexts refuse; another tenant produces a valid nonmatching query.
-Rust typed query chains and generated Go query methods execute these cases.
+Rust data-plan queries and generated Go query methods execute these cases.
 Key-independent refusals must make no retrieval. An empty valid batch also makes none. Changing the stored
 label does not confer permission to open the ciphertext even if the caller's
 expectation matches the replacement label.
@@ -132,8 +135,10 @@ The earlier read profile continues to cover context storage shape and exact
 structured diagnostics. The enrolled `record-context-fields-v1` fixture
 retains generated Go expectation, query, tampering and single-field update
 checks and Rust typed/dynamic cross-opening. The required native `plan_grammar`
-binary additionally covers missing caller bases, conflicting sources, invalid
-labels, caller-derived queries and empty-batch validation before keyset loading.
+binary additionally covers, through the data plan, a missing context (a
+query on a context-field plan that names none, and an empty caller scope),
+conflicting sources, invalid labels, caller-derived queries and an empty
+scope on an empty batch. Each refusal is made before any key is requested.
 
 ## Bindings
 

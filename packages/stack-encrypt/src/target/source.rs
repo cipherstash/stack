@@ -3,8 +3,8 @@
 //! module is private and its items are re-exported from `target`.
 
 /// A description's plaintext is handed to it by reference: the default mode,
-/// and the one every [`EncryptFrom`](super::EncryptFrom) declaration runs in.
-/// An operation that consumes the plaintext clones it.
+/// and the one a record runs each field in when it takes the field out of a
+/// borrowed struct. An operation that consumes the plaintext clones it.
 ///
 /// This is a mode, not a value: the enum is uninhabited, so no `Borrowed`
 /// ever exists and it never holds a plaintext. Its `Debug` can print nothing.
@@ -34,9 +34,9 @@ mod sealed {
 /// description can be handed it two ways, and because the mode is a type
 /// parameter the difference is settled at compile time:
 ///
-/// - [`Borrowed`], the default: the description is handed `&S`. This is what
-///   [`encrypt_as`](crate::KeysetCipher::encrypt_as) does for every
-///   [`EncryptFrom`](super::EncryptFrom) declaration, and what lets a record
+/// - [`Borrowed`], the default: the description is handed `&S`. This is
+///   what [`EncryptTarget::encryption`](super::EncryptTarget::encryption)
+///   describes, and what lets a record
 ///   pick its fields out of a borrowed struct. An operation that consumes the
 ///   plaintext clones it first ([`ConsumeSource`]), so here, and only here,
 ///   `S` must be `Clone`.

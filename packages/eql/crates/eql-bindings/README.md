@@ -114,10 +114,8 @@ The optional `stack-encrypt` feature implements Stack Encrypt's
 `DecryptSource<String>` for `v4::text::TextEq`. These owned traits take the
 plaintext by value and wipe it.
 
-The same derives also implement the older `EncryptFrom` and `DecryptInto`.
-Plans, the dynamic layer, and `encrypt_as` still use them, until Stack Encrypt
-removes them. Stack Encrypt writes EQL v4 only, so no `v3` type implements
-these traits. `eql-codegen` emits the derives.
+Stack Encrypt writes EQL v4 only, so no `v3` type implements these traits.
+`eql-codegen` emits the derives.
 
 Each Rust example in this file is a complete program, and the encryption
 test crate runs it as a doctest:
@@ -355,15 +353,30 @@ escaped in the descriptor rather than read as two names.
 
 ### Querying an EQL v4 field from Rust
 
-A query names an operator, and a plan for the column's EQL type finds the
-index that answers it (Stack Encrypt's ADR-0009). The term that comes back
-is the type's query twin, the value the `eql_v4.query_*` domain takes:
+A typed query starts from a field of a derived record. The record derive
+gives each field a field reference, such as `EncryptedUser::EMAIL`, with a method for
+each operator the field's EQL type answers. The term that comes back is the
+type's query twin, the value the `eql_v4.query_*` domain takes:
 
 ```rust
 use eql_bindings::v4::text::{TextEq, TextMatch};
-use stack_encrypt::op::{self, Probabilistic, Stats};
-use stack_encrypt::{Plan, StackCipher};
+use stack_encrypt::op::{Probabilistic, Stats};
+use stack_encrypt::{EncryptInto, EncryptTarget, StackCipher};
 use stack_kms::FakeDataKeySource;
+
+#[derive(zeroize::Zeroize)]
+struct User {
+    email: String,
+    name: String,
+}
+
+// The record's scope names the table, and each field's name is its column.
+#[derive(EncryptTarget)]
+#[stash(struct = User, scope = "users")]
+struct EncryptedUser {
+    email: TextEq,   // i = {"t": "users", "c": "email"}
+    name: TextMatch, // i = {"t": "users", "c": "name"}
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -372,28 +385,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .kms(FakeDataKeySource::new())
         .init()
         .await?;
+    let keyset = cipher.default_keyset();
 
-    // A plan for the column's type, under the label that names the column:
-    // "users/email" is Identifier::for_column("users", "email").
-    let email_plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<TextEq>()
-        .build()?;
+    let user = User {
+        email: "alice@example.com".into(),
+        name: "Alice Nguyen".into(),
+    };
+    let stored: EncryptedUser = user.encrypt_into(&keyset).await?;
+
     // A `TextEqQuery`.
-    let query = cipher
-        .query(op::Eq, "alice@example.com")
-        .on(&email_plan)
+    let query = EncryptedUser::EMAIL
+        .eq("alice@example.com")
+        .encrypt(&keyset)
         .await?;
     // WHERE email = $1::eql_v4.query_text_eq, binding sqlx::types::Json(&query)
     assert_eq!(query.i.t, "users");
     assert_eq!(query.i.c, "email");
+    assert_eq!(query.hm, stored.email.hm);
 
-    let name_plan = Plan::value::<String>()
-        .context("users/name")
-        .encrypt_into::<TextMatch>()
-        .build()?;
     // A `MatchTwin<TextMatchQuery>`.
-    let query = cipher.query(op::Matches, "ali").on(&name_plan).await?;
+    let query = EncryptedUser::NAME.matches("ali").encrypt(&keyset).await?;
     // How many rows to fetch to expect 10 real matches in a million.
     let fetch = query
         .target_limit(10, &Stats::declared(1_000_000))
@@ -407,37 +418,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-| v4 type | Operator | Query term |
-| --- | --- | --- |
-| `TextEq` | `op::Eq` | `TextEqQuery` |
-| `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`, `DoubleEq` | `op::Eq` | `SmallintEqQuery`, `IntegerEqQuery`, `BigintEqQuery`, `RealEqQuery`, `DoubleEqQuery` |
-| `DateEq`, `TimestampEq`, `NumericEq` | `op::Eq` | `DateEqQuery`, `TimestampEqQuery`, `NumericEqQuery` (from `v4::plaintext::Date`, `Timestamp`, `Decimal`) |
-| `TextMatch` | `op::Matches` | `MatchTwin<TextMatchQuery>` |
+| v4 type | Field reference method | Operator | Query term |
+| --- | --- | --- | --- |
+| `TextEq` | `eq` | `op::Eq` | `TextEqQuery` |
+| `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`, `DoubleEq` | `eq` | `op::Eq` | `SmallintEqQuery`, `IntegerEqQuery`, `BigintEqQuery`, `RealEqQuery`, `DoubleEqQuery` |
+| `DateEq`, `TimestampEq`, `NumericEq` | `eq` | `op::Eq` | `DateEqQuery`, `TimestampEqQuery`, `NumericEqQuery` (from `v4::plaintext::Date`, `Timestamp`, `Decimal`) |
+| `TextMatch` | `matches` | `op::Matches` | `MatchTwin<TextMatchQuery>` |
 
 `MatchTwin` serializes as the twin and adds `verify` and `target_limit`
 under `EqlMatch`: a filter can match a row that does not hold the query's
 text, so keep only the decrypted rows that verify. An exact query has no
-`verify`. An operator a type does not answer does not compile: `op::Lt` on
-`TextEq`, or `op::Matches` on `IntegerEq`. Nor does naming another index
-with `.via(..)`, such as the bare `Equality`, whose term the type's SQL does
-not take. The ordered types (`IntegerOrd`, `TextOrd`, …) answer nothing in
-the typed chain yet: their twins need an order term, or several terms at
-once, and the chain sends one index's term. Query them through the data
-path (`stack_encrypt::dynamic::query_term`) for now.
+`verify`. An operator a type does not answer does not compile: `.lt(..)` on
+a `TextEq` field, or `.matches(..)` on an `IntegerEq` field. A field reference names
+its field's type and no index, so a query cannot send another index's term,
+such as the bare `Equality` term, which the type's SQL does not take. The
+ordered types (`IntegerOrd`, `TextOrd`, …) and the text search types answer
+nothing from a field reference yet: their twins need an order term, or several terms
+at once, and a field query sends one index's term. Query them through
+the data path (`stack_encrypt::dynamic::query_term`) for now.
 
-The label must name the column the value was written under, as two
-segments, table then column. A label of any other length is refused when
-the query is awaited, before any keyset is resolved, with an
-`encryption::query::QueryLabelError` in `Error::Other`. A label's segments are plain, so a table or column name
-that is not a plain label segment cannot be named on a plan, and such a
-column, which `Identifier::for_column` accepts, cannot be queried this way:
-for instance a name that starts with a digit, `-` or `b64:`, or one holding
-`/`, `(`, `)`, or a control or invisible format character.
-The plan is for queries: write with
-`value.encrypt_into_with_context(&keyset, column)` and open with
-`P::decrypt_from_with_context`, since
-an EQL type is sealed under its column rather than the plan's label. The
-query is the same bytes the data path derives for a field that names the
+The query is derived under the field reference's label: the record's scope, then the
+field's name (or its `identity`). That is the column the field stores in
+`i`, so the query finds the values the record wrote, and the values the
+type wrote on its own with
+`value.encrypt_into_with_context(&keyset, Identifier::for_column("users", "email")?)`.
+A field reference's label always has those two segments, so it always names a
+column. The derive accepts only plain label segments. So a column whose
+table or column name is not one, which `Identifier::for_column` accepts,
+cannot be a record field, and cannot be queried this way: for instance a
+name that starts with a digit, `-` or `b64:`, or one holding `/`, `(`, `)`,
+or a control or invisible format character.
+A record that lists a scope, such as a tenant, takes it on the query with
+`.scope(..)`: see [EQL types as record fields](#eql-types-as-record-fields).
+The query is the same bytes the data path derives for a field that names the
 type (`stack_encrypt::dynamic::query_term`), which is what the Go SDK sends,
 and `tests/encryption/tests/typed_queries.rs` checks that for every type and
 operator. The `op::Answers` impls are generated into `src/v4/answers.rs`
@@ -517,7 +530,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(stored.email.i.t, "members");
     assert_eq!(stored.email.i.c, "email");
 
-    // A query from the field's marker carries the stored equality term.
+    // A query from the field reference carries the stored equality term.
     let query = EncryptedMember::EMAIL
         .eq("alice@example.com")
         .encrypt(&keyset)
@@ -684,15 +697,14 @@ field's label, then those parts, and the EQL value stores the column alone,
 as it does for a [record field](#eql-types-as-record-fields). A type is producible exactly
 when its generated struct carries the `stack-encrypt` derives
 (`ENCRYPTION_DOMAINS` in `eql-codegen`), because the dispatch runs the derived
-plan; `targets::targets()` lists them, each with `producible` and, when it is
+declaration; `targets::targets()` lists them, each with `producible` and, when it is
 `false`, the reason.
 
 ### Features
 
 - `stack-encrypt`: the EQL v4 types (`eql_bindings::v4`) with Stack
   Encrypt's `EncryptTarget` and `DecryptSource`, for a Rust program that
-  encrypts through `encrypt_into`. The older `EncryptFrom` and `DecryptInto`
-  are implemented too. It builds Stack Encrypt with no default
+  encrypts through `encrypt_into`. It builds Stack Encrypt with no default
   features and without its `dynamic` layer.
 - `targets`: `stack-encrypt`, plus the by-name dispatch a language binding
   needs (`encryption::targets`, `v4::targets`), where the EQL type is named at

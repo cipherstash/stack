@@ -1,16 +1,22 @@
 //! The ordering operators are answered over the integer types, the floats and text.
 //! Bytes have no order key the ordering operators compare, so an ordering on
-//! a bytes plan does not compile, even where the plan declares an ORE index.
-use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::op;
-use stack_encrypt::{Ore, Plan, StackCipher};
+//! a bytes field does not compile, even where the field declares an ORE index.
+use stack_encrypt::sem::OreTerm;
+use stack_encrypt::target::EncryptTarget;
+use stack_encrypt::Encrypted;
+use zeroize::Zeroize;
 
-async fn query(cipher: &StackCipher<FakeDataKeySource>) {
-    let blob_plan = Plan::context("users/blob")
-        .with::<Vec<u8>, _>(Ore)
-        .build()
-        .unwrap();
-    let _ = cipher.query(op::Lt, &vec![1u8, 2]).on(&blob_plan);
+#[derive(Clone, Zeroize)]
+struct File {
+    blob: Vec<u8>,
 }
 
-fn main() {}
+#[derive(EncryptTarget)]
+#[stash(struct = File, scope = "files")]
+struct EncryptedFile {
+    blob: Encrypted<OreTerm<Vec<u8>>>,
+}
+
+fn main() {
+    let _ = EncryptedFile::BLOB.lt(vec![1u8, 2]);
+}

@@ -7,8 +7,7 @@
 //!
 //! The resolver here stores the engine's `JsonDocument` as JSON, so the
 //! whole path runs inside this crate. `packages/eql/tests/encryption/tests/
-//! json_tree_data_plan.rs` runs the same path through eql-bindings' table
-//! and holds every operand to the typed chain's.
+//! json_tree_data_plan.rs` runs the same path through eql-bindings' table.
 #![cfg(feature = "dynamic")]
 
 mod common;
@@ -513,8 +512,8 @@ fn malformed_inputs_are_refused_with_their_reason() {
         (
             Op::LtAt,
             json!({"path": "$.visits[0].at", "json": "1"}),
-            // A position on an ordering is the index's own refusal, the
-            // one the typed ordering gives.
+            // A position on an ordering is the index's own refusal, named
+            // by its term error.
             "JsonOrderingAtPosition",
         ),
         (

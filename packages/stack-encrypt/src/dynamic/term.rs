@@ -870,9 +870,10 @@ fn lifted(error: Error) -> crate::Error {
 /// `operation` is [`term`]'s derivation wrapped as a description, which
 /// walks the frame in place to its one scalar, so a field lowered from data
 /// runs through the same `indexed()` and `zip` every other field does, and
-/// its term is a [`TermBytes`]. A Rust chain over `ValueFrame` fields names
-/// its indexes this way too (`(IndexSpec::Equality, IndexSpec::Ore)`), and is
-/// then the same declaration as a data plan's.
+/// its term is a [`TermBytes`]. Rust code that runs the combinators over a
+/// `ValueFrame` names its indexes this way too
+/// (`indexed((IndexSpec::Equality, IndexSpec::Ore))`), and is then the same
+/// declaration as a data plan's.
 ///
 /// A value the index does not take (a container, a boolean under ORE)
 /// fails the description when it runs, with the dynamic [`Error::Term`]

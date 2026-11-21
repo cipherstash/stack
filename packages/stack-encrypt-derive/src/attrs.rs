@@ -194,14 +194,14 @@ impl ContainerAttrs {
                     let plaintext: Type = meta.value()?.parse()?;
                     // The type is spliced into the impl header as
                     // written, where a reference has no lifetime to
-                    // name. The generic impl (no `plaintext` at all)
-                    // already accepts `&str` and friends.
+                    // name. A plaintext is also passed by value and wiped,
+                    // which a reference cannot be.
                     if let Type::Reference(_) = plaintext {
                         return Err(syn::Error::new_spanned(
                             &plaintext,
                             "`plaintext` must be an owned type: a reference plaintext has no \
-                             lifetime the generated impl can name. Omit `plaintext` for an impl \
-                             generic over the source, which accepts references too.",
+                             lifetime the generated impl can name, and a plaintext is passed by \
+                             value and wiped. Name the owned type, such as `String` for `&str`.",
                         ));
                     }
                     if plaintexts.contains(&plaintext) {
@@ -321,8 +321,7 @@ pub(crate) struct FieldAttrs {
     pub(crate) context_field: bool,
     /// `#[stash(identity = "...")]`: with `struct = ..`, the label segment
     /// this field is keyed under, in place of the plaintext field's name:
-    /// the field is derived under `("<scope>", "<identity>")`. The plan
-    /// builder's `.identity(segment)`.
+    /// the field is derived under `("<scope>", "<identity>")`.
     pub(crate) identity: Option<LitStr>,
     /// `#[stash(from = field)]` / `#[stash(from = 0)]`: with `struct = ..`,
     /// derive this field from a plaintext field whose name differs from its
@@ -338,9 +337,9 @@ pub(crate) struct FieldAttrs {
     /// clear, not encrypted, and moved back when the record is decrypted.
     pub(crate) passthrough: bool,
     /// `#[stash(query = String)]`: with `struct = ..`, the type a query of
-    /// this field takes, so its marker's methods take that type alone. The
+    /// this field takes, so its field reference's methods take that type alone. The
     /// derive checks it against the plaintext field, which is that type or
-    /// an `Option` of it. On a field whose marker has no operator method
+    /// an `Option` of it. On a field whose field reference has no operator method
     /// (a record field, a ciphertext alone), only the check applies.
     pub(crate) query: Option<Type>,
 }
@@ -359,9 +358,8 @@ impl FieldAttrs {
                     return Ok(());
                 }
                 // Removed rather than unknown, so the message can say what
-                // to write instead. A plan has exactly one context source,
-                // and every field sits under it: a field sealed under a
-                // literal of its own has no plan form.
+                // to write instead. A record has exactly one context source,
+                // and every field sits under it.
                 if meta.path.is_ident("context") {
                     return Err(meta.error(
                         "a field-level `context = \"..\"` is no longer accepted (0.2.0 accepted \
@@ -370,9 +368,9 @@ impl FieldAttrs {
                          record's context, so key it under another segment with \
                          `identity = \"..\"`. Either replacement is a different context from the \
                          old literal: data written with the literal does not decrypt under it and \
-                         its terms do not match, so re-encrypt that data. Writing one value under \
-                         two contexts (a dual write) is a fields plan that picks the same source \
-                         twice, not a derive",
+                         its terms do not match, so re-encrypt that data. To write one value \
+                         under two contexts (a dual write), encrypt it twice, once under each \
+                         context",
                     ));
                 }
                 // Each of these is singular by meaning, so a repeat is a

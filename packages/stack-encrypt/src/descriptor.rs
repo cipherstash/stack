@@ -622,8 +622,8 @@ impl std::str::FromStr for Label {
 /// position, counting from zero.
 ///
 /// A label is not always schema: a plan's context and its fields' names
-/// are, but [`context_field`](crate::plan::FieldsBuilder::context_field)
-/// builds the context from a record's own field, which is customer data.
+/// are, but a plan whose context is a field of the record (`context_field`)
+/// builds the context from that field's value, which is customer data.
 /// So no message or payload quotes a segment or the character it refused;
 /// they name the segment by position. A caller in the same process can
 /// still read [`Reserved`](Self::Reserved)'s `found`.

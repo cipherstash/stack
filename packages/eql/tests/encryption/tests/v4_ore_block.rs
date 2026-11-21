@@ -34,7 +34,7 @@ use stack_encrypt::sem::{Orderable, OreBlockTerm};
 use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{Encrypt, Label};
 
-type Keyset<'a> = stack_encrypt::KeysetCipher<'a, common::Observed>;
+type Keyset<'a> = stack_encrypt::KeysetCipher<'a, common::RecordingKeySource>;
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
     ValueFrame::of(value).unwrap()

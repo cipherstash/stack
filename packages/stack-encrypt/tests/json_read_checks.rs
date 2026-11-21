@@ -23,11 +23,11 @@ use std::sync::atomic::Ordering;
 use common::CountingSource;
 use serde_json::{json, Value};
 use stack_encrypt::json::{
-    JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonSelector, JsonSubtree,
-    JsonSubtreeKey,
+    JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonPlaintext, JsonSelector,
+    JsonSubtree, JsonSubtreeKey,
 };
 use stack_encrypt::target::{AeadContext, CallerContext};
-use stack_encrypt::{nonempty, Error, StackCipher};
+use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, Error, StackCipher};
 
 type Cipher = StackCipher<CountingSource>;
 
@@ -53,10 +53,9 @@ fn fixture() -> Value {
 }
 
 async fn seal(cipher: &Cipher, value: &Value) -> JsonDocument {
-    cipher
-        .default_keyset()
-        .encrypt_as::<Value, JsonDocument>(
-            value,
+    JsonPlaintext::from(value.clone())
+        .encrypt_into_with_context(
+            &cipher.default_keyset(),
             CallerContext::from(nonempty!("users").with("profile")),
         )
         .await
@@ -155,20 +154,43 @@ fn base64(bytes: &[u8]) -> String {
     Base64::encode_string(bytes)
 }
 
+/// The document a plaintext holds. An opened plaintext is wiped when it is
+/// dropped and is not compared directly, so the helpers below hand a test
+/// the document itself.
+fn document(opened: JsonPlaintext) -> Value {
+    opened.value().clone()
+}
+
 async fn open_extracted(cipher: &Cipher, extracted: JsonExtracted) -> Result<Value, Error> {
-    cipher
-        .decrypt_as::<Value, JsonExtracted>(extracted, aead())
+    JsonPlaintext::decrypt_from_with_context(extracted, cipher, aead())
         .await
+        .map(document)
 }
 
 async fn open_value(cipher: &Cipher, rows: JsonSubtree) -> Result<Value, Error> {
-    cipher.decrypt_as::<Value, JsonSubtree>(rows, aead()).await
+    open_value_under(cipher, rows, aead()).await
+}
+
+async fn open_value_under(
+    cipher: &Cipher,
+    rows: JsonSubtree,
+    context: AeadContext,
+) -> Result<Value, Error> {
+    JsonPlaintext::decrypt_from_with_context(rows, cipher, context)
+        .await
+        .map(document)
+}
+
+async fn open_option(cipher: &Cipher, rows: JsonSubtree) -> Result<Option<Value>, Error> {
+    Option::<JsonPlaintext>::decrypt_from_with_context(rows, cipher, aead())
+        .await
+        .map(|opened| opened.map(document))
 }
 
 async fn open_list(cipher: &Cipher, rows: JsonSubtree) -> Result<Vec<Value>, Error> {
-    cipher
-        .decrypt_as::<Vec<Value>, JsonSubtree>(rows, aead())
+    Vec::<JsonPlaintext>::decrypt_from_with_context(rows, cipher, aead())
         .await
+        .map(|opened| opened.into_iter().map(document).collect())
 }
 
 mod assertions {
@@ -731,12 +753,12 @@ mod given_the_rows_of_a_read {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
         let nested = key(&cipher, "$.nested").await;
-        let opened = cipher
-            .decrypt_as::<Value, JsonSubtree>(
-                nested.open(walk(&doc, &nested)),
-                AeadContext::from(nonempty!("users").with("other")),
-            )
-            .await;
+        let opened = open_value_under(
+            &cipher,
+            nested.open(walk(&doc, &nested)),
+            AeadContext::from(nonempty!("users").with("other")),
+        )
+        .await;
         assertions::aead(opened);
     }
 
@@ -836,9 +858,7 @@ mod given_answers_the_check_cannot_tell_apart {
     async fn rows_withheld_whole_read_as_no_node() {
         let (cipher, _) = cipher().await;
         let nested = key(&cipher, "$.nested").await;
-        let opened = cipher
-            .decrypt_as::<Option<Value>, JsonSubtree>(nested.open(Vec::new()), aead())
-            .await;
+        let opened = open_option(&cipher, nested.open(Vec::new())).await;
         assert_eq!(
             opened.unwrap(),
             None,
@@ -849,7 +869,7 @@ mod given_answers_the_check_cannot_tell_apart {
 
 /// The four answers a read at a path with no wildcard gives, as `jsonb #>`
 /// gives them: an empty object, an empty array, a scalar and no node, as a
-/// `Value`, an `Option<Value>` and a `Vec<Value>`.
+/// `JsonPlaintext`, an `Option<JsonPlaintext>` and a `Vec<JsonPlaintext>`.
 mod given_a_read_of_one_node {
     use super::*;
 
@@ -869,19 +889,16 @@ mod given_a_read_of_one_node {
         ] {
             let read = key(&cipher, path).await;
             let rows = walk(&doc, &read);
-            let option = cipher
-                .decrypt_as::<Option<Value>, JsonSubtree>(read.open(rows.clone()), aead())
-                .await
-                .unwrap();
-            assert_eq!(option, expected, "{path} as Option<Value>");
+            let option = open_option(&cipher, read.open(rows.clone())).await.unwrap();
+            assert_eq!(option, expected, "{path} as an Option");
             let list = open_list(&cipher, read.open(rows.clone())).await.unwrap();
             assert_eq!(
                 list,
                 expected.clone().into_iter().collect::<Vec<_>>(),
-                "{path} as Vec<Value>"
+                "{path} as a Vec"
             );
             match (open_value(&cipher, read.open(rows)).await, expected) {
-                (Ok(value), Some(expected)) => assert_eq!(value, expected, "{path} as Value"),
+                (Ok(value), Some(expected)) => assert_eq!(value, expected, "{path} as one value"),
                 (Err(Error::OpenedType { expected }), None) => {
                     assert_eq!(expected, "a node at the walked path", "{path}")
                 }

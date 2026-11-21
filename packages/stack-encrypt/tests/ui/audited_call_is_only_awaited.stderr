@@ -1,7 +1,7 @@
 error[E0599]: `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>` is not an iterator
-  --> tests/ui/audited_call_is_only_awaited.rs:15:35
+  --> tests/ui/audited_call_is_only_awaited.rs:13:35
    |
-15 |     let _ = seal().audit(facts()).zip(seal());
+13 |     let _ = seal().audit(facts()).zip(seal());
    |                                   ^^^ `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>` is not an iterator
    |
   ::: src/audit.rs
@@ -14,78 +14,32 @@ error[E0599]: `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, Fak
            which is required by `&mut Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>: Iterator`
 
 error[E0599]: no method named `audit` found for struct `Audited<C>` in the current scope
-  --> tests/ui/audited_call_is_only_awaited.rs:17:35
+  --> tests/ui/audited_call_is_only_awaited.rs:15:35
    |
-17 |     let _ = seal().audit(facts()).audit(facts());
+15 |     let _ = seal().audit(facts()).audit(facts());
    |             ------                ^^^^^ method not found in `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>`
    |             |
    |             method `audit` is available on `stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>`
 
 error[E0599]: no method named `audit` found for struct `Audited<C>` in the current scope
-  --> tests/ui/audited_call_is_only_awaited.rs:18:63
+  --> tests/ui/audited_call_is_only_awaited.rs:18:10
    |
-18 |     let _ = cipher.encrypt(&email).using(plan).audit(facts()).audit(facts());
-   |                                    -----------                ^^^^^ method not found in `Audited<EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>>`
-   |                                    |
-   |                                    method `audit` is available on `EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>`
-
-error[E0599]: no method named `audit` found for struct `Audited<C>` in the current scope
-  --> tests/ui/audited_call_is_only_awaited.rs:24:6
-   |
-19 |        let _ = all((
-   |   _____________-
-   |  |_____________|
-20 | ||         cipher.encrypt(&email).using(plan),
-21 | ||         cipher.encrypt(&email).using(plan),
-22 | ||     ))
-   | ||______- method `audit` is available on `All<'_, FakeDataKeySource, (EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>, EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>)>`
-23 | |      .audit(facts())
-24 | |      .audit(facts());
-   | |      -^^^^^ method not found in `Audited<All<'_, FakeDataKeySource, (EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>, EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>)>>`
-   | |______|
+16 |       let _ = Pending::all(&keyset, vec![seal(), seal()])
+   |               -------------------------------------------
+   |               |
+   |  _____________method `audit` is available on `stack_encrypt::Pending<'_, Vec<stack_encrypt::Ciphertext>, FakeDataKeySource>`
+   | |
+17 | |         .audit(facts())
+18 | |         .audit(facts());
+   | |         -^^^^^ method not found in `Audited<stack_encrypt::Pending<'_, Vec<stack_encrypt::Ciphertext>, FakeDataKeySource>>`
+   | |_________|
    |
 
-error[E0277]: the trait bound `Audited<EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>>: Operation<'_, FakeDataKeySource>` is not satisfied
-  --> tests/ui/audited_call_is_only_awaited.rs:27:9
+error[E0308]: mismatched types
+  --> tests/ui/audited_call_is_only_awaited.rs:20:40
    |
-26 |     let _ = all((
-   |             --- required by a bound introduced by this call
-27 |         cipher.encrypt(&email).using(plan).audit(facts()),
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+20 |     let _ = Pending::all(&keyset, vec![seal().audit(facts()), seal()]);
+   |                                        ^^^^^^^^^^^^^^^^^^^^^ expected `Pending<'_, _, FakeDataKeySource>`, found `Audited<Pending<'_, Ciphertext, ...>>`
    |
-   = help: the trait `Operation<'_, FakeDataKeySource>` is not implemented for `Audited<EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>>`
-   = help: the following other types implement trait `Operation<'a, K>`:
-             EncryptFields<'a, S, K>
-             EncryptIndexed<'a, S, X, K>
-             EncryptUsing<'a, S, P, K>
-             EncryptWithContext<'a, S, K>
-             OpenUsing<'a, R, P, K>
-             QueryOp<'a, F, Op, I, K>
-   = note: required for `(Audited<EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>>, EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>)` to implement `Batch<'_, FakeDataKeySource>`
-note: required by a bound in `stack_encrypt::all`
-  --> src/plan/chain.rs
-   |
-   | pub fn all<'a, K: 'static, T: Batch<'a, K>>(operations: T) -> All<'a, K, T> {
-   |                               ^^^^^^^^^^^^ required by this bound in `all`
-
-error[E0277]: the trait bound `Audited<EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>>: Operation<'_, FakeDataKeySource>` is not satisfied
-  --> tests/ui/audited_call_is_only_awaited.rs:32:18
-   |
-32 |     is_operation(&cipher.encrypt(&email).using(plan).audit(facts()));
-   |     ------------ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
-   |     |
-   |     required by a bound introduced by this call
-   |
-   = help: the trait `Operation<'_, FakeDataKeySource>` is not implemented for `Audited<EncryptUsing<'_, std::string::String, stack_encrypt::Plan<std::string::String, FakeDataKeySource>, FakeDataKeySource>>`
-   = help: the following other types implement trait `Operation<'a, K>`:
-             EncryptFields<'a, S, K>
-             EncryptIndexed<'a, S, X, K>
-             EncryptUsing<'a, S, P, K>
-             EncryptWithContext<'a, S, K>
-             OpenUsing<'a, R, P, K>
-             QueryOp<'a, F, Op, I, K>
-note: required by a bound in `is_operation`
-  --> tests/ui/audited_call_is_only_awaited.rs:35:24
-   |
-35 | fn is_operation<'a, O: Operation<'a, FakeDataKeySource>>(_: &O) {}
-   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `is_operation`
+   = note: expected struct `stack_encrypt::Pending<'_, _, FakeDataKeySource>`
+              found struct `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>`

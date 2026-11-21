@@ -1,24 +1,12 @@
 # Attributes
 
-All attributes are written inside `#[stash(...)]`. There are two pairs of
-derives, and they read the same attributes.
+All attributes are written inside `#[stash(...)]`. The two derives,
+`EncryptTarget` and `DecryptSource`, read the same attributes.
 
-**Use `EncryptTarget` and `DecryptSource`.** With these, encryption takes
-the plaintext by value. The call `user.encrypt_into(&keyset)` moves `user`
-into the encryption, so the caller has no copy left. The encryption then
-wipes the plaintext: it overwrites the memory that held each encrypted
-field. Only this pair accepts `passthrough`.
-
-`EncryptFrom` and `DecryptInto` are the older pair. They encrypt a borrowed
-plaintext, `&user`. The caller keeps the original, and must wipe it. Plans
-and the dynamic engine still use them. The older pair will be removed once
-plans and the dynamic engine use the new pair (#1488).
-
-Derive one pair or the other on a record. `EncryptTarget` and
-`DecryptSource` already implement `EncryptFrom` and `DecryptInto` for the
-record, so an owned record also works where the older pair is expected.
-If you derive both pairs, those traits are implemented twice. That does not
-compile.
+Encryption takes the plaintext by value. The call
+`user.encrypt_into(&keyset)` moves `user` into the encryption, so the
+caller has no copy left. The encryption then wipes the plaintext: it
+overwrites the memory that held each encrypted field.
 
 ## On the struct
 
@@ -49,7 +37,7 @@ field from the whole `User`. To encrypt a struct field by field, use
 | Attribute | Effect |
 |---|---|
 | `context_field` | This field stores the record's context, and decryption reads it back. At most one per record. Not with any other field attribute. |
-| `identity = "..."` | With `struct` only. The field is derived under `("<scope>", "<identity>")`, in place of the plaintext field's name. One plain segment. The plan builder's `.identity(segment)` does the same. |
+| `identity = "..."` | With `struct` only. The field is derived under `("<scope>", "<identity>")`, in place of the plaintext field's name. One plain segment. |
 | `from = field` or `from = 0` | With `struct` only. Derive this field from `plaintext.field`, or `plaintext.0` for a tuple struct, when the names differ. Each plaintext field has one output, so two fields `from` the same plaintext field are refused. A ciphertext with search terms is one `Encrypted<Terms>` field. |
 | `default` or `default = expr` | The field is not derived. It is filled with `Default::default()` or `expr`. It is not encrypted and not authenticated. |
 | `decrypt` | Decryption opens this field. Use it only when the field types do not decide it. See [Which field decryption opens](#which-field-decryption-opens). |
@@ -58,8 +46,8 @@ field from the whole `User`. To encrypt a struct field by field, use
 A field cannot have a `context = ".."` of its own, on any derive. Every
 field of a `plaintext` record shares the caller's context. Every field of a
 `struct` record sits under the record's scope, and `identity` changes only
-its second part. To write one value under two contexts, use a plan that
-picks the same source twice.
+its second part. To write one value under two contexts, encrypt it twice,
+once under each context.
 
 **Upgrading from 0.2.0.** Version 0.2.0 accepted a field `context = ".."`
 and `#[stash(nested)]`. Each change below derives the field under a
@@ -210,9 +198,9 @@ change it, and the encrypted fields beside it still decrypt. So:
 - If a value must be readable and also detect changes, it belongs in the
   record's context. A `struct` record cannot take a caller's context yet.
 
-The field's type must implement `Clone`. The owned conversion never clones
-it, but the older `EncryptFrom` form of the record does, and plans run that
-form.
+The field's type must implement `Clone`. Encrypting the record by value
+never clones it. The borrowed form of the record's declaration does, and a
+record that is a field of another record can run that form.
 
 ### Wiping
 
@@ -260,19 +248,18 @@ compile error at the term, because a term needs a `CallerContext`. A call
 that leaves out a required context is a compile error at the call
 (`AllowsNoContext`), even if the context type implements `Default`.
 
-### The structural traits
+### A record as a field of another record
 
-Each owned derive also implements the structural traits:
+Each derive also implements the trait that lets a record be a field of
+another record:
 
-- `EncryptTarget` also implements `EncryptFrom` and `Decryptable`.
-  `EncryptFrom` converts the record's structural context into the owned
-  input. The structural context is a `DeclaredContext`, a `CallerContext`,
-  or a `NonEmpty<C>`.
-- `DecryptSource` also implements `DecryptInto` and `DecryptField`.
+- `EncryptTarget` also implements `Decryptable`, which says whether the
+  record holds a ciphertext that decryption can open.
+- `DecryptSource` also implements `DecryptField`, which opens the record
+  through its own `DecryptSource`, under the context the outer record
+  gives the field.
 
-So an owned record can be a field of a `#[derive(EncryptFrom)]` record, or a
-typed field of a plan (`encrypt_into::<Record, _>`), with no second derive.
-A hand-written owned target that will be a record field must implement
+A hand-written target that will be a record field must implement
 `Decryptable` and `DecryptField`, as well as `DecryptSource`.
 
 ### Example
@@ -421,9 +408,9 @@ record's fields.
 
 A `struct = ..` record takes no context from the caller. A `plaintext = ..`
 record and a record with a `context_field` do take one. See [The context a
-call takes](#the-context-a-call-takes). A plan that contains a `struct = ..`
-record can still extend each field's context. Under a plan extension `7u64`, the `age` field
-is derived under `(("users", "age"), 7u64)`.
+call takes](#the-context-a-call-takes). A record that lists a scope, such
+as `scope(tenant: u64)`, extends each field's context with it. Under the
+tenant `7u64`, the `age` field is derived under `(("users", "age"), 7u64)`.
 
 ### Why the scope is required
 

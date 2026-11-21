@@ -205,12 +205,12 @@ use zeroize::Zeroizing;
 use super::query::{Op, Operand};
 use super::{Error, Reason, ValueFrame};
 use crate::json::{
-    parse_text, wipe_value, JsonExtracted, JsonLeafQuery, JsonNode, JsonOptions, JsonPath,
-    JsonQuery, JsonSubtree, JsonSubtreeKey,
+    parse_text, wipe_value, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonPlaintext,
+    JsonQuery, JsonSubtreeKey,
 };
 use crate::sem::TermError;
 use crate::target::{AeadContext, CallerContext, DeclaredContext, Index, Json, Owned};
-use crate::{ContextPiece, KeysetCipher, Label, NonEmpty, Pending};
+use crate::{ContextPiece, DecryptFrom, KeysetCipher, Label, NonEmpty, Pending};
 
 /// The SQL type a JSON operand binds as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1070,45 +1070,50 @@ pub(super) fn open<'a, K: 'static>(
     // keyset's, so a document sealed under another cannot answer it.
     let opener_cipher = keyset.cipher();
     let confine = keyset.keyset_id();
-    let confined = |pending: Pending<'a, Vec<Value>, K>| pending.scoped_to(confine);
-    let mut pendings: Vec<Pending<'a, Vec<Value>, K>> = Vec::with_capacity(groups.len());
+    let confined = |pending: Pending<'a, Vec<JsonPlaintext>, K>| pending.scoped_to(confine);
+    let mut pendings: Vec<Pending<'a, Vec<JsonPlaintext>, K>> = Vec::with_capacity(groups.len());
     for nodes in groups {
         pendings.push(match &opener {
             Opener::Selector(selector) => match <[JsonNode; 1]>::try_from(nodes) {
                 Ok([node]) => confined(
-                    opener_cipher
-                        .decrypt_as::<Value, JsonExtracted>(selector.open(node), context())
-                        .map(|value| vec![value]),
+                    JsonPlaintext::decrypt_from_with_context(
+                        selector.open(node),
+                        opener_cipher,
+                        context(),
+                    )
+                    .map(|value| vec![value]),
                 ),
                 // `read_open` allows a selector group one entry or none.
                 Err(_) => Pending::ready(keyset, Ok(Vec::new())),
             },
-            Opener::Subtree(key) => confined(
-                opener_cipher.decrypt_as::<Vec<Value>, JsonSubtree>(key.open(nodes), context()),
-            ),
+            Opener::Subtree(key) => confined(Vec::<JsonPlaintext>::decrypt_from_with_context(
+                key.open(nodes),
+                opener_cipher,
+                context(),
+            )),
         });
     }
     Ok(Pending::all(keyset, pendings).try_map(opened_frame))
 }
 
 /// The opened groups as a frame: a list per group of each value's JSON
-/// text, as bytes. Each value is wiped once its text is written, and each
-/// text once the frame holds it.
-fn opened_frame(mut groups: Vec<Vec<Value>>) -> Result<ValueFrame, crate::Error> {
+/// text, as bytes. Each value is wiped when it is dropped, here, once its
+/// text is written, and each text once the frame holds it.
+fn opened_frame(groups: Vec<Vec<JsonPlaintext>>) -> Result<ValueFrame, crate::Error> {
     let texts: Result<Vec<Vec<Protected<Vec<u8>>>>, crate::Error> = groups
         .iter()
         .map(|group| {
             group
                 .iter()
                 .map(|value| {
-                    crate::json::to_text(value)
+                    crate::json::to_text(value.value())
                         .map(Protected::new)
                         .map_err(|error| crate::Error::Other(Box::new(error)))
                 })
                 .collect()
         })
         .collect();
-    groups.iter_mut().flatten().for_each(wipe_value);
+    drop(groups);
     ValueFrame::of(&texts?).map_err(|error| crate::Error::Other(Box::new(error)))
 }
 

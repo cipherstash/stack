@@ -34,7 +34,7 @@
 )]
 #![cfg_attr(
     feature = "targets",
-    doc = "A binding that names an EQL type as a string reaches the same plans through [`encryption::targets`] (`targets` feature): the catalog-generated table of types a data plan may name as a field target, and the by-name `encrypt` / `decrypt` / `query` dispatch."
+    doc = "A binding that names an EQL type as a string runs the same encryption through [`encryption::targets`] (`targets` feature): the catalog-generated table of types a data plan may name as a field target, and the by-name `encrypt` / `decrypt` / `query` dispatch."
 )]
 
 use schemars::JsonSchema;

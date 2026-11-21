@@ -1,5 +1,5 @@
-//! A query type is for a sealed field's marker: a passthrough field has no
-//! marker, so `query = ..` on one is refused.
+//! A query type is for a sealed field's reference: a passthrough field has no
+//! field reference, so `query = ..` on one is refused.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::EncryptTarget;
 use stack_encrypt::Encrypted;

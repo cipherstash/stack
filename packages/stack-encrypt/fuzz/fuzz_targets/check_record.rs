@@ -5,7 +5,7 @@
 //!
 //! This is the walk a binding's decrypt runs before any key is requested:
 //! it decides whether a stored tree fits its plan, and it is the only thing
-//! standing between a tree an attacker rewrote and `decrypt_as`, which
+//! standing between a tree an attacker rewrote and the decrypt, which
 //! opens no AEAD for a passthrough and would hand forged plaintext back as
 //! a successful decrypt. So the input is not bytes but a *structure*: an
 //! `Arbitrary`-derived mirror of a plan value and of a ciphertext tree,

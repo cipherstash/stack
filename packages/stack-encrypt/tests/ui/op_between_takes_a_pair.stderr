@@ -1,77 +1,51 @@
-error[E0277]: `u32` is not what a query of arity `Pair` takes
-  --> tests/ui/op_between_takes_a_pair.rs:12:39
+error[E0061]: this method takes 2 arguments but 1 argument was supplied
+  --> tests/ui/op_between_takes_a_pair.rs:22:32
    |
-12 |     let _ = cipher.query(op::Between, &40u32).on(&age_plan);
-   |                    -----              ^^^^^^ the operator takes another input
-   |                    |
-   |                    required by a bound introduced by this call
+22 |     let _ = EncryptedUser::AGE.between(40u32);
+   |                                ^^^^^^^------- argument #2 of type `u32` is missing
    |
-   = help: the trait `Input<Pair>` is not implemented for `u32`
-   = note: an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes a path and the leaf's input, `&("$.a", value)` or `&("$.a", (lo, hi))`
-help: the following other types implement trait `Input<A>`
-  --> src/op/mod.rs
+note: method defined here
+  --> src/field_reference.rs
    |
-   |   impl<S: 'static> Input<Pair> for (S, S) {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(S, S)` implements `Input<Pair>`
+   |     pub fn between<Q>(self, lo: Q, hi: Q) -> BetweenQuery<T, Q::Value, C::Start>
+   |            ^^^^^^^
+help: provide the argument
    |
-  ::: src/json/query.rs
-   |
-   | / impl<P, V> Input<Pathed<One>> for (P, V)
-   | | where
-   | |     P: AsRef<str> + 'static,
-   | |     V: Into<Value> + 'static,
-   | |_____________________________^ `(P, V)` implements `Input<Pathed<stack_encrypt::op::One>>`
-...
-   | / impl<P, V> Input<Pathed<Pair>> for (P, (V, V))
-   | | where
-   | |     P: AsRef<str> + 'static,
-   | |     V: Into<Value> + 'static,
-   | |_____________________________^ `(P, (V, V))` implements `Input<Pathed<Pair>>`
-note: required by a bound in `plan::chain::<impl StackCipher<K>>::query`
-  --> src/plan/chain.rs
-   |
-   |     pub fn query<'a, Op, Q>(&'a self, op: Op, value: &Q) -> QueryBuilder<'a, Op, F<Q>, K>
-   |            ----- required by a bound in this associated function
-...
-   |         F<Q>: Input<Op::Arity>,
-   |               ^^^^^^^^^^^^^^^^ required by this bound in `plan::chain::<impl StackCipher<K>>::query`
+22 |     let _ = EncryptedUser::AGE.between(40u32, /* u32 */);
+   |                                             +++++++++++
 
-error[E0599]: the method `on` exists for struct `QueryBuilder<'_, stack_encrypt::op::Between, u32, FakeDataKeySource>`, but its trait bounds were not satisfied
-  --> tests/ui/op_between_takes_a_pair.rs:12:47
+error[E0277]: the trait bound `(u32, u32): QueryInput` is not satisfied
+  --> tests/ui/op_between_takes_a_pair.rs:23:35
    |
-12 |     let _ = cipher.query(op::Between, &40u32).on(&age_plan);
-   |                                               ^^
+23 |     let _ = EncryptedUser::AGE.lt((18u32, 65u32));
+   |                                -- ^^^^^^^^^^^^^^ the trait `QueryInput` is not implemented for `(u32, u32)`
+   |                                |
+   |                                required by a bound introduced by this call
    |
-   = note: the following trait bounds were not satisfied:
-           `u32: Input<Pair>`
-
-error[E0271]: type mismatch resolving `<(u32, {integer}) as Input<One>>::Plaintext == u32`
-  --> tests/ui/op_between_takes_a_pair.rs:13:48
-   |
-13 |     let _ = cipher.query(op::Lt, &(18u32, 65)).on(&age_plan);
-   |                                                ^^ expected `u32`, found `(u32, {integer})`
-   |
-   = note: expected type `u32`
-             found tuple `(u32, {integer})`
-   = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Ore>>` to implement `Chooses<stack_encrypt::op::Lt, (u32, {integer}), Whole>`
-
-error[E0277]: `(u32, {integer})` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals
-  --> tests/ui/op_between_takes_a_pair.rs:13:48
-   |
-13 |     let _ = cipher.query(op::Lt, &(18u32, 65)).on(&age_plan);
-   |                                                ^^ no ordering operator over this type
-   |
-   = help: the trait `Ordered` is not implemented for `(u32, {integer})`
-   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term
-   = help: the following other types implement trait `Ordered`:
+   = help: the following other types implement trait `QueryInput`:
+             &Vec<u8>
+             &[u8]
+             &std::string::String
+             &str
+             Option<V>
+             Vec<u8>
+             bool
              f32
-             f64
-             i128
-             i16
-             i32
-             i64
-             stack_encrypt::value::Date
-             stack_encrypt::value::Decimal
            and $N others
-   = note: required for `stack_encrypt::op::Lt` to implement `DefaultIndex<(u32, {integer})>`
-   = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Ore>>` to implement `Chooses<stack_encrypt::op::Lt, (u32, {integer}), Whole>`
+note: required by a bound in `FieldReference::<W, T, C, P>::lt`
+  --> src/field_reference.rs
+   |
+   |                   Q: QueryInput,
+   |                      ^^^^^^^^^^ required by this bound in `FieldReference::<W, T, C, P>::lt`
+...
+   | / operator_methods! {
+   | |     /// Rows whose value equals `value` ([`op::Eq`](struct@Eq)).
+   | |     eq => Eq;
+   | |     /// Rows whose value is below `value` ([`op::Lt`](Lt)).
+   | |     lt => Lt;
+   | |     -- required by a bound in this associated function
+...  |
+   | |     matches => Matches;
+   | | }
+   | |_- in this macro invocation
+   = note: this error originates in the macro `operator_methods` (in Nightly builds, run with -Z macro-backtrace for more info)

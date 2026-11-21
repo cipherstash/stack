@@ -3,7 +3,7 @@
 //! row, and derive a query term under a `QueryPlan`, each with the caller's
 //! context as the one context argument. The dynamic field handle checks
 //! each operator against the plan where it is called. A query from a plan
-//! that is data derives the same term a typed query from a field marker
+//! that is data derives the same term a typed query from a field reference
 //! does, under the same scope.
 #![cfg(all(feature = "dynamic", feature = "testing"))]
 
@@ -433,7 +433,7 @@ mod a_query_plan {
     }
 
     #[tokio::test]
-    async fn derives_the_term_a_typed_marker_query_derives() {
+    async fn derives_the_term_a_typed_field_query_derives() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = plan();

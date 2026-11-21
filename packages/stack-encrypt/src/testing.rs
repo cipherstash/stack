@@ -246,9 +246,11 @@ impl ContextSubject for Contexts {
             })
     }
 }
-/// A field marker states its field's context: the record's contexts,
+/// A field reference states its field's context: the record's contexts,
 /// narrowed to that field.
-impl<W: crate::marker::Place, T, C, P> ContextSubject for crate::marker::Marker<W, T, C, P> {
+impl<W: crate::field_reference::Place, T, C, P> ContextSubject
+    for crate::field_reference::FieldReference<W, T, C, P>
+{
     fn single_context(&self) -> Result<LeafContext, String> {
         self.contexts().single_context()
     }

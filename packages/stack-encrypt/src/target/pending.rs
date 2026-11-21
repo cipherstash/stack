@@ -1,5 +1,5 @@
 //! [`Pending`]: the request carrier [`StackCipher`] hands back from
-//! [`EncryptFrom`](super::EncryptFrom) / [`DecryptInto`](super::DecryptInto),
+//! [`EncryptTarget`](super::EncryptTarget) / [`DecryptSource`](super::DecryptSource),
 //! and the single place the target layer talks to ZeroKMS.
 //!
 //! A `Pending` is built synchronously and settled once. Combining pendings
@@ -37,6 +37,17 @@ type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<T, Error> + Sen
 /// See the native definition above; identical minus the `Send` bound.
 #[cfg(target_arch = "wasm32")]
 type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<T, Error> + 'a>;
+
+/// How to wipe a recovered value in place. A decrypt sets it on the pending
+/// it returns ([`wiping`](Pending::wiping)), so that [`zip`](Pending::zip) and
+/// [`all`](Pending::all) can wipe that value when a later operation in the
+/// same batch fails. `Send` split as above.
+#[cfg(not(target_arch = "wasm32"))]
+type WipeHook<'a, T> = Arc<dyn Fn(&mut T) + Send + Sync + 'a>;
+/// See the native definition above; identical minus the `Send` and `Sync`
+/// bounds.
+#[cfg(target_arch = "wasm32")]
+type WipeHook<'a, T> = Arc<dyn Fn(&mut T) + 'a>;
 
 /// The boxed future a [`Pending`] settles through; `Send` split as above.
 #[cfg(not(target_arch = "wasm32"))]
@@ -86,6 +97,11 @@ pub struct Pending<'a, T, K> {
     /// [`context`](Self::context) shows. A failed pending carries none, as
     /// it carries no requests.
     contexts: Vec<(ContextPiece<'static>, ContextPiece<'static>)>,
+    /// How to wipe this pending's output, when the output is recovered
+    /// plaintext. A batch calls it when a later operation fails after this
+    /// one's output was recovered. `None` for an output that is not
+    /// plaintext, or whose type is not known to be `Zeroize` here.
+    wipe: Option<WipeHook<'a, T>>,
     fulfil: FulfilBox<'a, T>,
 }
 
@@ -223,6 +239,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 requests: Vec::new(),
                 failed: None,
                 contexts: Vec::new(),
+                wipe: None,
                 fulfil: Box::new(move |_| Ok(value)),
             },
             Err(error) => Self::failed(scope, error),
@@ -233,7 +250,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// type `T` is ever produced), and any assembly it is merged into fails
     /// without I/O — see the `failed` field.
     ///
-    /// Public because a hand-written `EncryptFrom` / `DecryptInto` that
+    /// Public because a hand-written `EncryptTarget` / `DecryptSource` that
     /// works with a cipher scope directly reaches for it when a contract is
     /// broken — e.g. [`Error::NotOpened`] for a field whose type declared
     /// [`DECRYPTABLE`](super::Decryptable::DECRYPTABLE) but was passed over.
@@ -251,6 +268,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests: Vec::new(),
             failed: Some(error),
             contexts: Vec::new(),
+            wipe: None,
             // Unreachable: `settle` returns the stored error before any
             // fulfilment runs. Kept honest rather than panicking.
             fulfil: Box::new(|_| {
@@ -291,6 +309,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             contexts: Vec::new(),
+            wipe: None,
             fulfil: Box::new(move |responses| {
                 let mut own = responses.split_front(generated, retrieved, keysets)?;
                 let value = fulfil(&mut own)?;
@@ -314,6 +333,9 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests: self.requests,
             failed: self.failed,
             contexts: self.contexts,
+            // The output is a new value. Whether it holds plaintext is not
+            // known here.
+            wipe: None,
             fulfil: Box::new(move |responses| fulfil(responses).map(f)),
         }
     }
@@ -330,6 +352,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests: self.requests,
             failed: self.failed,
             contexts: self.contexts,
+            wipe: None,
             fulfil: Box::new(move |responses| fulfil(responses).and_then(f)),
         }
     }
@@ -382,6 +405,25 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// first. Then attach the metadata to the whole call.
     pub fn audit(self, metadata: AuditMetadata) -> Audited<Self> {
         Audited::new(self, metadata)
+    }
+
+    /// Mark this pending's output as plaintext that can be wiped in place.
+    /// [`zip`](Self::zip) and [`all`](Self::all) then wipe it if a later
+    /// operation in the same batch fails after it was recovered. Every
+    /// [`DecryptFrom`](super::DecryptFrom) call marks the pending it returns,
+    /// and so does each leaf a [`Decryption`](super::Decryption) opens
+    /// ([`open`](super::open) and the targets' own openings), so that a
+    /// [`Decryption::zip`](super::Decryption::zip) or
+    /// [`Decryption::all`](super::Decryption::all) written by hand wipes too.
+    pub(crate) fn wiping(mut self) -> Self
+    where
+        T: zeroize::Zeroize,
+    {
+        if self.failed.is_none() {
+            let wipe: WipeHook<'a, T> = Arc::new(|value: &mut T| value.zeroize());
+            self.wipe = Some(wipe);
+        }
+        self
     }
 
     /// The contexts this call will use, with the caller's values filled in.
@@ -439,14 +481,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         }
     }
 
-    /// Whether this pending opens leaves from any keyset: it was built
-    /// through the [`StackCipher`] (no scope) and has not failed. Such a
-    /// pending cannot be merged with a scoped one without being confined to
-    /// that scope, so a batch settles it on its own.
-    pub(crate) fn opens_any_keyset(&self) -> bool {
-        self.keyset.is_none() && self.failed.is_none()
-    }
-
     /// Merge two pendings into one resolving to the pair. Their requests
     /// concatenate — awaiting the result is still one batched call per
     /// request kind.
@@ -467,6 +501,14 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// client, so either side's client can dispatch the batch; a client that
     /// is *not* authorised for the keyset is refused at ZeroKMS
     /// ([`Error::Kms`]), exactly as it would be on its own.
+    ///
+    /// When the right side fails after the left side recovered plaintext
+    /// (a decrypt whose key arrived), the left side's plaintext is wiped
+    /// before the error is returned. A decrypt such as
+    /// [`DecryptFrom::decrypt_from`](super::DecryptFrom::decrypt_from) marks
+    /// its pending for this. A pending built by [`ready`](Self::ready),
+    /// [`request`](Self::request) or [`map`](Self::map) is not marked, and
+    /// its output is dropped as it is.
     pub fn zip<U: 'a>(self, other: Pending<'a, U, K>) -> Pending<'a, (T, U), K> {
         self.zip_releasing(other, drop)
     }
@@ -486,8 +528,9 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     }
 
     /// The builder behind every pair. `release` is given the left side's
-    /// output when the right side fails or panics after it. It is not called
-    /// when both sides succeed.
+    /// output when the right side fails or panics after it, after the left
+    /// side's own wipe has run if it has one. It is not called when both
+    /// sides succeed.
     fn zip_releasing<U: 'a>(
         self,
         other: Pending<'a, U, K>,
@@ -509,12 +552,36 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         contexts.extend(other.contexts);
         let first = self.fulfil;
         let second = other.fulfil;
+        // The pair is wiped by wiping each side that can be wiped.
+        let wipe = match (self.wipe.clone(), other.wipe) {
+            (None, None) => None,
+            (left, right) => {
+                let wipe: WipeHook<'a, (T, U)> = Arc::new(move |(t, u): &mut (T, U)| {
+                    if let Some(left) = &left {
+                        left(t);
+                    }
+                    if let Some(right) = &right {
+                        right(u);
+                    }
+                });
+                Some(wipe)
+            }
+        };
+        // The left side is wiped, if it can be, before `release` takes it.
+        let left_wipe = self.wipe;
+        let release = move |mut first: T| {
+            if let Some(wipe) = &left_wipe {
+                wipe(&mut first);
+            }
+            release(first);
+        };
         Pending {
             cipher: self.cipher,
             keyset,
             requests,
             failed: None,
             contexts,
+            wipe,
             fulfil: Box::new(move |responses| {
                 // The left side's output is held in a guard. So if the right
                 // side fails or panics, the guard releases the left side's
@@ -535,6 +602,10 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// `zip`: every item must agree with `scope`'s keyset — which cipher
     /// value each was built through does not matter, for the reason `zip`
     /// gives — and the first failed item fails the whole column with no I/O.
+    ///
+    /// When an item fails after the items before it recovered plaintext,
+    /// each of those items that a decrypt marked is wiped before the error
+    /// is returned, as [`zip`](Self::zip) does for its left side.
     pub fn all(
         scope: impl Into<CipherRef<'a, K>>,
         items: Vec<Pending<'a, T, K>>,
@@ -553,8 +624,9 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     }
 
     /// The same as [`collect`](Self::collect), but for a collection of
-    /// recovered plaintext. `collect` drops the items recovered before a
-    /// failure. This function wipes them.
+    /// recovered plaintext. `collect` wipes only the items recovered before
+    /// a failure that a decrypt marked ([`wiping`](Self::wiping)), and drops
+    /// the rest. This function wipes them all.
     ///
     /// The wipe applies when a later item fails at fulfilment, after its key
     /// arrived. That failure can be an authentication failure, a type
@@ -577,7 +649,8 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
 
     /// The collection builder that `collect` and `collect_wiping` both use.
     /// When an item fails or panics, `release` receives the items fulfilled
-    /// before it. When every item succeeds, `release` is not called.
+    /// before it, after each item's own wipe has run if it has one. When
+    /// every item succeeds, `release` is not called.
     fn collect_releasing(
         scope: CipherRef<'a, K>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
@@ -589,6 +662,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         let mut requests = Vec::new();
         let mut contexts = Vec::new();
         let mut fulfils = Vec::with_capacity(items.size_hint().0);
+        let mut wipes = Vec::with_capacity(items.size_hint().0);
         for item in items {
             keyset = match merge_scopes(keyset, item.keyset) {
                 Ok(keyset) => keyset,
@@ -600,16 +674,34 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests.extend(item.requests);
             contexts.extend(item.contexts);
             fulfils.push(item.fulfil);
+            wipes.push(item.wipe);
         }
         if let Err(error) = check_scope(keyset, &requests) {
             return Pending::failed(cipher, error);
         }
+        // Each item is wiped by its own hook, if it has one. The items
+        // recovered before a failure are wiped before `release` takes them.
+        let wipes: Option<Arc<[Option<WipeHook<'a, T>>]>> =
+            wipes.iter().any(Option::is_some).then(|| wipes.into());
+        let wipe = wipes.clone().map(|wipes| {
+            let wipe: WipeHook<'a, Vec<T>> = Arc::new(move |items: &mut Vec<T>| {
+                wipe_each(items, &wipes);
+            });
+            wipe
+        });
+        let release = move |mut items: Vec<T>| {
+            if let Some(wipes) = &wipes {
+                wipe_each(&mut items, wipes);
+            }
+            release(items);
+        };
         Pending {
             cipher,
             keyset,
             requests,
             failed: None,
             contexts,
+            wipe,
             fulfil: Box::new(move |responses| {
                 // Held in a guard so that an item whose fulfilment panics
                 // releases the prefix during the unwind, as an error does.
@@ -622,6 +714,15 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 }
                 Ok(recovered.keep())
             }),
+        }
+    }
+}
+
+/// Wipe each item with the hook at the same position, where there is one.
+fn wipe_each<T>(items: &mut [T], wipes: &[Option<WipeHook<'_, T>>]) {
+    for (item, wipe) in items.iter_mut().zip(wipes) {
+        if let Some(wipe) = wipe {
+            wipe(item);
         }
     }
 }

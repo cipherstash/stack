@@ -1,8 +1,10 @@
 error[E0277]: the trait bound `CallerContext: From<&str>` is not satisfied
-  --> tests/ui/bare_context.rs:31:73
+  --> tests/ui/bare_context.rs:30:44
    |
-31 |     let _term: EqualityTerm = cipher.encrypt_as(&"alice", "users/email".into())
-   |                                                                         ^^^^ the trait `From<&str>` is not implemented for `CallerContext`
+30 |         .encrypt_into_with_context(keyset, "users/email")
+   |          -------------------------         ^^^^^^^^^^^^^ the trait `From<&str>` is not implemented for `CallerContext`
+   |          |
+   |          required by a bound introduced by this call
    |
    = help: the following other types implement trait `From<T>`:
              `CallerContext` implements `From<&NonEmpty<T>>`
@@ -15,30 +17,22 @@ error[E0277]: the trait bound `CallerContext: From<&str>` is not satisfied
              `CallerContext` implements `From<i64>`
            and $N others
    = note: required for `&str` to implement `Into<CallerContext>`
-
-error[E0277]: the trait bound `DeclaredContext: From<&str>` is not satisfied
-  --> tests/ui/bare_context.rs:34:70
+note: required by a bound in `encrypt_into_with_context`
+  --> src/target/conversion.rs
    |
-34 |     let _row: EncryptedUser = cipher.encrypt_as(&user, "tenant/acme".into())
-   |                                                                      ^^^^ the trait `From<&str>` is not implemented for `DeclaredContext`
-   |
-   = help: the following other types implement trait `From<T>`:
-             `DeclaredContext` implements `From<&NonEmpty<T>>`
-             `DeclaredContext` implements `From<()>`
-             `DeclaredContext` implements `From<CallerContext>`
-             `DeclaredContext` implements `From<DeclaredScopes>`
-             `DeclaredContext` implements `From<NoCallerContext>`
-             `DeclaredContext` implements `From<NonEmpty<T>>`
-             `DeclaredContext` implements `From<RequiredContext<Parts<S, B>>>`
-             `DeclaredContext` implements `From<i128>`
-           and $N others
-   = note: required for `&str` to implement `Into<DeclaredContext>`
+   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<T::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into_with_context`
 
 error[E0277]: the trait bound `CallerContext: From<&str>` is not satisfied
-  --> tests/ui/bare_context.rs:37:71
+  --> tests/ui/bare_context.rs:34:44
    |
-37 |     let _record: EncryptedAge = cipher.encrypt_as(&42u32, "users/age".into())
-   |                                                                       ^^^^ the trait `From<&str>` is not implemented for `CallerContext`
+34 |         .encrypt_into_with_context(keyset, "users/age")
+   |          -------------------------         ^^^^^^^^^^^ the trait `From<&str>` is not implemented for `CallerContext`
+   |          |
+   |          required by a bound introduced by this call
    |
    = help: the following other types implement trait `From<T>`:
              `CallerContext` implements `From<&NonEmpty<T>>`
@@ -51,30 +45,52 @@ error[E0277]: the trait bound `CallerContext: From<&str>` is not satisfied
              `CallerContext` implements `From<i64>`
            and $N others
    = note: required for `&str` to implement `Into<CallerContext>`
-
-error[E0277]: the trait bound `DeclaredContext: From<&str>` is not satisfied
-  --> tests/ui/bare_context.rs:47:65
+note: required by a bound in `encrypt_into_with_context`
+  --> src/target/conversion.rs
    |
-47 |     let _user = cipher.decrypt_as::<User, _>(row, "tenant/acme".into())
-   |                                                                 ^^^^ the trait `From<&str>` is not implemented for `DeclaredContext`
+   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<T::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into_with_context`
+
+error[E0277]: the trait bound `NonEmpty<&'static str>: From<&str>` is not satisfied
+  --> tests/ui/bare_context.rs:38:44
+   |
+38 |         .encrypt_into_with_context(keyset, "users/email")
+   |          -------------------------         ^^^^^^^^^^^^^ the trait `From<&str>` is not implemented for `NonEmpty<&'static str>`
+   |          |
+   |          required by a bound introduced by this call
    |
    = help: the following other types implement trait `From<T>`:
-             `DeclaredContext` implements `From<&NonEmpty<T>>`
-             `DeclaredContext` implements `From<()>`
-             `DeclaredContext` implements `From<CallerContext>`
-             `DeclaredContext` implements `From<DeclaredScopes>`
-             `DeclaredContext` implements `From<NoCallerContext>`
-             `DeclaredContext` implements `From<NonEmpty<T>>`
-             `DeclaredContext` implements `From<RequiredContext<Parts<S, B>>>`
-             `DeclaredContext` implements `From<i128>`
+             `NonEmpty<Label>` implements `From<Label>`
+             `NonEmpty<i128>` implements `From<i128>`
+             `NonEmpty<i16>` implements `From<i16>`
+             `NonEmpty<i32>` implements `From<i32>`
+             `NonEmpty<i64>` implements `From<i64>`
+             `NonEmpty<i8>` implements `From<i8>`
+             `NonEmpty<u128>` implements `From<u128>`
+             `NonEmpty<u16>` implements `From<u16>`
            and $N others
-   = note: required for `&str` to implement `Into<DeclaredContext>`
+   = note: there are multiple different versions of crate `vitaminc_protected` in the dependency graph
+   = help: you can use `cargo tree` to explore your dependency tree
+   = note: required for `&str` to implement `Into<NonEmpty<&'static str>>`
+note: required by a bound in `encrypt_into_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<T::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into_with_context`
 
 error[E0277]: the trait bound `AeadContext: From<&str>` is not satisfied
-  --> tests/ui/bare_context.rs:50:59
+  --> tests/ui/bare_context.rs:42:44
    |
-50 |     let _age: u32 = cipher.decrypt_as(sealed, "users/age".into()).await.unwrap();
-   |                                                           ^^^^ the trait `From<&str>` is not implemented for `AeadContext`
+42 |         .encrypt_into_with_context(keyset, "users/age")
+   |          -------------------------         ^^^^^^^^^^^ the trait `From<&str>` is not implemented for `AeadContext`
+   |          |
+   |          required by a bound introduced by this call
    |
    = help: the following other types implement trait `From<T>`:
              `AeadContext` implements `From<&NonEmpty<T>>`
@@ -87,3 +103,67 @@ error[E0277]: the trait bound `AeadContext: From<&str>` is not satisfied
              `AeadContext` implements `From<i32>`
            and $N others
    = note: required for `&str` to implement `Into<AeadContext>`
+note: required by a bound in `encrypt_into_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<T::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into_with_context`
+
+error[E0277]: the trait bound `CallerContext: From<&str>` is not satisfied
+  --> tests/ui/bare_context.rs:52:63
+   |
+52 |     let _age = u32::decrypt_from_with_context(record, cipher, "users/age")
+   |                ------------------------------                 ^^^^^^^^^^^ the trait `From<&str>` is not implemented for `CallerContext`
+   |                |
+   |                required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `From<T>`:
+             `CallerContext` implements `From<&NonEmpty<T>>`
+             `CallerContext` implements `From<NonEmpty<T>>`
+             `CallerContext` implements `From<Parts<S, B>>`
+             `CallerContext` implements `From<RequiredContext<C>>`
+             `CallerContext` implements `From<i128>`
+             `CallerContext` implements `From<i16>`
+             `CallerContext` implements `From<i32>`
+             `CallerContext` implements `From<i64>`
+           and $N others
+   = note: required for `&str` to implement `Into<CallerContext>`
+note: required by a bound in `decrypt_from_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn decrypt_from_with_context<'a, S, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<S::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from_with_context`
+
+error[E0277]: the trait bound `AeadContext: From<&str>` is not satisfied
+  --> tests/ui/bare_context.rs:55:63
+   |
+55 |     let _age = u32::decrypt_from_with_context(sealed, cipher, "users/age")
+   |                ------------------------------                 ^^^^^^^^^^^ the trait `From<&str>` is not implemented for `AeadContext`
+   |                |
+   |                required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `From<T>`:
+             `AeadContext` implements `From<&NonEmpty<T>>`
+             `AeadContext` implements `From<CallerContext>`
+             `AeadContext` implements `From<NonEmpty<T>>`
+             `AeadContext` implements `From<Parts<S, B>>`
+             `AeadContext` implements `From<RequiredContext<C>>`
+             `AeadContext` implements `From<i128>`
+             `AeadContext` implements `From<i16>`
+             `AeadContext` implements `From<i32>`
+           and $N others
+   = note: required for `&str` to implement `Into<AeadContext>`
+note: required by a bound in `decrypt_from_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn decrypt_from_with_context<'a, S, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<S::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from_with_context`

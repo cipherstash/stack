@@ -2,10 +2,13 @@
 //! ciphertext, so it must be enough for a derived record made only of
 //! ciphertexts: `#[stash(context_type = AeadContext)]` declares that, and the
 //! record then accepts exactly what the canonical `StackCipherText` path
-//! accepts. `tests/ui/aead_context_with_term.rs` pins the record such a
+//! accepts. `tests/ui/owned_aead_record_with_term.rs` pins the record such a
 //! context cannot declare.
-use stack_encrypt::target::{AeadContext};
-use stack_encrypt::{ContextPiece, DecryptInto, EncryptFrom, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipherText};
+use stack_encrypt::target::{AeadContext, DecryptSource, EncryptTarget};
+use stack_encrypt::{
+    ContextPiece, DecryptFrom, EncryptInto, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty,
+    StackCipherText,
+};
 use stack_kms::FakeDataKeySource;
 
 /// Declared through `AeadContext` below: it can seal, but the record
@@ -23,7 +26,7 @@ impl<'a> IntoContext<'a> for Tenant {
     }
 }
 
-#[derive(EncryptFrom, DecryptInto)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String, context_type = AeadContext)]
 struct Sealed {
     c: StackCipherText,
@@ -31,7 +34,7 @@ struct Sealed {
 
 /// Two ciphertexts under the one AEAD-only context the caller passes, with
 /// `decrypt` choosing the one the record opens.
-#[derive(EncryptFrom, DecryptInto)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String, context_type = AeadContext)]
 struct Shadowed {
     #[stash(decrypt)]
@@ -43,18 +46,40 @@ fn tenant() -> NonEmpty<Tenant> {
     NonEmpty::new(Tenant("acme".into())).unwrap()
 }
 
-async fn canonical(cipher: &KeysetCipher<'_, FakeDataKeySource>, value: &String) {
-    let leaf: StackCipherText = cipher.encrypt_as(value, tenant().into()).await.unwrap();
-    let _: String = cipher.decrypt_as(leaf, tenant().into()).await.unwrap();
+async fn canonical(keyset: &KeysetCipher<'_, FakeDataKeySource>, value: String) {
+    let leaf: StackCipherText = value
+        .encrypt_into_with_context(keyset, tenant())
+        .await
+        .unwrap();
+    let _: String = String::decrypt_from_with_context(leaf, keyset, tenant())
+        .await
+        .unwrap();
 }
 
-async fn derived(cipher: &KeysetCipher<'_, FakeDataKeySource>, value: &String) {
-    let record: Sealed = cipher.encrypt_as(value, tenant().into()).await.unwrap();
-    let _: String = cipher.decrypt_as(record, tenant().into()).await.unwrap();
-    let record: Shadowed = cipher.encrypt_as(value, tenant().into()).await.unwrap();
-    let _ = cipher.decrypt_as::<String, _>(record, tenant().into()).await.unwrap();
-    let column: Vec<Sealed> = cipher.encrypt_as(&vec![value.clone()], tenant().into()).await.unwrap();
-    let _: Vec<String> = cipher.decrypt_as(column, tenant().into()).await.unwrap();
+async fn derived(keyset: &KeysetCipher<'_, FakeDataKeySource>, value: String) {
+    let record: Sealed = value
+        .clone()
+        .encrypt_into_with_context(keyset, tenant())
+        .await
+        .unwrap();
+    let _: String = String::decrypt_from_with_context(record, keyset, tenant())
+        .await
+        .unwrap();
+    let record: Shadowed = value
+        .clone()
+        .encrypt_into_with_context(keyset, tenant())
+        .await
+        .unwrap();
+    let _: String = String::decrypt_from_with_context(record, keyset, tenant())
+        .await
+        .unwrap();
+    let column: Vec<Sealed> = vec![value]
+        .encrypt_into_with_context(keyset, tenant())
+        .await
+        .unwrap();
+    let _: Vec<String> = Vec::decrypt_from_with_context(column, keyset, tenant())
+        .await
+        .unwrap();
 }
 
 fn main() {

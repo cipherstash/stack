@@ -7,8 +7,9 @@ use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::v4::SchemaVersion;
 use eql_bindings::Identifier;
 use stack_encrypt::target::transcode::{Reader, Transcode};
-use stack_encrypt::{Encrypt, NonEmpty};
+use stack_encrypt::{DecryptFrom, Encrypt, EncryptInto, NonEmpty};
 use vitaminc_aead::plaintext::Sink;
+use zeroize::Zeroize;
 
 fn column() -> NonEmpty<Identifier> {
     Identifier::for_column("users", "email").unwrap()
@@ -27,7 +28,11 @@ async fn text_round_trips_through_json_and_both_canonical_directions() {
         "a\0b",
     ] {
         let value = text.to_owned();
-        let stored: TextEq = keyset.encrypt_as(&value, column()).await.unwrap();
+        let stored: TextEq = value
+            .clone()
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
         let json = serde_json::to_value(&stored).unwrap();
         assert_eq!(json["v"], 4, "Stack Encrypt writes EQL v4");
         assert_eq!(json["i"], serde_json::json!({"t":"users", "c":"email"}));
@@ -49,7 +54,7 @@ async fn text_round_trips_through_json_and_both_canonical_directions() {
             opened, value,
             "EQL adds no plaintext encoding or envelope-field AAD"
         );
-        let opened: String = cipher.decrypt_as(stored, Default::default()).await.unwrap();
+        let opened = String::decrypt_from(stored, &cipher).await.unwrap();
         assert_eq!(opened, value);
 
         let native = keyset.encrypt_tree(value.clone(), column()).await.unwrap();
@@ -64,7 +69,9 @@ async fn text_round_trips_through_json_and_both_canonical_directions() {
                 .read(Hmac256::visitor())
                 .unwrap(),
         };
-        let opened: String = cipher.decrypt_as(stored, column().into()).await.unwrap();
+        let opened = String::decrypt_from_with_context(stored, &cipher, column())
+            .await
+            .unwrap();
         assert_eq!(
             opened, value,
             "native ciphertext opens through the EQL target"
@@ -82,12 +89,22 @@ async fn repeated_text_encryption_uses_distinct_ciphertexts_and_one_equality_ter
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let value = "alice@example.com".to_owned();
-    let first: TextEq = keyset.encrypt_as(&value, column()).await.unwrap();
-    let second: TextEq = keyset.encrypt_as(&value, column()).await.unwrap();
+    let first: TextEq = value
+        .clone()
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
+    let second: TextEq = value
+        .clone()
+        .encrypt_into_with_context(&keyset, column())
+        .await
+        .unwrap();
     assert_ne!(first.c, second.c, "each write seals under a fresh data key");
     assert_eq!(first.hm, second.hm, "equality search matches through hm");
     for record in [first, second] {
-        let opened: String = cipher.decrypt_as(record, column().into()).await.unwrap();
+        let opened = String::decrypt_from_with_context(record, &cipher, column())
+            .await
+            .unwrap();
         assert_eq!(opened, value);
     }
 }
@@ -97,14 +114,14 @@ async fn independent_queries_match_native_terms_without_requesting_data_keys() {
     let (writer, _) = common::cipher().await;
     let (reader, calls) = common::cipher().await;
     let value = "café".to_owned();
-    let stored: TextEq = writer
-        .default_keyset()
-        .encrypt_as(&value, column())
+    let stored: TextEq = value
+        .clone()
+        .encrypt_into_with_context(&writer.default_keyset(), column())
         .await
         .unwrap();
-    let query: TextEqQuery = reader
-        .default_keyset()
-        .encrypt_as(&value, column())
+    let query: TextEqQuery = value
+        .clone()
+        .encrypt_into_with_context(&reader.default_keyset(), column())
         .await
         .unwrap();
     assert_eq!(query.hm, stored.hm);
@@ -125,7 +142,10 @@ async fn independent_queries_match_native_terms_without_requesting_data_keys() {
         let text = text.to_owned();
         let keyset = reader.default_keyset();
         async move {
-            let probe: TextEqQuery = keyset.encrypt_as(&text, column()).await.unwrap();
+            let probe: TextEqQuery = text
+                .encrypt_into_with_context(&keyset, column())
+                .await
+                .unwrap();
             probe.hm
         }
     };
@@ -162,8 +182,9 @@ async fn identifier_components_are_nonempty_and_keep_their_boundaries() {
         ("users", "name"),
         ("other", "email"),
     ] {
-        let stored: TextEq = keyset
-            .encrypt_as(&value, Identifier::for_column(t, c).unwrap())
+        let stored: TextEq = value
+            .clone()
+            .encrypt_into_with_context(&keyset, Identifier::for_column(t, c).unwrap())
             .await
             .unwrap();
         for previous in &outputs {
@@ -183,16 +204,17 @@ async fn identifier_components_are_nonempty_and_keep_their_boundaries() {
 #[tokio::test]
 async fn context_and_encoding_failures_are_rejected_before_retrieving_keys() {
     let (cipher, calls) = common::cipher().await;
-    let stored: TextEq = cipher
-        .default_keyset()
-        .encrypt_as(&"secret".to_owned(), column())
+    let stored: TextEq = "secret"
+        .to_owned()
+        .encrypt_into_with_context(&cipher.default_keyset(), column())
         .await
         .unwrap();
     let wrong = Identifier::for_column("users", "name").unwrap();
-    assert!(cipher
-        .decrypt_as::<String, _>(stored.clone(), wrong.clone().into())
-        .await
-        .is_err());
+    assert!(
+        String::decrypt_from_with_context(stored.clone(), &cipher, wrong.clone())
+            .await
+            .is_err()
+    );
     for empty_table in [true, false] {
         let mut invalid = stored.clone();
         if empty_table {
@@ -200,10 +222,7 @@ async fn context_and_encoding_failures_are_rejected_before_retrieving_keys() {
         } else {
             invalid.i.c.clear();
         }
-        assert!(cipher
-            .decrypt_as::<String, _>(invalid, Default::default())
-            .await
-            .is_err());
+        assert!(String::decrypt_from(invalid, &cipher).await.is_err());
     }
     // A payload the TypeScript stack wrote carries no marker. The README says
     // decryption rejects it with an error that names the producer; if the
@@ -211,10 +230,7 @@ async fn context_and_encoding_failures_are_rejected_before_retrieving_keys() {
     // "invalid base64" instead, and `is_err()` alone would not notice.
     let mut legacy = stored.clone();
     legacy.c = Ciphertext("legacy-ciphertext".into());
-    let error = cipher
-        .decrypt_as::<String, _>(legacy, Default::default())
-        .await
-        .unwrap_err();
+    let error = String::decrypt_from(legacy, &cipher).await.unwrap_err();
     assert!(
         error
             .to_string()
@@ -231,19 +247,13 @@ async fn context_and_encoding_failures_are_rejected_before_retrieving_keys() {
     ] {
         let mut invalid = stored.clone();
         invalid.c = Ciphertext(encoded.into());
-        assert!(cipher
-            .decrypt_as::<String, _>(invalid, Default::default())
-            .await
-            .is_err());
+        assert!(String::decrypt_from(invalid, &cipher).await.is_err());
     }
     assert!(calls.lock().unwrap().retrieve.is_empty());
     let mut moved = stored;
     moved.i = wrong.into_inner();
     assert!(
-        cipher
-            .decrypt_as::<String, _>(moved, Default::default())
-            .await
-            .is_err(),
+        String::decrypt_from(moved, &cipher).await.is_err(),
         "a different nonempty stored identifier fails authentication"
     );
     assert_eq!(calls.lock().unwrap().retrieve.len(), 1);
@@ -258,9 +268,9 @@ async fn one_changed_byte_in_a_valid_body_fails_authentication() {
     // A transcoding that truncated or reordered them would surface as a wrong
     // plaintext or a decode error in a customer database, not here.
     let (cipher, calls) = common::cipher().await;
-    let stored: TextEq = cipher
-        .default_keyset()
-        .encrypt_as(&"secret".to_owned(), column())
+    let stored: TextEq = "secret"
+        .to_owned()
+        .encrypt_into_with_context(&cipher.default_keyset(), column())
         .await
         .unwrap();
     let body = stored.c.0.strip_prefix("stack-encrypt:1:").unwrap();
@@ -269,16 +279,19 @@ async fn one_changed_byte_in_a_valid_body_fails_authentication() {
     bytes[last] ^= 1;
     let mut tampered = stored.clone();
     tampered.c = Ciphertext(format!("stack-encrypt:1:{}", STANDARD.encode(&bytes)));
-    assert!(cipher
-        .decrypt_as::<String, _>(tampered, column().into())
-        .await
-        .is_err());
+    assert!(
+        String::decrypt_from_with_context(tampered, &cipher, column())
+            .await
+            .is_err()
+    );
     assert_eq!(
         calls.lock().unwrap().retrieve.len(),
         1,
         "the tampered body was decoded and parsed; the failure is authentication"
     );
-    let opened: String = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    let opened = String::decrypt_from_with_context(stored, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, "secret", "the untouched record still opens");
 }
 
@@ -286,14 +299,16 @@ async fn one_changed_byte_in_a_valid_body_fails_authentication() {
 async fn a_column_batches_generation_and_retrieval_under_the_same_descriptors() {
     let (cipher, calls) = common::cipher().await;
     let values = vec!["one".to_owned(), "two".to_owned(), "three".to_owned()];
-    let records: Vec<TextEq> = cipher
-        .default_keyset()
-        .encrypt_as(&values, column())
+    let records: Vec<TextEq> = values
+        .clone()
+        .encrypt_into_with_context(&cipher.default_keyset(), column())
         .await
         .unwrap();
     let json = serde_json::to_string(&records).unwrap();
     let records: Vec<TextEq> = serde_json::from_str(&json).unwrap();
-    let opened: Vec<String> = cipher.decrypt_as(records, column().into()).await.unwrap();
+    let opened = Vec::<String>::decrypt_from_with_context(records, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(opened, values);
     let calls = calls.lock().unwrap();
     assert_eq!(calls.generate.len(), 1);
@@ -302,7 +317,7 @@ async fn a_column_batches_generation_and_retrieval_under_the_same_descriptors() 
     assert_eq!(calls.generate, calls.retrieve);
 }
 
-#[derive(Clone)]
+#[derive(Clone, Zeroize)]
 struct WithoutSerde(String);
 impl Encrypt for WithoutSerde {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
@@ -318,14 +333,16 @@ impl Encrypt for &WithoutSerde {
 async fn leaf_transcoding_requires_no_serde_and_refuses_container_shapes() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let leaf: Ciphertext = keyset
-        .encrypt_as(&WithoutSerde("native".into()), column().into())
+    let leaf: Ciphertext = WithoutSerde("native".into())
+        .encrypt_into_with_context(&keyset, column())
         .await
         .unwrap();
-    let text: String = cipher.decrypt_as(leaf, column().into()).await.unwrap();
+    let text = String::decrypt_from_with_context(leaf, &cipher, column())
+        .await
+        .unwrap();
     assert_eq!(text, "native");
-    assert!(keyset
-        .encrypt_as::<_, Ciphertext>(&vec!["one".to_owned()], column().into())
+    assert!(vec!["one".to_owned()]
+        .encrypt_into_with_context::<Ciphertext, _>(&keyset, column())
         .await
         .is_err());
 }
@@ -357,7 +374,12 @@ fn postgres_stores_queries_indexes_and_returns_decryptable_text() {
         (4, "ALICE@example.com"),
     ] {
         let record: TextEq = runtime
-            .block_on(async { keyset.encrypt_as(&value.to_owned(), column()).await })
+            .block_on(async {
+                value
+                    .to_owned()
+                    .encrypt_into_with_context(&keyset, column())
+                    .await
+            })
             .unwrap();
         let json = serde_json::to_string(&record).unwrap();
         db.execute(
@@ -369,9 +391,9 @@ fn postgres_stores_queries_indexes_and_returns_decryptable_text() {
     let (query_cipher, _) = runtime.block_on(common::cipher());
     let query: TextEqQuery = runtime
         .block_on(async {
-            query_cipher
-                .default_keyset()
-                .encrypt_as(&"alice@example.com".to_owned(), column())
+            "alice@example.com"
+                .to_owned()
+                .encrypt_into_with_context(&query_cipher.default_keyset(), column())
                 .await
         })
         .unwrap();
@@ -383,8 +405,8 @@ fn postgres_stores_queries_indexes_and_returns_decryptable_text() {
     );
     for row in rows {
         let record: TextEq = serde_json::from_str(row.get::<_, &str>(1)).unwrap();
-        let value: String = runtime
-            .block_on(async { cipher.decrypt_as(record, column().into()).await })
+        let value = runtime
+            .block_on(async { String::decrypt_from_with_context(record, &cipher, column()).await })
             .unwrap();
         assert_eq!(value, "alice@example.com");
     }

@@ -87,9 +87,11 @@ pub enum Query {
     },
     /// Containment, `@>`, of a needle document.
     Contains(Value),
-    /// Equality at a path, `AtPath<Eq>`, of a scalar.
+    /// Equality at a path, the data plan's `eq_at`, of a scalar. The path
+    /// names no position.
     Equals(String, Value),
-    /// An ordering bound at a path, `AtPath<Gte>`, of a number or string.
+    /// An ordering bound at a path, the data plan's `gte_at`, of a number
+    /// or string.
     Order(String, Value),
 }
 

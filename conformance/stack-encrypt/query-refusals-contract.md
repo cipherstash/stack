@@ -78,30 +78,30 @@ The operator vocabulary is closed in Rust (`dynamic::Op`), so the unknown
 operator case is observed at the binding boundary alone; the Rust runner
 checks that the case expects exactly that and continues.
 
-## The typed chain
+## The typed query
 
-`typed` records how the typed Rust query chain answers the same query, for
-the queries it can spell (text on the text fields, a `uint32` range under
-ORE and an `int128` range under OPE): `before_keyset`, `after_keyset` or
-`none`. The Rust runner builds a one-field typed plan with the index that
-answers the operator, runs the chain under a keyset named for the case, and
-counts the keyset load. A refusal before the load is `before_keyset`; one
-after it is `after_keyset`. The error code must equal the binding's.
+`typed` records how a typed Rust query answers the same query, for the
+queries it can spell (text on the text fields, a `uint32` range under ORE
+and an `int128` range under OPE): `before_keyset`, `after_keyset` or
+`none`. A typed query is a query from the field reference of a derived record.
+The Rust runner has one derived record whose fields have the corpus's
+labels, runs the field query for the case, and counts the keyset loads
+and the key requests. The error code must equal the binding's.
 
 The two paths refuse the same inputs with the same codes at the same
-stage: before any keyset is resolved. Every `typed` entry of a refused case
-is `before_keyset`. Both paths call the one set of rules in the engine's
-`sem::query` module: the typed chain through each index's
+stage: before any keyset is resolved and before any key is requested. Every
+`typed` entry of a refused case is `before_keyset`, and the runner refuses
+an `after_keyset` entry. Both paths call the one set of rules in the
+engine's `sem::query` module: the typed query through each index's
 `Supports::prepare`, and the binding through `check_query`, `query_term`
 and `verify`. A rule written there is a rule on both paths, and a rule
 written anywhere else is a drift this profile fails on.
 
-Until the API plan's step 2 ("The engine's rules, and the order of the
-work", `docs/plans/2026-10-24-stack-encrypt-api-plan.md`) the typed chain
-refused equality text with no normal form, order text with no normal form
-and block ORE text over its limit only after the keyset was loaded, and the
-`typed` entries of those rows said `after_keyset`. They were flipped on
-purpose with that step.
+A typed query takes a keyset that is already loaded, so it cannot refuse
+after a keyset load. The value `after_keyset` stays in the vocabulary for
+the corpus's history: until the API plan's step 2 ("The engine's rules, and
+the order of the work", `docs/plans/2026-10-24-stack-encrypt-api-plan.md`)
+some rows said `after_keyset`.
 
 ## Scope and remaining work
 

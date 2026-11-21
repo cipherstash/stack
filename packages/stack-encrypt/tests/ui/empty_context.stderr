@@ -1,5 +1,5 @@
 error: an `identity` is the one label segment the field is keyed under, so it must be plain: not empty, no `/`, `(`, `)`, control or invisible character, and not beginning with `b64:`, a digit or `-` (e.g. `identity = "email"`)
-  --> tests/ui/empty_context.rs:10:24
+  --> tests/ui/empty_context.rs:13:24
    |
-10 |     #[stash(identity = "")]
+13 |     #[stash(identity = "")]
    |                        ^^

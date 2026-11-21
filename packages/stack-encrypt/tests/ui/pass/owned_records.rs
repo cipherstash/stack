@@ -5,16 +5,16 @@
 //! - `plaintext` records over opaque and structural leaves, including a
 //!   generic record and a record that stores its context;
 //! - a column of records;
-//! - an owned record used as a field of a structural record, and of a plan.
+//! - a record whose fields are a `struct = ..` record and a `plaintext`
+//!   record.
 //!
 //! `tests/ui/owned_record_*.rs` and `tests/ui/passthrough_misuse.rs` pin the
 //! forms that must not compile.
-use stack_encrypt::plan::pick;
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::{AeadContext, DecryptSource, EncryptTarget};
 use stack_encrypt::{
-    nonempty, Ciphertext, DecryptFrom, EncryptFrom, EncryptInto, Encrypted, KeysetCipher, Plan,
-    StackCipher, StackCipherText,
+    nonempty, Ciphertext, DecryptFrom, EncryptInto, Encrypted, KeysetCipher, StackCipher,
+    StackCipherText,
 };
 use stack_kms::FakeDataKeySource;
 use zeroize::Zeroize;
@@ -87,13 +87,13 @@ struct TextEq {
     hm: EqualityTerm,
 }
 
-/// An owned record as a field of a structural record.
-#[derive(Clone)]
+/// Records as the fields of another record.
+#[derive(Clone, Zeroize)]
 struct Profile {
     user: User,
     age: u32,
 }
-#[derive(EncryptFrom)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = Profile, scope = "profiles")]
 struct EncryptedProfile {
     user: EncryptedUser,
@@ -148,14 +148,10 @@ async fn records(
         .await?;
     let _: String = String::decrypt_from(stored, keyset).await?;
 
-    // An owned record in a structural record, and as a typed plan field.
-    let _: EncryptedProfile = keyset.encrypt_as(&profile, Default::default()).await?;
-    let plan = Plan::context("profiles")
-        .fields::<Profile, _>()
-        .encrypt_into::<EncryptedUser, _>(pick("user", |p: &Profile| &p.user))
-        .target::<Ciphertext, _>(pick("age", |p: &Profile| &p.age))
-        .build()?;
-    let _ = cipher.encrypt(&profile).using(&plan).await?;
+    // A record of records. Each inner field's context is extended by the
+    // outer field's.
+    let encrypted: EncryptedProfile = profile.encrypt_into(keyset).await?;
+    let _: Profile = Profile::decrypt_from(encrypted, cipher).await?;
     Ok(())
 }
 

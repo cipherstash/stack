@@ -560,6 +560,63 @@ async fn a_searchable_ciphertext_is_not_leaked_when_the_context_is_refused() {
     .await;
 }
 
+/// A record of one plaintext whose two fields name the equality index.
+#[allow(dead_code)] // never built: its declaration is refused
+#[derive(EncryptTarget)]
+#[stash(plaintext = Probe)]
+struct TwiceIndexedProbe {
+    first: EqualityTerm,
+    second: EqualityTerm,
+}
+
+/// A set of terms that names one index twice is refused before any key is
+/// requested. The refusal is handed the plaintext, so it must wipe it: the
+/// target alone, and a record of one plaintext.
+#[tokio::test]
+async fn a_plaintext_is_not_leaked_when_its_indexes_are_refused() {
+    let (cipher, generates, _) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let context = || nonempty!("users").with("email");
+    let leaked = Arc::new(AtomicBool::new(false));
+
+    let alone = probe(&leaked)
+        .encrypt_into_with_context::<Encrypted<(EqualityTerm, EqualityTerm)>, _>(&keyset, context())
+        .await;
+    assert!(
+        matches!(
+            alone.map(drop),
+            Err(Error::Plan(stack_encrypt::PlanError::DuplicateIndex {
+                index: "eq",
+                ..
+            }))
+        ),
+        "the target names the equality index twice"
+    );
+    assert!(
+        !leaked.load(Ordering::SeqCst),
+        "the refused target dropped the plaintext unwiped"
+    );
+
+    let in_a_record = probe(&leaked)
+        .encrypt_into_with_context::<TwiceIndexedProbe, _>(&keyset, context())
+        .await;
+    assert!(
+        matches!(
+            in_a_record.map(drop),
+            Err(Error::Plan(stack_encrypt::PlanError::DuplicateIndex {
+                index: "eq",
+                ..
+            }))
+        ),
+        "the record names the equality index twice"
+    );
+    assert!(
+        !leaked.load(Ordering::SeqCst),
+        "the refused record dropped the plaintext unwiped"
+    );
+    assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
+}
+
 #[derive(Zeroize)]
 struct Pair {
     first: Secret,
@@ -1116,18 +1173,16 @@ impl DecryptSource<i32> for FixedInteger {
 }
 
 #[tokio::test]
-async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
-    use stack_encrypt::plan::pick;
-    use stack_encrypt::{EncryptFrom, Plan};
-
-    #[derive(Clone)]
+async fn an_owned_record_is_a_field_of_another_record() {
+    #[derive(Clone, Zeroize)]
     struct Profile {
         user: User,
         age: u32,
     }
-    /// A structural record with an owned record as a field. The owned derive
-    /// also implements `EncryptFrom` with a `DeclaredContext`, so this works.
-    #[derive(EncryptFrom)]
+    /// A record whose fields are records: a `struct` record with passthrough
+    /// fields, and a `plaintext` record of the structural leaves. Each is
+    /// given its field's context.
+    #[derive(EncryptTarget)]
     #[stash(struct = Profile, scope = "profiles")]
     struct EncryptedProfile {
         user: EncryptedUser,
@@ -1141,10 +1196,7 @@ async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
         user: alice(),
         age: 34,
     };
-    let encrypted: EncryptedProfile = keyset
-        .encrypt_as(&profile, Default::default())
-        .await
-        .unwrap();
+    let encrypted: EncryptedProfile = profile.encrypt_into(&keyset).await.unwrap();
     assert_eq!(encrypted.user.id, 42);
     assert_eq!(
         sent.lock().unwrap().generated(),
@@ -1153,30 +1205,6 @@ async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
             "(users/email)/(profiles/user)",
             "profiles/age"
         ]
-    );
-
-    // The owned record also works as a typed field of a plan, for the same
-    // reason.
-    let plan = Plan::context("profiles")
-        .fields::<Profile, _>()
-        .encrypt_into::<EncryptedUser, _>(pick("user", |p: &Profile| &p.user))
-        .target::<Ciphertext, _>(pick("age", |p: &Profile| &p.age))
-        .build()
-        .unwrap();
-    let profile = Profile {
-        user: bob(),
-        age: 51,
-    };
-    let mut values = cipher.encrypt(&profile).using(&plan).await.unwrap();
-    let user: EncryptedUser = values.take("user").unwrap();
-    assert_eq!(user.id, 43);
-    let age: Ciphertext = values.take("age").unwrap();
-    assert_eq!(
-        keyset
-            .decrypt_with_context::<u32>(age, ("profiles", "age"))
-            .await
-            .unwrap(),
-        51
     );
     let _ = (
         FixedInteger::encryption::<common::CountingSource>,

@@ -1,11 +1,11 @@
 //! Classification of the derive input into the record it describes.
 
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, ToTokens};
+use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use syn::{
     parse_quote, Data, DeriveInput, Expr, Fields, Generics, Ident, Lifetime, LitStr, Member, Path,
-    Result, Type, WherePredicate,
+    PathArguments, Result, Type,
 };
 
 use crate::attrs::{ContainerAttrs, FieldAttrs};
@@ -40,7 +40,7 @@ pub(crate) struct Field {
 /// How a field gets its value when the record is encrypted.
 #[cfg_attr(test, derive(Debug))]
 pub(crate) enum Kind {
-    /// Derived from the source through the field type's own `EncryptFrom`.
+    /// Derived from the source through the field type's own `EncryptTarget`.
     Derived {
         /// With `struct = ..`: the plaintext field this one is derived from
         /// and the context it is keyed under, which come together. `None`
@@ -74,7 +74,7 @@ pub(crate) struct ByField {
     /// context the caller passes.
     pub(crate) context: OwnContext,
     /// `#[stash(query = T)]`: the type a query of the field takes, for its
-    /// marker.
+    /// field reference.
     pub(crate) query: Option<Type>,
 }
 
@@ -104,7 +104,7 @@ impl Field {
     /// `()`, and under it *extended* with the caller's (`(("users", "age"), id)`)
     /// when the caller passes a `NonEmpty<_>`. Every field of a `plaintext`
     /// record has none and is handed the caller's context as it is (a
-    /// one-value plan has one context source), and its type decides what
+    /// record of one value has one context source), and its type decides what
     /// that means: a record field composes it with its own contexts; a leaf
     /// accepts it only as a `NonEmpty<_>`.
     ///
@@ -152,18 +152,6 @@ pub(crate) enum FieldContext<'a> {
     /// No context of its own: handed the caller's as it is — `()`, or the
     /// record's associated context.
     Caller,
-}
-
-/// Which pair of declaration traits a derive emits.
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(test, derive(Debug))]
-pub(crate) enum Flavor {
-    /// `EncryptFrom` and `DecryptInto`: the structural declarations. They run
-    /// over a borrowed plaintext.
-    Structural,
-    /// `EncryptTarget` and `DecryptSource`: the owned declarations. These also
-    /// emit the structural pair.
-    Owned,
 }
 
 /// The record a derive input describes.
@@ -268,17 +256,13 @@ impl Record {
     }
 
     pub(crate) fn parse(input: &DeriveInput) -> Result<Self> {
-        Self::parse_as(input, Flavor::Structural)
-    }
-
-    pub(crate) fn parse_as(input: &DeriveInput, flavor: Flavor) -> Result<Self> {
         let attrs = ContainerAttrs::parse(&input.attrs)?;
 
         let data = match &input.data {
             Data::Struct(data) => data,
             Data::Enum(_) => return Err(syn::Error::new_spanned(
                 &input.ident,
-                "EncryptFrom/DecryptInto cannot be derived for enums: a record is a fixed set of \
+                "EncryptTarget/DecryptSource cannot be derived for enums: a record is a fixed set of \
                      fields derived from one source, and a variant choice has no field to be \
                      derived into. Model the choice explicitly instead, e.g. as a struct of \
                      `Option` fields.",
@@ -286,7 +270,7 @@ impl Record {
             Data::Union(_) => {
                 return Err(syn::Error::new_spanned(
                     &input.ident,
-                    "EncryptFrom/DecryptInto cannot be derived for unions",
+                    "EncryptTarget/DecryptSource cannot be derived for unions",
                 ))
             }
         };
@@ -294,16 +278,6 @@ impl Record {
         // `ContainerAttrs::parse` has established that `scope` is present
         // exactly when `struct` is.
         let fields = collect(&data.fields, attrs.scope.as_ref())?;
-        if flavor == Flavor::Structural {
-            if let Some(field) = fields.iter().find(|f| f.is_passthrough()) {
-                return Err(syn::Error::new_spanned(
-                    &field.ty,
-                    "`passthrough` is a field of an owned record: derive `EncryptTarget` and \
-                     `DecryptSource`, which move the plaintext field into the record and back. \
-                     The structural `EncryptFrom` / `DecryptInto` derives have no form for it",
-                ));
-            }
-        }
         if fields
             .iter()
             .filter(|f| matches!(f.kind, Kind::Context))
@@ -337,19 +311,6 @@ impl Record {
             ));
         }
 
-        if flavor == Flavor::Structural
-            && (attrs.caller_scope.is_some()
-                || attrs.stored_scope.is_some()
-                || attrs.caller_bind.is_some()
-                || attrs.stored_bind.is_some())
-        {
-            return Err(syn::Error::new_spanned(
-                &input.ident,
-                "`scope(..)` and `bind(..)` are parts of an owned record's context: derive \
-                 `EncryptTarget` and `DecryptSource`. The structural `EncryptFrom` / \
-                 `DecryptInto` derives have no form for them",
-            ));
-        }
         let parts = Parts {
             stored_scope: attrs
                 .stored_scope
@@ -380,7 +341,7 @@ impl Record {
             if record.context_field().is_some() {
                 return Err(syn::Error::new_spanned(
                     context_type,
-                    "`context_field` supplies the complete context, so the record's `Context` is \
+                    "`context_field` supplies the complete context, so the caller passes a \
                      `NonEmpty<T>` of that field's type; `context_type` does not apply",
                 ));
             }
@@ -389,7 +350,7 @@ impl Record {
     }
 }
 
-/// A `struct` derive's fields, as a plan's: each plaintext field has one
+/// A `struct` derive's fields: each plaintext field has one
 /// output, and each output one segment. A second output from one plaintext
 /// field (a term beside its ciphertext) is one field of type
 /// `Encrypted<Terms>` instead; two fields keyed under one segment would
@@ -495,7 +456,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     ));
                 }
             }
-            // A query type is for a field's marker, and only a derived
+            // A query type is for a field's reference, and only a derived
             // field of a `struct = ..` record has one.
             if let Some(query) = &attrs.query {
                 if prefix.is_none()
@@ -506,14 +467,14 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     return Err(syn::Error::new_spanned(
                         query,
                         "`query = ..` names the type a query of the field takes, for the \
-                         field's marker; only a sealed field of a `struct = ..` record has a \
-                         marker, so it does not apply to a `plaintext` record's field, or to a \
+                         field's reference; only a sealed field of a `struct = ..` record has a \
+                         field reference, so it does not apply to a `plaintext` record's field, or to a \
                          `context_field`, `passthrough` or `default` field",
                     ));
                 }
             }
-            // An identity is one label segment, as the plan builder's is:
-            // non-empty, and plain so the descriptor names the field.
+            // An identity is one label segment: non-empty, and plain so the
+            // descriptor names the field.
             if let Some(identity) = &attrs.identity {
                 if !crate::attrs::is_plain_segment(&identity.value()) {
                     return Err(syn::Error::new(
@@ -631,7 +592,8 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                             }
                         }
                         // Every output of a `plaintext` record takes the
-                        // caller's context: a one-value plan has one source.
+                        // caller's context: a record of one value has one
+                        // source.
                         None => Kind::Derived { by_field: None },
                     },
                 }
@@ -650,35 +612,6 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
 impl Record {
     pub(crate) fn context_field(&self) -> Option<&Field> {
         self.fields.iter().find(|f| matches!(f.kind, Kind::Context))
-    }
-    /// Whether the record takes `DeclaredContext`: exactly when it is a
-    /// `struct` derive, whose fields all carry a context of their own. A
-    /// `plaintext` record's fields have none.
-    pub(crate) fn declared_contexts(&self) -> bool {
-        self.by_field
-    }
-    pub(crate) fn context_type(&self, decrypt: bool) -> Type {
-        let krate = &self.krate;
-        // On the encrypt side a record whose parts are all stored in the row
-        // takes nothing from the caller, so it keeps the declared context.
-        // On the decrypt side the caller may pass a stored part to check it.
-        if self.parts.any() && (decrypt || self.parts.caller_any()) {
-            return self.parts_type(decrypt);
-        }
-        if let Some(field) = self.context_field() {
-            let ty = &field.ty;
-            if decrypt {
-                parse_quote!(#krate::target::ExpectedContext<#ty>)
-            } else {
-                parse_quote!(#krate::NonEmpty<#ty>)
-            }
-        } else if self.declared_contexts() {
-            parse_quote!(#krate::target::DeclaredContext)
-        } else if let Some(context_type) = &self.context_type {
-            context_type.clone()
-        } else {
-            parse_quote!(#krate::target::CallerContext)
-        }
     }
     /// The `Parts<S, B>` a record with `scope(..)` or `bind(..)` takes from
     /// its caller. On the encrypt side a stored part is read from the
@@ -705,58 +638,6 @@ impl Record {
         parse_quote!(#krate::target::Parts<#scope, #bind>)
     }
 
-    /// The context a field is handed on the decrypt side: the caller's as it
-    /// is, or — for a field with a context of its own, which only a `struct`
-    /// derive has — the `CallerContext` that `context_expr` builds from the
-    /// record's `DeclaredContext` with `under`.
-    pub(crate) fn field_context_type(&self, field: &Field) -> Type {
-        let krate = &self.krate;
-        match field.field_context() {
-            FieldContext::Own(_) => parse_quote!(#krate::target::CallerContext),
-            FieldContext::Caller => self.context_type(false),
-        }
-    }
-    /// The context type the record's declaration tree carries on the
-    /// encrypt side: a `DeclaredContext` when every field has a
-    /// context of its own, so the caller's is optional; otherwise the
-    /// caller's — the `context_type` named, or `CallerContext`. It is the
-    /// record's own `Context` except for a record that stores its context,
-    /// which declares the `NonEmpty<T>` it stores and converts it into this
-    /// once, at the root.
-    pub(crate) fn threaded_context(&self) -> Type {
-        let krate = &self.krate;
-        if self.context_field().is_some() {
-            parse_quote!(#krate::target::CallerContext)
-        } else {
-            self.context_type(false)
-        }
-    }
-
-    /// What a `plaintext` record asks of a field's type, as the impl's
-    /// where-clause: that it is a target of `source`, and that the context
-    /// the record takes converts into the one it declares. Stated per field,
-    /// beside what the plan asks of the tuple of them, so what a field's
-    /// type refuses is reported at that field.
-    /// Only for a field whose source the derive can name — a `from` field's
-    /// obligation is checked in the body, against a plaintext field's type
-    /// the derive cannot name.
-    pub(crate) fn field_bounds(&self, field: &Field, source: &Type) -> [WherePredicate; 2] {
-        let krate = &self.krate;
-        let ty = &field.ty;
-        let context = quote!(<#ty as #krate::target::EncryptFrom<#source>>::Context);
-        let threading = match field.field_context() {
-            FieldContext::Own(_) => parse_quote!(#context: From<#krate::target::CallerContext>),
-            FieldContext::Caller => {
-                let threaded = self.threaded_context();
-                parse_quote!(#threaded: Into<#context>)
-            }
-        };
-        [
-            parse_quote!(#ty: #krate::target::EncryptFrom<#source>),
-            threading,
-        ]
-    }
-
     /// The context a field is opened under, from the record's `__context`,
     /// on the decrypt side: the caller's as it is, or the field's own
     /// extended by it.
@@ -778,47 +659,6 @@ impl Record {
         }
     }
 }
-/// The outputs of a `plaintext` record's derived `fields`, as the plan's
-/// one-value target sees them: the tuple of their types (the type itself
-/// for one field), and the pattern binding each to its local. A tuple of
-/// targets is a target for up to five elements; a record of more than four
-/// outputs nests the rest in its fourth: `(A, B, C, (D, E, ..))`.
-pub(crate) fn outputs(fields: &[&Field]) -> (TokenStream, TokenStream) {
-    match fields {
-        [field] => {
-            let ty = &field.ty;
-            let local = &field.local;
-            (quote!(#ty), quote!(#local))
-        }
-        _ => {
-            let (flat, rest) = if fields.len() <= 4 {
-                (fields, None)
-            } else {
-                (&fields[..3], Some(outputs(&fields[3..])))
-            };
-            let mut types: Vec<TokenStream> = flat
-                .iter()
-                .map(|field| {
-                    let ty = &field.ty;
-                    quote!(#ty)
-                })
-                .collect();
-            let mut patterns: Vec<TokenStream> = flat
-                .iter()
-                .map(|field| {
-                    let local = &field.local;
-                    quote!(#local)
-                })
-                .collect();
-            if let Some((ty, pattern)) = rest {
-                types.push(ty);
-                patterns.push(pattern);
-            }
-            (quote!((#(#types),*)), quote!((#(#patterns),*)))
-        }
-    }
-}
-
 /// The chain zipping `operations` into one description, and the nested
 /// tuple pattern that binds each operation's output to its local in the
 /// closure that maps the chain's output.
@@ -838,21 +678,124 @@ fn zip_chain(operations: Vec<(TokenStream, Ident)>, method: &str) -> (TokenStrea
     (chain, pattern)
 }
 
-/// The zipped `operations`, mapped to `result`.
-pub(crate) fn zip(operations: Vec<(TokenStream, Ident)>, result: TokenStream) -> TokenStream {
-    let (chain, pattern) = zip_chain(operations, "zip");
-    quote!(#chain.map(move |#pattern| #result))
-}
-
-/// [`zip`] over recovered plaintext. Each field opened before a later field
-/// fails is wiped, not dropped as it is (`Decryption::zip_wiping`). An owned
-/// record's fields open through this.
+/// The zipped `operations` over recovered plaintext, mapped to `result`.
+/// Each field opened before a later field fails is wiped, not dropped as it
+/// is (`Decryption::zip_wiping`). A record's fields open through this.
 pub(crate) fn zip_wiping(
     operations: Vec<(TokenStream, Ident)>,
     result: TokenStream,
 ) -> TokenStream {
     let (chain, pattern) = zip_chain(operations, "zip_wiping");
     quote!(#chain.map(move |#pattern| #result))
+}
+
+/// `Decryptable` for the record: whether one of its derived fields holds
+/// recoverable ciphertext. A record that marks a field `decrypt` is
+/// decryptable.
+pub(crate) fn decryptable_impl(
+    input: &DeriveInput,
+    record: &Record,
+    derived: &[&Field],
+) -> TokenStream {
+    let krate = &record.krate;
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let value = if record.fields.iter().any(|f| f.decrypt) {
+        quote!(true)
+    } else {
+        let terms = derived.iter().map(|field| {
+            let ty = &field.ty;
+            // Spanned at the field type: a type that is not `Decryptable`
+            // is reported there, not at the derive.
+            quote_spanned!(ty.span()=> || <#ty as #krate::target::Decryptable>::DECRYPTABLE)
+        });
+        quote!(false #(#terms)*)
+    };
+    quote! {
+        #[automatically_derived]
+        impl #impl_generics #krate::target::Decryptable for #name #ty_generics #where_clause {
+            const DECRYPTABLE: bool = #value;
+        }
+    }
+}
+
+/// The plaintext struct's path as a struct literal and a pattern write it,
+/// with a turbofish on its generic arguments.
+pub(crate) fn struct_literal_path(plaintext: &Type) -> Result<Path> {
+    let Type::Path(type_path) = plaintext else {
+        return Err(syn::Error::new_spanned(
+            plaintext,
+            "field-by-field decryption rebuilds the plaintext as a struct literal, so \
+             `plaintext` must name a struct",
+        ));
+    };
+    if type_path.qself.is_some() {
+        return Err(syn::Error::new_spanned(
+            plaintext,
+            "field-by-field decryption rebuilds the plaintext as a struct literal, so \
+             `plaintext` must name a struct directly, not through a qualified path",
+        ));
+    }
+    let mut path = type_path.path.clone();
+    for segment in &mut path.segments {
+        if let PathArguments::AngleBracketed(args) = &mut segment.arguments {
+            args.colon2_token = Some(Default::default());
+        }
+    }
+    Ok(path)
+}
+
+/// The compile-time check that a record, or one plaintext field of it, has
+/// exactly one field that decryption opens.
+pub(crate) fn check(
+    krate: &Path,
+    name: &Ident,
+    from: Option<&Member>,
+    fields: &[&Field],
+) -> TokenStream {
+    let terms = fields.iter().map(|field| {
+        let ty = &field.ty;
+        // Spanned at the field type: a type that is not `Decryptable` is
+        // reported there, not at the derive.
+        quote_spanned!(ty.span()=> + (<#ty as #krate::target::Decryptable>::DECRYPTABLE as usize))
+    });
+    // A plaintext field has one output in a `struct` derive, so only the
+    // whole-value shape can hold several candidates.
+    let several = match from {
+        None => {
+            let several = LitStr::new(
+                &format!(
+                    "`{name}` has several decryptable fields: mark the one decryption opens \
+                     `#[stash(decrypt)]`"
+                ),
+                Span::call_site(),
+            );
+            quote!(::core::assert!(__decryptable <= 1, #several);)
+        }
+        Some(_) => TokenStream::new(),
+    };
+    let none = match from {
+        None => format!(
+            "`{name}` has no decryptable field: every derived field is a one-way index term, so \
+             there is nothing for DecryptSource to open"
+        ),
+        Some(from) => format!(
+            "no field of `{name}` can recover the plaintext field `{}`: the field derived from \
+             it is a one-way index term. To store its ciphertext with the term, make it \
+             `Encrypted<Terms>`",
+            from.to_token_stream()
+        ),
+    };
+    let none = LitStr::new(&none, Span::call_site());
+    // A `let`, not a nested `const` item: an item could not see the
+    // record's generics from inside an inline `const`.
+    quote! {
+        {
+            let __decryptable: usize = 0 #(#terms)*;
+            ::core::assert!(__decryptable >= 1, #none);
+            #several
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1035,10 +978,11 @@ mod tests {
 
     #[test]
     fn a_field_context_is_refused_on_every_derive_form() {
-        // A one-value plan has one context source, the caller's, and a
-        // fields plan's fields all sit under the plan's: a field sealed under
-        // a literal of its own has no plan form, whatever the literal, so the
-        // attribute itself is the mistake. Even an empty or non-plain one.
+        // A record of one value has one context source, the caller's, and
+        // a `struct` record's fields all sit under the record's scope. So a
+        // field cannot be sealed under a literal of its own, whatever the
+        // literal: the attribute itself is the mistake. Even an empty or
+        // non-plain one.
         for context in ["nickname", "users/nickname", ""] {
             let inputs: [DeriveInput; 3] = [
                 parse_quote! {
@@ -1083,7 +1027,7 @@ mod tests {
                 assert!(message.contains("re-encrypt that data"), "{message}");
                 assert!(message.contains("identity = \"..\""), "{message}");
                 assert!(
-                    message.contains("a fields plan that picks the same source twice"),
+                    message.contains("encrypt it twice, once under each context"),
                     "{message}"
                 );
             }
@@ -1549,17 +1493,17 @@ mod tests {
             }
         })
         .unwrap();
-        let ty = |ty: &Type| quote!(#ty).to_string();
-        assert_eq!(ty(&record.context_type(false)), "AeadContext");
-        assert_eq!(ty(&record.context_type(true)), "AeadContext");
-        // Both fields are handed the caller's type as it is.
+        // The type as text, without the spaces `quote` puts between tokens.
+        let ty = |ty: &Type| quote!(#ty).to_string().replace(' ', "");
+        // The record requires the caller's type, and every field is handed
+        // that type as it is.
         assert_eq!(
-            ty(&record.field_context_type(&record.fields[0])),
-            "AeadContext"
+            ty(&crate::owned_encrypt::encrypt_input(&record)),
+            "::stack_encrypt::target::RequiredContext<AeadContext>"
         );
         assert_eq!(
-            ty(&record.field_context_type(&record.fields[1])),
-            "AeadContext"
+            ty(&crate::owned_encrypt::threaded_input(&record)),
+            "::stack_encrypt::target::RequiredContext<AeadContext>"
         );
 
         let record = parse(parse_quote! {
@@ -1570,8 +1514,8 @@ mod tests {
         .unwrap();
         assert!(record.context_type.is_none());
         assert_eq!(
-            ty(&record.context_type(false)),
-            ":: stack_encrypt :: target :: CallerContext"
+            ty(&crate::owned_encrypt::encrypt_input(&record)),
+            "::stack_encrypt::target::RequiredContext<::stack_encrypt::target::CallerContext>"
         );
     }
 
@@ -1635,8 +1579,8 @@ mod tests {
         assert_eq!(record.fields.len(), 3);
         // Nothing is derived from a field of the plaintext.
         assert!(record.fields.iter().all(|f| f.from().is_none()));
-        // Every derived field takes the caller's context: a one-value plan
-        // has one source.
+        // Every derived field takes the caller's context: a record of one
+        // value has one source.
         assert!(record.fields[0].decrypt);
         assert!(record.fields[1].is_derived());
         for field in &record.fields[..2] {

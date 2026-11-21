@@ -154,8 +154,8 @@ the Go-only host conversions the host refuses before the engine. The
 `record-query-refusals-v1` in `v1/record-query-refusals-v1.cases.json`: one plan, every
 scalar operator against every field capability that does not answer it,
 the range shapes, other-kind values and nulls the contract lists, each refusal's
-class and diagnostic, no key I/O, and the stage at which the typed Rust
-chain refuses the same query. The [raw-frame contract](raw-frames-contract.md)
+class and diagnostic, no key I/O, and the stage at which a typed Rust
+query refuses the same query. The [raw-frame contract](raw-frames-contract.md)
 defines `record-raw-frames-v1` in `v1/record-raw-frames-v1.cases.json`: stored batches as
 transport bytes, so repeated keys and malformed leaves reach both decoders,
 and the table of error classes (transport, leaf, shape, authenticated,

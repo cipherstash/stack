@@ -1,10 +1,10 @@
 //! How a description receives its plaintext (`target::{Borrowed, Owned}`).
 //!
 //! Vitamin C's by-value `Encrypt` walk and `PrfValue` consume their input. A description
-//! handed a borrow (the default, and what every `EncryptFrom` declaration
-//! runs in) clones before an operation consumes; one handed the value
-//! (`Owned`) gives it to the operation. These tests hold the two claims that
-//! make owned mode worth having:
+//! handed a borrow (the default, and what every `EncryptTarget::encryption`
+//! declaration runs in) clones before an operation consumes; one handed the
+//! value (`Owned`) gives it to the operation. These tests hold the two claims
+//! that make owned mode worth having:
 //!
 //! - a plaintext that is **not `Clone`** runs a single operation — a
 //!   ciphertext alone, or one term alone — and the output is the same as the
@@ -21,7 +21,7 @@ use stack_encrypt::sem::{EqualityTerm, MatchTerms};
 use stack_encrypt::target::{
     ciphertext, equality, matching, AeadContext, Borrowed, CallerContext, Encryption, Owned,
 };
-use stack_encrypt::{nonempty, Encrypt, NonEmpty, StackCipherText};
+use stack_encrypt::{nonempty, DecryptFrom, Encrypt, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
 use vitaminc_aead::plaintext::Sink;
 use vitaminc_prf::{IntoPrfContext, Prf, PrfValue, PrfVisitor};
@@ -132,7 +132,9 @@ async fn a_plaintext_that_is_not_clone_seals_through_ciphertext_alone() {
         .await
         .unwrap();
 
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(
         opened, NUMBER,
         "an owned, non-Clone plaintext should seal to a ciphertext that opens to its text"
@@ -192,7 +194,9 @@ async fn a_value_frame_seals_by_value_through_ciphertext_alone() {
         .await
         .unwrap();
 
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(
         opened, NUMBER,
         "a value frame should seal by value and open to the same text"
@@ -248,7 +252,9 @@ async fn an_owned_zip_copies_for_every_side_but_the_last() {
     );
 
     // And what each side made is what it would have made alone.
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(opened, NUMBER, "the zipped ciphertext opens to the text");
     let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
     assert_eq!(term, expected, "the zipped term is the text's term");
@@ -275,7 +281,9 @@ async fn a_borrowed_operation_copies_once_for_each_operation_that_consumes() {
         .await
         .unwrap();
     assert_eq!(clones.load(Ordering::SeqCst), 1, "a borrowed ciphertext");
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(opened, NUMBER, "the borrowed ciphertext opens to the text");
 
     let (value, clones) = Counted::new(NUMBER);
@@ -385,7 +393,9 @@ async fn an_owned_plaintext_is_dropped_before_its_key_request_is_sent() {
         1,
         "ciphertext: dropped exactly once"
     );
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(
         opened, NUMBER,
         "the text was sealed before the husk dropped"
