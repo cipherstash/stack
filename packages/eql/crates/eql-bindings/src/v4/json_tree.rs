@@ -34,7 +34,7 @@ use stack_encrypt::json::{
 };
 use stack_encrypt::target::{
     json_document, AeadContext, Borrowed, DecryptSource, EncryptTarget, ExpectedContext, Index,
-    IndexSpec, Json, RequiredContext, StoredContext,
+    IndexSpec, Json, Owned, RequiredContext, StoredContext,
 };
 use stack_encrypt::{DecryptField, Decryptable, Decryption, Encryption, Error, NonEmpty};
 use ts_rs::TS;
@@ -508,10 +508,32 @@ impl JsonTree {
     /// On its own, the document stores the column the caller passes, and
     /// seals under it. As a field of a record, it stores the field's own
     /// column, and seals under the scopes and bindings of the record too.
+    ///
+    /// The document is borrowed, so it is copied once to be sealed, and the
+    /// copy is wiped. [`owned_sealing`](Self::owned_sealing) moves it in
+    /// instead.
     pub(crate) fn sealing<'s, K: 'static>(
         &self,
     ) -> Encryption<'s, Value, JsonTreeDocument, K, StoredContext<Identifier>> {
         json_document::<K, Borrowed>(self.options.clone())
+            .storing(|document, column: Identifier| (column, document))
+            .try_map(|(column, document)| JsonTreeDocument::envelope(column, &document))
+    }
+
+    /// [`sealing`](Self::sealing), for a document passed by value. The
+    /// document is moved out of the [`JsonPlaintext`] into the seal, with no
+    /// copy.
+    ///
+    /// The stored column is checked while the document is still a
+    /// `JsonPlaintext`, so a column that cannot be stored drops the
+    /// `JsonPlaintext`, which wipes the document. After that the document
+    /// is the seal's, which wipes it when it has been sealed, and when the
+    /// context is refused.
+    pub(crate) fn owned_sealing<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, JsonPlaintext, JsonTreeDocument, K, StoredContext<Identifier>, Owned> {
+        json_document::<K, Owned>(self.options.clone())
+            .over_json_plaintext()
             .storing(|document, column: Identifier| (column, document))
             .try_map(|(column, document)| JsonTreeDocument::envelope(column, &document))
     }
@@ -553,6 +575,11 @@ impl JsonTreeDocument {
 /// is then the record's scope and the field's name. A scope or a binding
 /// that the record lists is not stored in the document: the reader supplies
 /// it again.
+///
+/// `encrypt_into` moves the document into the seal, with no copy, and the
+/// document is wiped when it has been sealed or the context is refused.
+/// Sealing a borrowed plaintext, such as an element of a collection, reads
+/// the document through one copy, which is wiped too.
 impl EncryptTarget<JsonPlaintext> for JsonTreeDocument {
     type ContextInput = StoredContext<Identifier>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
@@ -561,6 +588,13 @@ impl EncryptTarget<JsonPlaintext> for JsonTreeDocument {
     {
         JsonTree::default().sealing().project(JsonPlaintext::value)
     }
+    fn owned_encryption<'s, K: 'static>(
+    ) -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput, Owned>
+    where
+        JsonPlaintext: 's,
+    {
+        JsonTree::default().owned_sealing()
+    }
     fn indexes() -> Vec<IndexSpec> {
         JsonTree::default().specs()
     }
@@ -568,6 +602,9 @@ impl EncryptTarget<JsonPlaintext> for JsonTreeDocument {
 
 /// A document field sealed under the options its record's
 /// `#[stash(json(..))]` names, which order the paths its queries compare.
+///
+/// A derived record seals each such field through the owned form, which
+/// moves the document into the seal, with no copy.
 impl JsonTarget<JsonPlaintext> for JsonTreeDocument {
     fn json_encryption<'s, K: 'static>(
         options: JsonOptions,
@@ -578,6 +615,14 @@ impl JsonTarget<JsonPlaintext> for JsonTreeDocument {
         JsonTree::new(options)
             .sealing()
             .project(JsonPlaintext::value)
+    }
+    fn json_owned_encryption<'s, K: 'static>(
+        options: JsonOptions,
+    ) -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput, Owned>
+    where
+        JsonPlaintext: 's,
+    {
+        JsonTree::new(options).owned_sealing()
     }
 }
 

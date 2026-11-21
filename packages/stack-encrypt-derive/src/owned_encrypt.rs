@@ -595,6 +595,12 @@ fn own_expr(krate: &syn::Path, context: &OwnContext) -> TokenStream {
 /// are zipped. A record with a `context_field` stores its context
 /// (`Encryption::storing`): the `NonEmpty<T>` the caller passes, or the
 /// field's own context when the record is a field of a `struct = ..` record.
+///
+/// A record with exactly one field derived from the plaintext also has an
+/// owned form ([`owned_form`]). Its value goes to that one field, so it can
+/// be moved into the field's own owned form. A record with two or more such
+/// fields keeps the default owned form: the value is guarded, and each field
+/// reads it through the borrowed form.
 fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> TokenStream {
     let krate = &record.krate;
     let input_type = encrypt_input(record);
@@ -659,6 +665,7 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
                 }
             }
         };
+        let owned = owned_form(record, fields, &source, &lifetime, &threaded, &body);
         impls.push(trait_impl(
             input,
             &generics,
@@ -681,6 +688,7 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
                     }
                     __described
                 }
+                #owned
                 fn indexes() -> ::std::vec::Vec<#krate::target::IndexSpec> {
                     let mut __indexes = ::std::vec::Vec::new();
                     #(#indexes)*
@@ -690,4 +698,48 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
         ));
     }
     quote!(#(#impls)*)
+}
+
+/// The owned form of a `plaintext = T` record with exactly one field derived
+/// from the plaintext, or nothing for any other record.
+///
+/// The whole value goes to the one field, so nothing needs to share it. The
+/// value is moved into the field's own owned form. A field type that only
+/// reads its plaintext in place keeps the default owned form, which guards
+/// the value and wipes it. A field type that seals the value, such as a
+/// ciphertext, moves it into the seal, with no copy.
+///
+/// `body` is the borrowed form's root, after the fields' descriptions: a
+/// `map` and `accepting`, which take any source mode, or `storing`, whose
+/// owned form wipes the value when the context cannot be stored. A refusal
+/// of the record's indexes wipes the value too (`refused_wiping`).
+fn owned_form(
+    record: &Record,
+    fields: &[&Field],
+    source: &Type,
+    lifetime: &syn::Lifetime,
+    threaded: &Type,
+    body: &TokenStream,
+) -> TokenStream {
+    let [field] = fields else {
+        return TokenStream::new();
+    };
+    let krate = &record.krate;
+    let ty = &field.ty;
+    let local = &field.local;
+    let name = field_name(field);
+    quote! {
+        fn owned_encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::ContextInput, #krate::target::Owned> where #source: #lifetime {
+            let #local = <#ty as #krate::target::EncryptTarget<#source>>::owned_encryption::<__K>()
+                .accepting::<#threaded>()
+                .named(#name);
+            let __described = #body;
+            if let ::core::result::Result::Err(__error) = #krate::target::check_indexes(
+                &<Self as #krate::target::EncryptTarget<#source>>::indexes(),
+            ) {
+                return __described.refused_wiping(__error);
+            }
+            __described
+        }
+    }
 }

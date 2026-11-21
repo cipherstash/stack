@@ -110,6 +110,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `json::JsonPredicateQuery`, the typed element and predicate operands;
     and `field_reference::json`, the query types.
 
+- **A value passed by value is sealed without a copy** (#1687). Sealing
+  a value took a copy of it when the target had no owned form of its own.
+  Both copies were wiped, so nothing leaked, but the copy was not needed.
+  - A `JsonDocument` field marked `#[stash(json(..))]` moves the document
+    out of the `JsonPlaintext` into the seal
+    (`JsonTarget::json_owned_encryption`), as `encrypt_into` already did.
+  - A derived `plaintext = T` record with exactly one field derived from
+    the plaintext has its own `owned_encryption`. It moves the value into
+    the owned form of that field's target. So a record whose one field is a
+    `StackCipherText` seals the value with no copy. When the record's
+    context cannot be stored, or its indexes are refused, the value is
+    wiped. A record with two or more such fields is unchanged.
+  - Three items for generated and binding code, hidden from the docs:
+    `Encryption::storing` in `Owned` mode (requires `S: Zeroize`, and
+    wipes the value when the context cannot be stored),
+    `Encryption::refused_wiping` (requires `S: Zeroize`), and
+    `Encryption::over_json_plaintext`, which turns an owned description of
+    a `serde_json::Value` into one of a `JsonPlaintext` by moving the
+    document across. No item returns the document to its caller.
+  - The stored bytes do not change. A target with search terms keeps its
+    behaviour.
+
 - **`Error::Input`: a refusal of the caller's input** (#1459). A field
   field reference's JSON query whose input has the wrong shape, and a data plan run
   through `dynamic::Planned` whose source does not fit it, now fail with

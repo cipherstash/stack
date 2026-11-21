@@ -77,6 +77,20 @@ impl JsonTarget<JsonPlaintext> for JsonDocument {
             .project(JsonPlaintext::value)
             .accepting()
     }
+
+    /// The document is moved out of the `JsonPlaintext` into the sealing,
+    /// with no copy. It is wiped when it has been sealed, and when the
+    /// context is refused.
+    fn json_owned_encryption<'s, K: 'static>(
+        options: JsonOptions,
+    ) -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput, Owned>
+    where
+        JsonPlaintext: 's,
+    {
+        json_document::<K, Owned>(options)
+            .over_json_plaintext()
+            .accepting()
+    }
 }
 
 /// A nullable document field: a `Some` is sealed under the options, and a

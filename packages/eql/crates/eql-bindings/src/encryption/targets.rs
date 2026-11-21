@@ -507,8 +507,8 @@ fn document(name: &str) -> Option<&'static Target> {
 /// Seal one `JsonSearch` value: the document the field's text holds,
 /// parsed by the engine's rules, laid out by the JSON index under
 /// `options`, under the field's context. The document stores the column
-/// alone. The parsed document is wiped when this returns; the pending has
-/// taken what it seals.
+/// alone. The parsed document is moved into the seal, with no copy, and is
+/// wiped when it has been sealed or the context is refused.
 fn encrypt_document<'a, K: 'static>(
     name: &'static str,
     options: &JsonOptions,
@@ -523,8 +523,8 @@ fn encrypt_document<'a, K: 'static>(
         })?;
     Ok(keyset
         .run(
-            crate::v4::json_tree::JsonTree::new(options.clone()).sealing(),
-            document.value(),
+            crate::v4::json_tree::JsonTree::new(options.clone()).owned_sealing(),
+            document,
             StoredContext::from(context),
         )
         .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
@@ -708,9 +708,9 @@ mod sealed {
 /// implementations are exactly the plaintext types the catalog's producible
 /// families name, and the generated dispatch picks one per type.
 /// `Zeroize`, because [`from_frame`](Self::from_frame) copies the plaintext
-/// out of the frame's `Protected` buffer and the copy is wiped when it is
-/// dropped (`run_target` holds it in [`zeroize::Zeroizing`]), as the frame
-/// is.
+/// out of the frame's `Protected` buffer, and that copy must be wiped, as
+/// the frame is. `run_target` hands it to the type's owned form, which
+/// wipes it.
 pub trait Plaintext:
     sealed::Sealed + Decrypt + Sized + MaybeSend + zeroize::Zeroize + 'static
 {
@@ -882,13 +882,37 @@ where
     S: Plaintext + zeroize::Zeroize,
     K: 'static,
 {
-    // The copy lives only until the run has cloned what it seals, and is
-    // wiped when this returns: the frame kept its bytes in `Protected`,
-    // and the copy is held to the same rule.
-    let plaintext = zeroize::Zeroizing::new(S::from_frame(name, &plaintext)?);
-    Ok(keyset
-        .run(T::encryption(), &*plaintext, StoredContext::from(context))
+    let pending = run_owned::<T, S, K>(name, keyset, context, plaintext)?;
+    Ok(pending
         .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
+}
+
+/// Read the plaintext out of the frame and run `T`'s owned form over it.
+///
+/// The frame kept its bytes in `Protected`, and the plaintext read out of it
+/// is held to the same rule. The owned form takes the value: a type that
+/// seals it alone, such as a storage-only type, moves it into the seal with
+/// no copy. A type that derives terms too guards it, as the default owned
+/// form does. Either way it is wiped. Until the owned form exists it is held
+/// in `Protected`, because building the form can panic.
+fn run_owned<'a, T, S, K>(
+    name: &'static str,
+    keyset: &'a KeysetCipher<'_, K>,
+    context: CallerContext,
+    plaintext: ValueFrame,
+) -> Result<Pending<'a, T, K>, TargetError>
+where
+    T: EncryptTarget<S, ContextInput = StoredContext<Identifier>>,
+    S: Plaintext + zeroize::Zeroize,
+    K: 'static,
+{
+    let plaintext = stack_encrypt::Protected::new(S::from_frame(name, &plaintext)?);
+    let description = T::owned_encryption();
+    Ok(keyset.run(
+        description,
+        stack_encrypt::Controlled::risky_unwrap(plaintext),
+        StoredContext::from(context),
+    ))
 }
 
 /// Run the plan of `P`, a projection of the query twin `Q` that carries one
@@ -907,14 +931,12 @@ where
     S: Plaintext + zeroize::Zeroize,
     K: 'static,
 {
-    // Wiped when this returns, as in `run_target`.
-    let plaintext = zeroize::Zeroizing::new(S::from_frame(name, &plaintext)?);
-    Ok(keyset
-        .run(P::encryption(), &*plaintext, StoredContext::from(context))
-        .try_map(|value| {
-            let query: Q = value.into();
-            serde_json::to_vec(&query).map_err(|error| Error::Other(Box::new(error)))
-        }))
+    // Wiped by the owned form, as in `run_target`.
+    let pending = run_owned::<P, S, K>(name, keyset, context, plaintext)?;
+    Ok(pending.try_map(|value| {
+        let query: Q = value.into();
+        serde_json::to_vec(&query).map_err(|error| Error::Other(Box::new(error)))
+    }))
 }
 
 /// Parse a stored EQL value as the target and describe opening it through

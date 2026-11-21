@@ -67,6 +67,13 @@
 //! requires the `NonEmpty<T>` it stores. On decrypt the caller may pass that
 //! `NonEmpty<T>` again, and the stored value must then equal it.
 //!
+//! When such a record has one field derived from the plaintext, its
+//! `owned_encryption` moves the value into the owned form of that field's
+//! target. So a record whose one field is a ciphertext seals the value with
+//! no copy. A record with two or more such fields keeps the default owned
+//! form: it guards the value, and each field reads it through the borrowed
+//! form, which copies it for each field that consumes it.
+//!
 //! The `DecryptSource` derive also implements [`DecryptField`], which is how
 //! a record finds the field that decryption opens. A hand-written target
 //! that will be a record field must implement [`Decryptable`] and
