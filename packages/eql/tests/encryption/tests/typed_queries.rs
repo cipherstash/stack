@@ -86,7 +86,7 @@ fn typed_bytes<Q: Serialize + DomainType>(query: &Q) -> (Vec<u8>, String) {
 
 /// One plaintext for each EQL type that answers an operator. Each field is
 /// named after its type, and the name is its column.
-#[derive(Clone, Zeroize)]
+#[derive(Zeroize)]
 struct Columns {
     text_eq: String,
     integer_eq: i32,
@@ -125,9 +125,9 @@ fn columns() -> Columns {
         text_eq: "bob@example.com".into(),
         integer_eq: -42,
         smallint_eq: -7,
-        date_eq: Date::from_days_since_epoch(19_000).expect("a day in range"),
-        timestamp_eq: Timestamp::new(1_700_000_000, 123_456_789).expect("an instant in range"),
-        numeric_eq: Decimal::new(-1_234_567, 4).expect("a decimal in range"),
+        date_eq: common::date_of_days(19_000),
+        timestamp_eq: common::timestamp_of(1_700_000_000, 123_456_789),
+        numeric_eq: common::decimal_of(-1_234_567, 4),
         bigint_eq: i64::MIN + 1,
         real_eq: -0.0,
         double_eq: f64::NAN,
@@ -144,21 +144,21 @@ struct Typed {
     input: ValueFrame,
 }
 
-/// The query `$field reference.$operator($value)` under `$keyset`, with `$value` as
-/// the data path's input.
+/// The query `$field reference.$operator(value)` under `$keyset`, where
+/// `value` is the row's `$field`, with the same value as the data path's
+/// input. The row is built twice: a plaintext is not `Clone`.
 macro_rules! typed {
-    ($keyset:expr, $reference:expr, $operator:ident, $value:expr) => {{
+    ($keyset:expr, $reference:expr, $operator:ident, $field:ident) => {{
         let reference = $reference;
-        let value = $value;
         let query = reference
-            .$operator(value.clone())
+            .$operator(columns().$field)
             .encrypt($keyset)
             .await
             .unwrap();
         Typed {
             bytes: typed_bytes(&query),
             column: reference.name(),
-            input: frame(value),
+            input: frame(columns().$field),
         }
     }};
 }
@@ -170,17 +170,17 @@ macro_rules! typed {
 async fn typed_and_input(keyset: &Keyset<'_>, name: &str, operator: &str) -> Typed {
     let row = columns();
     match (name, operator) {
-        ("TextEq", "eq") => typed!(keyset, EncryptedColumns::TEXT_EQ, eq, row.text_eq),
-        ("IntegerEq", "eq") => typed!(keyset, EncryptedColumns::INTEGER_EQ, eq, row.integer_eq),
-        ("SmallintEq", "eq") => typed!(keyset, EncryptedColumns::SMALLINT_EQ, eq, row.smallint_eq),
-        ("DateEq", "eq") => typed!(keyset, EncryptedColumns::DATE_EQ, eq, row.date_eq),
+        ("TextEq", "eq") => typed!(keyset, EncryptedColumns::TEXT_EQ, eq, text_eq),
+        ("IntegerEq", "eq") => typed!(keyset, EncryptedColumns::INTEGER_EQ, eq, integer_eq),
+        ("SmallintEq", "eq") => typed!(keyset, EncryptedColumns::SMALLINT_EQ, eq, smallint_eq),
+        ("DateEq", "eq") => typed!(keyset, EncryptedColumns::DATE_EQ, eq, date_eq),
         ("TimestampEq", "eq") => {
-            typed!(keyset, EncryptedColumns::TIMESTAMP_EQ, eq, row.timestamp_eq)
+            typed!(keyset, EncryptedColumns::TIMESTAMP_EQ, eq, timestamp_eq)
         }
-        ("NumericEq", "eq") => typed!(keyset, EncryptedColumns::NUMERIC_EQ, eq, row.numeric_eq),
-        ("BigintEq", "eq") => typed!(keyset, EncryptedColumns::BIGINT_EQ, eq, row.bigint_eq),
-        ("RealEq", "eq") => typed!(keyset, EncryptedColumns::REAL_EQ, eq, row.real_eq),
-        ("DoubleEq", "eq") => typed!(keyset, EncryptedColumns::DOUBLE_EQ, eq, row.double_eq),
+        ("NumericEq", "eq") => typed!(keyset, EncryptedColumns::NUMERIC_EQ, eq, numeric_eq),
+        ("BigintEq", "eq") => typed!(keyset, EncryptedColumns::BIGINT_EQ, eq, bigint_eq),
+        ("RealEq", "eq") => typed!(keyset, EncryptedColumns::REAL_EQ, eq, real_eq),
+        ("DoubleEq", "eq") => typed!(keyset, EncryptedColumns::DOUBLE_EQ, eq, double_eq),
         ("TextMatch", "matches") => {
             let reference = EncryptedColumns::TEXT_MATCH;
             let query: MatchTwin<TextMatchQuery> = reference

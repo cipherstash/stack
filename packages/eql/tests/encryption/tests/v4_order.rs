@@ -18,7 +18,6 @@ use eql_bindings::encryption::targets::{self as targets};
 use eql_bindings::v4::{bigint, double, integer, real, text};
 use eql_bindings::Identifier;
 use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty};
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -132,11 +131,11 @@ async fn each_ordered_type_stores_its_catalog_terms() {
         } else if name.starts_with("Real") {
             frame::<f32>(7.0)
         } else if name.starts_with("Date") {
-            frame(Date::from_days_since_epoch(7).unwrap())
+            frame(common::date_of_days(7))
         } else if name.starts_with("Timestamp") {
-            frame(Timestamp::new(7, 8).unwrap())
+            frame(common::timestamp_of(7, 8))
         } else if name.starts_with("Numeric") {
-            frame(Decimal::new(750, 2).unwrap())
+            frame(common::decimal_of(750, 2))
         } else {
             frame::<f64>(7.0)
         };
@@ -238,7 +237,7 @@ async fn integer_terms_order_by_value() {
 async fn date_timestamp_and_decimal_terms_order_by_value() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let day = |days| frame(Date::from_days_since_epoch(days).unwrap());
+    let day = |days| frame(common::date_of_days(days));
     for name in ["DateOrd", "DateOrdOpe"] {
         let values = vec![
             (0, day(-719_162), "0001-01-01"),
@@ -248,7 +247,7 @@ async fn date_timestamp_and_decimal_terms_order_by_value() {
         ];
         sorts_as(&keyset, name, values).await;
     }
-    let at = |seconds, nanos| frame(Timestamp::new(seconds, nanos).unwrap());
+    let at = |seconds, nanos| frame(common::timestamp_of(seconds, nanos));
     for name in ["TimestampOrd", "TimestampOrdOpe"] {
         let values = vec![
             (0, at(-1, 999_999_000), "-1us"),
@@ -260,7 +259,7 @@ async fn date_timestamp_and_decimal_terms_order_by_value() {
         ];
         sorts_as(&keyset, name, values).await;
     }
-    let number = |mantissa, scale| frame(Decimal::new(mantissa, scale).unwrap());
+    let number = |mantissa, scale| frame(common::decimal_of(mantissa, scale));
     for name in ["NumericOrd", "NumericOrdOpe"] {
         let values = vec![
             (0, number(-1_000, 0), "-1000"),
