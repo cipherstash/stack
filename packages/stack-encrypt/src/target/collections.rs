@@ -49,7 +49,7 @@ where
         // refused context is reported once rather than once per row.
         Encryption::from_build(
             T::encryption::<K>().shapes(),
-            move |source: &'s Vec<S>, cipher, context: T::ContextInput| {
+            move |source: &Vec<S>, cipher, context: T::ContextInput| {
                 Pending::collect(
                     cipher,
                     source
@@ -69,7 +69,7 @@ where
     where
         S: 's,
     {
-        Encryption::from_build(
+        Encryption::from_owned_build(
             T::owned_encryption::<K>().shapes(),
             move |source: Vec<S>, cipher, context: T::ContextInput| {
                 // Run every element, whatever happened to the elements before it.
@@ -152,7 +152,7 @@ impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for O
     {
         Encryption::from_build(
             T::encryption::<K>().shapes(),
-            move |source: &'s Option<S>, cipher, context: T::ContextInput| match source {
+            move |source: &Option<S>, cipher, context: T::ContextInput| match source {
                 Some(value) => cipher.run(T::encryption(), value, context).map(Some),
                 None => Pending::ready(cipher, Ok(None)),
             },
@@ -166,7 +166,7 @@ impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for O
     where
         S: 's,
     {
-        Encryption::from_build(
+        Encryption::from_owned_build(
             T::owned_encryption::<K>().shapes(),
             move |source: Option<S>, cipher, context: T::ContextInput| {
                 // Building the target's declaration can panic, so the value stays

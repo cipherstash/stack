@@ -4469,12 +4469,15 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a1d92d394e577ee424b4f35479a101896aecbce98f00c37bca5af1aa0d3b2c0"
 dependencies = [
+ "jiff",
+ "rust_decimal",
  "thiserror 2.0.18",
  "unicode-general-category",
  "unicode-normalization",
  "vitaminc-aead 0.10.0",
  "vitaminc-context 0.10.0",
  "vitaminc-normalize",
+ "vitaminc-prf",
  "vitaminc-protected 0.10.0",
  "zeroize",
 ]

@@ -641,6 +641,7 @@ mod given_encrypted_terms_as_a_target {
     async fn same_bytes<S, Terms, X>(value: S, indexes: X)
     where
         S: stack_encrypt::Encrypt
+            + stack_encrypt::EncryptRef
             + stack_encrypt::Decrypt
             + zeroize::Zeroize
             + Send

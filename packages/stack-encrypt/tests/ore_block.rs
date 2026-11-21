@@ -15,6 +15,7 @@
 use std::cmp::Ordering;
 
 use stack_encrypt::sem::{Orderable, OreBlockTerm, TermBytesError, TermError};
+#[cfg(all(feature = "jiff", feature = "rust_decimal"))]
 use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{nonempty, Error, KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
@@ -125,17 +126,20 @@ async fn wide_integers_are_the_chained_scheme_unpadded() {
 /// scheme, unpadded. Each orders by value: a timestamp by the microsecond,
 /// floored, so a nanosecond before the epoch is a microsecond before it,
 /// and a decimal whatever its scale.
+#[cfg(all(feature = "jiff", feature = "rust_decimal"))]
 #[tokio::test]
 async fn dates_timestamps_and_decimals_order_by_value() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let mut dates = Vec::new();
-    for days in [-719_162, -1, 0, 1, 19_782] {
-        let term = term(
-            &keyset,
-            Date::from_days_since_epoch(days).expect("in range"),
-        )
-        .await;
+    for (year, month, day) in [
+        (1, 1, 1),
+        (1969, 12, 31),
+        (1970, 1, 1),
+        (1970, 1, 2),
+        (2024, 2, 29),
+    ] {
+        let term = term(&keyset, Date::new(jiff::civil::date(year, month, day))).await;
         assert_eq!(
             &term.as_bytes()[..2],
             &[0x02, 0x02],
@@ -146,7 +150,10 @@ async fn dates_timestamps_and_decimals_order_by_value() {
     }
     assert_sorted(&dates, "date");
 
-    let instant = |seconds, nanos| Timestamp::new(seconds, nanos).expect("in range");
+    let instant = |seconds, nanos| {
+        let instant = jiff::Timestamp::new(seconds, nanos).expect("in range");
+        Timestamp::new(instant).expect("in range")
+    };
     let mut instants = Vec::new();
     for (seconds, nanos) in [(-1, 999_999_000), (0, 0), (0, 1_000), (1_700_000_000, 0)] {
         let term = term(&keyset, instant(seconds, nanos)).await;
@@ -175,7 +182,7 @@ async fn dates_timestamps_and_decimals_order_by_value() {
         "a nanosecond before the epoch floors to the microsecond before it"
     );
 
-    let decimal = |mantissa, scale| Decimal::new(mantissa, scale).expect("in range");
+    let decimal = |mantissa, scale| Decimal::new(rust_decimal::Decimal::new(mantissa, scale));
     let mut decimals = Vec::new();
     for (mantissa, scale) in [(-1, 0), (15, 1), (2, 0), (100, 0)] {
         let term = term(&keyset, decimal(mantissa, scale)).await;

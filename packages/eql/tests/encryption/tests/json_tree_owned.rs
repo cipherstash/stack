@@ -248,7 +248,7 @@ mod given_the_rows_of_a_read {
 mod given_a_document_that_is_a_field_of_a_record {
     use super::*;
 
-    #[derive(Clone, Zeroize)]
+    #[derive(Zeroize)]
     struct Lead {
         profile: JsonPlaintext,
     }

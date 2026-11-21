@@ -23,8 +23,9 @@ use super::{normalized, sealed, MatchOptions, Orderable, QueryTokens, TermError}
 
 /// An equality query of `value`: refused when the value has no equality
 /// term, or is text the index cannot normalize. The value is consumed as
-/// it is normalized, so a caller that still needs it passes a copy, as the
-/// typed `Equality::prepare` does; vitaminc wipes what it reads.
+/// it is normalized. A caller that still needs it lends it
+/// (`EncryptRef::lend`), as the typed `Equality::prepare` does, and then
+/// nothing is copied.
 ///
 /// # Errors
 ///

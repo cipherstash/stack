@@ -13,8 +13,8 @@ help: the trait `Answers<stack_encrypt::op::Gt, _>` is not implemented for `Equa
    |
    | / impl<S> Answers<Eq, S> for EqualityTerm
    | | where
-   | |     S: crate::Encrypt + Clone + 'static,
-   | |________________________________________^
+   | |     S: crate::Encrypt + vitaminc_aead::EncryptRef + 'static,
+   | |____________________________________________________________^
    = help: for that trait implementation, expected `stack_encrypt::op::Eq`, found `stack_encrypt::op::Gt`
    = note: required for `Encrypted<EqualityTerm>` to implement `Answers<stack_encrypt::op::Gt, _>`
 note: required by a bound in `FieldReference::<W, T, C, P>::gt`

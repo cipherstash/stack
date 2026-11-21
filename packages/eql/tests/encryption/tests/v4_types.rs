@@ -14,7 +14,7 @@ use eql_bindings::encryption::targets::{self as targets, TargetError};
 use eql_bindings::encryption::{CiphertextVisitor, NativeCiphertextVisitor as NativeLeaf};
 use eql_bindings::v3::terms::Ciphertext;
 use eql_bindings::v4::plaintext::JsonPlaintext;
-use eql_bindings::v4::{bigint, boolean, double, integer, json, plaintext, real, smallint, text};
+use eql_bindings::v4::{bigint, boolean, double, integer, json, real, smallint, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
@@ -123,9 +123,9 @@ fn sample(kind: ValueKind) -> ValueFrame {
         ValueKind::Float32 => frame::<f32>(-0.0),
         ValueKind::Float64 => frame::<f64>(f64::NAN),
         ValueKind::String => frame("a private note"),
-        ValueKind::Date => frame(plaintext::Date::from_days_since_epoch(-719_162).unwrap()),
-        ValueKind::Timestamp => frame(plaintext::Timestamp::new(-1, 999_999_999).unwrap()),
-        ValueKind::Decimal => frame(plaintext::Decimal::new(-123_450, 2).unwrap()),
+        ValueKind::Date => frame(common::date_of_days(-719_162)),
+        ValueKind::Timestamp => frame(common::timestamp_of(-1, 999_999_999)),
+        ValueKind::Decimal => frame(common::decimal_of(-123_450, 2)),
         other => panic!("no sample for {other:?}: add one with the type that takes it"),
     }
 }
@@ -215,7 +215,7 @@ async fn eq_terms(
     name: &str,
     value: ValueFrame,
 ) -> (serde_json::Value, serde_json::Value) {
-    let stored: serde_json::Value = by_name(keyset, name, value.clone()).await;
+    let stored: serde_json::Value = by_name(keyset, name, again(&value)).await;
     let query = targets::query(name, &common::index_of(name), keyset, &label(), value)
         .unwrap()
         .await
@@ -2629,4 +2629,10 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
         };
         runtime.block_on(go_rows::open_row(&cipher, &round_tripped));
     }
+}
+
+/// A second frame of the same bytes. A frame is not `Clone`.
+fn again(frame: &ValueFrame) -> ValueFrame {
+    use stack_encrypt::AsProtectedRef as _;
+    ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
 }

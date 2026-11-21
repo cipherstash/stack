@@ -57,7 +57,7 @@ impl Transcode for StoredLeaf {
 }
 // A ciphertext alone: it seals, and derives no term, so it requires the AEAD
 // context, as the canonical `StackCipherText` does.
-impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for StoredLeaf {
+impl<S: Encrypt + stack_encrypt::EncryptRef + Zeroize> EncryptTarget<S> for StoredLeaf {
     type ContextInput = RequiredContext<AeadContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
@@ -300,7 +300,7 @@ async fn scalar_destination_refuses_a_sequence() {
 // A target whose declaration carries every context it needs asks its caller
 // for none: `ContextInput = NoCallerContext`.
 struct FixedLeaf(StoredLeaf);
-impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for FixedLeaf {
+impl<S: Encrypt + stack_encrypt::EncryptRef + Zeroize> EncryptTarget<S> for FixedLeaf {
     type ContextInput = NoCallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where

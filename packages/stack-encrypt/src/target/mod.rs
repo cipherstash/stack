@@ -109,13 +109,14 @@
 //! ```
 //! use stack_encrypt::sem::EqualityTerm;
 //! use stack_encrypt::target::{self, CallerContext, EncryptTarget, RequiredContext};
-//! use stack_encrypt::{Encrypt, Encryption};
+//! use stack_encrypt::{Encrypt, EncryptRef, Encryption};
 //! use zeroize::Zeroize;
 //!
 //! /// An equality term, stored as its bytes.
 //! struct StoredEquality([u8; 32]);
 //!
-//! impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for StoredEquality {
+//! // The term reads the plaintext in place, by reference (`EncryptRef`).
+//! impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for StoredEquality {
 //!     type ContextInput = RequiredContext<CallerContext>;
 //!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
 //!     where
@@ -196,7 +197,7 @@ pub use operations::{
 };
 pub use pending::{CipherRef, Pending, PendingFuture};
 pub use request::{Request, Responses};
-pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
+pub use source::{Borrowed, ConsumeSource, Owned, Source, SourceMode};
 pub use stack_encrypt_derive::{DecryptSource, EncryptTarget};
 /// The cleanup trait that every owned plaintext must implement. It is
 /// re-exported here so that the derives can name it, even when the caller's

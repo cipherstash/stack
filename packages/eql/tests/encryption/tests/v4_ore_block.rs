@@ -125,19 +125,19 @@ async fn each_type_stores_one_block_ore_term_of_its_scheme() {
         ),
         (
             "DateOrdOre",
-            frame(Date::from_days_since_epoch(7).unwrap()),
+            frame(common::date_of_days(7)),
             [2, 2],
             &["c", "i", "ob", "v"],
         ),
         (
             "TimestampOrdOre",
-            frame(Timestamp::new(7, 8).unwrap()),
+            frame(common::timestamp_of(7, 8)),
             [2, 3],
             &["c", "i", "ob", "v"],
         ),
         (
             "NumericOrdOre",
-            frame(Decimal::new(750, 2).unwrap()),
+            frame(common::decimal_of(750, 2)),
             [2, 3],
             &["c", "i", "ob", "v"],
         ),
@@ -400,16 +400,17 @@ fn postgres_compares_fixed_width_terms_as_ore_rs_and_the_plaintexts_do() {
 }
 
 /// Each value's terms, two writes each, as `terms` makes them for a `Copy`
-/// plaintext: the plaintexts here are wiped on drop, so are not `Copy`.
-async fn terms_of<T: Encrypt + Clone>(
+/// plaintext. The plaintexts here are wiped on drop, so they are neither
+/// `Copy` nor `Clone`: each item builds its value, once for each write.
+async fn terms_of<T: Encrypt>(
     keyset: &Keyset<'_>,
     name: &str,
-    values: impl IntoIterator<Item = T>,
+    values: impl IntoIterator<Item = impl Fn() -> T>,
 ) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for value in values {
-        out.push(ob(keyset, name, frame(value.clone())).await);
-        out.push(ob(keyset, name, frame(value)).await);
+        out.push(ob(keyset, name, frame(value())).await);
+        out.push(ob(keyset, name, frame(value())).await);
     }
     out
 }
@@ -429,7 +430,7 @@ fn postgres_compares_date_timestamp_and_decimal_terms_as_ore_rs_and_the_plaintex
     let date_terms = runtime.block_on(terms_of(
         &keyset,
         "DateOrdOre",
-        days.map(|d| Date::from_days_since_epoch(d).unwrap()),
+        days.map(|d| move || common::date_of_days(d)),
     ));
     assert_agree::<Date, _>(&mut db, "DateOrdOre", &days, &date_terms);
 
@@ -448,7 +449,7 @@ fn postgres_compares_date_timestamp_and_decimal_terms_as_ore_rs_and_the_plaintex
     let instant_terms = runtime.block_on(terms_of(
         &keyset,
         "TimestampOrdOre",
-        instants.map(|(s, n)| Timestamp::new(s, n).unwrap()),
+        instants.map(|(s, n)| move || common::timestamp_of(s, n as i32)),
     ));
     assert_agree::<Timestamp, _>(&mut db, "TimestampOrdOre", &micros, &instant_terms);
 
@@ -466,7 +467,7 @@ fn postgres_compares_date_timestamp_and_decimal_terms_as_ore_rs_and_the_plaintex
     let number_terms = runtime.block_on(terms_of(
         &keyset,
         "NumericOrdOre",
-        numbers.map(|(m, s)| Decimal::new(m, s as u8).unwrap()),
+        numbers.map(|(m, s)| move || common::decimal_of(m, s)),
     ));
     assert_agree::<Decimal, _>(&mut db, "NumericOrdOre", &scaled, &number_terms);
 }

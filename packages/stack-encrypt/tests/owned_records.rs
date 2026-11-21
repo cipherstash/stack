@@ -298,20 +298,12 @@ async fn the_owned_record_wipes_sealed_fields_when_the_context_is_refused() {
 
 // --- A refused context drops no copy of a sealed plaintext unwiped ---------
 
-/// A sealed plaintext that the borrowed form of a `StackCipherText` leaf would
-/// clone. Its `Drop` records whether it still held its value. So a copy that
-/// is dropped without being wiped is seen, whichever copy it is.
+/// A sealed plaintext that is not `Clone`. Its `Drop` records whether it
+/// still held its value, so a value that is dropped without being wiped is
+/// seen.
 struct Probe {
     value: String,
     leaked: Arc<AtomicBool>,
-}
-impl Clone for Probe {
-    fn clone(&self) -> Self {
-        Probe {
-            value: self.value.clone(),
-            leaked: self.leaked.clone(),
-        }
-    }
 }
 impl Zeroize for Probe {
     fn zeroize(&mut self) {
@@ -328,6 +320,11 @@ impl Drop for Probe {
 impl stack_encrypt::Encrypt for Probe {
     fn visit<S: vitaminc_aead::Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
         std::mem::take(&mut self.value).visit(sink)
+    }
+}
+impl stack_encrypt::Encrypt for &Probe {
+    fn visit<S: vitaminc_aead::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (&self.value).visit(sink)
     }
 }
 fn probe(leaked: &Arc<AtomicBool>) -> Probe {

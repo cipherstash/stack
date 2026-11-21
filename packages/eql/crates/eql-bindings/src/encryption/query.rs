@@ -182,8 +182,8 @@ use serde::{Serialize, Serializer};
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::op::{self, Limit, Probabilistic, QueryTerm, QueryToken, Stats, Supports};
 use stack_encrypt::sem::{EqualityTerm, MatchQuery, MatchTerms, QueryTokens};
-use stack_encrypt::target::{CallerContext, ConsumeSource, Encryption, Index, IndexSpec};
-use stack_encrypt::{Encrypt, Equality, Error, Label, Match, NonEmpty};
+use stack_encrypt::target::{CallerContext, Encryption, Index, IndexSpec, SourceMode};
+use stack_encrypt::{Encrypt, EncryptRef, Equality, Error, Label, Match, NonEmpty};
 
 use super::{bloom_filter, hmac256, EqlMatch};
 use crate::v3::terms::{BloomFilter, Hmac256};
@@ -258,7 +258,7 @@ impl<S, I: Index<S>, Q> Index<S> for TwinIndex<I, Q> {
     fn spec(&self) -> IndexSpec {
         self.index.spec()
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: SourceMode<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -334,7 +334,7 @@ fn column(token: &QueryToken) -> Identifier {
 impl<Q> Supports<op::Eq, Q::Plaintext> for TwinIndex<Equality, Q>
 where
     Q: QueryTwin<Hmac256> + QueryTerm + MaybeSend + 'static,
-    Q::Plaintext: Encrypt + Clone + 'static,
+    Q::Plaintext: Encrypt + EncryptRef + 'static,
 {
     type Query = Q;
     type Verifier = ();

@@ -117,35 +117,35 @@ impl<T: Seen> Seen for Option<T> {
 impl Seen for DateValue {
     type View = CivilDate;
     fn view(&self) -> CivilDate {
-        CivilDate::from(self)
+        self.to_jiff()
     }
 }
 impl Seen for TimestampValue {
     type View = jiff::Timestamp;
     fn view(&self) -> jiff::Timestamp {
-        jiff::Timestamp::from(self)
+        self.to_jiff()
     }
 }
 impl Seen for DecimalValue {
     type View = String;
     fn view(&self) -> String {
-        rust_decimal::Decimal::from(self).to_string()
+        self.to_decimal().to_string()
     }
 }
 
 /// Writes each stored type twice, from the same plaintext under the same
-/// column. Checks that the terms match, and that each ciphertext opens: under
+/// column. The plaintext is built again for each write: it is not `Clone`. Checks that the terms match, and that each ciphertext opens: under
 /// the column it stores, and under the column the reader expects.
 macro_rules! stored_round_trips {
     ($keyset:expr, $plaintext:ty, $value:expr, [$($ty:ty),+ $(,)?]) => {$({
         let value: $plaintext = $value;
-        let first: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let first: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
-        let second: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let second: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
@@ -165,14 +165,13 @@ macro_rules! stored_round_trips {
 /// ORE operand is compared by the ORE scheme, as the type's `PartialEq` does.
 macro_rules! query_is_stable {
     ($keyset:expr, $plaintext:ty, $value:expr, [$($ty:ty),+ $(,)?]) => {$({
-        let value: $plaintext = $value;
-        let first: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let first: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
-        let second: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let second: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();

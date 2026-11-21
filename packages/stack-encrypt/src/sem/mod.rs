@@ -176,7 +176,9 @@ pub use clww_ore::{OpeClww8VariableV1, OreClww8VariableV1};
 use vitaminc_aead::Encrypt;
 use vitaminc_hmac::HmacSha256Prf;
 use vitaminc_normalize::{terms, NormalizeError, Normalized};
-use vitaminc_ore::{OrderEncrypt, OrderError, OrderKeyInit, OrderScheme, OrderTarget};
+use vitaminc_ore::{
+    OrderEncrypt, OrderError, OrderKeyInit, OrderScheme, OrderTarget, SchemeVisitor,
+};
 use vitaminc_prf::{
     BlockVisitor, Context, IntoPrfContext, MapAccess, PrfError, PrfValue, PrfVisitor,
     PrfVisitorError, SeqAccess,
@@ -1351,9 +1353,9 @@ where
 /// | `f32`, `f64` | `F64`: an `f32` widens to it exactly, `-0.0` ties `0.0`, every NaN is one value after `+Infinity` |
 /// | `String` | `Text`: Unicode 16 NFC with case and accents folded |
 /// | `Vec<u8>` | `Bytes`, as they are |
-/// | [`value::Date`](crate::value::Date) | `Date`: the day |
-/// | [`value::Timestamp`](crate::value::Timestamp) | `Timestamp`: the instant truncated to the microsecond, so instants in one microsecond tie |
-/// | [`value::Decimal`](crate::value::Decimal) | `Decimal`: the number with its scale normalised, so `1.5` ties `1.50` |
+/// | `value::Date` | `Date`: the day |
+/// | `value::Timestamp` | `Timestamp`: the instant truncated to the microsecond, so instants in one microsecond tie |
+/// | `value::Decimal` | `Decimal`: the number with its scale normalised, so `1.5` ties `1.50` |
 ///
 /// A borrowed text or byte string is not a source: an order term takes
 /// its value by ownership (the visitor carries it), so pass a `String` or
@@ -1438,9 +1440,11 @@ orderable!(
     i16 => I16, i32 => I32, i64 => I64, i128 => I128,
     f32 => F64, f64 => F64,
     Vec<u8> => Bytes,
-    crate::value::Date => Date, crate::value::Timestamp => Timestamp,
-    crate::value::Decimal => Decimal,
 );
+#[cfg(feature = "jiff")]
+orderable!(crate::value::Date => Date, crate::value::Timestamp => Timestamp);
+#[cfg(feature = "rust_decimal")]
+orderable!(crate::value::Decimal => Decimal);
 // Text by hand: its order encoding is the ADR-0002 fold, which refuses a
 // code point Unicode 16 does not assign, and block ORE bounds its length.
 // A query of such text is refused before any key, where every other
@@ -1807,90 +1811,33 @@ impl<T: Orderable> PartialOrd for OreBlockTerm<T> {
     }
 }
 
-/// A [`PrfVisitor`] that carries the plaintext in and hands the CLLW ORE
-/// ciphertext out. The PRF block keys clww-ore's vitaminc ORE scheme
-/// *inside* `visit_block` and dies there: the block arrives by value, is
-/// copied into the scheme's key (wiped when the scheme drops) and wiped
-/// here, the value is encrypted, and only the ciphertext leaves. No key is
-/// ever returned to the caller.
+/// Key the order scheme `S` of one index from the PRF, under `domain` and
+/// the index's context.
+///
+/// The PRF block keys the scheme inside Vitamin C's [`SchemeVisitor`] and
+/// is wiped there: the block is copied into the scheme's key, which is wiped
+/// when the scheme drops. The visitor holds no plaintext, so the value is
+/// never passed to the PRF call, and a backend that derives the block later
+/// keeps no copy of it. The caller then encrypts the value on the scheme, by
+/// reference.
 ///
 /// The column is opened with the value's target and the empty context:
 /// the key is already this index's own, derived under the index's
 /// descriptor, so there is nothing left for a context to separate. The
 /// column's salt still binds the scheme and the target.
-///
-/// This is the shape a 2-party PRF needs: the caller supplies a PRF input
-/// (the context) and receives a term, and where the key comes from — or
-/// whether one exists at all — is the visitor's business. Swapping the
-/// backend for one that returns per-prefix PRF outputs instead of a key
-/// changes this visitor, not its callers.
-///
-/// The plaintext is owned (`T: 'static`) because the visitor outlives the
-/// call under an asynchronous backend; `Send` for the same reason. Scheme
-/// failures surface through the visitor's `Value` rather than
-/// [`PrfVisitorError`] so they keep their own error type.
-///
-/// The plaintext is held in a [`Zeroizing`], so it is wiped when the
-/// visitor drops: after `visit_block`, or unvisited if the PRF fails first.
-/// `encrypt_in` reads it by reference and clww-ore copies nothing out of it
-/// unwiped, so that drop is the last place its bytes live.
-struct OreVisitor<T: Orderable>(Zeroizing<T>);
-
-impl<T, P> PrfVisitor<[u8; 32], P> for OreVisitor<T>
+fn keyed<S>(prf: &HmacSha256Prf, domain: &[u8], context: &Context<'_>) -> Result<S, TermError>
 where
-    T: Orderable,
-    P: Send + 'static,
+    S: OrderKeyInit<Key = Protected<[u8; 32]>> + Send + 'static,
 {
-    type Value = Result<OreClww8VariableV1, TermError>;
-
-    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let scheme = ClwwOre::new(Protected::new(block));
-        block.zeroize();
-        let space = scheme.target(T::TARGET);
-        Ok(sealed::Sealed::encrypt_in(&*self.0, &space).map_err(order_error))
-    }
-}
-
-/// The OPE twin of [`OreVisitor`]: same key handling, produces a CLLW OPE
-/// ciphertext (byte order is plaintext order).
-struct OpeVisitor<T: Orderable>(Zeroizing<T>);
-
-impl<T, P> PrfVisitor<[u8; 32], P> for OpeVisitor<T>
-where
-    T: Orderable,
-    P: Send + 'static,
-{
-    type Value = Result<OpeClww8VariableV1, TermError>;
-
-    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let scheme = ClwwOpe::new(Protected::new(block));
-        block.zeroize();
-        let space = scheme.target(T::TARGET);
-        Ok(sealed::Sealed::encrypt_in(&*self.0, &space).map_err(order_error))
-    }
-}
-
-/// The block ORE twin of [`OreVisitor`]: same key handling, under its own
-/// domain. ore-rs's `BlockOre` routes the space to its 6-bit or chained
-/// engine by the target's width, and derives the one ORE key both use from
-/// the block under a label of its own. The plaintext is held in a
-/// [`Zeroizing`], as [`OreVisitor`]'s is: ore-rs reads it by reference and
-/// works on scrubbed copies, so that drop is the last place its bytes live.
-struct OreBlockVisitor<T: Orderable>(Zeroizing<T>);
-
-impl<T, P> PrfVisitor<[u8; 32], P> for OreBlockVisitor<T>
-where
-    T: Orderable,
-    P: Send + 'static,
-{
-    type Value = Result<ore_rs::Term, TermError>;
-
-    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let scheme = ore_rs::BlockOre::new(Protected::new(block));
-        block.zeroize();
-        let term = sealed::Sealed::encrypt_in(&*self.0, &scheme.target(T::TARGET));
-        Ok(term.map_err(ore_block_error))
-    }
+    let context_bytes = context.as_bytes();
+    context_bytes
+        .prf_visit_with_context(
+            prf,
+            Context::pae(&[domain, context_bytes]),
+            SchemeVisitor::new(),
+        )
+        .into_result()
+        .map_err(TermError::from_prf)
 }
 
 /// Why ore-rs produced no block ORE term, as a [`TermError`]: the value's
@@ -1923,15 +1870,19 @@ fn ore<T: Orderable>(
 ) -> Result<OreTerm<T>, TermError> {
     // Wrapped before anything can fail, so a refused value is wiped too.
     let value = Zeroizing::new(value);
-    let context_bytes = context.as_bytes();
-    context_bytes
-        .prf_visit_with_context(
-            prf,
-            Context::pae(&[ORE_KEY_DOMAIN, context_bytes]),
-            OreVisitor(value),
-        )
-        .into_result()
-        .map_err(TermError::from_prf)?
+    ore_of(prf, &value, context)
+}
+
+/// [`ore`] of a value read in place. The value stays with the caller,
+/// and nothing here copies it.
+fn ore_of<T: Orderable>(
+    prf: &HmacSha256Prf,
+    value: &T,
+    context: Context<'_>,
+) -> Result<OreTerm<T>, TermError> {
+    let scheme: ClwwOre = keyed(prf, ORE_KEY_DOMAIN, &context)?;
+    sealed::Sealed::encrypt_in(value, &scheme.target(T::TARGET))
+        .map_err(order_error)
         .map(OreTerm::new)
 }
 
@@ -1946,15 +1897,19 @@ pub(crate) fn ope<T: Orderable>(
 ) -> Result<OpeTerm<T>, TermError> {
     // Wrapped before anything can fail, so a refused value is wiped too.
     let value = Zeroizing::new(value);
-    let context_bytes = context.as_bytes();
-    context_bytes
-        .prf_visit_with_context(
-            prf,
-            Context::pae(&[OPE_KEY_DOMAIN, context_bytes]),
-            OpeVisitor(value),
-        )
-        .into_result()
-        .map_err(TermError::from_prf)?
+    ope_of(prf, &value, context)
+}
+
+/// [`ope`] of a value read in place. The value stays with the caller,
+/// and nothing here copies it.
+pub(crate) fn ope_of<T: Orderable>(
+    prf: &HmacSha256Prf,
+    value: &T,
+    context: Context<'_>,
+) -> Result<OpeTerm<T>, TermError> {
+    let scheme: ClwwOpe = keyed(prf, OPE_KEY_DOMAIN, &context)?;
+    sealed::Sealed::encrypt_in(value, &scheme.target(T::TARGET))
+        .map_err(order_error)
         .map(OpeTerm::new)
 }
 
@@ -1967,15 +1922,19 @@ fn ore_block<T: Orderable>(
 ) -> Result<OreBlockTerm<T>, TermError> {
     // Wrapped before anything can fail, so a refused value is wiped too.
     let value = Zeroizing::new(value);
-    let context_bytes = context.as_bytes();
-    context_bytes
-        .prf_visit_with_context(
-            prf,
-            Context::pae(&[ORE_BLOCK_KEY_DOMAIN, context_bytes]),
-            OreBlockVisitor(value),
-        )
-        .into_result()
-        .map_err(TermError::from_prf)?
+    ore_block_of(prf, &value, context)
+}
+
+/// [`ore_block`] of a value read in place. The value stays with the caller,
+/// and nothing here copies it.
+fn ore_block_of<T: Orderable>(
+    prf: &HmacSha256Prf,
+    value: &T,
+    context: Context<'_>,
+) -> Result<OreBlockTerm<T>, TermError> {
+    let scheme: ore_rs::BlockOre = keyed(prf, ORE_BLOCK_KEY_DOMAIN, &context)?;
+    sealed::Sealed::encrypt_in(value, &scheme.target(T::TARGET))
+        .map_err(ore_block_error)
         .map(|term| OreBlockTerm(term, PhantomData))
 }
 
@@ -2025,6 +1984,27 @@ where
     }
 }
 
+/// The same term of a value read in place: the value stays with the
+/// caller, and is not copied.
+impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for OreTerm<S>
+where
+    S: Orderable,
+    T: IntoPrfContext<'c>,
+{
+    fn encrypt_from<'a>(
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
+        context: NonEmpty<T>,
+    ) -> Pending<'a, Self, K>
+    where
+        Self: 'a,
+    {
+        let context = context.into_prf_context().into_owned();
+        let term = ore_of(cipher.prf(), source, context).map_err(Error::from);
+        Pending::ready(cipher, term)
+    }
+}
+
 /// An OPE term of any [`Orderable`] source. Under the local HMAC
 /// backend, derived during the synchronous build — the returned [`Pending`]
 /// carries no requests.
@@ -2049,6 +2029,27 @@ where
     }
 }
 
+/// The same term of a value read in place: the value stays with the
+/// caller, and is not copied.
+impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for OpeTerm<S>
+where
+    S: Orderable,
+    T: IntoPrfContext<'c>,
+{
+    fn encrypt_from<'a>(
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
+        context: NonEmpty<T>,
+    ) -> Pending<'a, Self, K>
+    where
+        Self: 'a,
+    {
+        let context = context.into_prf_context().into_owned();
+        let term = ope_of(cipher.prf(), source, context).map_err(Error::from);
+        Pending::ready(cipher, term)
+    }
+}
+
 /// A block ORE term of any [`Orderable`] source. Under the local HMAC
 /// backend, derived during the synchronous build — the returned [`Pending`]
 /// carries no requests.
@@ -2069,6 +2070,27 @@ where
     {
         let context = context.into_prf_context().into_owned();
         let term = ore_block(cipher.prf(), source, context).map_err(Error::from);
+        Pending::ready(cipher, term)
+    }
+}
+
+/// The same term of a value read in place: the value stays with the
+/// caller, and is not copied.
+impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for OreBlockTerm<S>
+where
+    S: Orderable,
+    T: IntoPrfContext<'c>,
+{
+    fn encrypt_from<'a>(
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
+        context: NonEmpty<T>,
+    ) -> Pending<'a, Self, K>
+    where
+        Self: 'a,
+    {
+        let context = context.into_prf_context().into_owned();
+        let term = ore_block_of(cipher.prf(), source, context).map_err(Error::from);
         Pending::ready(cipher, term)
     }
 }
