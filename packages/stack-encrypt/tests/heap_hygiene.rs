@@ -1893,14 +1893,17 @@ mod json_index {
         let value = document();
         for sealed_root in [true, false] {
             let doc = sealed(&rt, &cipher, &value, sealed_root);
-            let opened = watched(&format!("open (sealed_root: {sealed_root})"), || {
-                rt.block_on(async {
+            // The opened document is dropped inside the watch, so a
+            // `JsonPlaintext` that stopped wiping itself fails here.
+            watched(&format!("open (sealed_root: {sealed_root})"), || {
+                let opened = rt.block_on(async {
                     JsonPlaintext::decrypt_from_with_context(doc.clone(), &cipher, aead())
                         .await
                         .unwrap()
-                })
+                });
+                assert_eq!(opened.value(), &value);
+                drop(opened);
             });
-            assert_eq!(opened.value(), &value);
         }
         *KEY.lock().unwrap() = None;
     }
@@ -1936,17 +1939,21 @@ mod json_index {
                 })
                 .collect();
             let read = key.open(rows);
-            let opened = watched(
+            // Built before the watch, and the opened value dropped inside
+            // it, as for the whole document.
+            let expected = json!(marked("short"));
+            watched(
                 &format!("subtree read (sealed_root: {sealed_root})"),
                 || {
-                    rt.block_on(async {
+                    let opened = rt.block_on(async {
                         JsonPlaintext::decrypt_from_with_context(read, &cipher, aead())
                             .await
                             .unwrap()
-                    })
+                    });
+                    assert_eq!(opened.value(), &expected);
+                    drop(opened);
                 },
             );
-            assert_eq!(opened.value(), &json!(marked("short")));
             let selector = rt
                 .block_on(async {
                     keyset
@@ -1956,14 +1963,15 @@ mod json_index {
                 .unwrap();
             let (j, _) = doc.find(&key.token_bytes()[0]).unwrap();
             let node = selector.open(doc.node(j).unwrap());
-            let opened = watched(&format!("-> (sealed_root: {sealed_root})"), || {
-                rt.block_on(async {
+            watched(&format!("-> (sealed_root: {sealed_root})"), || {
+                let opened = rt.block_on(async {
                     JsonPlaintext::decrypt_from_with_context(node, &cipher, aead())
                         .await
                         .unwrap()
-                })
+                });
+                assert_eq!(opened.value(), &expected);
+                drop(opened);
             });
-            assert_eq!(opened.value(), &json!(marked("short")));
         }
         *KEY.lock().unwrap() = None;
     }
