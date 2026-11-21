@@ -18,6 +18,12 @@
 //!   member's type. It implements `ElementArray`, so a predicate on the
 //!   array reaches its members again through `and()`.
 //!
+//! For `predicate!`, which sees a predicate's paths as text, it also
+//! implements a lookup of each path, array and member keyed by its text
+//! (`PathLookup`, `ArrayLookup`, `MemberLookup`), each calling the
+//! accessor above. The key is the path's text, so the lookup is the same
+//! whatever word `names = {..}` gives a key.
+//!
 //! # Names
 //!
 //! A JSON key gives a word: its ASCII letters in lower case, with `_`
@@ -67,6 +73,13 @@ pub(crate) fn accessors(
     let at = format_ident!("{}At", prefix);
     let elements = format_ident!("{}Elements", prefix);
     let json_mod = quote!(#krate::field_reference::json);
+    let support = quote!(#json_mod::predicate_checks);
+    let lookup_bounds = quote! {
+        W: #krate::field_reference::Place,
+        T: #krate::json::JsonQueries,
+        C: #krate::field_reference::ScopeInput,
+    };
+    let mut lookups = Vec::new();
     let reference = quote!(#krate::FieldReference<W, T, C, P, #paths>);
     let bounds = quote! {
         W: #krate::field_reference::Place,
@@ -128,6 +141,22 @@ pub(crate) fn accessors(
                 #json_mod::DeclaredPath::new(self.0, #text)
             }
         });
+        let key = key_type(&support, &ordered.path.to_string());
+        lookups.push(quote! {
+            #[automatically_derived]
+            impl #support::PathLookup<#key> for #paths {
+                type Value = #ty;
+                type Accessor<W, T, C, P> = #json_mod::DeclaredPath<W, T, C, P, #ty, #order>;
+                fn path<W, T, C, P>(
+                    reference: #krate::FieldReference<W, T, C, P, Self>,
+                ) -> Self::Accessor<W, T, C, P>
+                where
+                    #lookup_bounds
+                {
+                    reference.at().#method()
+                }
+            }
+        });
         at_names.push((name, ordered));
     }
 
@@ -182,6 +211,21 @@ pub(crate) fn accessors(
                 #members_type(#json_mod::ArrayElements::new(self.0, #array_text))
             }
         });
+        let key = key_type(&support, &array_text);
+        lookups.push(quote! {
+            #[automatically_derived]
+            impl #support::ArrayLookup<#key> for #paths {
+                type Array = #members_type;
+                fn array<W, T, C, P>(
+                    reference: #krate::FieldReference<W, T, C, P, Self>,
+                ) -> #members_type<#json_mod::ArrayElements<W, T, C, P, #members_type>>
+                where
+                    #lookup_bounds
+                {
+                    reference.elements().#method()
+                }
+            }
+        });
         array_names.push((name, array.first));
 
         let mut member_methods = Vec::new();
@@ -217,6 +261,19 @@ pub(crate) fn accessors(
                 #[doc = #doc]
                 pub fn #method(self) -> #output {
                     #json_mod::ElementMember::new(self.0, #member_text)
+                }
+            });
+            // A member's key is its steps below the element, written from
+            // `$`, as the macro writes a filter's `@` path.
+            let key = key_type(&support, &JsonPath::from(member.clone()).to_string());
+            lookups.push(quote! {
+                #[automatically_derived]
+                impl #support::MemberLookup<#key> for #members_type {
+                    type Value = #ty;
+                    type Accessor<Q> = #json_mod::ElementMember<Q, #ty>;
+                    fn member<Q>(members: #members_type<Q>) -> #json_mod::ElementMember<Q, #ty> {
+                        members.#method()
+                    }
                 }
             });
             member_names.push((name, ordered));
@@ -300,6 +357,8 @@ pub(crate) fn accessors(
 
         #(#array_items)*
 
+        #(#lookups)*
+
         #[automatically_derived]
         impl #json_mod::DocumentPaths for #paths {
             type At<W, T, C, P> = #at<W, T, C, P>;
@@ -316,6 +375,13 @@ pub(crate) fn accessors(
         #[allow(unused_imports)]
         #vis use #module::{#paths, #at, #elements #(, #array_types)*};
     })
+}
+
+/// A path's text as a type, for `predicate!`'s lookups: the tuple of its
+/// characters, each a `Char` of `support`.
+pub(crate) fn key_type(support: &TokenStream, text: &str) -> TokenStream {
+    let chars = text.chars().map(|c| quote!(#support::Char<#c>));
+    quote!((#(#chars,)*))
 }
 
 /// One array a field declares through its ordered members.
