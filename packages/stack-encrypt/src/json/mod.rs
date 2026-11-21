@@ -461,6 +461,12 @@ impl JsonEntry {
 /// [`json_document`](crate::target::json_document) produces and
 /// [`DecryptInto<Value>`](crate::DecryptInto) opens.
 ///
+/// With the owned API, a [`JsonPlaintext`] encrypts into a document
+/// ([`EncryptTarget<JsonPlaintext>`](crate::EncryptTarget)), and the
+/// document decrypts to one
+/// ([`DecryptSource<JsonPlaintext>`](crate::DecryptSource)). A
+/// `JsonPlaintext` is wiped when it is dropped.
+///
 /// Serializes to the wire form the EQL domain stores: `{"h": "…", "sv":
 /// [{"s": "…", "c": "…", …}, …], "q": {"sv": [{"s", "vs"}, …], "el":
 /// […]}}`, where `q` is the document's [selector set](Self::selector_set);
@@ -684,6 +690,10 @@ impl JsonNode {
 /// is checked against; an entry carrying another is refused with
 /// [`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry) before any key
 /// is retrieved.
+///
+/// With the owned API, the entry decrypts to a [`JsonPlaintext`]
+/// ([`DecryptSource<JsonPlaintext>`](crate::DecryptSource)), which is wiped
+/// when it is dropped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonExtracted {
     node: JsonNode,
@@ -731,6 +741,11 @@ where
 /// ([`JsonSubtreeKey::open`]), so it always carries the key, and what
 /// checks every row against it when the rows are opened (see
 /// [`JsonSubtreeKey::open`] for the checks).
+///
+/// With the owned API, the rows decrypt to a [`JsonPlaintext`], an
+/// `Option<JsonPlaintext>` or a `Vec<JsonPlaintext>`
+/// ([`DecryptSource`](crate::DecryptSource)), with the same answers. Each
+/// `JsonPlaintext` is wiped when it is dropped.
 ///
 /// The rows are, for each token of the key that names a node, the node at
 /// depth `0` and everything beneath it, so the four answers `jsonb #>`

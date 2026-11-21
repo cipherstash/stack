@@ -1519,6 +1519,49 @@ mod json_plaintext {
         });
     }
 
+    /// `encrypt_into` hands the document to the JSON index by value: it is
+    /// moved out of the `JsonPlaintext`, sealed and wiped.
+    #[test]
+    fn a_json_plaintext_sealed_into_a_document_leaves_no_plaintext_on_the_heap() {
+        use stack_encrypt::json::JsonDocument;
+        use stack_encrypt::EncryptInto;
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        watched_for_leaks("JsonPlaintext -> JsonDocument", || {
+            let _: JsonDocument = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, nonempty!("docs").with("body"))
+                    .await
+                    .unwrap()
+            });
+        });
+    }
+
+    /// A refused context: the document moved out of the `JsonPlaintext`
+    /// is wiped with the refusal, not dropped as it is.
+    #[test]
+    fn a_json_plaintext_refused_a_document_leaves_no_plaintext_on_the_heap() {
+        use stack_encrypt::json::JsonDocument;
+        use stack_encrypt::plan::PlanError;
+        use stack_encrypt::target::{CallerContext, Scope};
+        use stack_encrypt::EncryptInto;
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        let empty = CallerContext::from(Scope::new(String::new()));
+        watched_for_leaks("JsonPlaintext -> JsonDocument, refused", || {
+            let refused: Result<JsonDocument, _> =
+                rt.block_on(async { source.encrypt_into_with_context(&keyset, empty).await });
+            assert!(
+                matches!(refused, Err(Error::Plan(PlanError::EmptyPart))),
+                "an empty scope is refused: {refused:?}"
+            );
+        });
+    }
+
     #[test]
     fn a_json_plaintext_decrypted_leaves_no_plaintext_on_the_heap() {
         let rt = runtime();
