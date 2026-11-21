@@ -5,6 +5,7 @@
 the Go package embeds this directory and reports `ErrGuestNotBuilt` from
 `NewClient` when the module is absent, and its tests skip.
 
-The deterministic-kms TEST build of the same crate lives in `../testdata/`
-(`mise run wasm:guest:build:deterministic`), not here: this directory is what
-`//go:embed wasm` ships in every binary, and `go build` ignores `testdata`.
+The deterministic-kms TEST build of the same crate lives in
+`../encrypttest/wasm/` (`mise run wasm:guest:build:deterministic`), not here:
+this directory ships in every binary that links `encrypt`, and the test build
+ships only in a binary that imports `encrypttest`.

@@ -9,7 +9,7 @@
 // pushed, rather than by the proxy check at the end of the run, after the tag
 // exists and the version number is spent.
 //
-// Four rules:
+// Five rules:
 //
 // 1. CANONICAL SEMVER. Go accepts only `vMAJOR.MINOR.PATCH[-PRERELEASE]` with
 //    no leading zeros in a numeric part or a numeric pre-release identifier,
@@ -29,6 +29,14 @@
 //    the dispatcher picks. A pre-release (a version with a `-suffix`) may be
 //    cut from a branch, which is how a partner alpha is built from an
 //    unmerged stack; a final version may not.
+// 5. A FINAL VERSION SHIPS NO TEMPORARY VITAMINC PIN. vitaminc's Go bindings
+//    (`github.com/cipherstash/vitaminc/bindings/go/…`) have no tags, so
+//    `go.mod` names them by pseudo-version, and from time to time that is an
+//    unreleased commit taken ahead of a vitaminc release, marked TEMPORARY in
+//    `go.mod` and promised in the CHANGELOG to be gone before the module is
+//    tagged. `release-golang.yml` tags whatever `go.mod` names, so the promise
+//    is held here: a final version is refused while any vitaminc module is
+//    pinned to a pseudo-version; a pre-release may carry one.
 
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -43,12 +51,29 @@ const NUMERIC = /^(0|[1-9][0-9]*)$/
 const PSEUDO_VERSION =
   /^v[0-9]+\.(0\.0-|\d+\.\d+-([^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+$/
 const IDENTIFIER = /^[0-9A-Za-z-]+$/
+// A module of vitaminc's Go bindings and the version it is required or
+// replaced at, in a go.mod stripped of its comments.
+const VITAMINC_MODULE = /github\.com\/cipherstash\/vitaminc(?:\/\S+)?\s+(v\S+)/g
 
 /** The `module` line of a go.mod. */
 export function modulePathOf(goMod) {
   const match = goMod.match(/^module\s+(\S+)\s*$/m)
   if (!match) throw new Error('go.mod has no module line')
   return match[1]
+}
+
+/**
+ * Every `github.com/cipherstash/vitaminc/…` module a go.mod names at a
+ * pseudo-version, as `path version` strings. Comments are dropped first, so
+ * the TEMPORARY note explaining a pin does not count as one.
+ */
+export function vitamincPseudoVersions(goMod) {
+  const code = goMod.replace(/\/\/[^\n]*/g, '')
+  const pins = []
+  for (const match of code.matchAll(VITAMINC_MODULE)) {
+    if (PSEUDO_VERSION.test(match[1])) pins.push(match[0].trim())
+  }
+  return pins
 }
 
 /** The major version a module path may publish: `/vN` gives N, otherwise 0 or 1. */
@@ -59,9 +84,12 @@ export function allowedMajors(modulePath) {
 
 /**
  * Every reason `version` may not be released from `ref` for the module at
- * `modulePath`. Empty when it may.
+ * `modulePath`, whose go.mod text is `goMod`. Empty when it may.
  */
-export function goReleaseVersionErrors(version, { modulePath, ref }) {
+export function goReleaseVersionErrors(
+  version,
+  { modulePath, ref, goMod = '' },
+) {
   const errors = []
 
   if (version.startsWith('v')) {
@@ -125,6 +153,13 @@ export function goReleaseVersionErrors(version, { modulePath, ref }) {
     )
   }
 
+  const pins = vitamincPseudoVersions(goMod)
+  if (pre === null && pins.length > 0) {
+    errors.push(
+      `a final version cannot ship vitaminc's Go bindings at a pseudo-version (go.mod names ${pins.join(', ')}); pin a vitaminc tag or a commit on vitaminc main that a release carries first, or give a pre-release version such as ${core}-alpha.1`,
+    )
+  }
+
   return errors
 }
 
@@ -134,8 +169,9 @@ function main() {
     console.error('usage: go-release-version.mjs <version> <git ref>')
     process.exit(2)
   }
-  const modulePath = modulePathOf(readFileSync(GO_MOD, 'utf8'))
-  const errors = goReleaseVersionErrors(version, { modulePath, ref })
+  const goMod = readFileSync(GO_MOD, 'utf8')
+  const modulePath = modulePathOf(goMod)
+  const errors = goReleaseVersionErrors(version, { modulePath, ref, goMod })
   for (const error of errors) console.log(`::error::${error}`)
   if (errors.length > 0) process.exit(1)
   console.log(`${modulePath} v${version} may be released from ${ref}`)

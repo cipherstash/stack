@@ -1,7 +1,7 @@
 //! Searchable Encrypted Metadata, leaf by leaf.
 //!
 //! Shows each index-term primitive on its own through the target-directed
-//! `encrypt_into` API: equality terms (exact match), match terms (full-text
+//! owned `encrypt_into` API: equality terms (exact match), match terms (full-text
 //! containment), and ORE/OPE terms (range queries) — all generated locally
 //! from a deterministic per-keyset index key, then compared the way a server
 //! would compare them: without ever seeing a plaintext.
@@ -19,8 +19,9 @@
 //! `zerokms_auth` example for the lookup order).
 
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
-use stack_encrypt::target::EncryptInto;
-use stack_encrypt::{nonempty, EncryptFrom, StackCipher, StackCipherText};
+
+use stack_encrypt::target::EncryptTarget;
+use stack_encrypt::{nonempty, EncryptInto, StackCipher, StackCipherText};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,17 +44,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // field: the same
     // value indexed under another field can never produce a colliding term.
 
-    let stored: EqualityTerm = "alice@example.com"
+    let stored: EqualityTerm = String::from("alice@example.com")
         .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;
 
-    let hit: EqualityTerm = "alice@example.com"
+    let hit: EqualityTerm = String::from("alice@example.com")
         .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;
-    let miss: EqualityTerm = "bob@example.com"
+    let miss: EqualityTerm = String::from("bob@example.com")
         .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;
-    let wrong_field: EqualityTerm = "alice@example.com"
+    let wrong_field: EqualityTerm = String::from("alice@example.com")
         .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
         .await?;
 
@@ -112,10 +113,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  age 45 > 40 => {}", age_45 > query_40);
 
     // Strings order lexicographically.
-    let apple: OreTerm<&str> = "apple"
+    let apple: OreTerm<String> = "apple"
+        .to_string()
         .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
         .await?;
-    let banana: OreTerm<&str> = "banana"
+    let banana: OreTerm<String> = "banana"
+        .to_string()
         .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
         .await?;
     println!("  \"apple\" < \"banana\" => {}", apple < banana);
@@ -124,10 +127,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // Leaf by leaf is the query side. On the write side a field is stored
     // as *every* term it needs beside its ciphertext, in one shape: derive
-    // `EncryptFrom` for that shape and each field of it is derived from the
+    // `EncryptTarget` for that shape and each field of it is derived from the
     // one value under the one context — byte-identical to the leaves above,
     // so a probe built leaf by leaf finds what the record stored.
-    #[derive(EncryptFrom)]
+    #[derive(EncryptTarget)]
     #[stash(plaintext = String)]
     struct SearchableEmail {
         c: StackCipherText,
@@ -161,7 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
                 .await?
     );
-    let _ = record.c; // the ciphertext, opened with `decrypt_into` under the same context
+    let _ = record.c; // the ciphertext, opened with `decrypt_from_with_context` under the same context
 
     Ok(())
 }

@@ -242,7 +242,7 @@ impl Descriptor {
     /// Text that renders verbatim: non-empty, and nothing another form
     /// begins with or contains — exactly what a [`Label`] segment may be.
     /// One definition serves both, so a label always renders verbatim.
-    fn is_plain(text: &str) -> bool {
+    pub(crate) fn is_plain(text: &str) -> bool {
         Label::check_segment(0, text).is_ok()
     }
 
@@ -442,7 +442,7 @@ impl<'a> IntoContext<'a> for Description {
 /// `documents/v2/body` is never read as a scoped column.
 ///
 /// A two-segment `Label` binds the same context a
-/// `#[stash(struct = .., context = "<table>")]` derive gives a field, which
+/// `#[stash(struct = .., scope = "<table>")]` derive gives a field, which
 /// the derive spells `nonempty!("users").with("email")`. That is what lets a
 /// label open a row a derive wrote, and a probe built from the label match
 /// the terms the derive produced.
@@ -460,7 +460,7 @@ impl<'a> IntoContext<'a> for Description {
 /// let tenant_7 = NonEmpty::from(email.clone()).with(7u64);
 /// assert_eq!(Descriptor::of(tenant_7).as_str(), "(users/email)/7u64");
 ///
-/// // What a `struct = .., context = "users"` derive binds its `email` field under.
+/// // What a `struct = .., scope = "users"` derive binds its `email` field under.
 /// assert_eq!(Descriptor::of(&email), Descriptor::of(nonempty!("users").with("email")));
 ///
 /// // Not a label: the separator inside a segment, and an empty segment.
@@ -622,8 +622,8 @@ impl std::str::FromStr for Label {
 /// position, counting from zero.
 ///
 /// A label is not always schema: a plan's context and its fields' names
-/// are, but [`context_field`](crate::plan::FieldsBuilder::context_field)
-/// builds the context from a record's own field, which is customer data.
+/// are, but a plan whose context is a field of the record (`context_field`)
+/// builds the context from that field's value, which is customer data.
 /// So no message or payload quotes a segment or the character it refused;
 /// they name the segment by position. A caller in the same process can
 /// still read [`Reserved`](Self::Reserved)'s `found`.

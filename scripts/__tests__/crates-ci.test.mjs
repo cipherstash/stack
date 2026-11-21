@@ -34,6 +34,33 @@ const readRepo = (relPath) => readFileSync(join(REPO_ROOT, relPath), 'utf8')
 const ROOT_MISE = 'mise.toml'
 const IMPORTED_WORKFLOW_DIR = '.github/imported-workflows'
 
+describe('the test toolchain installs from a shared mise cache', () => {
+  it('runs the prebuilt CRAP executable on a compatible image before coverage', () => {
+    const workflow = readWorkflow('.github/workflows/crap-crates.yml')
+    for (const name of ['crap-stack-auth', 'crap-stack-encrypt']) {
+      const job = workflow.jobs[name]
+      expect(job['runs-on']).toMatch(/ubuntu-2404$/)
+      const probe = job.steps.findIndex((s) => s.run === 'cargo crap --version')
+      const gate = job.steps.findIndex((s) =>
+        s.run?.startsWith('mise run crap:'),
+      )
+      expect(probe).toBeGreaterThan(-1)
+      expect(gate).toBeGreaterThan(probe)
+    }
+  })
+
+  it('selects the prebuilt cargo-binstall before installing cargo tools', () => {
+    // EQL installs cargo-binstall. A restored shim with no selected version
+    // makes mise's cargo backend fail instead of falling back to cargo install.
+    const tools = readRepo('mise.test.toml')
+      .split(/^\[tools\]\s*$/m)[1]
+      .split(/^\[/m)[0]
+    expect(tools).toMatch(/^"cargo:cargo-nextest"\s*=/m)
+    expect(tools).toMatch(/^"cargo-binstall"\s*=\s*"\d+\.\d+\.\d+"\s*$/m)
+    expect(tools).not.toMatch(/^"cargo:cargo-binstall"\s*=/m)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // The task graph
 // ---------------------------------------------------------------------------
@@ -199,6 +226,10 @@ function reachableFrom(workflows) {
  * is nothing for CI to do.
  */
 const CI_EXEMPT_TASKS = new Map([
+  [
+    'test:conformance',
+    'Local aggregate: CI runs Rust profiles in tests-crates, Go profiles in go:test, and the fresh artifact consumer in tests-golang; rerunning the aggregate would duplicate both suites.',
+  ],
   ...[
     'stack-auth',
     'stack-encrypt',

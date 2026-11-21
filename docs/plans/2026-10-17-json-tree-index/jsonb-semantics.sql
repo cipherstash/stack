@@ -1,0 +1,25 @@
+\pset format aligned
+SELECT 'root array contains scalar' AS case, '["a"]'::jsonb @> '"a"' AS result
+UNION ALL SELECT 'scalar contains array', '"a"'::jsonb @> '["a"]'
+UNION ALL SELECT 'nested primitive vs array', '{"a":[1]}'::jsonb @> '{"a":1}'
+UNION ALL SELECT 'nested array vs primitive', '{"a":1}'::jsonb @> '{"a":[1]}'
+UNION ALL SELECT 'inner array does not contain scalar', '[1,[2]]'::jsonb @> '[2]'
+UNION ALL SELECT 'inner array contains array', '[1,[2]]'::jsonb @> '[[2]]'
+UNION ALL SELECT 'empty object needle', '{"a":{"b":1}}'::jsonb @> '{"a":{}}'
+UNION ALL SELECT 'empty object target', '{"a":{}}'::jsonb @> '{"a":{"b":1}}'
+UNION ALL SELECT 'empty array needle', '{"a":[1,2]}'::jsonb @> '{"a":[]}'
+UNION ALL SELECT 'root {} in object', '{"a":1}'::jsonb @> '{}'
+UNION ALL SELECT 'root {} in array', '[1]'::jsonb @> '{}'
+UNION ALL SELECT 'root [] in array', '[1]'::jsonb @> '[]'
+UNION ALL SELECT 'duplicates', '[1,2]'::jsonb @> '[1,1,1]'
+UNION ALL SELECT 'issue 1231 cross-element', '{"a":[{"x":1,"y":5},{"x":7,"y":2}]}'::jsonb @> '{"a":[{"x":1,"y":2}]}'
+UNION ALL SELECT 'issue 1231 same element', '{"a":[{"x":1,"y":2,"z":3}]}'::jsonb @> '{"a":[{"x":1,"y":2}]}'
+UNION ALL SELECT 'two needle elements one stored', '{"a":[{"x":1}]}'::jsonb @> '{"a":[{"x":1},{"x":1}]}'
+UNION ALL SELECT 'nested arrays of objects', '{"a":[{"b":[{"x":1},{"y":2}]}]}'::jsonb @> '{"a":[{"b":[{"x":1,"y":2}]}]}'
+UNION ALL SELECT 'nested arrays same inner', '{"a":[{"b":[{"x":1,"y":2}]}]}'::jsonb @> '{"a":[{"b":[{"x":1,"y":2}]}]}'
+UNION ALL SELECT 'scalar inside nested array at depth', '{"a":[["x"]]}'::jsonb @> '{"a":["x"]}'
+UNION ALL SELECT 'root scalar equal', '"a"'::jsonb @> '"a"'
+UNION ALL SELECT 'root number 2 vs 2.0', '2'::jsonb @> '2.0'
+UNION ALL SELECT 'null leaf', '{"a":null}'::jsonb @> '{"a":null}'
+UNION ALL SELECT 'root array of arrays contains scalar?', '[["a"]]'::jsonb @> '"a"';
+SELECT sha256('abc'::bytea) IS NOT NULL AS core_sha256, set_byte('\x00'::bytea,0,1) AS set_byte_ok;

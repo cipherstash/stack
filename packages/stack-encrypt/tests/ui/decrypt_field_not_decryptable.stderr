@@ -1,45 +1,43 @@
-error[E0277]: the trait bound `Opaque: DecryptField<u32, CallerContext>` is not satisfied
- --> tests/ui/decrypt_field_not_decryptable.rs:6:10
-  |
-6 | #[derive(DecryptInto)]
-  |          ^^^^^^^^^^^ unsatisfied trait bound
-  |
-help: the trait `DecryptField<u32, CallerContext>` is not implemented for `Opaque`
- --> tests/ui/decrypt_field_not_decryptable.rs:4:1
-  |
-4 | struct Opaque;
-  | ^^^^^^^^^^^^^
-  = help: the following other types implement trait `DecryptField<P, Ctx>`:
-            `(A, B)` implements `DecryptField<P, Ctx>`
-            `(A, B, C)` implements `DecryptField<P, Ctx>`
-            `(A, B, C, D)` implements `DecryptField<P, Ctx>`
-            `(A, B, C, D, E)` implements `DecryptField<P, Ctx>`
-            `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` implements `DecryptField<P, Ctx>`
-            `Encrypted<Terms>` implements `DecryptField<P, Ctx>`
-            `EqualityTerm` implements `DecryptField<P, Ctx>`
-            `MatchTerms<O>` implements `DecryptField<P, Ctx>`
-          and $N others
-  = help: see issue #48214
-  = note: this error originates in the derive macro `DecryptInto` (in Nightly builds, run with -Z macro-backtrace for more info)
+error[E0277]: the trait bound `Opaque: DecryptField<u32, RequiredContext<CallerContext>>` is not satisfied
+  --> tests/ui/decrypt_field_not_decryptable.rs:14:8
+   |
+14 |     o: Opaque,
+   |        ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `DecryptField<u32, RequiredContext<CallerContext>>` is not implemented for `Opaque`
+  --> tests/ui/decrypt_field_not_decryptable.rs:8:1
+   |
+ 8 | struct Opaque;
+   | ^^^^^^^^^^^^^
+   = help: the following other types implement trait `DecryptField<P, Ctx>`:
+             `CipherText<SealedValue, PassthroughFrame>` implements `DecryptField<P, Ctx>`
+             `Encrypted<Terms>` implements `DecryptField<P, Ctx>`
+             `EqualityTerm` implements `DecryptField<P, Ctx>`
+             `JsonDocument` implements `DecryptField<P, Ctx>`
+             `JsonExtracted` implements `DecryptField<P, Ctx>`
+             `JsonSubtree` implements `DecryptField<P, Ctx>`
+             `MatchTerms<O>` implements `DecryptField<P, Ctx>`
+             `OpeTerm<T>` implements `DecryptField<P, Ctx>`
+           and $N others
 
 error[E0277]: the trait bound `Opaque: Decryptable` is not satisfied
-  --> tests/ui/decrypt_field_not_decryptable.rs:10:8
+  --> tests/ui/decrypt_field_not_decryptable.rs:14:8
    |
-10 |     o: Opaque,
+14 |     o: Opaque,
    |        ^^^^^^ unsatisfied trait bound
    |
 help: the trait `Decryptable` is not implemented for `Opaque`
-  --> tests/ui/decrypt_field_not_decryptable.rs:4:1
+  --> tests/ui/decrypt_field_not_decryptable.rs:8:1
    |
- 4 | struct Opaque;
+ 8 | struct Opaque;
    | ^^^^^^^^^^^^^
    = help: the following other types implement trait `Decryptable`:
-             (A, B)
-             (A, B, C)
-             (A, B, C, D)
-             (A, B, C, D, E)
-             CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>
+             CipherText<SealedValue, PassthroughFrame>
              Encrypted<Terms>
              EqualityTerm
+             JsonDocument
+             JsonExtracted
+             JsonSubtree
              MatchTerms<O>
+             OpeTerm<T>
            and $N others

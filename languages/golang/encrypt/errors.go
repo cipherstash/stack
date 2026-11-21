@@ -1,6 +1,9 @@
 package encrypt
 
-import "github.com/cipherstash/stack/languages/golang/internal/guest"
+import (
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+)
 
 // Failure kinds surfaced across the boundary: the guest reports a status
 // code, and these are what the codes decode to. They separate a tampered
@@ -66,6 +69,12 @@ var (
 	ErrMemoryLock = guest.ErrMemoryLock
 )
 
+// ErrStorageVersion is an opaque struct sealed as a storage blob of a
+// version this release does not read: a later release wrote it. Its error
+// wraps [ErrEncoding] too. It is vcffi.ErrUnsupportedVersion, named here so
+// a program can check for it without importing vitaminc's bindings.
+var ErrStorageVersion = vcffi.ErrUnsupportedVersion
+
 // Diagnostic is the full error behind a failure the guest reports, beside
 // the kind: every such failure is a *Diagnostic wrapping one of the
 // sentinels above, so errors.Is matches the kind and errors.As reads the
@@ -81,13 +90,15 @@ var (
 // returns after the sentinel's text), Help, URL, Severity, Fields (the
 // structured fields, by name) and Causes (the errors behind it, outermost
 // first). Accessors read the fields a caller branches on: ExpectedKeyset
-// and FoundKeyset on an [ErrForeignKeyset] (each a [KeysetID]'s bytes), and
-// Field and Reason on a refused plan, record or value.
+// and FoundKeyset on an [ErrForeignKeyset] (each a [KeysetID]'s bytes);
+// Field and Reason on a refused plan, record or value; and Construct and At
+// on a refused Match predicate, the construct in the grammar's words and
+// the byte offset in the predicate where it starts.
 //
 // What one may carry is fixed: keyset ids and names, field names, counts,
-// index kinds, ZeroKMS request kinds and HTTP statuses. Never plaintext,
-// key material, tokens, ciphertext or term bytes, or the values of an
-// encryption context.
+// index kinds, ZeroKMS request kinds and HTTP statuses, and a refused
+// predicate's construct and offset. Never plaintext, key material,
+// tokens, ciphertext or term bytes, or the values of an encryption context.
 //
 // Errors the client raises itself carry none: a closed client ([ErrState]),
 // a guest that did not return, [ErrMemoryLock], and an argument refused

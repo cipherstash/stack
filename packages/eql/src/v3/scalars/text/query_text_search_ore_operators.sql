@@ -4,368 +4,368 @@
 -- REQUIRE: src/v3/scalars/text/query_text_search_ore_functions.sql
 
 --! @file encrypted_domain/text/query_text_search_ore_operators.sql
---! @brief Operators for eql_v3.query_text_search_ore.
+--! @brief Operators for {{prefix}}.query_text_search_ore.
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_search_ore,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = public.{{prefix}}_text_search_ore, RIGHTARG = {{prefix}}.query_text_search_ore,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search_ore,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search_ore,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_search_ore,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = public.{{prefix}}_text_search_ore, RIGHTARG = {{prefix}}.query_text_search_ore,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search_ore,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search_ore,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3.lt,
-  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_search_ore,
+  FUNCTION = {{prefix}}.lt,
+  LEFTARG = public.{{prefix}}_text_search_ore, RIGHTARG = {{prefix}}.query_text_search_ore,
   COMMUTATOR = >, NEGATOR = >=, RESTRICT = scalarltsel, JOIN = scalarltjoinsel
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3.lt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search_ore,
+  FUNCTION = {{prefix}}.lt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search_ore,
   COMMUTATOR = >, NEGATOR = >=, RESTRICT = scalarltsel, JOIN = scalarltjoinsel
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3.lte,
-  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_search_ore,
+  FUNCTION = {{prefix}}.lte,
+  LEFTARG = public.{{prefix}}_text_search_ore, RIGHTARG = {{prefix}}.query_text_search_ore,
   COMMUTATOR = >=, NEGATOR = >, RESTRICT = scalarlesel, JOIN = scalarlejoinsel
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3.lte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search_ore,
+  FUNCTION = {{prefix}}.lte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search_ore,
   COMMUTATOR = >=, NEGATOR = >, RESTRICT = scalarlesel, JOIN = scalarlejoinsel
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3.gt,
-  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_search_ore,
+  FUNCTION = {{prefix}}.gt,
+  LEFTARG = public.{{prefix}}_text_search_ore, RIGHTARG = {{prefix}}.query_text_search_ore,
   COMMUTATOR = <, NEGATOR = <=, RESTRICT = scalargtsel, JOIN = scalargtjoinsel
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3.gt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search_ore,
+  FUNCTION = {{prefix}}.gt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search_ore,
   COMMUTATOR = <, NEGATOR = <=, RESTRICT = scalargtsel, JOIN = scalargtjoinsel
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3.gte,
-  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_search_ore,
+  FUNCTION = {{prefix}}.gte,
+  LEFTARG = public.{{prefix}}_text_search_ore, RIGHTARG = {{prefix}}.query_text_search_ore,
   COMMUTATOR = <=, NEGATOR = <, RESTRICT = scalargesel, JOIN = scalargejoinsel
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3.gte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search_ore,
+  FUNCTION = {{prefix}}.gte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search_ore,
   COMMUTATOR = <=, NEGATOR = <, RESTRICT = scalargesel, JOIN = scalargejoinsel
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3.matches,
-  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_search_ore,
+  FUNCTION = {{prefix}}.matches,
+  LEFTARG = public.{{prefix}}_text_search_ore, RIGHTARG = {{prefix}}.query_text_search_ore,
   RESTRICT = contsel, JOIN = contjoinsel
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3.matches,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search_ore,
+  FUNCTION = {{prefix}}.matches,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search_ore,
   RESTRICT = contsel, JOIN = contjoinsel
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_text_eq, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_eq, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_eq
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_eq
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_text_eq, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_eq, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_eq
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_eq
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_text_match, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_text_match, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_match
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_match
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_text_ord_ore, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ore
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_text_ord_ore, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ore
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_text_ord_ore, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ore
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_text_ord_ore, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ore
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_text_ord_ore, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ore
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_text_ord_ore, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_text_ord_ore, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ore
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ore
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_text_ord, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_text_ord, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_text_ord, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_text_ord, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_text_ord, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_text_ord, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_text_ord, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_text_ord_ope, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ope
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_text_ord_ope, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ope
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_text_ord_ope, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ope
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_text_ord_ope, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ope
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_text_ord_ope, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ope
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_text_ord_ope, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_text_ord_ope, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_ord_ope
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_ord_ope
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search_ore
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search_ore
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = eql_v3.query_text_search_ore, RIGHTARG = public.eql_v3_text_search
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = {{prefix}}.query_text_search_ore, RIGHTARG = public.{{prefix}}_text_search
 );

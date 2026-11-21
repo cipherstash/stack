@@ -1,28 +1,41 @@
-//! The widened plan grammar: two starts, three context sources (exactly
-//! one), the typed verb `encrypt_into` in both positions, and the picker.
+//! Where a plan that is data gets its context, and what it refuses before
+//! any key is requested.
 //!
-//! The load-bearing claim is again byte identity: a typed field lowers to
-//! the same bytes as the data verbs it replaces, for every index set
-//! `Encrypted<Terms>` names, and a one-value typed plan is the `plaintext =
-//! T` derive's record.
+//! A plan (`dynamic::record::Plan`) takes the context of its fields from
+//! one of two places: the declaration, where each field names its label, or
+//! a field of each record (`context_field`), which holds the label the
+//! record's other fields run under. A caller adds a scope to either with
+//! `Planned`. A reader of a plan with a context field can name the context
+//! it expects each record to store.
+//!
+//! These tests hold the rules that follow from that, through the public
+//! entry points, with a key source that counts its calls:
+//!
+//! - a query on a plan that reads its context from the record names the
+//!   context, and is refused when it names none;
+//! - a context given by two sources is refused;
+//! - a context that is not a plain label is refused;
+//! - a query under the context or the scope the caller names derives the
+//!   stored term, and another derives another term;
+//! - an empty batch has the scope of its call checked, as a batch of
+//!   records has.
+//!
+//! Each refusal is made before any key is requested. A caller holds its
+//! keyset before it runs a plan, so no test here observes a keyset load.
+#![cfg(feature = "dynamic")]
 mod common;
 
 use std::fmt::Debug;
 use std::sync::atomic::Ordering;
 
-use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
-use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::plan::{pick, Field, FieldKind, FieldValues, Fields, Opens, PlanError, Runs};
-use stack_encrypt::sem::{
-    EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm, Tokenizer,
-};
-use stack_encrypt::target::{
-    CallerContext, DeclaredContext, DecryptField, DecryptInto, Decryptable, Decryption,
-    EncryptFrom, Encrypted, Encryption, IndexSpec, Indexes, TermSet,
-};
+use common::frames::{frame, object};
+use common::{counting_cipher, recording_cipher};
+use stack_encrypt::dynamic::{self, record, NoTargets, Op, Operand, Planned, ValueFrame};
+use stack_encrypt::plan::IntoLabel;
+use stack_encrypt::target::Scope;
 use stack_encrypt::{
-    nonempty, Decrypt, Encrypt, Equality, Error, ErrorPayload, Label, Match, NonEmpty, Ope, Ore,
-    Plan, StackCipherText,
+    AsProtectedRef as _, CipherText, DecryptFrom, EncryptInto, Error, Label, PlanError,
+    StackCipherText,
 };
 
 fn plan_error<T: Debug>(result: Result<T, Error>) -> PlanError {
@@ -36,775 +49,148 @@ fn two(first: &'static str, second: &'static str) -> PlanError {
     PlanError::TwoContextSources { first, second }
 }
 
-/// A value with no `Fields` impl at all: only pickers can read it.
-#[derive(Clone, Debug, PartialEq)]
-struct User {
-    email: String,
-    age: u32,
+/// One field's declaration: its label, its outputs and its type.
+fn field(context: &[&str], outputs: &[&str], kind: &str) -> ValueFrame {
+    object(vec![
+        ("context", frame(context.to_vec())),
+        ("outputs", frame(outputs.to_vec())),
+        ("type", frame(kind)),
+    ])
 }
 
-fn user() -> User {
-    User {
-        email: "bob@example.com".into(),
-        age: 34,
+fn plan_of(declaration: Vec<(&str, ValueFrame)>) -> Result<record::Plan, dynamic::Error> {
+    record::plan(object(declaration).as_protected_ref())
+}
+
+/// A plan whose context is in the declaration: `email` sealed and indexed
+/// under `users/email`, `age` sealed under `users/age`.
+fn users_plan() -> record::Plan {
+    plan_of(vec![
+        ("email", field(&["users", "email"], &["c", "eq"], "string")),
+        ("age", field(&["users", "age"], &["c"], "uint32")),
+    ])
+    .expect("the users plan parses")
+}
+
+fn user() -> ValueFrame {
+    object(vec![
+        ("email", frame("bob@example.com")),
+        ("age", frame(34u32)),
+    ])
+}
+
+/// A plan that reads its context from the record: `tenant` holds the
+/// label, and `email` is sealed and indexed under `<tenant>/email`.
+fn records_plan() -> record::Plan {
+    plan_of(vec![
+        ("context_field", frame("tenant")),
+        ("tenant", field(&["tenant"], &["passthrough"], "string")),
+        ("email", field(&["email"], &["c", "eq"], "string")),
+    ])
+    .expect("the records plan parses")
+}
+
+fn tenant_record(tenant: &str) -> ValueFrame {
+    object(vec![
+        ("tenant", frame(tenant)),
+        ("email", frame("bob@example.com")),
+    ])
+}
+
+/// The records plan under the context a call names: `email` under
+/// `<context>/email`, with no context field. A binding sends this plan for
+/// a query, because a query has no record to read the context from.
+fn under(context: &str) -> Result<record::Plan, dynamic::Error> {
+    let mut label = context.split('/').collect::<Vec<_>>();
+    label.push("email");
+    plan_of(vec![("email", field(&label, &["c", "eq"], "string"))])
+}
+
+fn label(text: &str) -> Label {
+    Label::parse(text).expect("a label")
+}
+
+/// The outputs of the field `name` of one stored record.
+fn outputs<'t>(record: &'t StackCipherText, name: &str) -> &'t [(String, StackCipherText)] {
+    let CipherText::Map(fields) = record else {
+        panic!("a record is a map of fields")
+    };
+    let (_, CipherText::Map(outputs)) = fields
+        .iter()
+        .find(|(key, _)| key == name)
+        .expect("the field")
+    else {
+        panic!("a field is a map of outputs")
+    };
+    outputs
+}
+
+/// The equality term a stored record holds for `email`.
+fn stored_term(record: &StackCipherText) -> Vec<u8> {
+    stored_eq_term(record, "email")
+}
+
+/// The equality term a stored record holds for `field`, found by its
+/// output key, not by its position.
+fn stored_eq_term(record: &StackCipherText, field: &str) -> Vec<u8> {
+    let (_, CipherText::Passthrough(term)) = outputs(record, field)
+        .iter()
+        .find(|(key, _)| key == "eq")
+        .expect("the term")
+    else {
+        panic!("a term is a passthrough")
+    };
+    vitaminc_aead_frame::serde::from_slice::<&[u8]>(&term.0)
+        .expect("a term is bytes")
+        .to_vec()
+}
+
+/// A stored record with its `tenant` replaced, or removed for `None`, as
+/// someone with write access to the row would leave it.
+fn with_stored_tenant(record: StackCipherText, tenant: Option<&str>) -> StackCipherText {
+    let CipherText::Map(mut fields) = record else {
+        panic!("a record is a map of fields")
+    };
+    fields.retain(|(key, _)| key != "tenant");
+    if let Some(tenant) = tenant {
+        fields.push((
+            "tenant".into(),
+            CipherText::Map(vec![(
+                "passthrough".into(),
+                CipherText::Passthrough(common::passthrough(tenant)),
+            )]),
+        ));
+    }
+    CipherText::Map(fields)
+}
+
+/// The equality term a query for `bob@example.com` derives under `plan`.
+async fn query<K>(keyset: &stack_encrypt::KeysetCipher<'_, K>, plan: &record::Plan) -> Vec<u8>
+where
+    K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync + 'static,
+{
+    let term = dynamic::query_term(keyset, plan, "email", Op::Eq, "bob@example.com", &NoTargets)
+        .expect("the plan answers the query")
+        .await
+        .expect("the term");
+    match term.operand() {
+        Operand::One(bytes) => bytes.clone(),
+        other => panic!("one term, got {other:?}"),
     }
 }
 
-fn email(u: &User) -> &String {
-    &u.email
-}
-fn age(u: &User) -> &u32 {
-    &u.age
-}
-
-/// The picker fields plan every context-source test runs, without a
-/// context of its own.
-fn contextless_plan<K: 'static>() -> Plan<User, K> {
-    Plan::fields()
-        .encrypt_index(("email", email), Equality)
-        .encrypt(("age", age))
-        .build()
-        .unwrap()
-}
-
-// --- Two starts --------------------------------------------------------------
-
-#[tokio::test]
-async fn both_starts_build_the_plan_the_context_start_builds() {
-    let (cipher, sent) = recording_cipher().await;
-    let fields_first = Plan::fields()
-        .context("users")
-        .encrypt_index(("email", email), Equality)
-        .encrypt(("age", age))
-        .build()
-        .unwrap();
-    let context_first = Plan::context("users")
-        .fields()
-        .encrypt_index(("email", email), Equality)
-        .encrypt(("age", age))
-        .build()
-        .unwrap();
-    assert_eq!(fields_first.label(), context_first.label());
-    assert_eq!(
-        fields_first.field_plans().collect::<Vec<_>>(),
-        context_first.field_plans().collect::<Vec<_>>()
-    );
-
-    let mut a = cipher.encrypt(&user()).using(&fields_first).await.unwrap();
-    let mut b = cipher.encrypt(&user()).using(&context_first).await.unwrap();
-    assert_eq!(
-        sent.lock().unwrap().generated(),
-        ["users/email", "users/age", "users/email", "users/age"]
-    );
-    let a: Encrypted<EqualityTerm> = a.take("email").unwrap();
-    let b: Encrypted<EqualityTerm> = b.take("email").unwrap();
-    assert_eq!(a.terms, b.terms);
-
-    let value_first = Plan::value::<u32>()
-        .context("users/age")
-        .with((Equality, Ore))
-        .build()
-        .unwrap();
-    let context_first = Plan::context("users/age")
-        .with::<u32, _>((Equality, Ore))
-        .build()
-        .unwrap();
-    assert_eq!(value_first.label(), context_first.label());
-    let a = cipher.encrypt(&34u32).using(&value_first).await.unwrap();
-    let b = cipher.encrypt(&34u32).using(&context_first).await.unwrap();
-    assert_eq!(a.terms, b.terms);
-}
-
-// --- The context, from the call ------------------------------------------------
-
-#[tokio::test]
-async fn a_plan_built_without_a_context_takes_the_calls() {
-    let (cipher, sent) = recording_cipher().await;
-    let users_plan = contextless_plan();
-    assert_eq!(users_plan.label(), None);
-    assert_eq!(users_plan.context_field(), None);
-    let email_plan = users_plan.field("email").unwrap();
-    assert_eq!(email_plan.label(), None, "the label is known only per call");
-    assert_eq!(email_plan.identity(), "email");
-
-    let mut record = cipher
-        .encrypt(&user())
-        .context("tenants/acme")
-        .using(&users_plan)
-        .await
-        .unwrap();
-    assert_eq!(
-        sent.lock().unwrap().generated(),
-        ["tenants/acme/email", "tenants/acme/age"],
-        "every field under <call context>/<identity>"
-    );
-    let stored: Encrypted<EqualityTerm> = record.take("email").unwrap();
-
-    let query_value = cipher
-        .query("bob@example.com")
-        .context("tenants/acme")
-        .using(&email_plan)
-        .equality()
-        .await
-        .unwrap();
-    assert_eq!(
-        query_value, stored.terms,
-        "a query naming the same context matches"
-    );
-    let elsewhere = cipher
-        .query("bob@example.com")
-        .context("tenants/globex")
-        .using(&email_plan)
-        .equality()
-        .await
-        .unwrap();
-    assert_ne!(elsewhere, stored.terms);
-
-    record.insert("email", stored);
-    let back = cipher
-        .open(record)
-        .context("tenants/acme")
-        .using(&users_plan)
-        .await
-        .unwrap();
-    assert_eq!(back.get::<String>("email"), Some(&user().email));
-    assert_eq!(back.get::<u32>("age"), Some(&34));
-}
-
-#[tokio::test]
-async fn a_plan_run_with_no_context_is_refused_before_any_key_request() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
-    let users_plan = Plan::fields()
-        .encrypt_index(("email", email), Equality)
-        .build()
-        .unwrap();
-    assert_eq!(
-        plan_error(cipher.encrypt(&user()).using(&users_plan).await),
-        PlanError::NoContext
-    );
-    assert_eq!(
-        plan_error(
-            cipher
-                .query("bob@example.com")
-                .using(&users_plan.field("email").unwrap())
-                .equality()
-                .await
-        ),
-        PlanError::NoContext
-    );
-    let record = cipher
-        .encrypt(&user())
-        .context("users")
-        .using(&users_plan)
-        .await
-        .unwrap();
-    assert_eq!(
-        plan_error(cipher.open(record).using(&users_plan).await),
-        PlanError::NoContext
-    );
-
-    let age_plan = Plan::value::<u32>().with(Equality).build().unwrap();
-    assert_eq!(age_plan.label(), None);
-    assert_eq!(
-        plan_error(cipher.encrypt(&34u32).using(&age_plan).await),
-        PlanError::NoContext
-    );
-    assert_eq!(
-        plan_error(cipher.query(&34u32).using(&age_plan).equality().await),
-        PlanError::NoContext
-    );
-    let age = cipher
-        .encrypt(&34u32)
-        .context("users/age")
-        .using(&age_plan)
-        .await
-        .unwrap();
-    assert_eq!(
-        plan_error(cipher.open(age).using(&age_plan).await),
-        PlanError::NoContext
-    );
-    assert_eq!(
-        generates.load(Ordering::SeqCst),
-        2,
-        "only the two good writes"
-    );
-    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
-    assert!(PlanError::NoContext
-        .to_string()
-        .starts_with("the plan has no context"));
-}
-
-#[tokio::test]
-async fn a_context_given_twice_is_refused_at_build() {
-    let both = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
-        .context("people")
-        .encrypt(("age", age))
-        .build();
-    assert_eq!(plan_error(both), two("the plan", "the plan"));
-
-    let with_field = Plan::context("users")
-        .fields::<TenantRecord, FakeDataKeySource>()
-        .context_field(("tenant", tenant))
-        .build();
-    assert_eq!(plan_error(with_field), two("the plan", "a context field"));
-
-    let field_first = Plan::fields::<TenantRecord, FakeDataKeySource>()
-        .context_field(("tenant", tenant))
-        .context("users")
-        .build();
-    assert_eq!(plan_error(field_first), two("a context field", "the plan"));
-
-    let value = Plan::value::<u32>()
-        .context("a")
-        .context("b")
-        .with(Equality)
-        .build();
-    assert_eq!(plan_error(value), two("the plan", "the plan"));
-
-    assert_eq!(
-        two("the plan", "the call").to_string(),
-        "the plan's context is given twice: by the plan and by the call"
-    );
-}
-
-#[tokio::test]
-async fn a_context_given_twice_is_refused_at_the_call_before_any_key_request() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
-    let users_plan: Plan<User, _> = Plan::context("users")
-        .fields()
-        .encrypt_index(("email", email), Equality)
-        .build()
-        .unwrap();
-    assert_eq!(
-        plan_error(
-            cipher
-                .encrypt(&user())
-                .context("users")
-                .using(&users_plan)
-                .await
-        ),
-        two("the plan", "the call")
-    );
-    assert_eq!(
-        plan_error(
-            cipher
-                .query("bob@example.com")
-                .context("users")
-                .using(&users_plan.field("email").unwrap())
-                .equality()
-                .await
-        ),
-        two("the plan", "the call")
-    );
-    let record = cipher.encrypt(&user()).using(&users_plan).await.unwrap();
-    assert_eq!(
-        plan_error(
-            cipher
-                .open(record)
-                .context("users")
-                .using(&users_plan)
-                .await
-        ),
-        two("the plan", "the call")
-    );
-
-    let records_plan = records_plan();
-    assert_eq!(
-        plan_error(
-            cipher
-                .encrypt(&tenant_record())
-                .context("x")
-                .using(&records_plan)
-                .await
-        ),
-        two("a context field", "the call")
-    );
-
-    let age_plan = Plan::value::<u32>()
-        .context("users/age")
-        .with(Equality)
-        .build()
-        .unwrap();
-    assert_eq!(
-        plan_error(
-            cipher
-                .encrypt(&34u32)
-                .context("users/age")
-                .using(&age_plan)
-                .await
-        ),
-        two("the plan", "the call")
-    );
-    assert_eq!(
-        plan_error(
-            cipher
-                .query(&34u32)
-                .context("users/age")
-                .using(&age_plan)
-                .equality()
-                .await
-        ),
-        two("the plan", "the call")
-    );
-    assert_eq!(generates.load(Ordering::SeqCst), 1, "only the good write");
-    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn a_call_context_that_is_not_a_label_is_refused() {
-    let cipher = stack_cipher().await;
-    let users_plan = contextless_plan();
-    let bad = |error: PlanError| matches!(error, PlanError::ContextLabel(_));
-    assert!(bad(plan_error(
-        cipher
-            .encrypt(&user())
-            .context("a//b")
-            .using(&users_plan)
-            .await
-    )));
-    assert!(bad(plan_error(
-        cipher
-            .query("bob@example.com")
-            .context("a//b")
-            .using(&users_plan.field("email").unwrap())
-            .equality()
-            .await
-    )));
-    assert!(bad(plan_error(
-        cipher
-            .open(FieldValues::new())
-            .context("a//b")
-            .using(&users_plan)
-            .await
-    )));
-}
-
-// --- The context, from a field of the value -----------------------------------
-
-#[derive(Clone, Debug, PartialEq)]
-struct TenantRecord {
-    tenant: String,
-    email: String,
-}
-
-fn tenant_record() -> TenantRecord {
-    TenantRecord {
-        tenant: "tenants/acme".into(),
-        email: "bob@example.com".into(),
-    }
-}
-
-fn tenant(r: &TenantRecord) -> &String {
-    &r.tenant
-}
-fn record_email(r: &TenantRecord) -> &String {
-    &r.email
-}
-
-fn records_plan<K: 'static>() -> Plan<TenantRecord, K> {
-    Plan::fields()
-        .context_field(("tenant", tenant))
-        .encrypt_index(("email", record_email), Equality)
-        .build()
-        .unwrap()
-}
-
-/// A context refused at the call (missing, given twice, not a label, or a
-/// context field that disagrees with the one expected) is refused before
-/// the keyset the chain names is loaded, for every plan kind and for a
-/// `Vec` as for one value.
-#[tokio::test]
-async fn a_context_refused_at_the_call_never_loads_the_keyset_it_names() {
-    let (cipher, loads) = loads_counting_cipher().await;
-    let users_plan = contextless_plan();
-    let records_plan = records_plan();
-    let age_plan = Plan::value::<u32>().with(Equality).build().unwrap();
-    let pair_plan = Plan::value::<u32>()
-        .encrypt_into::<(StackCipherText, EqualityTerm)>()
-        .build()
-        .unwrap();
-    let in_hand = |context: &'static str| {
-        let cipher = &cipher;
-        let pair_plan = &pair_plan;
-        async move {
-            cipher
-                .encrypt(&7u32)
-                .context(context)
-                .using(pair_plan)
-                .await
-                .unwrap()
-        }
-    };
-    let record = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
-        .await
-        .unwrap();
-    let sealed_age = cipher
-        .encrypt(&7u32)
-        .context("ages")
-        .using(&age_plan)
-        .await
-        .unwrap();
-    let pair = in_hand("ages").await;
-    let pairs = vec![in_hand("ages").await];
-    assert_eq!(
-        loads.load(Ordering::SeqCst),
-        0,
-        "the default keyset is in hand"
-    );
-
-    let refused = cipher
-        .encrypt(&user())
-        .using(&users_plan)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = cipher
-        .encrypt(&vec![user()])
-        .context("users//x")
-        .using(&users_plan)
-        .keyset("tenant")
-        .await;
-    assert!(matches!(plan_error(refused), PlanError::ContextLabel(_)));
-    let refused = cipher
-        .encrypt(&tenant_record())
-        .context("users")
-        .using(&records_plan)
-        .keyset("tenant")
-        .await;
-    assert!(matches!(
-        plan_error(refused),
-        PlanError::TwoContextSources { .. }
-    ));
-    let bad_tenant = TenantRecord {
-        tenant: "tenants//acme".into(),
-        ..tenant_record()
-    };
-    let refused = cipher
-        .encrypt(&bad_tenant)
-        .using(&records_plan)
-        .keyset("tenant")
-        .await;
-    assert!(matches!(plan_error(refused), PlanError::ContextLabel(_)));
-    let refused = cipher
-        .open(record)
-        .context("tenants/globex")
-        .using(&records_plan)
-        .keyset("tenant")
-        .await;
-    assert!(
-        matches!(refused, Err(Error::ContextMismatch { .. })),
-        "{refused:?}"
-    );
-
-    let refused = cipher
-        .encrypt(&7u32)
-        .using(&age_plan)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = cipher
-        .encrypt(&vec![7u32])
-        .using(&pair_plan)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = cipher
-        .open(sealed_age)
-        .using(&age_plan)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = cipher.open(pair).using(&pair_plan).keyset("tenant").await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = cipher.open(pairs).using(&pair_plan).keyset("tenant").await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    assert_eq!(loads.load(Ordering::SeqCst), 0, "no keyset was loaded");
-}
-
-/// A batch checks the context its call names once, apart from its items:
-/// an empty slice or `Vec` runs no item, and is still refused a context
-/// missing or given twice before the keyset the chain names is loaded,
-/// for a fields plan and a one-value plan, run or opened.
-#[tokio::test]
-async fn an_empty_batch_has_its_context_refused_before_the_keyset_loads() {
-    let (cipher, loads) = loads_counting_cipher().await;
-    let users_plan = contextless_plan();
-    let fixed_users = Plan::context("users")
-        .fields()
-        .encrypt_index(("email", email), Equality)
-        .encrypt(("age", age))
-        .build()
-        .unwrap();
-    let records_plan = records_plan();
-    let age_plan = Plan::value::<u32>().with(Equality).build().unwrap();
-    let fixed_age = Plan::context("ages")
-        .with::<u32, _>(Equality)
-        .build()
-        .unwrap();
-    let no_users: Vec<User> = Vec::new();
-    let no_records: Vec<TenantRecord> = Vec::new();
-    let no_ages: Vec<u32> = Vec::new();
-
-    let refused = cipher
-        .encrypt(&no_users)
-        .using(&users_plan)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = cipher
-        .encrypt(no_users.as_slice())
-        .using(&users_plan)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = cipher
-        .encrypt(&no_users)
-        .context("users")
-        .using(&fixed_users)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), two("the plan", "the call"));
-    let refused = cipher
-        .encrypt(no_users.as_slice())
-        .context("users")
-        .using(&fixed_users)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), two("the plan", "the call"));
-    let refused = cipher
-        .encrypt(&no_records)
-        .context("tenants/acme")
-        .using(&records_plan)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), two("a context field", "the call"));
-
-    let refused = cipher
-        .encrypt(&no_ages)
-        .using(&age_plan)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = cipher
-        .encrypt(no_ages.as_slice())
-        .context("ages")
-        .using(&fixed_age)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), two("the plan", "the call"));
-
-    let refused = cipher
-        .open(Vec::<FieldValues>::new())
-        .using(&users_plan)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = cipher
-        .open(Vec::<FieldValues>::new())
-        .context("users")
-        .using(&fixed_users)
-        .keyset("tenant")
-        .await;
-    assert_eq!(plan_error(refused), two("the plan", "the call"));
-    assert_eq!(loads.load(Ordering::SeqCst), 0, "no keyset was loaded");
-
-    // A context field's expected value is checked against each record, so
-    // an empty batch of them has nothing to refuse.
-    let opened = cipher
-        .open(Vec::<FieldValues>::new())
-        .context("tenants/acme")
-        .using(&records_plan)
-        .await
-        .unwrap();
-    assert!(opened.is_empty());
-    let sealed = cipher
-        .encrypt(&no_users)
-        .context("users")
-        .using(&users_plan)
-        .await
-        .unwrap();
-    assert!(sealed.is_empty());
-}
-
-/// Run or opened without a chain, an empty batch's description fails on
-/// the same context a chain refuses, so the two never disagree.
-#[tokio::test]
-async fn an_empty_batch_description_fails_on_the_context_a_chain_refuses() {
-    let cipher = stack_cipher().await;
-    let keyset = cipher.default_keyset();
-    let users_plan = contextless_plan();
-    let fixed_users = Plan::context("users")
-        .fields()
-        .encrypt(("age", age))
-        .build()
-        .unwrap();
-    let age_plan = Plan::value::<u32>().with(Equality).build().unwrap();
-    let users = || Some(Label::parse("users").unwrap());
-    let no_users: Vec<User> = Vec::new();
-
-    let refused = Runs::<Vec<User>, _>::pending(
-        &users_plan,
-        &keyset,
-        &no_users,
-        None,
-        DeclaredContext::default(),
-    )
-    .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let refused = Runs::<[User], _>::pending(
-        &fixed_users,
-        &keyset,
-        &no_users,
-        users(),
-        DeclaredContext::default(),
-    )
-    .await;
-    assert_eq!(plan_error(refused), two("the plan", "the call"));
-    let refused = Runs::<Vec<u32>, _>::pending(
-        &age_plan,
-        &keyset,
-        &Vec::new(),
-        None,
-        DeclaredContext::default(),
-    )
-    .await;
-    assert_eq!(plan_error(refused), PlanError::NoContext);
-    let run = Runs::<Vec<User>, _>::pending(
-        &users_plan,
-        &keyset,
-        &no_users,
-        users(),
-        DeclaredContext::default(),
-    )
-    .await;
-    assert!(run.unwrap().is_empty());
-
-    let opening = Opens::<Vec<FieldValues>, _>::decryption(
-        &users_plan,
-        Vec::new(),
-        None,
-        DeclaredContext::default(),
-    );
-    assert_eq!(
-        plan_error(keyset.run_decryption(opening).await),
-        PlanError::NoContext
-    );
-    let opening = Opens::<Vec<FieldValues>, _>::decryption(
-        &fixed_users,
-        Vec::new(),
-        users(),
-        DeclaredContext::default(),
-    );
-    assert_eq!(
-        plan_error(keyset.run_decryption(opening).await),
-        two("the plan", "the call")
-    );
-    let opening = Opens::<Vec<FieldValues>, _>::decryption(
-        &fixed_users,
-        Vec::new(),
-        None,
-        DeclaredContext::default(),
-    );
-    assert!(keyset.run_decryption(opening).await.unwrap().is_empty());
-}
-
-/// `.extend(parts)` reaches every field of a plan whose context is read
-/// from the value, and the same parts are needed to open it.
-#[tokio::test]
-async fn an_extension_reaches_every_field_of_a_context_field_plan() {
-    let (cipher, sent) = recording_cipher().await;
-    let records_plan = records_plan();
-    let record = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
-        .extend(7u64)
-        .await
-        .unwrap();
-    assert_eq!(
-        sent.lock().unwrap().generated(),
-        ["(tenants/acme/email)/7u64"]
-    );
-    let back = cipher
-        .open(record)
-        .using(&records_plan)
-        .extend(7u64)
-        .await
-        .unwrap();
-    assert_eq!(back.get::<String>("email"), Some(&tenant_record().email));
-
-    let record = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
-        .extend(7u64)
-        .await
-        .unwrap();
-    assert!(matches!(
-        cipher.open(record).using(&records_plan).await,
-        Err(Error::Aead)
-    ));
-}
-
-/// A `Vec` through a context-field plan seals each record under its own
-/// tenant, and a context the caller expects is checked against every
-/// record of it.
-#[tokio::test]
-async fn a_vec_through_a_context_field_plan_seals_each_record_under_its_own_tenant() {
-    let (cipher, sent) = recording_cipher().await;
-    let records_plan = records_plan();
-    let globex = TenantRecord {
-        tenant: "tenants/globex".into(),
-        ..tenant_record()
-    };
-    let records = vec![tenant_record(), globex];
-    let written = cipher.encrypt(&records).using(&records_plan).await.unwrap();
-    assert_eq!(
-        sent.lock().unwrap().generated(),
-        ["tenants/acme/email", "tenants/globex/email"],
-    );
-    let back = cipher.open(written).using(&records_plan).await.unwrap();
-    assert_eq!(
-        back[0].get::<String>("tenant").map(String::as_str),
-        Some("tenants/acme")
-    );
-    assert_eq!(
-        back[1].get::<String>("tenant").map(String::as_str),
-        Some("tenants/globex")
-    );
-    assert_eq!(back[1].get::<String>("email"), Some(&tenant_record().email));
-
-    let written = cipher.encrypt(&records).using(&records_plan).await.unwrap();
-    let refused = cipher
-        .open(written)
-        .context("tenants/acme")
-        .using(&records_plan)
-        .await;
-    assert!(
-        matches!(refused, Err(Error::ContextMismatch { .. })),
-        "{refused:?}"
-    );
-}
+// --- The context, from a field of the record -----------------------------------
 
 #[tokio::test]
 async fn a_context_field_is_the_context_of_every_other_field() {
     let (cipher, sent) = recording_cipher().await;
-    let records_plan: Plan<TenantRecord, _> = Plan::fields()
-        .context_field(("tenant", tenant))
-        .encrypt_index(("email", record_email), Equality)
-        .build()
-        .unwrap();
-    assert_eq!(records_plan.context_field(), Some("tenant"));
-    assert_eq!(records_plan.label(), None);
-    assert_eq!(
-        records_plan.field("tenant").unwrap().kind(),
-        FieldKind::ContextField
-    );
+    let keyset = cipher.default_keyset();
+    let plan = records_plan();
+    assert_eq!(plan.context_field(), Some("tenant"));
+    assert_eq!(plan.label(), None, "the plan has no context of its own");
 
-    let mut record = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
+    let record = record::encrypt(&keyset, tenant_record("tenants/acme"), &plan)
+        .unwrap()
         .await
         .unwrap();
     assert_eq!(
@@ -812,74 +198,106 @@ async fn a_context_field_is_the_context_of_every_other_field() {
         ["tenants/acme/email"],
         "the field is sealed under <context field>/<identity>"
     );
+    let (_, CipherText::Passthrough(tenant)) = &outputs(&record, "tenant")[0] else {
+        panic!("the context field is a passthrough")
+    };
     assert_eq!(
-        record.get::<String>("tenant"),
-        Some(&tenant_record().tenant),
+        tenant.0,
+        common::passthrough("tenants/acme").0,
         "the context field is carried as it is"
     );
 
-    // The same bytes as a plan given that context when it is built.
-    let fixed: Plan<TenantRecord, _> = Plan::context("tenants/acme")
-        .fields()
-        .passthrough(("tenant", tenant))
-        .encrypt_index(("email", record_email), Equality)
-        .build()
-        .unwrap();
-    let mut fixed_record = cipher
-        .encrypt(&tenant_record())
-        .using(&fixed)
-        .await
-        .unwrap();
-    let stored: Encrypted<EqualityTerm> = record.take("email").unwrap();
-    let fixed_email: Encrypted<EqualityTerm> = fixed_record.take("email").unwrap();
-    assert_eq!(stored.terms, fixed_email.terms);
+    // The same bytes as a plan given that context in its declaration.
+    let fixed = under("tenants/acme").unwrap();
+    let fixed_record = record::encrypt(
+        &keyset,
+        object(vec![("email", frame("bob@example.com"))]),
+        &fixed,
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    assert_eq!(stored_term(&record), stored_term(&fixed_record));
 
     // A query names the context field's value.
-    let query_value = cipher
-        .query("bob@example.com")
-        .context("tenants/acme")
-        .using(&records_plan.field("email").unwrap())
-        .equality()
-        .await
-        .unwrap();
-    assert_eq!(query_value, stored.terms);
+    assert_eq!(query(&keyset, &fixed).await, stored_term(&record));
 
     // Opens with no expectation, under the stored context.
-    record.insert("email", stored);
-    let back = cipher.open(record).using(&records_plan).await.unwrap();
-    assert_eq!(back.get::<String>("email"), Some(&tenant_record().email));
-    assert_eq!(back.get::<String>("tenant"), Some(&tenant_record().tenant));
+    let back = record::decrypt(&cipher, record, &plan, None)
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(back, tenant_record("tenants/acme"));
+}
+
+/// A batch through a plan with a context field seals each record under its
+/// own tenant, and a context the reader expects is checked against every
+/// record of it.
+#[tokio::test]
+async fn a_batch_through_a_context_field_plan_seals_each_record_under_its_own_tenant() {
+    let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = records_plan();
+    let records = || {
+        frame(vec![
+            tenant_record("tenants/acme"),
+            tenant_record("tenants/globex"),
+        ])
+    };
+    let written = record::encrypt(&keyset, records(), &plan)
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        sent.lock().unwrap().generated(),
+        ["tenants/acme/email", "tenants/globex/email"],
+    );
+    let back = record::decrypt(&cipher, written, &plan, None)
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(back, records());
+
+    let written = record::encrypt(&keyset, records(), &plan)
+        .unwrap()
+        .await
+        .unwrap();
+    let refused = record::decrypt(&cipher, written, &plan, Some(label("tenants/acme")))
+        .unwrap()
+        .await;
+    assert!(
+        matches!(refused, Err(Error::ContextMismatch { .. })),
+        "{refused:?}"
+    );
 }
 
 #[tokio::test]
 async fn opening_checks_the_context_field_against_the_expected_context() {
     let (cipher, _, retrieves) = counting_cipher().await;
-    let records_plan = records_plan();
+    let keyset = cipher.default_keyset();
+    let plan = records_plan();
+    let sealed = || async {
+        record::encrypt(&keyset, tenant_record("tenants/acme"), &plan)
+            .unwrap()
+            .await
+            .unwrap()
+    };
 
-    let record = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
+    let back = record::decrypt(&cipher, sealed().await, &plan, Some(label("tenants/acme")))
+        .unwrap()
         .await
         .unwrap();
-    let back = cipher
-        .open(record)
-        .context("tenants/acme")
-        .using(&records_plan)
-        .await
-        .unwrap();
-    assert_eq!(back.get::<String>("email"), Some(&tenant_record().email));
+    assert_eq!(back, tenant_record("tenants/acme"));
     let before = retrieves.load(Ordering::SeqCst);
 
-    let record = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
-        .await
-        .unwrap();
-    let refused = cipher
-        .open(record)
-        .context("tenants/globex")
-        .using(&records_plan)
-        .await;
+    let refused = record::decrypt(
+        &cipher,
+        sealed().await,
+        &plan,
+        Some(label("tenants/globex")),
+    )
+    .unwrap()
+    .await;
     assert!(
         matches!(refused, Err(Error::ContextMismatch { .. })),
         "{refused:?}"
@@ -892,980 +310,493 @@ async fn opening_checks_the_context_field_against_the_expected_context() {
 
     // A context field changed in storage opens nothing: every field was
     // sealed under the original.
-    let mut moved = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
-        .await
-        .unwrap();
-    moved.insert("tenant", String::from("tenants/globex"));
-    let refused = cipher.open(moved).using(&records_plan).await;
+    let moved = with_stored_tenant(sealed().await, Some("tenants/globex"));
+    let refused = record::decrypt(&cipher, moved, &plan, None).unwrap().await;
     assert!(matches!(refused, Err(Error::Aead)), "{refused:?}");
 }
 
+// --- A context that is missing -----------------------------------------------
+
+/// A plan that reads its context from the record has none for a query: a
+/// query holds no record. The query is refused until the call names the
+/// context, by the check that needs no key and by the derivation alike.
+#[tokio::test]
+async fn a_query_that_names_no_context_is_refused_before_any_key_request() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = records_plan();
+
+    let checked = dynamic::check_query(&plan, "email", Op::Eq, "bob@example.com", &NoTargets);
+    assert!(
+        matches!(checked, Err(dynamic::Error::Plan { .. })),
+        "{checked:?}"
+    );
+    let derived = dynamic::query_term(
+        &keyset,
+        &plan,
+        "email",
+        Op::Eq,
+        "bob@example.com",
+        &NoTargets,
+    );
+    assert!(
+        matches!(derived.as_ref().err(), Some(dynamic::Error::Plan { .. })),
+        "a query on a context field plan names its context"
+    );
+    assert_eq!(generates.load(Ordering::SeqCst), 0);
+    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+}
+
+/// A scope the caller passes empty names nothing. The write, the query and
+/// the read each refuse it before any key is requested.
+#[tokio::test]
+async fn an_empty_scope_is_refused_before_any_key_request() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = users_plan();
+    let stored: StackCipherText = Planned::new(&plan, user())
+        .encrypt_into_with_context(&keyset, Scope::new("acme"))
+        .await
+        .unwrap();
+    generates.store(0, Ordering::SeqCst);
+
+    let written = Planned::new(&plan, user())
+        .encrypt_into_with_context::<StackCipherText, _>(&keyset, Scope::new(""))
+        .await;
+    assert_eq!(plan_error(written), PlanError::EmptyPart);
+    let queried = plan
+        .field("email")
+        .unwrap()
+        .eq(frame("bob@example.com"))
+        .unwrap()
+        .scope(Scope::new(""))
+        .encrypt(&keyset)
+        .await;
+    assert!(queried.is_err(), "{queried:?}");
+    let opened =
+        ValueFrame::decrypt_from_with_context(Planned::new(&plan, stored), &keyset, Scope::new(""))
+            .await;
+    assert_eq!(plan_error(opened), PlanError::EmptyPart);
+    assert_eq!(generates.load(Ordering::SeqCst), 0);
+    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+}
+
+// --- A context given twice -----------------------------------------------------
+
+/// A plan names one source for its context. A declaration that names a
+/// context field and gives a field a label of its own is refused when it
+/// is parsed.
+#[test]
+fn a_context_given_twice_is_refused_when_the_plan_is_parsed() {
+    let refused = [
+        (
+            "a field under a label of its own beside the context field",
+            vec![
+                ("context_field", frame("tenant")),
+                ("tenant", field(&["tenant"], &["passthrough"], "string")),
+                ("email", field(&["users", "email"], &["c", "eq"], "string")),
+            ],
+        ),
+        (
+            "the context field itself under a label",
+            vec![
+                ("context_field", frame("tenant")),
+                (
+                    "tenant",
+                    field(&["users", "tenant"], &["passthrough"], "string"),
+                ),
+                ("email", field(&["email"], &["c", "eq"], "string")),
+            ],
+        ),
+    ];
+    for (what, declaration) in refused {
+        let result = plan_of(declaration);
+        assert!(
+            matches!(result, Err(dynamic::Error::Plan { .. })),
+            "{what}: {result:?}"
+        );
+    }
+}
+
+/// A context the reader expects is for a plan that reads its context from
+/// the record. A plan with a context of its own already has one, so the
+/// reader's is a second source.
+#[tokio::test]
+async fn a_context_given_twice_is_refused_at_the_call_before_any_key_request() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = users_plan();
+    let sealed = || async {
+        record::encrypt(&keyset, user(), &plan)
+            .unwrap()
+            .await
+            .unwrap()
+    };
+
+    let checked = record::check_record(sealed().await, &plan, Some(&label("users")));
+    assert!(
+        matches!(checked, Err(dynamic::Error::Record { .. })),
+        "{checked:?}"
+    );
+    let refused = record::decrypt(&cipher, sealed().await, &plan, Some(label("users")))
+        .unwrap()
+        .await;
+    assert_eq!(plan_error(refused), two("the plan", "the call"));
+
+    // A batch of them is refused the same way.
+    let batch = record::encrypt(&keyset, frame(vec![user(), user()]), &plan)
+        .unwrap()
+        .await
+        .unwrap();
+    let refused = record::decrypt(&cipher, batch, &plan, Some(label("users")))
+        .unwrap()
+        .await;
+    assert_eq!(plan_error(refused), two("the plan", "the call"));
+
+    assert_eq!(generates.load(Ordering::SeqCst), 3, "only the good writes");
+    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        two("the plan", "the call").to_string(),
+        "the plan's context is given twice: by the plan and by the call"
+    );
+}
+
+// --- A context that is not a label ---------------------------------------------
+
+/// The value of a context field is read as a label when the plan runs.
+/// Text that is not a plain label is refused, in the record a caller
+/// writes and in the record a store returns, before any key is requested.
 #[tokio::test]
 async fn a_context_field_that_is_not_a_label_or_missing_is_refused() {
     let (cipher, generates, retrieves) = counting_cipher().await;
-    let records_plan = records_plan();
-    let bad = TenantRecord {
-        tenant: "acme corp/(x)".into(),
-        email: "bob@example.com".into(),
-    };
-    assert!(matches!(
-        plan_error(cipher.encrypt(&bad).using(&records_plan).await),
-        PlanError::ContextLabel(_)
-    ));
+    let keyset = cipher.default_keyset();
+    let plan = records_plan();
+    for not_a_label in ["acme corp/(x)", "tenants//acme", ""] {
+        let refused = record::encrypt(&keyset, tenant_record(not_a_label), &plan)
+            .expect("the record has the plan's shape")
+            .await;
+        assert!(
+            matches!(plan_error(refused), PlanError::ContextLabel(_)),
+            "{not_a_label:?}"
+        );
+    }
+    assert_eq!(generates.load(Ordering::SeqCst), 0, "nothing was sealed");
 
-    let mut record = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
-        .await
-        .unwrap();
-    record.insert("tenant", 7u32);
-    assert_eq!(
-        plan_error(cipher.open(record).using(&records_plan).await),
-        PlanError::FieldType {
-            field: "tenant".into(),
-            expected: "alloc::string::String"
-        }
-    );
-    let mut record = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
-        .await
-        .unwrap();
-    record.insert("tenant", String::from("a//b"));
-    assert!(matches!(
-        plan_error(cipher.open(record).using(&records_plan).await),
-        PlanError::ContextLabel(_)
+    let sealed = || async {
+        record::encrypt(&keyset, tenant_record("tenants/acme"), &plan)
+            .unwrap()
+            .await
+            .unwrap()
+    };
+    let relabelled = with_stored_tenant(sealed().await, Some("a//b"));
+    let refused = record::decrypt(&cipher, relabelled, &plan, None)
+        .expect("the record has the plan's shape")
+        .await;
+    assert!(matches!(plan_error(refused), PlanError::ContextLabel(_)));
+    // A stored context that is not text is not the plan's shape.
+    let CipherText::Map(mut fields) = with_stored_tenant(sealed().await, None) else {
+        panic!("a record is a map of fields")
+    };
+    fields.push((
+        "tenant".into(),
+        CipherText::Map(vec![(
+            "passthrough".into(),
+            CipherText::Passthrough(common::passthrough(7u32)),
+        )]),
     ));
-    let mut record = cipher
-        .encrypt(&tenant_record())
-        .using(&records_plan)
-        .await
-        .unwrap();
-    assert!(record.remove("tenant"));
-    assert_eq!(
-        plan_error(cipher.open(record).using(&records_plan).await),
-        PlanError::NotInValue {
-            field: "tenant".into()
-        }
+    let refused = record::decrypt(&cipher, CipherText::Map(fields), &plan, None);
+    assert!(
+        matches!(
+            refused.as_ref().err(),
+            Some(dynamic::Error::Record { field: Some(field), .. }) if field == "tenant"
+        ),
+        "a context field of another type does not fit the plan"
+    );
+    let missing = with_stored_tenant(sealed().await, None);
+    let refused = record::decrypt(&cipher, missing, &plan, None);
+    assert!(
+        matches!(refused.as_ref().err(), Some(dynamic::Error::Record { .. })),
+        "a record with no context field does not fit the plan"
     );
     assert_eq!(generates.load(Ordering::SeqCst), 3, "the three good writes");
     assert_eq!(retrieves.load(Ordering::SeqCst), 0);
 }
 
-// --- encrypt_into: a typed field is the data verbs' bytes ----------------------
-
-/// A record of one field, read by a picker.
-struct One<F> {
-    v: F,
-}
-
-/// `encrypt_into::<Encrypted<Terms>>` beside `encrypt_index(indexes)`: the
-/// same descriptors, the same terms, and each record opens through the
-/// other plan.
-async fn same_field_bytes<F, Terms, X>(value: F, indexes: X)
-where
-    F: Encrypt + Decrypt<'static> + Clone + Send + Sync + PartialEq + Debug + 'static,
-    Terms: TermSet<F> + PartialEq + Debug + Send,
-    X: Indexes<F, Terms = Terms> + Clone + Send + Sync + 'static,
-{
-    let (cipher, sent) = recording_cipher().await;
-    let typed: Plan<One<F>, _> = Plan::context("t")
-        .fields()
-        .encrypt_into::<Encrypted<Terms>, _>(pick("v", |o: &One<F>| &o.v))
-        .build()
-        .unwrap();
-    let data: Plan<One<F>, _> = Plan::context("t")
-        .fields()
-        .encrypt_index(pick("v", |o: &One<F>| &o.v), indexes.clone())
-        .build()
-        .unwrap();
-    let field = typed.field("v").unwrap();
-    assert_eq!(field.kind(), FieldKind::EncryptInto);
-    assert_eq!(
-        field.indexes(),
-        data.field("v").unwrap().indexes(),
-        "the target declares the indexes the data verb names"
-    );
-    assert_eq!(field.indexes(), indexes.specs());
-
-    let one = One { v: value.clone() };
-    let mut typed_record = cipher.encrypt(&one).using(&typed).await.unwrap();
-    let mut data_record = cipher.encrypt(&one).using(&data).await.unwrap();
-    assert_eq!(sent.lock().unwrap().generated(), ["t/v", "t/v"]);
-
-    let typed_out: Encrypted<Terms> = typed_record.take("v").unwrap();
-    let data_out: Encrypted<Terms> = data_record.take("v").unwrap();
-    assert_eq!(typed_out.terms, data_out.terms, "the same terms");
-
-    typed_record.insert("v", typed_out);
-    data_record.insert("v", data_out);
-    let back = cipher.open(typed_record).using(&data).await.unwrap();
-    assert_eq!(
-        back.get::<F>("v"),
-        Some(&value),
-        "the data plan opens the typed record"
-    );
-    let back = cipher.open(data_record).using(&typed).await.unwrap();
-    assert_eq!(
-        back.get::<F>("v"),
-        Some(&value),
-        "the typed plan opens the data record"
-    );
-}
-
-/// A configuration other than the default.
-struct Words;
-impl MatchConfig for Words {
-    fn options() -> MatchOptions {
-        MatchOptions {
-            tokenizer: Tokenizer::Standard,
-            downcase: false,
-            k: 4,
-            m: 512,
-        }
-    }
-}
-
-type M = MatchTerms;
-type W = MatchTerms<Words>;
-
-#[tokio::test]
-async fn a_typed_text_field_is_the_data_verbs_bytes_for_every_index_set() {
-    let text = || String::from("Hello World");
-    let ore = Ore;
-    let ope = Ope;
-    let eq = Equality;
-    let m = Match::default;
-    same_field_bytes::<_, EqualityTerm, _>(text(), eq).await;
-    same_field_bytes::<_, M, _>(text(), m()).await;
-    same_field_bytes::<_, W, _>(text(), Match::<Words>::new()).await;
-    same_field_bytes::<_, OreTerm<String>, _>(text(), ore).await;
-    same_field_bytes::<_, OpeTerm<String>, _>(text(), ope).await;
-    same_field_bytes::<_, (EqualityTerm, M), _>(text(), (eq, m())).await;
-    same_field_bytes::<_, (EqualityTerm, OreTerm<String>), _>(text(), (eq, ore)).await;
-    same_field_bytes::<_, (EqualityTerm, OpeTerm<String>), _>(text(), (eq, ope)).await;
-    same_field_bytes::<_, (M, OreTerm<String>), _>(text(), (m(), ore)).await;
-    same_field_bytes::<_, (M, OpeTerm<String>), _>(text(), (m(), ope)).await;
-    same_field_bytes::<_, (OreTerm<String>, OpeTerm<String>), _>(text(), (ore, ope)).await;
-    same_field_bytes::<_, (EqualityTerm, M, OreTerm<String>), _>(text(), (eq, m(), ore)).await;
-    same_field_bytes::<_, (EqualityTerm, M, OpeTerm<String>), _>(text(), (eq, m(), ope)).await;
-    same_field_bytes::<_, (EqualityTerm, OreTerm<String>, OpeTerm<String>), _>(
-        text(),
-        (eq, ore, ope),
-    )
-    .await;
-    same_field_bytes::<_, (M, OreTerm<String>, OpeTerm<String>), _>(text(), (m(), ore, ope)).await;
-    same_field_bytes::<_, (EqualityTerm, M, OreTerm<String>, OpeTerm<String>), _>(
-        text(),
-        (eq, m(), ore, ope),
-    )
-    .await;
-    same_field_bytes::<_, (W, OpeTerm<String>, OreTerm<String>, EqualityTerm), _>(
-        text(),
-        (Match::<Words>::new(), ope, ore, eq),
-    )
-    .await;
-}
-
-/// Five indexes compile (there are four index kinds, so the fifth is a
-/// second match index under other options), but a field holds one term per
-/// kind, so both spellings refuse the set when the plan is built.
+/// The context a query names is a label too: one that is not plain makes
+/// no plan, so no term is derived under it.
 #[test]
-fn a_five_index_field_is_refused_by_both_spellings() {
-    let refused = || PlanError::DuplicateIndex {
-        at: "v".into(),
-        index: "match",
-    };
-    let typed = Plan::context("t")
-        .fields::<One<String>, FakeDataKeySource>()
-        .encrypt_into::<Encrypted<(EqualityTerm, M, OreTerm<String>, OpeTerm<String>, W)>, _>(pick(
-            "v",
-            |o: &One<String>| &o.v,
-        ))
-        .build();
-    assert_eq!(plan_error(typed), refused());
-    let data = Plan::context("t")
-        .fields::<One<String>, FakeDataKeySource>()
-        .encrypt_index(
-            pick("v", |o: &One<String>| &o.v),
-            (Equality, Match::default(), Ore, Ope, Match::<Words>::new()),
-        )
-        .build();
-    assert_eq!(plan_error(data), refused());
-}
-
-#[tokio::test]
-async fn a_typed_integer_field_is_the_data_verbs_bytes_for_every_index_set() {
-    same_field_bytes::<_, EqualityTerm, _>(7u32, Equality).await;
-    same_field_bytes::<_, OreTerm<u32>, _>(7u32, Ore).await;
-    same_field_bytes::<_, OpeTerm<u32>, _>(7u32, Ope).await;
-    same_field_bytes::<_, (EqualityTerm, OreTerm<u32>), _>(7u32, (Equality, Ore)).await;
-    same_field_bytes::<_, (EqualityTerm, OpeTerm<u32>), _>(7u32, (Equality, Ope)).await;
-    same_field_bytes::<_, (OreTerm<u32>, OpeTerm<u32>), _>(7u32, (Ore, Ope)).await;
-    same_field_bytes::<_, (OreTerm<u32>, EqualityTerm), _>(7u32, (Ore, Equality)).await;
-    same_field_bytes::<_, (EqualityTerm, OreTerm<u32>, OpeTerm<u32>), _>(
-        7u32,
-        (Equality, Ore, Ope),
-    )
-    .await;
-}
-
-type EmailOut = Encrypted<(EqualityTerm, MatchTerms)>;
-
-#[tokio::test]
-async fn a_typed_field_answers_the_queries_its_target_declares_and_no_other() {
-    let cipher = stack_cipher().await;
-    let users_plan: Plan<User, _> = Plan::context("users")
-        .fields()
-        .encrypt_into::<EmailOut, _>(("email", email))
-        .encrypt_into::<Encrypted<OreTerm<u32>>, _>(("age", age))
-        .build()
-        .unwrap();
-    let mut record = cipher.encrypt(&user()).using(&users_plan).await.unwrap();
-    let stored: EmailOut = record.take("email").unwrap();
-
-    let email_plan = users_plan.field("email").unwrap();
-    let query_value = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .equality()
-        .await
-        .unwrap();
-    assert_eq!(query_value, stored.terms.0);
-    let matched = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .index(Match::default())
-        .await
-        .unwrap();
-    assert_eq!(matched, stored.terms.1);
-    assert_eq!(
-        plan_error(
-            cipher
-                .query("bob@example.com")
-                .using(&email_plan)
-                .index(Ore)
-                .await
-        ),
-        PlanError::IndexNotDeclared {
-            field: "email".into(),
-            index: "ore"
-        }
-    );
-    assert_eq!(
-        plan_error(
-            cipher
-                .query(&34u32)
-                .using(&users_plan.field("age").unwrap())
-                .equality()
-                .await
-        ),
-        PlanError::IndexNotDeclared {
-            field: "age".into(),
-            index: "eq"
-        }
-    );
-}
-
-/// A target that opens nothing: its field does not come back from `open`,
-/// like an index-only field, and the stored record need not carry it.
-#[tokio::test]
-async fn a_typed_field_of_terms_alone_does_not_come_back() {
-    let cipher = stack_cipher().await;
-    let users_plan: Plan<User, _> = Plan::context("users")
-        .fields()
-        .encrypt_into::<EqualityTerm, _>(("email", email))
-        .encrypt_into::<StackCipherText, _>(("age", age))
-        .build()
-        .unwrap();
-    let mut record = cipher.encrypt(&user()).using(&users_plan).await.unwrap();
-    let term: EqualityTerm = record.take("email").unwrap();
-    let query_value = cipher
-        .query("bob@example.com")
-        .using(&users_plan.field("email").unwrap())
-        .equality()
-        .await
-        .unwrap();
-    assert_eq!(query_value, term);
-    let back = cipher.open(record).using(&users_plan).await.unwrap();
-    assert_eq!(back.names().collect::<Vec<_>>(), ["age"]);
-    assert_eq!(back.get::<u32>("age"), Some(&34));
-}
-
-/// A target that says it holds ciphertext and then opens nothing.
-#[allow(dead_code)] // never read: it only says it holds ciphertext
-struct Lying(StackCipherText);
-impl EncryptFrom<u32> for Lying {
-    type Context = stack_encrypt::target::AeadContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, u32, Self, K, Self::Context> {
-        <StackCipherText as EncryptFrom<u32>>::encryption().map(Lying)
-    }
-}
-impl Decryptable for Lying {
-    const DECRYPTABLE: bool = true;
-}
-impl<P, Ctx> DecryptField<P, Ctx> for Lying {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
-        None
-    }
-}
-
-#[tokio::test]
-async fn a_typed_field_that_opens_nothing_is_not_opened() {
-    let cipher = stack_cipher().await;
-    let plan: Plan<User, _> = Plan::context("users")
-        .fields()
-        .encrypt_into::<Lying, _>(("age", age))
-        .build()
-        .unwrap();
-    let record = cipher.encrypt(&user()).using(&plan).await.unwrap();
-    let result = cipher.open(record).using(&plan).await;
-    assert!(matches!(result, Err(Error::NotOpened)), "{result:?}");
-}
-
-#[tokio::test]
-async fn a_field_is_a_target_or_data_verbs_never_both() {
-    let target_first = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
-        .encrypt_into::<EmailOut, _>(("email", email))
-        .encrypt(("email", email))
-        .build();
-    let verbs_first = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
-        .passthrough(("email", email))
-        .encrypt_into::<EmailOut, _>(("email", email))
-        .build();
-    for refused in [target_first, verbs_first] {
-        assert_eq!(
-            plan_error(refused),
-            PlanError::TargetWithVerbs {
-                field: "email".into()
-            }
+fn a_query_context_that_is_not_a_label_is_refused() {
+    for not_a_label in ["a//b", "tenants/(acme)", "tenants/2fa"] {
+        let result = under(not_a_label);
+        assert!(
+            matches!(result, Err(dynamic::Error::Plan { .. })),
+            "{not_a_label:?}: {result:?}"
         );
     }
-    let twice = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
-        .encrypt_into::<EmailOut, _>(("email", email))
-        .encrypt_into::<EmailOut, _>(("email", email))
-        .build();
-    assert_eq!(
-        plan_error(twice),
-        PlanError::DuplicateField {
-            field: "email".into()
-        },
-        "two targets on one field is a field named twice"
-    );
-    let index_twice = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
-        .encrypt_into::<Encrypted<(EqualityTerm, EqualityTerm)>, _>(("email", email))
-        .build();
-    assert_eq!(
-        plan_error(index_twice),
-        PlanError::DuplicateIndex {
-            at: "email".into(),
-            index: "eq"
-        }
-    );
+    assert!(under("tenants/acme").is_ok());
 }
 
-// --- encrypt_into, one value: the `plaintext = T` record -----------------------
+// --- Queries under the context the caller names ----------------------------------
 
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
-#[stash(plaintext = String)]
-struct DerivedEmail {
-    c: StackCipherText,
-    hm: EqualityTerm,
-}
-
+/// A query on a plan with a context field derives under the context the
+/// call names: the stored term for the record's own tenant, and another
+/// term for another tenant. No key is requested for either.
 #[tokio::test]
-async fn a_one_value_typed_plan_is_the_plaintext_records_bytes() {
-    let (cipher, sent) = recording_cipher().await;
+async fn a_query_under_the_context_the_call_names_matches_the_stored_term() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
     let keyset = cipher.default_keyset();
-    let email_plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<(StackCipherText, EqualityTerm)>()
-        .build()
-        .unwrap();
-    let email = String::from("bob@example.com");
-
-    let (c, hm) = cipher.encrypt(&email).using(&email_plan).await.unwrap();
-    let derived: DerivedEmail = keyset
-        .encrypt_as(
-            &email,
-            CallerContext::from(nonempty!("users").with("email")),
-        )
+    let plan = records_plan();
+    let record = record::encrypt(&keyset, tenant_record("tenants/acme"), &plan)
+        .unwrap()
         .await
         .unwrap();
+    generates.store(0, Ordering::SeqCst);
+
+    let acme = query(&keyset, &under("tenants/acme").unwrap()).await;
+    assert_eq!(
+        acme,
+        stored_term(&record),
+        "a query naming the same context matches"
+    );
+    let globex = query(&keyset, &under("tenants/globex").unwrap()).await;
+    assert_ne!(globex, stored_term(&record));
+    assert_eq!(generates.load(Ordering::SeqCst), 0);
+    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+}
+
+/// A scope the caller passes extends every field of a plan whose context
+/// is in its declaration. A query that names the same scope derives the
+/// stored term, and the record opens only under that scope.
+#[tokio::test]
+async fn a_callers_scope_extends_every_field_and_a_query_names_it() {
+    let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = users_plan();
+    let write = || {
+        Planned::new(&plan, user())
+            .encrypt_into_with_context::<StackCipherText, _>(&keyset, Scope::new("acme"))
+    };
+    let record = write().await.unwrap();
     assert_eq!(
         sent.lock().unwrap().generated(),
-        ["users/email", "users/email"]
+        ["(users/email)/acme", "(users/age)/acme"],
+        "every field under its own label, then the scope"
     );
-    assert_eq!(hm, derived.hm, "the same equality term");
 
-    // Each ciphertext opens through the other's reader.
-    let opened: String = stack_encrypt::target::DecryptFrom::decrypt_from_with_context(
-        DerivedEmail { c, hm: hm.clone() },
-        &cipher,
-        CallerContext::from(nonempty!("users").with("email")),
+    let by_email = |scope: &'static str| {
+        plan.field("email")
+            .unwrap()
+            .eq(frame("bob@example.com"))
+            .unwrap()
+            .scope(Scope::new(scope))
+            .encrypt(&keyset)
+    };
+    let named = by_email("acme").await.unwrap();
+    assert_eq!(
+        named.operand(),
+        &Operand::One(stored_term(&record)),
+        "a query naming the same scope matches"
+    );
+    let elsewhere = by_email("globex").await.unwrap();
+    assert_ne!(elsewhere.operand(), &Operand::One(stored_term(&record)));
+    assert_ne!(
+        query(&keyset, &plan).await,
+        stored_term(&record),
+        "and so does a query that names none"
+    );
+
+    let back = ValueFrame::decrypt_from_with_context(
+        Planned::new(&plan, record),
+        &keyset,
+        Scope::new("acme"),
     )
     .await
     .unwrap();
-    assert_eq!(opened, email);
-    let back = cipher
-        .open((derived.c, derived.hm))
-        .using(&email_plan)
-        .await
-        .unwrap();
-    assert_eq!(back, email);
+    assert_eq!(back, user());
+    let unscoped =
+        ValueFrame::decrypt_from(Planned::new(&plan, write().await.unwrap()), &keyset).await;
+    assert!(
+        matches!(unscoped, Err(Error::Aead)),
+        "the fake key source ignores descriptors, so a missing scope reaches the AEAD"
+    );
 }
 
+/// A scope reaches every field of a plan whose context is read from the
+/// record, and the same scope is needed to open it.
 #[tokio::test]
-async fn a_one_value_typed_plan_answers_its_targets_queries_and_no_other() {
-    let cipher = stack_cipher().await;
-    let email_plan = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<(StackCipherText, EqualityTerm)>()
-        .build()
-        .unwrap();
-    let email = String::from("bob@example.com");
-    let (_, hm) = cipher.encrypt(&email).using(&email_plan).await.unwrap();
-    let query_value = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .equality()
-        .await
-        .unwrap();
-    assert_eq!(query_value, hm);
-    assert_eq!(
-        plan_error(
-            cipher
-                .query("bob@example.com")
-                .using(&email_plan)
-                .index(Ore)
-                .await
-        ),
-        PlanError::IndexNotDeclared {
-            field: "the value".into(),
-            index: "ore"
-        }
-    );
-}
-
-/// A context can carry customer data, so a one-value plan's refusal names
-/// `the value`, never the label the call gave: not in the message, not in
-/// the payload a binding hands its callers.
-#[tokio::test]
-async fn a_one_value_plan_quotes_no_call_context_in_its_refusals() {
-    let cipher = stack_cipher().await;
-    let plan = Plan::value::<String>()
-        .encrypt_into::<(StackCipherText, EqualityTerm)>()
-        .build()
-        .unwrap();
-    let marker = "tenants/marker-tenant";
-
-    let error = plan_error(
-        cipher
-            .query("bob@example.com")
-            .context(marker)
-            .using(&plan)
-            .index(Ore)
-            .await,
-    );
-    assert_eq!(
-        error,
-        PlanError::IndexNotDeclared {
-            field: "the value".into(),
-            index: "ore"
-        }
-    );
-    let message = error.to_string();
-    let payload = serde_json::Value::Object(error.payload()).to_string();
-    for shown in [&message, &payload] {
-        assert!(!shown.contains("marker-tenant"), "{shown}");
-    }
-}
-
-#[tokio::test]
-async fn a_one_value_plan_names_the_value_in_its_errors_never_its_context() {
-    let refused = Plan::value::<u32>().with((Equality, Equality)).build();
-    assert_eq!(
-        plan_error(refused),
-        PlanError::DuplicateIndex {
-            at: "the value".into(),
-            index: "eq"
-        }
-    );
-    let refused = Plan::value::<u32>()
-        .context("a")
-        .with((Equality, Equality))
-        .build();
-    assert_eq!(
-        plan_error(refused),
-        PlanError::DuplicateIndex {
-            at: "the value".into(),
-            index: "eq"
-        }
-    );
-}
-
-/// A target whose context is neither a `CallerContext` nor converted from
-/// one: a `NonEmpty<u64>`, as a `context_type = NonEmpty<u64>` record has.
-/// It declares its one index as many times as it is told to.
-struct Tenanted<const N: usize>(#[allow(dead_code)] EqualityTerm);
-impl<const N: usize> EncryptFrom<String> for Tenanted<N> {
-    type Context = NonEmpty<u64>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context> {
-        <EqualityTerm as EncryptFrom<String>>::encryption()
-            .accepting::<NonEmpty<u64>>()
-            .map(Tenanted)
-    }
-    fn indexes() -> Vec<IndexSpec> {
-        vec![IndexSpec::Equality; N]
-    }
-}
-
-#[test]
-fn a_one_value_plan_builds_over_a_target_of_any_context() {
-    // Building asks only for the target's indexes, never for a
-    // `CallerContext` it could not take.
-    let built = Plan::value::<String>()
-        .encrypt_into::<Tenanted<1>>()
-        .build();
-    assert!(built.is_ok(), "{:?}", built.err());
-    // And those indexes are checked.
-    let refused = Plan::value::<String>()
-        .encrypt_into::<Tenanted<2>>()
-        .build();
-    assert_eq!(
-        plan_error(refused),
-        PlanError::DuplicateIndex {
-            at: "the value".into(),
-            index: "eq"
-        }
-    );
-}
-
-// --- Collections through a one-value plan -------------------------------------
-
-#[tokio::test]
-async fn a_vec_written_through_a_one_value_plan_opens_through_it_in_one_request() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
-    let ages = vec![30u32, 31, 32];
-
-    let age_plan = Plan::context("users/age")
-        .with::<u32, _>(Equality)
-        .build()
-        .unwrap();
-    let written = cipher.encrypt(&ages).using(&age_plan).await.unwrap();
-    let back: Vec<u32> = cipher.open(written).using(&age_plan).await.unwrap();
-    assert_eq!(back, ages);
-    assert_eq!(generates.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        retrieves.load(Ordering::SeqCst),
-        1,
-        "one retrieve for the Vec"
-    );
-
-    let written = cipher.encrypt(&ages).using(&age_plan).await.unwrap();
-    let ciphertexts: Vec<StackCipherText> = written.into_iter().map(|e| e.ciphertext).collect();
-    let back: Vec<u32> = cipher.open(ciphertexts).using(&age_plan).await.unwrap();
-    assert_eq!(back, ages, "a Vec of bare ciphertexts opens too");
-    let one = cipher.encrypt(&30u32).using(&age_plan).await.unwrap();
-    let back: u32 = cipher.open(one.ciphertext).using(&age_plan).await.unwrap();
-    assert_eq!(back, 30);
-
-    let typed_plan = Plan::value::<u32>()
-        .context("users/age")
-        .encrypt_into::<(StackCipherText, EqualityTerm)>()
-        .build()
-        .unwrap();
-    let before = retrieves.load(Ordering::SeqCst);
-    let written = cipher.encrypt(&ages).using(&typed_plan).await.unwrap();
-    let back: Vec<u32> = cipher.open(written).using(&typed_plan).await.unwrap();
-    assert_eq!(back, ages);
-    assert_eq!(retrieves.load(Ordering::SeqCst), before + 1);
-}
-
-// --- Pickers -----------------------------------------------------------------
-
-#[tokio::test]
-async fn a_picker_plan_needs_no_fields_impl_and_is_the_by_name_plans_bytes() {
-    /// The same record, readable by name.
-    #[derive(Clone)]
-    struct Named(User);
-    impl Fields for Named {
-        fn field_names(&self) -> Vec<&str> {
-            vec!["email", "age"]
-        }
-    }
-    impl Field<String> for Named {
-        fn field(&self, name: &str) -> Option<&String> {
-            (name == "email").then_some(&self.0.email)
-        }
-    }
-    impl Field<u32> for Named {
-        fn field(&self, name: &str) -> Option<&u32> {
-            (name == "age").then_some(&self.0.age)
-        }
-    }
-
+async fn a_scope_reaches_every_field_of_a_context_field_plan() {
     let (cipher, sent) = recording_cipher().await;
-    let picked: Plan<User, _> = Plan::context("users")
-        .fields()
-        .encrypt_index(pick("email", |u: &User| &u.email), (Equality, Ore))
-        .encrypt(pick("age", |u: &User| &u.age))
-        .build()
-        .unwrap();
-    let named: Plan<Named, _> = Plan::context("users")
-        .fields()
-        .encrypt_index::<String>("email", (Equality, Ore))
-        .encrypt::<u32>("age")
-        .build()
-        .unwrap();
-    let mut a = cipher.encrypt(&user()).using(&picked).await.unwrap();
-    let mut b = cipher.encrypt(&Named(user())).using(&named).await.unwrap();
-    let sent = sent.lock().unwrap().generated();
-    assert_eq!(
-        sent,
-        ["users/email", "users/age", "users/email", "users/age"]
-    );
-    let a_email: Encrypted<(EqualityTerm, OreTerm<String>)> = a.take("email").unwrap();
-    let b_email: Encrypted<(EqualityTerm, OreTerm<String>)> = b.take("email").unwrap();
-    assert_eq!(a_email.terms, b_email.terms);
-    b.insert("email", a_email);
-    let back = cipher.open(b).using(&picked).await.unwrap();
-    assert_eq!(back.get::<String>("email"), Some(&user().email));
-}
-
-#[tokio::test]
-async fn a_plan_naming_any_field_by_name_checks_the_value_and_one_of_pickers_does_not() {
-    /// A value naming a field no plan declares.
-    struct Extra(User);
-    impl Fields for Extra {
-        fn field_names(&self) -> Vec<&str> {
-            vec!["email", "age", "extra"]
-        }
-    }
-    impl Field<String> for Extra {
-        fn field(&self, name: &str) -> Option<&String> {
-            (name == "email").then_some(&self.0.email)
-        }
-    }
-
-    let cipher = stack_cipher().await;
-    let mixed: Plan<Extra, _> = Plan::context("users")
-        .fields()
-        .encrypt::<String>("email")
-        .encrypt(pick("age", |e: &Extra| &e.0.age))
-        .build()
-        .unwrap();
-    assert_eq!(
-        plan_error(cipher.encrypt(&Extra(user())).using(&mixed).await),
-        PlanError::NotInPlan {
-            field: "extra".into()
-        }
-    );
-    let picked: Plan<Extra, _> = Plan::context("users")
-        .fields()
-        .encrypt(pick("email", |e: &Extra| &e.0.email))
-        .build()
-        .unwrap();
-    let record = cipher.encrypt(&Extra(user())).using(&picked).await.unwrap();
-    assert_eq!(record.names().collect::<Vec<_>>(), ["email"]);
-}
-
-// --- identity rescues a name that is not a plain segment -----------------------
-
-#[tokio::test]
-async fn a_pinned_identity_rescues_a_field_name_that_is_not_plain() {
-    #[derive(Clone)]
-    struct Secret {
-        totp: String,
-    }
-    #[derive(Clone)]
-    struct Reading(u32, String);
-
-    let (cipher, sent) = recording_cipher().await;
-    let users_plan: Plan<Secret, _> = Plan::context("users")
-        .fields()
-        .encrypt(pick("2fa_secret", |s: &Secret| &s.totp))
-        .identity("totp_secret")
-        .build()
-        .unwrap();
-    assert_eq!(
-        users_plan
-            .field("2fa_secret")
-            .unwrap()
-            .label()
-            .unwrap()
-            .to_string(),
-        "users/totp_secret"
-    );
-    let record = cipher
-        .encrypt(&Secret { totp: "s".into() })
-        .using(&users_plan)
-        .await
-        .unwrap();
-    assert_eq!(record.names().collect::<Vec<_>>(), ["2fa_secret"]);
-
-    // A tuple record: fields named by index, keyed by their identities.
-    let readings_plan: Plan<Reading, _> = Plan::context("reading")
-        .fields()
-        .encrypt_index(pick("0", |r: &Reading| &r.0), Equality)
-        .identity("value")
-        .encrypt(pick("1", |r: &Reading| &r.1))
-        .identity("unit")
-        .build()
-        .unwrap();
-    let mut record = cipher
-        .encrypt(&Reading(21, "celsius".into()))
-        .using(&readings_plan)
-        .await
-        .unwrap();
+    let keyset = cipher.default_keyset();
+    let plan = records_plan();
+    let write = || {
+        Planned::new(&plan, tenant_record("tenants/acme"))
+            .encrypt_into_with_context::<StackCipherText, _>(&keyset, Scope::new(7u64))
+    };
+    let record = write().await.unwrap();
     assert_eq!(
         sent.lock().unwrap().generated(),
-        ["users/totp_secret", "reading/value", "reading/unit"]
+        ["(tenants/acme/email)/7u64"]
     );
-    let value: Encrypted<EqualityTerm> = record.take("0").unwrap();
-    let query_value = cipher
-        .query(&21u32)
-        .using(&readings_plan.field("0").unwrap())
-        .equality()
-        .await
-        .unwrap();
-    assert_eq!(query_value, value.terms);
-    let opened: u32 = cipher
-        .decrypt(value.ciphertext, nonempty!("reading").with("value"))
-        .await
-        .unwrap();
-    assert_eq!(opened, 21);
+    let back = ValueFrame::decrypt_from_with_context(
+        Planned::new(&plan, record),
+        &keyset,
+        Scope::new(7u64),
+    )
+    .await
+    .unwrap();
+    assert_eq!(back, tenant_record("tenants/acme"));
 
-    // Without an identity the name is the identity, and must be plain.
-    let refused = Plan::context("users")
-        .fields::<Secret, FakeDataKeySource>()
-        .encrypt(pick("2fa_secret", |s: &Secret| &s.totp))
-        .build();
-    assert!(matches!(
-        plan_error(refused),
-        PlanError::FieldLabel { field, .. } if field == "2fa_secret"
-    ));
-    // And in a plan whose context comes later, likewise.
-    let refused = Plan::fields::<Secret, FakeDataKeySource>()
-        .encrypt(pick("2fa_secret", |s: &Secret| &s.totp))
-        .build();
-    assert!(matches!(
-        plan_error(refused),
-        PlanError::FieldLabel { field, .. } if field == "2fa_secret"
-    ));
+    let unscoped =
+        ValueFrame::decrypt_from(Planned::new(&plan, write().await.unwrap()), &keyset).await;
+    assert!(matches!(unscoped, Err(Error::Aead)), "{unscoped:?}");
 }
 
-/// In a plan built without a context, a pinned identity still keys the
-/// field: the write, the query and the open all use `<call>/<identity>`,
-/// never the field's name.
+/// A field whose label ends in another segment than its name is keyed
+/// under that segment: the write, the query and the read all use the
+/// label, never the field's name. So a name that is not a plain segment,
+/// such as a column that starts with a digit, is still a field.
 #[tokio::test]
-async fn a_pinned_identity_keys_a_call_context_plan_for_query_and_open() {
-    #[derive(Clone)]
-    struct Reading(u32);
+async fn a_pinned_identity_keys_the_field_for_the_write_the_query_and_the_read() {
     let (cipher, sent) = recording_cipher().await;
-    let readings_plan: Plan<Reading, _> = Plan::fields()
-        .encrypt_index(pick("0", |r: &Reading| &r.0), Equality)
-        .identity("value")
-        .build()
+    let keyset = cipher.default_keyset();
+    let plan = plan_of(vec![(
+        "2fa_secret",
+        field(&["users", "totp_secret"], &["c", "eq"], "string"),
+    )])
+    .unwrap();
+    assert_eq!(plan.fields()[0].identity(), "totp_secret");
+    let source = || object(vec![("2fa_secret", frame("s3cret"))]);
+    let record = record::encrypt(&keyset, source(), &plan)
+        .unwrap()
+        .await
         .unwrap();
-    let mut record = cipher
-        .encrypt(&Reading(21))
-        .context("reading")
-        .using(&readings_plan)
+    assert_eq!(sent.lock().unwrap().generated(), ["users/totp_secret"]);
+
+    let term = dynamic::query_term(&keyset, &plan, "2fa_secret", Op::Eq, "s3cret", &NoTargets)
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        term.operand(),
+        &Operand::One(stored_eq_term(&record, "2fa_secret"))
+    );
+    let back = record::decrypt(&cipher, record, &plan, None)
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(back, source());
+
+    // Under a context field the identity is the whole of the field's
+    // label, and the record's context comes before it.
+    let readings = plan_of(vec![
+        ("context_field", frame("tenant")),
+        ("tenant", field(&["tenant"], &["passthrough"], "string")),
+        ("0", field(&["value"], &["c", "eq"], "uint32")),
+    ])
+    .unwrap();
+    sent.lock().unwrap().generate.clear();
+    let reading = || object(vec![("tenant", frame("reading")), ("0", frame(21u32))]);
+    let record = record::encrypt(&keyset, reading(), &readings)
+        .unwrap()
         .await
         .unwrap();
     assert_eq!(sent.lock().unwrap().generated(), ["reading/value"]);
-    let stored: Encrypted<EqualityTerm> = record.take("0").unwrap();
-    let query_value = cipher
-        .query(&21u32)
-        .context("reading")
-        .using(&readings_plan.field("0").unwrap())
-        .equality()
+    // A query names the context, and the field's label under it ends in
+    // the identity.
+    let named = plan_of(vec![(
+        "0",
+        field(&["reading", "value"], &["c", "eq"], "uint32"),
+    )])
+    .unwrap();
+    let term = dynamic::query_term(&keyset, &named, "0", Op::Eq, 21u32, &NoTargets)
+        .unwrap()
         .await
         .unwrap();
-    assert_eq!(query_value, stored.terms);
-    record.insert("0", stored);
-    let back = cipher
-        .open(record)
-        .context("reading")
-        .using(&readings_plan)
+    assert_eq!(term.operand(), &Operand::One(stored_eq_term(&record, "0")));
+    let back = record::decrypt(&cipher, record, &readings, Some(label("reading")))
+        .unwrap()
         .await
         .unwrap();
-    assert_eq!(back.get::<u32>("0"), Some(&21));
+    assert_eq!(back, reading());
 }
 
-// --- Targets declare their indexes --------------------------------------------
-
+/// A context is written as a label, or as text that parses as one: a
+/// literal, a `String`, or a borrowed `String` such as a configuration
+/// value. Text that is not a plain label is refused.
 #[test]
-fn every_target_declares_the_indexes_its_terms_answer() {
-    assert_eq!(
-        <EqualityTerm as EncryptFrom<String>>::indexes(),
-        [IndexSpec::Equality]
-    );
-    assert_eq!(
-        <MatchTerms<Words> as EncryptFrom<String>>::indexes(),
-        [IndexSpec::Match(Words::options())]
-    );
-    assert_eq!(
-        <OreTerm<u32> as EncryptFrom<u32>>::indexes(),
-        [IndexSpec::Ore]
-    );
-    assert_eq!(
-        <OpeTerm<u32> as EncryptFrom<u32>>::indexes(),
-        [IndexSpec::Ope]
-    );
-    assert!(<StackCipherText as EncryptFrom<u32>>::indexes().is_empty());
-    assert_eq!(
-        <Encrypted<(OreTerm<u32>, EqualityTerm)> as EncryptFrom<u32>>::indexes(),
-        [IndexSpec::Ore, IndexSpec::Equality]
-    );
-    assert_eq!(
-        <(StackCipherText, EqualityTerm, OreTerm<u32>, OpeTerm<u32>) as EncryptFrom<u32>>::indexes(
-        ),
-        [IndexSpec::Equality, IndexSpec::Ore, IndexSpec::Ope]
-    );
-    assert_eq!(
-        <(OreTerm<u32>, StackCipherText, EqualityTerm) as EncryptFrom<u32>>::indexes(),
-        [IndexSpec::Ore, IndexSpec::Equality]
-    );
-    assert_eq!(
-        <(
-            EqualityTerm,
-            OreTerm<u32>,
-            StackCipherText,
-            OpeTerm<u32>,
-            EqualityTerm,
-        ) as EncryptFrom<u32>>::indexes(),
-        [
-            IndexSpec::Equality,
-            IndexSpec::Ore,
-            IndexSpec::Ope,
-            IndexSpec::Equality
-        ]
-    );
+fn a_context_is_a_label_or_text_that_parses_as_one() {
+    let users_age = label("users/age");
+    let held = String::from("users/age");
+    assert_eq!("users/age".into_label().unwrap(), users_age);
+    assert_eq!(held.clone().into_label().unwrap(), users_age);
+    assert_eq!((&held).into_label().unwrap(), users_age);
+    assert_eq!((&users_age).into_label().unwrap(), users_age);
+    assert_eq!(users_age.clone().into_label().unwrap(), users_age);
+    let not_plain = String::from("users//age");
+    assert!((&not_plain).into_label().is_err());
+    assert!("a b/".into_label().is_err());
 }
 
-#[test]
-#[allow(clippy::assertions_on_constants)] // evaluated at run time, so a mutant fails a test
-fn a_tuple_is_decryptable_when_one_element_is() {
-    assert!(<(StackCipherText, EqualityTerm) as Decryptable>::DECRYPTABLE);
-    assert!(<(EqualityTerm, StackCipherText) as Decryptable>::DECRYPTABLE);
-    assert!(!<(EqualityTerm, OreTerm<u32>) as Decryptable>::DECRYPTABLE);
-    assert!(<(EqualityTerm, OreTerm<u32>, StackCipherText) as Decryptable>::DECRYPTABLE);
-    assert!(
-        !<(EqualityTerm, OreTerm<u32>, OpeTerm<u32>, EqualityTerm) as Decryptable>::DECRYPTABLE
-    );
-    assert!(
-        <(
-            EqualityTerm,
-            OreTerm<u32>,
-            OpeTerm<u32>,
-            EqualityTerm,
-            StackCipherText
-        ) as Decryptable>::DECRYPTABLE
-    );
-    assert!(
-        !<(
-            EqualityTerm,
-            OreTerm<u32>,
-            OpeTerm<u32>,
-            EqualityTerm,
-            OreTerm<u32>
-        ) as Decryptable>::DECRYPTABLE
-    );
-}
+// --- An empty batch ------------------------------------------------------------
 
+/// An empty batch runs no record. The scope its call names is checked
+/// once for the call, apart from the records, so a scope passed empty is
+/// refused for an empty batch too, before any key is requested. A context
+/// the reader expects is compared with each record, so an empty batch of a
+/// plan with a context field has none to refuse.
 #[tokio::test]
-async fn a_tuple_opens_through_its_ciphertext_wherever_it_sits() {
-    let cipher = stack_cipher().await;
+async fn an_empty_batch_has_its_context_checked_before_any_key_request() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
     let keyset = cipher.default_keyset();
-    let context = || CallerContext::from(nonempty!("t"));
-    let terms_first: (EqualityTerm, OreTerm<u32>, StackCipherText) =
-        keyset.encrypt_as(&7u32, context()).await.unwrap();
-    let opened: u32 = cipher.decrypt_as(terms_first, context()).await.unwrap();
-    assert_eq!(opened, 7);
+    let users = users_plan();
+    let records = records_plan();
+    let none = || frame(Vec::<ValueFrame>::new());
+    let stored_none = || CipherText::Sequence(Vec::new());
 
-    let terms_alone: (EqualityTerm, OreTerm<u32>) =
-        keyset.encrypt_as(&7u32, context()).await.unwrap();
-    let result: Result<u32, _> = cipher.decrypt_as(terms_alone, context()).await;
-    assert!(matches!(result, Err(Error::NotOpened)), "{result:?}");
+    let refused = Planned::new(&users, none())
+        .encrypt_into_with_context::<StackCipherText, _>(&keyset, Scope::new(""))
+        .await;
+    assert_eq!(plan_error(refused), PlanError::EmptyPart);
+    let refused = ValueFrame::decrypt_from_with_context(
+        Planned::new(&users, stored_none()),
+        &keyset,
+        Scope::new(""),
+    )
+    .await;
+    assert_eq!(plan_error(refused), PlanError::EmptyPart);
 
-    // Five elements, the ciphertext last.
-    let five: (
-        EqualityTerm,
-        OreTerm<u32>,
-        OpeTerm<u32>,
-        EqualityTerm,
-        StackCipherText,
-    ) = keyset.encrypt_as(&7u32, context()).await.unwrap();
-    let opened: u32 = cipher.decrypt_as(five, context()).await.unwrap();
-    assert_eq!(opened, 7);
-
-    // As a field of a derived record, through `DecryptField`.
-    let pair: (StackCipherText, EqualityTerm) = keyset.encrypt_as(&7u32, context()).await.unwrap();
-    let opening: Option<Decryption<u32, FakeDataKeySource>> = pair.decryption_field(context());
-    let opened = cipher.run_decryption(opening.unwrap()).await.unwrap();
-    assert_eq!(opened, 7);
-    let _ = <(StackCipherText, EqualityTerm) as DecryptInto<u32>>::decryption::<FakeDataKeySource>;
+    let opened = record::decrypt(
+        &cipher,
+        stored_none(),
+        &records,
+        Some(label("tenants/acme")),
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    assert_eq!(opened, none());
+    let sealed: StackCipherText = Planned::new(&users, none())
+        .encrypt_into_with_context(&keyset, Scope::new("acme"))
+        .await
+        .unwrap();
+    assert!(matches!(sealed, CipherText::Sequence(rows) if rows.is_empty()));
+    assert_eq!(generates.load(Ordering::SeqCst), 0);
+    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
 }
 
-/// A record whose terms-only tuple comes before its ciphertext.
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
-#[stash(plaintext = u32)]
-struct TermsFirst {
-    terms: (EqualityTerm, OreTerm<u32>),
-    c: StackCipherText,
-}
-
-/// A tuple of terms alone is no field to open a record through: it yields
-/// to the ciphertext beside it, nested in a tuple or in a derived record,
-/// rather than stopping the search with `NotOpened`.
-#[tokio::test]
-async fn a_terms_only_tuple_yields_to_the_ciphertext_beside_it() {
-    let cipher = stack_cipher().await;
-    let keyset = cipher.default_keyset();
-    let context = || CallerContext::from(nonempty!("t"));
-
-    let terms_alone: (EqualityTerm, OreTerm<u32>) =
-        keyset.encrypt_as(&7u32, context()).await.unwrap();
-    let opening: Option<Decryption<u32, FakeDataKeySource>> =
-        terms_alone.decryption_field(context());
-    assert!(opening.is_none(), "a tuple of terms alone opens nothing");
-
-    let nested: ((EqualityTerm, OreTerm<u32>), StackCipherText) =
-        keyset.encrypt_as(&7u32, context()).await.unwrap();
-    let opened: u32 = cipher.decrypt_as(nested, context()).await.unwrap();
-    assert_eq!(opened, 7);
-
-    let record: TermsFirst = keyset.encrypt_as(&7u32, context()).await.unwrap();
-    let opened: u32 = cipher.decrypt_as(record, context()).await.unwrap();
-    assert_eq!(opened, 7);
-}
-
+/// The declaration says where the context comes from, before any value is
+/// in hand.
 #[test]
 fn a_plan_says_where_its_context_comes_from() {
-    let records_plan = records_plan::<FakeDataKeySource>();
-    assert!(format!("{records_plan:?}").starts_with(r#"Plan { context: "<from field \"tenant\">""#));
-    let users_plan = contextless_plan::<FakeDataKeySource>();
-    assert!(format!("{users_plan:?}").starts_with(r#"Plan { context: "<from the call>""#));
-    let builder =
-        Plan::fields::<TenantRecord, FakeDataKeySource>().context_field(("tenant", tenant));
-    assert!(format!("{builder:?}").starts_with(r#"FieldsBuilder { context: [Field("tenant")]"#));
-    let start = Plan::value::<u32>().context("a");
+    let users = users_plan();
     assert_eq!(
-        format!("{start:?}"),
-        r#"ValueStart { context: [Ok(Label(["a"]))] }"#
+        users.label().map(ToString::to_string).as_deref(),
+        Some("users")
     );
-    let typed = Plan::value::<u32>()
-        .encrypt_into::<StackCipherText>()
-        .build()
-        .unwrap();
-    assert!(format!("{typed:?}").contains("Typed<"));
-    let _ = Label::parse("a").unwrap();
+    assert_eq!(users.context_field(), None);
+    let records = records_plan();
+    assert_eq!(records.label(), None);
+    assert_eq!(records.context_field(), Some("tenant"));
+    let shown = records.contexts().unwrap().to_string();
+    assert!(shown.contains("tenant"), "{shown}");
 }

@@ -4,36 +4,36 @@
 -- REQUIRE: src/v3/scalars/text/query_text_match_functions.sql
 
 --! @file encrypted_domain/text/query_text_match_operators.sql
---! @brief Operators for eql_v3.query_text_match.
+--! @brief Operators for {{prefix}}.query_text_match.
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3.matches,
-  LEFTARG = public.eql_v3_text_match, RIGHTARG = eql_v3.query_text_match,
+  FUNCTION = {{prefix}}.matches,
+  LEFTARG = public.{{prefix}}_text_match, RIGHTARG = {{prefix}}.query_text_match,
   RESTRICT = contsel, JOIN = contjoinsel
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3.matches,
-  LEFTARG = eql_v3.query_text_match, RIGHTARG = public.eql_v3_text_match,
+  FUNCTION = {{prefix}}.matches,
+  LEFTARG = {{prefix}}.query_text_match, RIGHTARG = public.{{prefix}}_text_match,
   RESTRICT = contsel, JOIN = contjoinsel
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_match
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_text_search_ore, RIGHTARG = {{prefix}}.query_text_match
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = eql_v3.query_text_match, RIGHTARG = public.eql_v3_text_search_ore
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = {{prefix}}.query_text_match, RIGHTARG = public.{{prefix}}_text_search_ore
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_match
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_match
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = eql_v3.query_text_match, RIGHTARG = public.eql_v3_text_search
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = {{prefix}}.query_text_match, RIGHTARG = public.{{prefix}}_text_search
 );

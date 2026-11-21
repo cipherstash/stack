@@ -1,5 +1,5 @@
 //! [`Pending`]: the request carrier [`StackCipher`] hands back from
-//! [`EncryptFrom`](super::EncryptFrom) / [`DecryptInto`](super::DecryptInto),
+//! [`EncryptTarget`](super::EncryptTarget) / [`DecryptSource`](super::DecryptSource),
 //! and the single place the target layer talks to ZeroKMS.
 //!
 //! A `Pending` is built synchronously and settled once. Combining pendings
@@ -14,12 +14,20 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::future::{Future, IntoFuture};
 use std::pin::Pin;
+use std::sync::Arc;
 
-use stack_kms::{DataKey, DataKeySource, GenerateKeyPayload, Iv, MaybeSend, RetrieveKeyPayload};
+use stack_kms::{
+    DataKey, DataKeySource, GenerateKeyPayload, IndexKeySource, Iv, MaybeSend, RetrieveKeyPayload,
+    UnverifiedContext,
+};
 use uuid::Uuid;
 
-use super::request::{tally, Request, RequestKind, Responses};
+use super::request::{tally, KeysetAnswer, Request, RequestKind, Responses};
+use crate::audit::{AuditMetadata, Audited, Unverified};
+use crate::contexts::CallContexts;
+use crate::keyset::KeysetState;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
+use vitaminc_aead::ContextPiece;
 
 /// The boxed fulfilment: consumes this pending's slice of the responses and
 /// produces the output. The `Send` split mirrors [`kms::MaybeSend`](crate::kms::MaybeSend) —
@@ -29,6 +37,17 @@ type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<T, Error> + Sen
 /// See the native definition above; identical minus the `Send` bound.
 #[cfg(target_arch = "wasm32")]
 type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<T, Error> + 'a>;
+
+/// How to wipe a recovered value in place. A decrypt sets it on the pending
+/// it returns ([`wiping`](Pending::wiping)), so that [`zip`](Pending::zip) and
+/// [`all`](Pending::all) can wipe that value when a later operation in the
+/// same batch fails. `Send` split as above.
+#[cfg(not(target_arch = "wasm32"))]
+type WipeHook<'a, T> = Arc<dyn Fn(&mut T) + Send + Sync + 'a>;
+/// See the native definition above; identical minus the `Send` and `Sync`
+/// bounds.
+#[cfg(target_arch = "wasm32")]
+type WipeHook<'a, T> = Arc<dyn Fn(&mut T) + 'a>;
 
 /// The boxed future a [`Pending`] settles through; `Send` split as above.
 #[cfg(not(target_arch = "wasm32"))]
@@ -73,67 +92,154 @@ pub struct Pending<'a, T, K> {
     /// with one misconfigured field never mints data keys it will throw away.
     /// When set, `fulfil` is never called.
     failed: Option<Error>,
+    /// The query context and the stored context of every leaf this pending
+    /// seals or indexes, in the order the leaves ran. What
+    /// [`context`](Self::context) shows. A failed pending carries none, as
+    /// it carries no requests.
+    contexts: Vec<(ContextPiece<'static>, ContextPiece<'static>)>,
+    /// How to wipe this pending's output, when the output is recovered
+    /// plaintext. A batch calls it when a later operation fails after this
+    /// one's output was recovered. `None` for an output that is not
+    /// plaintext, or whose type is not known to be `Zeroize` here.
+    wipe: Option<WipeHook<'a, T>>,
     fulfil: FulfilBox<'a, T>,
 }
 
-/// What a [`Pending`] is built through: a [`StackCipher`] (no keyset
-/// scope) or a [`KeysetCipher`] (scoped to its keyset). Implemented for
-/// references to both, so the constructors take either.
+/// The cipher that a [`Pending`] operation runs through: a borrowed
+/// client, and the ID of one keyset if the operation is limited to it.
 ///
-/// Sealed: the two scopes are the two shapes, and a scope is how the target
-/// layer asks a cipher what it is bound to — not an extension point. An
-/// outside implementation could name any keyset id without holding the
-/// keyset, which would make [`Pending`]'s scope rules
-/// ([`Error::NoKeyset`], [`Error::ForeignKeyset`]) say less than they do:
-/// a scope's id is one the cipher loaded from ZeroKMS. Downstream code
-/// uses the cipher to execute [`EncryptFrom`](super::EncryptFrom); it never
-/// implements a scope of its own.
-pub trait CipherScope<'a, K>: sealed::Sealed {
-    /// The client-scoped cipher the pending settles through.
-    fn cipher(&self) -> &'a StackCipher<K>;
-    /// The keyset the pending is scoped to, if any.
-    fn keyset(&self) -> Option<Uuid>;
+/// # How to pass one
+///
+/// You do not need to name this type. Each entry point that can run
+/// through either cipher accepts `impl Into<CipherRef>`, so pass `&cipher`
+/// or `&keyset`. These entry points are:
+///
+/// - the decrypt entry points, such as
+///   [`DecryptFrom::decrypt_from`](super::DecryptFrom::decrypt_from) and
+///   `dynamic::record::decrypt`
+/// - the [`Pending`] constructors
+///
+/// An entry point that encrypts needs a keyset to generate keys under.
+/// That entry point accepts a [`KeysetCipher`], and not a `CipherRef`.
+///
+/// # What each reference can do
+///
+/// A `CipherRef` comes from a reference to a [`StackCipher`], or from a
+/// [`KeysetCipher`], borrowed or owned:
+///
+/// - A reference to a [`StackCipher`] is limited to no keyset. The
+///   operation opens a leaf sealed under any keyset the client can use.
+///   The operation cannot generate a key ([`Error::NoKeyset`]).
+/// - A [`KeysetCipher`] limits the operation to that keyset. The
+///   operation refuses a leaf from another keyset before it retrieves any
+///   key ([`Error::ForeignKeyset`]).
+///
+/// No other conversion makes a `CipherRef`. The keyset in a `CipherRef`
+/// is therefore one that the cipher loaded from ZeroKMS, and both rules
+/// above apply to every [`Pending`].
+///
+/// # Lifetime
+///
+/// A `CipherRef` made from a [`KeysetCipher`] keeps the keyset's ID and
+/// the borrowed client, and does not keep the `KeysetCipher`. The
+/// `CipherRef` is valid for as long as the client is, even when the
+/// `KeysetCipher` is a temporary value.
+///
+/// ```
+/// use stack_encrypt::{CipherRef, StackCipher};
+///
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+///
+/// let any = CipherRef::from(&cipher);
+/// assert_eq!(any.keyset_id(), None);
+/// let one = CipherRef::from(&keyset);
+/// assert_eq!(one.keyset_id(), Some(keyset.keyset_id()));
+/// # Ok::<(), stack_encrypt::Error>(())
+/// # }).unwrap();
+/// ```
+pub struct CipherRef<'c, K> {
+    cipher: &'c StackCipher<K>,
+    keyset: Option<Uuid>,
 }
 
-mod sealed {
-    pub trait Sealed {}
-    impl<K> Sealed for &crate::StackCipher<K> {}
-    impl<K> Sealed for &crate::KeysetCipher<'_, K> {}
-}
-
-impl<'a, K> CipherScope<'a, K> for &'a StackCipher<K> {
-    fn cipher(&self) -> &'a StackCipher<K> {
-        self
+impl<'c, K> CipherRef<'c, K> {
+    /// The client that the pending operation runs through.
+    pub(crate) fn cipher(&self) -> &'c StackCipher<K> {
+        self.cipher
     }
 
-    fn keyset(&self) -> Option<Uuid> {
-        None
+    /// Returns the ID of the keyset that this reference is limited to.
+    /// Returns `None` for a reference to a [`StackCipher`]. That
+    /// reference is limited to no keyset.
+    pub fn keyset_id(&self) -> Option<Uuid> {
+        self.keyset
     }
 }
 
-impl<'a, K> CipherScope<'a, K> for &'a KeysetCipher<'_, K> {
-    fn cipher(&self) -> &'a StackCipher<K> {
-        KeysetCipher::cipher(self)
+impl<K> Clone for CipherRef<'_, K> {
+    fn clone(&self) -> Self {
+        *self
     }
+}
+impl<K> Copy for CipherRef<'_, K> {}
 
-    fn keyset(&self) -> Option<Uuid> {
-        Some(self.keyset_id())
+// Written by hand, so that `K: Debug` is not needed. A data-key source
+// rarely implements `Debug`.
+impl<K> std::fmt::Debug for CipherRef<'_, K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CipherRef")
+            .field("keyset_id", &self.keyset)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'c, K> From<&'c StackCipher<K>> for CipherRef<'c, K> {
+    fn from(cipher: &'c StackCipher<K>) -> Self {
+        Self {
+            cipher,
+            keyset: None,
+        }
+    }
+}
+
+impl<'c, K> From<&KeysetCipher<'c, K>> for CipherRef<'c, K> {
+    fn from(keyset: &KeysetCipher<'c, K>) -> Self {
+        Self {
+            cipher: keyset.cipher(),
+            keyset: Some(keyset.keyset_id()),
+        }
+    }
+}
+
+impl<'c, K> From<KeysetCipher<'c, K>> for CipherRef<'c, K> {
+    fn from(keyset: KeysetCipher<'c, K>) -> Self {
+        Self::from(&keyset)
     }
 }
 
 impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// A pending with no requests: `result` was fully derived during the
     /// synchronous build. Awaiting it does no I/O.
-    pub fn ready(scope: impl CipherScope<'a, K>, result: Result<T, Error>) -> Self
+    pub fn ready(scope: impl Into<CipherRef<'a, K>>, result: Result<T, Error>) -> Self
     where
         T: MaybeSend,
     {
+        let scope: CipherRef<'a, K> = scope.into();
         match result {
             Ok(value) => Self {
                 cipher: scope.cipher(),
-                keyset: scope.keyset(),
+                keyset: scope.keyset_id(),
                 requests: Vec::new(),
                 failed: None,
+                contexts: Vec::new(),
+                wipe: None,
                 fulfil: Box::new(move |_| Ok(value)),
             },
             Err(error) => Self::failed(scope, error),
@@ -144,7 +250,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// type `T` is ever produced), and any assembly it is merged into fails
     /// without I/O — see the `failed` field.
     ///
-    /// Public because a hand-written `EncryptFrom` / `DecryptInto` that
+    /// Public because a hand-written `EncryptTarget` / `DecryptSource` that
     /// works with a cipher scope directly reaches for it when a contract is
     /// broken — e.g. [`Error::NotOpened`] for a field whose type declared
     /// [`DECRYPTABLE`](super::Decryptable::DECRYPTABLE) but was passed over.
@@ -154,12 +260,15 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     ///
     /// [`Encryption::failed`]: super::Encryption::failed
     /// [`Decryption::failed`]: super::Decryption::failed
-    pub fn failed(scope: impl CipherScope<'a, K>, error: Error) -> Self {
+    pub fn failed(scope: impl Into<CipherRef<'a, K>>, error: Error) -> Self {
+        let scope: CipherRef<'a, K> = scope.into();
         Self {
             cipher: scope.cipher(),
-            keyset: scope.keyset(),
+            keyset: scope.keyset_id(),
             requests: Vec::new(),
             failed: Some(error),
+            contexts: Vec::new(),
+            wipe: None,
             // Unreachable: `settle` returns the stored error before any
             // fulfilment runs. Kept honest rather than panicking.
             fulfil: Box::new(|_| {
@@ -185,21 +294,24 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// request through a [`StackCipher`] scope is [`Error::NoKeyset`], and
     /// a retrieve request naming another keyset than a [`KeysetCipher`]
     /// scope's is [`Error::ForeignKeyset`].
-    pub fn request<F>(scope: impl CipherScope<'a, K>, requests: Vec<Request>, fulfil: F) -> Self
+    pub fn request<F>(scope: impl Into<CipherRef<'a, K>>, requests: Vec<Request>, fulfil: F) -> Self
     where
         F: FnOnce(&mut Responses) -> Result<T, Error> + MaybeSend + 'a,
     {
-        let (generated, retrieved) = tally(&requests);
-        if let Err(error) = check_scope(scope.keyset(), &requests) {
+        let scope: CipherRef<'a, K> = scope.into();
+        let (generated, retrieved, keysets) = tally(&requests);
+        if let Err(error) = check_scope(scope.keyset_id(), &requests) {
             return Self::failed(scope, error);
         }
         Self {
             cipher: scope.cipher(),
-            keyset: scope.keyset(),
+            keyset: scope.keyset_id(),
             requests,
             failed: None,
+            contexts: Vec::new(),
+            wipe: None,
             fulfil: Box::new(move |responses| {
-                let mut own = responses.split_front(generated, retrieved)?;
+                let mut own = responses.split_front(generated, retrieved, keysets)?;
                 let value = fulfil(&mut own)?;
                 if !own.is_exhausted() {
                     return Err(Error::ResponseShape);
@@ -220,6 +332,10 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset: self.keyset,
             requests: self.requests,
             failed: self.failed,
+            contexts: self.contexts,
+            // The output is a new value. Whether it holds plaintext is not
+            // known here.
+            wipe: None,
             fulfil: Box::new(move |responses| fulfil(responses).map(f)),
         }
     }
@@ -235,8 +351,108 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset: self.keyset,
             requests: self.requests,
             failed: self.failed,
+            contexts: self.contexts,
+            wipe: None,
             fulfil: Box::new(move |responses| fulfil(responses).and_then(f)),
         }
+    }
+
+    /// Send `metadata` with every key request that this call makes, for
+    /// the ZeroKMS audit log. Audit metadata is optional: a call without it
+    /// sends none.
+    ///
+    /// ```
+    /// use stack_encrypt::{AuditMetadata, Ciphertext, StackCipher};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+    /// // the environment, or from the profile that `npx stash auth login` writes.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let keyset = cipher.default_keyset();
+    /// let purpose = AuditMetadata::new().with("purpose", "store api key");
+    ///
+    /// let stored: Ciphertext = keyset
+    ///     .encrypt(String::from("sk_live_1234"))
+    ///     .audit(purpose)
+    ///     .await?;
+    /// # let _ = stored;
+    /// # Ok::<(), stack_encrypt::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// ZeroKMS does not verify the metadata. A decrypt does not need it.
+    /// ZeroKMS writes the metadata to its logs, so do not send plaintext or
+    /// secrets. See [`AuditMetadata`] for the full rules.
+    ///
+    /// # One map for each call
+    ///
+    /// A call can make several key requests: one `generate_keys`, and one
+    /// `retrieve_keys` for each keyset it decrypts leaves from. Each
+    /// request is sent with the same metadata.
+    ///
+    /// Some calls request no data key: a query term, for example, or a
+    /// call over an empty list. Those calls send no metadata, because they
+    /// make no request to send it with. Those calls still succeed.
+    /// [`Audited`] lists them. Empty metadata sends none either.
+    ///
+    /// # Attach it last
+    ///
+    /// The result is an [`Audited`] call. You can only await it. So call
+    /// [`zip`](Self::zip), [`all`](Self::all), and [`map`](Self::map)
+    /// first. Then attach the metadata to the whole call.
+    pub fn audit(self, metadata: AuditMetadata) -> Audited<Self> {
+        Audited::new(self, metadata)
+    }
+
+    /// Mark this pending's output as plaintext that can be wiped in place.
+    /// [`zip`](Self::zip) and [`all`](Self::all) then wipe it if a later
+    /// operation in the same batch fails after it was recovered. Every
+    /// [`DecryptFrom`](super::DecryptFrom) call marks the pending it returns,
+    /// and so does each leaf a [`Decryption`](super::Decryption) opens
+    /// ([`open`](super::open) and the targets' own openings), so that a
+    /// [`Decryption::zip`](super::Decryption::zip) or
+    /// [`Decryption::all`](super::Decryption::all) written by hand wipes too.
+    pub(crate) fn wiping(mut self) -> Self
+    where
+        T: zeroize::Zeroize,
+    {
+        if self.failed.is_none() {
+            let wipe: WipeHook<'a, T> = Arc::new(|value: &mut T| value.zeroize());
+            self.wipe = Some(wipe);
+        }
+        self
+    }
+
+    /// The contexts this call will use, with the caller's values filled in.
+    ///
+    /// Each distinct context appears once, in the order the call's leaves
+    /// run. No key has been requested: a pending holds its requests until it
+    /// is awaited. A pending that has already failed shows no context, and
+    /// says that it failed.
+    ///
+    /// See [`CallContexts`] for an example, and
+    /// [`Encryption::contexts`](super::Encryption::contexts) for the same
+    /// view of a declaration, with placeholders for the caller's parts.
+    pub fn context(&self) -> CallContexts {
+        CallContexts::from_pieces(&self.contexts, self.failed.is_some())
+    }
+
+    /// Record that this pending's leaf derives its terms under `query` and
+    /// its key and AAD under `stored`. The leaf operations call it once
+    /// each, with the contexts they validated. A ciphertext alone has one
+    /// context, passed twice.
+    pub(crate) fn under_context(
+        mut self,
+        query: ContextPiece<'static>,
+        stored: ContextPiece<'static>,
+    ) -> Self {
+        if self.failed.is_none() {
+            self.contexts.push((query, stored));
+        }
+        self
     }
 
     /// Scope this pending to `keyset`: what a [`KeysetCipher`]'s decrypt
@@ -265,14 +481,6 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         }
     }
 
-    /// Whether this pending opens leaves from any keyset: it was built
-    /// through the [`StackCipher`] (no scope) and has not failed. Such a
-    /// pending cannot be merged with a scoped one without being confined to
-    /// that scope, so a batch settles it on its own.
-    pub(crate) fn opens_any_keyset(&self) -> bool {
-        self.keyset.is_none() && self.failed.is_none()
-    }
-
     /// Merge two pendings into one resolving to the pair. Their requests
     /// concatenate — awaiting the result is still one batched call per
     /// request kind.
@@ -293,7 +501,41 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// client, so either side's client can dispatch the batch; a client that
     /// is *not* authorised for the keyset is refused at ZeroKMS
     /// ([`Error::Kms`]), exactly as it would be on its own.
+    ///
+    /// When the right side fails after the left side recovered plaintext
+    /// (a decrypt whose key arrived), the left side's plaintext is wiped
+    /// before the error is returned. A decrypt such as
+    /// [`DecryptFrom::decrypt_from`](super::DecryptFrom::decrypt_from) marks
+    /// its pending for this. A pending built by [`ready`](Self::ready),
+    /// [`request`](Self::request) or [`map`](Self::map) is not marked, and
+    /// its output is dropped as it is.
     pub fn zip<U: 'a>(self, other: Pending<'a, U, K>) -> Pending<'a, (T, U), K> {
+        self.zip_releasing(other, drop)
+    }
+
+    /// [`zip`](Self::zip) for recovered plaintext. The right side can fail at
+    /// fulfilment, with an authentication or type failure after its key
+    /// arrives. It can also panic in its conversion.
+    ///
+    /// In both cases, the left side's recovered value is wiped before the
+    /// error is returned or the panic unwinds. It is not dropped as it is. A
+    /// record's fields open through this method.
+    pub(crate) fn zip_wiping<U: 'a>(self, other: Pending<'a, U, K>) -> Pending<'a, (T, U), K>
+    where
+        T: zeroize::Zeroize,
+    {
+        self.zip_releasing(other, |mut first: T| zeroize::Zeroize::zeroize(&mut first))
+    }
+
+    /// The builder behind every pair. `release` is given the left side's
+    /// output when the right side fails or panics after it, after the left
+    /// side's own wipe has run if it has one. It is not called when both
+    /// sides succeed.
+    fn zip_releasing<U: 'a>(
+        self,
+        other: Pending<'a, U, K>,
+        release: impl FnOnce(T) + MaybeSend + 'a,
+    ) -> Pending<'a, (T, U), K> {
         let keyset = match merge_scopes(self.keyset, other.keyset) {
             Ok(keyset) => keyset,
             Err(error) => return Pending::failed(self.cipher, error),
@@ -306,14 +548,51 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         if let Err(error) = check_scope(keyset, &requests) {
             return Pending::failed(self.cipher, error);
         }
+        let mut contexts = self.contexts;
+        contexts.extend(other.contexts);
         let first = self.fulfil;
         let second = other.fulfil;
+        // The pair is wiped by wiping each side that can be wiped.
+        let wipe = match (self.wipe.clone(), other.wipe) {
+            (None, None) => None,
+            (left, right) => {
+                let wipe: WipeHook<'a, (T, U)> = Arc::new(move |(t, u): &mut (T, U)| {
+                    if let Some(left) = &left {
+                        left(t);
+                    }
+                    if let Some(right) = &right {
+                        right(u);
+                    }
+                });
+                Some(wipe)
+            }
+        };
+        // The left side is wiped, if it can be, before `release` takes it.
+        let left_wipe = self.wipe;
+        let release = move |mut first: T| {
+            if let Some(wipe) = &left_wipe {
+                wipe(&mut first);
+            }
+            release(first);
+        };
         Pending {
             cipher: self.cipher,
             keyset,
             requests,
             failed: None,
-            fulfil: Box::new(move |responses| Ok((first(responses)?, second(responses)?))),
+            contexts,
+            wipe,
+            fulfil: Box::new(move |responses| {
+                // The left side's output is held in a guard. So if the right
+                // side fails or panics, the guard releases the left side's
+                // output, as a collection does.
+                let held = Held {
+                    item: Some(first(responses)?),
+                    release: Some(release),
+                };
+                let second = second(responses)?;
+                Ok((held.keep(), second))
+            }),
         }
     }
 
@@ -323,8 +602,12 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// `zip`: every item must agree with `scope`'s keyset — which cipher
     /// value each was built through does not matter, for the reason `zip`
     /// gives — and the first failed item fails the whole column with no I/O.
+    ///
+    /// When an item fails after the items before it recovered plaintext,
+    /// each of those items that a decrypt marked is wiped before the error
+    /// is returned, as [`zip`](Self::zip) does for its left side.
     pub fn all(
-        scope: impl CipherScope<'a, K>,
+        scope: impl Into<CipherRef<'a, K>>,
         items: Vec<Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K> {
         Self::collect(scope, items)
@@ -333,14 +616,53 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// Build a collection lazily, stopping at the first local failure so a bad
     /// context does not repeat work for every remaining row.
     pub(crate) fn collect(
-        scope: impl CipherScope<'a, K>,
+        scope: impl Into<CipherRef<'a, K>>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
+    ) -> Pending<'a, Vec<T>, K> {
+        let scope: CipherRef<'a, K> = scope.into();
+        Self::collect_releasing(scope, items, drop)
+    }
+
+    /// The same as [`collect`](Self::collect), but for a collection of
+    /// recovered plaintext. `collect` wipes only the items recovered before
+    /// a failure that a decrypt marked ([`wiping`](Self::wiping)), and drops
+    /// the rest. This function wipes them all.
+    ///
+    /// The wipe applies when a later item fails at fulfilment, after its key
+    /// arrived. That failure can be an authentication failure, a type
+    /// failure, or a panic in the item's conversion. The items recovered
+    /// before it are wiped before the error is returned, or before the panic
+    /// unwinds. A failure before fulfilment recovers nothing, so there is
+    /// nothing to wipe.
+    pub(crate) fn collect_wiping(
+        scope: impl Into<CipherRef<'a, K>>,
+        items: impl IntoIterator<Item = Pending<'a, T, K>>,
+    ) -> Pending<'a, Vec<T>, K>
+    where
+        T: zeroize::Zeroize,
+    {
+        let scope: CipherRef<'a, K> = scope.into();
+        Self::collect_releasing(scope, items, |mut recovered| {
+            zeroize::Zeroize::zeroize(&mut recovered)
+        })
+    }
+
+    /// The collection builder that `collect` and `collect_wiping` both use.
+    /// When an item fails or panics, `release` receives the items fulfilled
+    /// before it, after each item's own wipe has run if it has one. When
+    /// every item succeeds, `release` is not called.
+    fn collect_releasing(
+        scope: CipherRef<'a, K>,
+        items: impl IntoIterator<Item = Pending<'a, T, K>>,
+        release: impl FnOnce(Vec<T>) + MaybeSend + 'a,
     ) -> Pending<'a, Vec<T>, K> {
         let items = items.into_iter();
         let cipher = scope.cipher();
-        let mut keyset = scope.keyset();
+        let mut keyset = scope.keyset_id();
         let mut requests = Vec::new();
+        let mut contexts = Vec::new();
         let mut fulfils = Vec::with_capacity(items.size_hint().0);
+        let mut wipes = Vec::with_capacity(items.size_hint().0);
         for item in items {
             keyset = match merge_scopes(keyset, item.keyset) {
                 Ok(keyset) => keyset,
@@ -350,29 +672,116 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 return Pending::failed(cipher, error);
             }
             requests.extend(item.requests);
+            contexts.extend(item.contexts);
             fulfils.push(item.fulfil);
+            wipes.push(item.wipe);
         }
         if let Err(error) = check_scope(keyset, &requests) {
             return Pending::failed(cipher, error);
         }
+        // Each item is wiped by its own hook, if it has one. The items
+        // recovered before a failure are wiped before `release` takes them.
+        let wipes: Option<Arc<[Option<WipeHook<'a, T>>]>> =
+            wipes.iter().any(Option::is_some).then(|| wipes.into());
+        let wipe = wipes.clone().map(|wipes| {
+            let wipe: WipeHook<'a, Vec<T>> = Arc::new(move |items: &mut Vec<T>| {
+                wipe_each(items, &wipes);
+            });
+            wipe
+        });
+        let release = move |mut items: Vec<T>| {
+            if let Some(wipes) = &wipes {
+                wipe_each(&mut items, wipes);
+            }
+            release(items);
+        };
         Pending {
             cipher,
             keyset,
             requests,
             failed: None,
+            contexts,
+            wipe,
             fulfil: Box::new(move |responses| {
-                fulfils
-                    .into_iter()
-                    .map(|fulfil| fulfil(responses))
-                    .collect()
+                // Held in a guard so that an item whose fulfilment panics
+                // releases the prefix during the unwind, as an error does.
+                let mut recovered = Recovered {
+                    items: Vec::with_capacity(fulfils.len()),
+                    release: Some(release),
+                };
+                for fulfil in fulfils {
+                    recovered.items.push(fulfil(responses)?);
+                }
+                Ok(recovered.keep())
             }),
+        }
+    }
+}
+
+/// Wipe each item with the hook at the same position, where there is one.
+fn wipe_each<T>(items: &mut [T], wipes: &[Option<WipeHook<'_, T>>]) {
+    for (item, wipe) in items.iter_mut().zip(wipes) {
+        if let Some(wipe) = wipe {
+            wipe(item);
+        }
+    }
+}
+
+/// The items a collection has recovered so far. If this guard is dropped
+/// before [`keep`](Self::keep) is called, by an early return or an unwind, it
+/// passes the items to `release`.
+struct Recovered<T, R: FnOnce(Vec<T>)> {
+    items: Vec<T>,
+    release: Option<R>,
+}
+
+impl<T, R: FnOnce(Vec<T>)> Recovered<T, R> {
+    /// Returns the items as the output, without releasing them. Call this
+    /// when every item has succeeded.
+    fn keep(mut self) -> Vec<T> {
+        self.release = None;
+        std::mem::take(&mut self.items)
+    }
+}
+
+impl<T, R: FnOnce(Vec<T>)> Drop for Recovered<T, R> {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            release(std::mem::take(&mut self.items));
+        }
+    }
+}
+
+/// The left side of a pair, recovered before the right side is fulfilled. If
+/// it is dropped before [`keep`](Self::keep), by an early return or an unwind,
+/// it passes the value to `release`.
+struct Held<T, R: FnOnce(T)> {
+    item: Option<T>,
+    release: Option<R>,
+}
+
+impl<T, R: FnOnce(T)> Held<T, R> {
+    /// The right side succeeded. So the value is the output. It is not
+    /// released.
+    fn keep(mut self) -> T {
+        self.release = None;
+        self.item
+            .take()
+            .unwrap_or_else(|| unreachable!("a held value is kept once"))
+    }
+}
+
+impl<T, R: FnOnce(T)> Drop for Held<T, R> {
+    fn drop(&mut self) {
+        if let (Some(release), Some(item)) = (self.release.take(), self.item.take()) {
+            release(item);
         }
     }
 }
 
 impl<'a, T: 'a, K> Pending<'a, T, K>
 where
-    K: DataKeySource,
+    K: DataKeySource + IndexKeySource,
 {
     /// Settle: one batched ZeroKMS call per request kind (none at all for an
     /// all-[`ready`](Pending::ready) assembly), then the fulfilments shape the
@@ -383,10 +792,17 @@ where
     /// Unboxed, so it carries no `Send`/`Sync` demands beyond the backend's
     /// own; the public [`IntoFuture`] impl boxes it.
     pub(crate) async fn settle(self) -> Result<T, Error> {
+        self.settle_with(None).await
+    }
+
+    /// Settle as [`settle`](Self::settle) does, and send `audit` with
+    /// every key request. An [`Audited`] call settles through this method.
+    pub(crate) async fn settle_with(self, audit: Unverified) -> Result<T, Error> {
         if let Some(error) = self.failed {
             return Err(error);
         }
-        let mut responses = dispatch(self.cipher, self.keyset, self.requests).await?;
+        let mut responses =
+            dispatch(self.cipher, self.keyset, self.requests, audit.as_deref()).await?;
         (self.fulfil)(&mut responses)
     }
 }
@@ -428,7 +844,7 @@ fn check_scope(keyset: Option<Uuid>, requests: &[Request]) -> Result<(), Error> 
 #[cfg(not(target_arch = "wasm32"))]
 impl<'a, T: 'a, K> IntoFuture for Pending<'a, T, K>
 where
-    K: DataKeySource + Sync,
+    K: DataKeySource + IndexKeySource + Sync,
 {
     type Output = Result<T, Error>;
     type IntoFuture = PendingFuture<'a, T>;
@@ -442,13 +858,45 @@ where
 #[cfg(target_arch = "wasm32")]
 impl<'a, T: 'a, K> IntoFuture for Pending<'a, T, K>
 where
-    K: DataKeySource,
+    K: DataKeySource + IndexKeySource,
 {
     type Output = Result<T, Error>;
     type IntoFuture = PendingFuture<'a, T>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.settle())
+    }
+}
+
+/// Awaiting an audited `Pending` settles it, as awaiting the `Pending`
+/// does, with the audit metadata on every key request.
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a, T: 'a, K> IntoFuture for Audited<Pending<'a, T, K>>
+where
+    K: DataKeySource + IndexKeySource + Sync,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (pending, audit) = self.into_parts();
+        Box::pin(pending.settle_with(audit))
+    }
+}
+
+/// See the native impl above. This one is the same, without the `Sync`
+/// bound.
+#[cfg(target_arch = "wasm32")]
+impl<'a, T: 'a, K> IntoFuture for Audited<Pending<'a, T, K>>
+where
+    K: DataKeySource + IndexKeySource,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (pending, audit) = self.into_parts();
+        Box::pin(pending.settle_with(audit))
     }
 }
 
@@ -463,20 +911,25 @@ struct Retrieve {
 }
 
 /// Issue the batched ZeroKMS calls for `requests`: at most one
-/// `generate_keys` (under the pending's keyset) and one `retrieve_keys` per
-/// keyset the retrieved leaves were sealed under, whatever the request
-/// count. When ZeroKMS grows a combined operation (data keys + PRF
-/// derivations in one round-trip), this is the one place that changes.
-async fn dispatch<K: DataKeySource>(
+/// `generate_keys` (under the pending's keyset), one `retrieve_keys` per
+/// keyset the retrieved leaves were sealed under, and one keyset load per
+/// keyset the keyset requests name that the cipher has not cached, the
+/// loads running beside the retrieves, whatever the request count. When
+/// ZeroKMS grows a combined operation (data keys + PRF derivations in one
+/// round-trip), this is the one place that changes.
+async fn dispatch<K: DataKeySource + IndexKeySource>(
     cipher: &StackCipher<K>,
     keyset: Option<Uuid>,
     requests: Vec<Request>,
+    audit: Option<&UnverifiedContext>,
 ) -> Result<Responses, Error> {
     let mut generates: Vec<Descriptor> = Vec::new();
     let mut retrieves: Vec<Retrieve> = Vec::new();
+    let mut loads: Vec<Uuid> = Vec::new();
     for request in requests {
         match request.into_kind() {
             RequestKind::GenerateDataKey { descriptor } => generates.push(descriptor),
+            RequestKind::LoadKeyset { keyset_id } => loads.push(keyset_id),
             RequestKind::RetrieveDataKey {
                 iv,
                 tag,
@@ -502,6 +955,19 @@ async fn dispatch<K: DataKeySource>(
         .chain(retrieves.iter().map(|retrieve| &retrieve.descriptor))
         .try_for_each(Descriptor::check)?;
 
+    // The retrieves and the keyset loads run beside each other, after the
+    // generates. Both sides are built here, before any key has been through
+    // the stack, and boxed: a future is built on the stack and moved with
+    // every byte it does not initialise, and a joined future holds each
+    // side in a slot as wide as the side, replacing the whole slot with the
+    // side's output from a stack temporary when it is done. A side built
+    // early and boxed is a pointer wide at both moments, and its output is
+    // kept narrow too (an error travels boxed, a keyset's outcome shared).
+    // `tests/heap_hygiene.rs` is what notices.
+    let retrieving = retrieve_data_keys(cipher, &retrieves, audit);
+    let retrieve_keys = Box::pin(async move { retrieving.await.map_err(Box::new) });
+    let load_keysets = Box::pin(load_keysets(cipher, &loads));
+
     let generated = if generates.is_empty() {
         Vec::new()
     } else {
@@ -518,7 +984,7 @@ async fn dispatch<K: DataKeySource>(
         let expected = payloads.len();
         let keys = cipher
             .kms()
-            .generate_keys(payloads, Some(keyset), None)
+            .generate_keys(payloads, Some(keyset), audit.map(Cow::Borrowed))
             .await?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
@@ -529,9 +995,20 @@ async fn dispatch<K: DataKeySource>(
         keys
     };
 
-    // Retrieves group by the keyset each leaf names — one call per keyset,
-    // in first-seen order — and the keys scatter back into request order,
-    // which is the order the fulfilments draw them in.
+    let (retrieved, keysets) = futures::future::join(retrieve_keys, load_keysets).await;
+    let retrieved = retrieved.map_err(|error| *error)?;
+    Ok(Responses::new(generated, retrieved).with_keysets(keysets))
+}
+
+/// The data keys of `retrieves`, in request order: one `retrieve_keys` per
+/// keyset the leaves were sealed under, in first-seen order, the keys
+/// scattered back into request order, which is the order the fulfilments
+/// draw them in.
+async fn retrieve_data_keys<K: DataKeySource>(
+    cipher: &StackCipher<K>,
+    retrieves: &[Retrieve],
+    audit: Option<&UnverifiedContext>,
+) -> Result<Vec<DataKey>, Error> {
     let mut groups: Vec<(Uuid, Vec<usize>)> = Vec::new();
     let mut group_of: HashMap<Uuid, usize> = HashMap::new();
     for (index, retrieve) in retrieves.iter().enumerate() {
@@ -555,7 +1032,7 @@ async fn dispatch<K: DataKeySource>(
         let expected = payloads.len();
         let keys = cipher
             .kms()
-            .retrieve_keys(payloads, Some(keyset_id), None)
+            .retrieve_keys(payloads, Some(keyset_id), audit)
             .await?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
@@ -563,18 +1040,63 @@ async fn dispatch<K: DataKeySource>(
                 received: keys.len(),
             });
         }
-        for (index, key) in indices.into_iter().zip(keys) {
-            retrieved[index] = Some(key);
+        // Cloned, not moved: a data key wipes itself when it drops, and one
+        // moved out of `keys` would leave its bytes in the buffer `keys`
+        // frees. The originals drop here, in place.
+        for (index, key) in indices.into_iter().zip(&keys) {
+            retrieved[index] = Some(key.clone());
         }
     }
     // Every slot was filled by exactly one group; a hole would mean the
     // grouping above lost a request, which is a bug here, not a data error.
-    let retrieved: Vec<DataKey> = retrieved
-        .into_iter()
-        .map(|key| key.ok_or(Error::ResponseShape))
-        .collect::<Result<_, _>>()?;
+    // Cloned out for the same reason; `retrieved` drops its keys in place.
+    retrieved
+        .iter()
+        .map(|key| key.clone().ok_or(Error::ResponseShape))
+        .collect()
+}
 
-    Ok(Responses::new(generated, retrieved))
+/// The answers to the keyset requests naming `loads`, in request order. A
+/// keyset is answered from the cipher's cache, and loaded from ZeroKMS only
+/// on a miss, as selecting it would load it; each distinct keyset is loaded
+/// once however many requests name it (a column of documents names one),
+/// the loads running together. A load that fails answers the requests that
+/// named that keyset with its error and no other.
+///
+/// The per-keyset futures are built when this is called, not when the
+/// returned future is first polled, for the reason `dispatch` builds its
+/// sides early.
+fn load_keysets<'c, K: DataKeySource + IndexKeySource>(
+    cipher: &'c StackCipher<K>,
+    loads: &'c [Uuid],
+) -> impl Future<Output = Vec<KeysetAnswer>> + 'c {
+    let mut distinct: Vec<Uuid> = Vec::new();
+    for keyset_id in loads {
+        if !distinct.contains(keyset_id) {
+            distinct.push(*keyset_id);
+        }
+    }
+    let loading = futures::future::join_all(
+        distinct
+            .iter()
+            .map(|&id| Box::pin(async move { cipher.keyset_state(id).await.map_err(Arc::new) })),
+    );
+    async move {
+        let by_keyset: HashMap<Uuid, Result<Arc<KeysetState>, Arc<Error>>> =
+            distinct.into_iter().zip(loading.await).collect();
+        loads
+            .iter()
+            .map(|keyset_id| KeysetAnswer {
+                keyset_id: *keyset_id,
+                // Every keyset named was loaded above; a hole would be a bug
+                // here, reported as a response shape, never a panic.
+                outcome: by_keyset
+                    .get(keyset_id)
+                    .cloned()
+                    .unwrap_or_else(|| Err(Arc::new(Error::ResponseShape))),
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -588,6 +1110,39 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+
+    /// A reference to the client names no keyset. A reference to a keyset,
+    /// borrowed or owned, names that keyset, and settles through the same
+    /// client.
+    #[tokio::test]
+    async fn a_cipher_ref_names_the_keyset_it_was_built_from() {
+        let cipher = StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .unwrap();
+        let keyset = cipher.default_keyset();
+        let any = CipherRef::from(&cipher);
+        assert_eq!(any.keyset_id(), None);
+        assert!(std::ptr::eq(any.cipher(), &cipher));
+        let borrowed = CipherRef::from(&keyset);
+        let owned = CipherRef::from(keyset.clone());
+        for one in [borrowed, owned] {
+            assert_eq!(one.keyset_id(), Some(keyset.keyset_id()));
+            assert!(std::ptr::eq(one.cipher(), &cipher));
+        }
+        // A pending keeps the keyset of the reference it was built through.
+        let pending = Pending::ready(&keyset, Ok(()));
+        assert_eq!(pending.keyset, Some(keyset.keyset_id()));
+        let pending = Pending::ready(&cipher, Ok(()));
+        assert_eq!(pending.keyset, None);
+        let shown = format!("{any:?} {borrowed:?}");
+        assert!(shown.contains("keyset_id: None"), "{shown}");
+        assert!(
+            shown.contains(&format!("{:?}", keyset.keyset_id())),
+            "{shown}"
+        );
+    }
 
     /// Counts ZeroKMS *calls* (not keys) so the batching claim — one call per
     /// request kind however many pendings were merged — is testable. Delegates
@@ -603,6 +1158,10 @@ mod tests {
         /// The keyset each call named, in call order.
         generate_keysets: Mutex<Vec<Option<Uuid>>>,
         retrieve_keysets: Mutex<Vec<Option<Uuid>>>,
+        /// Index-key loads, and an id every load answers with instead of the
+        /// one asked for, when set.
+        load_calls: AtomicUsize,
+        answers_as: Mutex<Option<Uuid>>,
     }
 
     impl CountingSource {
@@ -628,6 +1187,10 @@ mod tests {
 
         fn retrieve_keysets(&self) -> Vec<Option<Uuid>> {
             self.retrieve_keysets.lock().unwrap().clone()
+        }
+
+        fn load_calls(&self) -> usize {
+            self.load_calls.load(Ordering::Relaxed)
         }
     }
 
@@ -672,8 +1235,127 @@ mod tests {
             &self,
             keyset_id: Option<IdentifiedBy>,
         ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
-            self.inner.load_index_key(keyset_id).await
+            self.load_calls.fetch_add(1, Ordering::Relaxed);
+            let (id, key) = self.inner.load_index_key(keyset_id).await?;
+            Ok((self.answers_as.lock().unwrap().unwrap_or(id), key))
         }
+    }
+
+    /// A pending that asks for the loaded state of `keyset` and resolves to
+    /// its id.
+    fn loading(
+        cipher: &StackCipher<CountingSource>,
+        keyset: Uuid,
+    ) -> Pending<'_, Uuid, CountingSource> {
+        Pending::request(cipher, vec![Request::load_keyset(keyset)], |responses| {
+            Ok(responses.next_keyset()?.id)
+        })
+    }
+
+    /// Keyset requests are answered once per keyset however many pendings
+    /// ask, from ZeroKMS on a miss and from the cache after.
+    #[tokio::test]
+    async fn keyset_requests_load_each_keyset_once_and_then_hit_the_cache() {
+        let cipher = cipher().await;
+        let at_init = cipher.kms().load_calls();
+        let other = FakeDataKeySource::new()
+            .load_index_key(Some(IdentifiedBy::Uuid(Uuid::from_u128(42))))
+            .await
+            .unwrap()
+            .0;
+        let pair = loading(&cipher, other)
+            .zip(loading(&cipher, other))
+            .await
+            .unwrap();
+        assert_eq!(
+            pair,
+            (other, other),
+            "both answered with the keyset asked for"
+        );
+        assert_eq!(
+            cipher.kms().load_calls(),
+            at_init + 1,
+            "one load for two requests"
+        );
+        assert_eq!(loading(&cipher, other).await.unwrap(), other);
+        assert_eq!(cipher.kms().load_calls(), at_init + 1, "then the cache");
+        let default = cipher.default_keyset().keyset_id();
+        assert_eq!(loading(&cipher, default).await.unwrap(), default);
+        assert_eq!(
+            cipher.kms().load_calls(),
+            at_init + 1,
+            "the default is never loaded again"
+        );
+    }
+
+    /// A source that answers a load by id for another keyset is refused,
+    /// as the load of that keyset, and nothing is cached under either id.
+    #[tokio::test]
+    async fn a_keyset_answered_for_another_id_is_refused() {
+        let cipher = cipher().await;
+        let asked = Uuid::from_u128(42);
+        let answered = Uuid::from_u128(43);
+        *cipher.kms().answers_as.lock().unwrap() = Some(answered);
+        let refused = loading(&cipher, asked).await;
+        assert!(
+            matches!(
+                &refused,
+                Err(Error::KeysetLoad { keyset_id, source })
+                    if *keyset_id == asked
+                        && matches!(**source, Error::KeysetMismatch { left, right } if left == asked && right == answered)
+            ),
+            "{refused:?}"
+        );
+        let loads = cipher.kms().load_calls();
+        let _ = loading(&cipher, asked).await;
+        assert_eq!(cipher.kms().load_calls(), loads + 1, "nothing was cached");
+    }
+
+    /// A keyset that cannot be loaded fails the fulfilment that asked for
+    /// it and nothing else: the data key beside it is retrieved, the
+    /// fulfilment draws it, and the keyset request alone comes back as the
+    /// load's error; a sibling pending that needs no keyset is answered.
+    #[tokio::test]
+    async fn a_failed_keyset_load_fails_only_the_fulfilment_that_needed_it() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let (iv, tag) = generating_pairs(&keyset, 1).await.unwrap().remove(0);
+        let failing = Uuid::from_u128(42);
+        *cipher.kms().answers_as.lock().unwrap() = Some(Uuid::from_u128(43));
+        let drew_key = Arc::new(AtomicUsize::new(0));
+        let drawn = Arc::clone(&drew_key);
+        let requests = vec![
+            Request::retrieve_under(iv, tag.clone(), d(), keyset.keyset_id()),
+            Request::load_keyset(failing),
+        ];
+        let result = Pending::request(&cipher, requests, move |responses| {
+            let _key = responses.next_retrieved_key()?;
+            drawn.fetch_add(1, Ordering::SeqCst);
+            responses.next_keyset().map(|state| state.id)
+        })
+        .await;
+        assert!(
+            matches!(result, Err(Error::KeysetLoad { keyset_id, .. }) if keyset_id == failing),
+            "{result:?}"
+        );
+        assert_eq!(
+            drew_key.load(Ordering::SeqCst),
+            1,
+            "the fulfilment ran and drew its data key before the keyset"
+        );
+        assert_eq!(cipher.kms().retrieve_calls(), 1, "the retrieve was made");
+
+        let retrieving = Pending::request(
+            &cipher,
+            vec![Request::retrieve_under(iv, tag, d(), keyset.keyset_id())],
+            |responses| responses.next_retrieved_key().map(|_| ()),
+        );
+        let zipped = retrieving.zip(loading(&cipher, failing)).await;
+        assert!(
+            matches!(zipped, Err(Error::KeysetLoad { keyset_id, .. }) if keyset_id == failing),
+            "the pair fails with the keyset's error, not a dispatch failure: {zipped:?}"
+        );
+        assert_eq!(cipher.kms().retrieve_calls(), 2, "its sibling was answered");
     }
 
     fn d() -> Descriptor {
@@ -1147,7 +1829,7 @@ mod tests {
             Request::generate_under(Descriptor::of("users/email")),
             Request::generate_under(long.clone()),
         ];
-        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests).await else {
+        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests, None).await else {
             panic!("an over-long descriptor must be refused");
         };
         assert!(
@@ -1163,7 +1845,7 @@ mod tests {
         let mut pairs = generating_pairs(&keyset, 1).await.unwrap();
         let (iv, tag) = pairs.remove(0);
         let requests = vec![Request::retrieve_under(iv, tag, long, keyset.keyset_id())];
-        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests).await else {
+        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests, None).await else {
             panic!("an over-long descriptor must be refused");
         };
         assert!(matches!(err, Error::DescriptorTooLong { .. }), "{err}");
@@ -1180,7 +1862,7 @@ mod tests {
             "a".repeat(Descriptor::MAX_LEN),
         ))];
         assert!(
-            dispatch(&cipher, Some(keyset.keyset_id()), requests)
+            dispatch(&cipher, Some(keyset.keyset_id()), requests, None)
                 .await
                 .is_ok(),
             "at the limit"

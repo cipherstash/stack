@@ -139,6 +139,8 @@ pub use key_source::FakeDataKeySource;
 pub use key_source::{DataKeySource, IndexKeySource};
 
 // Key providers
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
+pub use key_provider::ProfileKeyProvider;
 pub use key_provider::{
     EnvKeyProvider, FallbackKeyProvider, KeyProvider, KeyProviderError, StaticKeyProvider,
 };
@@ -154,8 +156,8 @@ pub use payload::{GenerateKeyPayload, RetrieveKeyPayload};
 // Commonly needed re-exports from the protocol / crypto layers
 pub use recipher::key::{GenRandom, Iv};
 pub use zerokms_protocol::{
-    Context, DecryptionPolicy, IdentifiedBy, KeyId, Keyset, UnverifiedContext, ViturKeyMaterial,
-    MAX_DESCRIPTOR_LEN,
+    Context, DecryptionPolicy, IdentifiedBy, KeyId, Keyset, UnverifiedContext,
+    UnverifiedContextValue, ViturKeyMaterial, MAX_DESCRIPTOR_LEN,
 };
 
 /// Process-wide environment guard for tests that set or clear env vars.

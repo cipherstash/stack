@@ -11,6 +11,10 @@
 # (cargo@0.96 needs rustc 1.93; the Ubuntu runners ship 1.92). Bump a pin
 # deliberately, after checking it still builds with the runners' rustc.
 [tools]
+# EQL setup can leave a cargo-binstall shim in the shared mise cache. Select
+# its prebuilt installer here too: an unselected shim is still found on PATH
+# by the cargo backend, then fails before it can install any test tools.
+"cargo-binstall" = "1.26.2"
 "cargo:cargo-nextest" = "0.9.146"
 # Coverage → CRAP (Change Risk Anti-Patterns) metric tooling. `cargo llvm-cov`
 # produces an LCOV file that `cargo crap` scores; see `mise run crap:stack-auth`.

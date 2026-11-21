@@ -36,7 +36,7 @@ func TestLiveRecordsAndTerms(t *testing.T) {
 		t.Fatalf("encrypted = %+v", encrypted)
 	}
 
-	probe, err := testusers.Fields.Age.Equality(ctx, cipher, 34)
+	probe, err := testusers.Fields.Age.Eq(ctx, cipher, 34)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestLiveRecordsAndTerms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scoped, err := testusers.Fields.Email.Equality(ctx, tenant7, "bob@example.com")
+	scoped, err := testusers.Fields.Email.Eq(ctx, tenant7, "bob@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

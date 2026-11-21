@@ -56,10 +56,12 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   NEXTEST_PROFILE: ci
 
+# cargo-crap 0.6.1's prebuilt GNU/Linux binary needs GLIBC 2.39 (Ubuntu 24.04).
+# Keep the runner and its mise cache on that image. The gate itself is unchanged.
 jobs:
   crap-stack-auth:
     name: CRAP (stack-auth)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -74,16 +76,19 @@ jobs:
           working_directory: .
           cache: true
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
-          cache_key_prefix: mise-v1-ubuntu-2204
+          cache_key_prefix: mise-v1-ubuntu-2404
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Check the CRAP executable before collecting coverage
+        run: cargo crap --version
 
       - name: Run the CRAP gate
         run: mise run crap:stack-auth -- --format github
 
   crap-stack-encrypt:
     name: CRAP (stack-encrypt)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -97,9 +102,12 @@ jobs:
           working_directory: .
           cache: true
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
-          cache_key_prefix: mise-v1-ubuntu-2204
+          cache_key_prefix: mise-v1-ubuntu-2404
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Check the CRAP executable before collecting coverage
+        run: cargo crap --version
 
       - name: Run the CRAP gate
         run: mise run crap:stack-encrypt -- --format github

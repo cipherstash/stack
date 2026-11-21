@@ -17,6 +17,13 @@ name: Tests (Go)
 #   go-binding-cross
 #               the same Go tests on macOS and Windows, against the guests
 #               Linux built, after checking their sha256.
+#   eql-postgres
+#               the Go module's PostgreSQL tests, against PostgreSQL 17 with
+#               the EQL v4 bundle built from this tree installed: rows the Go
+#               SDK stores in every EQL type it produces, found by the queries
+#               it derives, through EQL's operators; and a few hundred random
+#               values in every ordered type, which must order as their
+#               plaintexts do.
 #   live        the Go live tests and the stack-encrypt examples, against real
 #               ZeroKMS with the repository's CS_* credentials.
 #
@@ -31,14 +38,33 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**
       - packages/eql/crates/eql-domains/**
+      # eql-postgres installs the EQL v4 bundle `mise run build` writes from
+      # these, so a SQL change starts the Go test that runs against it.
+      - packages/eql/src/**
+      - packages/eql/tasks/**
+      - packages/eql/crates/eql-codegen/**
+      - packages/eql/Cargo.toml
+      - packages/eql/mise.toml
+      # The Go tests read the cross-language fixtures the EQL suite writes,
+      # which are derived under EQL's lockfile.
+      - packages/eql/tests/encryption/**
+      - packages/eql/Cargo.lock
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
+      - scripts/go-nested-modules.sh
+      - scripts/stack-conformance.sh
+      - scripts/stack-conformance-selection.mjs
+      - scripts/stack-eql-conformance.mjs
+      - scripts/stack-conformance-evidence.mjs
+      - scripts/stack-lifecycle-conformance.mjs
+      - scripts/stack-exchange-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -56,14 +82,33 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**
       - packages/eql/crates/eql-domains/**
+      # eql-postgres installs the EQL v4 bundle `mise run build` writes from
+      # these, so a SQL change starts the Go test that runs against it.
+      - packages/eql/src/**
+      - packages/eql/tasks/**
+      - packages/eql/crates/eql-codegen/**
+      - packages/eql/Cargo.toml
+      - packages/eql/mise.toml
+      # The Go tests read the cross-language fixtures the EQL suite writes,
+      # which are derived under EQL's lockfile.
+      - packages/eql/tests/encryption/**
+      - packages/eql/Cargo.lock
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
+      - scripts/go-nested-modules.sh
+      - scripts/stack-conformance.sh
+      - scripts/stack-conformance-selection.mjs
+      - scripts/stack-eql-conformance.mjs
+      - scripts/stack-conformance-evidence.mjs
+      - scripts/stack-lifecycle-conformance.mjs
+      - scripts/stack-exchange-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -90,6 +135,7 @@ env:
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: full
   CARGO_TERM_COLOR: always
+  STACK_CONFORMANCE_REQUIRED: "1"
   CARGO_NET_GIT_FETCH_WITH_CLI: true
 
 jobs:
@@ -107,6 +153,18 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+
+      # Native EQL conformance uses the EQL workspace's toolchain. Install it
+      # before root setup, so ordinary guest commands retain the root pin.
+      # Its local DATABASE_URL must not enable database tests in this job.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: packages/eql
+          env: false
+          cache: true
+          cache_key_prefix: mise-v1-ubuntu-2204
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
@@ -133,6 +191,7 @@ jobs:
             .
             languages/golang/encrypt/guest
             languages/golang/auth/guest
+            packages/eql
 
       # The HTTP-free core compiles for wasm32-wasip1 with no JS-host backend
       # and no native HTTP/TLS stack in its graph: the invariant the wazero
@@ -155,11 +214,12 @@ jobs:
       - name: stack-encrypt guest release build and import-surface gate
         run: mise run wasm:guest:build
 
-      # The deterministic-kms TEST build, under encrypt/testdata where no
-      # build or embed sees it: the Go tests open the record fixture Rust
-      # sealed through it, and run round trips with no ZeroKMS. The tests
-      # skip when it is absent, so a build that forgets this step would pass
-      # with less coverage, which is why the job builds it unconditionally.
+      # The deterministic-kms TEST build, under encrypt/encrypttest/wasm,
+      # which package encrypttest embeds: the Go tests open the record
+      # fixture Rust sealed through it, and run round trips with no ZeroKMS.
+      # The encrypt package's tests skip when it is absent, so a build that
+      # forgets this step would pass with less coverage, which is why the job
+      # builds it unconditionally. encrypttest's own tests fail without it.
       - name: stack-encrypt guest deterministic test build
         run: mise run wasm:guest:build:deterministic
 
@@ -186,7 +246,7 @@ jobs:
       # same bytes rather than a stale or rebuilt guest.
       - name: Record the guests' checksums
         run: |
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             (cd languages/golang && openssl dgst -sha256 "$guest" | awk '{print $NF}' > "$guest.sha256" && echo "$guest sha256 $(cat "$guest.sha256")")
           done
 
@@ -197,12 +257,12 @@ jobs:
           path: |
             languages/golang/encrypt/wasm/stack_encrypt_guest.wasm
             languages/golang/encrypt/wasm/stack_encrypt_guest.wasm.sha256
-            languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm
-            languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm.sha256
+            languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm
+            languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm.sha256
             languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm
             languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm.sha256
-            languages/golang/encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm
-            languages/golang/encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm.sha256
+            languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm
+            languages/golang/encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm.sha256
             languages/golang/auth/wasm/stack_auth_guest.wasm
             languages/golang/auth/wasm/stack_auth_guest.wasm.sha256
           if-no-files-found: error
@@ -215,10 +275,73 @@ jobs:
       - name: Go binding
         env:
           STACK_ENCRYPT_TESTS_REQUIRE_LOCK: "1"
+          STACK_CONFORMANCE_OUTPUT: ${{ runner.temp }}/stack-conformance-go.json
         run: |
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
+
+      - name: Required lifecycle and key-I/O conformance
+        env:
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/lifecycle-conformance
+        run: mise run test:conformance:lifecycle
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lifecycle-conformance
+          path: ${{ runner.temp }}/lifecycle-conformance/*.json
+          if-no-files-found: error
+
+      - name: Required EQL and JSON conformance
+        env:
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/eql-conformance-fast
+        run: mise run test:conformance:eql
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-conformance-fast
+          path: ${{ runner.temp }}/eql-conformance-fast/*.json
+          if-no-files-found: error
+
+      - name: Fresh Go scalar artifacts open in Rust
+        env:
+          STACK_CONFORMANCE_INPUT: ${{ runner.temp }}/stack-conformance-go.json
+        run: |
+          test -s "$STACK_CONFORMANCE_INPUT"
+          mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance
+
+      # Both directions, in a fresh directory: Rust and Go each write values
+      # of every kind, records with terms, opaque blobs and EQL rows, and the
+      # other opens them and derives the same query terms. The task fails on
+      # a missing guest or runner and on an empty output, and its report
+      # records the producers, engines, guests and storage versions.
+      - name: Required fresh cross-language artifact exchange
+        env:
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/exchange-conformance
+        run: mise run test:conformance:exchange
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: exchange-conformance
+          path: ${{ runner.temp }}/exchange-conformance/*.json
+          if-no-files-found: error
+
+      # The Rust suite opens the committed v4_rows.json,
+      # v4_smallint_rows.json and v4_json_rows.json, whose ciphertexts the Go
+      # SDK sealed when each file was last regenerated. This also hands it the rows the Go SDK
+      # seals in this run, so a Go guest and a native Rust build that stop
+      # agreeing on today's ciphertexts fail here rather than when someone
+      # next regenerates a file. Both filters are exact, so each test named
+      # here is one that reads the rows handed to it. The toolchain is the
+      # root's pin, as for the guests.
+      - name: Rows the Go SDK seals today open in Rust
+        run: |
+          rows="$RUNNER_TEMP/v4_rows.json"
+          smallint_rows="$RUNNER_TEMP/v4_smallint_rows.json"
+          json_rows="$RUNNER_TEMP/v4_json_rows.json"
+          (cd languages/golang && CGO_ENABLED=0 EQL_V4_ROWS_OUT="$rows" EQL_V4_SMALLINT_ROWS_OUT="$smallint_rows" EQL_V4_JSON_ROWS_OUT="$json_rows" go test -count=1 -run '^(TestV4RowsMatchTheCommittedFixture|TestV4SmallintRowsMatchTheCommittedFixture|TestV4JSONRowsMatchTheCommittedFixture)$' ./encrypt)
+          test -s "$rows" && test -s "$smallint_rows" && test -s "$json_rows"
+          EQL_V4_ROWS="$rows" EQL_V4_SMALLINT_ROWS="$smallint_rows" EQL_V4_JSON_ROWS="$json_rows" cargo test --locked --manifest-path packages/eql/Cargo.toml -p eql-encryption-tests --test v4_types -- --exact rows_the_go_sdk_sealed_open_in_rust smallint_rows_the_go_sdk_sealed_open_in_rust json_rows_the_go_sdk_sealed_open_in_rust
 
       # What is encrypted is fixed before the program ships: every generated
       # file is committed, and this fails when `go generate` would change
@@ -230,6 +353,11 @@ jobs:
         working-directory: languages/golang
         run: |
           CGO_ENABLED=0 go generate ./...
+          # The nested modules (encrypt/example holds generated code) are
+          # outside `./...`, so each runs its own go generate.
+          ../../scripts/go-nested-modules.sh | while IFS= read -r nested; do
+            (cd "$nested" && CGO_ENABLED=0 go generate ./...)
+          done
           git diff --exit-code -- .
           untracked="$(git status --porcelain -- .)"
           if [ -n "$untracked" ]; then
@@ -313,7 +441,7 @@ jobs:
       - name: The guests are the ones Linux built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -325,6 +453,109 @@ jobs:
 
       - name: Go binding
         run: scripts/go-binding-test.sh languages/golang
+
+  # The Go SDK's rows and queries inside PostgreSQL with EQL installed: the
+  # path a program using the SDK runs. Its own job because it builds the EQL
+  # v4 bundle under packages/eql's mise config, which pins its own Rust; the
+  # guests are the ones wasi-check built and checked.
+  eql-postgres:
+    env:
+      MISE_ENV: test
+    name: Go rows and queries in PostgreSQL with EQL v4
+    needs: wasi-check
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        # Container port only: Docker picks the host port, and the test step
+        # reads it from `job.services`, so the number is written once.
+        ports:
+          - 5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # The root config for Go, and EQL's for the build of its bundle.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
+
+      # mise caches Rust symlinks, not ~/.rustup. A cache hit can leave a
+      # toolchain directory without cargo and still report "all tools
+      # installed". The step above exports RUSTUP_TOOLCHAIN=1.94.1, and the
+      # EQL step below compiles cargo:sqlx-cli with it when the cache does not
+      # hold that tool, so the root toolchain is repaired before that step:
+      # after it, the build fails with "Missing manifest in toolchain".
+      - name: Restore the root Rust toolchain behind the cached mise link
+        run: |
+          mise install --force rust
+          mise x -- cargo --version
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: packages/eql
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
+
+      # The same repair for EQL's own toolchain, before cargo is used.
+      - name: Restore the EQL Rust toolchain behind the cached mise link
+        run: |
+          mise -C packages/eql install --force rust
+          mise -C packages/eql x -- cargo --version
+
+      # `mise run build` compiles eql-codegen to write the bundle.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: wasm-guests
+          path: languages/golang
+
+      - name: The guests are the ones wasi-check built and checked
+        run: |
+          cd languages/golang
+          for guest in encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm; do
+            want=$(cat "$guest.sha256")
+            got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
+            if [ "$want" != "$got" ]; then
+              echo "$guest checksum mismatch: artifact says $want, file is $got" >&2
+              exit 1
+            fi
+            echo "$guest sha256 $got"
+          done
+
+      # Builds the bundle from the tree, installs it, and runs the tests; a
+      # skip fails the task, so a missing guest or database cannot pass.
+      - name: Go rows, queries and required JSON conformance through EQL v4
+        env:
+          EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres sslmode=disable"
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/eql-conformance-postgres
+        run: mise run go:test:postgres
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-conformance-postgres
+          path: ${{ runner.temp }}/eql-conformance-postgres/*.json
+          if-no-files-found: error
 
   # Round trips through real ZeroKMS. The Go live tests skip without their
   # STACK_ENCRYPT_TEST_* variables, so the secrets pre-flight runs first and
@@ -379,7 +610,7 @@ jobs:
       - name: The guests are the ones the wasi-check job built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/encrypttest/wasm/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -391,9 +622,17 @@ jobs:
 
       # The whole package, not a `-run` filter: live tests are the ones that
       # call `liveClient`, and not all of them are named `TestLive*`.
+      # ./encrypt/... stops at the nested modules (encrypt/encrypttest,
+      # encrypt/example), so each runs too: a live test added to one of them
+      # would otherwise never run here.
       - name: Go live tests
         working-directory: languages/golang
-        run: CGO_ENABLED=0 go test -v ./encrypt/...
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go test -v ./encrypt/...
+          ../../scripts/go-nested-modules.sh | while IFS= read -r nested; do
+            (cd "$nested" && CGO_ENABLED=0 go test -v ./...)
+          done
 
       - name: stack-encrypt examples
         run: |

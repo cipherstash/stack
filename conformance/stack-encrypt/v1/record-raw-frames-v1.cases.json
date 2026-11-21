@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "profile": "record-raw-frames-v1",
+  "seed": "0000000000000000000000000000000000000000000000000000000000000000",
+  "required_capabilities": [
+    "records",
+    "raw-frames",
+    "read-shapes",
+    "authenticated-types"
+  ],
+  "boundary_error": {
+    "code": "stack_guest_abi::malformed_input",
+    "fields": {}
+  },
+  "cases": [
+    {
+      "id": "success-frozen-leaf",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c75650402000000010000006301650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "success",
+      "retrievals": 1,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "2147483647"
+          }
+        }
+      ]
+    },
+    {
+      "id": "authenticated-int64",
+      "read": {
+        "kind": "int64",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c75650402000000010000006301650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "authenticated",
+      "retrievals": 1,
+      "expected": {
+        "code": "stack_encrypt::plan_field_type",
+        "fields": {
+          "expected": "int64",
+          "field": "value"
+        }
+      }
+    },
+    {
+      "id": "authenticated-string",
+      "read": {
+        "kind": "string",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c75650402000000010000006301650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "authenticated",
+      "retrievals": 1,
+      "expected": {
+        "code": "stack_encrypt::plan_field_type",
+        "fields": {
+          "expected": "string",
+          "field": "value"
+        }
+      }
+    },
+    {
+      "id": "shape-c-passthrough",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c756504020000000100000063050422000000020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "shape",
+      "retrievals": 0,
+      "expected": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "passthrough"
+        }
+      }
+    },
+    {
+      "id": "authenticated-c-empty-sequence",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c75650402000000010000006306650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "authenticated",
+      "retrievals": 1,
+      "expected": {
+        "code": "stack_encrypt::aead",
+        "fields": {}
+      }
+    },
+    {
+      "id": "leaf-unknown-version",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c75650402000000010000006301650000000900000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "leaf",
+      "retrievals": 0,
+      "expected": {
+        "code": "stack_encrypt::leaf_version",
+        "fields": {
+          "version": 9
+        }
+      }
+    },
+    {
+      "id": "leaf-truncated",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c75650402000000010000006301020000000100020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "leaf",
+      "retrievals": 0,
+      "expected": {
+        "code": "stack_encrypt::leaf_truncated",
+        "fields": {}
+      }
+    },
+    {
+      "id": "transport-repeated-field",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030100000004020000000500000076616c75650402000000010000006301650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c0500000076616c75650402000000010000006301650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "transport",
+      "retrievals": 0,
+      "native_tree": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "field_repeated"
+        }
+      }
+    },
+    {
+      "id": "transport-repeated-output",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c75650403000000010000006301650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923010000006301650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "transport",
+      "retrievals": 0,
+      "native_tree": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "repeated_key"
+        }
+      }
+    },
+    {
+      "id": "transport-retired-none-tag",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c7565040200000001000000630200000000020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "transport",
+      "retrievals": 0
+    },
+    {
+      "id": "transport-trailing-byte",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030100000004010000000500000076616c75650402000000010000006301650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c00",
+      "class": "transport",
+      "retrievals": 0
+    },
+    {
+      "id": "transport-truncated-count",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "030200000004010000000500000076616c75650402000000010000006301650000000100000000000000000000000000000000df8645b1e40e43f85ac7f5e826cdc74a20000c6e5a55e60affd88eb9de36776909b2a62f0647fafd4b7e3540ef8d957793530208f96d6eb25ce8eaee6dddf6f8f78015539889051e72eddd5d96456b5487231923020000006571050b20000000d679831312fc2b397f9b7fa5dba2ac3918431668c9923c379eadf8fedf4a7c4c",
+      "class": "transport",
+      "retrievals": 0
+    },
+    {
+      "id": "transport-not-a-tree",
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "frame_hex": "ff",
+      "class": "transport",
+      "retrievals": 0
+    }
+  ]
+}

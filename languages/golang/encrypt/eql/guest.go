@@ -10,8 +10,8 @@ import (
 // crate in ../guest with its `eql` feature, copied here by
 // `mise run wasm:guest:build:eql`. It is embedded as a directory so the
 // package compiles without it; encrypt.NewClient reports its absence. Its
-// deterministic-kms test build lives under encrypt/testdata with the other
-// test build: nothing test-only is embedded.
+// deterministic-kms test build lives under encrypt/encrypttest/wasm with the
+// other test build, embedded by package encrypttest and by nothing here.
 //
 //go:embed wasm
 var guestFS embed.FS

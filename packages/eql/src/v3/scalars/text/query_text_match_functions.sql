@@ -4,64 +4,64 @@
 -- REQUIRE: src/v3/scalars/text/text_match_functions.sql
 
 --! @file encrypted_domain/text/query_text_match_functions.sql
---! @brief Functions for eql_v3.query_text_match.
+--! @brief Functions for {{prefix}}.query_text_match.
 
---! @brief Index extractor for eql_v3.query_text_match.
---! @param a eql_v3.query_text_match
---! @return eql_v3_internal.bloom_filter
-CREATE FUNCTION eql_v3.match_term(a eql_v3.query_text_match)
-RETURNS eql_v3_internal.bloom_filter
+--! @brief Index extractor for {{prefix}}.query_text_match.
+--! @param a {{prefix}}.query_text_match
+--! @return {{prefix}}_internal.bloom_filter
+CREATE FUNCTION {{prefix}}.match_term(a {{prefix}}.query_text_match)
+RETURNS {{prefix}}_internal.bloom_filter
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3_internal.bloom_filter(a::jsonb) $$;
+AS $$ SELECT {{prefix}}_internal.bloom_filter(a::jsonb) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_match.
---! @param a public.eql_v3_text_match
---! @param b eql_v3.query_text_match
+--! @brief Operator wrapper for {{prefix}}.query_text_match.
+--! @param a public.{{prefix}}_text_match
+--! @param b {{prefix}}.query_text_match
 --! @return boolean
-CREATE FUNCTION eql_v3.matches(a public.eql_v3_text_match, b eql_v3.query_text_match)
+CREATE FUNCTION {{prefix}}.matches(a public.{{prefix}}_text_match, b {{prefix}}.query_text_match)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) OPERATOR(pg_catalog.@>) eql_v3.match_term(b) AND (pg_catalog.cardinality(eql_v3.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality(eql_v3.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a) OPERATOR(pg_catalog.@>) {{prefix}}.match_term(b) AND (pg_catalog.cardinality({{prefix}}.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality({{prefix}}.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_match.
---! @param a eql_v3.query_text_match
---! @param b public.eql_v3_text_match
+--! @brief Operator wrapper for {{prefix}}.query_text_match.
+--! @param a {{prefix}}.query_text_match
+--! @param b public.{{prefix}}_text_match
 --! @return boolean
-CREATE FUNCTION eql_v3.matches(a eql_v3.query_text_match, b public.eql_v3_text_match)
+CREATE FUNCTION {{prefix}}.matches(a {{prefix}}.query_text_match, b public.{{prefix}}_text_match)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) OPERATOR(pg_catalog.@>) eql_v3.match_term(b) AND (pg_catalog.cardinality(eql_v3.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality(eql_v3.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a) OPERATOR(pg_catalog.@>) {{prefix}}.match_term(b) AND (pg_catalog.cardinality({{prefix}}.match_term(b)) OPERATOR(pg_catalog.>) 0 OR pg_catalog.cardinality({{prefix}}.match_term(a)) OPERATOR(pg_catalog.=) 0) $$;
 
---! @brief Unsupported operator blocker for eql_v3.query_text_match: public.eql_v3_text_search_ore and eql_v3.query_text_match (mismatched query domain).
---! @param a public.eql_v3_text_search_ore left operand
---! @param b eql_v3.query_text_match right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_text_match: public.{{prefix}}_text_search_ore and {{prefix}}.query_text_match (mismatched query domain).
+--! @param a public.{{prefix}}_text_search_ore left operand
+--! @param b {{prefix}}.query_text_match right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal."@@"(a public.eql_v3_text_search_ore, b eql_v3.query_text_match)
+CREATE FUNCTION {{prefix}}_internal."@@"(a public.{{prefix}}_text_search_ore, b {{prefix}}.query_text_match)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '@@', 'public.eql_v3_text_search_ore and eql_v3.query_text_match'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '@@', 'public.{{prefix}}_text_search_ore and {{prefix}}.query_text_match'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_text_match: eql_v3.query_text_match and public.eql_v3_text_search_ore (mismatched query domain).
---! @param a eql_v3.query_text_match left operand
---! @param b public.eql_v3_text_search_ore right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_text_match: {{prefix}}.query_text_match and public.{{prefix}}_text_search_ore (mismatched query domain).
+--! @param a {{prefix}}.query_text_match left operand
+--! @param b public.{{prefix}}_text_search_ore right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal."@@"(a eql_v3.query_text_match, b public.eql_v3_text_search_ore)
+CREATE FUNCTION {{prefix}}_internal."@@"(a {{prefix}}.query_text_match, b public.{{prefix}}_text_search_ore)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '@@', 'eql_v3.query_text_match and public.eql_v3_text_search_ore'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '@@', '{{prefix}}.query_text_match and public.{{prefix}}_text_search_ore'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_text_match: public.eql_v3_text_search and eql_v3.query_text_match (mismatched query domain).
---! @param a public.eql_v3_text_search left operand
---! @param b eql_v3.query_text_match right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_text_match: public.{{prefix}}_text_search and {{prefix}}.query_text_match (mismatched query domain).
+--! @param a public.{{prefix}}_text_search left operand
+--! @param b {{prefix}}.query_text_match right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal."@@"(a public.eql_v3_text_search, b eql_v3.query_text_match)
+CREATE FUNCTION {{prefix}}_internal."@@"(a public.{{prefix}}_text_search, b {{prefix}}.query_text_match)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '@@', 'public.eql_v3_text_search and eql_v3.query_text_match'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '@@', 'public.{{prefix}}_text_search and {{prefix}}.query_text_match'; END; $$
 LANGUAGE plpgsql;
 
---! @brief Unsupported operator blocker for eql_v3.query_text_match: eql_v3.query_text_match and public.eql_v3_text_search (mismatched query domain).
---! @param a eql_v3.query_text_match left operand
---! @param b public.eql_v3_text_search right operand
+--! @brief Unsupported operator blocker for {{prefix}}.query_text_match: {{prefix}}.query_text_match and public.{{prefix}}_text_search (mismatched query domain).
+--! @param a {{prefix}}.query_text_match left operand
+--! @param b public.{{prefix}}_text_search right operand
 --! @return boolean never returned — the function always raises
-CREATE FUNCTION eql_v3_internal."@@"(a eql_v3.query_text_match, b public.eql_v3_text_search)
+CREATE FUNCTION {{prefix}}_internal."@@"(a {{prefix}}.query_text_match, b public.{{prefix}}_text_search)
 RETURNS boolean IMMUTABLE PARALLEL SAFE
-AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '@@', 'eql_v3.query_text_match and public.eql_v3_text_search'; END; $$
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %: use the query domain that matches the column', '@@', '{{prefix}}.query_text_match and public.{{prefix}}_text_search'; END; $$
 LANGUAGE plpgsql;

@@ -21,6 +21,7 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
       - languages/typescript/packages/auth/**
@@ -44,6 +45,7 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
       - languages/typescript/packages/auth/**

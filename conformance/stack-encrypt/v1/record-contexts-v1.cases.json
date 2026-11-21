@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "profile": "record-contexts-v1",
+  "required_capabilities": [
+    "composition",
+    "typed-extensions",
+    "context-fields",
+    "frozen-open"
+  ],
+  "cases": [
+    {
+      "id": "literal-base",
+      "base": "literal",
+      "label": "tenants/acme",
+      "parts": []
+    },
+    {
+      "id": "literal-one",
+      "base": "literal",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "uint64",
+          "text": "7"
+        }
+      ]
+    },
+    {
+      "id": "literal-ordered",
+      "base": "literal",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "uint64",
+          "text": "7"
+        },
+        {
+          "type": "string",
+          "text": "eu"
+        }
+      ]
+    },
+    {
+      "id": "literal-reversed",
+      "base": "literal",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "string",
+          "text": "eu"
+        },
+        {
+          "type": "uint64",
+          "text": "7"
+        }
+      ]
+    },
+    {
+      "id": "literal-signed",
+      "base": "literal",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "int64",
+          "text": "7"
+        }
+      ]
+    },
+    {
+      "id": "literal-narrow",
+      "base": "literal",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "int32",
+          "text": "7"
+        }
+      ]
+    },
+    {
+      "id": "literal-text",
+      "base": "literal",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "string",
+          "text": "eu"
+        }
+      ]
+    },
+    {
+      "id": "literal-bytes",
+      "base": "literal",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "bytes",
+          "text": "6575"
+        }
+      ]
+    },
+    {
+      "id": "literal-empty-part",
+      "base": "literal",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "string",
+          "text": ""
+        }
+      ]
+    },
+    {
+      "id": "field-base",
+      "base": "field",
+      "label": "tenants/acme",
+      "parts": []
+    },
+    {
+      "id": "field-one",
+      "base": "field",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "uint64",
+          "text": "7"
+        }
+      ]
+    },
+    {
+      "id": "field-ordered",
+      "base": "field",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "uint64",
+          "text": "7"
+        },
+        {
+          "type": "string",
+          "text": "eu"
+        }
+      ]
+    },
+    {
+      "id": "field-reversed",
+      "base": "field",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "string",
+          "text": "eu"
+        },
+        {
+          "type": "uint64",
+          "text": "7"
+        }
+      ]
+    },
+    {
+      "id": "field-signed",
+      "base": "field",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "int64",
+          "text": "7"
+        }
+      ]
+    },
+    {
+      "id": "field-narrow",
+      "base": "field",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "int32",
+          "text": "7"
+        }
+      ]
+    },
+    {
+      "id": "field-text",
+      "base": "field",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "string",
+          "text": "eu"
+        }
+      ]
+    },
+    {
+      "id": "field-bytes",
+      "base": "field",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "bytes",
+          "text": "6575"
+        }
+      ]
+    },
+    {
+      "id": "field-empty-part",
+      "base": "field",
+      "label": "tenants/acme",
+      "parts": [
+        {
+          "type": "string",
+          "text": ""
+        }
+      ]
+    }
+  ]
+}

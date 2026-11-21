@@ -1,0 +1,11 @@
+error: `bind(..)` takes `name: Type` for a part the caller supplies, or `field = ".."` for a part stored in the row
+  --> tests/ui/part_bad_key.rs:15:46
+   |
+15 | #[stash(struct = User, scope = "users", bind(column = "id"))]
+   |                                              ^^^^^^
+
+error: `scope(..)` takes `name: Type` for a part the caller supplies, or `field = ".."` for a part stored in the row
+  --> tests/ui/part_bad_key.rs:21:47
+   |
+21 | #[stash(struct = User, scope = "users", scope(tenant))]
+   |                                               ^^^^^^

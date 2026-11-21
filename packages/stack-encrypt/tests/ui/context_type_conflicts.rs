@@ -1,15 +1,16 @@
 //! `context_type` names what the caller passes to a record whose fields take
 //! the caller's context. The two shapes that settle the context themselves
 //! refuse it, and like every other singular attribute it is given once.
-use stack_encrypt::{EncryptFrom, StackCipherText};
+use stack_encrypt::target::EncryptTarget;
+use stack_encrypt::StackCipherText;
 
-#[derive(EncryptFrom)]
-#[stash(struct = User, context = "users", context_type = stack_encrypt::target::AeadContext)]
+#[derive(EncryptTarget)]
+#[stash(struct = User, scope = "users", context_type = stack_encrypt::target::AeadContext)]
 struct ByField {
     name: StackCipherText,
 }
 
-#[derive(EncryptFrom)]
+#[derive(EncryptTarget)]
 #[stash(plaintext = String, context_type = stack_encrypt::target::AeadContext)]
 struct Stored {
     #[stash(context_field)]
@@ -17,7 +18,7 @@ struct Stored {
     c: StackCipherText,
 }
 
-#[derive(EncryptFrom)]
+#[derive(EncryptTarget)]
 #[stash(context_type = stack_encrypt::target::AeadContext, context_type = stack_encrypt::target::AeadContext)]
 struct Twice {
     c: StackCipherText,

@@ -1,6 +1,7 @@
-//! The engine pieces the plan builder lowers onto: indexes as types
-//! (`Index`, `Indexes`, `indexed`, `Encrypted<Terms>`), `passthrough`, and
-//! running a description held in a variable (`run`, `run_decryption`).
+//! The engine pieces that the targets and the data plans are composed of:
+//! indexes as types (`Index`, `Indexes`, `indexed`, `Encrypted<Terms>`),
+//! `passthrough`, and running a description held in a variable (`run`,
+//! `run_decryption`).
 //!
 //! The load-bearing claim is byte identity: `indexed` is the hand
 //! composition `ciphertext().accepting().zip(..)` and what the derive emits,
@@ -17,10 +18,10 @@ use stack_encrypt::sem::{
 };
 use stack_encrypt::target::{
     ciphertext, equality, indexed, matching, ope, ore, passthrough, AeadContext, Borrowed,
-    CallerContext, DecryptFrom, Decryption, Encrypted, Encryption, Equality, Index, IndexSpec,
-    Indexes, Match, Ope, Ore, Owned,
+    CallerContext, DecryptSource, Decryption, EncryptTarget, Encrypted, Encryption, Equality,
+    Index, IndexSpec, Indexes, Match, Ope, Ore, Owned,
 };
-use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, Error, StackCipherText};
+use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, Error, StackCipherText};
 use stack_kms::{FakeDataKeySource, IdentifiedBy};
 use vitaminc_protected::{Controlled, Protected};
 
@@ -38,19 +39,19 @@ fn caller() -> CallerContext {
 #[cfg(feature = "dynamic")]
 #[tokio::test]
 async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
-    use stack_encrypt::dynamic::{FfiValue, Value};
+    use stack_encrypt::dynamic::ValueFrame;
 
     let (cipher, generates, _) = counting_cipher().await;
     let keyset = cipher.default_keyset();
 
     let list: Vec<IndexSpec> = vec![IndexSpec::Ore, IndexSpec::Equality];
     assert_eq!(
-        Indexes::<Value>::specs(&list),
+        Indexes::<ValueFrame>::specs(&list),
         [IndexSpec::Ore, IndexSpec::Equality],
         "the specs are the indexes', in the order given"
     );
     assert_eq!(
-        Indexes::<Value>::specs(&vec![IndexSpec::Equality]),
+        Indexes::<ValueFrame>::specs(&vec![IndexSpec::Equality]),
         [IndexSpec::Equality]
     );
     assert_eq!(
@@ -61,8 +62,8 @@ async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
 
     let terms: Vec<stack_encrypt::dynamic::TermBytes> = keyset
         .run(
-            Indexes::<Value>::operations::<_, Borrowed>(&list),
-            &Value::new(FfiValue::UInt32(34)),
+            Indexes::<ValueFrame>::operations::<_, Borrowed>(&list),
+            &ValueFrame::of(34u32).unwrap(),
             caller(),
         )
         .await
@@ -114,7 +115,7 @@ fn aead() -> AeadContext {
 
 /// What the derive emits today for a field with equality and ORE beside its
 /// ciphertext: the struct `indexed::<String>((Equality, Ore))` replaces.
-#[derive(EncryptFrom, DecryptInto)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String)]
 struct DerivedEmail {
     c: StackCipherText,
@@ -146,7 +147,11 @@ mod given_equality_and_ore_over_a_string {
             .zip(ore::<String, _, Borrowed>());
         let ((hand_c, hand_eq), hand_ore) = keyset.run(hand, &email, caller()).await.expect("hand");
 
-        let derived: DerivedEmail = keyset.encrypt_as(&email, caller()).await.expect("derived");
+        let derived: DerivedEmail = email
+            .clone()
+            .encrypt_into_with_context(&keyset, caller())
+            .await
+            .expect("derived");
 
         let (eq, ore) = out.terms;
         assert_eq!(eq, hand_eq, "equality term matches the hand composition");
@@ -162,21 +167,22 @@ mod given_equality_and_ore_over_a_string {
             hm: eq,
             ob: ore,
         };
-        let opened: String = as_derived
-            .decrypt_into(&cipher, caller())
+        let opened: String = String::decrypt_from_with_context(as_derived, &cipher, caller())
             .await
             .expect("the derive's reader opens indexed's ciphertext");
         assert_eq!(opened, email);
-        let opened: String = Encrypted {
-            ciphertext: derived.c,
-            terms: (),
-        }
-        .decrypt_into(&cipher, aead())
+        let opened: String = String::decrypt_from_with_context(
+            Encrypted {
+                ciphertext: derived.c,
+                terms: (),
+            },
+            &cipher,
+            aead(),
+        )
         .await
         .expect("Encrypted's reader opens the derive's ciphertext");
         assert_eq!(opened, email);
-        let opened: String = keyset
-            .decrypt_as(hand_c, aead())
+        let opened: String = String::decrypt_from_with_context(hand_c, &keyset, aead())
             .await
             .expect("the hand composition's ciphertext opens");
         assert_eq!(opened, email);
@@ -210,7 +216,9 @@ mod given_equality_and_ore_over_a_string {
             owned.terms, borrowed.terms,
             "the mode does not change a term"
         );
-        let opened: String = owned.decrypt_into(&cipher, aead()).await.expect("open");
+        let opened: String = String::decrypt_from_with_context(owned, &cipher, aead())
+            .await
+            .expect("open");
         assert_eq!(opened, email);
     }
 }
@@ -226,6 +234,7 @@ mod given_a_set_of_indexes {
             MatchOptions {
                 tokenizer: Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 4,
                 m: 512,
             }
@@ -241,7 +250,7 @@ mod given_a_set_of_indexes {
         assert_eq!(<Ore as Indexes<u32>>::specs(&Ore), [IndexSpec::Ore]);
         assert_eq!(<Ope as Indexes<u32>>::specs(&Ope), [IndexSpec::Ope]);
         assert_eq!(
-            <Match as Indexes<String>>::specs(&Match::default()),
+            <Match as Indexes<String>>::specs(&Match),
             [IndexSpec::Match(MatchOptions::default())]
         );
         assert_eq!(
@@ -275,7 +284,7 @@ mod given_a_set_of_indexes {
 
     #[test]
     fn a_match_index_debugs_by_name_whatever_its_configuration() {
-        assert_eq!(format!("{:?}", Match::default()), "Match");
+        assert_eq!(format!("{:?}", Match), "Match");
         assert_eq!(format!("{:?}", Match::<Words>::new()), "Match");
         let copied = Match::<Words>::new();
         let again = copied;
@@ -386,7 +395,9 @@ mod given_a_set_of_indexes {
             .unwrap();
         let (m, o, p, e) = four.terms;
         assert_eq!((m, o, p, e), (words, ore_t, ope_t, eq));
-        let opened: String = four.ciphertext.decrypt_into(&cipher, aead()).await.unwrap();
+        let opened: String = String::decrypt_from_with_context(four.ciphertext, &cipher, aead())
+            .await
+            .unwrap();
         assert_eq!(opened, text);
     }
 
@@ -433,7 +444,7 @@ mod given_a_set_of_indexes {
             .unwrap();
         assert_eq!(q, ope_t, "position 2");
 
-        let four = (Equality, Ore, Ope, Match::default());
+        let four = (Equality, Ore, Ope, Match);
         assert_eq!(
             Index::<String>::spec(Indexes::<String>::select::<Match, _>(&four)),
             IndexSpec::Match(MatchOptions::default()),
@@ -535,7 +546,9 @@ mod given_a_passthrough {
             1,
             "one batch, for the ciphertext"
         );
-        let opened: String = keyset.decrypt_as(sealed, aead()).await.expect("open");
+        let opened: String = String::decrypt_from_with_context(sealed, &keyset, aead())
+            .await
+            .expect("open");
         assert_eq!(opened, value);
     }
 }
@@ -547,12 +560,14 @@ mod given_a_decryption_held_in_a_variable {
     async fn run_decryption_opens_it_through_a_keyset_or_the_client() {
         let cipher = stack_cipher().await;
         let keyset = cipher.default_keyset();
-        let sealed: StackCipherText = keyset
-            .encrypt_as(&"secret".to_string(), aead())
+        let sealed: StackCipherText = "secret"
+            .to_string()
+            .encrypt_into_with_context(&keyset, aead())
             .await
             .unwrap();
-        let again: StackCipherText = keyset
-            .encrypt_as(&"secret".to_string(), aead())
+        let again: StackCipherText = "secret"
+            .to_string()
+            .encrypt_into_with_context(&keyset, aead())
             .await
             .unwrap();
 
@@ -575,12 +590,14 @@ mod given_a_decryption_held_in_a_variable {
             .keyset(IdentifiedBy::Name("globex".to_string().into()))
             .await
             .unwrap();
-        let sealed: StackCipherText = acme
-            .encrypt_as(&"secret".to_string(), aead())
+        let sealed: StackCipherText = "secret"
+            .to_string()
+            .encrypt_into_with_context(&acme, aead())
             .await
             .unwrap();
-        let again: StackCipherText = acme
-            .encrypt_as(&"secret".to_string(), aead())
+        let again: StackCipherText = "secret"
+            .to_string()
+            .encrypt_into_with_context(&acme, aead())
             .await
             .unwrap();
 
@@ -611,6 +628,7 @@ mod given_encrypted_terms_as_a_target {
             MatchOptions {
                 tokenizer: Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 4,
                 m: 512,
             }
@@ -623,7 +641,9 @@ mod given_encrypted_terms_as_a_target {
     async fn same_bytes<S, Terms, X>(value: S, indexes: X)
     where
         S: stack_encrypt::Encrypt
-            + for<'a> stack_encrypt::Decrypt<'a>
+            + stack_encrypt::Decrypt
+            + zeroize::Zeroize
+            + Send
             + Clone
             + PartialEq
             + std::fmt::Debug
@@ -634,7 +654,11 @@ mod given_encrypted_terms_as_a_target {
         let cipher = stack_cipher().await;
         let keyset = cipher.default_keyset();
 
-        let typed: Encrypted<Terms> = keyset.encrypt_as(&value, caller()).await.expect("typed");
+        let typed: Encrypted<Terms> = value
+            .clone()
+            .encrypt_into_with_context(&keyset, caller())
+            .await
+            .expect("typed");
         let data = keyset
             .run(indexed::<S, _, Borrowed, _>(indexes), &value, caller())
             .await
@@ -644,16 +668,18 @@ mod given_encrypted_terms_as_a_target {
             "the typed and data spellings agree"
         );
 
-        let opened: S = Encrypted {
-            ciphertext: typed.ciphertext,
-            terms: (),
-        }
-        .decrypt_into(&cipher, aead())
+        let opened: S = S::decrypt_from_with_context(
+            Encrypted {
+                ciphertext: typed.ciphertext,
+                terms: (),
+            },
+            &cipher,
+            aead(),
+        )
         .await
         .expect("the typed ciphertext opens");
         assert_eq!(opened, value);
-        let opened: S = data
-            .decrypt_into(&cipher, aead())
+        let opened: S = S::decrypt_from_with_context(data, &cipher, aead())
             .await
             .expect("data opens");
         assert_eq!(opened, value);
@@ -662,47 +688,30 @@ mod given_encrypted_terms_as_a_target {
     #[tokio::test]
     async fn every_term_alone_lowers_to_its_index() {
         same_bytes::<u32, EqualityTerm, _>(7, Equality).await;
-        same_bytes::<String, MatchTerms, _>("hello world".into(), Match::default()).await;
+        same_bytes::<String, MatchTerms, _>("hello world".into(), Match).await;
         same_bytes::<String, MatchTerms<Words>, _>("Hello World".into(), Match::<Words>::new())
             .await;
         same_bytes::<u32, OreTerm<u32>, _>(7, Ore).await;
         same_bytes::<u32, OpeTerm<u32>, _>(7, Ope).await;
     }
 
+    /// A set holds at most one index for each operator, so the largest set
+    /// over text is three: equality, match and one order index. A set that
+    /// names an index twice, or two order indexes, is refused
+    /// (`combinators.rs`).
     #[tokio::test]
     async fn a_tuple_of_terms_lowers_to_the_tuple_of_their_indexes_in_order() {
         same_bytes::<u32, (EqualityTerm, OreTerm<u32>), _>(7, (Equality, Ore)).await;
         same_bytes::<u32, (OreTerm<u32>, EqualityTerm), _>(7, (Ore, Equality)).await;
-        same_bytes::<u32, (OpeTerm<u32>, OreTerm<u32>, EqualityTerm), _>(7, (Ope, Ore, Equality))
-            .await;
-        same_bytes::<
-            String,
-            (
-                MatchTerms<Words>,
-                OpeTerm<String>,
-                OreTerm<String>,
-                EqualityTerm,
-            ),
-            _,
-        >(
+        same_bytes::<u32, (OpeTerm<u32>, EqualityTerm), _>(7, (Ope, Equality)).await;
+        same_bytes::<String, (MatchTerms<Words>, OpeTerm<String>, EqualityTerm), _>(
             "Hello World".into(),
-            (Match::<Words>::new(), Ope, Ore, Equality),
+            (Match::<Words>::new(), Ope, Equality),
         )
         .await;
-        // Five: every index once, and a second match index under other options.
-        same_bytes::<
-            String,
-            (
-                EqualityTerm,
-                MatchTerms,
-                OreTerm<String>,
-                OpeTerm<String>,
-                MatchTerms<Words>,
-            ),
-            _,
-        >(
+        same_bytes::<String, (EqualityTerm, MatchTerms, OreTerm<String>), _>(
             "Hello World".into(),
-            (Equality, Match::default(), Ore, Ope, Match::<Words>::new()),
+            (Equality, Match, Ore),
         )
         .await;
     }
@@ -713,8 +722,11 @@ mod given_encrypted_terms_as_a_target {
         let keyset = cipher.default_keyset();
         let email = "bob@example.com".to_string();
 
-        let typed: Encrypted<(EqualityTerm, MatchTerms)> =
-            keyset.encrypt_as(&email, caller()).await.expect("typed");
+        let typed: Encrypted<(EqualityTerm, MatchTerms)> = email
+            .clone()
+            .encrypt_into_with_context(&keyset, caller())
+            .await
+            .expect("typed");
         let hand = ciphertext::<String, _, Borrowed>()
             .accepting::<CallerContext>()
             .zip(equality::<String, _, Borrowed>())
@@ -722,10 +734,11 @@ mod given_encrypted_terms_as_a_target {
         let ((hand_c, hand_eq), hand_match) =
             keyset.run(hand, &email, caller()).await.expect("hand");
         assert_eq!(typed.terms, (hand_eq, hand_match));
-        let opened: String = keyset.decrypt_as(hand_c, aead()).await.expect("hand opens");
+        let opened: String = String::decrypt_from_with_context(hand_c, &keyset, aead())
+            .await
+            .expect("hand opens");
         assert_eq!(opened, email);
-        let opened: String = typed
-            .decrypt_into(&cipher, aead())
+        let opened: String = String::decrypt_from_with_context(typed, &cipher, aead())
             .await
             .expect("typed opens");
         assert_eq!(opened, email);
@@ -735,19 +748,38 @@ mod given_encrypted_terms_as_a_target {
     fn the_terms_name_their_indexes() {
         assert_eq!(
             Indexes::<String>::specs(
-                &<(
-                    MatchTerms<Words>,
-                    OpeTerm<String>,
-                    OreTerm<String>,
-                    EqualityTerm
-                ) as TermSet<String>>::INDEXES
+                &<(MatchTerms<Words>, OpeTerm<String>, EqualityTerm) as TermSet<String>>::INDEXES
             ),
             [
                 IndexSpec::Match(Words::options()),
                 IndexSpec::Ope,
-                IndexSpec::Ore,
                 IndexSpec::Equality
             ]
         );
     }
+}
+
+/// A boolean has no equality term, on the typed path as on the dynamic one
+/// (`dynamic::admits`): refused when the term is derived, before any key
+/// is minted. (It has no order term either, which is a compile error:
+/// `bool` is not `sem::Orderable`, so `OreTerm<bool>`, `OpeTerm<bool>` and
+/// `indexed::<bool, _, _, _>(Ore)` do not build.)
+#[tokio::test]
+async fn a_boolean_has_no_equality_term() {
+    use stack_encrypt::sem::TermError;
+
+    let (cipher, generates, _) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let equality_term: Result<EqualityTerm, _> = true
+        .encrypt_into_with_context(&keyset, nonempty!("users/flag"))
+        .await;
+    assert!(matches!(
+        equality_term,
+        Err(Error::Term(TermError::NoEqualityTerm))
+    ));
+    assert_eq!(
+        generates.load(Ordering::SeqCst),
+        0,
+        "refused before any key"
+    );
 }

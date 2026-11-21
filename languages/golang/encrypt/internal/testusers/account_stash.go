@@ -13,7 +13,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // Account prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
@@ -143,6 +143,7 @@ func (f AccountEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v str
 	return EncryptedAccountEmail{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
-func (f AccountEmailField) Equality(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
-	return f.field.Equality(ctx, c, v)
+func (f AccountEmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return encrypt.EqualityTerm(term), err
 }

@@ -4,216 +4,216 @@
 -- REQUIRE: src/v3/scalars/numeric/query_numeric_ord_functions.sql
 
 --! @file encrypted_domain/numeric/query_numeric_ord_operators.sql
---! @brief Operators for eql_v3.query_numeric_ord.
+--! @brief Operators for {{prefix}}.query_numeric_ord.
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = public.eql_v3_numeric_ord, RIGHTARG = eql_v3.query_numeric_ord,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = public.eql_v3_numeric_ord, RIGHTARG = eql_v3.query_numeric_ord,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3.lt,
-  LEFTARG = public.eql_v3_numeric_ord, RIGHTARG = eql_v3.query_numeric_ord,
+  FUNCTION = {{prefix}}.lt,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord,
   COMMUTATOR = >, NEGATOR = >=, RESTRICT = scalarltsel, JOIN = scalarltjoinsel
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3.lt,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord,
+  FUNCTION = {{prefix}}.lt,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord,
   COMMUTATOR = >, NEGATOR = >=, RESTRICT = scalarltsel, JOIN = scalarltjoinsel
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3.lte,
-  LEFTARG = public.eql_v3_numeric_ord, RIGHTARG = eql_v3.query_numeric_ord,
+  FUNCTION = {{prefix}}.lte,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord,
   COMMUTATOR = >=, NEGATOR = >, RESTRICT = scalarlesel, JOIN = scalarlejoinsel
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3.lte,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord,
+  FUNCTION = {{prefix}}.lte,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord,
   COMMUTATOR = >=, NEGATOR = >, RESTRICT = scalarlesel, JOIN = scalarlejoinsel
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3.gt,
-  LEFTARG = public.eql_v3_numeric_ord, RIGHTARG = eql_v3.query_numeric_ord,
+  FUNCTION = {{prefix}}.gt,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord,
   COMMUTATOR = <, NEGATOR = <=, RESTRICT = scalargtsel, JOIN = scalargtjoinsel
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3.gt,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord,
+  FUNCTION = {{prefix}}.gt,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord,
   COMMUTATOR = <, NEGATOR = <=, RESTRICT = scalargtsel, JOIN = scalargtjoinsel
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3.gte,
-  LEFTARG = public.eql_v3_numeric_ord, RIGHTARG = eql_v3.query_numeric_ord,
+  FUNCTION = {{prefix}}.gte,
+  LEFTARG = public.{{prefix}}_numeric_ord, RIGHTARG = {{prefix}}.query_numeric_ord,
   COMMUTATOR = <=, NEGATOR = <, RESTRICT = scalargesel, JOIN = scalargejoinsel
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3.gte,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord,
+  FUNCTION = {{prefix}}.gte,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord,
   COMMUTATOR = <=, NEGATOR = <, RESTRICT = scalargesel, JOIN = scalargejoinsel
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_numeric_eq, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_numeric_eq, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_eq
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_eq
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_numeric_eq, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_numeric_eq, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_eq
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_eq
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_numeric_ord_ore, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ore
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ore
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_numeric_ord_ore, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ore
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ore
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_numeric_ord_ore, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ore
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ore
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_numeric_ord_ore, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ore
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ore
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_numeric_ord_ore, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ore
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ore
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_numeric_ord_ore, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_numeric_ord_ore, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ore
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ore
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_numeric_ord_ope, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_numeric_ord_ope, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ope
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ope
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_numeric_ord_ope, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_numeric_ord_ope, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ope
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ope
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_numeric_ord_ope, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_numeric_ord_ope, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ope
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ope
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_numeric_ord_ope, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_numeric_ord_ope, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ope
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ope
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_numeric_ord_ope, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_numeric_ord_ope, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ope
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ope
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_numeric_ord_ope, RIGHTARG = eql_v3.query_numeric_ord
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_numeric_ord_ope, RIGHTARG = {{prefix}}.query_numeric_ord
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = eql_v3.query_numeric_ord, RIGHTARG = public.eql_v3_numeric_ord_ope
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = {{prefix}}.query_numeric_ord, RIGHTARG = public.{{prefix}}_numeric_ord_ope
 );

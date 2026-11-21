@@ -1,0 +1,45 @@
+error[E0599]: `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>` is not an iterator
+  --> tests/ui/audited_call_is_only_awaited.rs:13:35
+   |
+13 |     let _ = seal().audit(facts()).zip(seal());
+   |                                   ^^^ `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>` is not an iterator
+   |
+  ::: src/audit.rs
+   |
+   | pub struct Audited<C> {
+   | --------------------- doesn't satisfy `_: Iterator`
+   |
+   = note: the following trait bounds were not satisfied:
+           `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>: Iterator`
+           which is required by `&mut Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>: Iterator`
+
+error[E0599]: no method named `audit` found for struct `Audited<C>` in the current scope
+  --> tests/ui/audited_call_is_only_awaited.rs:15:35
+   |
+15 |     let _ = seal().audit(facts()).audit(facts());
+   |             ------                ^^^^^ method not found in `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>`
+   |             |
+   |             method `audit` is available on `stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>`
+
+error[E0599]: no method named `audit` found for struct `Audited<C>` in the current scope
+  --> tests/ui/audited_call_is_only_awaited.rs:18:10
+   |
+16 |       let _ = Pending::all(&keyset, vec![seal(), seal()])
+   |               -------------------------------------------
+   |               |
+   |  _____________method `audit` is available on `stack_encrypt::Pending<'_, Vec<stack_encrypt::Ciphertext>, FakeDataKeySource>`
+   | |
+17 | |         .audit(facts())
+18 | |         .audit(facts());
+   | |         -^^^^^ method not found in `Audited<stack_encrypt::Pending<'_, Vec<stack_encrypt::Ciphertext>, FakeDataKeySource>>`
+   | |_________|
+   |
+
+error[E0308]: mismatched types
+  --> tests/ui/audited_call_is_only_awaited.rs:20:40
+   |
+20 |     let _ = Pending::all(&keyset, vec![seal().audit(facts()), seal()]);
+   |                                        ^^^^^^^^^^^^^^^^^^^^^ expected `Pending<'_, _, FakeDataKeySource>`, found `Audited<Pending<'_, Ciphertext, ...>>`
+   |
+   = note: expected struct `stack_encrypt::Pending<'_, _, FakeDataKeySource>`
+              found struct `Audited<stack_encrypt::Pending<'_, stack_encrypt::Ciphertext, FakeDataKeySource>>`

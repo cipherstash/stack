@@ -1,91 +1,163 @@
-error[E0277]: the trait bound `CallerContext: Default` is not satisfied
-  --> tests/ui/leaf_without_context.rs:17:39
+error[E0277]: the trait bound `RequiredContext<CallerContext>: AllowsNoContext` is not satisfied
+  --> tests/ui/leaf_without_context.rs:17:53
    |
-17 |     let _term: EqualityTerm = "alice".encrypt_into(cipher).await.unwrap();
-   |                                       ^^^^^^^^^^^^ the trait `Default` is not implemented for `CallerContext`
+17 |     let _term: EqualityTerm = String::from("alice").encrypt_into(keyset).await.unwrap();
+   |                                                     ^^^^^^^^^^^^ the trait `AllowsNoContext` is not implemented for `RequiredContext<CallerContext>`
    |
+help: the following other types implement trait `AllowsNoContext`
+  --> src/target/input.rs
+   |
+   | impl AllowsNoContext for NoCallerContext {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoCallerContext`
+...
+   | impl<C> AllowsNoContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+...
+   | impl AllowsNoContext for DeclaredScopes {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
 note: required by a bound in `encrypt_into`
-  --> src/target/operations.rs
+  --> src/target/conversion.rs
    |
-   |     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
+   |     fn encrypt_into<'a, T, K: 'static>(self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
    |        ------------ required by a bound in this associated function
 ...
-   |         T::Context: Default,
-   |                     ^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+   |         T::ContextInput: AllowsNoContext,
+   |                          ^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
-error[E0277]: the trait bound `CallerContext: Default` is not satisfied
+error[E0277]: the trait bound `RequiredContext<CallerContext>: AllowsNoContext` is not satisfied
   --> tests/ui/leaf_without_context.rs:18:39
    |
-18 |     let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
-   |                                       ^^^^^^^^^^^^ the trait `Default` is not implemented for `CallerContext`
+18 |     let _record: EncryptedAge = 42u32.encrypt_into(keyset).await.unwrap();
+   |                                       ^^^^^^^^^^^^ the trait `AllowsNoContext` is not implemented for `RequiredContext<CallerContext>`
    |
+help: the following other types implement trait `AllowsNoContext`
+  --> src/target/input.rs
+   |
+   | impl AllowsNoContext for NoCallerContext {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoCallerContext`
+...
+   | impl<C> AllowsNoContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+...
+   | impl AllowsNoContext for DeclaredScopes {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
 note: required by a bound in `encrypt_into`
-  --> src/target/operations.rs
+  --> src/target/conversion.rs
    |
-   |     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
+   |     fn encrypt_into<'a, T, K: 'static>(self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
    |        ------------ required by a bound in this associated function
 ...
-   |         T::Context: Default,
-   |                     ^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+   |         T::ContextInput: AllowsNoContext,
+   |                          ^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
-error[E0277]: the trait bound `AeadContext: Default` is not satisfied
+error[E0277]: the trait bound `RequiredContext<AeadContext>: AllowsNoContext` is not satisfied
   --> tests/ui/leaf_without_context.rs:19:41
    |
-19 |     let _column: Vec<StackCipherText> = vec![1u32].encrypt_into(cipher).await.unwrap();
+19 |     let _column: Vec<StackCipherText> = vec![1u32].encrypt_into(keyset).await.unwrap();
    |                                         ^^^^^^^^^^ ------------ required by a bound introduced by this call
    |                                         |
-   |                                         the trait `Default` is not implemented for `AeadContext`
+   |                                         the trait `AllowsNoContext` is not implemented for `RequiredContext<AeadContext>`
    |
+help: the following other types implement trait `AllowsNoContext`
+  --> src/target/input.rs
+   |
+   | impl AllowsNoContext for NoCallerContext {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoCallerContext`
+...
+   | impl<C> AllowsNoContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+...
+   | impl AllowsNoContext for DeclaredScopes {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
 note: required by a bound in `encrypt_into`
-  --> src/target/operations.rs
+  --> src/target/conversion.rs
    |
-   |     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
+   |     fn encrypt_into<'a, T, K: 'static>(self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
    |        ------------ required by a bound in this associated function
 ...
-   |         T::Context: Default,
-   |                     ^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+   |         T::ContextInput: AllowsNoContext,
+   |                          ^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
-error[E0277]: the trait bound `CallerContext: Default` is not satisfied
+error[E0277]: the trait bound `RequiredContext<CallerContext>: AllowsNoContext` is not satisfied
   --> tests/ui/leaf_without_context.rs:23:34
    |
 23 |     let _age = u32::decrypt_from(record, cipher).await.unwrap();
-   |                ----------------- ^^^^^^ the trait `Default` is not implemented for `CallerContext`
+   |                ----------------- ^^^^^^ the trait `AllowsNoContext` is not implemented for `RequiredContext<CallerContext>`
    |                |
    |                required by a bound introduced by this call
    |
+help: the following other types implement trait `AllowsNoContext`
+  --> src/target/input.rs
+   |
+   | impl AllowsNoContext for NoCallerContext {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoCallerContext`
+...
+   | impl<C> AllowsNoContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+...
+   | impl AllowsNoContext for DeclaredScopes {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeclaredScopes`
 note: required by a bound in `decrypt_from`
-  --> src/target/operations.rs
+  --> src/target/conversion.rs
    |
    |     fn decrypt_from<'a, S, K: 'static>(
    |        ------------ required by a bound in this associated function
 ...
-   |         S::Context: Default,
-   |                     ^^^^^^^ required by this bound in `DecryptFrom::decrypt_from`
+   |         S::ContextInput: AllowsNoContext,
+   |                          ^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from`
 
 error[E0277]: the trait bound `CallerContext: From<()>` is not satisfied
-  --> tests/ui/leaf_without_context.rs:27:49
+  --> tests/ui/leaf_without_context.rs:28:44
    |
-27 |     let _age: u32 = record.decrypt_into(cipher, ()).await.unwrap();
-   |                            ------------         ^^ the trait `From<()>` is not implemented for `CallerContext`
-   |                            |
-   |                            required by a bound introduced by this call
+28 |         .encrypt_into_with_context(keyset, ())
+   |          -------------------------         ^^ the trait `From<()>` is not implemented for `CallerContext`
+   |          |
+   |          required by a bound introduced by this call
    |
    = help: the following other types implement trait `From<T>`:
+             `CallerContext` implements `From<&NonEmpty<T>>`
              `CallerContext` implements `From<NonEmpty<T>>`
+             `CallerContext` implements `From<Parts<S, B>>`
+             `CallerContext` implements `From<RequiredContext<C>>`
              `CallerContext` implements `From<i128>`
              `CallerContext` implements `From<i16>`
              `CallerContext` implements `From<i32>`
              `CallerContext` implements `From<i64>`
-             `CallerContext` implements `From<i8>`
-             `CallerContext` implements `From<u128>`
-             `CallerContext` implements `From<u16>`
            and $N others
    = note: required for `()` to implement `Into<CallerContext>`
-note: required by a bound in `decrypt_into`
-  --> src/target/operations.rs
+note: required by a bound in `encrypt_into_with_context`
+  --> src/target/conversion.rs
    |
-   |     fn decrypt_into<'a, P: 'static, K: 'static>(
-   |        ------------ required by a bound in this associated function
+   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
 ...
-   |         context: impl Into<<Self as DecryptInto<P>>::Context>,
-   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_into`
+   |         context: impl Into<<T::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into_with_context`
+
+error[E0277]: the trait bound `CallerContext: From<()>` is not satisfied
+  --> tests/ui/leaf_without_context.rs:31:63
+   |
+31 |     let _age = u32::decrypt_from_with_context(record, keyset, ())
+   |                ------------------------------                 ^^ the trait `From<()>` is not implemented for `CallerContext`
+   |                |
+   |                required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `From<T>`:
+             `CallerContext` implements `From<&NonEmpty<T>>`
+             `CallerContext` implements `From<NonEmpty<T>>`
+             `CallerContext` implements `From<Parts<S, B>>`
+             `CallerContext` implements `From<RequiredContext<C>>`
+             `CallerContext` implements `From<i128>`
+             `CallerContext` implements `From<i16>`
+             `CallerContext` implements `From<i32>`
+             `CallerContext` implements `From<i64>`
+           and $N others
+   = note: required for `()` to implement `Into<CallerContext>`
+note: required by a bound in `decrypt_from_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn decrypt_from_with_context<'a, S, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         context: impl Into<<S::ContextInput as AcceptsContext>::Value>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from_with_context`

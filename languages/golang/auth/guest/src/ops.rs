@@ -30,8 +30,8 @@
 
 use serde::Deserialize;
 use stack_auth::Token;
+use stack_guest_abi::value::HostValue;
 use stack_profile::{DeviceIdentity, ProfileStore};
-use vitaminc_aead_value::{transport as codec, FfiValue};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use stack_guest_abi::last_error::{internal, malformed};
@@ -76,18 +76,18 @@ fn text(bytes: &[u8]) -> Result<&str, u32> {
     std::str::from_utf8(bytes).map_err(|_| malformed("an input is not UTF-8"))
 }
 
-fn string(value: impl Into<String>) -> FfiValue {
-    FfiValue::String(value.into().into())
+fn string(value: impl Into<String>) -> HostValue {
+    HostValue::text(value)
 }
 
-fn optional(value: Option<&str>) -> FfiValue {
-    value.map_or(FfiValue::Null, string)
+fn optional(value: Option<&str>) -> HostValue {
+    value.map_or(HostValue::Null, string)
 }
 
-fn encode(value: FfiValue) -> Result<Vec<u8>, u32> {
-    let mut out = Vec::new();
-    codec::encode_value(value, &mut out).map_err(|_| internal("an output did not encode"))?;
-    Ok(out)
+fn encode(value: HostValue) -> Result<Vec<u8>, u32> {
+    value
+        .encode()
+        .map_err(|_| internal("an output did not encode"))
 }
 
 /// The current workspace id, as text.
@@ -122,7 +122,7 @@ pub fn list_workspaces(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let ids = store(dir)?
         .list_workspaces()
         .map_err(|e| fail_profile(&e))?;
-    encode(FfiValue::Array(ids.into_iter().map(string).collect()))
+    encode(HostValue::List(ids.into_iter().map(string).collect()))
 }
 
 /// The directory of the store scoped to workspace `id`, as text: what
@@ -165,11 +165,11 @@ pub fn secret_key(dir: &[u8]) -> Result<Vec<u8>, u32> {
     // fields cannot be moved out of it directly.
     let client_id = std::mem::take(&mut file.client_id);
     let client_key = std::mem::take(&mut file.client_key);
-    encode(FfiValue::Object(vec![
+    encode(HostValue::Map(vec![
         ("client_id".to_string(), string(client_id)),
         (
             "client_key".to_string(),
-            FfiValue::Bytes(client_key.into_bytes().into()),
+            HostValue::Bytes(client_key.into_bytes().into()),
         ),
     ]))
 }
@@ -184,7 +184,7 @@ pub fn token(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let token: Token = store(dir)?
         .load(AUTH_FILENAME)
         .map_err(|e| fail_profile(&e))?;
-    encode(FfiValue::Object(vec![
+    encode(HostValue::Map(vec![
         (
             "access_token".to_string(),
             string(token.access_token().as_str()),
@@ -192,7 +192,7 @@ pub fn token(dir: &[u8]) -> Result<Vec<u8>, u32> {
         ("token_type".to_string(), string(token.token_type())),
         (
             "expires_at".to_string(),
-            FfiValue::UInt64(token.expires_at()),
+            HostValue::UInt(token.expires_at()),
         ),
         ("region".to_string(), optional(token.region())),
         ("client_id".to_string(), optional(token.client_id())),
@@ -214,7 +214,7 @@ pub fn has_token(dir: &[u8]) -> Result<Vec<u8>, u32> {
 /// `{device_instance_id, device_name}`. Creating one is the CLI's.
 pub fn device_identity(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let identity = DeviceIdentity::load(&store(dir)?).map_err(|e| fail_profile(&e))?;
-    encode(FfiValue::Object(vec![
+    encode(HostValue::Map(vec![
         (
             "device_instance_id".to_string(),
             string(identity.device_instance_id.to_string()),
@@ -235,12 +235,12 @@ mod tests {
         t.path().to_str().unwrap().as_bytes().to_vec()
     }
 
-    fn decode(bytes: &[u8]) -> FfiValue {
-        codec::decode_value(&mut codec::Reader::new(bytes)).unwrap()
+    fn decode(bytes: &[u8]) -> HostValue {
+        HostValue::decode(bytes).unwrap()
     }
 
-    fn field<'a>(value: &'a FfiValue, key: &str) -> &'a FfiValue {
-        let FfiValue::Object(entries) = value else {
+    fn field<'a>(value: &'a HostValue, key: &str) -> &'a HostValue {
+        let HostValue::Map(entries) = value else {
             panic!("not an object");
         };
         entries
@@ -250,16 +250,16 @@ mod tests {
             .unwrap_or_else(|| panic!("no field {key}"))
     }
 
-    fn as_text(value: &FfiValue) -> String {
-        let FfiValue::String(s) = value else {
+    fn as_text(value: &HostValue) -> String {
+        let HostValue::Text(s) = value else {
             panic!("not a string");
         };
-        String::from_utf8(s.risky_ref().to_vec()).unwrap()
+        s.to_string()
     }
 
-    fn as_bytes(value: &FfiValue) -> Vec<u8> {
+    fn as_bytes(value: &HostValue) -> Vec<u8> {
         use vitaminc_protected::Controlled;
-        let FfiValue::Bytes(b) = value else {
+        let HostValue::Bytes(b) = value else {
             panic!("not bytes");
         };
         b.risky_ref().to_vec()
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(current_workspace(&d).unwrap(), WS_A.as_bytes());
 
         let listed = decode(&list_workspaces(&d).unwrap());
-        let FfiValue::Array(items) = listed else {
+        let HostValue::List(items) = listed else {
             panic!("not an array");
         };
         let ids: Vec<String> = items.iter().map(as_text).collect();
@@ -411,11 +411,11 @@ mod tests {
         assert_eq!(as_text(field(&tok, "token_type")), "Bearer");
         assert!(matches!(
             field(&tok, "expires_at"),
-            FfiValue::UInt64(1_800_000_000)
+            HostValue::UInt(1_800_000_000)
         ));
         assert_eq!(as_text(field(&tok, "region")), "ap-southeast-2");
-        assert!(matches!(field(&tok, "client_id"), FfiValue::Null));
-        let FfiValue::Object(entries) = tok else {
+        assert!(matches!(field(&tok, "client_id"), HostValue::Null));
+        let HostValue::Map(entries) = tok else {
             panic!("not an object");
         };
         assert!(

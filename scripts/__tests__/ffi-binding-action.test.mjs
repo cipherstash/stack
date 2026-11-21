@@ -43,6 +43,7 @@ import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { readJsonc } from './lib/read-jsonc.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { compiledCrateFiles } from './lib/rust-compiled-files.mjs'
 
 const ACTION = '.github/actions/build-ffi-binding/action.yml'
 const RUST_WORKFLOW = '.github/workflows/tests-rust.yml'
@@ -567,7 +568,7 @@ function enabledByFeatures(features, requested, defaults) {
   for (const [dep, depFeature] of weak) {
     if (deps.has(dep)) want(dep, depFeature)
   }
-  return { deps, depFeatures }
+  return { deps, depFeatures, features: seen }
 }
 
 /**
@@ -590,8 +591,10 @@ function alreadyWalked(prior, wanted, defaultFeatures) {
 /**
  * Every crate `cargo build` compiles into the artifact, as repo-relative
  * directories, starting from the cdylib crate and following path deps
- * transitively. The starting crate itself is excluded: it lives under
- * `languages/typescript/packages/protect-ffi/crates/**`, which both keys already hash.
+ * transitively, each with the files cargo reads from it under the features it
+ * is built with (`compiledCrateFiles`). The starting crate itself is excluded:
+ * it lives under `languages/typescript/packages/protect-ffi/crates/**`, which
+ * both keys already hash.
  */
 function compiledPathDependencies(rootManifestRel) {
   const crates = new Map()
@@ -639,10 +642,22 @@ function compiledPathDependencies(rootManifestRel) {
       queue.push(depManifest)
     }
   }
-  return {
-    crates: [...crates.entries()].map(([dir, name]) => ({ dir, name })),
-    unresolved,
-  }
+  // The files of each crate cargo reads, under the union of what every
+  // dependent asked of it. A module behind a feature nobody enables is not
+  // among them, which is what lets the keys name less than the whole crate.
+  const withFiles = [...crates.entries()].map(([dir, name]) => {
+    const manifest = `${dir}/Cargo.toml`
+    const asked = requested.get(manifest)
+    const { features } = enabledByFeatures(
+      parseFeatures(readFileSync(resolve(REPO_ROOT, manifest), 'utf8')),
+      [...asked.features],
+      asked.defaults,
+    )
+    const walk = compiledCrateFiles(REPO_ROOT, dir, features)
+    unresolved.push(...walk.unresolved)
+    return { dir, name, features, files: walk.files }
+  })
+  return { crates: withFiles, unresolved }
 }
 
 /**
@@ -794,7 +809,7 @@ describe('build-ffi-binding — the keys cover every crate the build compiles', 
   it('found the path dependencies it means to check', () => {
     expect(
       COMPILED.unresolved,
-      `These manifests are named by a \`path = \` dependency and do not exist. A path dep cargo cannot resolve does not build at all, so this is a broken manifest rather than a broken guard.`,
+      `The walk could not follow these. A manifest named by a \`path = \` dependency that does not exist is a broken manifest, since cargo cannot build it either. Anything else is a module or include \`compiledCrateFiles\` (./lib/rust-compiled-files.mjs) cannot resolve: a \`mod\` with no file, an \`include_str!\` with a non-literal argument, an inline module declaring file modules. Teach the walk the form rather than widening the key, or the keys stop being derived from what cargo compiles.`,
     ).toEqual([])
 
     expect(
@@ -804,23 +819,86 @@ describe('build-ffi-binding — the keys cover every crate the build compiles', 
 
     for (const crate of COMPILED.crates) {
       expect(
-        trackedUnder(crate.dir).length,
-        `${crate.dir} (\`${crate.name}\`) has no git-tracked files, so the coverage check below has nothing to compare against.`,
+        crate.files.filter((file) => file.endsWith('.rs')).length,
+        `The walk found no Rust source in ${crate.dir} (\`${crate.name}\`), so the coverage check below has nothing to compare against.`,
       ).toBeGreaterThan(0)
     }
+  })
+
+  it('the compiled-file walk drops only what a feature gates off', () => {
+    // The narrowing below rests on this: `eql-bindings` is compiled with no
+    // features, so its `stack-encrypt` modules are not compiled into the
+    // binding, and the keys may leave them out. If protect-ffi ever turns
+    // that feature on, the walk includes them and the coverage check fails
+    // until the keys name them, which is the direction this should fail in.
+    const eqlBindings = COMPILED.crates.find(
+      (crate) => crate.name === 'eql-bindings',
+    )
+    expect(
+      eqlBindings,
+      'eql-bindings is no longer a compiled path dependency of the binding. Rewrite this case around what replaced it.',
+    ).toBeTruthy()
+    const all = compiledCrateFiles(
+      REPO_ROOT,
+      eqlBindings.dir,
+      new Set(['stack-encrypt', 'targets']),
+    )
+    expect(all.unresolved).toEqual([])
+    const gated = all.files.filter((file) => !eqlBindings.files.includes(file))
+    expect(
+      eqlBindings.features.has('stack-encrypt') ? [] : gated.length,
+      'With every feature on, the walk should find the `v4`, `encryption` and `encoding` modules on top of what the binding compiles. If it finds nothing more, the feature gate is no longer being read and every module counts as compiled.',
+    ).not.toBe(0)
+    expect(
+      gated.every((file) =>
+        /\/src\/(v4|encryption|encoding)(\/|\.rs$)/.test(file),
+      ),
+      `The walk dropped files outside the modules eql-bindings gates behind \`stack-encrypt\`:\n${gated.join('\n')}`,
+    ).toBe(true)
   })
 
   for (const { step, name } of RUST_CACHE_STEPS) {
     it(`"${name}" hashes every crate the build compiles`, () => {
       const patterns = hashFilesPatterns(step?.with?.key)
       const uncovered = COMPILED.crates.flatMap((crate) =>
-        trackedUnder(crate.dir).filter(
+        crate.files.filter(
           (file) => !patterns.some((pattern) => globMatches(pattern, file)),
         ),
       )
       expect(
         uncovered,
-        `These files are compiled into the artifact this step caches and are absent from its key, so an edit to one leaves the key unchanged, the restore hits, and the build step is skipped over a stale binary. A path dependency carries no registry checksum and does not move \`Cargo.lock\` on a source-only edit, so nothing else in the key covers it either.\nAdd a glob for each crate to the \`hashFiles(...)\` list on the "${name}" step.`,
+        `These files are compiled into the artifact this step caches and are absent from its key, so an edit to one leaves the key unchanged, the restore hits, and the build step is skipped over a stale binary. A path dependency carries no registry checksum and does not move \`Cargo.lock\` on a source-only edit, so nothing else in the key covers it either.\nAdd a glob covering each to the \`hashFiles(...)\` list on the "${name}" step, and the same entry to the \`paths:\` filters that wasm-build-inputs-paths-filter.test.mjs holds to this key.`,
+      ).toEqual([])
+    })
+
+    it(`"${name}" hashes nothing beside those crates that cargo does not read`, () => {
+      // The other direction. A key naming a whole crate directory, or every
+      // crate beside it, hashes tests, docs, generated bindings and modules
+      // behind features the binding never enables; each edit to one misses the
+      // cache, and every path-filtered workflow listing the same glob starts
+      // its suites over a change that cannot reach them. That was
+      // \`packages/eql/crates/**\`, and an EQL v4 pull request ran every
+      // TypeScript integration suite. Scoped to the directories holding the
+      // compiled crates, and their workspace manifests.
+      const patterns = hashFilesPatterns(step?.with?.key)
+      const compiled = new Set(COMPILED.crates.flatMap((crate) => crate.files))
+      const roots = new Set(
+        COMPILED.crates.map((crate) => workspaceRootOf(crate.dir)),
+      )
+      const parents = [
+        ...new Set(COMPILED.crates.map((crate) => dirname(crate.dir))),
+      ]
+      const extra = parents.flatMap((parent) =>
+        trackedUnder(parent).filter(
+          (file) =>
+            !compiled.has(file) &&
+            !roots.has(file) &&
+            patterns.some((pattern) => globMatches(pattern, file)),
+        ),
+      )
+      expect(
+        extra,
+        `The "${name}" key hashes these, and cargo reads none of them when it builds the binding. Narrow the glob to the compiled files (the walk in ./lib/rust-compiled-files.mjs lists them), and narrow the \`paths:\` filters that copy it.`,
       ).toEqual([])
     })
 

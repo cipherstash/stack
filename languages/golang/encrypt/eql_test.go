@@ -25,9 +25,7 @@ import (
 func deterministicEQLClient(t *testing.T) *encrypt.Client {
 	t.Helper()
 	c, err := encrypt.NewDeterministicEQLClient(context.Background(), testSeed)
-	if errors.Is(err, encrypt.ErrDeterministicEQLGuestNotBuilt) || errors.Is(err, encrypt.ErrGuestNotBuilt) {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,8 +39,8 @@ var contacts = []testusers.Contact{
 	{ID: 3, Email: "bob@example.com"},
 }
 
-// eqlEnvelope is the EQL v3 envelope of a TextEq value, as PostgreSQL's
-// public.eql_v3_text_eq domain checks it.
+// eqlEnvelope is the EQL v4 envelope of a TextEq value, as PostgreSQL's
+// public.eql_v4_text_eq domain checks it.
 type eqlEnvelope struct {
 	V  int `json:"v"`
 	I  struct{ T, C string }
@@ -91,8 +89,8 @@ func TestTextEqFieldSealsToTheEQLEnvelope(t *testing.T) {
 			t.Errorf("row %d: passthrough id %d, want %d", i, e.ID, contacts[i].ID)
 		}
 		env := decodeEnvelope(t, e.Email)
-		if env.V != 3 {
-			t.Errorf("row %d: v = %d, want 3", i, env.V)
+		if env.V != 4 {
+			t.Errorf("row %d: v = %d, want 4", i, env.V)
 		}
 		if env.I.T != "users" || env.I.C != "email" {
 			t.Errorf("row %d: i = %+v, want users/email", i, env.I)
@@ -162,7 +160,7 @@ func TestTextEqQueryMatchesTheStoredValueAndTheRustFixture(t *testing.T) {
 		t.Fatalf("the fixture's column changed: %+v", fixture)
 	}
 
-	query, err := testusers.ContactFields.Email.Query(ctx, cipher, fixture.Plaintext)
+	query, err := testusers.ContactFields.Email.Eq(ctx, cipher, fixture.Plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +182,7 @@ func TestTextEqQueryMatchesTheStoredValueAndTheRustFixture(t *testing.T) {
 	if env := decodeEnvelope(t, stored); env.HM != probe.HM {
 		t.Fatalf("the query's hm %s does not match the stored %s", probe.HM, env.HM)
 	}
-	if other, _ := testusers.ContactFields.Email.Query(ctx, cipher, "Bob@example.com"); string(other) == fixture.Query {
+	if other, _ := testusers.ContactFields.Email.Eq(ctx, cipher, "Bob@example.com"); string(other) == fixture.Query {
 		t.Fatal("no case folding: a different plaintext has a different term")
 	}
 }
@@ -217,7 +215,7 @@ func TestATamperedEQLValueDoesNotOpen(t *testing.T) {
 	for name, value := range map[string]eql.TextEq{
 		"an empty object": eql.TextEq(`{}`),
 		"not JSON":        eql.TextEq(`not json`),
-		"a query value":   eql.TextEq(`{"v":3,"i":{"t":"users","c":"email"},"hm":"00"}`),
+		"a query value":   eql.TextEq(`{"v":4,"i":{"t":"users","c":"email"},"hm":"00"}`),
 	} {
 		junk[0].Email = value
 		if _, err := testusers.DecryptContact(ctx, cipher, junk); !errors.Is(err, encrypt.ErrEncoding) {
@@ -315,29 +313,105 @@ func TestTextEqIsRefusedByTheBuildWithoutEQLTypes(t *testing.T) {
 	if err := eqlChecker.Check(ctx, plan); err != nil {
 		t.Fatalf("the eql build refuses TextEq: %v", err)
 	}
-	for _, name := range []string{"TextOrdOre", "Nope"} {
-		refused := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: name}}}
-		if err := eqlChecker.Check(ctx, refused); !errors.Is(err, encrypt.ErrEncoding) {
-			t.Errorf("%s: Check = %v, want ErrEncoding", name, err)
-		}
+	// A type the engine does not have.
+	unknown := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: "Nope"}}}
+	if err := eqlChecker.Check(ctx, unknown); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("Nope: Check = %v, want ErrEncoding", err)
 	}
-	// A declared type other than TextEq's plaintext, and an extended plan.
+	// The storage-only document is a target for a json field, and for no
+	// other kind.
+	document := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "profile", Kind: record.JSON, Target: "Json"}}}
+	if err := eqlChecker.Check(ctx, document); err != nil {
+		t.Errorf("the eql build refuses Json: %v", err)
+	}
+	notDocument := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "profile", Kind: record.String, Target: "Json"}}}
+	if err := eqlChecker.Check(ctx, notDocument); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("a string Json field: Check = %v, want ErrEncoding", err)
+	}
+	// A declared type other than TextEq's plaintext.
 	wrongKind := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.Uint64, Target: "TextEq"}}}
 	if err := eqlChecker.Check(ctx, wrongKind); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Errorf("a uint64 TextEq field: Check = %v, want ErrEncoding", err)
 	}
-	extended := &record.Plan{Context: []string{"users"}, Extension: []any{uint64(7)}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: "TextEq"}}}
-	if err := eqlChecker.Check(ctx, extended); !errors.Is(err, encrypt.ErrEncoding) {
-		t.Errorf("an extended plan with a target field: Check = %v, want ErrEncoding", err)
+	// A plan with a scope and a binding: both come after a target field's
+	// column, so the engine takes the plan.
+	scoped := &record.Plan{Context: []string{"users"}, Extension: []any{uint64(7)}, Bind: []any{uint64(9)}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: "TextEq"}}}
+	if err := eqlChecker.Check(ctx, scoped); err != nil {
+		t.Errorf("a plan with a scope, a binding and a target field: Check = %v", err)
 	}
 }
 
-func TestExtendedCipherRefusesATextEqField(t *testing.T) {
+// A scope and a binding come after the column in an EQL field's context, as
+// they do for a field with outputs. The EQL value stores the column alone.
+// So a query supplies the scope, and whoever opens the value supplies the
+// scope and the binding again.
+func TestAnEQLFieldTakesAScopeAndABinding(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
-	tenant := c.DefaultKeyset().Extend(uint64(7))
-	_, err := testusers.EncryptContact(ctx, tenant, contacts[:1])
-	if !errors.Is(err, encrypt.ErrEncoding) {
-		t.Fatalf("an extended cipher sealed a TextEq field: %v", err)
+	plain := c.DefaultKeyset()
+	tenant := plain.Scope(uint64(7))
+	bound := tenant.Bind(uint64(9))
+
+	encrypted, err := testusers.EncryptContact(ctx, bound, contacts[:1])
+	if err != nil {
+		t.Fatalf("a cipher with a scope and a binding did not seal a TextEq field: %v", err)
+	}
+	env := decodeEnvelope(t, encrypted[0].Email)
+	if env.I.T != "users" || env.I.C != "email" {
+		t.Errorf("i = %+v, want users/email and nothing else", env.I)
+	}
+
+	// The term is derived under the column, then the tenant. A query through
+	// the tenant's cipher gives the stored term, and names the column alone.
+	hmOf := func(cipher *encrypt.Cipher) string {
+		t.Helper()
+		query, err := testusers.ContactFields.Email.Eq(ctx, cipher, contacts[0].Email)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var probe struct {
+			I  struct{ T, C string }
+			HM string `json:"hm"`
+		}
+		if err := json.Unmarshal(query, &probe); err != nil {
+			t.Fatal(err)
+		}
+		if probe.I.T != "users" || probe.I.C != "email" {
+			t.Errorf("the query's i = %+v, want users/email", probe.I)
+		}
+		return probe.HM
+	}
+	if hm := hmOf(tenant); hm != env.HM {
+		t.Errorf("the tenant's query has hm %s, and the stored value %s", hm, env.HM)
+	}
+	if hmOf(plain) == env.HM || hmOf(plain.Scope(uint64(8))) == env.HM {
+		t.Error("a query with no tenant, or with another, gave the tenant's term")
+	}
+	// A binding is in no query context: another row has the same term.
+	other, err := testusers.EncryptContact(ctx, tenant.Bind(uint64(10)), contacts[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decodeEnvelope(t, other[0].Email).HM != env.HM {
+		t.Error("another row of the tenant has another term")
+	}
+
+	// The value opens under the same scope and binding, and under no other.
+	decrypted, err := testusers.DecryptContact(ctx, bound, encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decrypted[0] != contacts[0] {
+		t.Errorf("opened %+v, want %+v", decrypted[0], contacts[0])
+	}
+	for name, cipher := range map[string]*encrypt.Cipher{
+		"another tenant": plain.Scope(uint64(8)).Bind(uint64(9)),
+		"another row":    tenant.Bind(uint64(10)),
+		"no binding":     tenant,
+		"no scope":       plain,
+	} {
+		if _, err := testusers.DecryptContact(ctx, cipher, encrypted); err == nil {
+			t.Errorf("%s: the value opened", name)
+		}
 	}
 }

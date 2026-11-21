@@ -12,3 +12,9 @@ import (
 func (e Exports) Diagnose(ctx context.Context, m api.Module, kind error) error {
 	return e.diagnose(ctx, m, kind)
 }
+
+// WholeFloatUpTo is wholeFloatUpTo, for the external tests: the bound a
+// float offset is read to, at a limit of the test's choosing.
+func WholeFloatUpTo(f float64, limit int64) (int64, bool) {
+	return wholeFloatUpTo(f, limit)
+}

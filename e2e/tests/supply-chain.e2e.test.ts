@@ -874,8 +874,9 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
   })
 
   it('a `directories` glob is expanded; the same pattern under `directory` is not', () => {
-    // No entry in .github/dependabot.yml uses `directories` today, so the glob
-    // branch above ships with no live coverage — and the first person to write
+    // The gomod entry in .github/dependabot.yml lists literal `directories`;
+    // none uses a glob, so the glob branch above has no live coverage — and
+    // the first person to write
     // `directories: ["/languages/typescript/packages/*"]` would otherwise be failed by a check
     // reporting "no package.json" at a path that was never meant to be literal.
     // Synthetic entries because this suite asserts against the real config as

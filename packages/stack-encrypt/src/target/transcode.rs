@@ -9,8 +9,8 @@
 //! What a reader hands over is what the cipher produced, no more: a sealed
 //! leaf or marker is authenticated ciphertext, but passthrough metadata and
 //! terms are not, and a visitor must not present them as such.
-use crate::sem::{EqualityTerm, MatchConfig, MatchTerms, OpeTerm, OreTerm};
-use crate::{BoxedPassthrough, CipherText, Error, SealedValue, StackCipherText};
+use crate::sem::{EqualityTerm, MatchConfig, MatchTerms, OpeTerm, OreBlockTerm, OreTerm};
+use crate::{CipherText, Error, PassthroughFrame, SealedValue, StackCipherText};
 
 /// An encrypted output that can drive a destination visitor.
 ///
@@ -36,7 +36,9 @@ pub trait Reader: Sized {
 pub trait Visitor: Sized {
     /// The destination this visitor builds.
     type Value;
-    /// One sealed leaf: a scalar's ciphertext.
+    /// One sealed leaf: a scalar's ciphertext. An absent optional is one
+    /// too, a sealed null, so opening it under the wrong context fails
+    /// like any leaf.
     ///
     /// # Errors
     ///
@@ -60,15 +62,6 @@ pub trait Visitor: Sized {
     fn map<R: MapReader>(self, _: R) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
-    /// The sealed marker of an absent optional. It is ciphertext, not a
-    /// null: opening it under the wrong context fails like any leaf.
-    ///
-    /// # Errors
-    ///
-    /// Refuses with [`Error::UnsupportedShape`] unless overridden.
-    fn absent(self, _: SealedValue) -> Result<Self::Value, Error> {
-        Err(Error::UnsupportedShape)
-    }
     /// The sealed marker of an empty sequence.
     ///
     /// # Errors
@@ -86,12 +79,13 @@ pub trait Visitor: Sized {
         Err(Error::UnsupportedShape)
     }
     /// Passthrough metadata the plaintext carried alongside its encrypted
-    /// fields. Not authenticated: the reader hands it over as it was given.
+    /// fields, as the frame of its subtree. Not authenticated: the reader
+    /// hands it over as it was given.
     ///
     /// # Errors
     ///
     /// Refuses with [`Error::UnsupportedShape`] unless overridden.
-    fn passthrough(self, _: BoxedPassthrough) -> Result<Self::Value, Error> {
+    fn passthrough(self, _: PassthroughFrame) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
     /// An equality term. One-way, and not authenticated.
@@ -115,7 +109,7 @@ pub trait Visitor: Sized {
     /// # Errors
     ///
     /// Refuses with [`Error::UnsupportedShape`] unless overridden.
-    fn ore<T: cllw_ore::CllwOreEncrypt>(self, _: OreTerm<T>) -> Result<Self::Value, Error> {
+    fn ore<T: crate::sem::Orderable>(self, _: OreTerm<T>) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
     /// An order-preserving term. One-way, and not authenticated.
@@ -123,7 +117,15 @@ pub trait Visitor: Sized {
     /// # Errors
     ///
     /// Refuses with [`Error::UnsupportedShape`] unless overridden.
-    fn ope<T: cllw_ore::CllwOpeEncrypt>(self, _: OpeTerm<T>) -> Result<Self::Value, Error> {
+    fn ope<T: crate::sem::Orderable>(self, _: OpeTerm<T>) -> Result<Self::Value, Error> {
+        Err(Error::UnsupportedShape)
+    }
+    /// A block ORE term. One-way, and not authenticated.
+    ///
+    /// # Errors
+    ///
+    /// Refuses with [`Error::UnsupportedShape`] unless overridden.
+    fn ore_block<T: crate::sem::Orderable>(self, _: OreBlockTerm<T>) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
 }
@@ -183,7 +185,6 @@ impl Reader for StackCipherText {
             CipherText::Single(leaf) => visitor.sealed(leaf),
             CipherText::Sequence(items) => visitor.sequence(items.into_iter()),
             CipherText::Map(entries) => visitor.map(entries.into_iter()),
-            CipherText::None(marker) => visitor.absent(marker),
             CipherText::EmptySequence(marker) => visitor.empty_sequence(marker),
             CipherText::EmptyMap(marker) => visitor.empty_map(marker),
             CipherText::Passthrough(value) => visitor.passthrough(value),
@@ -200,13 +201,18 @@ impl<O: MatchConfig> Reader for MatchTerms<O> {
         visitor.matching(self)
     }
 }
-impl<T: cllw_ore::CllwOreEncrypt> Reader for OreTerm<T> {
+impl<T: crate::sem::Orderable> Reader for OreTerm<T> {
     fn read<V: Visitor>(self, visitor: V) -> Result<V::Value, Error> {
         visitor.ore(self)
     }
 }
-impl<T: cllw_ore::CllwOpeEncrypt> Reader for OpeTerm<T> {
+impl<T: crate::sem::Orderable> Reader for OpeTerm<T> {
     fn read<V: Visitor>(self, visitor: V) -> Result<V::Value, Error> {
         visitor.ope(self)
+    }
+}
+impl<T: crate::sem::Orderable> Reader for OreBlockTerm<T> {
+    fn read<V: Visitor>(self, visitor: V) -> Result<V::Value, Error> {
+        visitor.ore_block(self)
     }
 }

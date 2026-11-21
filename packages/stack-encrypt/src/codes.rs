@@ -11,7 +11,7 @@ mod tests {
     use crate::diagnostic::is_code_of;
     use crate::sem::{MatchOptions, TermBytesError, TermError};
     use crate::target::IndexSpec;
-    use crate::{Descriptor, Error, LabelError, LeafBytesError, PlanError};
+    use crate::{BlobError, Descriptor, Error, LabelError, LeafBytesError, PlanError};
 
     /// One row per variant of an enum, written `pattern => value`. The
     /// patterns are the arms of a match with no wildcard, so a variant with
@@ -39,6 +39,12 @@ mod tests {
         rows.into_iter().map(crate::diagnostic::named)
     }
 
+    /// A storage profile error, from reading `bytes` as a `u32`: the
+    /// profile's errors have no public constructor, so one is provoked.
+    fn storage_error(bytes: &[u8]) -> vitaminc_aead_frame::storage::Error {
+        vitaminc_aead_frame::storage::from_slice::<u32>(bytes).unwrap_err()
+    }
+
     /// One of every variant of every error type here.
     fn every_variant() -> Vec<Row> {
         let cause = || Box::new(std::io::Error::other("cause"));
@@ -48,6 +54,12 @@ mod tests {
         errors.extend(boxed(variants![
             Error::Kms(_) => Error::Kms(crate::kms::Error::Unexpected("kms".into())),
             Error::Aead => Error::Aead,
+            Error::OpenedType { .. } => Error::OpenedType { expected: "i32" },
+            Error::JsonWrongEntry { .. } => Error::JsonWrongEntry {
+                expected: "the entry at the path asked for",
+            },
+            Error::JsonWildcardTruncated { .. } => Error::JsonWildcardTruncated { bound: 64 },
+            Error::JsonNotALeaf => Error::JsonNotALeaf,
             Error::KeyCountMismatch { .. } => Error::KeyCountMismatch {
                 expected: 2,
                 received: 1,
@@ -62,6 +74,10 @@ mod tests {
             },
             Error::ResponseShape => Error::ResponseShape,
             Error::KeysetMismatch { .. } => Error::KeysetMismatch { left: a, right: b },
+            Error::KeysetLoad { .. } => Error::KeysetLoad {
+                keyset_id: a,
+                source: std::sync::Arc::new(Error::KeysetMismatch { left: a, right: b }),
+            },
             Error::ForeignKeyset { .. } => Error::ForeignKeyset {
                 expected: a,
                 found: b,
@@ -69,6 +85,14 @@ mod tests {
             Error::NoKeyset => Error::NoKeyset,
             Error::NotOpened => Error::NotOpened,
             Error::Plan(_) => Error::Plan(PlanError::NoContext),
+            Error::Blob(_) => Error::Blob(BlobError::NotABlob),
+        ]));
+        errors.extend(boxed(variants![
+            BlobError::Unwritable(_) => BlobError::Unwritable(storage_error(b"VCS\x01\x0a\x01\x00\x00\x00")),
+            BlobError::NotABlob => BlobError::NotABlob,
+            BlobError::UnsupportedVersion { .. } => BlobError::UnsupportedVersion { version: 2 },
+            BlobError::Malformed(_) => BlobError::Malformed(storage_error(b"VCS\x01\xff")),
+            BlobError::Mismatch(_) => BlobError::Mismatch(storage_error(b"VCS\x01\x0a\x01\x00\x00\x00x")),
         ]));
         errors.extend(boxed(variants![
             LeafBytesError::UnknownVersion(_) => LeafBytesError::UnknownVersion(9),
@@ -77,10 +101,28 @@ mod tests {
         ]));
         errors.extend(boxed(variants![
             TermError::Prf(_) => TermError::Prf(cause()),
-            TermError::Ore(_) => TermError::Ore(cllw_ore::Error),
+            TermError::Ore(_) => TermError::Ore(clww_ore::Error),
+            TermError::OreBlockTooLong => TermError::OreBlockTooLong,
+            TermError::OreBlockTrailingNul => TermError::OreBlockTrailingNul,
+            TermError::OreBlock(_) => TermError::OreBlock(cause()),
             TermError::InvalidOptions(_) => TermError::InvalidOptions("k out of range"),
             TermError::EmptyTermText => TermError::EmptyTermText,
+            TermError::NoEqualityTerm => TermError::NoEqualityTerm,
+            TermError::Normalize(_) => {
+                TermError::Normalize(vitaminc_normalize::NormalizeError::UnassignedCodePoint)
+            },
             TermError::Bytes(_) => TermError::Bytes(TermBytesError::OddMatchTermsLength(3)),
+            TermError::JsonPath(_) => TermError::JsonPath(crate::json::JsonPathError {
+                reason: "expected `$`",
+                at: 0,
+            }),
+            TermError::JsonTooDeep => TermError::JsonTooDeep,
+            TermError::JsonTooWide => TermError::JsonTooWide,
+            TermError::JsonWildcardTooWide => TermError::JsonWildcardTooWide,
+            TermError::JsonLeafNotOrdered => TermError::JsonLeafNotOrdered,
+            TermError::JsonPathNotOrdered => TermError::JsonPathNotOrdered,
+            TermError::JsonOrderingAtPosition => TermError::JsonOrderingAtPosition,
+            TermError::JsonValueNotScalar => TermError::JsonValueNotScalar,
         ]));
         errors.extend(boxed(variants![
             TermBytesError::WrongEqualityTermLength(_) => {
@@ -95,6 +137,9 @@ mod tests {
             },
             TermBytesError::MalformedCllwCiphertext(_) => {
                 TermBytesError::MalformedCllwCiphertext(3)
+            },
+            TermBytesError::MalformedOreBlockCiphertext(_) => {
+                TermBytesError::MalformedOreBlockCiphertext(3)
             },
         ]));
         errors.extend(boxed(variants![
@@ -129,6 +174,10 @@ mod tests {
                 index: "eq",
             },
             PlanError::EmptyIndexes => PlanError::EmptyIndexes,
+            PlanError::EmptyPart => PlanError::EmptyPart,
+            PlanError::ContextNotStorable { .. } => PlanError::ContextNotStorable {
+                field: "users/email".into(),
+            },
             PlanError::NotInPlan { .. } => PlanError::NotInPlan { field: field() },
             PlanError::NotInValue { .. } => PlanError::NotInValue { field: field() },
             PlanError::FieldType { .. } => PlanError::FieldType {
@@ -149,11 +198,18 @@ mod tests {
                     ..MatchOptions::default()
                 }),
             },
+            PlanError::IndexOverlap { .. } => PlanError::IndexOverlap {
+                at: field(),
+                first: "ore",
+                second: "ope",
+                operator: crate::op::Op::Lt,
+            },
             PlanError::TwoContextSources { .. } => PlanError::TwoContextSources {
                 first: "the plan",
                 second: "the call",
             },
             PlanError::NoContext => PlanError::NoContext,
+            PlanError::BindInQuery => PlanError::BindInQuery,
             PlanError::TargetWithVerbs { .. } => PlanError::TargetWithVerbs { field: field() },
         ]));
         #[cfg(feature = "dynamic")]
@@ -177,6 +233,12 @@ mod tests {
             Error::UntypedIndex { .. } => Error::UntypedIndex { field: name() },
             Error::Source { .. } => Error::bad_source(Reason::FieldMissing),
             Error::Record { .. } => Error::bad_record(Reason::NoCiphertextNode),
+            Error::Predicate { .. } => Error::Predicate {
+                field: Some(name()),
+                reason: Reason::JsonPredicateUnsupported,
+                construct: "`like_regex`",
+                at: 4,
+            },
             Error::Internal => Error::Internal,
             Error::Target(_) => Error::Target(TargetError::NoTargets { name: target() }),
             Error::Cipher(_) => Error::Cipher(crate::Error::Aead),
@@ -189,10 +251,6 @@ mod tests {
                 reason: "block ORE".into(),
             },
             TargetError::NoQuery { .. } => TargetError::NoQuery { name: target() },
-            TargetError::Extended { .. } => TargetError::Extended {
-                name: name(),
-                label: "users/email".into(),
-            },
             TargetError::ContextField { .. } => TargetError::ContextField {
                 name: name(),
                 context_field: "tenant".into(),
@@ -218,6 +276,11 @@ mod tests {
                 name: name(),
                 target: target(),
                 reason: "not JSON".into(),
+            },
+            TargetError::Json { .. } => TargetError::Json {
+                name: name(),
+                target: target(),
+                reason: "json_duplicate_key",
             },
             TargetError::Other(_) => TargetError::Other(Box::new(std::io::Error::other("boom"))),
         ]));
@@ -368,6 +431,20 @@ mod tests {
             ),
             (Box::new(Error::Aead), json!({})),
             (
+                Box::new(Error::OpenedType { expected: "i32" }),
+                json!({ "expected": "i32" }),
+            ),
+            (
+                Box::new(Error::JsonWrongEntry {
+                    expected: "the entry at the path asked for",
+                }),
+                json!({ "expected": "the entry at the path asked for" }),
+            ),
+            (
+                Box::new(Error::JsonWildcardTruncated { bound: 64 }),
+                json!({ "bound": 64 }),
+            ),
+            (
                 Box::new(LeafBytesError::UnknownVersion(9)),
                 json!({ "version": 9 }),
             ),
@@ -381,10 +458,23 @@ mod tests {
                 json!({ "len": 3 }),
             ),
             (Box::new(TermError::EmptyTermText), json!({})),
+            (Box::new(TermError::NoEqualityTerm), json!({})),
+            (
+                Box::new(TermError::Normalize(
+                    vitaminc_normalize::NormalizeError::UnassignedCodePoint,
+                )),
+                json!({}),
+            ),
             (
                 Box::new(TermBytesError::MalformedCllwCiphertext(5)),
                 json!({ "len": 5 }),
             ),
+            (
+                Box::new(TermBytesError::MalformedOreBlockCiphertext(7)),
+                json!({ "len": 7 }),
+            ),
+            (Box::new(TermError::OreBlockTooLong), json!({})),
+            (Box::new(TermError::OreBlockTrailingNul), json!({})),
             (
                 Box::new(TermBytesError::MatchPositionOutOfRange {
                     position: 900,
@@ -529,6 +619,23 @@ mod tests {
                 Box::new(Error::UntypedIndex { field: name() }),
                 json!({ "field": "email" }),
             ),
+            (
+                Box::new(
+                    Error::Predicate {
+                        field: None,
+                        reason: Reason::JsonPredicateUnsupported,
+                        construct: "`like_regex`",
+                        at: 4,
+                    }
+                    .in_field("email"),
+                ),
+                json!({
+                    "field": "email",
+                    "reason": "json_predicate_unsupported",
+                    "construct": "`like_regex`",
+                    "at": 4
+                }),
+            ),
             (Box::new(Error::Internal), json!({})),
             (
                 Box::new(TargetError::NoTargets { name: target() }),
@@ -542,19 +649,19 @@ mod tests {
                 json!({ "target": "TextEq", "reason": "block ORE" }),
             ),
             (
-                Box::new(TargetError::Extended {
+                Box::new(TargetError::ContextField {
                     name: name(),
-                    label: "users/email".into(),
+                    context_field: "tenant".into(),
                 }),
-                json!({ "field": "email", "label": "users/email" }),
+                json!({ "field": "email", "context_field": "tenant" }),
             ),
             // Before the lowering names the field, there is none to give.
             (
-                Box::new(TargetError::Extended {
+                Box::new(TargetError::ContextField {
                     name: String::new(),
-                    label: "users/email".into(),
+                    context_field: "tenant".into(),
                 }),
-                json!({ "label": "users/email" }),
+                json!({ "context_field": "tenant" }),
             ),
             (
                 Box::new(TargetError::Kind {

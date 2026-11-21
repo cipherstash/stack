@@ -8,8 +8,9 @@ derivation of searchable index terms from the same values. Covers
 ## Language
 
 **Cipher-directed**:
-Encryption driven by the value's shape: the value's `Encrypt` implementation
-walks the cipher and the caller decides the context, which may be absent.
+Encryption driven by the value's shape: the value describes itself once
+(vitaminc's `Encrypt`), vitaminc walks it into sealed leaves, and the
+caller decides the context, which may be absent.
 Nothing declares an index and no output type is involved. One of the two
 preferred entry points for a native Rust caller. A language SDK may leave it
 out: the Go SDK seals a whole value through a plan, so that every sealed
@@ -20,7 +21,7 @@ _Avoid_: raw path, low-level path
 Encryption driven by the output type: the type being produced (a ciphertext, a
 term, a record) declares what it is derived from, which operations produce it,
 and which context it demands; execution belongs to the cipher. Rust-only: a
-hand-written `EncryptFrom` type, the combinators, and the derive. With
+hand-written `EncryptTarget` type, the combinators, and the derive. With
 cipher-directed, the preferred entry point for a native Rust caller. A
 binding reaches indexes and field-by-field encryption only through a plan
 lowered from data, which runs the same engine.
@@ -67,7 +68,7 @@ mapping, config, target (a plan may name a target type for a field)
 
 **Target**:
 A type that decides a field's layout, and so the queries it answers, through
-its own `EncryptFrom`: an EQL type, `Encrypted<Terms>`, or a type of the
+its own `EncryptTarget`: an EQL type, `Encrypted<Terms>`, or a type of the
 consumer's. A plan field is either plain verbs (encrypt, index, passthrough)
 or one target, never both. Rust-only, since it names a Rust type; a binding's
 counterpart is generated code (in Go, the generator's output), which
@@ -83,7 +84,10 @@ is; a term is not). A type on the Rust side, generic over the plaintext, so
 an index that does not apply to a type (match on an integer) does not
 compile; data at a binding boundary. An index answers queries by source
 type: a scalar index answers one, the JSON index answers containment, a
-path, and a value at a path.
+path, and a value at a path. Each index declares the operators it answers
+once (`Ore::OPERATORS`), and a field declares at most one index per
+operator: `(Equality, Ore)` is allowed, `(Ore, Ope)` is refused when the
+plan is built.
 _Avoid_: term (that is what an index produces), output, search type, target
 (the JSON index replaces the ciphertext but is still an index)
 
@@ -109,10 +113,37 @@ _Avoid_: AAD (that is one of its encodings, not the concept), lock context
 **Own context**:
 The context a field carries itself: `<record context>/<identity>`, where the
 identity defaults to the field's name and `identity = ".."` pins it (see
-**Identity**). A caller's context *extends* it (`(("users", "age"), id)`); it
-is never discarded. A subtree of a declaration is given one with `under` (the
-caller's is then optional) or `extend` (the caller's stays required).
+**Identity**). A caller's scopes *extend* it (`(("users", "age"), tenant)`);
+it is never discarded. A subtree of a declaration is given one with `under`
+(the caller's is then optional) or `extend` (the caller's stays required).
 _Avoid_: default context, field prefix
+
+**Scope**:
+A part of a context that a query can supply too: the record's name, a
+field's name, a tenant. The declared scopes come first, then the caller's.
+A scope narrows the data and the queries over it. The **query context** is
+all the scopes, and the search terms derive under it. Declared as
+`scope(tenant: u64)` for a part the caller passes as `Scope::new(tenant)`,
+or `scope(field = "tenant")` for a part stored in the row. Go: `Scope`,
+formerly `Extend`.
+_Avoid_: extension (the old word), label (that is a key tag fact), tenant
+(one example of a scope)
+
+**Binding**:
+A part of a context that ties a ciphertext to one row, such as a row ID. A
+query does not know it. The **stored context** is the query context followed
+by the bindings, in order, and the data key and the AAD derive under it. So a
+bound row is found by a query under the scopes alone, and fails to open in
+another row. Declared as `bind(row: u128)` for a part the caller passes as
+`Bind::new(row)`, or `bind(field = "id")` for a part stored in the row. The
+kind of a part is in no derivation: a record with no binding stores the
+bytes it always did. Go: `Bind`.
+
+The word has a second meaning in this repository. AGENTS.md calls the FFI
+or WASI layer between the engine and a language a binding, and the
+conformance README's "bindings" are those. The `record-bindings-v1` profile
+tests context bindings, this entry's.
+_Avoid_: lock, label, row context, extension
 
 **Context field**:
 A field of a value whose value is the context of the value's other fields.
@@ -223,11 +254,89 @@ _Avoid_: index (that is the declaration; a term is what it produces), token,
 hash
 
 **Query**:
-Deriving the terms for a plaintext under a field's plan, with no ciphertext,
-to match terms already stored. A query against an index the plan never
+Deriving the query term for a plaintext under a field's plan, with no
+ciphertext, to match terms already stored. A query names an operator, and the
+plan finds the index that answers it. A query against an index the plan never
 declared is refused, so a query cannot silently match nothing.
 _Avoid_: probe, search term, lookup, encrypt query (that is the TypeScript
 package's method name, not the concept)
+
+**Operator**:
+What a query asks of the server — equality, text match — as a unit type
+(`op::Eq`, `op::Matches`). Every operator is declared once, with its wire
+name: `op::Eq`, the dynamic `Op::Eq` and `"eq"` are three faces of one
+operator. An index declares the operators it answers and the query term it
+sends for each, and prepares a query once (`Supports::prepare`): what it
+refuses, and what the query keeps to check a row. A target type names the
+index that answers each operator for it. An operator nothing answers is
+refused before any key is requested: at compile time where the plan's type
+shows it, when the query is awaited where the plan is data (ADR-0009).
+Case belongs to the match index's configuration, not to the operator.
+_Avoid_: query type, index (that is what answers the operator), `OpSpec`
+(the dynamic enum's old name)
+
+**Field reference**:
+The value a typed query of a derived record's field starts from. The
+derive emits one per field, as an associated constant named after the field
+in upper case (`EncryptedUser::EMAIL`). A field reference names the field, the
+context the derive sealed it under, and the field's target type. It also
+names the type of the scope the record's caller supplies. The target
+type's `Answers` impls give the field reference one method per operator the
+field's index answers, checked at compile time.
+
+A query from a field reference takes the record's scope once, by type. It takes no
+binding. It derives under the declaration the derive wrote, so it is the
+stored term. No plan is written by hand beside the record.
+
+`FieldReference::contexts()` is the record's contexts narrowed to the field, and
+`assert_context!` takes a field reference. A field of several indexes answers each
+operator through the one index that answers it. A nullable field answers
+what a present value answers. A record field's reference reaches the inner
+record's field references with `.field(..)`, under the outer field's context.
+`#[stash(query = T)]` gives a field reference the type its queries take.
+_Avoid_: marker (its old name), field handle (that is the dynamic form),
+column, accessor
+
+**Planned**:
+A value under a plan that is data, `Planned::new(&plan, value)`. The
+value is a `ValueFrame` under a record plan or a query plan, or a stored
+row under a record plan. A target in the owned API's sense, so
+`encrypt_into`, `decrypt_from`, and their `_with_context` forms run it.
+The caller's scope and bindings are the one context argument, after the
+plan's own.
+
+It prints neither its value nor its plan. The frame is a protected
+buffer, wiped as it is dropped. A serialised form, what a binding sends
+for an operation, is to come (#1594). The Go module still sends a plan
+frame and a value frame.
+_Avoid_: request, envelope (that is the storage format), record (a
+`Planned` can contain a query value)
+
+**Query plan**:
+A record plan narrowed to one field and one operator, `plan.query(field,
+op)`. It is refused where it is made when none of the field's indexes
+answers the operator. So a query plan in hand is one the engine derives a term
+for. A query value under it is a `Planned`, and encrypts to the query
+term.
+_Avoid_: query, index (that is what answers the operator)
+
+**Field handle**:
+One field of a plan that is data, for a query: `plan.field(name)`, or
+`plan.field_with(name, &resolver)` for a field that names an EQL type. It
+has one method per scalar operator and `op(..)` for any operator. Each is
+checked against the plan where it is called, then `.scope(..)` and
+`.encrypt(&keyset)` follow.
+
+The dynamic counterpart of a field reference. Neither has a `bind` method: a
+binding is in no query context.
+_Avoid_: field reference (that is the typed form), column
+
+**Query term**:
+The value a query sends to the server. It is not the stored term: equality
+sends the same HMAC it stores, but a match query is a filter over the query's
+value, where the stored term is a filter over the whole stored value. A query term is never
+stored, and a query chain never sends a stored term as a query.
+_Avoid_: probe, stored term (that is what a write keeps)
 
 **Open**:
 Decrypting through a plan: reading back every field of a record that can
@@ -242,6 +351,19 @@ An output whose local work (term derivation, per-leaf sealing plan) is done
 and whose ZeroKMS key requests are queued but not sent. Pendings compose
 (`zip`, `map`, `all`) so a whole struct or `Vec` settles in one batched call.
 _Avoid_: future, promise
+
+**Audit metadata**:
+Facts about one call, such as its purpose or a request id
+(`AuditMetadata`). ZeroKMS writes the facts to its audit log, beside the
+identity that made the request. Audit metadata is optional. A call sends
+one map, with every key request that it makes. Attach the map last, with
+`.audit(..)`: the result (`Audited`) can only be awaited.
+
+ZeroKMS does not verify the facts. No key depends on them, so nothing may
+rely on them for access control. A decrypt can send different facts from
+the encrypt. The ZeroKMS protocol calls audit metadata the request's
+*unverified context*.
+_Avoid_: context, unverified context, label, lock context
 
 **Keyset**:
 The ZeroKMS key domain a data key is minted under and an index key belongs
@@ -264,9 +386,10 @@ sub-cipher, tenant cipher
 What a `Pending` was built through, and therefore what it is allowed to do:
 a `KeysetCipher` scope mints under its keyset and opens leaves from no
 other; a `StackCipher` scope mints nothing and opens leaves from any keyset.
-`CipherScope` is the sealed trait both references implement; `dynamic::Scope`
-is the same choice as a runtime value, for a binding whose caller makes it
-per call. Two pendings merge when their scopes agree on a keyset — which
+`CipherRef` is the one borrowed value that carries the choice: a connection
+and an optional keyset ID. It is built from a reference to either cipher, or
+from an owned `KeysetCipher`. The typed API and the dynamic interface both
+take it. Two pendings merge when their scopes agree on a keyset — which
 cipher *value* each came from is not part of the rule.
 _Avoid_: binding (that is a name's), context (that is the AAD's), opener
 

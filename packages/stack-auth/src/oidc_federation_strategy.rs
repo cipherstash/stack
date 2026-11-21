@@ -1,4 +1,5 @@
 mod cache;
+mod workspace;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -188,8 +189,102 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
         Self::builder(workspace_crn, oidc_provider).build()
     }
 
+    /// Create an `OidcFederationStrategy` for the workspace this process is
+    /// configured for.
+    ///
+    /// Use this constructor when the workspace comes from the environment or
+    /// from a CLI login. Use [`new`](Self::new) to name the workspace
+    /// yourself.
+    ///
+    /// The workspace is `CS_WORKSPACE_CRN` if that variable is set.
+    /// Otherwise the workspace is the CLI's current workspace. That
+    /// workspace must have a session saved by `npx stash auth login`. To
+    /// set other options as well, such as a token store, use
+    /// [`builder_with_detected_workspace`](Self::builder_with_detected_workspace).
+    ///
+    /// The constructor reads the session from `auth.json` in the profile
+    /// directory. The profile directory is `~/.cipherstash`, unless
+    /// `CS_CONFIG_PATH` names another. On wasm32 there is no profile
+    /// directory, so the variable is the only source.
+    ///
+    /// Only the workspace is read from the saved session. The strategy
+    /// still gets every token by exchanging the JWT that `oidc_provider`
+    /// returns.
+    ///
+    /// # Errors
+    ///
+    /// - [`AuthError::InvalidCrn`] if `CS_WORKSPACE_CRN` is set to a value
+    ///   that is not a CRN. The profile is not read in that case.
+    /// - [`AuthError::NotAuthenticated`] if the variable is not set and the
+    ///   CLI's current workspace has no saved session, or the saved session
+    ///   records no region. Set `CS_WORKSPACE_CRN`, or log in with
+    ///   `npx stash auth login`.
+    /// - [`AuthError::Store`] if the saved session cannot be read or parsed,
+    ///   or if the file that records the CLI's current workspace cannot be
+    ///   read or does not hold a valid workspace id.
+    /// - [`AuthError::InvalidToken`] if the saved session's token is not a
+    ///   JWT with a `workspace` claim.
+    /// - [`AuthError::Server`] if the saved session records a region this
+    ///   crate does not know.
+    /// - Any error [`new`](Self::new) returns.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use stack_auth::{AuthError, OidcFederationStrategy, OidcProviderFn, SecretToken};
+    ///
+    /// # fn run() -> Result<(), AuthError> {
+    /// let provider = OidcProviderFn::new(|| async {
+    ///     // Return the JWT of the user who made the current request.
+    ///     Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
+    /// });
+    /// let strategy = OidcFederationStrategy::with_detected_workspace(provider)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_detected_workspace(oidc_provider: P) -> Result<Self, AuthError> {
+        Self::builder_with_detected_workspace(oidc_provider).build()
+    }
+
     /// Return a builder for configuring an `OidcFederationStrategy` before construction.
     pub fn builder(workspace_crn: Crn, oidc_provider: P) -> OidcFederationStrategyBuilder<P> {
+        Self::builder_for(Some(workspace_crn), oidc_provider)
+    }
+
+    /// Return a builder for a strategy whose workspace is detected, as
+    /// [`with_detected_workspace`](Self::with_detected_workspace) detects it.
+    ///
+    /// Use this builder to set other options, such as a token store, for a
+    /// strategy whose workspace you do not name. [`build`](OidcFederationStrategyBuilder::build)
+    /// detects the workspace, and returns the errors that
+    /// `with_detected_workspace` lists.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use stack_auth::{
+    ///     AuthError, InMemoryTokenStore, OidcFederationStrategy, OidcProviderFn, SecretToken,
+    /// };
+    ///
+    /// # fn run() -> Result<(), AuthError> {
+    /// let provider = OidcProviderFn::new(|| async {
+    ///     // Return the JWT of the user who made the current request.
+    ///     Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
+    /// });
+    /// let strategy = OidcFederationStrategy::builder_with_detected_workspace(provider)
+    ///     .with_token_store(InMemoryTokenStore::new())
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn builder_with_detected_workspace(oidc_provider: P) -> OidcFederationStrategyBuilder<P> {
+        Self::builder_for(None, oidc_provider)
+    }
+
+    fn builder_for(
+        workspace_crn: Option<Crn>,
+        oidc_provider: P,
+    ) -> OidcFederationStrategyBuilder<P> {
         OidcFederationStrategyBuilder {
             workspace_crn,
             oidc_provider,
@@ -397,9 +492,11 @@ impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P,
 
 /// Builder for [`OidcFederationStrategy`].
 ///
-/// Created via [`OidcFederationStrategy::builder`].
+/// Created via [`OidcFederationStrategy::builder`] or
+/// [`OidcFederationStrategy::builder_with_detected_workspace`].
 pub struct OidcFederationStrategyBuilder<P, S = NoStore> {
-    workspace_crn: Crn,
+    /// `None` when [`build`](Self::build) detects the workspace.
+    workspace_crn: Option<Crn>,
     oidc_provider: P,
     base_url_override: Option<url::Url>,
     token_store: S,
@@ -513,10 +610,22 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
     /// override, then the `CS_CTS_HOST` environment variable, then service
     /// discovery using the CRN's region.
     ///
+    /// # Errors
+    ///
+    /// A builder from
+    /// [`builder_with_detected_workspace`](OidcFederationStrategy::builder_with_detected_workspace)
+    /// detects the workspace here, and returns the errors that
+    /// [`with_detected_workspace`](OidcFederationStrategy::with_detected_workspace)
+    /// lists.
+    ///
     /// [`base_url`]: Self::base_url
     pub fn build(self) -> Result<OidcFederationStrategy<P, S>, AuthError> {
-        let expected_workspace = self.workspace_crn.workspace_id;
-        let region = self.workspace_crn.region;
+        let workspace_crn = match self.workspace_crn {
+            Some(crn) => crn,
+            None => workspace::detect_crn()?,
+        };
+        let expected_workspace = workspace_crn.workspace_id;
+        let region = workspace_crn.region;
         let base_url = match self.base_url_override {
             Some(url) => url,
             None => {
@@ -773,6 +882,67 @@ mod tests {
             token.workspace_id().expect("workspace_id").as_str(),
             WS,
             "token should come from the override's mock server",
+        );
+    }
+
+    /// A builder from `builder_with_detected_workspace` takes its workspace
+    /// from `CS_WORKSPACE_CRN` in `build()`, and keeps the other options set
+    /// on it: here a token store, which receives the federated token.
+    ///
+    /// The variables are set only around `build()`, which is where the
+    /// workspace is detected. `CS_CONFIG_PATH` names an empty directory, so
+    /// the developer's own profile is never read.
+    #[tokio::test]
+    async fn detected_workspace_builder_keeps_its_options() {
+        let server = start_mock_server_returning_jwt(WS).await;
+        let profile = tempfile::tempdir().unwrap();
+        let store = Arc::new(InMemoryTokenStore::new());
+        let crn = format!("crn:ap-southeast-2.aws:{WS}");
+
+        let strategy = temp_env::with_vars(
+            [
+                ("CS_WORKSPACE_CRN", Some(crn.as_str())),
+                ("CS_CONFIG_PATH", profile.path().to_str()),
+            ],
+            || {
+                OidcFederationStrategy::builder_with_detected_workspace(provider())
+                    .base_url(server.url(""))
+                    .with_token_store(Arc::clone(&store))
+                    .build()
+                    .expect("the workspace is detected from CS_WORKSPACE_CRN")
+            },
+        );
+
+        assert_eq!(
+            strategy.expected_workspace.as_str(),
+            WS,
+            "the strategy verifies tokens against the detected workspace"
+        );
+        (&strategy).get_token().await.expect("get_token");
+        assert!(
+            store.load().await.is_some(),
+            "the token store set on the builder receives the federated token"
+        );
+    }
+
+    /// With no `CS_WORKSPACE_CRN` and no CLI login, `build()` on a
+    /// detected-workspace builder fails as `with_detected_workspace` does.
+    #[test]
+    fn detected_workspace_builder_with_nothing_configured_is_not_authenticated() {
+        let profile = tempfile::tempdir().unwrap();
+
+        let result = temp_env::with_vars(
+            [
+                ("CS_WORKSPACE_CRN", None),
+                ("CS_CONFIG_PATH", profile.path().to_str()),
+            ],
+            || OidcFederationStrategy::builder_with_detected_workspace(provider()).build(),
+        );
+
+        assert!(
+            matches!(result, Err(AuthError::NotAuthenticated(_))),
+            "expected NotAuthenticated, got: {:?}",
+            result.err()
         );
     }
 

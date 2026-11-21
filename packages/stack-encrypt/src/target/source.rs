@@ -3,8 +3,8 @@
 //! module is private and its items are re-exported from `target`.
 
 /// A description's plaintext is handed to it by reference: the default mode,
-/// and the one every [`EncryptFrom`](super::EncryptFrom) declaration runs in.
-/// An operation that consumes the plaintext clones it.
+/// and the one a record runs each field in when it takes the field out of a
+/// borrowed struct. An operation that consumes the plaintext clones it.
 ///
 /// This is a mode, not a value: the enum is uninhabited, so no `Borrowed`
 /// ever exists and it never holds a plaintext. Its `Debug` can print nothing.
@@ -29,14 +29,14 @@ mod sealed {
 /// How a description receives its plaintext: the `M` parameter of
 /// [`Encryption`](super::Encryption).
 ///
-/// Vitamin C's `Encrypt`, `PrfValue` and `CllwOreEncrypt` consume the value
+/// Vitamin C's `Encrypt` and `PrfValue`, and the order terms, consume the value
 /// they are given, so an operation needs the plaintext by value. A
 /// description can be handed it two ways, and because the mode is a type
 /// parameter the difference is settled at compile time:
 ///
-/// - [`Borrowed`], the default: the description is handed `&S`. This is what
-///   [`encrypt_as`](crate::KeysetCipher::encrypt_as) does for every
-///   [`EncryptFrom`](super::EncryptFrom) declaration, and what lets a record
+/// - [`Borrowed`], the default: the description is handed `&S`. This is
+///   what [`EncryptTarget::encryption`](super::EncryptTarget::encryption)
+///   describes, and what lets a record
 ///   pick its fields out of a borrowed struct. An operation that consumes the
 ///   plaintext clones it first ([`ConsumeSource`]), so here, and only here,
 ///   `S` must be `Clone`.
@@ -57,6 +57,10 @@ pub trait SourceMode<'s, S: 's>: sealed::Sealed + 's {
     /// Read the plaintext in place, for an operation that does not consume
     /// it (a match term reads text through `AsRef<str>`).
     fn view(source: &Self::Source) -> &S;
+    /// Let go of the plaintext after reading it in place: in [`Owned`]
+    /// mode the description owns it, and hands it to `wipe`; in
+    /// [`Borrowed`] mode it is the caller's, and nothing is done.
+    fn release(source: Self::Source, wipe: impl FnOnce(S));
 }
 
 /// A mode in which an operation can take the plaintext by value: always for
@@ -79,6 +83,7 @@ impl<'s, S: 's> SourceMode<'s, S> for Borrowed {
     fn view(source: &Self::Source) -> &S {
         source
     }
+    fn release(_: Self::Source, _: impl FnOnce(S)) {}
 }
 impl<'s, S: Clone + 's> ConsumeSource<'s, S> for Borrowed {
     fn take(source: Self::Source) -> S {
@@ -95,6 +100,9 @@ impl<'s, S: 's> SourceMode<'s, S> for Owned {
     type Source = S;
     fn view(source: &Self::Source) -> &S {
         source
+    }
+    fn release(source: Self::Source, wipe: impl FnOnce(S)) {
+        wipe(source);
     }
 }
 impl<'s, S: 's> ConsumeSource<'s, S> for Owned {

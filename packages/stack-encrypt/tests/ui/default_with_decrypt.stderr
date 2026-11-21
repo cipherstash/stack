@@ -1,5 +1,5 @@
 error: a `default` field is not derived from the source, so `identity`, `from` and `decrypt` do not apply to it
- --> tests/ui/default_with_decrypt.rs:7:8
-  |
-7 |     v: u8,
-  |        ^^
+  --> tests/ui/default_with_decrypt.rs:10:8
+   |
+10 |     v: u8,
+   |        ^^
