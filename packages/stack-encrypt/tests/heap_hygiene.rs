@@ -542,9 +542,10 @@ fn a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap() {
     );
 }
 
-/// Two decrypts joined with `Pending::zip`, the second of which fails after
-/// its key arrived. The plaintext the first one recovered is wiped, not
-/// dropped as it is.
+/// Three decrypts joined with `Pending::zip`, the last of which fails after
+/// its key arrived. The plaintext the first two recovered is wiped, not
+/// dropped as it is. The second opens under a context, so both `DecryptFrom`
+/// calls are covered.
 #[test]
 fn a_late_failure_in_a_zip_of_decrypts_leaves_no_plaintext_on_the_heap() {
     use stack_encrypt::DecryptFrom;
@@ -554,14 +555,17 @@ fn a_late_failure_in_a_zip_of_decrypts_leaves_no_plaintext_on_the_heap() {
     let (first, second, third) = rt.block_on(async {
         (
             keyset.encrypt(marked("first")).await.unwrap(),
-            keyset.encrypt(marked("second")).await.unwrap(),
+            keyset
+                .encrypt_with_context(marked("second"), "users/second")
+                .await
+                .unwrap(),
             keyset.encrypt(true).await.unwrap(),
         )
     });
     watched("late type failure in a zip of decrypts", || {
         let result = rt.block_on(async {
             String::decrypt_from(first, &keyset)
-                .zip(String::decrypt_from(second, &keyset))
+                .zip(keyset.decrypt_with_context::<String>(second, "users/second"))
                 .zip(String::decrypt_from(third, &keyset))
                 .await
         });
