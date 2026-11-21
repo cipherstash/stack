@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -220,5 +221,199 @@ func TestJSONReadTypesPrintAndLogRedacted(t *testing.T) {
 	}
 	if !strings.Contains(logged.String(), `"field":"profile"`) || !strings.Contains(logged.String(), `"tokens":3`) {
 		t.Errorf("slog records no field or token count: %s", logged.String())
+	}
+}
+
+// subtreeLeafRow is the one row eql_v4.json_tree_subtree returns for a
+// read of a scalar: the scalar's entry, at depth 0 below the node its token
+// names.
+func subtreeLeafRow(t *testing.T, entry []byte) eql.JSONEntry {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(entry, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["d"] = json.RawMessage(`0`)
+	row, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return eql.JSONEntry(row)
+}
+
+// A document sealed through a cipher with a binding is read in part through
+// the same cipher: Selector and Subtree prepare the read under the cipher's
+// scopes alone, so their selector and tokens are those of a cipher with the
+// same scopes and no binding, and open what the database returns under the
+// scopes and the binding. A cipher with another binding, or none, finds the
+// same entries and does not open them. A document sealed with no binding
+// reads through a cipher with no binding, as before.
+func TestACustomersDocumentReadsThroughACipherWithABinding(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	f := testusers.CustomerFields.Profile
+	in := []testusers.Customer{{ID: 1, Profile: json.RawMessage(`{"name":"Alice","age":34}`)}}
+	const path = "$.name"
+
+	// selectorRead opens the entry `col -> selector` returns through
+	// cipher.
+	selectorRead := func(cipher *encrypt.Cipher, document []byte) (encrypt.JSONSelector, error) {
+		t.Helper()
+		sel, err := f.Selector(ctx, cipher, path)
+		if err != nil {
+			return "", err
+		}
+		entry := jsonEntry(t, document, string(sel.Selector()))
+		if entry == nil {
+			t.Fatal("the selector names no entry of the document")
+		}
+		row := eql.JSONEntry(entry)
+		values, err := sel.Open(ctx, []*eql.JSONEntry{&row})
+		if err != nil {
+			return sel.Selector(), err
+		}
+		if len(values) != 1 || !values[0].Found || string(values[0].JSON) != `"Alice"` {
+			t.Fatalf("the selection opened %+v", values)
+		}
+		return sel.Selector(), nil
+	}
+	// subtreeRead opens the row json_tree_subtree returns through cipher.
+	subtreeRead := func(cipher *encrypt.Cipher, document []byte) (encrypt.JSONTokens, error) {
+		t.Helper()
+		read, err := f.Subtree(ctx, cipher, path, encrypt.JSONReadOptions{})
+		if err != nil {
+			return nil, err
+		}
+		// The entry the selector at the same path names is the scalar's
+		// node: the row json_tree_subtree returns for it.
+		sel, err := f.Selector(ctx, cipher, path)
+		if err != nil {
+			return nil, err
+		}
+		entry := jsonEntry(t, document, string(sel.Selector()))
+		if entry == nil {
+			t.Fatal("the selector names no entry of the document")
+		}
+		value, err := read.OpenOne(ctx, []eql.JSONEntry{subtreeLeafRow(t, entry)})
+		if err != nil {
+			return read.Tokens(), err
+		}
+		if !value.Found || string(value.JSON) != `"Alice"` {
+			t.Fatalf("the subtree read opened %+v", value)
+		}
+		return read.Tokens(), nil
+	}
+
+	plain := c.DefaultKeyset()
+	for _, scoped := range []struct {
+		name   string
+		cipher *encrypt.Cipher
+	}{
+		{"no scope", plain},
+		{"a scope", plain.Scope(uint64(7))},
+	} {
+		t.Run(scoped.name, func(t *testing.T) {
+			bound := scoped.cipher.Bind(uint64(9))
+			encrypted, err := testusers.EncryptCustomer(ctx, bound, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			document := []byte(encrypted[0].Profile)
+
+			selector, err := selectorRead(bound, document)
+			if err != nil {
+				t.Fatalf("Selector through the cipher that sealed the document: %v", err)
+			}
+			tokens, err := subtreeRead(bound, document)
+			if err != nil {
+				t.Fatalf("Subtree through the cipher that sealed the document: %v", err)
+			}
+			// The operands are those of the cipher's scopes alone.
+			unbound, err := f.Selector(ctx, scoped.cipher, path)
+			if err != nil || unbound.Selector() != selector {
+				t.Errorf("the bound cipher's selector is not its scopes' own: %v", err)
+			}
+			unboundRead, err := f.Subtree(ctx, scoped.cipher, path, encrypt.JSONReadOptions{})
+			if err != nil || !slices.Equal(unboundRead.Tokens(), tokens) {
+				t.Errorf("the bound cipher's tokens are not its scopes' own: %v", err)
+			}
+			// A binding part Bind refuses is reported when the read is
+			// prepared, not when it opens.
+			if _, err := f.Selector(ctx, scoped.cipher.Bind(""), path); !errors.Is(err, encrypt.ErrEncoding) {
+				t.Errorf("Selector through a cipher with an empty binding: %v, want ErrEncoding", err)
+			}
+			if _, err := f.Subtree(ctx, scoped.cipher.Bind(""), path, encrypt.JSONReadOptions{}); !errors.Is(err, encrypt.ErrEncoding) {
+				t.Errorf("Subtree through a cipher with an empty binding: %v, want ErrEncoding", err)
+			}
+
+			// An ordered path's accessor prepares its selection the same way.
+			atAge, err := f.At.Age.Selector(ctx, bound)
+			if err != nil {
+				t.Fatalf("At.Age.Selector through a cipher with a binding: %v", err)
+			}
+			if want, err := f.Selector(ctx, scoped.cipher, "$.age"); err != nil || atAge.Selector() != want.Selector() {
+				t.Errorf("At.Age's selector is not its scopes' own: %v", err)
+			}
+
+			// A cipher with the same scopes and another binding, or none,
+			// finds the entry and does not open it: the entry was sealed
+			// under the binding, so ZeroKMS refuses its data key
+			// (ErrForbidden), as it refuses a record's.
+			for whose, other := range map[string]*encrypt.Cipher{
+				"no binding":  scoped.cipher,
+				"another row": scoped.cipher.Bind(uint64(10)),
+			} {
+				if _, err := selectorRead(other, document); !errors.Is(err, encrypt.ErrForbidden) {
+					t.Errorf("%s: Selector opened the entry, or not as ErrForbidden: %v", whose, err)
+				}
+				if _, err := subtreeRead(other, document); !errors.Is(err, encrypt.ErrForbidden) {
+					t.Errorf("%s: Subtree opened the row, or not as ErrForbidden: %v", whose, err)
+				}
+			}
+
+			// A query opens nothing, so it has no use for a binding, and a
+			// query through a cipher with one is still refused. So is a
+			// node's token, which is a query's operand too.
+			for name, err := range map[string]error{
+				"Contains":    func() error { _, err := f.Contains(ctx, bound, json.RawMessage(`{"name":"Alice"}`)); return err }(),
+				"ContainedBy": func() error { _, err := f.ContainedBy(ctx, bound, json.RawMessage(`{"name":"Alice"}`)); return err }(),
+				"EqAt":        func() error { _, err := f.EqAt(ctx, bound, path, "Alice"); return err }(),
+				"At.Age.Lt":   func() error { _, err := f.At.Age.Lt(ctx, bound, 40); return err }(),
+				"Match": func() error {
+					_, err := f.Match(ctx, bound, `$.age < 40`, map[string]any{}, encrypt.JSONReadOptions{})
+					return err
+				}(),
+				"Elements.Visits.Match": func() error {
+					_, err := f.Elements.Visits.Match(ctx, bound, encrypt.JSONReadOptions{}, encrypt.AtPath(testusers.CustomerPaths.Profile.Visits.At).Gt(1))
+					return err
+				}(),
+				"Children":   func() error { _, err := f.Children(ctx, bound, path); return err }(),
+				"ChildCount": func() error { _, err := f.ChildCount(ctx, bound, path); return err }(),
+			} {
+				if !errors.Is(err, encrypt.ErrEncoding) {
+					t.Errorf("%s through a cipher with a binding: %v, want ErrEncoding", name, err)
+				}
+			}
+
+			// A document sealed with no binding reads through a cipher with
+			// no binding, and not through one with a binding.
+			plainEncrypted, err := testusers.EncryptCustomer(ctx, scoped.cipher, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plainDocument := []byte(plainEncrypted[0].Profile)
+			if _, err := selectorRead(scoped.cipher, plainDocument); err != nil {
+				t.Errorf("Selector of a document sealed with no binding: %v", err)
+			}
+			if _, err := subtreeRead(scoped.cipher, plainDocument); err != nil {
+				t.Errorf("Subtree of a document sealed with no binding: %v", err)
+			}
+			if _, err := selectorRead(bound, plainDocument); !errors.Is(err, encrypt.ErrForbidden) {
+				t.Errorf("a bound cipher's Selector opened a document sealed with no binding: %v", err)
+			}
+			if _, err := subtreeRead(bound, plainDocument); !errors.Is(err, encrypt.ErrForbidden) {
+				t.Errorf("a bound cipher's Subtree opened a document sealed with no binding: %v", err)
+			}
+		})
 	}
 }

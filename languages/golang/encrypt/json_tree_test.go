@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -292,9 +293,10 @@ func jsonEntry(t *testing.T, document []byte, selector string) []byte {
 //
 // Its selectors derive under the column, then the scope, so a cipher with
 // the scope finds its entries, and a cipher with another scope, or none,
-// does not. A binding is in no query. The entries open under the scope and
-// the binding, so a cipher with another binding, or none, finds an entry
-// and does not open it.
+// does not. A binding is in no query, and a read derives its selector
+// under the scope alone. The entries open under the scope and the binding,
+// so a cipher with another binding, or none, finds an entry and does not
+// open it.
 func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
@@ -351,8 +353,8 @@ func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
 				t.Errorf("i = %+v, want users/profile and nothing else", stored.I)
 			}
 
-			// A read is prepared with the scope and no binding, and opened
-			// through the cipher the document was sealed through.
+			// A read prepared with the scope and no binding opens through the
+			// cipher the document was sealed through.
 			name := jsonEntry(t, document, selector(tenant))
 			if name == nil {
 				t.Fatal("the tenant's selector names no entry of the tenant's document")
@@ -379,9 +381,31 @@ func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
 		})
 	}
 
-	// Preparing a read is a query, and a query takes no binding.
-	if _, err := bound.QueryTerm(ctx, jsonPlan(), "profile", "selector", vcvalue.Object{{Key: "path", Value: "$.name"}}); !errors.Is(err, encrypt.ErrEncoding) {
-		t.Errorf("a selector through a cipher with a binding: %v", err)
+	// A cipher with a binding prepares a read: its selector and its subtree
+	// tokens derive under the scope alone, so they are the tenant's. A query,
+	// and a node's token, take no binding.
+	if got := selector(bound); got != selector(tenant) {
+		t.Errorf("a selector through a cipher with a binding is not the tenant's")
+	}
+	subtree := func(cipher *encrypt.Cipher) ([]string, error) {
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "subtree", vcvalue.Object{{Key: "path", Value: "$.name"}})
+		return term.Text, err
+	}
+	boundTokens, err := subtree(bound)
+	if err != nil {
+		t.Fatalf("a subtree read through a cipher with a binding: %v", err)
+	}
+	if tenantTokens, err := subtree(tenant); err != nil || !slices.Equal(boundTokens, tenantTokens) {
+		t.Errorf("a subtree read's tokens through a cipher with a binding are not the tenant's: %v", err)
+	}
+	for _, operator := range []string{"children", "child_count", "eq_at"} {
+		input := vcvalue.Object{{Key: "path", Value: "$.name"}}
+		if operator == "eq_at" {
+			input = append(input, vcvalue.Field{Key: "json", Value: []byte(`"Alice"`)})
+		}
+		if _, err := bound.QueryTerm(ctx, jsonPlan(), "profile", operator, input); !errors.Is(err, encrypt.ErrEncoding) {
+			t.Errorf("%s through a cipher with a binding: %v, want ErrEncoding", operator, err)
+		}
 	}
 }
 

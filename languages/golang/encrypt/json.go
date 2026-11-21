@@ -40,9 +40,11 @@ import (
 // document sealed through a cipher with a scope opens through a cipher with
 // the same scope. A document sealed through a cipher with a binding too
 // opens through a cipher with the same scope and binding, and every group
-// of one call opens under that one binding. The selector or the key derives
-// under the scope alone, as a query's term does: prepare the read through
-// a cipher with no binding.
+// of one call opens under that one binding: a read through a cipher with a
+// binding is a read of that binding's row. The selector or the key derives
+// under the scope alone, as a query's term does, so the read can be
+// prepared through this cipher ([Cipher.QueryTerm] takes a binding for
+// selector and subtree) or through one with the same scope and no binding.
 //
 // Opening does not prove the database returned every row the read asked
 // for, or rows of the database row the caller meant: see the EQL json_tree
@@ -241,6 +243,12 @@ type JSONRange[Q ~[]byte] struct {
 // the cipher's keyset), so the entries open only as answers to it: the
 // engine derives the selector again and refuses an entry that does not
 // carry it. E is the column's entry type, eql.JSONEntry.
+//
+// It keeps the cipher it was prepared through, and opens through it. A
+// cipher with a binding prepares one: the selector derives under the
+// cipher's scopes alone, so it is the selector a cipher with the same
+// scopes and no binding derives, and the entries open under the scopes and
+// the binding.
 type JSONSelection[E ~[]byte] struct {
 	cipher   *Cipher
 	plan     *record.Plan
@@ -289,6 +297,12 @@ func (s JSONSelection[E]) LogValue() slog.Value {
 // whole document; a nil opens to no value. A container's entry is refused:
 // read a container with a subtree read. An entry that is not the selector's
 // is [ErrEncoding].
+//
+// Every entry of one call opens under the binding of the cipher the
+// selection was prepared through. So through a cipher with a binding, pass
+// only the entry of the row that binding names. An entry sealed under
+// another binding, or under none where the cipher has one, does not open:
+// ZeroKMS refuses its data key.
 func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, error) {
 	if s.cipher == nil {
 		return nil, fmt.Errorf("%w: a zero JSONSelection has no request to open against", ErrEncoding)
@@ -328,6 +342,11 @@ func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, err
 // the path, the bound and the cipher's keyset); the engine derives the read
 // again from it, and checks every row against it. E is the column's entry
 // type, eql.JSONEntry.
+//
+// It keeps the cipher it was prepared through, and opens through it, as a
+// [JSONSelection] does: through a cipher with a binding the tokens are
+// those of the cipher's scopes alone, and the rows open under the scopes
+// and the binding.
 type JSONRead[E ~[]byte] struct {
 	cipher *Cipher
 	plan   *record.Plan
@@ -382,6 +401,12 @@ func (r JSONRead[E]) LogValue() slog.Value {
 // to the same values; only those values come back. A row that is not one
 // the read asked for, or a wildcard read of an array longer than the bound,
 // is [ErrEncoding].
+//
+// Every group of one call opens under the binding of the cipher the read
+// was prepared through. So through a cipher with a binding, pass only the
+// group of the row that binding names. An entry sealed under another
+// binding, or under none where the cipher has one, does not open: ZeroKMS
+// refuses its data key.
 //
 // Opening checks each row against the read, not that the database
 // returned every row it should have, nor that the rows came from the row

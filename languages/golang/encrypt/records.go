@@ -188,6 +188,25 @@ func (cph *Cipher) queryPlan(plan *record.Plan, field string) (*record.Plan, err
 	return cph.underNamedContext(p, field)
 }
 
+// operandPlan is the plan operator's operand on field derives under. A
+// read's operand (selector, subtree) derives under this cipher's scopes
+// alone, and its bindings are left out: the read opens what the database
+// returns through the same cipher, bindings included ([Cipher.JSONOpen]).
+// So a cipher with a binding prepares a read, and its operand is the one a
+// cipher with the same scopes and no binding derives. Every other operator
+// is a query's, which opens nothing: [Cipher.queryPlan] refuses it through
+// a cipher with a binding.
+func (cph *Cipher) operandPlan(plan *record.Plan, field, operator string) (*record.Plan, error) {
+	if operator == "selector" || operator == "subtree" {
+		// The copy keeps the cipher's error, so a binding part Bind refused
+		// is reported here, before the read is prepared.
+		scopes := cph.copy()
+		scopes.bindings = nil
+		return scopes.queryPlan(plan, field)
+	}
+	return cph.queryPlan(plan, field)
+}
+
 // readPlan is the plan a read of field's document opens under: as
 // [Cipher.queryPlan], and with this cipher's bindings. The engine derives
 // the read's selector or key under the scopes, as it derives a query's
