@@ -43,7 +43,7 @@
 
 use stack_encrypt::CipherRef;
 use stack_encrypt::{KeysetCipher, Label, StackCipher};
-use stack_kms::{IdentifiedBy, IndexKeySource};
+use stack_kms::{DataKeySource, IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
 use zerokms_protocol::Name;
 
@@ -221,13 +221,16 @@ impl KeysetSelector {
     /// default without a round trip, a name or id through the cipher's
     /// cache (a first use is one `load-keyset` call). `Any` is not a keyset
     /// and is [`STATUS_ENCODING`] here; opening exports resolve it through
-    /// [`scope_for`] instead.
+    /// [`cipher_ref_for`] instead.
+    ///
+    /// A keyset selected by name or id is loaded here, so one that ZeroKMS
+    /// does not know fails the call that selected it, with that error.
     pub async fn resolve<'c, K>(
         &self,
         cipher: &'c StackCipher<K>,
     ) -> Result<KeysetCipher<'c, K>, u32>
     where
-        K: IndexKeySource,
+        K: DataKeySource + IndexKeySource + Sync,
     {
         let by: IdentifiedBy = match self {
             KeysetSelector::Default => return Ok(cipher.default_keyset()),
@@ -235,7 +238,11 @@ impl KeysetSelector {
             KeysetSelector::Name(name) => IdentifiedBy::Name(name.clone()),
             KeysetSelector::Id(id) => IdentifiedBy::Uuid(*id),
         };
-        cipher.keyset(by).await.map_err(|e| fail_error(&e))
+        // Selecting makes no request. Reading the id loads the keyset, and
+        // the handle keeps it.
+        let keyset = cipher.keyset(by);
+        let _ = keyset.keyset_id().await.map_err(|e| fail_error(&e))?;
+        Ok(keyset)
     }
 }
 
@@ -246,12 +253,12 @@ impl KeysetSelector {
 /// - For one keyset, the result is that keyset's cipher. That cipher only
 ///   opens leaves from its own keyset. The cipher refuses any other leaf
 ///   before it retrieves any key.
-pub async fn scope_for<'c, K>(
+pub async fn cipher_ref_for<'c, K>(
     cipher: &'c StackCipher<K>,
     selector: &KeysetSelector,
 ) -> Result<CipherRef<'c, K>, u32>
 where
-    K: IndexKeySource,
+    K: DataKeySource + IndexKeySource + Sync,
 {
     match selector {
         KeysetSelector::Any => Ok(CipherRef::from(cipher)),

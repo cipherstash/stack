@@ -516,7 +516,12 @@ async fn the_committed_fixture_opens_both_ways() {
         );
         let _ = entries.insert(
             "keyset_id".into(),
-            json!(cipher.default_keyset().keyset_id().to_string()),
+            json!(cipher
+                .default_keyset()
+                .keyset_id()
+                .await
+                .unwrap()
+                .to_string()),
         );
         let _ = entries.insert("plan".into(), data_plan_json());
         let _ = entries.insert("plaintext".into(), plaintext_json());
@@ -536,7 +541,12 @@ async fn the_committed_fixture_opens_both_ways() {
     assert_eq!(fixture["key_source"]["seed"], json!(hex(&SEED)));
     assert_eq!(
         fixture["keyset_id"],
-        json!(cipher.default_keyset().keyset_id().to_string())
+        json!(cipher
+            .default_keyset()
+            .keyset_id()
+            .await
+            .unwrap()
+            .to_string())
     );
     assert_eq!(
         fixture["plan"],

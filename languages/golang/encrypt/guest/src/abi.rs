@@ -100,7 +100,7 @@ use stack_guest_abi::step::{self, Operation, Step};
 
 use crate::io;
 use crate::ops::{self, Bytes};
-use crate::options::{parse_options, parse_selector, scope_for, KeysetSelector, Side};
+use crate::options::{cipher_ref_for, parse_options, parse_selector, KeysetSelector, Side};
 #[cfg(not(feature = "deterministic-kms"))]
 use crate::status::STATUS_INTERNAL;
 #[cfg(not(feature = "deterministic-kms"))]
@@ -256,12 +256,12 @@ fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
     let initialising = Initialising::begin();
     run(Box::pin(async move {
         let _initialising = initialising;
-        install(
-            builder
-                .init()
-                .await
-                .map_err(|e| crate::status::fail_error(&e))?,
-        )
+        let cipher = builder
+            .init()
+            .await
+            .map_err(|e| crate::status::fail_error(&e))?;
+        let default = default_keyset_id(&cipher).await?;
+        install(cipher, default)
     }))
 }
 
@@ -278,12 +278,12 @@ fn cipher_init(seed: InitConfig) -> Result<Vec<u8>, u32> {
     let initialising = Initialising::begin();
     run(Box::pin(async move {
         let _initialising = initialising;
-        install(
-            builder
-                .init()
-                .await
-                .map_err(|e| crate::status::fail_error(&e))?,
-        )
+        let cipher = builder
+            .init()
+            .await
+            .map_err(|e| crate::status::fail_error(&e))?;
+        let default = default_keyset_id(&cipher).await?;
+        install(cipher, default)
     }))
 }
 
@@ -318,14 +318,24 @@ fn init_out_of_order() -> u32 {
     out_of_order("the cipher is already initialised or initialising, or the instance is shut down")
 }
 
-/// Install the built cipher as the instance's and return its default
-/// keyset's id.
-fn install(cipher: GuestCipher) -> Result<Vec<u8>, u32> {
+/// The id of the cipher's default keyset. `init` loaded that keyset, so
+/// this makes no request.
+async fn default_keyset_id(cipher: &GuestCipher) -> Result<Vec<u8>, u32> {
+    let id = cipher
+        .default_keyset()
+        .keyset_id()
+        .await
+        .map_err(|e| crate::status::fail_error(&e))?;
+    Ok(id.as_bytes().to_vec())
+}
+
+/// Install the built cipher as the instance's and return `default`, its
+/// default keyset's id.
+fn install(cipher: GuestCipher, default: Vec<u8>) -> Result<Vec<u8>, u32> {
     // A shutdown that overtook a paused init installs nothing.
     if SHUT_DOWN.with(Cell::get) {
         return Err(init_out_of_order());
     }
-    let default = cipher.default_keyset().keyset_id().as_bytes().to_vec();
     CIPHER.with(|c| *c.borrow_mut() = Some(Rc::new(cipher)));
     Ok(default)
 }
@@ -377,7 +387,11 @@ pub unsafe extern "C" fn se_keyset(sel_ptr: *const u8, sel_len: u32) -> u64 {
         let cipher = cipher()?;
         run(Box::pin(async move {
             let keyset = selector.resolve(&cipher).await?;
-            Ok(keyset.keyset_id().as_bytes().to_vec())
+            let id = keyset
+                .keyset_id()
+                .await
+                .map_err(|e| crate::status::fail_error(&e))?;
+            Ok(id.as_bytes().to_vec())
         }))
     })
 }
@@ -500,8 +514,8 @@ pub unsafe extern "C" fn se_decrypt_record(
         ops::validate::record_tree(&record, &plan, options.context.as_ref())?;
         let cipher = cipher()?;
         run(Box::pin(async move {
-            let scope = scope_for(&cipher, &options.keyset).await?;
-            ops::decrypt_record(scope, &record, &plan, options.context).await
+            let cipher_ref = cipher_ref_for(&cipher, &options.keyset).await?;
+            ops::decrypt_record(cipher_ref, &record, &plan, options.context).await
         }))
     })
 }

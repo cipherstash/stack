@@ -350,6 +350,15 @@ impl<C> Audited<C> {
     pub(crate) fn into_parts(self) -> (C, Unverified) {
         (self.call, self.metadata)
     }
+
+    /// The same metadata, on the call `wrap` makes of this one: what
+    /// attaching a credential to an audited call does.
+    pub(crate) fn rewrap<D>(self, wrap: impl FnOnce(C) -> D) -> Audited<D> {
+        Audited {
+            call: wrap(self.call),
+            metadata: self.metadata,
+        }
+    }
 }
 
 /// Shows the call and nothing of the metadata.

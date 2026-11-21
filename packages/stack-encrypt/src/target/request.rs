@@ -53,6 +53,12 @@ pub(super) enum RequestKind {
     /// place a pending reaches ZeroKMS, so the keyset is asked for as a
     /// request and answered beside the document's data key.
     LoadKeyset { keyset_id: Uuid },
+    /// The loaded state of the keyset the pending works under, asked for
+    /// by a pending that was built before the cipher had loaded that
+    /// keyset. Settling the pending loads the keyset and replaces this
+    /// with [`LoadKeyset`](Self::LoadKeyset) for its id, so dispatch never
+    /// sees it.
+    SelectedKeyset,
 }
 
 impl Request {
@@ -127,16 +133,48 @@ impl Request {
         Self(RequestKind::LoadKeyset { keyset_id })
     }
 
+    /// Request the loaded state of the keyset the pending works under,
+    /// for a pending built through a keyset that the cipher had not loaded
+    /// yet. Settling the pending loads the keyset and turns this into
+    /// [`load_keyset`](Self::load_keyset) for its id
+    /// ([`resolve_selected_keyset`](Self::resolve_selected_keyset)).
+    pub(crate) fn selected_keyset() -> Self {
+        Self(RequestKind::SelectedKeyset)
+    }
+
+    /// Whether this asks for the pending's keyset before its id is known.
+    pub(super) fn is_selected_keyset(&self) -> bool {
+        matches!(self.0, RequestKind::SelectedKeyset)
+    }
+
+    /// Name the pending's keyset by its id, `keyset_id`, once it is
+    /// loaded. Every other request is left as it is.
+    pub(super) fn resolve_selected_keyset(&mut self, keyset_id: Uuid) {
+        if self.is_selected_keyset() {
+            self.0 = RequestKind::LoadKeyset { keyset_id };
+        }
+    }
+
+    /// Whether this needs the pending to work under a keyset: it mints a
+    /// data key under it, or it asks for its loaded state.
+    pub(super) fn needs_keyset(&self) -> bool {
+        matches!(
+            self.0,
+            RequestKind::GenerateDataKey { .. } | RequestKind::SelectedKeyset
+        )
+    }
+
     /// Consume the request, yielding what it asks for.
     pub(super) fn into_kind(self) -> RequestKind {
         self.0
     }
 
     /// The keyset a retrieve or keyset request names; `None` for a generate
-    /// request, which mints under the pending's keyset.
+    /// request, which mints under the pending's keyset, and for a request
+    /// for the pending's own keyset, whose id may not be known yet.
     pub(super) fn retrieve_keyset(&self) -> Option<Uuid> {
         match &self.0 {
-            RequestKind::GenerateDataKey { .. } => None,
+            RequestKind::GenerateDataKey { .. } | RequestKind::SelectedKeyset => None,
             RequestKind::RetrieveDataKey { keyset_id, .. }
             | RequestKind::LoadKeyset { keyset_id } => Some(*keyset_id),
         }
@@ -151,7 +189,7 @@ pub(super) fn tally(requests: &[Request]) -> (usize, usize, usize) {
         match request.0 {
             RequestKind::GenerateDataKey { .. } => generate += 1,
             RequestKind::RetrieveDataKey { .. } => retrieve += 1,
-            RequestKind::LoadKeyset { .. } => keyset += 1,
+            RequestKind::LoadKeyset { .. } | RequestKind::SelectedKeyset => keyset += 1,
         }
     }
     (generate, retrieve, keyset)

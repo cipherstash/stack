@@ -34,6 +34,9 @@ struct Observed {
     /// The name whose *next* lookup waits for [`release`](Self::release).
     held: Mutex<Option<String>>,
     released: AtomicBool,
+    /// Names that were given to another keyset: a lookup of the key is
+    /// answered with the keyset of the value.
+    renamed: Mutex<HashMap<String, String>>,
 }
 
 /// How a refused name's lookup fails: with ZeroKMS's own answer that no
@@ -75,6 +78,16 @@ impl Observed {
 
     fn release(&self) {
         self.released.store(true, Ordering::SeqCst);
+    }
+
+    /// From now on `name` means the keyset that `other` names, as when a
+    /// keyset is renamed in ZeroKMS and another takes its old name.
+    fn rename(&self, name: &str, other: &str) {
+        let _ = self
+            .renamed
+            .lock()
+            .expect("lock")
+            .insert(name.to_owned(), other.to_owned());
     }
 }
 
@@ -144,13 +157,36 @@ impl IndexKeySource for Observed {
                     ViturRequestError::new(kind, message, std::io::Error::other(message)),
                 )))
             }
-            None => self.inner.load_index_key(keyset_id).await,
+            None => {
+                let renamed = asked
+                    .as_deref()
+                    .and_then(|name| self.renamed.lock().expect("lock").get(name).cloned());
+                let keyset_id = match renamed {
+                    Some(other) => Some(name(&other)),
+                    None => keyset_id,
+                };
+                self.inner.load_index_key(keyset_id).await
+            }
         }
     }
 }
 
 fn name(name: &str) -> IdentifiedBy {
     IdentifiedBy::Name(name.to_string().into())
+}
+
+/// Select a keyset and load it now, as the first call on its handle does.
+/// A test that counts loads, or reads what a load answered, starts here.
+async fn load<K>(
+    cipher: &StackCipher<K>,
+    keyset: impl Into<IdentifiedBy>,
+) -> Result<stack_encrypt::KeysetCipher<'_, K>, Error>
+where
+    K: stack_kms::DataKeySource + stack_kms::IndexKeySource + Sync,
+{
+    let keyset = cipher.keyset(keyset);
+    keyset.keyset_id().await?;
+    Ok(keyset)
 }
 
 async fn cipher() -> StackCipher<Observed> {
@@ -176,12 +212,12 @@ async fn init_loads_the_default_keyset_once() {
         .expect("resolve")
         .0;
     assert_eq!(
-        cipher.default_keyset().keyset_id(),
+        cipher.default_keyset().keyset_id().await.unwrap(),
         expected,
         "init resolves the source's own default keyset"
     );
     assert_eq!(
-        cipher.default_keyset().keyset_name(),
+        cipher.default_keyset().keyset_name().await.unwrap(),
         None,
         "the client's default is resolved by naming nothing, so it has no name"
     );
@@ -194,24 +230,28 @@ async fn init_loads_the_default_keyset_once() {
 #[tokio::test]
 async fn selecting_a_keyset_never_moves_the_default() {
     let cipher = cipher().await;
-    let default = cipher.default_keyset().keyset_id();
+    let default = cipher.default_keyset().keyset_id().await.unwrap();
 
-    let customers = cipher.keyset(name("customers")).await.expect("select");
-    assert_ne!(customers.keyset_id(), default, "a distinct keyset");
+    let customers = load(&cipher, name("customers")).await.expect("select");
+    assert_ne!(
+        customers.keyset_id().await.unwrap(),
+        default,
+        "a distinct keyset"
+    );
     assert_eq!(
-        cipher.default_keyset().keyset_id(),
+        cipher.default_keyset().keyset_id().await.unwrap(),
         default,
         "the default is unchanged by a selection"
     );
 
-    let _ = cipher.keyset(name("acme")).await.expect("select another");
+    let _ = load(&cipher, name("acme")).await.expect("select another");
     assert_eq!(
-        cipher.default_keyset().keyset_id(),
+        cipher.default_keyset().keyset_id().await.unwrap(),
         default,
         "and by any number of them"
     );
     assert_eq!(
-        cipher.default_keyset().keyset_name(),
+        cipher.default_keyset().keyset_name().await.unwrap(),
         None,
         "the client's default is never a name the caller chose"
     );
@@ -220,32 +260,31 @@ async fn selecting_a_keyset_never_moves_the_default() {
 #[tokio::test]
 async fn a_keyset_loads_on_first_selection_and_is_cached_after() {
     let cipher = cipher().await;
-    let first = cipher.keyset(name("acme")).await.expect("select");
+    let first = load(&cipher, name("acme")).await.expect("select");
     assert_eq!(cipher.kms().loads(), 2, "first selection loads");
     assert_eq!(
-        first.keyset_name(),
+        first.keyset_name().await.unwrap().as_deref(),
         Some("acme"),
         "a keyset selected by name reports the name it was selected by"
     );
 
-    let again = cipher.keyset(name("acme")).await.expect("select again");
-    let by_id = cipher
-        .keyset(first.keyset_id())
+    let again = load(&cipher, name("acme")).await.expect("select again");
+    let by_id = load(&cipher, first.keyset_id().await.unwrap())
         .await
         .expect("select by id");
     assert_eq!(cipher.kms().loads(), 2, "later selections are lookups");
     assert_eq!(
-        again.keyset_id(),
-        first.keyset_id(),
+        again.keyset_id().await.unwrap(),
+        first.keyset_id().await.unwrap(),
         "the second selection by name is the same keyset"
     );
     assert_eq!(
-        by_id.keyset_id(),
-        first.keyset_id(),
+        by_id.keyset_id().await.unwrap(),
+        first.keyset_id().await.unwrap(),
         "and so is the selection by the id it resolved to"
     );
     assert_eq!(
-        by_id.keyset_name(),
+        by_id.keyset_name().await.unwrap().as_deref(),
         Some("acme"),
         "the cached state keeps the name"
     );
@@ -254,9 +293,9 @@ async fn a_keyset_loads_on_first_selection_and_is_cached_after() {
 #[tokio::test]
 async fn a_keyset_selected_by_id_is_not_known_by_name() {
     let cipher = cipher().await;
-    let by_id = cipher.keyset(Uuid::from_u128(42)).await.expect("select");
+    let by_id = load(&cipher, Uuid::from_u128(42)).await.expect("select");
     assert_eq!(
-        by_id.keyset_name(),
+        by_id.keyset_name().await.unwrap(),
         None,
         "a selection by id knows no name to report"
     );
@@ -272,28 +311,27 @@ async fn an_evicted_keyset_reloads_on_its_next_selection() {
         .await
         .expect("build cipher");
 
-    let a = cipher.keyset(Uuid::from_u128(1)).await.expect("a");
-    let _b = cipher.keyset(Uuid::from_u128(2)).await.expect("b");
+    let a = load(&cipher, Uuid::from_u128(1)).await.expect("a");
+    let _b = load(&cipher, Uuid::from_u128(2)).await.expect("b");
     assert_eq!(cipher.kms().loads(), 3, "default + a + b");
 
     // `a` was evicted by `b`; selecting it again is a load. The handle taken
     // earlier is unaffected: it holds its own state.
-    let a_again = cipher.keyset(Uuid::from_u128(1)).await.expect("a again");
+    let a_again = load(&cipher, Uuid::from_u128(1)).await.expect("a again");
     assert_eq!(
         cipher.kms().loads(),
         4,
         "an evicted keyset is loaded again on its next selection"
     );
     assert_eq!(
-        a_again.keyset_id(),
-        a.keyset_id(),
+        a_again.keyset_id().await.unwrap(),
+        a.keyset_id().await.unwrap(),
         "the reload is the same keyset"
     );
 
     // The default never evicts, however small the cache.
     let _ = cipher.default_keyset();
-    let _ = cipher
-        .keyset(cipher.default_keyset().keyset_id())
+    let _ = load(&cipher, cipher.default_keyset().keyset_id().await.unwrap())
         .await
         .expect("default by id");
     assert_eq!(
@@ -315,17 +353,18 @@ async fn a_name_selection_is_re_resolved_after_its_window() {
         .expect("build cipher");
     assert_eq!(cipher.kms().loads(), 1, "init loads the default keyset");
 
-    let acme = cipher.keyset(name("acme")).await.expect("acme");
-    let _ = cipher.keyset(name("acme")).await.expect("acme again");
+    let acme = load(&cipher, name("acme")).await.expect("acme");
+    let _ = load(&cipher, name("acme")).await.expect("acme again");
     assert_eq!(
         cipher.kms().loads(),
         3,
         "every selection by name asks again"
     );
 
-    let _ = cipher.keyset(acme.keyset_id()).await.expect("acme by id");
-    let _ = cipher
-        .keyset(acme.keyset_id())
+    let _ = load(&cipher, acme.keyset_id().await.unwrap())
+        .await
+        .expect("acme by id");
+    let _ = load(&cipher, acme.keyset_id().await.unwrap())
         .await
         .expect("acme by id again");
     assert_eq!(
@@ -334,10 +373,9 @@ async fn a_name_selection_is_re_resolved_after_its_window() {
         "an id is identity and is never re-asked"
     );
 
-    let _ = cipher.keyset(name("primary")).await.expect("primary");
+    let _ = load(&cipher, name("primary")).await.expect("primary");
     assert_eq!(cipher.kms().loads(), 4, "another name, another ask");
-    let _ = cipher
-        .keyset(cipher.default_keyset().keyset_id())
+    let _ = load(&cipher, cipher.default_keyset().keyset_id().await.unwrap())
         .await
         .expect("default by id");
     assert_eq!(
@@ -359,11 +397,11 @@ async fn a_refused_name_is_zerokms_answer_and_leaves_the_keyset_cached_by_id() {
         .init()
         .await
         .expect("build cipher");
-    let acme = cipher.keyset(name("acme")).await.expect("acme");
+    let acme = load(&cipher, name("acme")).await.expect("acme");
     assert_eq!(cipher.kms().loads(), 2, "init and acme");
 
     cipher.kms().refuse("acme", Refusal::Unknown);
-    let error = cipher.keyset(name("acme")).await.expect_err("refused");
+    let error = load(&cipher, name("acme")).await.expect_err("refused");
     assert!(
         matches!(
             error,
@@ -373,16 +411,21 @@ async fn a_refused_name_is_zerokms_answer_and_leaves_the_keyset_cached_by_id() {
         ),
         "ZeroKMS's not-found reaches the caller as it is, got {error:?}"
     );
-    let by_id = cipher.keyset(acme.keyset_id()).await.expect("acme by id");
+    let by_id = load(&cipher, acme.keyset_id().await.unwrap())
+        .await
+        .expect("acme by id");
     assert_eq!(
         cipher.kms().loads(),
         3,
         "the keyset is still cached by id: only the name was answered"
     );
-    assert_eq!(by_id.keyset_id(), acme.keyset_id());
+    assert_eq!(
+        by_id.keyset_id().await.unwrap(),
+        acme.keyset_id().await.unwrap()
+    );
 
     cipher.kms().refuse("acme", Refusal::Unreachable);
-    let error = cipher.keyset(name("acme")).await.expect_err("failed");
+    let error = load(&cipher, name("acme")).await.expect_err("failed");
     assert!(
         matches!(
             error,
@@ -394,10 +437,10 @@ async fn a_refused_name_is_zerokms_answer_and_leaves_the_keyset_cached_by_id() {
     );
 
     cipher.kms().allow("acme");
-    let again = cipher.keyset(name("acme")).await.expect("acme once more");
+    let again = load(&cipher, name("acme")).await.expect("acme once more");
     assert_eq!(
-        again.keyset_id(),
-        acme.keyset_id(),
+        again.keyset_id().await.unwrap(),
+        acme.keyset_id().await.unwrap(),
         "the fake resolves a name deterministically"
     );
 }
@@ -411,10 +454,10 @@ async fn a_refused_name_is_zerokms_answer_and_leaves_the_keyset_cached_by_id() {
 async fn an_answer_in_flight_does_not_rebind_a_name_zerokms_has_since_refused() {
     let cipher = cipher().await;
     cipher.kms().hold("acme");
-    let earlier = cipher.keyset(name("acme"));
+    let earlier = load(&cipher, name("acme"));
     let meanwhile = async {
         cipher.kms().refuse("acme", Refusal::Unknown);
-        let refused = cipher.keyset(name("acme")).await;
+        let refused = load(&cipher, name("acme")).await;
         cipher.kms().release();
         refused
     };
@@ -439,15 +482,15 @@ async fn an_answer_in_flight_does_not_rebind_a_name_zerokms_has_since_refused() 
     );
 
     cipher.kms().allow("acme");
-    let later = cipher.keyset(name("acme")).await.expect("acme afterwards");
+    let later = load(&cipher, name("acme")).await.expect("acme afterwards");
     assert_eq!(
         cipher.kms().loads(),
         4,
         "the earlier answer bound nothing: a selection by the name asks ZeroKMS"
     );
     assert_eq!(
-        later.keyset_id(),
-        earlier.keyset_id(),
+        later.keyset_id().await.unwrap(),
+        earlier.keyset_id().await.unwrap(),
         "the fake resolves a name deterministically; what differs is that it was asked"
     );
 }
@@ -461,10 +504,10 @@ async fn an_answer_in_flight_does_not_rebind_a_name_zerokms_has_since_refused() 
 async fn a_lookup_that_got_no_answer_forgets_nothing() {
     let cipher = cipher().await;
     cipher.kms().hold("acme");
-    let earlier = cipher.keyset(name("acme"));
+    let earlier = load(&cipher, name("acme"));
     let meanwhile = async {
         cipher.kms().refuse("acme", Refusal::Unreachable);
-        let failed = cipher.keyset(name("acme")).await;
+        let failed = load(&cipher, name("acme")).await;
         cipher.kms().release();
         failed
     };
@@ -486,20 +529,23 @@ async fn a_lookup_that_got_no_answer_forgets_nothing() {
     );
 
     cipher.kms().allow("acme");
-    let later = cipher.keyset(name("acme")).await.expect("acme afterwards");
+    let later = load(&cipher, name("acme")).await.expect("acme afterwards");
     assert_eq!(
         cipher.kms().loads(),
         3,
         "a failure to get an answer forgot nothing: the earlier answer bound the name and serves"
     );
-    assert_eq!(later.keyset_id(), earlier.keyset_id());
+    assert_eq!(
+        later.keyset_id().await.unwrap(),
+        earlier.keyset_id().await.unwrap()
+    );
 }
 
 #[tokio::test]
 async fn keysets_derive_distinct_index_keys() {
     let cipher = cipher().await;
-    let a = cipher.keyset(Uuid::from_u128(1)).await.expect("a");
-    let b = cipher.keyset(Uuid::from_u128(2)).await.expect("b");
+    let a = load(&cipher, Uuid::from_u128(1)).await.expect("a");
+    let b = load(&cipher, Uuid::from_u128(2)).await.expect("b");
 
     let term_a = a
         .equality_term(7u32, nonempty!("users/age"))
@@ -535,7 +581,7 @@ fn leaf_of(tree: StackCipherText) -> SealedValue {
 #[tokio::test]
 async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
     let cipher = cipher().await;
-    let tenant = cipher.keyset(name("acme")).await.expect("select");
+    let tenant = load(&cipher, name("acme")).await.expect("select");
 
     let sealed = tenant
         .encrypt_tree("hello".to_string(), "greeting")
@@ -543,7 +589,7 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
         .expect("seal");
     assert_eq!(
         leaf_of(sealed).keyset_id(),
-        tenant.keyset_id(),
+        tenant.keyset_id().await.unwrap(),
         "a leaf carries the keyset it was sealed under"
     );
 
@@ -554,8 +600,76 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
         .expect("seal");
     assert_eq!(
         leaf_of(sealed).keyset_id(),
-        cipher.default_keyset().keyset_id(),
+        cipher.default_keyset().keyset_id().await.unwrap(),
         "and so does one sealed through the default keyset"
+    );
+}
+
+/// A handle is one keyset. Calls built through a handle before its keyset
+/// is loaded all settle under the keyset the first of them loaded. A name
+/// that comes to mean another keyset in between changes nothing for the
+/// handle: no call mints a key under one keyset and names another in its
+/// leaf. A new selection by the name gets the other keyset.
+#[tokio::test]
+async fn calls_built_before_the_load_settle_under_the_keyset_their_handle_keeps() {
+    use stack_encrypt::sem::EqualityTerm;
+
+    // No name is trusted, so every lookup of a name asks.
+    let cipher = StackCipher::builder()
+        .kms(Observed::default())
+        .keyset_name_ttl(Duration::ZERO)
+        .init()
+        .await
+        .expect("build cipher");
+    let acme = cipher.keyset(name("acme"));
+    let field = || nonempty!("users").with("email");
+
+    // Built before anything has loaded the keyset.
+    let first = acme.encrypt_tree("hello".to_string(), "greeting");
+    let second = acme.encrypt_tree("hello".to_string(), "greeting");
+    let third = acme.encrypt_tree("hello".to_string(), "greeting");
+    let term = acme.equality_term(String::from("a@example.com"), field());
+
+    let first = first.await.expect("seal");
+    let kept = acme.keyset_id().await.unwrap();
+    assert_eq!(leaf_of(first).keyset_id(), kept);
+    let loads = cipher.kms().loads();
+
+    cipher.kms().rename("acme", "globex");
+    let elsewhere = load(&cipher, name("acme"))
+        .await
+        .expect("the name, selected again");
+    let other = elsewhere.keyset_id().await.unwrap();
+    assert_ne!(other, kept, "the name now means another keyset");
+    assert_eq!(cipher.kms().loads(), loads + 1);
+
+    let (second, third) = second.zip(third).await.expect("seal");
+    assert_eq!(
+        leaf_of(third).keyset_id(),
+        kept,
+        "the leaf names the handle's keyset"
+    );
+    let opened: String = acme
+        .decrypt_tree(second, "greeting")
+        .await
+        .expect("its key was minted under the keyset the leaf names");
+    assert_eq!(opened, "hello");
+
+    let term: EqualityTerm = term.await.expect("term");
+    let same = acme
+        .equality_term(String::from("a@example.com"), field())
+        .await
+        .expect("term");
+    assert_eq!(term, same, "derived under the handle's keyset");
+    let under_the_other = elsewhere
+        .equality_term(String::from("a@example.com"), field())
+        .await
+        .expect("term");
+    assert_ne!(term, under_the_other);
+    assert_eq!(
+        cipher.kms().loads(),
+        loads + 1,
+        "no call through the handle resolved the name again"
     );
 }
 
@@ -566,7 +680,7 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
 #[tokio::test]
 async fn the_client_opens_a_leaf_from_any_keyset() {
     let cipher = cipher().await;
-    let tenant = cipher.keyset(name("acme")).await.expect("select");
+    let tenant = load(&cipher, name("acme")).await.expect("select");
     let sealed = tenant
         .encrypt_tree("hello".to_string(), "greeting")
         .await
@@ -576,7 +690,7 @@ async fn the_client_opens_a_leaf_from_any_keyset() {
     assert_eq!(opened, "hello", "the client opens another keyset's leaf");
     assert_eq!(
         cipher.kms().retrieve_keysets(),
-        vec![Some(tenant.keyset_id())],
+        vec![Some(tenant.keyset_id().await.unwrap())],
         "the retrieve names the leaf's keyset, not the default"
     );
 }
@@ -584,7 +698,7 @@ async fn the_client_opens_a_leaf_from_any_keyset() {
 #[tokio::test]
 async fn a_keyset_handle_opens_its_own_leaves() {
     let cipher = cipher().await;
-    let tenant = cipher.keyset(name("acme")).await.expect("select");
+    let tenant = load(&cipher, name("acme")).await.expect("select");
     let sealed = tenant
         .encrypt_tree("hello".to_string(), "greeting")
         .await
@@ -597,8 +711,8 @@ async fn a_keyset_handle_opens_its_own_leaves() {
 #[tokio::test]
 async fn a_keyset_handle_refuses_another_keysets_leaf_before_any_retrieve() {
     let cipher = cipher().await;
-    let acme = cipher.keyset(name("acme")).await.expect("acme");
-    let globex = cipher.keyset(name("globex")).await.expect("globex");
+    let acme = load(&cipher, name("acme")).await.expect("acme");
+    let globex = load(&cipher, name("globex")).await.expect("globex");
     let sealed = acme
         .encrypt_tree("hello".to_string(), "greeting")
         .await
@@ -609,7 +723,7 @@ async fn a_keyset_handle_refuses_another_keysets_leaf_before_any_retrieve() {
         matches!(
             result,
             Err(Error::ForeignKeyset { expected, found })
-                if expected == globex.keyset_id() && found == acme.keyset_id()
+                if expected == globex.keyset_id().await.unwrap() && found == acme.keyset_id().await.unwrap()
         ),
         "{result:?}"
     );
@@ -622,8 +736,8 @@ async fn a_keyset_handle_refuses_another_keysets_leaf_before_any_retrieve() {
 #[tokio::test]
 async fn the_target_path_through_a_keyset_handle_is_constrained_too() {
     let cipher = cipher().await;
-    let acme = cipher.keyset(name("acme")).await.expect("acme");
-    let globex = cipher.keyset(name("globex")).await.expect("globex");
+    let acme = load(&cipher, name("acme")).await.expect("acme");
+    let globex = load(&cipher, name("globex")).await.expect("globex");
     // A ciphertext tree is not `Clone`; seal three, one per path.
     let seal = || async {
         let sealed: StackCipherText = 34u32
@@ -654,8 +768,8 @@ async fn the_target_path_through_a_keyset_handle_is_constrained_too() {
 #[tokio::test]
 async fn a_mixed_keyset_column_opens_through_the_client_in_one_call_per_keyset() {
     let cipher = cipher().await;
-    let acme = cipher.keyset(name("acme")).await.expect("acme");
-    let globex = cipher.keyset(name("globex")).await.expect("globex");
+    let acme = load(&cipher, name("acme")).await.expect("acme");
+    let globex = load(&cipher, name("globex")).await.expect("globex");
 
     // A column whose rows belong to two tenants, interleaved.
     let mut column: Vec<StackCipherText> = Vec::new();
@@ -678,7 +792,10 @@ async fn a_mixed_keyset_column_opens_through_the_client_in_one_call_per_keyset()
     );
     assert_eq!(
         cipher.kms().retrieve_keysets(),
-        vec![Some(acme.keyset_id()), Some(globex.keyset_id())],
+        vec![
+            Some(acme.keyset_id().await.unwrap()),
+            Some(globex.keyset_id().await.unwrap())
+        ],
         "one retrieve per keyset, first seen first"
     );
 }
@@ -686,8 +803,8 @@ async fn a_mixed_keyset_column_opens_through_the_client_in_one_call_per_keyset()
 #[tokio::test]
 async fn a_mixed_keyset_column_does_not_open_through_a_keyset_handle() {
     let cipher = cipher().await;
-    let acme = cipher.keyset(name("acme")).await.expect("acme");
-    let globex = cipher.keyset(name("globex")).await.expect("globex");
+    let acme = load(&cipher, name("acme")).await.expect("acme");
+    let globex = load(&cipher, name("globex")).await.expect("globex");
     let mut column: Vec<StackCipherText> = Vec::new();
     for tenant in [&acme, &globex] {
         let sealed: StackCipherText = 1u32
@@ -792,7 +909,7 @@ async fn opening_an_open_root_json_document_loads_its_keyset_once() {
         let value = value.clone();
         async move {
             let writer = reader().await;
-            let tenant = writer.keyset(name("acme")).await.expect("select");
+            let tenant = load(&writer, name("acme")).await.expect("select");
             tenant
                 .run(
                     json_document::<_, Borrowed>(JsonOptions {
@@ -829,8 +946,8 @@ async fn opening_an_open_root_json_document_loads_its_keyset_once() {
         2,
         "the document's keyset loads on the first open and is cached after"
     );
-    let acme = reader.keyset(name("acme")).await.expect("select");
-    assert_eq!(acme.keyset_id(), open.header().keyset_id());
+    let acme = load(&reader, name("acme")).await.expect("select");
+    assert_eq!(acme.keyset_id().await.unwrap(), open.header().keyset_id());
     let opened = JsonPlaintext::decrypt_from_with_context(open.clone(), &acme, aead())
         .await
         .expect("and through the keyset's own cipher");

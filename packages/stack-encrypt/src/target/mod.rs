@@ -201,6 +201,7 @@ pub use operations::{
     ciphertext, equality, json_document, json_terms, matching, ope, open, ore, ore_block,
     passthrough, scalar_ciphertext, DecryptField, Decryptable, Decryption, Encryption,
 };
+pub(crate) use pending::KeysetSelector;
 pub use pending::{CipherRef, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
