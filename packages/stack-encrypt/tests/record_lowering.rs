@@ -509,7 +509,7 @@ async fn the_committed_fixture_opens_both_ways() {
         // The comment and the `typed_chain` key are written as they are
         // committed, so that an update changes the sealed bytes and nothing
         // else in the file the Go module reads.
-        let _ = entries.insert("_comment".into(), json!("Records sealed by the typed Rust chain and by the data-plan lowering under one declaration (ADR-0007). Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand."));
+        let _ = entries.insert("_comment".into(), json!("Records sealed by typed Rust code and by the data-plan lowering under one declaration (ADR-0007). The typed_chain record was written by the plan chain until that chain was removed; since then, an update writes it with the engine's target combinators (seal_typed in tests/record_lowering.rs), and the key keeps its name for the Go reader. Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand."));
         let _ = entries.insert(
             "key_source".into(),
             json!({ "kind": "deterministic-sha256", "seed": hex(&SEED) }),
