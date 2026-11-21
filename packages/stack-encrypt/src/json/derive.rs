@@ -758,20 +758,50 @@ pub(crate) fn terms_pending<'a, K>(
     context: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonTerms, K> {
     let context = context.into_prf_context().into_owned();
-    let terms = cipher
-        .cipher()
-        .json_randomness()
-        .generator()
-        .and_then(|mut rng| {
-            let walked = walk(value, options, cipher.prf(), &context, &mut rng)?;
-            let mut selectors = group_of(&walked.terms.nodes, None);
-            selectors.shuffle(&mut rng);
-            Ok(JsonTerms {
-                query_selectors: Some(selectors),
-                ..walked.terms
+    // Drawn now whether or not the keyset is loaded, so a seeded cipher
+    // draws its generators in the order of the calls.
+    let rng = match cipher.cipher().json_randomness().generator() {
+        Ok(rng) => rng,
+        Err(error) => return Pending::ready(cipher, Err(error)),
+    };
+    match cipher.loaded_state() {
+        Some(keyset) => Pending::ready(
+            cipher,
+            query_terms(value, options, &keyset.prf, &context, rng),
+        ),
+        // The keyset is loaded when the pending settles. The pending keeps
+        // its own copy of the document until then, wiped on drop.
+        None => {
+            let value = PlainJson::protect(value.clone());
+            let options = options.clone();
+            cipher.deferred(move |keyset| {
+                query_terms(
+                    value.risky_ref().value(),
+                    &options,
+                    &keyset.prf,
+                    &context,
+                    rng,
+                )
             })
-        });
-    Pending::ready(cipher, terms)
+        }
+    }
+}
+
+/// The terms [`terms_pending`] derives, under the keyset's `prf`.
+fn query_terms(
+    value: &Value,
+    options: &JsonOptions,
+    prf: &HmacSha256Prf,
+    context: &Context<'_>,
+    mut rng: SafeRand,
+) -> Result<JsonTerms, Error> {
+    let walked = walk(value, options, prf, context, &mut rng)?;
+    let mut selectors = group_of(&walked.terms.nodes, None);
+    selectors.shuffle(&mut rng);
+    Ok(JsonTerms {
+        query_selectors: Some(selectors),
+        ..walked.terms
+    })
 }
 
 /// Seal `value` into a [`JsonDocument`]: one data key for the document,
@@ -804,15 +834,22 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         Ok(rng) => rng,
         Err(error) => return Pending::failed(cipher, error),
     };
-    let walked = match walk(
-        value.risky_ref().value(),
-        options,
-        cipher.prf(),
-        &prf_context,
-        &mut rng,
-    ) {
-        Ok(walked) => walked,
-        Err(error) => return Pending::failed(cipher, error.into()),
+    // The walk derives every term under the keyset's index key. With the
+    // keyset loaded it runs now. With a keyset that is not loaded
+    // yet it runs when the pending settles: see the end of this function.
+    let loaded = cipher.loaded_state().cloned();
+    let walked = match &loaded {
+        Some(keyset) => match walk(
+            value.risky_ref().value(),
+            options,
+            &keyset.prf,
+            &prf_context,
+            &mut rng,
+        ) {
+            Ok(walked) => Some(walked),
+            Err(error) => return Pending::failed(cipher, error.into()),
+        },
+        None => None,
     };
     let whole = if options.sealed_root {
         // A document is sealed only if opening can read it back.
@@ -829,16 +866,44 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     } else {
         None
     };
-    let keyset_id = cipher.keyset_id();
     let sealed_root = options.sealed_root;
-    Pending::request(
-        cipher,
-        vec![Request::generate_under(descriptor)],
-        move |responses| {
-            let key = responses.next_generated_key()?;
-            seal(walked, whole, keyset_id, key, &aad, sealed_root, rng)
-        },
-    )
+    match (loaded, walked) {
+        (Some(keyset), Some(walked)) => {
+            let keyset_id = keyset.id;
+            Pending::request(
+                cipher,
+                vec![Request::generate_under(descriptor)],
+                move |responses| {
+                    let key = responses.next_generated_key()?;
+                    seal(walked, whole, keyset_id, key, &aad, sealed_root, rng)
+                },
+            )
+        }
+        // The pending asks for the keyset beside the data key. It keeps the
+        // document, wiped on drop, and walks it once the keyset is loaded.
+        _ => {
+            let options = options.clone();
+            Pending::request(
+                cipher,
+                vec![
+                    Request::generate_under(descriptor),
+                    Request::selected_keyset(),
+                ],
+                move |responses| {
+                    let keyset = responses.next_keyset()?;
+                    let key = responses.next_generated_key()?;
+                    let walked = walk(
+                        value.risky_ref().value(),
+                        &options,
+                        &keyset.prf,
+                        &prf_context,
+                        &mut rng,
+                    )?;
+                    seal(walked, whole, keyset.id, key, &aad, sealed_root, rng)
+                },
+            )
+        }
+    }
 }
 
 /// The AAD an entry is sealed and opened under, PAE-framed: the domain;
@@ -2193,26 +2258,29 @@ impl<K> KeysetCipher<'_, K> {
         path: &JsonPath,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSelector, K> {
-        Pending::ready(self, self.json_selector_now(path, descriptor))
+        let context = descriptor.into_prf_context().into_owned();
+        let path = path.selector_bytes();
+        match self.loaded_state() {
+            Some(keyset) => Pending::ready(self, selector_of(keyset, &path, &context)),
+            None => self.deferred(move |keyset| selector_of(keyset, &path, &context)),
+        }
     }
 
     /// [`json_selector`](Self::json_selector), derived and returned now:
     /// for the engine's own callers, which derive locally and want a
     /// refusal as a plain error.
+    ///
+    /// For a keyset that is loaded: a caller reads
+    /// [`loaded_state`](Self::loaded_state) first, and goes through
+    /// [`json_selector`](Self::json_selector) otherwise.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     pub(crate) fn json_selector_now<'c>(
         &self,
         path: &JsonPath,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Result<JsonSelector, Error> {
         let context = descriptor.into_prf_context().into_owned();
-        prf16(
-            self.prf(),
-            SELECTOR_DOMAIN,
-            &context,
-            &path.selector_bytes(),
-        )
-        .map(JsonSelector)
-        .map_err(Error::from)
+        selector_of(self.loaded_now()?, &path.selector_bytes(), &context)
     }
 
     /// The key that reads the node at `path`, under the field `descriptor`
@@ -2263,14 +2331,35 @@ impl<K> KeysetCipher<'_, K> {
         bound: u32,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSubtreeKey, K> {
-        Pending::ready(
-            self,
-            self.json_subtree_key_now(path, options, bound, descriptor),
-        )
+        let context = descriptor.into_prf_context().into_owned();
+        match self.loaded_state() {
+            Some(keyset) => {
+                let selectors = Selectors::new(Arc::clone(keyset), context);
+                Pending::ready(
+                    self,
+                    subtree_key_for(selectors, options, path, bound).map_err(Error::from),
+                )
+            }
+            None => {
+                let (path, options) = (path.clone(), options.clone());
+                self.deferred(move |keyset| {
+                    let selectors = Selectors::new(Arc::clone(keyset), context);
+                    subtree_key_for(selectors, &options, &path, bound).map_err(Error::from)
+                })
+            }
+        }
     }
 
     /// [`json_subtree_key_with_bound`](Self::json_subtree_key_with_bound),
     /// derived and returned now, for the engine's own callers.
+    ///
+    /// For a keyset that is loaded, as
+    /// [`json_selector_now`](Self::json_selector_now).
+    ///
+    /// # Errors
+    ///
+    /// As that method.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     pub(crate) fn json_subtree_key_now<'c>(
         &self,
         path: &JsonPath,
@@ -2279,9 +2368,21 @@ impl<K> KeysetCipher<'_, K> {
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Result<JsonSubtreeKey, Error> {
         let context = descriptor.into_prf_context().into_owned();
-        let selectors = Selectors::new(Arc::clone(self.state()), context);
+        let selectors = Selectors::new(Arc::clone(self.loaded_now()?), context);
         subtree_key_for(selectors, options, path, bound).map_err(Error::from)
     }
+}
+
+/// The selector of the path whose bytes are `path`, under `keyset`'s index
+/// key and the field `context`.
+fn selector_of(
+    keyset: &KeysetState,
+    path: &[u8],
+    context: &Context<'_>,
+) -> Result<JsonSelector, Error> {
+    prf16(&keyset.prf, SELECTOR_DOMAIN, context, path)
+        .map(JsonSelector)
+        .map_err(Error::from)
 }
 
 #[cfg(test)]

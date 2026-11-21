@@ -594,7 +594,7 @@ pub trait TargetResolver {
     /// Open a stored value of the named type back to its plaintext, checking
     /// it was stored under `label`'s column. The value opens under `label`,
     /// then `parts`. Opens through the client; the lowering confines the
-    /// pending to a keyset when the caller's scope is one.
+    /// pending to a keyset when the caller ran it through one.
     ///
     /// # Errors
     ///

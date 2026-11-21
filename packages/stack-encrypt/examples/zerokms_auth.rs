@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(other) => return Err(other.into()),
     };
     let keyset = cipher.default_keyset();
-    println!("connected; keyset {}", keyset.keyset_id());
+    println!("connected; keyset {}", keyset.keyset_id().await.unwrap());
 
     let ciphertext = keyset.encrypt_tree("hello", "demo/greeting").await?;
     let plaintext: String = cipher.decrypt(ciphertext, "demo/greeting").await?;

@@ -55,7 +55,10 @@ vitaminc = { workspace = true }
 rand = { version = "0.10.1", default-features = false }
 # `future::join` and `join_all`: a pending's dispatch loads the keysets its
 # JSON documents need beside the data-key retrieval, in one await.
-futures = { version = "0.3.25", default-features = false }
+# `lock::Mutex` (behind `std`): a deferred cipher holds it while the first
+# credential loads the default keyset, so callers arriving together make
+# one load between them.
+futures = { version = "0.3.25", default-features = false, features = ["std"] }
 # Two things: the storage profile (`storage`, behind `serde`) that
 # `OpaqueBlob<T>` encodes a whole value with before sealing it as one leaf,
 # the same versioned bytes the Go SDK writes through `vcffi.MarshalStorage`;

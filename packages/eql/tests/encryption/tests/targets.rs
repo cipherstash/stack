@@ -152,8 +152,8 @@ mod given_text_eq {
         use stack_kms::IdentifiedBy;
         let (cipher, calls) = common::cipher().await;
         let named = |n: &str| IdentifiedBy::Name(n.to_string().into());
-        let acme = cipher.keyset(named("acme")).await.unwrap();
-        let globex = cipher.keyset(named("globex")).await.unwrap();
+        let acme = cipher.keyset(named("acme"));
+        let globex = cipher.keyset(named("globex"));
         let stored = targets::encrypt("TextEq", &acme, &email(), text("secret"))
             .unwrap()
             .await

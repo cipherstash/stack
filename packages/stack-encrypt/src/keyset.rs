@@ -1,24 +1,28 @@
 //! Keysets: the one thing a client holds more than one of.
 //!
-//! A [`StackCipher`] is scoped to a client — one ZeroKMS client, one client
+//! A [`StackCipher`] belongs to a client — one ZeroKMS client, one client
 //! key — and a client may use any number of keysets: one per tenant is the
 //! common shape. A [`KeysetCipher`] is the cipher bound to one of them, and
 //! it is what every operation that *mints* something binds to: sealing
-//! values, sealing records, deriving index terms. Decrypting is not
-//! keyset-scoped (a sealed leaf carries the id of the keyset it was sealed
+//! values, sealing records, deriving index terms. Decrypting is not bound
+//! to a keyset (a sealed leaf carries the id of the keyset it was sealed
 //! under). For an owned scalar, import [`DecryptFrom`](crate::DecryptFrom)
 //! and use `i32::decrypt_from(ciphertext, &cipher)`; [`KeysetCipher::decrypt`]
 //! adds the keyset constraint. For a structural tree, [`StackCipher::decrypt`]
 //! opens across keysets and [`KeysetCipher::decrypt_tree`] adds that constraint.
 //!
-//! Keysets load lazily. [`StackCipher::keyset`] resolves an id or a name
-//! through a bounded cache and loads the keyset from ZeroKMS on a miss —
-//! one round trip, paid once per keyset per process (or again after
-//! eviction). That is the one async point: everything on the returned
-//! handle keeps its shape. The default keyset — the one named on the
-//! builder, else the client's — is loaded eagerly by
+//! Keysets load lazily. [`StackCipher::keyset`] selects a keyset by id or
+//! by name, makes no request and cannot fail. The first call on the handle
+//! that is awaited resolves the keyset through a bounded cache and loads
+//! it from ZeroKMS on a miss: one round trip, paid once per keyset per
+//! process (or again after eviction). The default keyset — the one named
+//! on the builder, else the client's — is loaded eagerly by
 //! [`init`](crate::StackCipherBuilder::init), so a misconfigured client
-//! fails at startup, and never evicts.
+//! fails at startup, and never evicts. A key source that takes a
+//! credential with each call is the exception: `init` has no credential
+//! to load the default keyset with, so the first call on the default
+//! keyset that is awaited loads it ([`StackCipher::default_keyset`]). A
+//! call on any other keyset loads that keyset, and not the default one.
 //!
 //! # Ids are identity; names are looked up
 //!
@@ -48,13 +52,15 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::num::NonZeroUsize;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use stack_kms::IdentifiedBy;
 use uuid::Uuid;
 use vitaminc_hmac::HmacSha256Prf;
 
+#[cfg(test)]
+use crate::credential::KeySource;
 use crate::StackCipher;
 
 /// How long a name-to-id binding is trusted before a selection by that
@@ -171,7 +177,10 @@ pub(crate) struct KeysetCache {
     resolutions: u64,
     /// The default keyset's entry, held apart from the bound: it never
     /// evicts, and [`insert`](Self::insert) never replaces its state.
-    default: Entry,
+    /// `None` until the default keyset is loaded
+    /// ([`hold_default`](Self::hold_default)). A cipher whose key source
+    /// takes a credential with each call selects keysets before that.
+    default: Option<Entry>,
     /// The latest lookup whose answer the cache holds nothing of to order
     /// an older answer against: one eviction has forgotten, or one ZeroKMS
     /// answered with "no keyset has this name".
@@ -208,38 +217,51 @@ impl KeysetCache {
     /// start and then not again.
     pub(crate) const DEFAULT_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(1023);
 
-    /// A cache holding `default` apart from the bound; its builder-time
-    /// name, if any, is bound now.
-    pub(crate) fn new(
-        capacity: NonZeroUsize,
-        name_ttl: Duration,
-        default: Arc<KeysetState>,
-    ) -> Self {
-        let mut by_name = HashMap::new();
-        if let Some(name) = &default.name {
-            let _ = by_name.insert(
-                name.clone(),
-                Alias {
-                    id: default.id,
-                    resolved_at: Instant::now(),
-                    resolution: Resolution(0),
-                },
-            );
-        }
+    /// An empty cache. The default keyset is not loaded yet.
+    pub(crate) fn new(capacity: NonZeroUsize, name_ttl: Duration) -> Self {
         Self {
             capacity,
             name_ttl,
             tick: 0,
             resolutions: 0,
             watermark: Resolution(0),
-            default: Entry {
-                last_used: 0,
-                name: default.name.clone(),
-                resolution: Resolution(0),
-                state: default,
-            },
+            default: None,
             by_id: HashMap::new(),
-            by_name,
+            by_name: HashMap::new(),
+        }
+    }
+
+    /// The default keyset is loaded: hold `default` apart from the bound
+    /// from now on. The first call decides, and a second changes nothing.
+    ///
+    /// A selection by id or by name may have loaded this keyset already,
+    /// as one of the bounded entries. That entry leaves the bound. It
+    /// keeps its name binding and its place in the order of lookups, and
+    /// takes the state given here, so every later lookup is answered with
+    /// the state the cipher holds as its default.
+    ///
+    /// Otherwise the entry is new, and its builder-time name, if any, is
+    /// bound now, as the answer older than every lookup.
+    pub(crate) fn hold_default(&mut self, default: Arc<KeysetState>) {
+        if self.default.is_some() {
+            return;
+        }
+        if let Some(entry) = self.by_id.remove(&default.id) {
+            self.default = Some(Entry {
+                state: default,
+                ..entry
+            });
+            return;
+        }
+        let (id, name) = (default.id, default.name.clone());
+        self.default = Some(Entry {
+            state: default,
+            last_used: 0,
+            name: None,
+            resolution: Resolution(0),
+        });
+        if let Some(name) = name {
+            let _ = self.bind(&name, id, Resolution(0));
         }
     }
 
@@ -249,9 +271,11 @@ impl KeysetCache {
         Resolution(self.resolutions)
     }
 
-    /// The keyset held apart from the bound.
-    fn default_id(&self) -> Uuid {
-        self.default.state.id
+    /// Whether `id` is the keyset held apart from the bound.
+    fn is_default(&self, id: Uuid) -> bool {
+        self.default
+            .as_ref()
+            .is_some_and(|default| default.state.id == id)
     }
 
     /// The entry for `id`, whether it is the default's or one of the bounded
@@ -259,8 +283,8 @@ impl KeysetCache {
     /// that know the default is held apart, so every rule below — ordering,
     /// binding, forgetting a name — is written once and applies to it too.
     fn entry(&self, id: Uuid) -> Option<&Entry> {
-        if id == self.default_id() {
-            Some(&self.default)
+        if self.is_default(id) {
+            self.default.as_ref()
         } else {
             self.by_id.get(&id)
         }
@@ -268,8 +292,8 @@ impl KeysetCache {
 
     /// [`entry`](Self::entry), mutably.
     fn entry_mut(&mut self, id: Uuid) -> Option<&mut Entry> {
-        if id == self.default_id() {
-            Some(&mut self.default)
+        if self.is_default(id) {
+            self.default.as_mut()
         } else {
             self.by_id.get_mut(&id)
         }
@@ -366,7 +390,7 @@ impl KeysetCache {
         // on the watermark before `bind` consults it — or an answer from
         // before a rename binds a name it should have lost to the entry its
         // own insert evicts.
-        if state.id != self.default_id()
+        if !self.is_default(state.id)
             && !self.by_id.contains_key(&state.id)
             && self.by_id.len() >= self.capacity.get()
         {
@@ -379,8 +403,10 @@ impl KeysetCache {
             None => false,
         };
         let answer = later.unwrap_or_else(|| Arc::clone(&state));
-        if state.id == self.default_id() {
-            self.default.resolution = resolution;
+        if self.is_default(state.id) {
+            if let Some(default) = &mut self.default {
+                default.resolution = resolution;
+            }
             return answer;
         }
         self.tick += 1;
@@ -537,28 +563,73 @@ impl KeysetCache {
 /// A [`StackCipher`] bound to one keyset: what sealing and term derivation
 /// bind to, and what a decrypt that must stay within one keyset binds to.
 ///
-/// Obtained from [`StackCipher::keyset`] (any keyset, loaded on first use)
-/// or [`StackCipher::default_keyset`]. Cheap to clone and to hold: a
-/// reference to the cipher plus a shared handle on the keyset's loaded
-/// state, so a request handler can take one per tenant and hand it around.
+/// Obtained from [`StackCipher::keyset`] (any keyset, by id or by name) or
+/// [`StackCipher::default_keyset`]. Cheap to clone and to hold: a reference
+/// to the cipher plus a shared handle on the keyset's loaded state, so a
+/// request handler can take one per tenant and hand it around.
+///
+/// # Taking a handle makes no request
+///
+/// Neither method loads anything. A handle is on a keyset the cipher has
+/// loaded, or on one it has not loaded yet. Every call on the handle works
+/// either way: awaiting the call loads the keyset first, once for the
+/// cipher, and the handle then keeps that keyset loaded for as long as it
+/// is held. A keyset that ZeroKMS does not know, or has disabled, is that
+/// call's [`Error::Kms`](crate::Error::Kms).
+///
+/// The default keyset is loaded by
+/// [`init`](crate::StackCipherBuilder::init), unless the key source takes
+/// a credential with each call. Any other keyset is loaded by the first
+/// call that uses it.
+///
+/// What reads the loaded keyset is a call too, for the same reason:
+/// [`keyset_id`](Self::keyset_id), [`keyset_name`](Self::keyset_name) and
+/// [`with_prf`](Self::with_prf) each return a
+/// [`Pending`](crate::Pending).
 ///
 /// The type a caller holds states the guarantee it gets. A `KeysetCipher`
 /// for tenant A mints every data key under A's keyset, derives every term
-/// under A's index key, and refuses — before any ZeroKMS call — to open a
-/// leaf sealed under any other keyset ([`Error::ForeignKeyset`]). The
-/// [`StackCipher`] it came from opens leaves from any keyset the client
-/// is authorised for.
+/// under A's index key, and refuses — before any data key is requested —
+/// to open a leaf sealed under any other keyset
+/// ([`Error::ForeignKeyset`]). The [`StackCipher`] it came from opens
+/// leaves from any keyset the client is authorised for.
 ///
 /// [`Error::ForeignKeyset`]: crate::Error::ForeignKeyset
 pub struct KeysetCipher<'k, K> {
     cipher: &'k StackCipher<K>,
-    state: Arc<KeysetState>,
+    /// Which keyset this is a handle on.
+    selected: Selected,
+    /// The keyset's loaded state, from the first time this handle found
+    /// the keyset loaded: see [`loaded_state`](Self::loaded_state). Shared
+    /// with this handle's clones, and with every call built through it
+    /// before the keyset was loaded.
+    state: Kept,
+}
+
+/// The loaded state a [`KeysetCipher`] keeps once its keyset is loaded.
+///
+/// A call built through the handle before the load shares it
+/// ([`KeysetSelector::not_loaded`](crate::target::KeysetSelector)). The
+/// first of those calls to settle loads the keyset and sets it. Every
+/// other one then settles under that keyset, and does not resolve the
+/// handle's id or name again. So everything made through one handle is
+/// under one keyset, whatever a name comes to mean in between.
+pub(crate) type Kept = Arc<OnceLock<Arc<KeysetState>>>;
+
+/// The keyset a handle was taken for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Selected {
+    /// The client's default keyset.
+    Default,
+    /// The keyset with this id, or of this name.
+    By(IdentifiedBy),
 }
 
 impl<K> Clone for KeysetCipher<'_, K> {
     fn clone(&self) -> Self {
         Self {
             cipher: self.cipher,
+            selected: self.selected.clone(),
             state: Arc::clone(&self.state),
         }
     }
@@ -567,32 +638,130 @@ impl<K> Clone for KeysetCipher<'_, K> {
 /// Opaque: the keyset's identity (which is in every sealed leaf already, and
 /// in ZeroKMS's own logs) and nothing else. The index-key PRF this handle
 /// carries is key material and never appears, and neither does the cipher —
-/// whose own [`Debug`](fmt::Debug) is opaque for the same reason.
+/// whose own [`Debug`](fmt::Debug) is opaque for the same reason. The
+/// identity is `None` until the keyset is loaded.
 impl<K> fmt::Debug for KeysetCipher<'_, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = self.loaded_state();
         f.debug_struct("KeysetCipher")
-            .field("keyset_id", &self.state.id)
-            .field("keyset_name", &self.state.name)
+            .field("keyset_id", &state.map(|state| state.id))
+            .field(
+                "keyset_name",
+                &state.and_then(|state| state.name.as_deref()),
+            )
             .field("kms", &std::any::type_name::<K>())
             .finish_non_exhaustive()
     }
 }
 
 impl<'k, K> KeysetCipher<'k, K> {
+    /// A handle on a keyset that is loaded.
     pub(crate) fn new(cipher: &'k StackCipher<K>, state: Arc<KeysetState>) -> Self {
-        Self { cipher, state }
+        Self {
+            cipher,
+            selected: Selected::By(IdentifiedBy::Uuid(state.id)),
+            state: Arc::new(OnceLock::from(state)),
+        }
     }
 
-    /// The client-scoped cipher this keyset belongs to.
+    /// A handle on the keyset `selected`, whether or not the cipher has
+    /// loaded it. No request is made.
+    pub(crate) fn selected(cipher: &'k StackCipher<K>, selected: Selected) -> Self {
+        Self {
+            cipher,
+            selected,
+            state: Kept::default(),
+        }
+    }
+
+    /// The keyset's loaded state, or `None` for a keyset that the cipher
+    /// has not loaded yet. A handle taken before the load finds the state
+    /// in the cipher once a call has loaded it, and keeps it from then on.
+    pub(crate) fn loaded_state(&self) -> Option<&Arc<KeysetState>> {
+        if let Some(state) = self.state.get() {
+            return Some(state);
+        }
+        let found = match &self.selected {
+            Selected::Default => self.cipher.loaded_default().cloned(),
+            Selected::By(keyset) => self.cipher.loaded_keyset(keyset),
+        }?;
+        Some(self.state.get_or_init(|| found))
+    }
+
+    /// The keyset's loaded state, for a caller that has already read
+    /// [`loaded_state`](Self::loaded_state) and found the keyset loaded,
+    /// or was handed this handle by a call that loaded it. A handle keeps
+    /// the state it found, so this does not fail for that caller.
+    pub(crate) fn loaded_now(&self) -> Result<&Arc<KeysetState>, crate::Error> {
+        self.loaded_state().ok_or_else(|| {
+            crate::Error::Other("a keyset was read before the call loaded it".into())
+        })
+    }
+
+    /// The keyset a pending built through this handle works under.
+    pub(crate) fn selector(&self) -> crate::target::KeysetSelector {
+        match self.loaded_state() {
+            Some(state) => crate::target::KeysetSelector::keyset(state.id),
+            None => crate::target::KeysetSelector::not_loaded(
+                self.selected.clone(),
+                Arc::clone(&self.state),
+            ),
+        }
+    }
+
+    /// A value that is derived from this keyset's loaded state, such as a
+    /// term under its index key, for a keyset that is not loaded yet. The
+    /// pending asks for the keyset, and `derive` runs when the pending
+    /// settles and has loaded it. So `derive` owns what it reads.
+    ///
+    /// A caller reads [`loaded_state`](Self::loaded_state) first, and
+    /// derives at once when the keyset is loaded. That path does not come
+    /// through here, so a call on a loaded keyset moves its plaintext
+    /// through no extra frame.
+    pub(crate) fn deferred<'s, T, F>(&'s self, derive: F) -> crate::target::Pending<'s, T, K>
+    where
+        T: stack_kms::MaybeSend + 's,
+        F: FnOnce(&Arc<KeysetState>) -> Result<T, crate::Error> + stack_kms::MaybeSend + 's,
+    {
+        crate::target::Pending::request(
+            self,
+            vec![crate::target::Request::selected_keyset()],
+            move |responses| derive(&responses.next_keyset()?),
+        )
+    }
+
+    /// A value read from this keyset's loaded state: now when the keyset
+    /// is loaded, and when the pending has loaded it otherwise.
+    fn reading<'s, T, F>(&'s self, read: F) -> crate::target::Pending<'s, T, K>
+    where
+        T: stack_kms::MaybeSend + 's,
+        F: FnOnce(&Arc<KeysetState>) -> Result<T, crate::Error> + stack_kms::MaybeSend + 's,
+    {
+        match self.loaded_state() {
+            Some(state) => crate::target::Pending::ready(self, read(state)),
+            None => self.deferred(read),
+        }
+    }
+
+    /// The client's cipher, which this keyset belongs to.
     pub fn cipher(&self) -> &'k StackCipher<K> {
         self.cipher
     }
 
     /// The keyset every data key this handle mints is generated under, and
-    /// whose index key keys [`prf`](Self::prf). Resolved: a keyset selected
-    /// by name reports its id here.
-    pub fn keyset_id(&self) -> Uuid {
-        self.state.id
+    /// whose index key its terms are derived under. Resolved: a keyset
+    /// selected by name reports its id here.
+    ///
+    /// A [`Pending`](crate::Pending), because a keyset that the cipher has
+    /// not loaded yet is loaded when it is awaited. With the keyset
+    /// loaded, awaiting it makes no request.
+    ///
+    /// # Errors
+    ///
+    /// Awaiting fails with [`Error::Kms`](crate::Error::Kms) if the keyset
+    /// is not loaded yet and the load fails.
+    pub fn keyset_id(&self) -> crate::target::Pending<'_, Uuid, K> {
+        self.reading(|keyset| Ok(keyset.id))
     }
 
     /// The name this keyset's loaded state was last resolved under, if any.
@@ -602,29 +771,49 @@ impl<'k, K> KeysetCipher<'k, K> {
     /// name, and the default keyset knows its name only when the builder
     /// named it. A label from the time of loading, not an identity: see the
     /// [module docs](self#ids-are-identity-names-are-looked-up).
-    pub fn keyset_name(&self) -> Option<&str> {
-        self.state.name.as_deref()
-    }
-
-    /// The PRF index terms are derived from, keyed by this keyset's index
-    /// key.
     ///
-    /// Public so that other crates can implement their own term types
-    /// against this cipher (see [`crate::sem`]).
-    pub fn prf(&self) -> &HmacSha256Prf {
-        &self.state.prf
+    /// A [`Pending`](crate::Pending), and it fails, as
+    /// [`keyset_id`](Self::keyset_id) does.
+    pub fn keyset_name(&self) -> crate::target::Pending<'_, Option<String>, K> {
+        self.reading(|keyset| Ok(keyset.name.clone()))
     }
 
-    /// The keyset's loaded state, shared: for a value that must derive
-    /// terms after this handle is gone, such as a JSON subtree key, which
-    /// derives the selectors a walk's rows must carry when it opens them.
-    pub(crate) fn state(&self) -> &Arc<KeysetState> {
-        &self.state
+    /// A value derived under this keyset's index key: `derive` is handed
+    /// the PRF that index terms are derived from.
+    ///
+    /// For other crates that implement their own term types against this
+    /// cipher (see [`crate::sem`]). With the keyset loaded, `derive` runs
+    /// now and the pending carries no request. With a keyset that is not
+    /// loaded yet, it runs when the pending is awaited and has loaded the
+    /// keyset. So `derive` owns what it reads.
+    pub fn with_prf<'s, T, F>(&'s self, derive: F) -> crate::target::Pending<'s, T, K>
+    where
+        T: stack_kms::MaybeSend + 's,
+        F: FnOnce(&HmacSha256Prf) -> Result<T, crate::Error> + stack_kms::MaybeSend + 's,
+    {
+        self.reading(move |keyset| derive(&keyset.prf))
     }
 
     /// The underlying data-key source.
     pub fn kms(&self) -> &'k K {
         self.cipher.kms()
+    }
+}
+
+#[cfg(test)]
+impl<'k, K> KeysetCipher<'k, K> {
+    /// This handle, on a keyset that is loaded, for a test that reads the
+    /// keyset's state. A keyset that is not loaded yet is loaded here, as
+    /// `identity`.
+    pub(crate) async fn loaded<I>(self, identity: &I) -> Result<Self, crate::Error>
+    where
+        K: KeySource<I>,
+    {
+        if self.loaded_state().is_none() {
+            let state = self.cipher.selected_state(&self.selected, identity).await?;
+            let _ = self.state.set(state);
+        }
+        Ok(self)
     }
 }
 
@@ -652,10 +841,22 @@ mod tests {
         IdentifiedBy::Uuid(Uuid::from_u128(id))
     }
 
+    /// A cache that holds `default` as its default keyset from the start,
+    /// as the cache of a cipher whose `init` loaded it.
+    fn holding(
+        capacity: NonZeroUsize,
+        name_ttl: Duration,
+        default: Arc<KeysetState>,
+    ) -> KeysetCache {
+        let mut cache = KeysetCache::new(capacity, name_ttl);
+        cache.hold_default(default);
+        cache
+    }
+
     /// A cache whose default is keyset 0 (unnamed) and whose name window
     /// never closes.
     fn cache(capacity: usize) -> KeysetCache {
-        KeysetCache::new(
+        holding(
             NonZeroUsize::new(capacity).unwrap(),
             Duration::MAX,
             state(0, None),
@@ -843,12 +1044,121 @@ mod tests {
         );
     }
 
+    /// A cipher whose key source takes a credential with each call selects
+    /// keysets before its default keyset is loaded. The cache works with no
+    /// default: every keyset is in the bound, the nil id included.
+    #[test]
+    fn a_cache_with_no_default_holds_every_keyset_in_the_bound() {
+        let mut cache = KeysetCache::new(NonZeroUsize::new(2).unwrap(), Duration::MAX);
+        assert_eq!(hit(cache.get(&id(0))), None, "nothing is held apart yet");
+
+        cache.load(state(0, None));
+        cache.load(state(1, Some("tenant")));
+        assert_eq!(cache.len(), 2);
+        assert_eq!(hit(cache.get(&id(0))), Some(Uuid::from_u128(0)));
+        assert_eq!(hit(cache.get(&name("tenant"))), Some(Uuid::from_u128(1)));
+
+        // The bound applies to all of them: a third keyset evicts the one
+        // used least recently, which is keyset 0.
+        cache.load(state(2, None));
+        assert_eq!(cache.len(), 2);
+        assert_eq!(hit(cache.get(&id(0))), None, "evicted like any other");
+        assert_eq!(hit(cache.get(&name("tenant"))), Some(Uuid::from_u128(1)));
+    }
+
+    /// The default keyset is loaded after other keysets were selected. It
+    /// is held apart from then on, and what the cache held stays.
+    #[test]
+    fn a_default_loaded_late_is_held_apart_from_the_keysets_already_cached() {
+        let mut cache = KeysetCache::new(NonZeroUsize::new(1).unwrap(), Duration::MAX);
+        cache.load(state(1, Some("tenant")));
+
+        cache.hold_default(state(7, None));
+        assert_eq!(cache.len(), 1, "the default takes no slot of the bound");
+        assert_eq!(hit(cache.get(&id(7))), Some(Uuid::from_u128(7)));
+        assert_eq!(hit(cache.get(&name("tenant"))), Some(Uuid::from_u128(1)));
+
+        // Filling the one slot evicts the tenant keyset, never the default.
+        cache.load(state(2, None));
+        assert_eq!(cache.len(), 1);
+        assert_eq!(hit(cache.get(&id(1))), None);
+        assert_eq!(hit(cache.get(&id(7))), Some(Uuid::from_u128(7)));
+    }
+
+    /// A selection by name loaded the keyset that turns out to be the
+    /// default. Its entry leaves the bound and keeps its name, and lookups
+    /// are answered with the state the cipher holds as its default.
+    #[test]
+    fn a_cached_keyset_that_is_the_default_leaves_the_bound_and_keeps_its_name() {
+        let mut cache = KeysetCache::new(NonZeroUsize::new(1).unwrap(), Duration::MAX);
+        cache.load(state(7, Some("primary")));
+        assert_eq!(cache.len(), 1);
+
+        let default = state(7, None);
+        cache.hold_default(Arc::clone(&default));
+        assert_eq!(cache.len(), 0, "the entry left the bound");
+        assert_eq!(cache.names(), 1, "and kept its name binding");
+        for by in [id(7), name("primary")] {
+            match cache.get(&by) {
+                Lookup::Hit(state) => assert!(
+                    Arc::ptr_eq(&state, &default),
+                    "answered with the default's state"
+                ),
+                Lookup::Stale(_) | Lookup::Miss(_) => panic!("the default is held"),
+            }
+        }
+
+        // The slot it left is free, and filling it twice over evicts
+        // nothing of the default's.
+        cache.load(state(1, None));
+        cache.load(state(2, None));
+        assert_eq!(cache.len(), 1);
+        assert_eq!(hit(cache.get(&id(7))), Some(Uuid::from_u128(7)));
+        assert_eq!(hit(cache.get(&name("primary"))), Some(Uuid::from_u128(7)));
+    }
+
+    /// A cached keyset that becomes the default keeps its place in the
+    /// order of lookups. An answer from before its rename, landing after,
+    /// is still the older one: it does not bring the old name back.
+    #[test]
+    fn a_cached_keyset_that_is_the_default_keeps_its_place_in_the_order() {
+        let mut cache = KeysetCache::new(NonZeroUsize::new(2).unwrap(), Duration::MAX);
+        let Lookup::Miss(before_rename) = cache.get(&name("old")) else {
+            panic!("nothing is cached yet");
+        };
+        let Lookup::Miss(after_rename) = cache.get(&name("new")) else {
+            panic!("nothing is cached yet");
+        };
+        let _ = cache.insert(state(7, Some("new")), after_rename);
+
+        cache.hold_default(state(7, None));
+        let _ = cache.insert(state(7, Some("old")), before_rename);
+
+        assert_eq!(hit(cache.get(&name("new"))), Some(Uuid::from_u128(7)));
+        assert_eq!(
+            hit(cache.get(&name("old"))),
+            None,
+            "the older answer must not bind the name the keyset left"
+        );
+    }
+
+    /// The default keyset is decided once. A second answer changes nothing.
+    #[test]
+    fn the_default_is_decided_by_the_first_load() {
+        let mut cache = KeysetCache::new(NonZeroUsize::new(1).unwrap(), Duration::MAX);
+        cache.hold_default(state(7, None));
+        cache.hold_default(state(8, None));
+
+        assert_eq!(hit(cache.get(&id(7))), Some(Uuid::from_u128(7)));
+        assert_eq!(hit(cache.get(&id(8))), None, "keyset 8 was never held");
+    }
+
     /// The default here is keyset 7, not the nil id the other tests' caches
     /// default to: a cache that mistook the nil id for its default would
     /// pass every test whose default *is* nil.
     #[test]
     fn the_default_is_found_by_id_and_its_builder_name_but_never_stored() {
-        let mut cache = KeysetCache::new(
+        let mut cache = holding(
             NonZeroUsize::new(1).unwrap(),
             Duration::MAX,
             state(7, Some("primary")),
@@ -1095,7 +1405,7 @@ mod tests {
     /// answers the same way.
     #[test]
     fn the_defaults_binding_also_follows_the_later_lookup() {
-        let mut cache = KeysetCache::new(
+        let mut cache = holding(
             NonZeroUsize::new(4).unwrap(),
             Duration::ZERO,
             state(0, Some("primary")),
@@ -1358,7 +1668,7 @@ mod tests {
     /// lookup with a ticket and a bound name reads as `Stale`.
     #[test]
     fn a_negative_answer_unbinds_a_name_and_refuses_earlier_answers_for_it() {
-        let mut cache = KeysetCache::new(
+        let mut cache = holding(
             NonZeroUsize::new(4).unwrap(),
             Duration::ZERO,
             state(0, None),
@@ -1410,7 +1720,7 @@ mod tests {
     /// the binding is not trusted — and a re-resolution refreshes it.
     #[test]
     fn a_name_binding_ages_out_and_is_refreshed_by_reinsertion() {
-        let mut cache = KeysetCache::new(
+        let mut cache = holding(
             NonZeroUsize::new(4).unwrap(),
             Duration::ZERO,
             state(0, Some("primary")),

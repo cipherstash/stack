@@ -77,8 +77,6 @@ use serde::{Serialize, Serializer};
 use super::WireBytes;
 use std::fmt;
 
-use stack_kms::DataKeySource;
-
 use super::record::{FieldPlan, Plan};
 use super::term::derive;
 use super::term::OneScalar;
@@ -996,7 +994,7 @@ pub fn json_open<'a, K>(
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, ValueFrame, K>, Error>
 where
-    K: DataKeySource + Sync + 'static,
+    K: Sync + 'static,
 {
     // Answering `selector` is what makes a field a document field.
     let answer = answer(plan, field, Op::Selector, resolver)?;

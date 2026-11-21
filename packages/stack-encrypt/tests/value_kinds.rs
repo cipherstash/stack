@@ -487,7 +487,7 @@ async fn the_committed_fixture_opens_and_its_terms_are_todays() {
         let fixture = json!({
             "_comment": "One field of each value kind added in #1144, sealed by the data-plan lowering under a deterministic key source, with each value's transport frame and the equality queries vitaminc-normalize folds onto a stored term. Read by tests/value_kinds.rs and the Go SDK's encrypt tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
             "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
-            "keyset_id": keyset.keyset_id().to_string(),
+            "keyset_id": keyset.keyset_id().await.unwrap().to_string(),
             "plan": data_plan_json(),
             "values": values(),
             "record": record,
@@ -502,7 +502,10 @@ async fn the_committed_fixture_opens_and_its_terms_are_todays() {
         serde_json::from_str(&std::fs::read_to_string(&path).expect("the fixture is committed"))
             .expect("the fixture is JSON");
     assert_eq!(fixture["key_source"]["seed"], json!(hex(&SEED)));
-    assert_eq!(fixture["keyset_id"], json!(keyset.keyset_id().to_string()));
+    assert_eq!(
+        fixture["keyset_id"],
+        json!(keyset.keyset_id().await.unwrap().to_string())
+    );
     assert_eq!(
         fixture["plan"],
         data_plan_json(),

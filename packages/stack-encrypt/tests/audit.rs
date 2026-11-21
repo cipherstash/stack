@@ -319,10 +319,7 @@ async fn an_audited_call_that_requests_no_data_key_succeeds_and_sends_nothing() 
 async fn trees_send_their_metadata_on_every_request() {
     let (cipher, source) = cipher().await;
     let first = cipher.default_keyset();
-    let second = cipher
-        .keyset(IdentifiedBy::Name("tenant-b".to_string().into()))
-        .await
-        .unwrap();
+    let second = cipher.keyset(IdentifiedBy::Name("tenant-b".to_string().into()));
 
     let a = first
         .encrypt_tree(String::from("alice"), "users/name")

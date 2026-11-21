@@ -529,7 +529,7 @@ async fn init_pins_the_cipher_to_the_keyset_it_resolved() {
         .load_index_key(None)
         .await
         .expect("load index key");
-    assert_eq!(cipher.default_keyset().keyset_id(), expected);
+    assert_eq!(cipher.default_keyset().keyset_id().await.unwrap(), expected);
 }
 
 #[tokio::test]
@@ -540,16 +540,13 @@ async fn an_explicit_keyset_is_honoured() {
         .init()
         .await
         .expect("build cipher");
-    let explicit = cipher
-        .keyset(IdentifiedBy::Uuid(keyset))
-        .await
-        .expect("select keyset");
-    assert_eq!(explicit.keyset_id(), keyset);
+    let explicit = cipher.keyset(IdentifiedBy::Uuid(keyset));
+    assert_eq!(explicit.keyset_id().await.unwrap(), keyset);
 
     // Selecting one does not move the cipher's default: that is the client's,
     // set by a ZeroKMS administrator, not a preference a caller can override.
     assert_ne!(
-        cipher.default_keyset().keyset_id(),
+        cipher.default_keyset().keyset_id().await.unwrap(),
         keyset,
         "default_keyset() is always the client's default"
     );
@@ -794,8 +791,8 @@ async fn pendings_from_two_ciphers_over_the_same_keyset_merge() {
     let cipher_b = counting_cipher().await.0;
     let cipher_b = cipher_b.default_keyset();
     assert_eq!(
-        cipher_a.keyset_id(),
-        cipher_b.keyset_id(),
+        cipher_a.keyset_id().await.unwrap(),
+        cipher_b.keyset_id().await.unwrap(),
         "two ciphers over the same client config share a default keyset"
     );
     let v = "v".to_string();
@@ -843,15 +840,9 @@ async fn pendings_from_two_ciphers_over_the_same_keyset_merge() {
 #[tokio::test]
 async fn pendings_from_two_ciphers_over_different_keysets_refuse_to_merge() {
     let (cipher_a, generates, _) = counting_cipher().await;
-    let acme = cipher_a
-        .keyset(IdentifiedBy::Name("acme".to_string().into()))
-        .await
-        .unwrap();
+    let acme = cipher_a.keyset(IdentifiedBy::Name("acme".to_string().into()));
     let cipher_b = counting_cipher().await.0;
-    let globex = cipher_b
-        .keyset(IdentifiedBy::Name("globex".to_string().into()))
-        .await
-        .unwrap();
+    let globex = cipher_b.keyset(IdentifiedBy::Name("globex".to_string().into()));
     let v = "v".to_string();
     let w = "w".to_string();
 
@@ -865,7 +856,7 @@ async fn pendings_from_two_ciphers_over_different_keysets_refuse_to_merge() {
         .await;
     assert!(
         matches!(zipped, Err(Error::KeysetMismatch { left, right })
-            if left == acme.keyset_id() && right == globex.keyset_id()),
+            if left == acme.keyset_id().await.unwrap() && right == globex.keyset_id().await.unwrap()),
         "expected KeysetMismatch, got: {zipped:?}"
     );
 

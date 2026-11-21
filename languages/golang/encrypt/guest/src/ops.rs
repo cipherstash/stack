@@ -216,7 +216,7 @@ where
 /// were sealed under. The output buffer contains plaintext — the ABI layer's
 /// ownership rules govern its wiping.
 pub async fn decrypt_record<'a, K>(
-    scope: impl Into<CipherRef<'a, K>>,
+    cipher_ref: impl Into<CipherRef<'a, K>>,
     record: &[u8],
     plan: &Bytes,
     expected: Option<Label>,
@@ -225,11 +225,16 @@ where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
-    let value =
-        dynamic::record::decrypt_with(scope, decode_tree(record)?, &plan, expected, &resolver())
-            .map_err(|e| fail_dynamic(&e))?
-            .await
-            .map_err(|e| fail_error(&e))?;
+    let value = dynamic::record::decrypt_with(
+        cipher_ref,
+        decode_tree(record)?,
+        &plan,
+        expected,
+        &resolver(),
+    )
+    .map_err(|e| fail_dynamic(&e))?
+    .await
+    .map_err(|e| fail_error(&e))?;
     encode_frame(value)
 }
 

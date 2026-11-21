@@ -25,7 +25,9 @@ use uuid::Uuid;
 use super::request::{tally, KeysetAnswer, Request, RequestKind, Responses};
 use crate::audit::{AuditMetadata, Audited, Unverified};
 use crate::contexts::CallContexts;
-use crate::keyset::KeysetState;
+use crate::credential::{KeySource, WithCredential};
+use crate::keyset::{Kept, KeysetState, Selected};
+use crate::OwnIdentity;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
 use vitaminc_aead::ContextPiece;
 
@@ -49,6 +51,14 @@ type WipeHook<'a, T> = Arc<dyn Fn(&mut T) + Send + Sync + 'a>;
 #[cfg(target_arch = "wasm32")]
 type WipeHook<'a, T> = Arc<dyn Fn(&mut T) + 'a>;
 
+/// What builds a pending once its keyset is loaded: see
+/// [`Pending::after_load`]. `Send` split as above.
+#[cfg(not(target_arch = "wasm32"))]
+type BuildBox<'a, T, K> = Box<dyn FnOnce(&KeysetCipher<'a, K>) -> Pending<'a, T, K> + Send + 'a>;
+/// See the native definition above; identical minus the `Send` bound.
+#[cfg(target_arch = "wasm32")]
+type BuildBox<'a, T, K> = Box<dyn FnOnce(&KeysetCipher<'a, K>) -> Pending<'a, T, K> + 'a>;
+
 /// The boxed future a [`Pending`] settles through; `Send` split as above.
 #[cfg(not(target_arch = "wasm32"))]
 pub type PendingFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>;
@@ -70,20 +80,29 @@ pub type PendingFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + 
 /// Construct leaves with [`ready`](Self::ready) (value already derived,
 /// nothing to request) or [`request`](Self::request) (value needs ZeroKMS
 /// responses).
+// `T: 'a` is written out: the compiler inferred it from `fulfil` until the
+// type came to name itself in `build`, and code that takes a
+// `Pending<'_, T, K>` relies on it.
 #[must_use = "a Pending does nothing until it is awaited or merged into one that is; \
               dropping it silently discards the value and any error that produced it"]
-pub struct Pending<'a, T, K> {
+pub struct Pending<'a, T: 'a, K> {
     /// The cipher the settled batch dispatches through. Which
     /// [`StackCipher`] value it is does not constrain merging — see
     /// [`zip`](Self::zip) — only which client issues the calls.
     cipher: &'a StackCipher<K>,
-    /// The keyset this pending is scoped to: the one a [`KeysetCipher`]
+    /// The keyset this pending is confined to: the one a [`KeysetCipher`]
     /// built it through, or none when it was built through the
-    /// [`StackCipher`]. A scoped pending mints every data key under this
-    /// keyset and opens leaves from no other; an unscoped one mints nothing
-    /// ([`Error::NoKeyset`]) and opens leaves from any keyset, one retrieve
-    /// call per keyset. Merging two scopes is [`Error::KeysetMismatch`].
-    keyset: Option<Uuid>,
+    /// [`StackCipher`]. A pending confined to a keyset mints every data key
+    /// under it and opens leaves from no other; one with no keyset mints
+    /// nothing ([`Error::NoKeyset`]) and opens leaves from any keyset, one
+    /// retrieve call per keyset. Merging two pendings confined to different
+    /// keysets is [`Error::KeysetMismatch`].
+    ///
+    /// A pending built through a keyset that was not loaded yet works
+    /// under that keyset without its id
+    /// ([`KeysetSelector::not_loaded`]). Settling the pending loads the
+    /// keyset and applies the rules above then.
+    keyset: KeysetSelector,
     requests: Vec<Request>,
     /// Set when the value already failed during the synchronous build
     /// (`ready(Err(..))`, a keyset mismatch, a failed sibling). A failed
@@ -103,6 +122,109 @@ pub struct Pending<'a, T, K> {
     /// plaintext, or whose type is not known to be `Zeroize` here.
     wipe: Option<WipeHook<'a, T>>,
     fulfil: FulfilBox<'a, T>,
+    /// Set for a pending that cannot be built until its keyset is
+    /// loaded ([`after_load`](Self::after_load)). Settling it loads the
+    /// keyset, builds the pending this returns, and settles that one. The
+    /// requests and `fulfil` above are unused until then.
+    build: Option<BuildBox<'a, T, K>>,
+}
+
+/// Which keyset a [`CipherRef`] or a [`Pending`] works under: none, one
+/// whose id is known, or one that was selected and is not loaded yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct KeysetSelector {
+    /// The keyset's id, when it is known.
+    id: Option<Uuid>,
+    /// Keysets that were selected and were not loaded when a call was
+    /// built through them: the default keyset, or one selected by id or by
+    /// name. Settling a pending loads each one. Merged pendings can name
+    /// more than one, and all of them must turn out to be one keyset.
+    not_loaded: Vec<NotLoaded>,
+}
+
+/// A keyset that was selected and not loaded when a call was built through
+/// its handle, with what the handle keeps of the keyset once it is loaded.
+#[derive(Clone)]
+struct NotLoaded {
+    selected: Selected,
+    /// Shared with the handle. Settling a pending sets it if it is empty,
+    /// and reads it otherwise: see [`Kept`].
+    kept: Kept,
+}
+
+/// Two are the same when they came from one handle, or from its clones.
+impl PartialEq for NotLoaded {
+    fn eq(&self, other: &Self) -> bool {
+        self.selected == other.selected && Arc::ptr_eq(&self.kept, &other.kept)
+    }
+}
+
+impl Eq for NotLoaded {}
+
+/// Shows the selection. The kept state holds an index key, and is not
+/// shown.
+impl std::fmt::Debug for NotLoaded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.selected.fmt(f)
+    }
+}
+
+impl KeysetSelector {
+    /// No keyset: what a reference to the client has.
+    pub(crate) const ANY: Self = Self {
+        id: None,
+        not_loaded: Vec::new(),
+    };
+
+    /// The keyset `id`, loaded.
+    pub(crate) fn keyset(id: Uuid) -> Self {
+        Self {
+            id: Some(id),
+            not_loaded: Vec::new(),
+        }
+    }
+
+    /// The keyset `selected`, which is not loaded yet, with what its handle
+    /// keeps of it. Its id is known only when it was selected by id.
+    pub(crate) fn not_loaded(selected: Selected, kept: Kept) -> Self {
+        let id = match &selected {
+            Selected::By(stack_kms::IdentifiedBy::Uuid(id)) => Some(*id),
+            Selected::By(stack_kms::IdentifiedBy::Name(_)) | Selected::Default => None,
+        };
+        Self {
+            id,
+            not_loaded: vec![NotLoaded { selected, kept }],
+        }
+    }
+
+    /// The keyset's id, when it is known.
+    pub(crate) fn id(&self) -> Option<Uuid> {
+        self.id
+    }
+
+    /// Whether this names no keyset at all.
+    fn is_any(&self) -> bool {
+        self.id.is_none() && self.not_loaded.is_empty()
+    }
+
+    /// The keyset two merged pendings work under: either's when the other
+    /// names none, [`Error::KeysetMismatch`] when both give an id and the
+    /// two differ. A keyset that is not loaded yet cannot be compared
+    /// here. [`resolved_id`] compares it when the pending settles.
+    fn merge(mut self, other: Self) -> Result<Self, Error> {
+        self.id = match (self.id, other.id) {
+            (Some(left), Some(right)) if left != right => {
+                return Err(Error::KeysetMismatch { left, right })
+            }
+            (left, right) => left.or(right),
+        };
+        for selected in other.not_loaded {
+            if !self.not_loaded.contains(&selected) {
+                self.not_loaded.push(selected);
+            }
+        }
+        Ok(self)
+    }
 }
 
 /// The cipher that a [`Pending`] operation runs through: a borrowed
@@ -135,15 +257,17 @@ pub struct Pending<'a, T, K> {
 ///   key ([`Error::ForeignKeyset`]).
 ///
 /// No other conversion makes a `CipherRef`. The keyset in a `CipherRef`
-/// is therefore one that the cipher loaded from ZeroKMS, and both rules
-/// above apply to every [`Pending`].
+/// is therefore one that the cipher loaded from ZeroKMS, or one that was
+/// selected and is loaded when the call is awaited. Both rules above apply
+/// to every [`Pending`].
 ///
 /// # Lifetime
 ///
 /// A `CipherRef` made from a [`KeysetCipher`] keeps the keyset's ID and
 /// the borrowed client, and does not keep the `KeysetCipher`. The
 /// `CipherRef` is valid for as long as the client is, even when the
-/// `KeysetCipher` is a temporary value.
+/// `KeysetCipher` is a temporary value. It is `Clone` and not `Copy`: a
+/// keyset selected by name that is not loaded yet is kept by its name.
 ///
 /// ```
 /// use stack_encrypt::{CipherRef, StackCipher};
@@ -160,13 +284,13 @@ pub struct Pending<'a, T, K> {
 /// let any = CipherRef::from(&cipher);
 /// assert_eq!(any.keyset_id(), None);
 /// let one = CipherRef::from(&keyset);
-/// assert_eq!(one.keyset_id(), Some(keyset.keyset_id()));
+/// assert_eq!(one.keyset_id(), Some(keyset.keyset_id().await?));
 /// # Ok::<(), stack_encrypt::Error>(())
 /// # }).unwrap();
 /// ```
 pub struct CipherRef<'c, K> {
     cipher: &'c StackCipher<K>,
-    keyset: Option<Uuid>,
+    keyset: KeysetSelector,
 }
 
 impl<'c, K> CipherRef<'c, K> {
@@ -175,27 +299,40 @@ impl<'c, K> CipherRef<'c, K> {
         self.cipher
     }
 
+    /// The keyset the operation works under.
+    pub(crate) fn keyset(&self) -> &KeysetSelector {
+        &self.keyset
+    }
+
     /// Returns the ID of the keyset that this reference is limited to.
+    ///
     /// Returns `None` for a reference to a [`StackCipher`]. That
     /// reference is limited to no keyset.
+    ///
+    /// Also returns `None` for a keyset that the cipher has not loaded
+    /// yet, unless it was selected by its ID. That reference is limited to
+    /// the keyset, and the ID is known once a call has loaded it. See
+    /// [`KeysetCipher`].
     pub fn keyset_id(&self) -> Option<Uuid> {
-        self.keyset
+        self.keyset.id()
     }
 }
 
 impl<K> Clone for CipherRef<'_, K> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            cipher: self.cipher,
+            keyset: self.keyset.clone(),
+        }
     }
 }
-impl<K> Copy for CipherRef<'_, K> {}
 
 // Written by hand, so that `K: Debug` is not needed. A data-key source
 // rarely implements `Debug`.
 impl<K> std::fmt::Debug for CipherRef<'_, K> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CipherRef")
-            .field("keyset_id", &self.keyset)
+            .field("keyset_id", &self.keyset.id())
             .finish_non_exhaustive()
     }
 }
@@ -204,7 +341,7 @@ impl<'c, K> From<&'c StackCipher<K>> for CipherRef<'c, K> {
     fn from(cipher: &'c StackCipher<K>) -> Self {
         Self {
             cipher,
-            keyset: None,
+            keyset: KeysetSelector::ANY,
         }
     }
 }
@@ -213,7 +350,7 @@ impl<'c, K> From<&KeysetCipher<'c, K>> for CipherRef<'c, K> {
     fn from(keyset: &KeysetCipher<'c, K>) -> Self {
         Self {
             cipher: keyset.cipher(),
-            keyset: Some(keyset.keyset_id()),
+            keyset: keyset.selector(),
         }
     }
 }
@@ -227,22 +364,23 @@ impl<'c, K> From<KeysetCipher<'c, K>> for CipherRef<'c, K> {
 impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// A pending with no requests: `result` was fully derived during the
     /// synchronous build. Awaiting it does no I/O.
-    pub fn ready(scope: impl Into<CipherRef<'a, K>>, result: Result<T, Error>) -> Self
+    pub fn ready(cipher_ref: impl Into<CipherRef<'a, K>>, result: Result<T, Error>) -> Self
     where
         T: MaybeSend,
     {
-        let scope: CipherRef<'a, K> = scope.into();
+        let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
         match result {
             Ok(value) => Self {
-                cipher: scope.cipher(),
-                keyset: scope.keyset_id(),
+                cipher: cipher_ref.cipher(),
+                keyset: cipher_ref.keyset().clone(),
                 requests: Vec::new(),
                 failed: None,
                 contexts: Vec::new(),
                 wipe: None,
                 fulfil: Box::new(move |_| Ok(value)),
+                build: None,
             },
-            Err(error) => Self::failed(scope, error),
+            Err(error) => Self::failed(cipher_ref, error),
         }
     }
 
@@ -251,20 +389,20 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// without I/O — see the `failed` field.
     ///
     /// Public because a hand-written `EncryptTarget` / `DecryptSource` that
-    /// works with a cipher scope directly reaches for it when a contract is
+    /// works with a [`CipherRef`] directly reaches for it when a contract is
     /// broken — e.g. [`Error::NotOpened`] for a field whose type declared
     /// [`DECRYPTABLE`](super::Decryptable::DECRYPTABLE) but was passed over.
     /// Inside an operation description, [`Encryption::failed`] and
-    /// [`Decryption::failed`] are the same thing without the scope; the
+    /// [`Decryption::failed`] are the same thing without the cipher; the
     /// derives' generated code uses those.
     ///
     /// [`Encryption::failed`]: super::Encryption::failed
     /// [`Decryption::failed`]: super::Decryption::failed
-    pub fn failed(scope: impl Into<CipherRef<'a, K>>, error: Error) -> Self {
-        let scope: CipherRef<'a, K> = scope.into();
+    pub fn failed(cipher_ref: impl Into<CipherRef<'a, K>>, error: Error) -> Self {
+        let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
         Self {
-            cipher: scope.cipher(),
-            keyset: scope.keyset_id(),
+            cipher: cipher_ref.cipher(),
+            keyset: cipher_ref.keyset().clone(),
             requests: Vec::new(),
             failed: Some(error),
             contexts: Vec::new(),
@@ -276,36 +414,41 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                     "fulfilment invoked on an already-failed pending".into(),
                 ))
             }),
+            build: None,
         }
     }
 
     /// A pending whose value needs ZeroKMS responses. `fulfil` runs after the
-    /// batched call, scoped to exactly the responses `requests` asked for —
+    /// batched call, over exactly the responses `requests` asked for —
     /// drawing more (or another kind) is [`Error::ResponseShape`], and can
     /// never consume a sibling pending's responses.
     ///
-    /// The scope is exact in both directions: a fulfilment must also consume
+    /// The match is exact in both directions: a fulfilment must also consume
     /// *every* response it asked for. Leaving one behind is
     /// [`Error::ResponseShape`] too — the key was minted at ZeroKMS, and
     /// silently discarding it means the pending's declared requests do not
     /// describe what it actually does.
     ///
     /// The keyset rules apply at construction, before any I/O: a generate
-    /// request through a [`StackCipher`] scope is [`Error::NoKeyset`], and
-    /// a retrieve request naming another keyset than a [`KeysetCipher`]
-    /// scope's is [`Error::ForeignKeyset`].
-    pub fn request<F>(scope: impl Into<CipherRef<'a, K>>, requests: Vec<Request>, fulfil: F) -> Self
+    /// request through a [`StackCipher`] is [`Error::NoKeyset`], and a
+    /// retrieve request that names another keyset than the
+    /// [`KeysetCipher`]'s is [`Error::ForeignKeyset`].
+    pub fn request<F>(
+        cipher_ref: impl Into<CipherRef<'a, K>>,
+        requests: Vec<Request>,
+        fulfil: F,
+    ) -> Self
     where
         F: FnOnce(&mut Responses) -> Result<T, Error> + MaybeSend + 'a,
     {
-        let scope: CipherRef<'a, K> = scope.into();
+        let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
         let (generated, retrieved, keysets) = tally(&requests);
-        if let Err(error) = check_scope(scope.keyset_id(), &requests) {
-            return Self::failed(scope, error);
+        if let Err(error) = check_keyset(cipher_ref.keyset(), &requests) {
+            return Self::failed(cipher_ref, error);
         }
         Self {
-            cipher: scope.cipher(),
-            keyset: scope.keyset_id(),
+            cipher: cipher_ref.cipher(),
+            keyset: cipher_ref.keyset().clone(),
             requests,
             failed: None,
             contexts: Vec::new(),
@@ -318,6 +461,86 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 }
                 Ok(value)
             }),
+            build: None,
+        }
+    }
+
+    /// A pending that can only be built once its keyset is loaded: its
+    /// requests depend on something derived under the keyset's index key,
+    /// such as the key a JSON read opens its rows with.
+    ///
+    /// `keyset` is a handle on a keyset that is not loaded yet. Settling
+    /// the pending loads the keyset, calls `build` with a handle on the
+    /// loaded keyset, and settles the pending `build` returns. So `build`
+    /// owns what it reads.
+    ///
+    /// Every other call derives what it needs when its responses arrive
+    /// ([`KeysetCipher::deferred`]). This one has no requests until it is
+    /// built. It still merges like any pending ([`zip`](Self::zip),
+    /// [`all`](Self::all)): the merged pending is built when it settles
+    /// too, and then makes one request for each kind.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn after_load<F>(keyset: &KeysetCipher<'a, K>, build: F) -> Self
+    where
+        F: FnOnce(&KeysetCipher<'a, K>) -> Pending<'a, T, K> + MaybeSend + 'a,
+    {
+        let cipher_ref = CipherRef::from(keyset);
+        Self::unbuilt(
+            cipher_ref.cipher(),
+            cipher_ref.keyset().clone(),
+            Box::new(build),
+        )
+    }
+
+    /// A pending that `build` makes when it settles, under `keyset`.
+    fn unbuilt(
+        cipher: &'a StackCipher<K>,
+        keyset: KeysetSelector,
+        build: BuildBox<'a, T, K>,
+    ) -> Self {
+        Self {
+            cipher,
+            keyset,
+            requests: Vec::new(),
+            failed: None,
+            contexts: Vec::new(),
+            // What `build` returns carries its own.
+            wipe: None,
+            fulfil: Box::new(|_| {
+                Err(Error::Other(
+                    "fulfilment invoked on a pending that is not built".into(),
+                ))
+            }),
+            build: Some(build),
+        }
+    }
+
+    /// This pending, changed by `change` once it is built. For a pending
+    /// from [`after_load`](Self::after_load) only.
+    fn rebuilt<U: 'a>(
+        self,
+        build: BuildBox<'a, T, K>,
+        change: impl FnOnce(Pending<'a, T, K>) -> Pending<'a, U, K> + MaybeSend + 'a,
+    ) -> Pending<'a, U, K> {
+        Pending::unbuilt(
+            self.cipher,
+            self.keyset,
+            Box::new(move |keyset| change(build(keyset))),
+        )
+    }
+
+    /// This pending without its cipher: what a merged pending that is not
+    /// built yet keeps of each side. A reference to the cipher would make
+    /// what keeps it `Send` only for a `Sync` key source.
+    fn detached(self) -> Detached<'a, T, K> {
+        Detached {
+            keyset: self.keyset,
+            requests: self.requests,
+            failed: self.failed,
+            contexts: self.contexts,
+            wipe: self.wipe,
+            fulfil: self.fulfil,
+            build: self.build,
         }
     }
 
@@ -326,17 +549,22 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     where
         F: FnOnce(T) -> U + MaybeSend + 'a,
     {
-        let fulfil = self.fulfil;
+        let mut pending = self;
+        if let Some(build) = pending.build.take() {
+            return pending.rebuilt(build, move |built| built.map(f));
+        }
+        let fulfil = pending.fulfil;
         Pending {
-            cipher: self.cipher,
-            keyset: self.keyset,
-            requests: self.requests,
-            failed: self.failed,
-            contexts: self.contexts,
+            cipher: pending.cipher,
+            keyset: pending.keyset,
+            requests: pending.requests,
+            failed: pending.failed,
+            contexts: pending.contexts,
             // The output is a new value. Whether it holds plaintext is not
             // known here.
             wipe: None,
             fulfil: Box::new(move |responses| fulfil(responses).map(f)),
+            build: None,
         }
     }
 
@@ -345,15 +573,20 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     where
         F: FnOnce(T) -> Result<U, Error> + MaybeSend + 'a,
     {
-        let fulfil = self.fulfil;
+        let mut pending = self;
+        if let Some(build) = pending.build.take() {
+            return pending.rebuilt(build, move |built| built.try_map(f));
+        }
+        let fulfil = pending.fulfil;
         Pending {
-            cipher: self.cipher,
-            keyset: self.keyset,
-            requests: self.requests,
-            failed: self.failed,
-            contexts: self.contexts,
+            cipher: pending.cipher,
+            keyset: pending.keyset,
+            requests: pending.requests,
+            failed: pending.failed,
+            contexts: pending.contexts,
             wipe: None,
             fulfil: Box::new(move |responses| fulfil(responses).and_then(f)),
+            build: None,
         }
     }
 
@@ -415,10 +648,16 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// ([`open`](super::open) and the targets' own openings), so that a
     /// [`Decryption::zip`](super::Decryption::zip) or
     /// [`Decryption::all`](super::Decryption::all) written by hand wipes too.
+    ///
+    /// A pending that is built when it settles
+    /// ([`after_load`](Self::after_load)) is marked when it is built.
     pub(crate) fn wiping(mut self) -> Self
     where
         T: zeroize::Zeroize,
     {
+        if let Some(build) = self.build.take() {
+            return self.rebuilt(build, Pending::wiping);
+        }
         if self.failed.is_none() {
             let wipe: WipeHook<'a, T> = Arc::new(|value: &mut T| value.zeroize());
             self.wipe = Some(wipe);
@@ -455,47 +694,52 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         self
     }
 
-    /// Scope this pending to `keyset`: what a [`KeysetCipher`]'s decrypt
-    /// does to the pending its [`StackCipher`] built, so that opening a
-    /// leaf from any other keyset fails before any key is retrieved.
-    /// Scoping a pending already scoped to another keyset is
-    /// [`Error::KeysetMismatch`].
-    pub(crate) fn scoped_to(self, keyset: Uuid) -> Self {
-        if let Some(existing) = self.keyset {
-            if existing != keyset {
-                return Pending::failed(
-                    self.cipher,
-                    Error::KeysetMismatch {
-                        left: existing,
-                        right: keyset,
-                    },
-                );
-            }
+    /// The cipher and the keyset this pending runs through.
+    fn cipher_ref(&self) -> CipherRef<'a, K> {
+        CipherRef {
+            cipher: self.cipher,
+            keyset: self.keyset.clone(),
         }
-        if let Err(error) = check_scope(Some(keyset), &self.requests) {
-            return Pending::failed(self.cipher, error);
+    }
+
+    #[cfg(test)]
+    /// [`confined_to`](Self::confined_to), for a keyset given by its id.
+    pub(crate) fn confined_to_id(self, keyset: Uuid) -> Self {
+        self.confined_to(&KeysetSelector::keyset(keyset))
+    }
+
+    /// Confine this pending to `keyset`, the keyset of the reference the
+    /// caller ran it through: what a [`KeysetCipher`]'s decrypt does to the
+    /// pending its [`StackCipher`] built, so that opening a leaf from any
+    /// other keyset fails before any key is retrieved. A reference to the
+    /// client names no keyset, and changes nothing. Confining a pending
+    /// already confined to another keyset is [`Error::KeysetMismatch`].
+    pub(crate) fn confined_to(self, keyset: &KeysetSelector) -> Self {
+        let keyset = match self.keyset.clone().merge(keyset.clone()) {
+            Ok(keyset) => keyset,
+            Err(error) => return Pending::failed(self.cipher_ref(), error),
+        };
+        if let Err(error) = check_keyset(&keyset, &self.requests) {
+            return Pending::failed(self.cipher_ref(), error);
         }
-        Pending {
-            keyset: Some(keyset),
-            ..self
-        }
+        Pending { keyset, ..self }
     }
 
     /// Merge two pendings into one resolving to the pair. Their requests
     /// concatenate — awaiting the result is still one batched call per
     /// request kind.
     ///
-    /// Both must agree on a keyset if both are scoped to one: the merged
+    /// Both must agree on a keyset if both are confined to one: the merged
     /// assembly mints every key under one keyset, so merging one tenant's
     /// pending with another's is [`Error::KeysetMismatch`], not a debug
-    /// assertion. A scoped pending merged with an unscoped one takes the
-    /// scope. If either side already failed, the result is that failure and
-    /// carries no requests.
+    /// assertion. A pending confined to a keyset, merged with one that has
+    /// no keyset, gives a pending confined to that keyset. If either side
+    /// already failed, the result is that failure and carries no requests.
     ///
     /// The keyset is the whole rule: the two sides need not have been built
     /// through the *same* [`StackCipher`] value. The merged assembly
     /// dispatches through one of them, and every request it carries is
-    /// keyset-addressed — a generate mints under the merged scope, a
+    /// keyset-addressed — a generate mints under the merged keyset, a
     /// retrieve names the keyset its leaf was sealed under. A keyset id is
     /// global, and a cipher only holds a keyset ZeroKMS resolved for its
     /// client, so either side's client can dispatch the batch; a client that
@@ -536,16 +780,31 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         other: Pending<'a, U, K>,
         release: impl FnOnce(T) + MaybeSend + 'a,
     ) -> Pending<'a, (T, U), K> {
-        let keyset = match merge_scopes(self.keyset, other.keyset) {
+        let keyset = match self.keyset.clone().merge(other.keyset.clone()) {
             Ok(keyset) => keyset,
             Err(error) => return Pending::failed(self.cipher, error),
         };
-        if let Some(error) = self.failed.or(other.failed) {
+        if self.failed.is_some() || other.failed.is_some() {
+            let error = self.failed.or(other.failed).unwrap_or(Error::ResponseShape);
             return Pending::failed(self.cipher, error);
+        }
+        if self.build.is_some() || other.build.is_some() {
+            // A side that is not built yet has no requests to merge. The
+            // pair is built when it settles, and merged then.
+            let cipher = self.cipher;
+            let (left, right) = (self.detached(), other.detached());
+            return Pending::unbuilt(
+                cipher,
+                keyset,
+                Box::new(move |loaded| {
+                    left.built(loaded)
+                        .zip_releasing(right.built(loaded), release)
+                }),
+            );
         }
         let mut requests = self.requests;
         requests.extend(other.requests);
-        if let Err(error) = check_scope(keyset, &requests) {
+        if let Err(error) = check_keyset(&keyset, &requests) {
             return Pending::failed(self.cipher, error);
         }
         let mut contexts = self.contexts;
@@ -593,13 +852,14 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 let second = second(responses)?;
                 Ok((held.keep(), second))
             }),
+            build: None,
         }
     }
 
     /// Merge any number of same-typed pendings into one resolving to the
     /// `Vec` — [`zip`](Self::zip) at scale, used by the `Vec<T>`
     /// implementations to make a whole column one batched call. Same rule as
-    /// `zip`: every item must agree with `scope`'s keyset — which cipher
+    /// `zip`: every item must agree with `cipher_ref`'s keyset — which cipher
     /// value each was built through does not matter, for the reason `zip`
     /// gives — and the first failed item fails the whole column with no I/O.
     ///
@@ -607,20 +867,20 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// each of those items that a decrypt marked is wiped before the error
     /// is returned, as [`zip`](Self::zip) does for its left side.
     pub fn all(
-        scope: impl Into<CipherRef<'a, K>>,
+        cipher_ref: impl Into<CipherRef<'a, K>>,
         items: Vec<Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K> {
-        Self::collect(scope, items)
+        Self::collect(cipher_ref, items)
     }
 
     /// Build a collection lazily, stopping at the first local failure so a bad
     /// context does not repeat work for every remaining row.
     pub(crate) fn collect(
-        scope: impl Into<CipherRef<'a, K>>,
+        cipher_ref: impl Into<CipherRef<'a, K>>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K> {
-        let scope: CipherRef<'a, K> = scope.into();
-        Self::collect_releasing(scope, items, drop)
+        let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
+        Self::collect_releasing(cipher_ref, items, drop)
     }
 
     /// The same as [`collect`](Self::collect), but for a collection of
@@ -635,14 +895,14 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// unwinds. A failure before fulfilment recovers nothing, so there is
     /// nothing to wipe.
     pub(crate) fn collect_wiping(
-        scope: impl Into<CipherRef<'a, K>>,
+        cipher_ref: impl Into<CipherRef<'a, K>>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K>
     where
         T: zeroize::Zeroize,
     {
-        let scope: CipherRef<'a, K> = scope.into();
-        Self::collect_releasing(scope, items, |mut recovered| {
+        let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
+        Self::collect_releasing(cipher_ref, items, |mut recovered| {
             zeroize::Zeroize::zeroize(&mut recovered)
         })
     }
@@ -652,31 +912,53 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// before it, after each item's own wipe has run if it has one. When
     /// every item succeeds, `release` is not called.
     fn collect_releasing(
-        scope: CipherRef<'a, K>,
+        cipher_ref: CipherRef<'a, K>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
         release: impl FnOnce(Vec<T>) + MaybeSend + 'a,
     ) -> Pending<'a, Vec<T>, K> {
         let items = items.into_iter();
-        let cipher = scope.cipher();
-        let mut keyset = scope.keyset_id();
-        let mut requests = Vec::new();
-        let mut contexts = Vec::new();
-        let mut fulfils = Vec::with_capacity(items.size_hint().0);
-        let mut wipes = Vec::with_capacity(items.size_hint().0);
+        let cipher = cipher_ref.cipher();
+        let mut keyset = cipher_ref.keyset().clone();
+        // Items are taken one at a time, and none after the first that
+        // failed: a lazy column stops building there.
+        let mut column: Vec<Pending<'a, T, K>> = Vec::with_capacity(items.size_hint().0);
+        let mut unbuilt = false;
         for item in items {
-            keyset = match merge_scopes(keyset, item.keyset) {
+            keyset = match keyset.merge(item.keyset.clone()) {
                 Ok(keyset) => keyset,
                 Err(error) => return Pending::failed(cipher, error),
             };
             if let Some(error) = item.failed {
                 return Pending::failed(cipher, error);
             }
+            unbuilt |= item.build.is_some();
+            column.push(item);
+        }
+        if unbuilt {
+            // An item that is not built yet has no requests to merge. The
+            // column is built when it settles, and merged then.
+            let column: Vec<_> = column.into_iter().map(Pending::detached).collect();
+            return Pending::unbuilt(
+                cipher,
+                keyset,
+                Box::new(move |loaded| {
+                    let column: Vec<_> =
+                        column.into_iter().map(|item| item.built(loaded)).collect();
+                    Pending::collect_releasing(CipherRef::from(loaded), column, release)
+                }),
+            );
+        }
+        let mut requests = Vec::new();
+        let mut contexts = Vec::new();
+        let mut fulfils = Vec::with_capacity(column.len());
+        let mut wipes = Vec::with_capacity(column.len());
+        for item in column {
             requests.extend(item.requests);
             contexts.extend(item.contexts);
             fulfils.push(item.fulfil);
             wipes.push(item.wipe);
         }
-        if let Err(error) = check_scope(keyset, &requests) {
+        if let Err(error) = check_keyset(&keyset, &requests) {
             return Pending::failed(cipher, error);
         }
         // Each item is wiped by its own hook, if it has one. The items
@@ -714,6 +996,38 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
                 }
                 Ok(recovered.keep())
             }),
+            build: None,
+        }
+    }
+}
+
+/// A [`Pending`] without its cipher: see [`Pending::detached`].
+struct Detached<'a, T, K> {
+    keyset: KeysetSelector,
+    requests: Vec<Request>,
+    failed: Option<Error>,
+    contexts: Vec<(ContextPiece<'static>, ContextPiece<'static>)>,
+    wipe: Option<WipeHook<'a, T>>,
+    fulfil: FulfilBox<'a, T>,
+    build: Option<BuildBox<'a, T, K>>,
+}
+
+impl<'a, T: 'a, K> Detached<'a, T, K> {
+    /// The pending again, on the cipher of `loaded`, and built through
+    /// `loaded` if it was not built yet.
+    fn built(self, loaded: &KeysetCipher<'a, K>) -> Pending<'a, T, K> {
+        match self.build {
+            Some(build) => build(loaded),
+            None => Pending {
+                cipher: loaded.cipher(),
+                keyset: self.keyset,
+                requests: self.requests,
+                failed: self.failed,
+                contexts: self.contexts,
+                wipe: self.wipe,
+                fulfil: self.fulfil,
+                build: None,
+            },
         }
     }
 }
@@ -779,10 +1093,7 @@ impl<T, R: FnOnce(T)> Drop for Held<T, R> {
     }
 }
 
-impl<'a, T: 'a, K> Pending<'a, T, K>
-where
-    K: DataKeySource + IndexKeySource,
-{
+impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// Settle: one batched ZeroKMS call per request kind (none at all for an
     /// all-[`ready`](Pending::ready) assembly), then the fulfilments shape the
     /// responses. This is the only place I/O happens — the cipher-directed
@@ -791,41 +1102,145 @@ where
     ///
     /// Unboxed, so it carries no `Send`/`Sync` demands beyond the backend's
     /// own; the public [`IntoFuture`] impl boxes it.
-    pub(crate) async fn settle(self) -> Result<T, Error> {
-        self.settle_with(None).await
+    pub(crate) async fn settle(self) -> Result<T, Error>
+    where
+        K: KeySource<OwnIdentity>,
+    {
+        self.settle_with(None, &OwnIdentity).await
     }
 
-    /// Settle as [`settle`](Self::settle) does, and send `audit` with
-    /// every key request. An [`Audited`] call settles through this method.
-    pub(crate) async fn settle_with(self, audit: Unverified) -> Result<T, Error> {
+    /// Settle as [`settle`](Self::settle) does. `audit` is sent with every
+    /// key request: an [`Audited`] call settles through this method.
+    /// Every request is made as `identity`, the load of a keyset included:
+    /// the key source's own identity, or the credential of a
+    /// [`WithCredential`] call.
+    pub(crate) async fn settle_with<I>(self, audit: Unverified, identity: &I) -> Result<T, Error>
+    where
+        K: KeySource<I>,
+    {
         if let Some(error) = self.failed {
             return Err(error);
         }
-        let mut responses =
-            dispatch(self.cipher, self.keyset, self.requests, audit.as_deref()).await?;
+        if let Some(build) = self.build {
+            // Not built yet: load the keyset, build through a handle on
+            // it, and settle what was built, confined to that keyset. A
+            // keyset this pending was confined to since is the same one,
+            // or `resolved_id` has refused it.
+            let Some(id) = Box::pin(resolved_id(self.cipher, &self.keyset, identity)).await? else {
+                return Err(Error::NoKeyset);
+            };
+            let loaded = Box::pin(self.cipher.keyset_state(id, identity)).await?;
+            let keyset = KeysetCipher::new(self.cipher, loaded);
+            let built = build(&keyset).confined_to(&KeysetSelector::keyset(id));
+            // Boxed: the call is recursive, though a built pending has
+            // nothing more to build.
+            return Box::pin(built.settle_with(audit, identity)).await;
+        }
+        let unresolved = !self.keyset.not_loaded.is_empty()
+            || self.requests.iter().any(Request::is_selected_keyset);
+        let (keyset, requests) = if unresolved {
+            // Boxed: see `dispatch` on what a future holds on the stack.
+            Box::pin(resolved(self.cipher, &self.keyset, self.requests, identity)).await?
+        } else {
+            (self.keyset.id(), self.requests)
+        };
+        let mut responses = if requests.is_empty() {
+            // Nothing to ask ZeroKMS for: the value was derived during the
+            // build. `dispatch` is not entered, so it builds none of the
+            // futures it boxes, and nothing the build left on the stack is
+            // copied into one.
+            Responses::new(Vec::new(), Vec::new())
+        } else {
+            dispatch(self.cipher, keyset, requests, audit.as_deref(), identity).await?
+        };
         (self.fulfil)(&mut responses)
     }
 }
 
-/// The keyset two merged pendings share: either's when the other has none,
-/// [`Error::KeysetMismatch`] when both have one and they differ.
-fn merge_scopes(left: Option<Uuid>, right: Option<Uuid>) -> Result<Option<Uuid>, Error> {
-    match (left, right) {
-        (Some(left), Some(right)) if left != right => Err(Error::KeysetMismatch { left, right }),
-        (Some(keyset), _) | (_, Some(keyset)) => Ok(Some(keyset)),
-        (None, None) => Ok(None),
+/// The id of the keyset `keyset` names, with every keyset it names that
+/// was not loaded now loaded, as `identity`, and kept by the handle it was
+/// selected through. Merged
+/// pendings can name more than one, and all must be one keyset:
+/// [`Error::KeysetMismatch`] otherwise. `None` for a selector that names
+/// no keyset.
+async fn resolved_id<K: KeySource<I>, I>(
+    cipher: &StackCipher<K>,
+    keyset: &KeysetSelector,
+    identity: &I,
+) -> Result<Option<Uuid>, Error> {
+    let mut id = keyset.id();
+    for NotLoaded { selected, kept } in &keyset.not_loaded {
+        let found = match kept.get() {
+            // A call through the same handle has loaded the keyset since
+            // this one was built. It is used as the handle holds it, and
+            // the id or name is not resolved again: a name can come to
+            // mean another keyset.
+            Some(loaded) => loaded.id,
+            None => {
+                let loaded = cipher.selected_state(selected, identity).await?;
+                // If a call through the same handle set it meanwhile, that
+                // one stands for both.
+                kept.get_or_init(|| loaded).id
+            }
+        };
+        match id {
+            Some(known) if known != found => {
+                return Err(Error::KeysetMismatch {
+                    left: known,
+                    right: found,
+                })
+            }
+            _ => id = Some(found),
+        }
     }
+    Ok(id)
+}
+
+/// The keyset and the requests of a pending that was built through a
+/// keyset before the cipher had loaded it.
+///
+/// Loads the keyset if no call has yet, as `identity`. Then applies
+/// what the build could not: the keyset rules ([`check_keyset`]), and
+/// [`Error::KeysetMismatch`] when the pending was merged with one under
+/// another keyset. A request for the selected keyset's state becomes a
+/// request for that keyset by id, which `dispatch` answers from the cache.
+async fn resolved<K: KeySource<I>, I>(
+    cipher: &StackCipher<K>,
+    keyset: &KeysetSelector,
+    mut requests: Vec<Request>,
+    identity: &I,
+) -> Result<(Option<Uuid>, Vec<Request>), Error> {
+    let id = resolved_id(cipher, keyset, identity).await?;
+    let loaded = match id {
+        Some(id) => {
+            for request in &mut requests {
+                request.resolve_selected_keyset(id);
+            }
+            KeysetSelector::keyset(id)
+        }
+        None => KeysetSelector::ANY,
+    };
+    check_keyset(&loaded, &requests)?;
+    Ok((id, requests))
 }
 
 /// The keyset rules over a request list, applied wherever requests meet a
-/// scope — construction, scoping, merging — so a violation fails the
-/// pending before any I/O: a generate request needs a keyset to mint under
-/// ([`Error::NoKeyset`]), and a retrieve request in a scoped pending must
-/// name that keyset ([`Error::ForeignKeyset`]).
-fn check_scope(keyset: Option<Uuid>, requests: &[Request]) -> Result<(), Error> {
+/// keyset (construction, confining, merging), so a violation fails the
+/// pending before any I/O: a request that needs a keyset (one that mints a
+/// data key, or asks for the selected keyset) has none through the client
+/// ([`Error::NoKeyset`]), and a retrieve request in a pending confined to
+/// a keyset must name that keyset ([`Error::ForeignKeyset`]).
+///
+/// A keyset that is not loaded yet is a keyset to mint under, and gives no
+/// id to compare a retrieve request with unless it was selected by id.
+/// [`resolved`] applies the rules again when the pending settles and the
+/// id is known.
+fn check_keyset(keyset: &KeysetSelector, requests: &[Request]) -> Result<(), Error> {
     for request in requests {
-        match (keyset, request.retrieve_keyset()) {
-            (None, None) => return Err(Error::NoKeyset),
+        if request.needs_keyset() && keyset.is_any() {
+            return Err(Error::NoKeyset);
+        }
+        match (keyset.id(), request.retrieve_keyset()) {
             (Some(expected), Some(found)) if expected != found => {
                 return Err(Error::ForeignKeyset { expected, found });
             }
@@ -833,6 +1248,52 @@ fn check_scope(keyset: Option<Uuid>, requests: &[Request]) -> Result<(), Error> 
         }
     }
     Ok(())
+}
+
+impl<'a, T: 'a, K: stack_kms::CredentialKeySource> Pending<'a, T, K> {
+    /// Send every key request that this call makes with `credential`, so
+    /// that ZeroKMS serves and logs the request as that caller. For a
+    /// `stack_auth::OidcFederationStrategy`, the credential is a JWT, most
+    /// often that of the end user who signed in.
+    ///
+    /// A keyset that the call needs and the cipher has not loaded yet is
+    /// loaded with the credential too.
+    ///
+    /// # Attach it last
+    ///
+    /// The result is a [`WithCredential`] call. You can await it, or call
+    /// `.audit(..)` on it and await that. So call [`zip`](Self::zip),
+    /// [`all`](Self::all), and [`map`](Self::map) first. Then attach the
+    /// credential to the whole call. See [`WithCredential`] for an
+    /// example.
+    ///
+    /// Only a call through a key source that takes a credential with each
+    /// call has this method
+    /// ([`CredentialKeySource`](stack_kms::CredentialKeySource)). Such a
+    /// call is not a future until it has a credential, so it cannot be
+    /// awaited without this method.
+    pub fn with_credential(self, credential: stack_kms::SecretToken) -> WithCredential<Self> {
+        WithCredential::new(self, credential)
+    }
+}
+
+impl<'a, T: 'a, K: stack_kms::CredentialKeySource> Audited<Pending<'a, T, K>> {
+    /// Send the audited call's key requests with `credential`. See
+    /// [`Pending::with_credential`].
+    pub fn with_credential(
+        self,
+        credential: stack_kms::SecretToken,
+    ) -> Audited<WithCredential<Pending<'a, T, K>>> {
+        self.rewrap(|pending| WithCredential::new(pending, credential))
+    }
+}
+
+impl<'a, T: 'a, K> WithCredential<Pending<'a, T, K>> {
+    /// Send `metadata` with every key request that this call makes, for
+    /// the ZeroKMS audit log. See [`Pending::audit`].
+    pub fn audit(self, metadata: AuditMetadata) -> Audited<Self> {
+        Audited::new(self, metadata)
+    }
 }
 
 /// Awaiting a `Pending` settles it. The boxed future is `Send` on native
@@ -880,7 +1341,7 @@ where
 
     fn into_future(self) -> Self::IntoFuture {
         let (pending, audit) = self.into_parts();
-        Box::pin(pending.settle_with(audit))
+        Box::pin(async move { pending.settle_with(audit, &OwnIdentity).await })
     }
 }
 
@@ -896,7 +1357,77 @@ where
 
     fn into_future(self) -> Self::IntoFuture {
         let (pending, audit) = self.into_parts();
-        Box::pin(pending.settle_with(audit))
+        Box::pin(async move { pending.settle_with(audit, &OwnIdentity).await })
+    }
+}
+
+/// Awaiting a `Pending` with a credential settles it, as awaiting the
+/// `Pending` does, with every key request made with the credential.
+///
+/// This is the only way to await a call through a key source that takes a
+/// credential with each call
+/// ([`CredentialKeySource`](stack_kms::CredentialKeySource)). Such a key
+/// source is not a [`DataKeySource`], so the call alone is not a future.
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a, T: 'a, K> IntoFuture for WithCredential<Pending<'a, T, K>>
+where
+    K: stack_kms::CredentialKeySource + Sync,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (pending, credential) = self.into_parts();
+        Box::pin(async move { pending.settle_with(None, &credential).await })
+    }
+}
+
+/// See the native impl above. This one is the same, without the `Sync`
+/// bound.
+#[cfg(target_arch = "wasm32")]
+impl<'a, T: 'a, K> IntoFuture for WithCredential<Pending<'a, T, K>>
+where
+    K: stack_kms::CredentialKeySource,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (pending, credential) = self.into_parts();
+        Box::pin(async move { pending.settle_with(None, &credential).await })
+    }
+}
+
+/// Awaiting an audited `Pending` with a credential settles it with both.
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a, T: 'a, K> IntoFuture for Audited<WithCredential<Pending<'a, T, K>>>
+where
+    K: stack_kms::CredentialKeySource + Sync,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (call, audit) = self.into_parts();
+        let (pending, credential) = call.into_parts();
+        Box::pin(async move { pending.settle_with(audit, &credential).await })
+    }
+}
+
+/// See the native impl above. This one is the same, without the `Sync`
+/// bound.
+#[cfg(target_arch = "wasm32")]
+impl<'a, T: 'a, K> IntoFuture for Audited<WithCredential<Pending<'a, T, K>>>
+where
+    K: stack_kms::CredentialKeySource,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        let (call, audit) = self.into_parts();
+        let (pending, credential) = call.into_parts();
+        Box::pin(async move { pending.settle_with(audit, &credential).await })
     }
 }
 
@@ -917,11 +1448,15 @@ struct Retrieve {
 /// loads running beside the retrieves, whatever the request count. When
 /// ZeroKMS grows a combined operation (data keys + PRF derivations in one
 /// round-trip), this is the one place that changes.
-async fn dispatch<K: DataKeySource + IndexKeySource>(
+///
+/// Every call is made as `identity`: the key source's own, or the
+/// credential of the call.
+async fn dispatch<K: KeySource<I>, I>(
     cipher: &StackCipher<K>,
     keyset: Option<Uuid>,
     requests: Vec<Request>,
     audit: Option<&UnverifiedContext>,
+    identity: &I,
 ) -> Result<Responses, Error> {
     let mut generates: Vec<Descriptor> = Vec::new();
     let mut retrieves: Vec<Retrieve> = Vec::new();
@@ -930,6 +1465,9 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
         match request.into_kind() {
             RequestKind::GenerateDataKey { descriptor } => generates.push(descriptor),
             RequestKind::LoadKeyset { keyset_id } => loads.push(keyset_id),
+            // `settle_with` names the pending's keyset by its id before it
+            // dispatches, so none reaches here.
+            RequestKind::SelectedKeyset => return Err(Error::ResponseShape),
             RequestKind::RetrieveDataKey {
                 iv,
                 tag,
@@ -964,15 +1502,23 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
     // early and boxed is a pointer wide at both moments, and its output is
     // kept narrow too (an error travels boxed, a keyset's outcome shared).
     // `tests/heap_hygiene.rs` is what notices.
-    let retrieving = retrieve_data_keys(cipher, &retrieves, audit);
-    let retrieve_keys = Box::pin(async move { retrieving.await.map_err(Box::new) });
-    let load_keysets = Box::pin(load_keysets(cipher, &loads));
+    //
+    // A side with nothing to do is not built at all. A call that only
+    // generates keys, such as an encrypt, derives its terms before it gets
+    // here, and a future built now would be moved to the heap with whatever
+    // that derivation left on the stack.
+    let retrieve_keys = (!retrieves.is_empty()).then(|| {
+        let retrieving = retrieve_data_keys(cipher, &retrieves, audit, identity);
+        Box::pin(async move { retrieving.await.map_err(Box::new) })
+    });
+    let load_keysets =
+        (!loads.is_empty()).then(|| Box::pin(load_keysets(cipher, &loads, identity)));
 
     let generated = if generates.is_empty() {
         Vec::new()
     } else {
-        // Every constructor checks this before any I/O (`check_scope`), so
-        // an unscoped generate cannot reach here; kept as the rule, not
+        // Every constructor checks this before any I/O (`check_keyset`), so
+        // a generate with no keyset cannot reach here; kept as the rule, not
         // as an assumption.
         let keyset = keyset.ok_or(Error::NoKeyset)?;
         // Each leaf's descriptor is its context, rendered; the lock context
@@ -982,10 +1528,14 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
             .map(|descriptor| GenerateKeyPayload::new(descriptor.as_str(), Cow::Owned(Vec::new())))
             .collect();
         let expected = payloads.len();
-        let keys = cipher
-            .kms()
-            .generate_keys(payloads, Some(keyset), audit.map(Cow::Borrowed))
-            .await?;
+        let keys = crate::credential::generate_keys(
+            cipher.kms(),
+            identity,
+            payloads,
+            Some(keyset),
+            audit.map(Cow::Borrowed),
+        )
+        .await?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
                 expected,
@@ -995,8 +1545,15 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
         keys
     };
 
-    let (retrieved, keysets) = futures::future::join(retrieve_keys, load_keysets).await;
-    let retrieved = retrieved.map_err(|error| *error)?;
+    let (retrieved, keysets) = match (retrieve_keys, load_keysets) {
+        (None, None) => (Vec::new(), Vec::new()),
+        (Some(retrieve_keys), None) => (retrieve_keys.await.map_err(|error| *error)?, Vec::new()),
+        (None, Some(load_keysets)) => (Vec::new(), load_keysets.await),
+        (Some(retrieve_keys), Some(load_keysets)) => {
+            let (retrieved, keysets) = futures::future::join(retrieve_keys, load_keysets).await;
+            (retrieved.map_err(|error| *error)?, keysets)
+        }
+    };
     Ok(Responses::new(generated, retrieved).with_keysets(keysets))
 }
 
@@ -1004,10 +1561,11 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
 /// keyset the leaves were sealed under, in first-seen order, the keys
 /// scattered back into request order, which is the order the fulfilments
 /// draw them in.
-async fn retrieve_data_keys<K: DataKeySource>(
+async fn retrieve_data_keys<K: KeySource<I>, I>(
     cipher: &StackCipher<K>,
     retrieves: &[Retrieve],
     audit: Option<&UnverifiedContext>,
+    identity: &I,
 ) -> Result<Vec<DataKey>, Error> {
     let mut groups: Vec<(Uuid, Vec<usize>)> = Vec::new();
     let mut group_of: HashMap<Uuid, usize> = HashMap::new();
@@ -1030,10 +1588,14 @@ async fn retrieve_data_keys<K: DataKeySource>(
             })
             .collect();
         let expected = payloads.len();
-        let keys = cipher
-            .kms()
-            .retrieve_keys(payloads, Some(keyset_id), audit)
-            .await?;
+        let keys = crate::credential::retrieve_keys(
+            cipher.kms(),
+            identity,
+            payloads,
+            Some(keyset_id),
+            audit,
+        )
+        .await?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
                 expected,
@@ -1066,9 +1628,10 @@ async fn retrieve_data_keys<K: DataKeySource>(
 /// The per-keyset futures are built when this is called, not when the
 /// returned future is first polled, for the reason `dispatch` builds its
 /// sides early.
-fn load_keysets<'c, K: DataKeySource + IndexKeySource>(
+fn load_keysets<'c, K: KeySource<I>, I>(
     cipher: &'c StackCipher<K>,
     loads: &'c [Uuid],
+    identity: &'c I,
 ) -> impl Future<Output = Vec<KeysetAnswer>> + 'c {
     let mut distinct: Vec<Uuid> = Vec::new();
     for keyset_id in loads {
@@ -1076,11 +1639,9 @@ fn load_keysets<'c, K: DataKeySource + IndexKeySource>(
             distinct.push(*keyset_id);
         }
     }
-    let loading = futures::future::join_all(
-        distinct
-            .iter()
-            .map(|&id| Box::pin(async move { cipher.keyset_state(id).await.map_err(Arc::new) })),
-    );
+    let loading = futures::future::join_all(distinct.iter().map(|&id| {
+        Box::pin(async move { cipher.keyset_state(id, identity).await.map_err(Arc::new) })
+    }));
     async move {
         let by_keyset: HashMap<Uuid, Result<Arc<KeysetState>, Arc<Error>>> =
             distinct.into_iter().zip(loading.await).collect();
@@ -1127,19 +1688,22 @@ mod tests {
         assert!(std::ptr::eq(any.cipher(), &cipher));
         let borrowed = CipherRef::from(&keyset);
         let owned = CipherRef::from(keyset.clone());
-        for one in [borrowed, owned] {
-            assert_eq!(one.keyset_id(), Some(keyset.keyset_id()));
+        for one in [borrowed.clone(), owned] {
+            assert_eq!(one.keyset_id(), Some(keyset.keyset_id().await.unwrap()));
             assert!(std::ptr::eq(one.cipher(), &cipher));
         }
         // A pending keeps the keyset of the reference it was built through.
         let pending = Pending::ready(&keyset, Ok(()));
-        assert_eq!(pending.keyset, Some(keyset.keyset_id()));
+        assert_eq!(
+            pending.keyset,
+            KeysetSelector::keyset(keyset.keyset_id().await.unwrap())
+        );
         let pending = Pending::ready(&cipher, Ok(()));
-        assert_eq!(pending.keyset, None);
+        assert_eq!(pending.keyset, KeysetSelector::ANY);
         let shown = format!("{any:?} {borrowed:?}");
         assert!(shown.contains("keyset_id: None"), "{shown}");
         assert!(
-            shown.contains(&format!("{:?}", keyset.keyset_id())),
+            shown.contains(&format!("{:?}", keyset.keyset_id().await.unwrap())),
             "{shown}"
         );
     }
@@ -1279,7 +1843,7 @@ mod tests {
         );
         assert_eq!(loading(&cipher, other).await.unwrap(), other);
         assert_eq!(cipher.kms().load_calls(), at_init + 1, "then the cache");
-        let default = cipher.default_keyset().keyset_id();
+        let default = cipher.default_keyset().keyset_id().await.unwrap();
         assert_eq!(loading(&cipher, default).await.unwrap(), default);
         assert_eq!(
             cipher.kms().load_calls(),
@@ -1325,7 +1889,7 @@ mod tests {
         let drew_key = Arc::new(AtomicUsize::new(0));
         let drawn = Arc::clone(&drew_key);
         let requests = vec![
-            Request::retrieve_under(iv, tag.clone(), d(), keyset.keyset_id()),
+            Request::retrieve_under(iv, tag.clone(), d(), keyset.keyset_id().await.unwrap()),
             Request::load_keyset(failing),
         ];
         let result = Pending::request(&cipher, requests, move |responses| {
@@ -1347,7 +1911,12 @@ mod tests {
 
         let retrieving = Pending::request(
             &cipher,
-            vec![Request::retrieve_under(iv, tag, d(), keyset.keyset_id())],
+            vec![Request::retrieve_under(
+                iv,
+                tag,
+                d(),
+                keyset.keyset_id().await.unwrap(),
+            )],
             |responses| responses.next_retrieved_key().map(|_| ()),
         );
         let zipped = retrieving.zip(loading(&cipher, failing)).await;
@@ -1360,6 +1929,357 @@ mod tests {
 
     fn d() -> Descriptor {
         Descriptor::of("test/field")
+    }
+
+    fn by_name(name: &str) -> Selected {
+        Selected::By(IdentifiedBy::Name(name.to_string().into()))
+    }
+
+    /// The keysets a selector still has to load, as they were selected.
+    fn to_load(selector: &KeysetSelector) -> Vec<Selected> {
+        selector
+            .not_loaded
+            .iter()
+            .map(|one| one.selected.clone())
+            .collect()
+    }
+
+    /// Two selectors merge to the keyset either names. A keyset that is
+    /// not loaded yet stays in the merged selector, beside an id it must
+    /// turn out to be.
+    #[test]
+    fn selectors_merge_by_id_and_keep_a_keyset_that_is_not_loaded() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let any = || KeysetSelector::ANY;
+        // One handle on the default keyset, not loaded: every selector made
+        // from it shares what the handle keeps.
+        let handle = Kept::default();
+        let default = || KeysetSelector::not_loaded(Selected::Default, Arc::clone(&handle));
+        let loaded = KeysetSelector::keyset;
+        assert!(any().is_any());
+        assert!(!default().is_any());
+        assert!(!loaded(a).is_any());
+
+        assert_eq!(any().merge(any()).unwrap(), any());
+        for (left, right) in [
+            (any(), loaded(a)),
+            (loaded(a), any()),
+            (loaded(a), loaded(a)),
+        ] {
+            assert_eq!(left.merge(right).unwrap(), loaded(a));
+        }
+        assert!(matches!(
+            loaded(a).merge(loaded(b)),
+            Err(Error::KeysetMismatch { left, right }) if left == a && right == b
+        ));
+
+        for (left, right) in [
+            (default(), any()),
+            (any(), default()),
+            (default(), default()),
+        ] {
+            assert_eq!(left.merge(right).unwrap(), default());
+        }
+        for (left, right) in [(default(), loaded(a)), (loaded(a), default())] {
+            let merged = left.merge(right).unwrap();
+            assert_eq!(merged.id(), Some(a));
+            assert_eq!(
+                to_load(&merged),
+                [Selected::Default],
+                "still to be compared with the default"
+            );
+        }
+
+        // A keyset selected by id gives its id before it is loaded, so two
+        // of them are compared at once. One selected by name gives none.
+        let by_id =
+            |id| KeysetSelector::not_loaded(Selected::By(IdentifiedBy::Uuid(id)), Kept::default());
+        assert_eq!(by_id(a).id(), Some(a));
+        assert!(matches!(
+            by_id(a).merge(by_id(b)),
+            Err(Error::KeysetMismatch { .. })
+        ));
+        let named = KeysetSelector::not_loaded(by_name("acme"), Kept::default());
+        assert_eq!(named.id(), None);
+        let both = named.merge(default()).unwrap();
+        assert_eq!(to_load(&both), [by_name("acme"), Selected::Default]);
+
+        // Two handles on the default keyset are two selections: each keeps
+        // its own keyset once it is loaded.
+        let another = KeysetSelector::not_loaded(Selected::Default, Kept::default());
+        let two = default().merge(another).unwrap();
+        assert_eq!(to_load(&two), [Selected::Default, Selected::Default]);
+    }
+
+    /// The keyset rules under a keyset that is not loaded yet: there is a
+    /// keyset to mint under, and nothing to compare a retrieve request
+    /// with until the pending settles.
+    #[test]
+    fn a_keyset_that_is_not_loaded_can_mint_and_compares_later() {
+        let other = Uuid::from_u128(7);
+        let requests = vec![
+            Request::generate_under(d()),
+            Request::retrieve_under(Iv::default(), vec![1], d(), other),
+            Request::selected_keyset(),
+        ];
+        let default = KeysetSelector::not_loaded(Selected::Default, Kept::default());
+        assert!(check_keyset(&default, &requests).is_ok());
+        assert!(matches!(
+            check_keyset(&KeysetSelector::ANY, &requests),
+            Err(Error::NoKeyset)
+        ));
+        assert!(check_keyset(&KeysetSelector::keyset(other), &requests).is_ok());
+        assert!(matches!(
+            check_keyset(&KeysetSelector::keyset(Uuid::from_u128(8)), &requests),
+            Err(Error::ForeignKeyset { found, .. }) if found == other
+        ));
+        // A request for the pending's keyset needs the pending to have one.
+        assert!(matches!(
+            check_keyset(&KeysetSelector::ANY, &[Request::selected_keyset()]),
+            Err(Error::NoKeyset)
+        ));
+    }
+
+    /// A request for the pending's keyset is answered with that keyset
+    /// when the pending settles: the default keyset, or one selected by
+    /// name. Two keysets that are not loaded yet are compared then.
+    #[tokio::test]
+    async fn a_request_for_the_selected_keyset_is_answered_when_the_pending_settles() {
+        fn asking<'a>(
+            keyset: &'a KeysetCipher<'_, CountingSource>,
+        ) -> Pending<'a, Uuid, CountingSource> {
+            Pending::request(keyset, vec![Request::selected_keyset()], |responses| {
+                Ok(responses.next_keyset()?.id)
+            })
+        }
+        let cipher = cipher().await;
+        let default = cipher.default_keyset();
+        let default_id = default.keyset_id().await.unwrap();
+        assert_eq!(asking(&default).await.unwrap(), default_id);
+
+        let other = cipher.keyset(IdentifiedBy::Name("other".to_string().into()));
+        assert!(other.loaded_state().is_none(), "selecting loads nothing");
+        // What shows a selector that is not loaded is the selection. The
+        // state the handle keeps holds an index key, and is not shown.
+        let shown = format!("{:?}", other.selector());
+        assert!(shown.contains("other"), "{shown}");
+        assert!(!shown.contains("kept"), "{shown}");
+        let other_id = asking(&other).await.unwrap();
+        assert_ne!(other_id, default_id);
+        assert_eq!(
+            other.loaded_state().map(|keyset| keyset.id),
+            Some(other_id),
+            "the handle finds the keyset loaded afterwards"
+        );
+        // A new handle on a keyset the cipher has loaded is on a loaded
+        // keyset from the start, by the name or by the id: it reads the
+        // cipher's cache when it is taken, and no call has to settle first.
+        for selection in [
+            IdentifiedBy::Name("other".to_string().into()),
+            IdentifiedBy::Uuid(other_id),
+        ] {
+            assert_eq!(
+                cipher
+                    .keyset(selection)
+                    .loaded_state()
+                    .map(|keyset| keyset.id),
+                Some(other_id),
+            );
+        }
+
+        // Not loaded on one side, loaded on the other: compared when the
+        // merged pending settles.
+        let late = cipher.keyset(IdentifiedBy::Name("late".to_string().into()));
+        let crossed = asking(&late).zip(asking(&default)).await;
+        assert!(
+            matches!(crossed, Err(Error::KeysetMismatch { .. })),
+            "{crossed:?}"
+        );
+    }
+
+    /// A pending built after the load is built through a handle on the
+    /// loaded keyset, and the load is made with the credential of the
+    /// call. What was done to the pending before it was built applies to
+    /// what is built, and it merges like any pending.
+    #[tokio::test]
+    async fn a_pending_built_after_the_load_is_built_through_the_loaded_keyset() {
+        use stack_kms::{FakeCredentialKeySource, SecretToken};
+
+        async fn not_loaded() -> StackCipher<FakeCredentialKeySource> {
+            StackCipher::builder()
+                .kms(FakeCredentialKeySource::new())
+                .init()
+                .await
+                .unwrap()
+        }
+        fn deferred<'a>(
+            keyset: &KeysetCipher<'a, FakeCredentialKeySource>,
+        ) -> Pending<'a, Uuid, FakeCredentialKeySource> {
+            Pending::after_load(keyset, |loaded| {
+                Pending::ready(loaded, loaded.loaded_now().map(|keyset| keyset.id))
+            })
+        }
+        let alice = || SecretToken::new("alice.jwt");
+
+        let cipher = not_loaded().await;
+        let keyset = cipher.default_keyset();
+        let pending = deferred(&keyset)
+            .map(|id| (id, 2))
+            .try_map(|(id, n)| Ok((id, n + 1)));
+        assert!(cipher.kms().credentials_seen().is_empty(), "not built yet");
+        let (id, n) = pending.with_credential(alice()).await.unwrap();
+        assert_eq!(n, 3, "both changes apply to the pending that was built");
+        assert_eq!(
+            id,
+            keyset.keyset_id().with_credential(alice()).await.unwrap()
+        );
+        assert_eq!(
+            cipher.kms().credentials_seen(),
+            ["alice.jwt"],
+            "one load, with the credential of the call"
+        );
+
+        // Confined to another keyset before it is built: refused once the
+        // default keyset is known.
+        let cipher = not_loaded().await;
+        let keyset = cipher.default_keyset();
+        let other = Uuid::from_u128(9);
+        let crossed = deferred(&keyset)
+            .confined_to_id(other)
+            .with_credential(alice())
+            .await;
+        assert!(
+            matches!(crossed, Err(Error::KeysetMismatch { .. })),
+            "{crossed:?}"
+        );
+
+        // Merged before it is built, on either side or in a collection: the
+        // merged pending is built when it settles, with one load.
+        let cipher = not_loaded().await;
+        let keyset = cipher.default_keyset();
+        let ready = || Pending::ready(&cipher, Ok(1u8));
+        let (left, one) = deferred(&keyset)
+            .zip(ready())
+            .with_credential(alice())
+            .await
+            .unwrap();
+        let (two, right) = ready()
+            .zip(deferred(&keyset))
+            .with_credential(alice())
+            .await
+            .unwrap();
+        let column = Pending::all(&keyset, vec![deferred(&keyset), deferred(&keyset)])
+            .with_credential(alice())
+            .await
+            .unwrap();
+        let id = keyset.keyset_id().with_credential(alice()).await.unwrap();
+        assert_eq!((left, one, two, right), (id, 1, 1, id));
+        assert_eq!(column, [id, id]);
+        assert_eq!(
+            cipher.kms().credentials_seen(),
+            ["alice.jwt"],
+            "the keyset is loaded once, by the first of them"
+        );
+    }
+
+    /// A pending built after the load keeps the mark a decrypt gives it
+    /// ([`wiping`](Pending::wiping)). So what it recovered is wiped when a
+    /// later operation of the same call fails, in a pair and in a column.
+    /// A pending with no mark is dropped as it is.
+    #[tokio::test]
+    async fn a_pending_built_after_the_load_is_wiped_when_a_later_one_fails() {
+        use stack_kms::{FakeCredentialKeySource, SecretToken};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        /// Stands for recovered plaintext. It records that it was wiped.
+        struct Plain(Arc<AtomicBool>);
+        impl zeroize::Zeroize for Plain {
+            fn zeroize(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        type Source = FakeCredentialKeySource;
+        fn deferred<'a>(
+            keyset: &KeysetCipher<'a, Source>,
+            wiped: &Arc<AtomicBool>,
+        ) -> Pending<'a, Plain, Source> {
+            let wiped = Arc::clone(wiped);
+            Pending::after_load(keyset, move |loaded| {
+                Pending::ready(loaded, Ok(Plain(wiped)))
+            })
+        }
+        /// Fails when it is fulfilled, after the operations before it.
+        fn failing<'a>(keyset: &KeysetCipher<'a, Source>) -> Pending<'a, Plain, Source> {
+            Pending::request(keyset, Vec::new(), |_| Err(Error::ResponseShape))
+        }
+        let alice = || SecretToken::new("alice.jwt");
+        let flag = || Arc::new(AtomicBool::new(false));
+
+        let cipher = StackCipher::builder()
+            .kms(Source::new())
+            .init()
+            .await
+            .unwrap();
+        let keyset = cipher.default_keyset();
+
+        let (marked, unmarked, in_a_column) = (flag(), flag(), flag());
+        let pair = deferred(&keyset, &marked)
+            .wiping()
+            .zip(failing(&keyset))
+            .with_credential(alice())
+            .await;
+        assert!(matches!(pair, Err(Error::ResponseShape)));
+        assert!(marked.load(Ordering::SeqCst), "the marked side is wiped");
+
+        let pair = deferred(&keyset, &unmarked)
+            .zip(failing(&keyset))
+            .with_credential(alice())
+            .await;
+        assert!(matches!(pair, Err(Error::ResponseShape)));
+        assert!(!unmarked.load(Ordering::SeqCst), "no mark, no wipe");
+
+        let column = Pending::all(
+            &keyset,
+            vec![deferred(&keyset, &in_a_column).wiping(), failing(&keyset)],
+        )
+        .with_credential(alice())
+        .await;
+        assert!(matches!(column, Err(Error::ResponseShape)));
+        assert!(in_a_column.load(Ordering::SeqCst), "a marked item is wiped");
+    }
+
+    /// A pending that failed while it was built keeps its error and loads
+    /// nothing. Every other pending settles under its keyset, so it loads
+    /// the keyset first, even when it has no request of its own.
+    #[tokio::test]
+    async fn a_pending_through_a_keyset_that_is_not_loaded_loads_it_unless_it_failed() {
+        use stack_kms::{FakeCredentialKeySource, SecretToken};
+
+        let cipher = StackCipher::builder()
+            .kms(FakeCredentialKeySource::new())
+            .init()
+            .await
+            .unwrap();
+        let alice = || SecretToken::new("alice.jwt");
+        let keyset = cipher.default_keyset();
+        assert_eq!(to_load(&keyset.selector()), [Selected::Default]);
+        assert_eq!(keyset.selector().id(), None);
+        let failed: Pending<'_, (), _> = Pending::failed(&keyset, Error::NoKeyset);
+        assert!(
+            matches!(failed.with_credential(alice()).await, Err(Error::NoKeyset)),
+            "a failed pending keeps its own error"
+        );
+        assert!(
+            cipher.kms().credentials_seen().is_empty(),
+            "and asks for nothing"
+        );
+        // A ready value still settles under the keyset, so the keyset is
+        // loaded.
+        let ready = Pending::ready(&keyset, Ok(1u8))
+            .with_credential(alice())
+            .await;
+        assert!(matches!(ready, Ok(1)), "{ready:?}");
+        assert_eq!(cipher.kms().credentials_seen(), ["alice.jwt"]);
     }
 
     async fn cipher() -> StackCipher<CountingSource> {
@@ -1488,7 +2408,7 @@ mod tests {
         );
     }
 
-    /// The scoping guarantee at the `Pending` level: zipped fulfilments draw
+    /// The response guarantee at the `Pending` level: zipped fulfilments draw
     /// disjoint response slices, in build order.
     #[tokio::test]
     async fn zipped_fulfilments_never_share_key_material() {
@@ -1675,7 +2595,7 @@ mod tests {
         let (iv, tag) = pairs.remove(0);
         let requests = vec![
             Request::generate_under(d()),
-            Request::retrieve_under(iv, tag, d(), keyset.keyset_id()),
+            Request::retrieve_under(iv, tag, d(), keyset.keyset_id().await.unwrap()),
         ];
         let lazy: Pending<'_, Vec<u8>, _> = Pending::request(&keyset, requests, |responses| {
             responses.next_generated_key().map(|key| key.tag)
@@ -1742,9 +2662,10 @@ mod tests {
             "the setup seal is one call"
         );
 
+        let keyset_id = keyset.keyset_id().await.unwrap();
         let requests: Vec<Request> = pairs
             .iter()
-            .map(|(iv, tag)| Request::retrieve_under(*iv, tag.clone(), d(), keyset.keyset_id()))
+            .map(|(iv, tag)| Request::retrieve_under(*iv, tag.clone(), d(), keyset_id))
             .collect();
         let retrieve: Pending<'_, usize, _> = Pending::request(&keyset, requests, |responses| {
             Ok(responses.drain_retrieved().count())
@@ -1792,16 +2713,12 @@ mod tests {
             vec![vec!["users/email".to_owned(), "users/name".to_owned()]]
         );
 
+        let keyset_id = keyset.keyset_id().await.unwrap();
         let requests: Vec<Request> = pairs
             .iter()
             .zip([("users", "name"), ("users", "email")])
             .map(|((iv, tag), descriptor)| {
-                Request::retrieve_under(
-                    *iv,
-                    tag.clone(),
-                    Descriptor::of(descriptor),
-                    keyset.keyset_id(),
-                )
+                Request::retrieve_under(*iv, tag.clone(), Descriptor::of(descriptor), keyset_id)
             })
             .collect();
         let count: usize = Pending::request(&keyset, requests, |responses| {
@@ -1829,7 +2746,15 @@ mod tests {
             Request::generate_under(Descriptor::of("users/email")),
             Request::generate_under(long.clone()),
         ];
-        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests, None).await else {
+        let Err(err) = dispatch(
+            &cipher,
+            Some(keyset.keyset_id().await.unwrap()),
+            requests,
+            None,
+            &OwnIdentity,
+        )
+        .await
+        else {
             panic!("an over-long descriptor must be refused");
         };
         assert!(
@@ -1844,8 +2769,21 @@ mod tests {
 
         let mut pairs = generating_pairs(&keyset, 1).await.unwrap();
         let (iv, tag) = pairs.remove(0);
-        let requests = vec![Request::retrieve_under(iv, tag, long, keyset.keyset_id())];
-        let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests, None).await else {
+        let requests = vec![Request::retrieve_under(
+            iv,
+            tag,
+            long,
+            keyset.keyset_id().await.unwrap(),
+        )];
+        let Err(err) = dispatch(
+            &cipher,
+            Some(keyset.keyset_id().await.unwrap()),
+            requests,
+            None,
+            &OwnIdentity,
+        )
+        .await
+        else {
             panic!("an over-long descriptor must be refused");
         };
         assert!(matches!(err, Error::DescriptorTooLong { .. }), "{err}");
@@ -1862,9 +2800,15 @@ mod tests {
             "a".repeat(Descriptor::MAX_LEN),
         ))];
         assert!(
-            dispatch(&cipher, Some(keyset.keyset_id()), requests, None)
-                .await
-                .is_ok(),
+            dispatch(
+                &cipher,
+                Some(keyset.keyset_id().await.unwrap()),
+                requests,
+                None,
+                &OwnIdentity
+            )
+            .await
+            .is_ok(),
             "at the limit"
         );
         assert_eq!(
@@ -1875,14 +2819,14 @@ mod tests {
     }
 
     // =========================================================================
-    // Keyset scope
+    // Confined to a keyset
     // =========================================================================
 
     /// A generate request needs a keyset to mint under, and only a
-    /// `KeysetCipher` scope has one: through the `StackCipher` it fails at
+    /// `KeysetCipher` has one: through the `StackCipher` it fails at
     /// construction, with no I/O.
     #[tokio::test]
-    async fn a_generate_request_through_the_client_scope_has_no_keyset() {
+    async fn a_generate_request_through_the_client_has_no_keyset() {
         let cipher = cipher().await;
         let pending: Pending<'_, Vec<u8>, _> =
             Pending::request(&cipher, vec![Request::generate_under(d())], |responses| {
@@ -1898,25 +2842,29 @@ mod tests {
         );
     }
 
-    /// Data keys are minted under the scope's keyset, and that is what
+    /// Data keys are minted under the handle's keyset, and that is what
     /// reaches ZeroKMS.
     #[tokio::test]
-    async fn generates_are_minted_under_the_scopes_keyset() {
+    async fn generates_are_minted_under_the_handles_keyset() {
         let cipher = cipher().await;
-        let tenant = cipher.keyset(Uuid::from_u128(9)).await.unwrap();
+        let tenant = cipher
+            .keyset(Uuid::from_u128(9))
+            .loaded(&OwnIdentity)
+            .await
+            .unwrap();
         generating(&tenant, 2).await.unwrap();
 
         assert_eq!(
             cipher.kms().generate_keysets(),
             vec![Some(Uuid::from_u128(9))],
-            "the scope's keyset is what ZeroKMS is asked to mint under"
+            "the handle's keyset is what ZeroKMS is asked to mint under"
         );
     }
 
-    /// A retrieve request naming another keyset than the scope's is refused
+    /// A retrieve request naming another keyset than the handle's is refused
     /// at construction, before any key is retrieved.
     #[tokio::test]
-    async fn a_retrieve_from_another_keyset_is_foreign_in_a_keyset_scope() {
+    async fn a_retrieve_from_another_keyset_is_foreign_through_a_keyset() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let other = Uuid::from_u128(2);
@@ -1931,7 +2879,7 @@ mod tests {
             matches!(
                 result,
                 Err(Error::ForeignKeyset { expected, found })
-                    if expected == keyset.keyset_id() && found == other
+                    if expected == keyset.keyset_id().await.unwrap() && found == other
             ),
             "{result:?}"
         );
@@ -1942,10 +2890,10 @@ mod tests {
         );
     }
 
-    /// Scoping a pending built through the client (the constrained decrypt
+    /// Confining a pending built through the client (the constrained decrypt
     /// path) applies the same rule to the requests it already carries.
     #[tokio::test]
-    async fn scoping_an_unscoped_pending_refuses_its_foreign_retrieves() {
+    async fn confining_a_pending_refuses_its_foreign_retrieves() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let other = Uuid::from_u128(2);
@@ -1954,7 +2902,9 @@ mod tests {
             vec![Request::retrieve_under(Iv::default(), vec![1], d(), other)],
             |responses| Ok(responses.drain_retrieved().count()),
         );
-        let result = pending.scoped_to(keyset.keyset_id()).await;
+        let result = pending
+            .confined_to_id(keyset.keyset_id().await.unwrap())
+            .await;
 
         assert!(
             matches!(result, Err(Error::ForeignKeyset { .. })),
@@ -1963,17 +2913,25 @@ mod tests {
         assert_eq!(
             cipher.kms().retrieve_calls(),
             0,
-            "scoping applies the rule before any key is retrieved"
+            "confining applies the rule before any key is retrieved"
         );
     }
 
-    /// Two pendings scoped to different keysets are one tenant's row and
+    /// Two pendings confined to different keysets are one tenant's row and
     /// another's: merging them is a composition bug, caught with no I/O.
     #[tokio::test]
-    async fn pendings_scoped_to_different_keysets_refuse_to_merge() {
+    async fn pendings_confined_to_different_keysets_refuse_to_merge() {
         let cipher = cipher().await;
-        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
-        let b = cipher.keyset(Uuid::from_u128(2)).await.unwrap();
+        let a = cipher
+            .keyset(Uuid::from_u128(1))
+            .loaded(&OwnIdentity)
+            .await
+            .unwrap();
+        let b = cipher
+            .keyset(Uuid::from_u128(2))
+            .loaded(&OwnIdentity)
+            .await
+            .unwrap();
 
         let result = generating(&a, 1).zip(generating(&b, 1)).await;
         assert!(
@@ -1994,15 +2952,19 @@ mod tests {
         );
     }
 
-    /// Scoping a pending that already has a scope checks the two agree: the
-    /// same keyset again is a no-op, another one is the mismatch `zip`
-    /// reports — never a silent re-scope that mints under the second.
+    /// Confining a pending that is already confined checks the two agree:
+    /// the same keyset again is a no-op, another one is the mismatch `zip`
+    /// reports — never a silent change that mints under the second.
     #[tokio::test]
-    async fn rescoping_to_another_keyset_is_a_mismatch() {
+    async fn confining_to_another_keyset_is_a_mismatch() {
         let cipher = cipher().await;
-        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
+        let a = cipher
+            .keyset(Uuid::from_u128(1))
+            .loaded(&OwnIdentity)
+            .await
+            .unwrap();
 
-        let result = generating(&a, 1).scoped_to(Uuid::from_u128(2)).await;
+        let result = generating(&a, 1).confined_to_id(Uuid::from_u128(2)).await;
         assert!(
             matches!(result, Err(Error::KeysetMismatch { left, right })
                 if left == Uuid::from_u128(1) && right == Uuid::from_u128(2)),
@@ -2011,39 +2973,47 @@ mod tests {
         assert_eq!(
             cipher.kms().generate_calls(),
             0,
-            "a mismatched scope mints nothing"
+            "a mismatched keyset mints nothing"
         );
 
         let tags = generating(&a, 1)
-            .scoped_to(a.keyset_id())
+            .confined_to_id(a.keyset_id().await.unwrap())
             .await
-            .expect("re-scoping to its own keyset changes nothing");
+            .expect("confining to its own keyset changes nothing");
         assert_eq!(
             tags.len(),
             1,
-            "rescoping to the same keyset should produce one tag"
+            "confining to the same keyset should produce one tag"
         );
         assert_eq!(
             cipher.kms().generate_keysets(),
-            vec![Some(a.keyset_id())],
-            "minted under the one keyset it was scoped to"
+            vec![Some(a.keyset_id().await.unwrap())],
+            "minted under the one keyset it was confined to"
         );
     }
 
-    /// The scope a pending is given is the scope it keeps: merged afterwards
-    /// with another tenant's pending, it is a mismatch, not an unscoped
-    /// value the other side's keyset absorbs.
+    /// The keyset a pending is confined to is the one it keeps: merged
+    /// afterwards with another tenant's pending, it is a mismatch, not a
+    /// value with no keyset that the other side's keyset absorbs.
     #[tokio::test]
-    async fn a_scoped_pending_keeps_its_scope_through_a_merge() {
+    async fn a_confined_pending_keeps_its_keyset_through_a_merge() {
         let cipher = cipher().await;
-        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
-        let b = cipher.keyset(Uuid::from_u128(2)).await.unwrap();
+        let a = cipher
+            .keyset(Uuid::from_u128(1))
+            .loaded(&OwnIdentity)
+            .await
+            .unwrap();
+        let b = cipher
+            .keyset(Uuid::from_u128(2))
+            .loaded(&OwnIdentity)
+            .await
+            .unwrap();
 
-        let scoped = Pending::ready(&cipher, Ok(())).scoped_to(a.keyset_id());
-        let result = scoped.zip(generating(&b, 1)).await;
+        let confined = Pending::ready(&cipher, Ok(())).confined_to_id(a.keyset_id().await.unwrap());
+        let result = confined.zip(generating(&b, 1)).await;
         assert!(
             matches!(result, Err(Error::KeysetMismatch { left, right })
-                if left == a.keyset_id() && right == b.keyset_id()),
+                if left == a.keyset_id().await.unwrap() && right == b.keyset_id().await.unwrap()),
             "{result:?}"
         );
         assert_eq!(
@@ -2053,19 +3023,23 @@ mod tests {
         );
     }
 
-    /// A generate built through the client scope fails where it is built,
+    /// A generate built through the client fails where it is built,
     /// so merging it into a tenant's batch afterwards cannot launder it into
     /// a key minted under that tenant's keyset.
     #[tokio::test]
-    async fn an_unscoped_generate_is_not_adopted_by_a_scoped_merge() {
+    async fn a_generate_with_no_keyset_is_not_adopted_by_a_merge() {
         let cipher = cipher().await;
-        let tenant = cipher.keyset(Uuid::from_u128(9)).await.unwrap();
-        let unscoped: Pending<'_, Vec<u8>, _> =
+        let tenant = cipher
+            .keyset(Uuid::from_u128(9))
+            .loaded(&OwnIdentity)
+            .await
+            .unwrap();
+        let no_keyset: Pending<'_, Vec<u8>, _> =
             Pending::request(&cipher, vec![Request::generate_under(d())], |responses| {
                 responses.next_generated_key().map(|key| key.tag)
             });
 
-        let result = unscoped.zip(generating(&tenant, 1)).await;
+        let result = no_keyset.zip(generating(&tenant, 1)).await;
         assert!(matches!(result, Err(Error::NoKeyset)), "{result:?}");
         assert_eq!(
             cipher.kms().generate_calls(),
@@ -2074,10 +3048,11 @@ mod tests {
         );
     }
 
-    /// An unscoped pending merged with a scoped one takes the scope: a
+    /// A pending with no keyset, merged with one confined to a keyset, is
+    /// confined to that keyset: a
     /// ready value beside a tenant's data keys is still that tenant's batch.
     #[tokio::test]
-    async fn an_unscoped_pending_merged_with_a_scoped_one_takes_the_scope() {
+    async fn a_pending_with_no_keyset_takes_the_keyset_it_is_merged_with() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let (n, tags) = Pending::ready(&cipher, Ok(7u32))
@@ -2092,19 +3067,27 @@ mod tests {
         );
         assert_eq!(
             cipher.kms().generate_keysets(),
-            vec![Some(keyset.keyset_id())],
-            "the merged assembly took the scoped side's keyset"
+            vec![Some(keyset.keyset_id().await.unwrap())],
+            "the merged assembly took the confined side's keyset"
         );
     }
 
-    /// Through the client scope, retrieves from several keysets settle in one
+    /// Through the client, retrieves from several keysets settle in one
     /// assembly: one `retrieve_keys` call per keyset, in first-seen order,
     /// with the keys back in request order.
     #[tokio::test]
     async fn retrieves_group_by_keyset_and_return_in_request_order() {
         let cipher = cipher().await;
-        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
-        let b = cipher.keyset(Uuid::from_u128(2)).await.unwrap();
+        let a = cipher
+            .keyset(Uuid::from_u128(1))
+            .loaded(&OwnIdentity)
+            .await
+            .unwrap();
+        let b = cipher
+            .keyset(Uuid::from_u128(2))
+            .loaded(&OwnIdentity)
+            .await
+            .unwrap();
         let mut from_a = generating_pairs(&a, 2).await.unwrap();
         let mut from_b = generating_pairs(&b, 1).await.unwrap();
         let (a1, a2) = (from_a.remove(0), from_a.remove(0));
@@ -2112,9 +3095,9 @@ mod tests {
 
         // Interleaved: A, B, A.
         let requests = vec![
-            Request::retrieve_under(a1.0, a1.1.clone(), d(), a.keyset_id()),
-            Request::retrieve_under(b1.0, b1.1.clone(), d(), b.keyset_id()),
-            Request::retrieve_under(a2.0, a2.1.clone(), d(), a.keyset_id()),
+            Request::retrieve_under(a1.0, a1.1.clone(), d(), a.keyset_id().await.unwrap()),
+            Request::retrieve_under(b1.0, b1.1.clone(), d(), b.keyset_id().await.unwrap()),
+            Request::retrieve_under(a2.0, a2.1.clone(), d(), a.keyset_id().await.unwrap()),
         ];
         let ivs: Vec<Iv> = Pending::request(&cipher, requests, |responses| {
             Ok(responses.drain_retrieved().map(|key| key.iv).collect())
@@ -2134,7 +3117,10 @@ mod tests {
         );
         assert_eq!(
             cipher.kms().retrieve_keysets(),
-            vec![Some(a.keyset_id()), Some(b.keyset_id())],
+            vec![
+                Some(a.keyset_id().await.unwrap()),
+                Some(b.keyset_id().await.unwrap())
+            ],
             "one call per keyset, first seen first"
         );
     }
