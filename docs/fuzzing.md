@@ -29,6 +29,7 @@ Current targets:
 | `fuzz:check-record`  | `stack-encrypt` | `check_record`      | `dynamic::record::check_record` over an `Arbitrary`-derived plan and tree, against a model of the record rules (structure-aware) |
 | `fuzz:json-text`     | `stack-encrypt` | `json_text`         | `json::parse_text`, the boundary parser for a language SDK's JSON document, against serde_json: it reads what serde_json reads to the same value, refuses beyond it only repeated members and out-of-range integers, and what it reads writes back to itself |
 | `fuzz:json-wire`     | `stack-encrypt` | `json_wire_decode`  | the JSON index's wire decoders (`JsonDocument`, `JsonNode`, `JsonSelectorSet`, `JsonLeafQuery` from JSON text; `JsonHeader::from_bytes`), over base64 tags and base85 ciphertexts; an accepted document or node must round-trip through its wire form |
+| `fuzz:label-parse`   | `stack-encrypt` | `label_parse`       | `Label::parse` and `Label::new`, which read a binding's names and a context field's value: a label renders back to the text it was read from, and a refusal names a segment that shows its reason |
 
 Each target is a few lines — `libfuzzer-sys` hands a `&str` (or `&[u8]`
 for the byte decoders) to the parser via the `arbitrary` crate:

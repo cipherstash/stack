@@ -70,6 +70,16 @@ description = "Fuzz stack-encrypt's JSON text parser (json::parse_text) against 
 dir = "{{config_root}}/packages/stack-encrypt"
 run = "mise x --env test -- cargo +nightly fuzz run json_text --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
+# Fuzz the label parser and constructor (`Label::parse`, `Label::new`). A
+# label is often the caller's text: a binding's record keys and options, a
+# data plan's names, and a context field's value. Neither may panic, a label
+# must render back to the text it was read from, and a refusal must name a
+# segment that shows the reason the error gives.
+["fuzz:label-parse"]
+description = "Fuzz stack-encrypt's label parser and constructor, Label::parse and Label::new (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "mise x --env test -- cargo +nightly fuzz run label_parse --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
 # Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
 # warning fails the build. Doc *examples* are `test:doc:stack-encrypt`. Both run
 # with all features so nothing feature-gated goes unchecked; the root `doc`

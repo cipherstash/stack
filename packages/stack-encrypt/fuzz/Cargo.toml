@@ -73,5 +73,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "label_parse"
+path = "fuzz_targets/label_parse.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 resolver = "2"
