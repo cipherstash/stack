@@ -137,6 +137,7 @@ pub trait DecryptFrom: Zeroize + Sized + 'static {
         source
             .decryption(S::ContextInput::omitted())
             .open_in(cipher)
+            .wiping()
     }
 
     /// Decrypt with the context supplied at encryption.
@@ -152,6 +153,7 @@ pub trait DecryptFrom: Zeroize + Sized + 'static {
         source
             .decryption(S::ContextInput::supplied(context.into()))
             .open_in(cipher)
+            .wiping()
     }
 }
 impl<P: Zeroize + 'static> DecryptFrom for P {}

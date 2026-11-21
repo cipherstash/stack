@@ -542,6 +542,85 @@ fn a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap() {
     );
 }
 
+/// Two decrypts joined with `Pending::zip`, the second of which fails after
+/// its key arrived. The plaintext the first one recovered is wiped, not
+/// dropped as it is.
+#[test]
+fn a_late_failure_in_a_zip_of_decrypts_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::DecryptFrom;
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let (first, second, third) = rt.block_on(async {
+        (
+            keyset.encrypt(marked("first")).await.unwrap(),
+            keyset.encrypt(marked("second")).await.unwrap(),
+            keyset.encrypt(true).await.unwrap(),
+        )
+    });
+    watched("late type failure in a zip of decrypts", || {
+        let result = rt.block_on(async {
+            String::decrypt_from(first, &keyset)
+                .zip(String::decrypt_from(second, &keyset))
+                .zip(String::decrypt_from(third, &keyset))
+                .await
+        });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+}
+
+/// Three decrypts collected with `Pending::all`, the last of which fails
+/// after its key arrived. The plaintext the first two recovered is wiped,
+/// not dropped as it is. The same holds when the failure is a decrypt
+/// zipped after the collection.
+#[test]
+fn a_late_failure_in_all_of_decrypts_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::{Ciphertext, DecryptFrom, Pending};
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let column = || -> Vec<Ciphertext> {
+        rt.block_on(async {
+            vec![
+                keyset.encrypt(marked("first")).await.unwrap(),
+                keyset.encrypt(marked("second")).await.unwrap(),
+                keyset.encrypt(true).await.unwrap(),
+            ]
+        })
+    };
+    let decrypts = |rows: Vec<Ciphertext>| {
+        rows.into_iter()
+            .map(|row| String::decrypt_from(row, &keyset))
+            .collect::<Vec<_>>()
+    };
+
+    let rows = column();
+    watched("late type failure in all of decrypts", || {
+        let result = rt.block_on(async { Pending::all(&keyset, decrypts(rows)).await });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+
+    let mut rows = column();
+    let last = rows.pop().unwrap();
+    watched("late type failure zipped after all of decrypts", || {
+        let result = rt.block_on(async {
+            Pending::all(&keyset, decrypts(rows))
+                .zip(String::decrypt_from(last, &keyset))
+                .await
+        });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::OpenedType { .. })
+        ));
+    });
+}
+
 #[test]
 fn a_query_term_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();

@@ -298,7 +298,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `Plan::context("users").fields()..build()` and `.using(&plan)` | A derived record, `#[stash(struct = User, scope = "users")]`. A program whose declaration is data parses it with `dynamic::record::plan` and runs `dynamic::Planned::new(&plan, value)`. |
   | `cipher.query(op::Eq, value).on(&plan)` | The field's reference: `EncryptedUser::EMAIL.eq(value).encrypt(&keyset)` |
   | `cipher.open(record).using(&plan)` | `P::decrypt_from(record, &keyset)` |
-  | `plan::all((a, b))` | `a.zip(b)` on two `Pending` values, or `Pending::all` |
+  | `plan::all((a, b))` | `a.zip(b)` on two `Pending` values, or `Pending::all`. Both wipe the plaintext a decrypt recovered if a later item fails. |
   | A hand-written `impl EncryptFrom<S> for T` | `impl EncryptTarget<S> for T` with `type ContextInput = RequiredContext<CallerContext>`, and `DecryptSource` in place of `DecryptInto` |
 
   What has no replacement yet:
@@ -849,6 +849,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not published with the crates.
 
 ### Fixed
+
+- **`Pending::zip` and `Pending::all` wipe the plaintext they recovered
+  before a later failure** (#1666). When one decrypt in a batch failed
+  after its key arrived, for example with the wrong context or another
+  type, the plaintext the batch had already recovered was dropped without
+  being wiped. A `String` from `String::decrypt_from` was one such value.
+  - Every `DecryptFrom` call now marks the `Pending` it returns as
+    plaintext that can be wiped. `zip` wipes a marked left side when the
+    right side fails. `all` wipes each marked item recovered before the
+    item that failed. A pair or a collection of marked values is itself
+    marked, so a batch nested in another batch is wiped too.
+  - A `Pending` from `Pending::ready`, `Pending::request` or `map` is not
+    marked. Its output is dropped as before.
 
 - **A derived record wipes an owned plaintext when a caller's part is
   empty.** An empty scope or binding is refused where a field is given
