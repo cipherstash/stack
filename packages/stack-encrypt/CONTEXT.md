@@ -297,6 +297,15 @@ record's field references with `.field(..)`, under the outer field's context.
 _Avoid_: field reference (its old name), field handle (that is the dynamic form),
 column, accessor
 
+**Declared path**:
+A path into a JSON document field that the field's
+`#[stash(json(ordered = { "$.age": u32 }))]` names, with the type of the
+values at it. The derive parses it at compile time and gives it a method
+under the field reference's `at()`, and, for a member of an array, one under
+`elements()` (`DeclaredPath`, `ElementMember`). A path given as text at run
+time (`at_text_path`) is not a declared path.
+_Avoid_: typed path (that is the target-directed form), static path
+
 **Planned**:
 A value under a plan that is data, `Planned::new(&plan, value)`. The
 value is a `ValueFrame` under a record plan or a query plan, or a stored

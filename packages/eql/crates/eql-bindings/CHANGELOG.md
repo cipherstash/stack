@@ -9,18 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A `JsonTreeDocument` field is queried from its field reference** (#1459). As a
-  field of a derived record, a `JsonTreeDocument` (and an
+- **A `JsonTreeDocument` field is queried from its field reference** (#1459,
+  #1687). As a field of a derived record, a `JsonTreeDocument` (and an
   `Option<JsonTreeDocument>`) has Stack Encrypt's JSON field queries,
   which return the EQL query types a parameter binds as:
   `EncryptedCustomer::PROFILE.contains(doc)` gives a `JsonTreeQuery`,
-  `at(path).gt(v)` a `JsonTreeLeafQuery`, `elements(path)..` a
-  `JsonTreeElementsQuery`, `predicate(text)` a `JsonTreePredicateQuery`,
-  `at(path).selector()` a `JsonTreeSelector` and `children(path)` a
-  `JsonTreeToken`. A field marked `#[stash(json(ordered = ["$.age"]))]` is
-  sealed under those options, so its orderings compare. Each operand is
-  the one a data plan naming `JsonSearch` derives for the same column and
-  options. `JsonTreeDocument` implements `JsonTarget` and `JsonQueries`.
+  `at().age().gt(v)` a `JsonTreeLeafQuery`, `elements().visits()..` a
+  `JsonTreeElementsQuery`, `predicate(text).var(name, v)` a
+  `JsonTreePredicateQuery`, `at().age().selector()` a `JsonTreeSelector`
+  and `children(path)` a `JsonTreeToken`. A field marked
+  `#[stash(json(ordered = { "$.age": u32 }))]` is sealed under those
+  options, so its orderings compare, and each declared path has a typed
+  method that the compiler checks; `at_text_path(path)` and
+  `elements_text_path(path)` take a path built at run time. Each operand
+  is the one a data plan naming `JsonSearch` derives for the same column
+  and options. `JsonTreeDocument` implements `JsonTarget` and
+  `JsonQueries`.
 
 - **A value passed by value is sealed without a copy** (#1687). Sealing
   took a copy of the value when the type had no owned form of its own.

@@ -57,58 +57,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Three more records derive** (#1661). The owned derives did not accept
 
-- **Typed JSON queries from a field reference** (#1459). A field whose type
-  stores a JSON document (`JsonDocument`, or EQL's `JsonTreeDocument`) has
-  one field reference method for each kind of JSON query, in place of the operator
-  methods:
+- **Typed JSON queries from a field reference** (#1459, #1687). A field
+  whose type stores a JSON document (`JsonDocument`, or EQL's
+  `JsonTreeDocument`) has one field reference method for each kind of JSON
+  query, in place of the operator methods:
 
   | Field reference method | Returns, for `JsonDocument` |
   | --- | --- |
-  | `contains(doc)`, `contained_by(doc)`, `at(path).eq(v)` | `JsonQuery` |
-  | `at(path).lt(v)`, `.lte`, `.gt`, `.gte` | `JsonLeafQuery` |
-  | `at(path).between(lo, hi)` | `(JsonLeafQuery, JsonLeafQuery)`, low then high |
-  | `at(path).is_null()` | `JsonQuery` |
-  | `at(path).selector()` | `JsonSelector` |
-  | `elements(path).eq(member, v).gt(member, v)` | `JsonElementsQuery` |
-  | `predicate(text).vars(object)` | `JsonPredicateQuery` |
+  | `contains(doc)`, `contained_by(doc)`, `at().age().eq(v)` | `JsonQuery` |
+  | `at().age().lt(v)`, `.lte`, `.gt`, `.gte` | `JsonLeafQuery` |
+  | `at().age().between(lo, hi)` | `(JsonLeafQuery, JsonLeafQuery)`, low then high |
+  | `at().age().is_null()` | `JsonQuery` |
+  | `at().age().selector()` | `JsonSelector` |
+  | `elements().visits().place().eq(v).and().at().gt(v)` | `JsonElementsQuery` |
+  | `predicate(text).var(name, v)` | `JsonPredicateQuery` |
   | `children(path)` | `JsonSubtreeKey`, which holds the node's one token |
 
-  `EncryptedCustomer::PROFILE.at("$.age").gt(30).encrypt(&keyset)` derives
+  `EncryptedCustomer::PROFILE.at().age().gt(30).encrypt(&keyset)` derives
   under the field's column and options, as a scalar field's query does,
   and takes a scope with `.scope(..)`. Each query derives the operand the
-  dynamic interface derives for the same declaration: the field reference and the
-  data plan read one definition of each input, which no longer needs the
-  `dynamic` feature.
-  - **Field options.** `#[stash(json(ordered = ["$.age", "$.visits[*].at"],
-    sealed_root = false))]` on the field names the JSON index's options.
-    The derive seals the field under them, and the field queries under
-    them. Without it the field takes the default options, which order no
-    path, so every ordering at a path is refused. A document type that
-    seals under other options when its field names none says so with
-    `JsonQueries::default_options`, which its field queries under.
-  - **Typed values.** An ordering takes a number or a string
-    (`field_reference::json::JsonOrdered`), equality at a path a scalar
+  dynamic interface derives for the same declaration: the field reference
+  and the data plan read one definition of each input, which no longer
+  needs the `dynamic` feature.
+  - **Typed paths.** `#[stash(json(ordered = { "$.age": u32,
+    "$.visits[*].place": String }, sealed_root = false))]` on the field
+    names the JSON index's options and the type of the values at each
+    ordered path. The derive seals the field under them, and the field
+    queries under them. It parses each path at compile time with the
+    engine's grammar (`stack-encrypt-jsonpath`): a path that does not
+    parse, has no `$`, names an array position or is given twice is a
+    compile error at the path, and a type other than an integer type,
+    `f64` or `String` (`JsonPathType`) is one at the type. Each path gets
+    a method under `at()`, returning a `DeclaredPath` of its type, and
+    each array whose elements have an ordered member gets one under
+    `elements()`, whose methods are the members (`ElementMember`). A
+    path, member or array the field does not declare has no method, a
+    value of another type does not compile (`PathValue`), and `and()`
+    after a condition gives the same array's members, so a member of
+    another array cannot be given. A method is named after the path's
+    keys (`$.visits[*].at` is `visits_at()`); `names = { "key": word }`
+    names a key the rule cannot. The field reference has a fifth type
+    parameter, the field's paths (`DocumentPaths`); a field that declares
+    none has `TextPaths`. A field reached through an outer record
+    (`field`) keeps its paths.
+  - **Paths as text.** `at_text_path(path)` and `elements_text_path(path)`
+    take JSONPath text, for a filter built at run time, and check it when
+    the query is encrypted, before any key is requested, by the dynamic
+    interface's rules: an ordering at a path the field does not order is
+    `TermError::JsonPathNotOrdered`. They derive the operand the typed
+    method derives for the same path and value. A field with no declared
+    paths has only these. A document type that seals under other options
+    when its field names none says so with `JsonQueries::default_options`,
+    which its field queries under.
+  - **Typed values.** An ordering at a text path takes a number or a
+    string (`field_reference::json::JsonOrdered`), equality there a scalar
     (`JsonScalar`), and containment a document. A boolean ordering, or
-    equality with an object, does not compile. `elements` with no
-    condition has no `encrypt`. A NaN or an infinity, which no JSON number
-    is, is refused with the new `TermError::JsonNumberNotFinite`
+    equality with an object, does not compile. An element predicate with
+    no condition has no `encrypt`. A NaN or an infinity, which no JSON
+    number is, is refused with the new `TermError::JsonNumberNotFinite`
     (`stack_encrypt::json_number_not_finite`) before any key is requested,
     rather than becoming `null`. There is no `f32` value: serde_json widens
     an `f32` when it builds a document, so the query takes the `f64` the
     document holds (`f64::from(x)` for one built from `x`). A NaN or an
-    infinity inside a `serde_json::Value` (`contains`, `vars`) is already
+    infinity inside a `serde_json::Value` given to `contains` is already
     `null`, and is queried as `null`.
-  - **Refusals.** A path is JSONPath text, checked when the query is
-    encrypted, before any key is requested, by the dynamic interface's
-    rules: an ordering at a path the field does not order is
-    `TermError::JsonPathNotOrdered`. A refusal of the input's own shape (an
-    `elements` path with no wildcard, a predicate the grammar does not
-    read) is the new `Error::Input`, below.
+  - **Predicate variables.** `predicate(text).var("min", 30)` names one
+    variable, which the predicate reads as `$min`; `var_null(name)` names
+    a JSON `null`. A value is a `JsonScalar`. A NaN or an infinity is
+    refused with `TermError::JsonNumberNotFinite`, and a name given twice
+    with `Error::Input` and `Reason::JsonDuplicateKey`, each before any
+    key is requested. The predicate text is checked when the query is
+    encrypted.
+  - **Refusals.** A refusal of the input's own shape (an
+    `elements_text_path` path with no wildcard, a predicate the grammar
+    does not read) is the new `Error::Input`, below.
   - **New public items.** `json::JsonTarget`, which seals a document under
     options; `json::JsonQueries`, which converts each operand into the
     field type's query type; `json::JsonElementsQuery` and
     `json::JsonPredicateQuery`, the typed element and predicate operands;
-    and `field_reference::json`, the query types.
+    and `field_reference::json`, the query types: `DeclaredPath`,
+    `ArrayElements`, `ElementMember`, `DocumentPaths`, `ElementArray`,
+    `TextPaths`, `JsonPathType` and `PathValue` among them.
 
 - **A value passed by value is sealed without a copy** (#1687). Sealing
   a value took a copy of it when the target had no owned form of its own.

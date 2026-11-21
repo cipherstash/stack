@@ -435,7 +435,7 @@ struct Customer {
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = Customer, scope = "customers")]
 struct EncryptedCustomer {
-    #[stash(json(ordered = ["$.age", "$.visits[*].at", "$.visits[*].place"]))]
+    #[stash(json(ordered = { "$.age": u32, "$.visits[*].at": u64, "$.visits[*].place": String }))]
     profile: JsonTreeDocument,
 }
 
@@ -445,6 +445,7 @@ let opened = Customer::decrypt_from(encrypted, &keyset).await?;
 ```
 
 The field is sealed under the options, and its field queries under them.
+`ordered` maps each ordered path to the type of the values at it.
 `sealed_root = false` in the same list turns off the sealed root.
 
 #### Query a JSON document
@@ -474,19 +475,22 @@ let ada: JsonTreeQuery = EncryptedCustomer::PROFILE
     .encrypt(&keyset)
     .await?;
 let older: JsonTreeLeafQuery = EncryptedCustomer::PROFILE
-    .at("$.age")
+    .at()
+    .age()
     .gt(30)
     .encrypt(&keyset)
     .await?;
 let (low, high): (JsonTreeLeafQuery, JsonTreeLeafQuery) = EncryptedCustomer::PROFILE
-    .at("$.age")
+    .at()
+    .age()
     .between(18, 65)
     .encrypt(&keyset)
     .await?;
 let home: JsonTreeElementsQuery = EncryptedCustomer::PROFILE
-    .elements("$.visits[*]")
-    .eq("place", "home")
-    .gt("at", 15)
+    .elements()
+    .visits()
+    .place().eq("home")
+    .and().at().gt(15)
     .encrypt(&keyset)
     .await?;
 ```
@@ -508,15 +512,38 @@ The kinds of JSON query, the field reference method for each, and what each find
 
 | Query | Field reference method | What it finds | EQL query type |
 | --- | --- | --- | --- |
-| Containment | `contains(doc)`, `contained_by(doc)`, and `at(path).eq(v)` | Rows whose document contains the given document, or is contained by it. Equality of a scalar at a path is containment of a one-entry document, so `at(path).eq(v)` lowers to it | `JsonTreeQuery` |
-| Comparison at a path | `at(path).gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery`; two for `between`, low then high |
-| A path's selector | `at(path).selector()` | The selector `->` and `ORDER BY eql_v4.ord_term(col -> $1)` take | `JsonTreeSelector` |
-| Element match | `elements(path).eq(member, v).gt(member, v)` | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
-| Jsonpath predicate | `predicate(text)`, with `.vars(object)` | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
+| Containment | `contains(doc)`, `contained_by(doc)`, and `at().age().eq(v)` | Rows whose document contains the given document, or is contained by it. Equality of a scalar at a path is containment of a one-entry document, so a path's `eq(v)` lowers to it | `JsonTreeQuery` |
+| Comparison at a path | `at().age().gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery`; two for `between`, low then high |
+| A path's selector | `at().age().selector()` | The selector `->` and `ORDER BY eql_v4.ord_term(col -> $1)` take | `JsonTreeSelector` |
+| Element match | `elements().visits().place().eq(v).and().at().gt(v)` | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
+| Jsonpath predicate | `predicate(text)`, with `.var(name, v)` for each variable | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
 | Children and child count | `children(path)` | The entries directly below one node, or how many there are | `JsonTreeToken` |
 
-A path is text. So an order query on a path the options do not order is
-refused at run time, before any key is fetched.
+Paths are typed, from the attribute. Decided by Dan on 21 November 2026:
+
+- `ordered = { "$.age": u32, .. }` names each ordered path and the type of
+  the values at it. The derive parses every path at compile time with the
+  engine's grammar, from the `stack-encrypt-jsonpath` crate that
+  `stack-encrypt` and its derive share. A path that does not parse, names
+  an array position, or is given twice does not compile.
+- The derive gives each path a method under `at()`, and each array whose
+  elements have an ordered member a method under `elements()`, whose
+  methods are the members. The names come from the path's keys
+  (`$.visits[*].at` is `at().visits_at()`), and `names = { "key": word }`
+  names a key that gives no Rust name. Each method takes the path's
+  type. So a path or a member the field does not declare, a value of
+  another type, a member of another array, and an element match on a path
+  that is not an array do not compile. These are the Go SDK's generated
+  `At`, `Elements` and `Paths`.
+- A filter a program builds at run time names its paths as text:
+  `at_text_path(path)` and `elements_text_path(path)`, whose members are
+  text. A text path is checked when the query is encrypted, before any key
+  is fetched, and derives the operand the typed method derives for the same
+  path and value. A field that declares no paths has only these.
+- A predicate's variables are given one at a time: `.var(name, v)`, with
+  `v` a scalar, and `.var_null(name)`. A repeated name, a NaN and an
+  infinity are refused before any key is fetched. The predicate text is
+  checked when the query is encrypted.
 
 Two limits of the SQL stay, from the reference page's sections on
 comparing a value at a path and on what the SQL cannot do. Sorting rows by a path through an array
@@ -1564,8 +1591,12 @@ Base64.
 
 - **What to build.** One method for each kind of JSON query on a JSON
   document's field reference. The methods are `contains` and `contained_by`;
-  `at(path)` with the comparison operators; `elements(path)` with its
-  member conditions; `predicate`; and `children`. Each method builds the input type the
+  `at()` with a method per declared path and the comparison operators;
+  `elements()` with a method per declared array and its member conditions;
+  `predicate` with its variables; and `children`. Paths are typed from the
+  attribute, and `at_text_path` and `elements_text_path` take paths built
+  at run time (decided on 21 November 2026, see [Query a JSON
+  document](#query-a-json-document)). Each method builds the input type the
   dynamic interface already has for that operator, and `encrypt(&keyset)`
   returns the EQL query type. The field reference supplies the column and the
   options. The dynamic parser keeps reading into the same input types, so
@@ -1583,18 +1614,27 @@ Base64.
   the dynamic parser reads into (`json::inputs`, out of the `dynamic`
   feature), and returns the field type's query type (`JsonQueries`):
   the EQL types for `JsonTreeDocument`. A field's options are its
-  `#[stash(json(ordered = [..]))]`, decided on 16 November 2026. A test
-  holds every query to the data plan's operand, and the [JSON query
+  `#[stash(json(..))]`, decided on 16 November 2026. Pull request #1687
+  types the paths: `ordered = { "$.age": u32, .. }`, parsed at compile time
+  through `stack-encrypt-jsonpath`, with a typed method per path, array
+  and member (21 November 2026). Tests hold every typed query to the text
+  form's operand and to the data plan's, the compile-fail cases under
+  `packages/stack-encrypt/tests/ui` hold the refusals, and the [JSON query
   example](#query-a-json-document) runs.
-- **Not done.** Typed paths checked at compile time, which #1459 asks
-  for: a path is text, checked before any key is fetched. Values are
-  typed (a number or a string for an ordering), and an element predicate
-  needs a condition to compile.
-- **Tracked in.** Issue #1459 is open until its pull request merges. Issue #1677 is open for opening one child. Issue #1486 is closed.
-- **Finished when** these are both true:
+- **Not done.** Checking a predicate's text at compile time (a
+  `predicate!` macro built on the typed paths), which a following pull
+  request adds. Until then the predicate text is checked when the query is
+  encrypted.
+- **Tracked in.** Issue #1459 is open until the predicate pull request
+  merges; #1687 refers to it. Issue #1677 is open for opening one child.
+  Issue #1486 is closed.
+- **Finished when** these are all true:
   - the [JSON query example](#query-a-json-document) compiles;
-  - an order query on a path the options do not order is refused before
-    any key is fetched.
+  - a path, a member or a value type the field does not declare does not
+    compile;
+  - a text path the options do not order is refused before any key is
+    fetched;
+  - a predicate's text is checked at compile time.
 
 #### Field references and the encryption plan
 
