@@ -10,8 +10,17 @@ use crate::LabelError;
 /// that does not hold up never reaches ZeroKMS. Carried in [`Error::Plan`].
 ///
 /// Some variants were raised only by the Rust plan builder, which is
-/// removed, so nothing raises them now. They stay because each has an error
-/// code that a binding's status table lists.
+/// removed, so nothing raises them now: [`IdentityWithoutField`],
+/// [`MixedCiphers`], [`IndexNotDeclared`], [`IndexOptions`], [`NoContext`]
+/// and [`TargetWithVerbs`]. They stay because each has an error code that a
+/// binding's status table lists. Each one's documentation says so.
+///
+/// [`IdentityWithoutField`]: Self::IdentityWithoutField
+/// [`MixedCiphers`]: Self::MixedCiphers
+/// [`IndexNotDeclared`]: Self::IndexNotDeclared
+/// [`IndexOptions`]: Self::IndexOptions
+/// [`NoContext`]: Self::NoContext
+/// [`TargetWithVerbs`]: Self::TargetWithVerbs
 ///
 /// [`Error::Plan`]: crate::Error::Plan
 ///
@@ -50,6 +59,9 @@ pub enum PlanError {
     },
     /// `identity` was called before any field was declared, so there was no
     /// field for it to pin.
+    ///
+    /// Not raised any more: only the removed plan builder raised it. Kept
+    /// for its error code.
     #[error("identity was set before any field was declared")]
     #[diagnostic(code(stack_encrypt::plan_identity_without_field))]
     IdentityWithoutField,
@@ -144,9 +156,12 @@ pub enum PlanError {
         field: String,
     },
     /// The operations given to one batch were started on different
-    /// ciphers. A batch settles through one client and resolves every keyset
-    /// it names there, so an operation from another cipher would run under a
-    /// keyset its own cipher never chose.
+    /// ciphers. The removed `plan::all` refused such a batch.
+    ///
+    /// Not raised any more. [`Pending::zip`](crate::Pending::zip) and
+    /// [`Pending::all`](crate::Pending::all) accept operations started on
+    /// different ciphers, because they check the keyset, not the cipher.
+    /// Kept for its error code.
     #[error("the operations in one batch were started on different ciphers")]
     #[diagnostic(
         code(stack_encrypt::plan_mixed_ciphers),
@@ -155,6 +170,9 @@ pub enum PlanError {
     MixedCiphers,
     /// A query asked a field for an index the field never declared, so it
     /// would have matched nothing.
+    ///
+    /// Not raised any more: only the removed plan builder raised it. Kept
+    /// for its error code.
     #[error("field {field:?} declares no {index} index")]
     #[diagnostic(
         code(stack_encrypt::plan_index_not_declared),
@@ -169,6 +187,9 @@ pub enum PlanError {
     /// A query asked a field for an index the field declares with other
     /// options (a match index under another tokenizer or filter size), so
     /// its terms would never have matched.
+    ///
+    /// Not raised any more: only the removed plan builder raised it. Kept
+    /// for its error code.
     #[error(
         "field {field:?} declares a {} index with other options: declared {declared:?}, asked {asked:?}",
         declared.key()
@@ -227,6 +248,9 @@ pub enum PlanError {
     },
     /// The plan was run with no context: it was built without one and has
     /// no context field, and the call named none.
+    ///
+    /// Not raised any more: only the removed plan builder raised it. Kept
+    /// for its error code.
     #[error(
         "the plan has no context: build it with one, name one in the call, or use a context field"
     )]
@@ -274,6 +298,9 @@ pub enum PlanError {
     /// A field was declared both as a typed target (`encrypt_into`) and with
     /// a data verb. A field is one or the other: the target's type decides
     /// its layout and its queries.
+    ///
+    /// Not raised any more: only the removed plan builder raised it. Kept
+    /// for its error code.
     #[error("field {field:?} is declared both as a typed target and with data verbs")]
     #[diagnostic(code(stack_encrypt::plan_target_with_verbs))]
     TargetWithVerbs {

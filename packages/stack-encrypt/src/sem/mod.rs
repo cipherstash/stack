@@ -664,9 +664,9 @@ where
 /// `m = 256`-bit filter, no short-word tokens.
 ///
 /// Every option is part of the index's identity: a stored filter and a query
-/// filter agree only when both were cut under the same options, so a query
-/// asked under options other than the index's is refused
-/// ([`PlanError::IndexOptions`](crate::plan::PlanError::IndexOptions)).
+/// filter agree only when both were cut under the same options. So a query
+/// takes its options from the field it queries: a field reference from the
+/// field's type, and a plan that is data from the plan.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MatchOptions {
     /// How text splits into tokens.
