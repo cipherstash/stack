@@ -36,13 +36,16 @@ pub fn decode<'t>(rest: &mut &'t [u8], out: &mut String) -> Result<(), StringSyn
         let plain = std::str::from_utf8(plain).map_err(|_| StringSyntaxError)?;
         out.push_str(plain);
         *rest = tail;
-        match rest.first() {
-            Some(b'"') => {
-                bump(rest);
+        // Each arm that goes round again first moves `rest` past the byte
+        // it read, so every turn of the loop consumes at least one byte,
+        // whatever the escape reads after it.
+        match *rest {
+            [b'"', after @ ..] => {
+                *rest = after;
                 return Ok(());
             }
-            Some(b'\\') => {
-                bump(rest);
+            [b'\\', after @ ..] => {
+                *rest = after;
                 out.push(escape(rest)?);
             }
             // A control character, or the end of the text.
@@ -51,31 +54,28 @@ pub fn decode<'t>(rest: &mut &'t [u8], out: &mut String) -> Result<(), StringSyn
     }
 }
 
-/// Step past the next byte.
-fn bump(rest: &mut &[u8]) {
-    if let [_, tail @ ..] = *rest {
-        *rest = tail;
-    }
-}
-
-/// The character an escape names, after its backslash.
+/// The character an escape names, after its backslash. On a refusal
+/// `rest` is at the byte refused.
 fn escape(rest: &mut &[u8]) -> Result<char, StringSyntaxError> {
-    let c = match rest.first() {
-        Some(b'"') => '"',
-        Some(b'\\') => '\\',
-        Some(b'/') => '/',
-        Some(b'b') => '\u{8}',
-        Some(b'f') => '\u{c}',
-        Some(b'n') => '\n',
-        Some(b'r') => '\r',
-        Some(b't') => '\t',
-        Some(b'u') => {
-            bump(rest);
+    let [first, after @ ..] = *rest else {
+        return Err(StringSyntaxError);
+    };
+    let c = match first {
+        b'"' => '"',
+        b'\\' => '\\',
+        b'/' => '/',
+        b'b' => '\u{8}',
+        b'f' => '\u{c}',
+        b'n' => '\n',
+        b'r' => '\r',
+        b't' => '\t',
+        b'u' => {
+            *rest = after;
             return unicode(rest);
         }
         _ => return Err(StringSyntaxError),
     };
-    bump(rest);
+    *rest = after;
     Ok(c)
 }
 
@@ -231,6 +231,10 @@ mod tests {
             (br"\u12g4", b"12g4"),
             (br"\ud83dx", b"x"),
             (br"\ud83d\u0041", b""),
+            (br"\ud83d\ue000x", b"x"),
+            (br"\udc00x", b"x"),
+            (br"a\", b""),
+            (br"\u12", b"12"),
             (b"a\xffb\"", b"a\xffb\""),
         ] {
             let mut rest = text;
