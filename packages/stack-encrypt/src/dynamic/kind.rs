@@ -62,10 +62,10 @@ use crate::target::IndexSpec;
 /// values. A composite (`array`, `object`) has no term. Only the index's
 /// kind matters: a match index's options do not change what it applies to.
 ///
-/// A plan refuses an order index on bytes. No ordering operator accepts
-/// bytes, so no query could use the stored term. Anyone who reads the rows
-/// could still compare the terms. [`IndexSpec::defines`] gives bytes no
-/// order term either.
+/// Bytes have no order term: no ordering operator compares them, so no
+/// query could use a stored term, and anyone who reads the rows could
+/// still compare the terms. So a plan refuses an order index on bytes, as
+/// [`IndexSpec::defines`] gives bytes no order term.
 ///
 /// A plan therefore accepts an index on a kind only if one of the
 /// index's operators accepts that kind. The typed interface has the same
@@ -89,9 +89,7 @@ use crate::target::IndexSpec;
 /// assert!(!admits(ValueKind::Bytes, &IndexSpec::Ore));
 /// ```
 pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
-    let unanswered = kind == ValueKind::Bytes
-        && matches!(index, IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock);
-    !unanswered && scalar_of(kind).is_some_and(|(ty, scalar)| index.takes(ty, &scalar))
+    scalar_of(kind).is_some_and(|(ty, scalar)| index.takes(ty, &scalar))
 }
 
 /// Why `kind` does not admit `index`, or `None` when it does: the reason a
@@ -701,8 +699,8 @@ mod tests {
 
     /// `admits` is `IndexSpec::defines` stated over kinds: the two cannot
     /// disagree about a value of any kind, and a composite admits nothing.
-    /// The one exception is an order index on bytes, whose term the scheme
-    /// defines and no operator answers: a plan does not admit it.
+    /// Bytes have no order term, so a plan refuses an order index on them
+    /// with `index_not_admitted`.
     #[test]
     fn admits_agrees_with_defines_for_every_kind() {
         for kind in value_kinds() {
@@ -722,8 +720,6 @@ mod tests {
                 );
             }
         }
-        // Every other index bytes can hold is still admitted.
-        assert!(admits(ValueKind::Bytes, &IndexSpec::Equality));
         // Spelled out, so the table reads without the cross-check.
         assert!(admits(ValueKind::UInt64, &IndexSpec::Equality));
         assert!(admits(ValueKind::Float64, &IndexSpec::Equality));

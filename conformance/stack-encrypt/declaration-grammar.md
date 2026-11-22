@@ -179,10 +179,10 @@ select a different leaf encoding.
 | bytes | Admitted | Refused | Refused |
 | array, object, json | Refused | Refused | Refused |
 
-An index is admitted only over a kind one of its operators answers. The
-scheme defines an order term for bytes, but no ordering operator is answered
-over bytes, so the term would be stored and never queried. The order indexes
-are refused on bytes as `index_not_admitted`.
+An index is admitted only over a kind one of its operators answers. Bytes
+have no order term: no ordering operator compares them, so a term would be
+stored and never queried. The order indexes are refused on bytes as
+`index_not_admitted`.
 
 The corpus explicitly tests all 21 kinds against all five scalar indexes.
 `array` and `object` may still be sealed without indexes. A `json` field requires

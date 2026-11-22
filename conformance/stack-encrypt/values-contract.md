@@ -95,9 +95,9 @@ null.
 
 Every index a case declares is one a query operator answers for the kind,
 because a declaration admits no other. An order index on `bytes` is the
-case that shows it: the scheme defines an order term for bytes, but no
-ordering operator is answered over them, so a stored term would let anyone
-who holds two rows compare them without a key, and no query could use it.
+case that shows it: bytes have no order term, because no ordering operator
+compares them. A stored term would let anyone who holds two rows compare
+them without a key, and no query could use it.
 Both paths refuse it. The typed Rust path bounds an order index on
 vitaminc-ore's `Orderable`, which does not cover `Vec<u8>`, so the
 declaration does not compile. The dynamic path, which both runners

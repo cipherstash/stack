@@ -189,8 +189,8 @@ impl Op {
         // answers is the one. A document field's JSON index answers the
         // document operators over a document alone; every other index
         // answers over the kinds it is defined for.
-        // `admits` refuses an order index over bytes, the one kind with an
-        // order term and no ordering, so no ordering is answered there.
+        // Bytes have no order term, so `admits` refuses an order index over
+        // them, and no ordering is answered there.
         indexes.iter().find(|index| {
             index.answers(self)
                 && match index {

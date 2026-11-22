@@ -44,10 +44,17 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   is answered over bytes, so the field stored an order term that anyone
   who read the column could compare and that no query could use.
   `stashgen`'s notice for an index no generated method queries is gone
-  with the case it described. To upgrade, remove the index from the tag
-  and generate again. Rows stored with the term still open: opening
-  ignores a stored term the plan does not declare. The stored terms stay
-  in the database until the row is written again or the column is dropped.
+  with the case it described.
+  - Code that rc.6 or earlier generated for such a field still compiles,
+    but the guest refuses its plan when it is parsed. Until the tag is
+    edited and `stashgen` is run again, `Encrypt` and `Decrypt` of that
+    record type fail with `index_not_admitted`, as does its bytes field's
+    `Field.Encrypt`. That includes rows that were stored correctly.
+  - To upgrade, remove the index from the tag and generate again. Once the
+    code is generated again, rows stored with the term still open: opening
+    ignores a stored term the plan does not declare. The stored terms stay
+    in the database until the row is written again or the column is
+    dropped.
 
 ### Changed
 
@@ -313,7 +320,8 @@ In the code:
   is requested. Before, the field stored both terms and every query used
   the ORE one; the OPE term cost a write and told anyone who read the
   column how its values order. `stashgen`'s notice for a second order index
-  is gone with the case it described.
+  is gone with the case it described; the notice for an order index on
+  bytes stays.
 
 - **`Cipher.Extend` is now `Cipher.Scope`, and `Cipher.Bind` is new**
   (#1487). A scope narrows the data and the queries over it. A binding ties

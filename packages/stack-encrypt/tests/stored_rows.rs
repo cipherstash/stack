@@ -191,19 +191,27 @@ fn without_order_terms(json: &Json) -> Json {
     }
 }
 
-/// The outputs a frozen plan declares that no build admits any more: an
-/// order index on a `bytes` field. The plan the rows were stored under
-/// declares two (`blob` with `ore`, and the index-only `blob_ope`); a
-/// declaration now refuses them, because no ordering is answered over
-/// bytes.
-const RETIRED_ON_BYTES: [&str; 3] = ["ore", "ope", "ore_block"];
-
-/// Whether `output` of a field of the frozen plan is retired.
+/// Whether `output` of a field of the frozen plan is retired: an index the
+/// engine no longer admits for the field's kind. The plan the rows were
+/// stored under declares two, an order index on a `bytes` field (`blob`
+/// with `ore`, and the index-only `blob_ope`). The engine's own rule
+/// decides, so if it admits an order index on bytes again, nothing is
+/// retired and the frozen rows must reseal as they were.
 fn retired(field: &Json, output: &Json) -> bool {
-    field.get("type") == Some(&json!("bytes"))
-        && output
-            .as_str()
-            .is_some_and(|o| RETIRED_ON_BYTES.contains(&o))
+    let Some(kind) = field
+        .get("type")
+        .and_then(Json::as_str)
+        .and_then(|ty| ty.parse::<ValueKind>().ok())
+    else {
+        return false;
+    };
+    let index = match output.as_str() {
+        Some("ore") => IndexSpec::Ore,
+        Some("ope") => IndexSpec::Ope,
+        Some("ore_block") => IndexSpec::OreBlock,
+        _ => return false,
+    };
+    !admits(kind, &index)
 }
 
 /// Whether every output of a field of the frozen plan is retired: the field
