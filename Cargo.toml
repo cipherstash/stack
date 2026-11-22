@@ -120,6 +120,10 @@ rustls = { version = "0.23", default-features = false, features = ["std", "tls12
 rustls-platform-verifier = "0.6"
 rustls-webpki = { version = "0.103", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", features = ["derive"] }
+# Named on its own only so a crate can turn on one of its features.
+# stack-encrypt turns on `deserialize_in_place`, which every derive in the
+# build then writes.
+serde_derive = "1.0"
 serde_json = { version = "1.0.132" }
 # Constant-time hex (through base16ct) for serde over the order terms.
 serdect = { version = "0.3", default-features = false, features = ["alloc"] }

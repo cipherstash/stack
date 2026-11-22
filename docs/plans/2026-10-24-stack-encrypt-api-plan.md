@@ -2146,8 +2146,18 @@ table.
   when it is dropped.
 - **Why.** Plaintext must not stay in freed memory.
 - **Done already.** Collections wipe the values decoded before a failure.
-  Cancellation and drop are tested (#1493, #1501).
-- **Tracked in.** Issue #1676 is open for the partial Serde decode, which pull request #1503 recorded as a known gap. Issue #1684 is open for the drop-wiping adapter for a single value, such as `Zeroizing<String>`, which needs Vitamin C to implement `FromScalar` for `Zeroizing<T>`. Issue #1458 is open: data keys by reference. Issues #1468 and #1480 are closed. Pull requests #1493, #1501 and #1503 are merged; a decrypted `OpaqueBlob<T>` wipes its value when it is dropped, and its `into_inner` returns a `Zeroizing<T>`.
+  Cancellation and drop are tested (#1493, #1501). A decrypted
+  `OpaqueBlob<T>` is read in place into a `T::default()`, so a refusal
+  wipes the fields of most derived structs that were read before it
+  (#1676, pull request #1750). Decrypting needs `T: Default`.
+- **Tracked in.** Issue #1754 is open for what #1676 left: the
+  `native-partial-decode-inside-whole-values` known gap. serde still builds
+  some values whole (an element of a sequence, a map, an `Option`, a `Box`,
+  an enum, a field read with `deserialize_with`, and a struct marked
+  `transparent`, `from` or `try_from`, with a `flatten` field, or whose
+  every field uses `deserialize_with`), and a refusal inside one drops what
+  it built unwiped; a sequence longer than the 1 MiB serde reserves frees
+  each regrown buffer unwiped. Issue #1684 is open for the drop-wiping adapter for a single value, such as `Zeroizing<String>`, which needs Vitamin C to implement `FromScalar` for `Zeroizing<T>`. Issue #1458 is open: data keys by reference. Issues #1468 and #1480 are closed. Pull requests #1493, #1501 and #1503 are merged; a decrypted `OpaqueBlob<T>` wipes its value when it is dropped, and its `into_inner` returns a `Zeroizing<T>`.
 - **Finished when** the conformance profile for the lifecycle covers both cases.
 
 ### 4. The query engine

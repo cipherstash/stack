@@ -1766,10 +1766,7 @@ mod opaque_blob {
                     .decrypt_with_context::<OpaqueBlob<Other>>(sealed, "docs/body")
                     .await
             });
-            assert!(matches!(
-                result,
-                Err(Error::Blob(stack_encrypt::BlobError::Mismatch(_)))
-            ));
+            assertions::is_a_mismatch(&result);
         });
     }
 
@@ -1780,7 +1777,7 @@ mod opaque_blob {
         use super::*;
 
         use stack_encrypt::kms::FakeDataKeySource;
-        use stack_encrypt::{BlobError, Ciphertext, StackCipher};
+        use stack_encrypt::{Ciphertext, StackCipher};
 
         #[derive(Serialize, Zeroize)]
         struct Shelf {
@@ -1823,14 +1820,26 @@ mod opaque_blob {
             })
         }
 
-        /// The runtime, a cipher, and `source` sealed under it.
-        fn scenario<T>(
-            source: OpaqueBlob<T>,
-        ) -> (
-            tokio::runtime::Runtime,
-            StackCipher<FakeDataKeySource>,
-            Ciphertext,
-        )
+        /// [`Doc`] read with a `u32` where its body is: the `String` and
+        /// the `Vec<String>` read, then the `u32` refuses the text it finds.
+        #[derive(Deserialize, Zeroize, Default)]
+        #[allow(dead_code)]
+        struct DocWithNumericBody {
+            title: String,
+            notes: Vec<String>,
+            body: u32,
+        }
+
+        /// A source sealed under a cipher, with the runtime that cipher
+        /// runs on.
+        struct Sealed {
+            rt: tokio::runtime::Runtime,
+            cipher: StackCipher<FakeDataKeySource>,
+            sealed: Ciphertext,
+        }
+
+        /// `source` sealed under a fresh cipher.
+        fn sealed<T>(source: OpaqueBlob<T>) -> Sealed
         where
             T: Serialize + Zeroize + Send + 'static,
         {
@@ -1843,22 +1852,16 @@ mod opaque_blob {
                     .await
                     .expect("the source seals")
             });
-            (rt, cipher, sealed)
+            Sealed { rt, cipher, sealed }
         }
 
-        /// Open `sealed` as an `OpaqueBlob<T>` while watched for marked
+        /// Open `source` as an `OpaqueBlob<T>` while watched for marked
         /// frees and leaks, and check it is refused as another shape.
-        fn opened_as<T>(
-            what: &str,
-            source: (
-                tokio::runtime::Runtime,
-                StackCipher<FakeDataKeySource>,
-                Ciphertext,
-            ),
-        ) where
+        fn opened_as<T>(what: &str, source: Sealed)
+        where
             T: serde::de::DeserializeOwned + Default + Zeroize + Send + 'static,
         {
-            let (rt, cipher, sealed) = source;
+            let Sealed { rt, cipher, sealed } = source;
             let keyset = cipher.default_keyset();
             watched_for_leaks(what, || {
                 let result = rt.block_on(async {
@@ -1874,14 +1877,10 @@ mod opaque_blob {
         /// refuses the text it finds.
         #[test]
         fn the_fields_built_before_it_are_wiped() {
-            #[derive(Deserialize, Zeroize, Default)]
-            #[allow(dead_code)]
-            struct Later {
-                title: String,
-                notes: Vec<String>,
-                body: u32,
-            }
-            opened_as::<Later>("OpaqueBlob decrypt (refused after fields)", scenario(doc()));
+            opened_as::<DocWithNumericBody>(
+                "OpaqueBlob decrypt (refused after fields)",
+                sealed(doc()),
+            );
         }
 
         /// A refusal inside a nested struct: the outer field, both whole
@@ -1910,11 +1909,11 @@ mod opaque_blob {
             }
             opened_as::<ShelfRead>(
                 "OpaqueBlob decrypt (refused in a nested field)",
-                scenario(shelf()),
+                sealed(shelf()),
             );
         }
 
-        /// The limit that remains, held as a negative control. serde fills
+        /// A limit that remains, held as a negative control. serde fills
         /// a struct's fields in place, but builds each element of a
         /// sequence whole before it stores it. A refusal inside an element
         /// drops the fields that element built as ordinary values,
@@ -1936,22 +1935,45 @@ mod opaque_blob {
             }
             opened_as::<ShelfRead>(
                 "OpaqueBlob decrypt (refused inside an element)",
-                scenario(shelf()),
+                sealed(shelf()),
             );
         }
 
-        mod assertions {
-            use super::*;
-
-            pub(super) fn is_a_mismatch<T>(result: &Result<OpaqueBlob<T>, Error>)
-            where
-                T: Zeroize,
-            {
-                assert!(
-                    matches!(result, Err(Error::Blob(BlobError::Mismatch(_)))),
-                    "a blob of another shape is refused as a mismatch: {result:?}"
-                );
+        /// A limit that remains, held as a negative control. serde's
+        /// derive writes no in-place read for a `#[serde(transparent)]`
+        /// struct, so the struct it wraps is built whole, and a refusal of
+        /// that struct's later field drops the fields read before it as
+        /// ordinary values, unwiped. `flatten`, `from`, `try_from`, and a
+        /// struct whose every field uses `deserialize_with` read whole in
+        /// the same way.
+        #[test]
+        #[should_panic(expected = "freed with plaintext in them")]
+        fn a_refusal_in_a_struct_the_derive_reads_whole_drops_its_fields() {
+            #[derive(Deserialize, Zeroize, Default)]
+            #[serde(transparent)]
+            struct Wrapped {
+                inner: DocWithNumericBody,
             }
+            opened_as::<Wrapped>(
+                "OpaqueBlob decrypt (refused in a transparent struct)",
+                sealed(doc()),
+            );
+        }
+    }
+
+    mod assertions {
+        use super::*;
+
+        use stack_encrypt::BlobError;
+
+        pub(super) fn is_a_mismatch<T>(result: &Result<OpaqueBlob<T>, Error>)
+        where
+            T: Zeroize,
+        {
+            assert!(
+                matches!(result, Err(Error::Blob(BlobError::Mismatch(_)))),
+                "a blob of another shape is refused as a mismatch: {result:?}"
+            );
         }
     }
 }

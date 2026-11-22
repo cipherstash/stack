@@ -120,15 +120,20 @@ On decrypt, the opened bytes are held in a `Protected` buffer until the
 reader returns.
 
 The blob is read into a `T::default()` in a `Zeroizing<T>`, in place,
-through serde's `Deserialize::deserialize_in_place`. A derived
-`Deserialize` for a struct stores each field in that value as it reads it.
-A valid blob of another shape can be refused after some fields are read;
-the refusal drops the `Zeroizing<T>`, so those fields are wiped. Without
+through serde's `Deserialize::deserialize_in_place`. For most derived
+structs, serde stores each field in that value as it reads it. A valid
+blob of another shape can be refused after some fields are read; the
+refusal drops the `Zeroizing<T>`, so those fields are wiped. Without
 this, serde holds them as locals of its own and drops them unwiped,
 because no `T` exists yet. The derive writes `deserialize_in_place` only
 with serde_derive's `deserialize_in_place` feature, which this crate turns
 on. Cargo unifies features, so every derive in the build writes it.
 `Deserialize::deserialize` does not change.
+
+serde's in-place read never assigns a field it skips (`#[serde(skip)]` or
+`#[serde(skip_deserializing)]`), so that field keeps the value
+`T::default()` gives it, and a `#[serde(default = "...")]` on the field or
+on its struct is not used.
 
 The returned `OpaqueBlob<T>` stores its value in a `Zeroizing<T>`, so **the
 value is wiped on drop**. `into_inner` returns that `Zeroizing<T>`, not a
@@ -157,14 +162,22 @@ Vitamin C.
   scalar shows its length in the same way. Padding is the application's
   job.
 - **Complete erasure.** serde reads some values whole and stores them only
-  when they are complete: an element of a sequence, an entry of a map, an
-  `Option`, a `Box`, an enum, and a type whose `Deserialize` is not derived
-  for a struct. A refusal inside one of these drops the parts of it already
-  read without wiping them. `tests/heap_hygiene.rs` records this as a
-  negative control, so the gap stays visible. A `Copy` value that is moved
-  leaves its bytes behind. Compiler temporaries are not wiped. The
-  promise covers the owned source, the encoded buffer, the opened buffer,
-  and the library's own copies.
+  when they are complete: an element of a sequence, a map, an `Option`, a
+  `Box`, an enum, a field read with `deserialize_with`, a type whose own
+  `Deserialize` impl writes no `deserialize_in_place`, and a struct the
+  derive writes no in-place read for. That last is a struct marked
+  `#[serde(transparent)]`, `from` or `try_from`, one with a
+  `#[serde(flatten)]` field, and one whose every field uses
+  `deserialize_with`; when `T` is such a struct, a refusal wipes nothing
+  `T` read. A refusal inside any of these drops the parts of it already
+  read without wiping them. `tests/heap_hygiene.rs` records this with two
+  negative controls (a sequence element, and a `transparent` struct), so
+  the gap stays visible; #1754 tracks it. serde also reserves room for at
+  most 1 MiB of a sequence's elements before reading them, and a longer
+  sequence regrows its buffer, freeing each old one unwiped. A `Copy`
+  value that is moved leaves its bytes behind. Compiler temporaries are
+  not wiped. The promise covers the owned source, the encoded buffer, the
+  opened buffer, and the library's own copies.
 - **Search or partial reads.** A blob is opaque. Nothing inside it can be
   queried or read on its own. The structural API and the JSON index are for
   those needs.

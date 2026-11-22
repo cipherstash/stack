@@ -1245,20 +1245,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until the whole `T` is built. Decrypting now reads the blob in place
   into a `T::default()` held in a `Zeroizing<T>`, through serde's
   `Deserialize::deserialize_in_place`, and a refusal wipes that value. This
-  covers the fields of a struct, the fields of a struct nested in it, and
-  the elements of a `Vec` stored before the refusal.
+  covers the fields of most derived structs, the fields of a struct nested
+  in one, and the elements of a `Vec` stored before the refusal.
   - Decrypting an `OpaqueBlob<T>` now needs `T: Default`. Add
     `#[derive(Default)]` to the type.
   - stack-encrypt turns on serde_derive's `deserialize_in_place` feature.
     Cargo shares a crate's features across a build, so every
     `#[derive(Deserialize)]` in a build with stack-encrypt also writes
     `deserialize_in_place`. `deserialize` does not change.
-  - A field serde skips (`#[serde(skip)]`) keeps the value `T::default()`
-    gives it.
-  - serde builds an element of a sequence, an entry of a map, an `Option`,
-    a `Box` and an enum whole. A refusal inside one of those still drops
-    what it built unwiped. A part that wipes itself on drop, such as a
+  - A field serde skips when reading (`#[serde(skip)]` or
+    `#[serde(skip_deserializing)]`) keeps the value `T::default()` gives
+    it. A `#[serde(default = "...")]` on that field or on its struct is not
+    used, so make `T::default()` give the value the field should have.
+  - serde still builds some values whole, and a refusal inside one of them
+    still drops what it built unwiped (#1754): an element of a sequence, a
+    map, an `Option`, a `Box`, an enum, a field read with
+    `deserialize_with`, and a struct the derive writes no in-place read
+    for. That is a struct marked `#[serde(transparent)]`, `from` or
+    `try_from`, one with a `#[serde(flatten)]` field, and one whose every
+    field uses `deserialize_with`; when `T` is such a struct, a refusal
+    wipes nothing `T` read. A part that wipes itself on drop, such as a
     `Zeroizing<String>`, closes that gap for that part.
+  - serde reserves room for at most 1 MiB of a sequence's elements before
+    reading them. A longer sequence regrows its buffer as it is read and
+    frees each old buffer unwiped, as it did before this change.
 - **Encrypting an `OpaqueBlob` wipes the value in every case.** The value is
   wiped before `encrypt` returns the pending request, both on success and
   when the value cannot be encoded. A failed encoding requests no key. A

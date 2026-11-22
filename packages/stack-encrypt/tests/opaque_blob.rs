@@ -91,6 +91,20 @@ struct NarrowProfile {
     age: u8,
 }
 
+/// A type with a field serde skips, whose serde default differs from the
+/// one `Default` gives it.
+#[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug, Default)]
+struct WithSkippedField {
+    name: String,
+    #[serde(skip, default = "one")]
+    count: u32,
+}
+
+/// The serde default of [`WithSkippedField::count`].
+fn one() -> u32 {
+    1
+}
+
 /// A byte string written as bytes, not as a sequence of `u8`.
 #[derive(Serialize, Deserialize, Zeroize, PartialEq, Debug, Default)]
 struct RawBytes(#[serde(with = "serde_bytes_shim")] Vec<u8>);
@@ -197,8 +211,10 @@ struct TrackedRead {
     value: String,
 }
 
-/// How many times a [`Witness`] has been wiped. Only one test uses it, and
-/// nextest runs each test in its own process.
+/// How many times a [`Witness`] has been wiped. Only
+/// `is_wiped_on_drop_and_into_inner_keeps_it_guarded` encrypts or decrypts a
+/// `Witness`, so no other test moves the count while it runs, under nextest
+/// or the threads of `cargo test`.
 static WITNESS_WIPES: AtomicUsize = AtomicUsize::new(0);
 
 /// A value that counts its wipes in [`WITNESS_WIPES`].
@@ -218,7 +234,7 @@ impl Zeroize for Witness {
 /// uses it.
 static WIPED_BEFORE_REFUSAL: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// [`Witness`] read as a type with a later field the blob does not have.
+/// [`Tracked`] read as a type with a later field the blob does not have.
 /// `value` reads, then `more` is refused as missing. Its wipe records what
 /// `value` held in [`WIPED_BEFORE_REFUSAL`] before it wipes it.
 #[derive(Deserialize, Default)]
@@ -1005,6 +1021,59 @@ mod given_a_later_version_of_the_type {
     }
 }
 
+/// A decrypted blob is read in place into `T::default()`, and serde's
+/// in-place read never assigns a field it skips.
+mod given_a_field_serde_skips {
+    use super::*;
+
+    fn source() -> WithSkippedField {
+        WithSkippedField {
+            name: "Ada".into(),
+            count: 5,
+        }
+    }
+
+    #[tokio::test]
+    async fn decrypting_keeps_the_value_default_gives_it_not_its_serde_default() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let ct = keyset.encrypt(OpaqueBlob::new(source())).await.unwrap();
+
+        let opened = keyset
+            .decrypt::<OpaqueBlob<WithSkippedField>>(ct)
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(
+            *opened,
+            WithSkippedField {
+                name: "Ada".into(),
+                count: 0,
+            },
+            "a skipped field should keep the value T::default() gives it"
+        );
+    }
+
+    /// The contrast: serde's whole-value read gives the skipped field its
+    /// `#[serde(default = "...")]` value from the same bytes.
+    #[test]
+    fn a_whole_value_read_of_the_same_bytes_gives_its_serde_default() {
+        let encoded = OpaqueBlob::new(source()).encode().unwrap();
+
+        let whole: WithSkippedField =
+            vitaminc_aead_frame::storage::from_slice(encoded.risky_ref()).unwrap();
+        let in_place = OpaqueBlob::<WithSkippedField>::decode(encoded.risky_ref()).unwrap();
+
+        assert_eq!(whole.count, 1, "serde's own read should call `one`");
+        assert_eq!(
+            in_place.get().count,
+            0,
+            "the in-place read should leave T::default()'s value"
+        );
+    }
+}
+
 /// What is wiped, and when, on encrypt.
 mod given_an_owned_source {
     use super::*;
@@ -1197,12 +1266,8 @@ mod given_a_decrypted_blob {
     async fn a_field_read_before_a_refusal_is_wiped() {
         let cipher = common::stack_cipher().await;
         let keyset = cipher.default_keyset();
-        let ct = keyset
-            .encrypt(OpaqueBlob::new(Witness {
-                value: "secret".into(),
-            }))
-            .await
-            .unwrap();
+        let (source, _) = tracked();
+        let ct = keyset.encrypt(source).await.unwrap();
 
         let refused = keyset.decrypt::<OpaqueBlob<WitnessThenMore>>(ct).await;
         assert!(

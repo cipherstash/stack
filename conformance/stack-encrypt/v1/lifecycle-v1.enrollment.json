@@ -333,7 +333,26 @@
     {
       "id": "native-partial-decode-inside-whole-values",
       "status": "known-gap",
-      "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs::opaque_blob::given_a_blob_refused_after_fields_are_built::a_refusal_inside_a_sequence_element_drops_what_the_element_built"
+      "tracking": "#1754",
+      "cases": [
+        "sequence-element",
+        "map",
+        "option",
+        "box",
+        "enum",
+        "deserialize-with-field",
+        "serde-transparent-struct",
+        "serde-from-struct",
+        "serde-try-from-struct",
+        "serde-flatten-struct",
+        "all-fields-deserialize-with-struct",
+        "hand-written-deserialize-without-in-place",
+        "sequence-regrown-past-1-mib"
+      ],
+      "evidence": [
+        "packages/stack-encrypt/tests/heap_hygiene.rs::opaque_blob::given_a_blob_refused_after_fields_are_built::a_refusal_inside_a_sequence_element_drops_what_the_element_built",
+        "packages/stack-encrypt/tests/heap_hygiene.rs::opaque_blob::given_a_blob_refused_after_fields_are_built::a_refusal_in_a_struct_the_derive_reads_whole_drops_its_fields"
+      ]
     },
     {
       "id": "caller-owned-host-values",

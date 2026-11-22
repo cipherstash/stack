@@ -301,25 +301,46 @@
 //! malformed blob is refused before `T` reads anything. To wipe what `T`
 //! read before such a refusal, decrypting starts from `T::default()` in a
 //! `Zeroizing<T>` and reads the blob into it in place, with serde's
-//! `Deserialize::deserialize_in_place`. A derived `Deserialize` for a struct
+//! `Deserialize::deserialize_in_place`. For most derived structs, serde
 //! reads each field straight into that value, so a refusal wipes every
 //! field read before it, through `T::zeroize`. This holds at every level of
-//! nested structs, tuples and arrays, and for every element of a `Vec`
-//! stored before the refusal. This crate turns on serde's
+//! nested structs, tuples and arrays, and for the elements of a `Vec` or
+//! another sequence stored before the refusal. This crate turns on serde's
 //! `deserialize_in_place` derive feature for that, so every derive in the
 //! build writes the method.
 //!
 //! serde reads some values whole and stores them only when they are
-//! complete: an element of a sequence, an entry of a map, an `Option`, a
-//! `Box`, an enum, and a type whose `Deserialize` is not derived for a
-//! struct. If the refusal happens inside one of these, the parts of it
-//! already read are dropped as ordinary values, without `T::zeroize`. A
-//! part that wipes itself on drop closes that gap for that part. Examples
+//! complete. If the refusal happens inside one of these, the parts of it
+//! already read are dropped as ordinary values, without `T::zeroize`:
+//!
+//! - an element of a sequence, a map, an `Option`, a `Box`, and an enum;
+//! - a field read with `#[serde(deserialize_with = "...")]` or
+//!   `#[serde(with = "...")]`;
+//! - a struct the derive writes no in-place read for: one marked
+//!   `#[serde(transparent)]`, `#[serde(from = "...")]` or
+//!   `#[serde(try_from = "...")]`, one with a `#[serde(flatten)]` field,
+//!   and one whose every field uses `deserialize_with`. Such a struct is
+//!   read whole wherever it is, so if it is `T` itself, a refusal wipes
+//!   none of what was read;
+//! - a type whose own `Deserialize` impl does not write
+//!   `deserialize_in_place`.
+//!
+//! A part that wipes itself on drop closes that gap for that part. Examples
 //! are a `Zeroizing<String>` field, or a type that derives `ZeroizeOnDrop`.
 //! The bytes those parts were copied from are wiped with the opened buffer.
 //!
-//! A field serde skips (`#[serde(skip)]`) keeps the value `T::default()`
-//! gives it, rather than the field's own default.
+//! serde reserves room for at most 1 MiB of a sequence's elements before it
+//! reads them. A longer sequence regrows its buffer as it is read, and each
+//! old buffer is freed unwiped, whether or not the blob is refused. An
+//! element that holds its value inline, such as an integer, leaves that
+//! value in the old buffer; a `String` element leaves only its pointer and
+//! length there.
+//!
+//! A field serde skips when reading (`#[serde(skip)]` or
+//! `#[serde(skip_deserializing)]`) keeps the value `T::default()` gives it.
+//! serde's in-place read never assigns it, so a
+//! `#[serde(default = "...")]` on that field, or on the struct, is not
+//! used. Make `T::default()` give the value the field should have.
 //!
 //! A Rust move does not erase memory. A `Copy` field leaves its bytes
 //! where it was moved from. Compiler temporaries are not wiped. This module
@@ -466,9 +487,10 @@ impl<T: DeserializeOwned + Default + Zeroize> OpaqueBlob<T> {
     /// buffer decrypting reads from is.
     ///
     /// The value is read in place into a `T::default()` that is wiped if
-    /// the blob is refused, so the fields read before a refusal are wiped
-    /// with it. [Cleanup](self#cleanup) in the module docs says which parts
-    /// are not.
+    /// the blob is refused, so for most derived structs the fields read
+    /// before a refusal are wiped with it. [Cleanup](self#cleanup) in the
+    /// module docs says which parts serde reads whole and does not wipe on
+    /// a refusal, and what a skipped field holds.
     ///
     /// # Errors
     ///
@@ -481,10 +503,11 @@ impl<T: DeserializeOwned + Default + Zeroize> OpaqueBlob<T> {
     }
 }
 
-/// A `T` read into a `T::default()` in place, inside a [`Zeroizing`]. A
-/// derived `Deserialize` for a struct stores each field in that value as
-/// it reads it, so a field read before a later one is refused is wiped
-/// when the refusal drops the value.
+/// A `T` read into a `T::default()` in place, inside a [`Zeroizing`]. For
+/// most derived structs, serde stores each field in that value as it reads
+/// it, so a field read before a later one is refused is wiped when the
+/// refusal drops the value. The module docs' Cleanup section lists the
+/// values serde reads whole instead.
 struct ReadInPlace<T: Zeroize>(Zeroizing<T>);
 
 impl<'de, T: Deserialize<'de> + Default + Zeroize> Deserialize<'de> for ReadInPlace<T> {
