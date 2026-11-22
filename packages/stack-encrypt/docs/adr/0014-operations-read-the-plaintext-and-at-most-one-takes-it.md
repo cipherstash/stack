@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-21
 revised: 2026-11-22
 extends: ADR-0012
@@ -34,7 +34,7 @@ parameter, as the axum web framework does. #1737 was written at the same
 time and reaches the same rule a simpler way, by position. This revision
 adopts that mechanism, and settles each point where the two disagreed.
 [What changed in this revision](#what-changed-in-this-revision) lists
-them. The status is `proposed` until the revision is confirmed.
+them. Dan accepted the revision on 22 November 2026.
 
 ## Context
 
@@ -223,6 +223,12 @@ type. Two operations that both take the value therefore do not compile.
   required `EncryptTarget::encryption()` away from every record with a
   passthrough field, and with it borrowed runs, borrowed parents, and
   the borrowed `Vec` and `Option` forms. It is withdrawn.
+- The copy happens only when a caller runs a whole record from a borrow,
+  to keep the plaintext: `keyset.run(EncryptedUser::encryption(), &user,
+  ..)`. An owned run (`encrypt_into`, a `Vec` or an `Option` of records,
+  a nested record) moves a passthrough field into the output. Without
+  the borrowed form, a caller who needs the plaintext afterwards would
+  clone the whole value, its secrets included.
 - No other public bound in Stack Encrypt or `eql-bindings` requires a
   plaintext to be `Clone`. `ValueFrame` and `JsonPlaintext` are not
   `Clone`.
@@ -272,10 +278,15 @@ type. Two operations that both take the value therefore do not compile.
   `sem::Orderable` covers `Vec<u8>` and `op::Ordered` does not, and #1611
   moves each bound from the first to the second. With both traits gone
   there is one list, and it is Vitamin C's.
-- Vitamin C orders bytes only into a target that is named
-  (`scheme.target(Bytes)`). Whether Stack Encrypt keeps a bytes order
-  term at the term level, for a caller who names that target, is
-  decided in #1611. No record, index or data plan names one.
+- **Stack Encrypt no longer derives an order term from bytes.** On
+  `next` the keyset's term functions (`ore_term`, `ope_term` and
+  `ore_block_term`) take a `Vec<u8>`, because `sem::Orderable` covers
+  it. That goes with the trait. No ordering operator compares bytes, so
+  such a term answers no query and still reveals the order of the rows.
+  Vitamin C orders bytes only into a target that is named
+  (`scheme.target(Bytes)`), and Stack Encrypt does not offer that
+  target. A stored row that carries a bytes order term still opens:
+  #1611 reads it without naming the term.
 
 ## What is not claimed
 
@@ -334,7 +345,8 @@ type. Two operations that both take the value therefore do not compile.
     from jiff's and rust_decimal's values, and none is `Clone`. The
     `jiff` and `rust_decimal` features are on by default, and a build
     with `default-features = false` names them to get the three types;
-  - `sem::Orderable` and `op::Ordered` are removed;
+  - `sem::Orderable` and `op::Ordered` are removed, and the keyset's
+    order term functions no longer take bytes;
   - an operation in `Owned` mode requires `S: Zeroize` (decision 4).
 - The Go guest links jiff and rust_decimal in its plain build. Its size
   is measured before #1737 merges.
@@ -358,8 +370,9 @@ Three pull requests touch the same code. They land in this order:
    JSON queries. It also takes on decision 4's wipe rule, the test that
    counts one wipe, and the measurement of the Go guest.
 2. **The order bound** (item 4 of #1734, decision 5) removes
-   `sem::Orderable` and `op::Ordered`. It goes in #1737 or in a pull
-   request stacked on it.
+   `sem::Orderable` and `op::Ordered`, and with them the order term of
+   bytes and its term-level tests. It goes in #1737 or in a pull request
+   stacked on it.
 3. **#1611** is rebased on top. Its commits that move each bound from
    `sem::Orderable` to `op::Ordered` are dropped, because the bound in
    step 2 replaces them. It keeps what only it has: a data plan refuses
@@ -380,6 +393,7 @@ Three pull requests touch the same code. They land in this order:
 | Queries and their checks | Not covered | Readers | #1734 names them, and they kept `Clone` |
 | The dynamic interface | "A write holds one copy" | One decoded frame for each field, and no further copy | The first claim was true of the typed path only |
 | `Date`, `Timestamp`, `Decimal`, and the order traits | "Can be removed" | Removed, and the order bound is Vitamin C's | #1734 asks for it, and it gives #1611 its typed refusal |
+| An order term of bytes | Not covered | Removed | No operator compares bytes, and Vitamin C's bound does not cover them |
 
 ## The questions the first version left for a prototype
 
