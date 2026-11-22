@@ -1,9 +1,9 @@
 // Security lints — the block `stack-encrypt` and `stack-auth` carry, minus
 // `deny(unsafe_code)`: the export surface (`abi`) and the host import
 // (`transport`) are `extern "C"` over raw pointers by nature. Every `unsafe`
-// block is confined to those two wasm32-only modules and to the buffer
-// registry, and documented at the site; `unsafe_op_in_unsafe_fn` keeps each
-// one explicit.
+// block is confined to those two modules, the pair validation (`memory`)
+// and the buffer registry, and documented at the site;
+// `unsafe_op_in_unsafe_fn` keeps each one explicit.
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(clippy::unwrap_used)]
 #![warn(clippy::expect_used)]
@@ -24,8 +24,8 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 #![cfg_attr(test, allow(clippy::panic))]
 #![cfg_attr(test, allow(unused_results))]
-// `abi` and `transport` only exist on wasm32, so on a native doc build their
-// intra-doc links have nothing to resolve to. The wasm32 doc build
+// `abi` and `transport::send` only exist on wasm32, so on a native doc build
+// their intra-doc links have nothing to resolve to. The wasm32 doc build
 // (`mise run wasm:guest:test`) is where links are enforced.
 #![cfg_attr(not(target_arch = "wasm32"), allow(rustdoc::broken_intra_doc_links))]
 //! # The guest ABI the Go binding's WASI guests share
@@ -49,6 +49,9 @@
 //!   `se_last_error` exports every guest has, the `export` wrapper every
 //!   guest export runs through, and the hostile-input helpers that validate
 //!   a host `(ptr, len)` pair against linear memory before any slice exists.
+//! - [`memory`] — that validation, over any address range: [`abi`] names
+//!   linear memory, and the native tests name a buffer of their own, so
+//!   Miri runs the code that turns a host pair into a slice.
 //! - [`call`] — what those exports do that is not wasm: the last-error
 //!   lifecycle every export runs and the packed `u64` result encoding, so
 //!   both are tested natively and the guests' leak tests run the real
@@ -60,9 +63,10 @@
 //! - [`status`] — the status table. **One numbering for every guest**: the
 //!   codes below keep their values for good, and a guest that needs more
 //!   appends after them. The Go side decodes the table once.
-//! - [`transport`] (wasm32 only) — the `cipherstash_transport::transport_send`
-//!   host import, wrapped so a guest performs one HTTP request as a safe
-//!   call and gets both response buffers back through the registry.
+//! - [`transport`] — the `cipherstash_transport::transport_send` host import
+//!   (wasm32 only), wrapped so a guest performs one HTTP request as a safe
+//!   call and gets both response buffers back through the registry
+//!   ([`transport::reclaim`], on every target).
 //! - [`headers`] — the `name: value` line format request and response
 //!   headers cross the import in.
 //! - [`value`] — [`HostValue`](value::HostValue), a value a guest hands its
@@ -88,11 +92,11 @@
 //! host serializes calls into one instance, and during an export the host's
 //! imports may re-enter the guest only through `se_alloc`.
 //!
-//! The crate builds natively too — the registry, the header format and the
-//! export lifecycle have no wasm in them and are unit-tested on the host —
-//! but only the wasm32
-//! build has an ABI: on any other target the export and import modules do
-//! not exist, so a native library built over this crate exports no `se_*`
+//! The crate builds natively too — the registry, the header format, the
+//! export lifecycle, the pair validation and the response reclaim have no
+//! wasm in them and are unit-tested on the host and under Miri — but only
+//! the wasm32 build has an ABI: on any other target the exports and the
+//! import do not exist, so a native library built over this crate exports no `se_*`
 //! symbol at all rather than a silently wrong one (the packed result would
 //! truncate a 64-bit pointer). A native backend, when it comes, adds its own
 //! export and import modules beside these and swaps the registry's
@@ -103,11 +107,11 @@ pub mod buffers;
 pub mod call;
 pub mod headers;
 pub mod last_error;
+pub mod memory;
 pub mod status;
 pub mod step;
+pub mod transport;
 pub mod value;
 
 #[cfg(target_arch = "wasm32")]
 pub mod abi;
-#[cfg(target_arch = "wasm32")]
-pub mod transport;

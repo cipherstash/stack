@@ -25,8 +25,8 @@ thiserror = { workspace = true }
 # crosses to the host as a transport frame.
 vitaminc-aead = { workspace = true }
 vitaminc-aead-frame = { workspace = true }
-# `HostValue::Bytes` holds its bytes in `Protected`, and `transport`
-# (wasm32-only) uses `OpaqueDebug` for its response, whose body can carry
+# `HostValue::Bytes` holds its bytes in `Protected`, and `transport` uses
+# `OpaqueDebug` for its response, whose body can carry
 # wrapped key material or a credential and so never prints.
 vitaminc-protected = { workspace = true }
 

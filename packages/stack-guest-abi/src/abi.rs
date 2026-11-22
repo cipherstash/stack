@@ -35,13 +35,14 @@
 //! As the vitaminc guest: every export validates its pointer/length pairs
 //! against linear memory before any unsafe construction ([`input`]; null
 //! with nonzero length rejected), and invalid input yields `STATUS_ENCODING`
-//! rather than a trap. A guest wraps each of its *own* exports in a
+//! rather than a trap. The validation lives in [`crate::memory`], which
+//! builds natively so Miri runs it; this module only names linear memory. A guest wraps each of its *own* exports in a
 //! `catch_unwind`, belt-and-braces for a hypothetical unwind build —
 //! wasm32-wasip1 aborts on panic; the two exports here need none, since
 //! neither has a panic path (allocation goes through `try_reserve_exact`
 //! and release through the registry). A failure is a status number, and
 //! `se_last_error` has the error behind it, encoded under the rule on
-//! `stack-profile`'s `ErrorPayload` ([`last_error`]): no plaintext, key,
+//! `stack-profile`'s `ErrorPayload` ([`crate::last_error`]): no plaintext, key,
 //! token, ciphertext or context value is ever in it.
 //!
 //! Wasm modules are single-threaded; the host must serialize calls into one
@@ -52,11 +53,11 @@
 //! by depending on it and defines only the exports that are its own.
 
 use vitaminc_protected::Protected;
-use zeroize::Zeroize;
 
 use crate::buffers;
 use crate::call;
-use crate::last_error;
+pub use crate::memory::wipe_input;
+use crate::memory::GuestMemory;
 
 /// Run an export's body through [`call::run`] — clear the last error, run
 /// `f` (a panic is an internal failure), clear it again on success or make
@@ -74,7 +75,7 @@ pub fn export(f: impl FnOnce() -> Result<Vec<u8>, u32>) -> u64 {
 /// The full error behind the most recent failed export, as a packed buffer
 /// result: a transport-frame map of `code`, `message`, `help`, `url`
 /// (when set), `severity`, `fields` and `causes` (see
-/// [`last_error::encode`]). Zero when there is none — no export has failed
+/// [`crate::last_error::encode`]). Zero when there is none — no export has failed
 /// since the last success, or the error was already handed over.
 ///
 /// The host calls it only after a non-zero status, copies the buffer out
@@ -127,88 +128,32 @@ fn address(ptr: *mut u8) -> u32 {
     ptr as usize as u32
 }
 
-/// Current linear-memory size in bytes. `u64` because a full 4 GiB memory
-/// (65536 pages) overflows a 32-bit `usize`.
-fn linear_memory_bytes() -> u64 {
-    core::arch::wasm32::memory_size::<0>() as u64 * 65536
-}
-
-/// Borrow a host-supplied `(ptr, len)` pair, validating before any slice
-/// exists: null-with-nonzero-length is rejected (treating it as empty would
-/// silently drop whatever bytes the host meant to pass), the length must be
-/// under `isize::MAX`, and the whole range must lie inside the current
-/// linear memory. A pair that fails validation yields `STATUS_ENCODING`; a
-/// pair that passes can still name the wrong bytes — the host owns its
-/// pointers — but can never fault or over-read past linear memory.
+/// Borrow a host-supplied `(ptr, len)` pair from linear memory:
+/// [`GuestMemory::input`] over [`GuestMemory::linear`]. A pair that fails
+/// validation yields `STATUS_ENCODING`; a pair that passes can still name
+/// the wrong bytes (the host owns its pointers) but can never fault or
+/// over-read past linear memory.
 ///
 /// # Safety
 ///
-/// The bounds check is what keeps the read inside linear memory; it cannot
-/// see who owns the range or for how long, and that is what the caller
-/// promises. `ptr`/`len` must name a buffer the host wrote and still owns
-/// (one it obtained from [`se_alloc`], or an empty range), and that buffer
-/// must stay allocated and unwritten for the whole of `'a` — in practice,
-/// the borrow must end before the export returns and before any wipe of an
-/// overlapping range ([`wipe_input`], [`take_plaintext`]). The lifetime is
-/// otherwise unconstrained, so a caller choosing `'static` over a range it
-/// is about to free would read freed memory: that is the promise, not a
-/// property this function can check.
+/// As for [`GuestMemory::input`]: `ptr`/`len` must name a buffer the host
+/// wrote and still owns, and that buffer must stay allocated and unwritten
+/// for the whole of `'a`.
 pub unsafe fn input<'a>(ptr: *const u8, len: u32) -> Result<&'a [u8], u32> {
-    let refuse = || last_error::malformed("a pointer/length pair is outside guest memory");
-    let len = len as usize;
-    if len == 0 {
-        return Ok(&[]);
-    }
-    if ptr.is_null() || len > isize::MAX as usize {
-        return Err(refuse());
-    }
-    let end = (ptr as usize).checked_add(len).ok_or_else(refuse)?;
-    if end as u64 > linear_memory_bytes() {
-        return Err(refuse());
-    }
-    // SAFETY: non-null, in-bounds of linear memory, and under `isize::MAX`;
-    // wasm linear memory is fully initialized (fresh pages are zero), so
-    // reading the range as bytes is defined. That it stays allocated and
-    // unwritten for `'a` is the caller's contract, above.
-    Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
+    // SAFETY: the caller's contract is the one `GuestMemory::input` needs.
+    unsafe { GuestMemory::linear().input(ptr, len) }
 }
 
-/// Zeroize a validated input range in place (without freeing it — the host
-/// still owns the buffer and will `se_dealloc` it after the call).
+/// Take a plaintext input out of the host's buffer and wipe the buffer:
+/// [`GuestMemory::take_plaintext`] over [`GuestMemory::linear`]. Call it
+/// before any other buffer is borrowed.
 ///
 /// # Safety
 ///
-/// The range must have passed [`input`] validation and carry no outstanding
-/// borrows.
-pub unsafe fn wipe_input(ptr: *mut u8, len: u32) {
-    if ptr.is_null() || len == 0 {
-        return;
-    }
-    unsafe { std::slice::from_raw_parts_mut(ptr, len as usize) }.zeroize();
-}
-
-/// Take a plaintext input out of the host's buffer and wipe the buffer.
-///
-/// An export that holds its decoded value across a host round trip would
-/// otherwise keep the borrow of the host buffer alive for the whole call.
-/// Copying into a `Protected` first lets the original be wiped immediately:
-/// the plaintext then exists for the duration of the call and no longer,
-/// instead of sitting in linear memory until the host gets round to
-/// `se_dealloc`.
-///
-/// Call it before any other buffer is borrowed, deliberately. The wipe
-/// writes through `&mut`, so no other `&[u8]` into linear memory may be
-/// live — and a host that aliases its value range onto another argument
-/// therefore reads zeros there, which that argument's parser rejects.
-///
-/// # Safety
-///
-/// `ptr`/`len` must name a host buffer the caller is done with; it is zeroed
+/// As for [`GuestMemory::take_plaintext`]: `ptr`/`len` must name a host
+/// buffer the caller is done with, with no borrow of it live; it is zeroed
 /// before this returns.
 pub unsafe fn take_plaintext(ptr: *mut u8, len: u32) -> Result<Protected<Vec<u8>>, u32> {
-    // SAFETY: the borrow lives only for the copy on this line, inside the
-    // call, over a buffer the caller has promised is the host's and live.
-    let taken = Protected::new(unsafe { input(ptr, len)? }.to_vec());
-    unsafe { wipe_input(ptr, len) };
-    Ok(taken)
+    // SAFETY: the caller's contract is the one `take_plaintext` needs.
+    unsafe { GuestMemory::linear().take_plaintext(ptr, len) }
 }

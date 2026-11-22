@@ -814,10 +814,15 @@ buffers from them. Its unit tests run under Miri with strict provenance:
 mise run miri:stack-guest-abi           # nightly + the miri component
 ```
 
-Only the native half (the buffer registry, headers, status table) is
-interpretable; the wasm32-only `abi` and `transport` modules read the wasm
-`memory_size` intrinsic, so their hostile-input behaviour is pinned from the
-Go side (`mise run go:test`).
+That covers the code that turns a host `(ptr, len)` pair into a slice
+(`memory.rs`, run over a buffer the test owns), the buffer registry, and the
+reclaim of the transport's response buffers, as well as the headers and the
+status table. Miri cannot run wasm, so the `memory_size` intrinsic and the
+host imports stay outside it. The exports that call them (`abi.rs`,
+`transport::send`, and the guests' own `abi.rs` and `host.rs`) only pass
+pointers to those functions, and their hostile-input behaviour is pinned from
+the Go side (`mise run go:test`). Keep new pointer handling in
+`stack-guest-abi`, where Miri reaches it, not in a guest.
 
 ### Mutation testing
 
