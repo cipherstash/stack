@@ -190,10 +190,15 @@ bound: `BETWEEN` needs EQL v4's range query domains and is not produced yet.
 (`EqlMatch`: 3-grams of the lower-cased text, plus each two-letter word whole
 as one more token, `k = 6`, a 2048-bit filter) for stored values and queries
 alike. The word token makes a two-letter surname such as "Ng" storable and
-searchable: `@@` with "ng" finds "Ng" and "Mike Ng", not "Nguyen". A query's
-two-letter words must be whole words of the row (words split on space,
-comma, semicolon, colon and exclamation mark), so "Mike Ng" does not find
-"Mike Nguyen", and a query is not a plain substring test. The configuration is part of the stored
+searchable: `@@` with "ng" finds "Ng" and "Mike Ng", not "Nguyen" (words
+split on space, comma, semicolon, colon and exclamation mark). A query keeps
+its two-letter words only when it cuts no 3-gram, which is when the whole
+query is one two-letter word: "Mike Ng" is its 3-grams alone, so it finds
+"Mike Ng" and "Mike Nguyen", and "san fr" finds "San Francisco". A query's
+filter is a `QueryBloomFilter`, with `BloomFilter`'s JSON. The word token is
+one more token per two-letter word in every stored value that holds one,
+unique to the word, so rows holding "Ng" can be told from rows holding
+"Nguyen". A query is not a plain substring test. The configuration is part of the stored
 format, so changing it means a new domain or payload version. A filter can
 match a row that does not contain the query, so re-check after decrypting
 where that matters. Write the stored column on the left, `col @@ query`: the

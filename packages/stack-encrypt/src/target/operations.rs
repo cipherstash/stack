@@ -1132,8 +1132,9 @@ where
 /// without a copy. `$lend` is how a borrow of `S` becomes the source its
 /// scheme reads. In [`Owned`] mode a `wipe` term hands the value to its
 /// scheme, which wipes it. A `view` term (match) reads a borrow in either
-/// mode, and then wipes a value it was handed. Either kind wipes a value it
-/// was handed when the context is refused ([`WipeSource`]).
+/// mode through `$derive`, called as `Term::encrypt_from` is, and then
+/// wipes a value it was handed. Either kind wipes a value it was handed
+/// when the context is refused ([`WipeSource`]).
 macro_rules! term_operation {
     (
         $(#[$doc:meta])*
@@ -1177,7 +1178,7 @@ macro_rules! term_operation {
     };
     (
         $(#[$doc:meta])*
-        $function:ident, $output:ty, view, [$($generics:tt)*], [$($bounds:tt)*]
+        $function:ident, $output:ty, view($derive:expr), [$($generics:tt)*], [$($bounds:tt)*]
     ) => {
         $(#[$doc])*
         pub fn $function<'s, S, K: 'static, M: WipeSource<'s, S>, $($generics)*>(
@@ -1193,7 +1194,7 @@ macro_rules! term_operation {
                     let guarded = Guarded::<M, S>::new(source);
                     let (query, stored) = (cx.query(), cx.stored());
                     match cx.validated() {
-                        Ok(ctx) => <$output as Term<&S, K, _>>::encrypt_from(
+                        Ok(ctx) => ($derive)(
                             guarded.source().view(),
                             cipher,
                             CallerContext::query_nonempty(ctx),
@@ -1216,8 +1217,30 @@ term_operation!(
 );
 term_operation!(
     /// The match term of any text `S` under the context the tree hands it,
-    /// tokenised and hashed as `O` declares.
-    matching, crate::sem::MatchTerms<O>, view, [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
+    /// tokenised and hashed as `O` declares: a stored value's filter, which
+    /// holds every token the text cuts.
+    matching, crate::sem::MatchTerms<O>,
+    view(<crate::sem::MatchTerms<O> as Term<&S, K, _>>::encrypt_from),
+    [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
+);
+term_operation!(
+    /// The match term a query of the text `S` sends, under the context the
+    /// tree hands it: the filter of the tokens the query keeps, which a
+    /// stored filter holds when the row holds them. With
+    /// [`short_words`](crate::sem::MatchOptions::short_words) on, a query's
+    /// short words are tokens of the filter only when it cuts no n-gram:
+    /// "Ng" asks for the word `ng`, and "Mike Ng" for its trigrams alone, so
+    /// it finds "Mike Nguyen" as well as "Mike Ng". With the option off it
+    /// is [`matching`]'s term.
+    ///
+    /// What a field query of a match index derives
+    /// ([`Index::query_operation`](super::Index::query_operation)). It
+    /// refuses nothing [`matching`] does not: a query is prepared first
+    /// ([`Supports::prepare`](crate::op::Supports::prepare)), which refuses
+    /// text that cuts no token.
+    matching_query, crate::sem::MatchTerms<O>,
+    view(crate::sem::match_query),
+    [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
 );
 term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.

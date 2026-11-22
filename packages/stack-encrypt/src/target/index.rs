@@ -62,7 +62,9 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use super::context::{AeadContext, CallerContext};
-use super::operations::{ciphertext, equality, json_terms, matching, ope, open, ore, ore_block};
+use super::operations::{
+    ciphertext, equality, json_terms, matching, matching_query, ope, open, ore, ore_block,
+};
 use super::source::{Owned, WipeSource};
 use super::{
     DecryptField, DecryptSource, Decryptable, Decryption, EncryptTarget, Encryption,
@@ -247,7 +249,8 @@ impl fmt::Display for IndexSpec {
 ///
 /// An index does not seal anything. [`indexed`] puts a ciphertext beside the
 /// indexes of a field; [`operation`](Self::operation) on its own is the term
-/// alone, which is the query side.
+/// alone, and [`query_operation`](Self::query_operation) is the term a query
+/// sends.
 ///
 /// The trait is open: an index defined in another crate implements it by
 /// composing this module's public operations, as the four here do.
@@ -271,6 +274,20 @@ pub trait Index<S> {
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
         S: 's;
+    /// The description that derives the term a query of `S` sends, under
+    /// the [`CallerContext`] it is handed when it runs: what a field query
+    /// derives. By default [`operation`](Self::operation)'s, since most
+    /// indexes send what they store. A match index cuts a query differently
+    /// from a stored value ([`matching_query`]), so it overrides this. An
+    /// index that wraps another forwards both.
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        self.operation()
+    }
 }
 
 /// The equality (exact-match) index: one PRF block over the whole value.
@@ -407,6 +424,14 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
     {
         matching()
     }
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        matching_query()
+    }
 }
 impl<S> Index<S> for Ore
 where
@@ -504,6 +529,28 @@ pub trait Indexes<S> {
     where
         S: 's,
         M: WipeSource<'s, S>;
+    /// The description that derives every term a query of `S` sends, each
+    /// index's [`query_operation`](Index::query_operation), under the one
+    /// [`CallerContext`] it is handed and settled in one batch, as
+    /// [`operations`](Self::operations) settles the stored terms. A set
+    /// that holds a [`Match`](struct@Match) index sends the filter of the
+    /// tokens the query keeps, where [`operations`](Self::operations)
+    /// derives a stored value's.
+    ///
+    /// By default [`operations`](Self::operations)'s, since most indexes
+    /// send what they store. Every set in this crate derives each index's
+    /// query term; a set defined elsewhere that holds a
+    /// [`Match`](struct@Match) index overrides this, as an index that wraps
+    /// another forwards [`Index::query_operation`].
+    fn query_operations<'s, K: 'static, M>(
+        &self,
+    ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+    where
+        S: 's,
+        M: WipeSource<'s, S>,
+    {
+        self.operations()
+    }
     /// The one index of type `I` in this set, for the query side, where a
     /// query asks one index for one term and needs no ciphertext; its
     /// [`operation`](Index::operation) is that term alone.
@@ -591,13 +638,23 @@ macro_rules! single_index {
             {
                 self.operation()
             }
+            fn query_operations<'s, K: 'static, M>(
+                &self,
+            ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+            where
+                S: 's,
+                M: WipeSource<'s, S>,
+            {
+                self.query_operation()
+            }
         }
     )+};
 }
 single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] OreBlock, [] Json, [] IndexSpec);
 
-/// A tuple of indexes: each index's operation, zipped left to right, and the
-/// nested pairs `zip` builds flattened back into one tuple of terms.
+/// A tuple of indexes: each index's operation (or query operation), zipped
+/// left to right, and the nested pairs `zip` builds flattened back into one
+/// tuple of terms.
 macro_rules! tuple_of_indexes {
     ($(($($name:ident $at:tt),+) => $nested:pat,)+) => {$(
         impl<S, $($name: Index<S>),+> Indexes<S> for ($($name,)+) {
@@ -612,14 +669,24 @@ macro_rules! tuple_of_indexes {
                 S: 's,
                 M: WipeSource<'s, S>,
             {
-                tuple_of_indexes!(@zip self, $($at),+)
+                tuple_of_indexes!(@zip self, operation, $($at),+)
+                    .map(|$nested| ($($name,)+))
+            }
+            fn query_operations<'s, K: 'static, M>(
+                &self,
+            ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+            where
+                S: 's,
+                M: WipeSource<'s, S>,
+            {
+                tuple_of_indexes!(@zip self, query_operation, $($at),+)
                     .map(|$nested| ($($name,)+))
             }
         }
         tuple_of_indexes!(@select [$($name),+] $($name $at),+);
     )+};
-    (@zip $self:ident, $first:tt $(, $rest:tt)*) => {
-        $self.$first.operation()$(.zip($self.$rest.operation::<K, super::super::Borrowed>()))*
+    (@zip $self:ident, $operation:ident, $first:tt $(, $rest:tt)*) => {
+        $self.$first.$operation()$(.zip($self.$rest.$operation::<K, super::super::Borrowed>()))*
     };
     // One `Select` impl per position, each over the whole tuple.
     (@select [$($all:ident),+] $name:ident $at:tt $(, $rest:ident $rest_at:tt)*) => {
@@ -677,6 +744,29 @@ impl<S, I: Index<S>> Indexes<S> for Vec<I> {
                     terms
                 })
         })
+    }
+    fn query_operations<'s, K: 'static, M>(
+        &self,
+    ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+    where
+        S: 's,
+        M: WipeSource<'s, S>,
+    {
+        let mut indexes = self.iter();
+        let Some(first) = indexes.next() else {
+            return Encryption::failed(crate::PlanError::EmptyIndexes.into());
+        };
+        indexes.fold(
+            first.query_operation().map(|term| vec![term]),
+            |terms, index| {
+                terms
+                    .zip(index.query_operation::<K, super::Borrowed>())
+                    .map(|(mut terms, term)| {
+                        terms.push(term);
+                        terms
+                    })
+            },
+        )
     }
 }
 

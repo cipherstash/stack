@@ -88,14 +88,16 @@
 //! any token.
 //!
 //! With [`MatchOptions::short_words`] on, each word shorter than the n-gram
-//! length (and at least 2 characters) adds one token: the word itself, under
-//! the same PRF and a domain of its own, folded into the same filter by the
-//! same `k` positions and matched by the same containment rule. That is one
-//! extra token per short word and no new class of leakage. The token is
-//! specific to the word, so someone who clusters tokens across rows can tell
-//! the rows holding the word "Ng" from those holding "Nguyen", where before
-//! only the boundary trigram `" ng"` they share was visible. No bigram of a
-//! longer word is ever indexed.
+//! length (and at least 2 characters) adds one token to a stored value's
+//! filter: the word itself, under the same PRF and a domain of its own,
+//! folded into the same filter by the same `k` positions and matched by the
+//! same containment rule. That is one more token per short word, and the
+//! token is unique to the word: someone who clusters tokens across rows can
+//! tell the rows holding the word "Ng" from those holding "Nguyen", where
+//! before only the boundary trigram `" ng"` they share was visible. No
+//! bigram of a longer word is ever indexed. A query sends its word tokens
+//! only when it cuts no n-gram ("Ng"); a query that cuts one ("Mike Ng")
+//! sends its n-grams alone, as it would with the option off.
 //!
 //! This is a fresh (v2) term format: PRF inputs are framed with vitaminc's PAE
 //! context encoding, so terms are intentionally **not** byte-compatible with
@@ -163,6 +165,7 @@
 pub(crate) mod query;
 mod tokenize;
 
+pub(crate) use tokenize::Side;
 pub use tokenize::Tokenizer;
 
 use std::fmt;
@@ -720,20 +723,28 @@ pub struct MatchOptions {
     /// derives the bits of an n-gram of the same characters, and folds into
     /// the same filter by the same `k` positions. Stored, "Ng" is one token
     /// rather than the empty filter, and "Mike Ng" carries its trigrams and
-    /// `ng`. Queried, "Ng" is one token and is accepted, and "Mike Ng" asks
-    /// for its trigrams and `ng`: every short word of a query must be a
-    /// whole word of the row, so "Mike Ng" does not find "Mike Nguyen",
-    /// which it would with the option off. A query that cuts nothing at all,
-    /// such as one letter, is still refused
-    /// ([`TermError::EmptyTermText`]).
+    /// `ng`.
     ///
-    /// **What it reveals.** One more token per short word, under the same
-    /// PRF, in the same filter, matched by the same containment rule, so
-    /// there is no new class of leakage. The token is specific to the word:
+    /// A query keeps its word tokens only when it cuts no n-gram, which is
+    /// when the whole query is one short word. "Ng" is one word token and is
+    /// accepted: it finds the rows holding the word "Ng" ("Ng", "Mike Ng"),
+    /// and not "Nguyen". "Mike Ng" cuts trigrams, so it asks for its
+    /// trigrams alone, as with the option off: it finds "Mike Ng", and "Mike
+    /// Nguyen" too, so a name typed in part still finds its row. So does
+    /// "Li Wu": its trigrams cross the space. A query that cuts nothing at
+    /// all, such as one letter, is still refused
+    /// ([`TermError::EmptyTermText`]). A query is verified by the tokens it
+    /// asks for, so its filter and its verify agree.
+    ///
+    /// **What it reveals.** One more token per short word in every stored
+    /// value that holds one, under the same PRF, in the same filter, matched
+    /// by the same containment rule. The token is unique to the word:
     /// someone who clusters tokens across rows can tell the rows holding the
     /// word "Ng" from those holding "Nguyen", where before only the boundary
-    /// trigram `" ng"` they share was visible. Only words shorter than an
-    /// n-gram get one, so no bigram of a longer word is ever indexed.
+    /// trigram `" ng"` they share was visible, and can count how many rows
+    /// hold it. A query of short words alone shows which word tokens it asks
+    /// for. Only words shorter than an n-gram get one, so no bigram of a
+    /// longer word is ever indexed.
     ///
     /// It takes an n-gram tokenizer of length at least 3: the
     /// [`Standard`](Tokenizer::Standard) tokenizer already emits whole words,
@@ -1165,13 +1176,20 @@ impl<T> RangeQuery<T> {
 pub struct QueryTokens(Zeroizing<tokenize::Tokens>);
 
 impl QueryTokens {
-    /// The tokens of `text` under `options`' tokenizer and case folding.
+    /// The tokens a query of `text` keeps under `options`' tokenizer and
+    /// case folding: its short words only when it cuts no n-gram
+    /// ([`Side::Query`]). The filter a query sends is derived from the same
+    /// cut, so a query verifies by exactly the tokens it asks for.
     ///
     /// # Errors
     ///
-    /// As for [`of`](Self::of).
+    /// [`TermError::Normalize`] for text with no normal form.
     pub(crate) fn under(text: &str, options: &MatchOptions) -> Result<Self, TermError> {
-        Ok(Self(Zeroizing::new(tokenize::tokens(text, options)?)))
+        Ok(Self(Zeroizing::new(tokenize::tokens(
+            text,
+            options,
+            Side::Query,
+        )?)))
     }
 
     /// The tokens of a query's `text` under `options`, or why the query is
@@ -1194,12 +1212,13 @@ impl QueryTokens {
     /// Whether `value` holds every one of these tokens, cut under the same
     /// `options` the tokens were: what [`MatchQuery`]'s `verify` asks, with
     /// the options a value rather than a type, so a match index declared as
-    /// data verifies by the same code. Each kind is held by its own kind: a
+    /// data verifies by the same code. The value is cut as it is stored,
+    /// with every token of both kinds. Each kind is held by its own kind: a
     /// short-word token of the query must be a short word of the value. No
     /// tokens verify nothing, and a value the index cannot normalize holds
     /// no token of any query.
     pub(crate) fn verify(&self, value: &str, options: &MatchOptions) -> bool {
-        let Ok(tokens) = tokenize::tokens(value, options) else {
+        let Ok(tokens) = tokenize::tokens(value, options, Side::Stored) else {
             return false;
         };
         let tokens = Zeroizing::new(tokens);
@@ -1272,11 +1291,12 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
     }
 }
 
-/// Derive a match term. Synchronous — see [`equality`]: validation and
-/// tokenization run before the PRF, the visitor folds blocks into positions.
-/// The tokenizer's tokens derive under [`MATCH_DOMAIN`] and the short-word
-/// tokens under [`MATCH_WORD_DOMAIN`], each bound to `context`, and both
-/// fold into the one filter.
+/// Derive a match term of `text` cut for `side` ([`Side`]): a stored
+/// value's filter or a query's. Synchronous — see [`equality`]: validation
+/// and tokenization run before the PRF, the visitor folds blocks into
+/// positions. The tokenizer's tokens derive under [`MATCH_DOMAIN`] and the
+/// short-word tokens under [`MATCH_WORD_DOMAIN`], each bound to `context`,
+/// and both fold into the one filter.
 ///
 /// Text that cuts no token (empty, separator-only, or shorter than the
 /// n-gram length with no short word) is the empty filter: no position set,
@@ -1290,6 +1310,7 @@ fn match_term<O>(
     text: &str,
     context: Context<'_>,
     options: MatchOptions,
+    side: Side,
 ) -> Result<MatchTerms<O>, TermError> {
     let mask = options.validate()?;
     // The PRF takes the tokens by value and moves each `String`'s buffer
@@ -1298,7 +1319,7 @@ fn match_term<O>(
     let tokenize::Tokens {
         tokenizer,
         short_words,
-    } = tokenize::tokens(text, &options)?;
+    } = tokenize::tokens(text, &options, side)?;
     // Held wiped-on-drop until the PRF takes them, so a failure deriving
     // the tokenizer's tokens does not free the words unwiped.
     let mut short_words = Zeroizing::new(short_words);
@@ -1340,6 +1361,29 @@ fn bloom_positions(
         .map_err(TermError::from_prf)
 }
 
+/// The match term of `text` cut for `side`, through the keyset `cipher`
+/// holds: derived now when the keyset is loaded, else when it has loaded.
+/// Under the local HMAC backend the returned [`Pending`] carries no
+/// requests.
+fn match_pending<'a, K, O>(
+    cipher: &'a KeysetCipher<'_, K>,
+    text: &str,
+    context: Context<'_>,
+    options: MatchOptions,
+    side: Side,
+) -> Pending<'a, MatchTerms<O>, K>
+where
+    O: MatchConfig,
+{
+    match cipher.loaded_state() {
+        Some(keyset) => {
+            let term = match_term(&keyset.prf, text, context, options, side).map_err(Error::from);
+            Pending::ready(cipher, term)
+        }
+        None => match_deferred(cipher, text, context, options, side),
+    }
+}
+
 /// The match term of `text`, through a keyset that is not loaded
 /// yet. The pending keeps a copy of the text, wiped on drop, and derives
 /// the term when it has loaded the keyset.
@@ -1348,6 +1392,7 @@ fn match_deferred<'a, K, O>(
     text: &str,
     context: Context<'_>,
     options: MatchOptions,
+    side: Side,
 ) -> Pending<'a, MatchTerms<O>, K>
 where
     O: MatchConfig,
@@ -1355,8 +1400,30 @@ where
     let text = Zeroizing::new(text.to_owned());
     let context = context.into_owned();
     cipher.deferred(move |keyset| {
-        match_term(&keyset.prf, &text, context, options).map_err(Error::from)
+        match_term(&keyset.prf, &text, context, options, side).map_err(Error::from)
     })
+}
+
+/// The match term a query of `source` sends under `O`'s options: the
+/// filter of the tokens the query keeps ([`Side::Query`]), the tokens its
+/// [`QueryTokens`] verify a row by. What a field query of a match index
+/// derives ([`matching_query`](crate::target::matching_query)), called as
+/// [`Term::encrypt_from`] is.
+pub(crate) fn match_query<'a, 'c, K, O>(
+    source: impl AsRef<str>,
+    cipher: &'a KeysetCipher<'_, K>,
+    context: NonEmpty<impl IntoPrfContext<'c>>,
+) -> Pending<'a, MatchTerms<O>, K>
+where
+    O: MatchConfig,
+{
+    match_pending(
+        cipher,
+        source.as_ref(),
+        context.into_prf_context(),
+        O::options(),
+        Side::Query,
+    )
 }
 
 /// A match term of any text source, generated under `O`'s options. Under
@@ -1379,15 +1446,13 @@ where
     where
         Self: 'a,
     {
-        let context = context.into_prf_context().into_owned();
-        match cipher.loaded_state() {
-            Some(keyset) => {
-                let term = match_term(&keyset.prf, source.as_ref(), context, O::options())
-                    .map_err(Error::from);
-                Pending::ready(cipher, term)
-            }
-            None => match_deferred(cipher, source.as_ref(), context, O::options()),
-        }
+        match_pending(
+            cipher,
+            source.as_ref(),
+            context.into_prf_context(),
+            O::options(),
+            Side::Stored,
+        )
     }
 }
 
@@ -2085,8 +2150,9 @@ impl<K> KeysetCipher<'_, K> {
     /// [`MatchQuery`], and comes from a query
     /// (a field reference's `matches(..)`), which refuses a query of such
     /// text ([`TermError::EmptyTermText`]) because its filter would match
-    /// every row; this method does not know which it is deriving and
-    /// refuses nothing.
+    /// every row, and keeps a query's short words only when it cuts no
+    /// n-gram ([`MatchOptions::short_words`]); this method derives the
+    /// stored filter and refuses nothing.
     pub fn match_terms<'c, O>(
         &self,
         text: &str,
@@ -2095,7 +2161,7 @@ impl<K> KeysetCipher<'_, K> {
     where
         O: MatchConfig + MaybeSend,
     {
-        self.match_terms_under(text, descriptor, O::options())
+        self.match_terms_under(text, descriptor, O::options(), Side::Stored)
     }
 
     /// [`equality_term`](Self::equality_term) of one scalar the caller has
@@ -2123,29 +2189,24 @@ impl<K> KeysetCipher<'_, K> {
         }
     }
 
-    /// [`match_terms`](Self::match_terms) under runtime options, for the
-    /// `dynamic` path, whose plan carries a match index's options as data
-    /// (an `IndexSpec::Match`). Not public: the typed API keeps the options
-    /// on the type so a stored field and its probe cannot disagree, and a
-    /// binding reaches this only through a plan that names the options for
-    /// both.
-    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    /// [`match_terms`](Self::match_terms) under runtime options and cut for
+    /// `side`, for the `dynamic` path, whose plan carries a match index's
+    /// options as data (an `IndexSpec::Match`) and which derives a stored
+    /// value's filter and a query's alike. Not public: the typed API keeps
+    /// the options on the type so a stored field and its probe cannot
+    /// disagree, and a binding reaches this only through a plan that names
+    /// the options for both.
     pub(crate) fn match_terms_under<'c, O>(
         &self,
         text: &str,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
         options: MatchOptions,
+        side: Side,
     ) -> Pending<'_, MatchTerms<O>, K>
     where
         O: MatchConfig + MaybeSend,
     {
-        match self.loaded_state() {
-            Some(keyset) => {
-                let term = match_term(&keyset.prf, text, descriptor.into_prf_context(), options);
-                Pending::ready(self, term.map_err(Error::from))
-            }
-            None => match_deferred(self, text, descriptor.into_prf_context(), options),
-        }
+        match_pending(self, text, descriptor.into_prf_context(), options, side)
     }
 
     /// Generate an order-revealing (CLLW ORE) term for a range-queryable value
@@ -2408,6 +2469,185 @@ mod tests {
             );
         }
 
+        #[test]
+        fn a_query_that_cuts_an_ngram_keeps_no_short_word() {
+            let tokens = QueryTokens::of_query("Mike Ng", &options()).expect("a query");
+            assert!(
+                tokens.0.short_words.is_empty(),
+                "\"Mike Ng\" keeps its trigrams alone: {:?}",
+                tokens.0.short_words
+            );
+            assert_eq!(
+                tokens.0.tokenizer,
+                ["mik", "ike", "ke ", "e n", " ng"],
+                "every trigram of the whole text"
+            );
+            for row in ["Mike Ng", "Mike Nguyen", "mike ngo"] {
+                assert!(
+                    tokens.verify(row, &options()),
+                    "\"Mike Ng\" verifies {row:?}"
+                );
+            }
+            assert!(
+                !tokens.verify("Ng", &options()),
+                "\"Ng\" holds none of its trigrams"
+            );
+        }
+
+        /// The filter a query sends, against the tokens it verifies by.
+        mod given_a_query_filter {
+            use super::*;
+
+            fn prf() -> HmacSha256Prf {
+                HmacSha256Prf::new(Protected::new([7; 32]))
+            }
+
+            fn context() -> Context<'static> {
+                Context::from_encoded(&b"users/name"[..])
+            }
+
+            /// The filter of `tokens`, each kind under its own domain, as
+            /// [`match_term`] folds them.
+            fn filter_of(prf: &HmacSha256Prf, tokens: &tokenize::Tokens) -> MatchTerms {
+                let mask = options().validate().expect("valid");
+                let mut positions = bloom_positions(
+                    prf,
+                    tokens.tokenizer.clone(),
+                    MATCH_DOMAIN,
+                    &context(),
+                    3,
+                    mask,
+                )
+                .expect("grams");
+                positions.extend(
+                    bloom_positions(
+                        prf,
+                        tokens.short_words.clone(),
+                        MATCH_WORD_DOMAIN,
+                        &context(),
+                        3,
+                        mask,
+                    )
+                    .expect("words"),
+                );
+                MatchTerms::normalised(positions)
+            }
+
+            fn derive(text: &str, side: Side) -> MatchTerms {
+                match_term(&prf(), text, context(), options(), side).expect("derives")
+            }
+
+            #[test]
+            fn a_query_of_ngrams_sends_the_filter_of_its_ngrams_alone() {
+                let query = derive("Mike Ng", Side::Query);
+                let without: MatchTerms = match_term(
+                    &prf(),
+                    "Mike Ng",
+                    context(),
+                    MatchOptions::default(),
+                    Side::Stored,
+                )
+                .expect("derives");
+                assert_eq!(
+                    query, without,
+                    "the filter the index without the option stores"
+                );
+                assert!(
+                    derive("Mike Nguyen", Side::Stored).contains(&query),
+                    "which \"Mike Nguyen\" holds"
+                );
+                assert!(
+                    derive("Mike Ng", Side::Stored).contains(&query)
+                        && derive("Mike Ng", Side::Stored) != query,
+                    "\"Mike Ng\" holds it, and stores its word beside it"
+                );
+            }
+
+            #[test]
+            fn a_query_of_one_short_word_sends_the_filter_the_word_stores() {
+                let query = derive("Ng", Side::Query);
+                assert_eq!(query, derive("Ng", Side::Stored), "one word token");
+                assert!(
+                    derive("Mike Ng", Side::Stored).contains(&query),
+                    "held by a row holding the word"
+                );
+                assert!(
+                    !derive("Mike Nguyen", Side::Stored).contains(&query),
+                    "and not by a row holding a longer word it begins"
+                );
+            }
+
+            /// Text of short and long words, so a query cuts n-grams, words,
+            /// both or neither.
+            fn text() -> impl Strategy<Value = String> {
+                prop::collection::vec(
+                    prop::sample::select(vec!['a', 'n', 'g', 'é', '李', ' ', ',']),
+                    0..10,
+                )
+                .prop_map(|chars| chars.into_iter().collect())
+            }
+
+            proptest! {
+                /// A query's filter is the filter of exactly the tokens it
+                /// verifies by, so no row the filter rejects would verify.
+                #[test]
+                fn the_filter_is_the_filter_of_the_tokens_it_verifies_by(query in text()) {
+                    let prf = prf();
+                    let tokens = QueryTokens::under(&query, &options()).expect("normalizes");
+                    prop_assert_eq!(
+                        derive(&query, Side::Query),
+                        filter_of(&prf, &tokens.0),
+                        "the filter of {:?}",
+                        query
+                    );
+                }
+
+                /// No false negative: a row that verifies holds the query's
+                /// filter, whatever the two texts.
+                #[test]
+                fn a_row_that_verifies_holds_the_filter(query in text(), row in text()) {
+                    if let Ok(tokens) = QueryTokens::of_query(&query, &options()) {
+                        if tokens.verify(&row, &options()) {
+                            prop_assert!(
+                                derive(&row, Side::Stored).contains(&derive(&query, Side::Query)),
+                                "{:?} verifies {:?} and holds its filter",
+                                query,
+                                row
+                            );
+                        }
+                    }
+                }
+
+                /// A query finds the text it was cut from, and any text it
+                /// is a run of characters of when it cuts an n-gram: a name
+                /// typed in part finds its row.
+                #[test]
+                fn a_query_that_cuts_an_ngram_finds_every_text_it_is_part_of(
+                    row in text(),
+                    bounds in (0usize..10, 0usize..10),
+                ) {
+                    let chars: Vec<char> = row.chars().collect();
+                    let (start, end) = (bounds.0.min(chars.len()), bounds.1.min(chars.len()));
+                    let query: String = chars[start.min(end)..start.max(end)].iter().collect();
+                    let tokens = QueryTokens::under(&query, &options()).expect("normalizes");
+                    if !tokens.0.tokenizer.is_empty() {
+                        prop_assert!(
+                            tokens.verify(&row, &options()),
+                            "{:?} verifies {:?}",
+                            query,
+                            row
+                        );
+                        prop_assert!(
+                            derive(&row, Side::Stored).contains(&derive(&query, Side::Query)),
+                            "{:?} holds the filter of {:?}",
+                            row,
+                            query
+                        );
+                    }
+                }
+            }
+        }
+
         /// A word token is framed under its own domain, so it never sets
         /// the bits an n-gram of the same characters sets: pinned for
         /// `ng`, under a fixed key and the widest filter, where the two
@@ -2433,7 +2673,8 @@ mod tests {
             let prf = HmacSha256Prf::new(Protected::new([7; 32]));
             let context = Context::from_encoded(&b"users/name"[..]);
             let stored: MatchTerms =
-                match_term(&prf, "Mike Ng", context.clone(), options()).expect("derives");
+                match_term(&prf, "Mike Ng", context.clone(), options(), Side::Stored)
+                    .expect("derives");
             let mask = options().validate().expect("valid");
             let mut union = bloom_positions(
                 &prf,
@@ -2467,13 +2708,14 @@ mod tests {
                 "the trigrams of the whole text and the word"
             );
             let alone: MatchTerms =
-                match_term(&prf, "Ng", context.clone(), options()).expect("derives");
+                match_term(&prf, "Ng", context.clone(), options(), Side::Stored).expect("derives");
             assert!(
                 !alone.positions().is_empty() && stored.contains(&alone),
                 "\"Ng\" stores one token, which \"Mike Ng\" holds: {alone:?}"
             );
             let without: MatchTerms =
-                match_term(&prf, "Ng", context, MatchOptions::default()).expect("derives");
+                match_term(&prf, "Ng", context, MatchOptions::default(), Side::Stored)
+                    .expect("derives");
             assert!(
                 without.positions().is_empty(),
                 "without the option, \"Ng\" is the empty filter"

@@ -310,7 +310,7 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
     fields.extend(quote! { #context pub i: Identifier, });
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
-        let ty = term_type(eql, family, term, term.binding_newtype());
+        let ty = term_type(eql, family, term, query_term_newtype(eql, term));
         let attrs = term_field_attrs(eql, term, optional);
         fields.extend(if optional {
             quote! {
@@ -462,6 +462,20 @@ pub fn stored_term_newtype(eql: EqlVersion, domain: &Domain, term: Term) -> &'st
     }
 }
 
+/// The newtype of a query struct's `term` field. The term's own
+/// ([`Term::binding_newtype`]), except an EQL v4 match term:
+/// `QueryBloomFilter`, the same JSON as `BloomFilter`, into which Stack
+/// Encrypt derives the filter of the tokens a query keeps (its two-letter
+/// words only when it cuts no 3-gram), where a stored value's filter holds
+/// them all.
+pub fn query_term_newtype(eql: EqlVersion, term: Term) -> &'static str {
+    if eql == EqlVersion::V4 && term == Term::Bloom {
+        "QueryBloomFilter"
+    } else {
+        term.binding_newtype()
+    }
+}
+
 /// The Rust type of a struct field carrying `term`, in a struct of
 /// `family`. An EQL v4 order term is Stack Encrypt's own term over the
 /// family's plaintext, as [`Term::v4_format`] names it (`OreBlockTerm<Date>`,
@@ -514,7 +528,7 @@ fn term_field_attrs(eql: EqlVersion, term: Term, optional: bool) -> TokenStream 
 /// What a family module imports for its terms, in first-use order: the
 /// names it takes from its version's `terms` module, `Ciphertext` first
 /// (each stored struct's newtype, [`stored_term_newtype`], each query
-/// struct's, [`Term::binding_newtype`], and a v4 order term's JSON shape),
+/// struct's, [`query_term_newtype`], and a v4 order term's JSON shape),
 /// and the Stack Encrypt term types it names (`OreBlockTerm`, `OpeTerm`).
 struct FamilyTerms {
     terms: Vec<&'static str>,
@@ -540,7 +554,7 @@ fn family_terms<'d>(eql: EqlVersion, domains: impl Iterator<Item = &'d Domain>) 
                 }
                 _ => {
                     add(&mut used.terms, stored_term_newtype(eql, d, term));
-                    add(&mut used.terms, term.binding_newtype());
+                    add(&mut used.terms, query_term_newtype(eql, term));
                 }
             }
         }
@@ -591,7 +605,7 @@ fn render_query_projections(
         .map(|&term| {
             let ident = format_ident!("{}", query_projection_ident(family, domain, term));
             let fid = format_ident!("{}", term.json_key());
-            let tid = term_type(eql, family, term, term.binding_newtype());
+            let tid = term_type(eql, family, term, query_term_newtype(eql, term));
             let ops = Term::operators_for_terms(domain.terms)
                 .into_iter()
                 .filter(|op| Term::extractor_for_operator(domain.terms, op) == Some(term.extractor()))
@@ -1856,8 +1870,9 @@ mod tests {
     }
 
     /// A v4 search domain's stored filter is `SearchBloomFilter`, which takes
-    /// the empty filter of text too short for a 3-gram; `TextMatch` and every
-    /// query keep `BloomFilter`, which refuses that text. v3 is untouched.
+    /// the empty filter of text too short for a 3-gram; `TextMatch` keeps
+    /// `BloomFilter`, which refuses that text; every query's is
+    /// `QueryBloomFilter`, cut by the query's rule. v3 is untouched.
     #[test]
     fn a_v4_search_domain_stores_a_filter_that_may_be_empty() {
         let v4 = render_family_bindings(EqlVersion::V4, family("text"));
@@ -1885,18 +1900,23 @@ mod tests {
         );
         assert_eq!(
             field(&v4, "TextMatchQuery").as_deref(),
-            Some("pub bf: BloomFilter,")
+            Some("pub bf: QueryBloomFilter,")
         );
         assert_eq!(
             field(&v4, "TextSearchMatchQuery").as_deref(),
-            Some("pub bf: BloomFilter,")
+            Some("pub bf: QueryBloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextSearchOreMatchQuery").as_deref(),
+            Some("pub bf: QueryBloomFilter,")
         );
         assert_eq!(
             field(&v4, "TextSearchQuery").as_deref(),
-            Some("pub bf: Option<BloomFilter>,")
+            Some("pub bf: Option<QueryBloomFilter>,")
         );
         let v3 = render_family_bindings(EqlVersion::V3, family("text"));
         assert!(!v3.contains("SearchBloomFilter"));
+        assert!(!v3.contains("QueryBloomFilter"));
     }
 
     #[test]

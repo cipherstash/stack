@@ -1362,6 +1362,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **With `MatchOptions::short_words` on, a query keeps its short words only
+  when it cuts no n-gram** (#1398). A query that held a short word cut that
+  word's token beside its n-grams, so the word had to be a whole word of
+  the row: "Mike Ng" no longer found "Mike Nguyen", and "san fr" no longer
+  found "San Francisco". Now a query that cuts an n-gram sends its n-grams
+  alone, as it does with the option off, and finds those rows again. A
+  query that cuts no n-gram, which is a query of one short word, is that
+  word's token: "Ng" finds "Ng" and "Mike Ng", and not "Nguyen".
+  - The stored side does not change: a stored value keeps its word tokens,
+    so no stored filter moves and nothing needs re-encrypting.
+  - Every query path cuts a query by the one rule, so a filter and its
+    verify agree: a field query (`Supports::prepare` and the term it
+    derives), `dynamic::query_term`, `dynamic::term`, `dynamic::verify`, and
+    `MatchQuery::verify`.
+  - A field query now derives its term through the new
+    `Index::query_operation`, which by default is `Index::operation`. A
+    match index overrides it with the new `target::matching_query`, the
+    query's filter. An index that wraps another forwards both methods.
+  - A set of indexes derives a query's terms through the new
+    `Indexes::query_operations`, each index's `query_operation`, as
+    `Indexes::operations` derives the stored terms through each index's
+    `operation`. One index, a tuple and a `Vec` implement it; by default it
+    is `Indexes::operations`, so a set defined elsewhere that holds a match
+    index overrides it.
+  - What it reveals: one more token per short word in every stored value
+    that holds one, unique to the word, so rows holding "Ng" can be told
+    from rows holding "Nguyen" and counted. A query of one short word
+    shows the word token it asks for; a longer query sends no word token.
 - **The JSON path grammar is its own crate, `stack-encrypt-jsonpath`**
   (#1687). `JsonPath`, `Segment` and `JsonPathError` moved there unchanged,
   so that the derive can parse a field's declared paths at compile time

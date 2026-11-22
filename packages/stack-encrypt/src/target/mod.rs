@@ -198,8 +198,8 @@ pub use input::{
 #[cfg(feature = "dynamic")]
 pub(crate) use operations::{chosen, inspect};
 pub use operations::{
-    ciphertext, equality, json_document, json_terms, matching, ope, open, ore, ore_block,
-    passthrough, scalar_ciphertext, DecryptField, Decryptable, Decryption, Encryption,
+    ciphertext, equality, json_document, json_terms, matching, matching_query, ope, open, ore,
+    ore_block, passthrough, scalar_ciphertext, DecryptField, Decryptable, Decryption, Encryption,
 };
 pub(crate) use pending::KeysetSelector;
 pub use pending::{CipherRef, Pending, PendingFuture};

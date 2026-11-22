@@ -152,6 +152,17 @@ and `languages/golang/encrypt/encrypttest/vX.Y.Z` on the same commit.
   token derives under the cipher's scopes alone. The children open under
   the scopes and the binding. A cipher with a binding still refuses
   `ChildCount`, since a count opens nothing.
+
+- **`Matches` on `TextMatch`, `TextSearch` and `TextSearchOre` finds a
+  name typed in part again** (#1398). A query that held a two-letter word
+  also asked for that word whole, so "Mike Ng" did not find "Mike Nguyen".
+  Now a query keeps its two-letter words only when it cuts no 3-gram,
+  which is when the whole query is one two-letter word. "Mike Ng" is its
+  3-grams alone and finds "Mike Ng" and "Mike Nguyen", and "ke Ng" finds
+  "Mike Ng". "Ng" is still its word token, and finds "Ng" and "Mike Ng" and
+  not "Nguyen". `Verify` keeps the same rows the filter selects. Stored
+  values do not change, so nothing needs re-encrypting.
+
 - `vcffi` and `vcvalue` move to vitaminc `f1fc9ae74`, the commit vitaminc
   0.10.0 was released from. The host now checks the same date and
   timestamp range as the guests.

@@ -125,7 +125,7 @@ use zeroize::Zeroize;
 
 use crate::{
     v3::terms::{BloomFilter, Ciphertext, Hmac256},
-    v4::terms::SearchBloomFilter,
+    v4::terms::{QueryBloomFilter, SearchBloomFilter},
     Identifier,
 };
 
@@ -367,13 +367,17 @@ impl<P, Ctx> DecryptField<P, Ctx> for Hmac256 {
 /// cuts no 3-gram, so without them it would be no `TextMatch` value at all,
 /// and the query "ng" would be refused. With them "Ng" stores one token, and
 /// `@@` with the query "ng" finds the rows holding the word "Ng" ("Ng",
-/// "Mike Ng", "Ng, Mike"), not "Nguyen". A query's two-letter words must be
-/// whole words of the row, so "Mike Ng" does not find "Mike Nguyen". What it
-/// reveals: one more token per two-letter word, under the same PRF (in a
-/// domain of its own), in the same filter, by the same containment rule, so
-/// no new class of leakage; the token is specific to the word, so someone who
-/// clusters tokens across rows can tell "Ng" from "Nguyen", where before only
-/// the boundary trigram `" ng"` they share was visible.
+/// "Mike Ng", "Ng, Mike"), not "Nguyen". A query keeps its word token only
+/// when it is one two-letter word: a query that cuts a 3-gram is its
+/// 3-grams alone, so "Mike Ng" finds "Mike Ng" and "Mike Nguyen", and "san
+/// fr" finds "San Francisco" ([`QueryBloomFilter`]). What it reveals: one
+/// more token per two-letter word in every stored value that holds one,
+/// under the same PRF (in a domain of its own), in the same filter, by the
+/// same containment rule. The token is unique to the word, so someone who
+/// clusters tokens across rows can tell "Ng" from "Nguyen", where before
+/// only the boundary trigram `" ng"` they share was visible.
+///
+/// [`QueryBloomFilter`]: crate::v4::terms::QueryBloomFilter
 ///
 /// Pinned here rather than taken from Stack Encrypt's default, because it is
 /// part of the stored format: a stored filter and a query filter agree only
@@ -511,6 +515,51 @@ impl Decryptable for SearchBloomFilter {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for SearchBloomFilter {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// Builds a query's filter: [`MatchVisitor`]'s filter, so text that cuts no
+/// token is refused, over the tokens a query keeps (see
+/// [`QueryBloomFilter`]).
+#[doc(hidden)]
+pub struct QueryMatchVisitor;
+impl Visitor for QueryMatchVisitor {
+    type Value = QueryBloomFilter;
+    fn matching<O: MatchConfig>(self, terms: MatchTerms<O>) -> Result<Self::Value, Error> {
+        MatchVisitor.matching(terms).map(QueryBloomFilter)
+    }
+}
+impl Transcode for QueryBloomFilter {
+    type Visitor = QueryMatchVisitor;
+    fn visitor() -> Self::Visitor {
+        QueryMatchVisitor
+    }
+}
+impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for QueryBloomFilter {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        // A query's cut of the text: its two-letter words only when it cuts
+        // no 3-gram. The annotation names the match configuration, as for
+        // `BloomFilter`.
+        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> =
+            target::matching_query();
+        terms.accepting().transcode()
+    }
+    /// The match index under [`EqlMatch`], as [`BloomFilter`]'s: a query
+    /// twin holding a `bf` is the query of that index.
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Match(EqlMatch::options())]
+    }
+}
+impl Decryptable for QueryBloomFilter {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for QueryBloomFilter {
     fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
     }

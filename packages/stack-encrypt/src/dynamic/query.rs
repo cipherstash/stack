@@ -87,7 +87,7 @@ use super::{
     ValueFrame,
 };
 use crate::op::{Limit, Stats};
-use crate::sem::{match_limit, MatchOptions, QueryTokens, TermError};
+use crate::sem::{match_limit, MatchOptions, QueryTokens, Side, TermError};
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, Pending};
 use vitaminc_aead::plaintext::{Logical, Physical};
@@ -1153,7 +1153,8 @@ pub fn query_term<'a, K: 'static>(
     }
     let context = answer.field.context();
     let term = |value: &ValueFrame| {
-        derive(cipher, value, &answer.index, context.clone()).map_err(|error| error.in_field(field))
+        derive(cipher, value, &answer.index, context.clone(), Side::Query)
+            .map_err(|error| error.in_field(field))
     };
     Ok(match input {
         Input::One(value) => {

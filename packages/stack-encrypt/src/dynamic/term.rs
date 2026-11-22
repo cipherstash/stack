@@ -50,7 +50,7 @@ use super::{Error, Reason};
 use crate::json::{JsonOptions, JsonPath};
 use crate::sem::{
     ope, order_error, order_pending, ore, ore_block, ore_block_error, target_of, DefaultMatch,
-    MatchOptions, TermError, Tokenizer,
+    MatchOptions, Side, TermError, Tokenizer,
 };
 use crate::target::{
     chosen, CallerContext, Encryption, Index, IndexSpec, Pending, Source, WipeSource,
@@ -415,7 +415,11 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
     }
 }
 
-/// Derive one index term's frozen byte encoding.
+/// Derive one index term's frozen byte encoding, as a query sends it. A
+/// match term is cut as a query is: with
+/// [`short_words`](MatchOptions::short_words) on, a value's short words are
+/// tokens only when it cuts no n-gram, so the probe of "Mike Ng" is its
+/// trigrams alone, where the record path stores its word token beside them.
 ///
 /// # Examples
 ///
@@ -485,7 +489,7 @@ where
     // as it is, not re-framed, so every scalar `defines` takes is one a
     // probe takes.
     prepare_probe(kind, value.lend())?;
-    derive(cipher, value, kind, context)?
+    derive(cipher, value, kind, context, Side::Query)?
         .await
         .map(TermBytes::into_bytes)
         .map_err(Error::Cipher)
@@ -555,8 +559,10 @@ impl AsRef<[u8]> for TermBytes {
     }
 }
 
-/// Walk `value` to its one scalar and derive `kind`'s term there. Nothing
-/// is requested: a term is derived by the keyset cipher's own PRF, so the
+/// Walk `value` to its one scalar and derive `kind`'s term there, for
+/// `side`: a stored value's term, or the term a query sends, which differ
+/// only for a match index with short words ([`Side`]). Nothing is
+/// requested: a term is derived by the keyset cipher's own PRF, so the
 /// pending is ready when it is built.
 ///
 /// # Errors
@@ -571,6 +577,7 @@ pub(super) fn derive<'a, 'c, K: 'static, P, D>(
     value: P,
     kind: &IndexSpec,
     context: NonEmpty<D>,
+    side: Side,
 ) -> Result<Pending<'a, TermBytes, K>, Error>
 where
     P: Encrypt,
@@ -579,7 +586,7 @@ where
     value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| {
-                scalar_term(cipher, kind, ty, value, context)
+                scalar_term(cipher, kind, ty, value, context, side)
             },
         ))
         .map_err(|refused| {
@@ -601,6 +608,7 @@ fn scalar_term<'a, 'c, K: 'static, D>(
     ty: Option<Logical>,
     value: Physical<'_>,
     context: NonEmpty<D>,
+    side: Side,
 ) -> Result<Pending<'a, TermBytes, K>, Option<Error>>
 where
     D: IntoPrfContext<'c>,
@@ -621,7 +629,7 @@ where
                 return Err(None);
             };
             Ok(cipher
-                .match_terms_under::<DefaultMatch>(text, context, options.clone())
+                .match_terms_under::<DefaultMatch>(text, context, options.clone(), side)
                 .map(|terms| TermBytes(terms.to_bytes())))
         }
         IndexSpec::Ore => order_of(cipher, OrderIndex::Ore, ty, value, context).ok_or(None),
@@ -924,23 +932,36 @@ impl Index<ValueFrame> for IndexSpec {
     fn operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
         &self,
     ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
-        let spec = self.clone();
-        chosen(
-            move |source: Source<'_, ValueFrame>, cipher, cx: CallerContext| {
-                // A term derives under the query context: the scopes, with no
-                // binding.
-                let (query, stored) = (cx.query(), cx.stored());
-                let context = match cx.validated() {
-                    Ok(context) => CallerContext::query_nonempty(context),
-                    Err(error) => return Pending::failed(cipher, error),
-                };
-                match derive(cipher, source.view(), &spec, context) {
-                    Ok(pending) => pending.under_context(query, stored),
-                    Err(error) => Pending::failed(cipher, error.into_crate()),
-                }
-            },
-        )
+        spec_operation(self.clone(), Side::Stored)
     }
+    fn query_operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
+        &self,
+    ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
+        spec_operation(self.clone(), Side::Query)
+    }
+}
+
+/// The description that derives `spec`'s term of a [`ValueFrame`] for
+/// `side`: [`derive`], under the query context.
+fn spec_operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
+    spec: IndexSpec,
+    side: Side,
+) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
+    chosen(
+        move |source: Source<'_, ValueFrame>, cipher, cx: CallerContext| {
+            // A term derives under the query context: the scopes, with no
+            // binding.
+            let (query, stored) = (cx.query(), cx.stored());
+            let context = match cx.validated() {
+                Ok(context) => CallerContext::query_nonempty(context),
+                Err(error) => return Pending::failed(cipher, error),
+            };
+            match derive(cipher, source.view(), &spec, context, side) {
+                Ok(pending) => pending.under_context(query, stored),
+                Err(error) => Pending::failed(cipher, error.into_crate()),
+            }
+        },
+    )
 }
 
 #[cfg(test)]
@@ -2079,9 +2100,13 @@ mod tests {
             assert_ne!(wide, default, "other options derive other terms");
         }
 
-        /// The data path derives a short-word index's term as the typed
-        /// path does, and "Ng", which cuts nothing under the default
-        /// options, is one token under them.
+        /// The data path derives a short-word index's query term by the
+        /// query's rule, and "Ng", which cuts nothing under the default
+        /// options, is one token under them. A probe is a query: "Ng" cuts
+        /// no trigram, so it is its word token, the filter "Ng" stores;
+        /// "Mike Ng" cuts trigrams, so it is its trigrams alone, the filter
+        /// the index without the option stores, and not the one "Mike Ng"
+        /// stores under it.
         #[tokio::test]
         async fn short_words_drive_the_derivation() {
             struct ShortWords;
@@ -2096,21 +2121,81 @@ mod tests {
             let options = <ShortWords as crate::sem::MatchConfig>::options();
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            for text in ["Ng", "Mike Ng"] {
-                let data = term(
-                    &keyset,
-                    &s(text),
-                    &IndexSpec::Match(options.clone()),
-                    ctx("users/x"),
-                )
+            let probe = |text: &'static str| {
+                let keyset = &keyset;
+                let index = IndexSpec::Match(options.clone());
+                async move {
+                    term(keyset, &s(text), &index, ctx("users/x"))
+                        .await
+                        .expect("a query")
+                }
+            };
+            let stored = |text: &'static str| {
+                let keyset = &keyset;
+                async move {
+                    keyset
+                        .match_terms::<ShortWords>(text, nonempty!("users/x"))
+                        .await
+                        .expect("stored")
+                        .to_bytes()
+                }
+            };
+            assert_eq!(
+                probe("Ng").await,
+                stored("Ng").await,
+                "\"Ng\" is its word token, the filter it stores"
+            );
+            let trigrams = keyset
+                .match_terms::<DefaultMatch>("Mike Ng", nonempty!("users/x"))
                 .await
-                .expect("a short word is a query");
-                let typed = keyset
-                    .match_terms::<ShortWords>(text, nonempty!("users/x"))
-                    .await
-                    .expect("typed");
-                assert_eq!(data, typed.to_bytes(), "{text:?}: the typed config's bytes");
-            }
+                .expect("stored without the option")
+                .to_bytes();
+            assert_eq!(
+                probe("Mike Ng").await,
+                trigrams,
+                "\"Mike Ng\" is its trigrams alone"
+            );
+            assert_ne!(
+                probe("Mike Ng").await,
+                stored("Mike Ng").await,
+                "and not the stored filter, which holds the word token too"
+            );
+            // The index as a description: `operation` is the stored side,
+            // `query_operation` a field query's, the probe's bytes.
+            let index = IndexSpec::Match(options.clone());
+            let run = |query: bool| {
+                let keyset = &keyset;
+                let operation = if query {
+                    Index::<ValueFrame>::query_operation::<FakeDataKeySource, crate::target::Owned>(
+                        &index,
+                    )
+                } else {
+                    Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
+                        &index,
+                    )
+                };
+                async move {
+                    keyset
+                        .run(
+                            operation,
+                            vf(s("Mike Ng")),
+                            CallerContext::from(nonempty!("users/x")),
+                        )
+                        .await
+                        .expect("derives")
+                        .into_bytes()
+                }
+            };
+            assert_eq!(
+                run(true).await,
+                trigrams,
+                "the index's query description cuts a query"
+            );
+            assert_eq!(
+                run(false).await,
+                stored("Mike Ng").await,
+                "the index's own description cuts a stored value"
+            );
             let refused = term(&keyset, &s("Ng"), &default_match(), ctx("users/x")).await;
             assert!(
                 matches!(

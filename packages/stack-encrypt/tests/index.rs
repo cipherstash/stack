@@ -493,6 +493,203 @@ mod given_a_set_of_indexes {
     }
 }
 
+/// A set of indexes derives a query's terms through each index's own query
+/// derivation (`Indexes::query_operations`): a match index's term is the
+/// filter of the tokens the query keeps, and every other index's is the
+/// term it stores. One index, a tuple and a `Vec` alike.
+mod given_a_set_holding_a_match_index_with_short_words {
+    use super::*;
+
+    /// 3-grams with short-word tokens, so a query that cuts an n-gram
+    /// derives a filter other than the one the same text stores.
+    struct ShortWords;
+    impl MatchConfig for ShortWords {
+        fn options() -> MatchOptions {
+            MatchOptions {
+                short_words: true,
+                ..MatchOptions::default()
+            }
+        }
+    }
+
+    /// The text: "Ng" is a short word of a query that cuts n-grams, so the
+    /// query keeps its 3-grams alone, where a stored value holds the word
+    /// too.
+    const TEXT: &str = "Mike Ng";
+
+    /// A keyset over the fake key source, and the stored and query filters
+    /// the match index derives for [`TEXT`] alone.
+    async fn scenario() -> (
+        stack_encrypt::StackCipher<FakeDataKeySource>,
+        MatchTerms<ShortWords>,
+        MatchTerms<ShortWords>,
+    ) {
+        let cipher = stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let index = Match::<ShortWords>::new();
+        let text = TEXT.to_owned();
+        let stored = keyset
+            .run(
+                Index::<String>::operation::<_, Borrowed>(&index),
+                &text,
+                caller(),
+            )
+            .await
+            .unwrap();
+        let queried = keyset
+            .run(
+                Index::<String>::query_operation::<_, Borrowed>(&index),
+                &text,
+                caller(),
+            )
+            .await
+            .unwrap();
+        assertions::differ(&stored, &queried);
+        (cipher, stored, queried)
+    }
+
+    #[tokio::test]
+    async fn one_index_derives_its_query_filter() {
+        let (cipher, stored, queried) = scenario().await;
+        let keyset = cipher.default_keyset();
+        let index = Match::<ShortWords>::new();
+        let text = TEXT.to_owned();
+        let query: MatchTerms<ShortWords> = keyset
+            .run(
+                Indexes::<String>::query_operations::<_, Borrowed>(&index),
+                &text,
+                caller(),
+            )
+            .await
+            .unwrap();
+        assertions::same_filter("one index's query", &query, &queried);
+        let store: MatchTerms<ShortWords> = keyset
+            .run(
+                Indexes::<String>::operations::<_, Borrowed>(&index),
+                &text,
+                caller(),
+            )
+            .await
+            .unwrap();
+        assertions::same_filter("one index's stored terms", &store, &stored);
+    }
+
+    #[tokio::test]
+    async fn a_tuple_derives_the_query_filter_beside_the_stored_equality_term() {
+        let (cipher, stored, queried) = scenario().await;
+        let keyset = cipher.default_keyset();
+        let indexes = (Equality, Match::<ShortWords>::new());
+        let text = TEXT.to_owned();
+        let (query_eq, query_match): (EqualityTerm, MatchTerms<ShortWords>) = keyset
+            .run(
+                Indexes::<String>::query_operations::<_, Borrowed>(&indexes),
+                &text,
+                caller(),
+            )
+            .await
+            .unwrap();
+        let (stored_eq, stored_match): (EqualityTerm, MatchTerms<ShortWords>) = keyset
+            .run(
+                Indexes::<String>::operations::<_, Borrowed>(&indexes),
+                &text,
+                caller(),
+            )
+            .await
+            .unwrap();
+        assertions::same_filter("the tuple's query", &query_match, &queried);
+        assertions::same_filter("the tuple's stored terms", &stored_match, &stored);
+        assert_eq!(
+            query_eq, stored_eq,
+            "the equality index sends the term it stores"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_vec_derives_each_query_filter_in_order() {
+        let (cipher, stored, queried) = scenario().await;
+        let keyset = cipher.default_keyset();
+        let indexes = vec![Match::<ShortWords>::new(), Match::<ShortWords>::new()];
+        let text = TEXT.to_owned();
+        let query: Vec<MatchTerms<ShortWords>> = keyset
+            .run(
+                Indexes::<String>::query_operations::<_, Borrowed>(&indexes),
+                &text,
+                caller(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(query.len(), 2, "one query term per index");
+        for term in &query {
+            assertions::same_filter("the vec's query", term, &queried);
+        }
+        let store: Vec<MatchTerms<ShortWords>> = keyset
+            .run(
+                Indexes::<String>::operations::<_, Borrowed>(&indexes),
+                &text,
+                caller(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.len(), 2, "one stored term per index");
+        for term in &store {
+            assertions::same_filter("the vec's stored terms", term, &stored);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_vec_is_refused_before_any_key_request() {
+        let (cipher, generates, _) = counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let none: Vec<Match<ShortWords>> = Vec::new();
+        let refused: Result<Vec<MatchTerms<ShortWords>>, _> = keyset
+            .run(
+                Indexes::<String>::query_operations::<_, Borrowed>(&none),
+                &TEXT.to_owned(),
+                caller(),
+            )
+            .await;
+        assert!(
+            matches!(
+                refused,
+                Err(Error::Plan(stack_encrypt::PlanError::EmptyIndexes))
+            ),
+            "an empty set derives no query: {refused:?}"
+        );
+        assert_eq!(
+            generates.load(Ordering::SeqCst),
+            0,
+            "no key request for an empty set"
+        );
+    }
+
+    mod assertions {
+        use super::*;
+
+        /// The stored and query filters of one text differ, so a set that
+        /// derived the stored filter for a query would show.
+        pub(super) fn differ(stored: &MatchTerms<ShortWords>, queried: &MatchTerms<ShortWords>) {
+            assert_ne!(
+                stored.positions(),
+                queried.positions(),
+                "{TEXT:?}: a stored value holds the word token, a query its 3-grams alone"
+            );
+        }
+
+        /// Two filters set the same positions.
+        pub(super) fn same_filter(
+            what: &str,
+            actual: &MatchTerms<ShortWords>,
+            expected: &MatchTerms<ShortWords>,
+        ) {
+            assert_eq!(
+                actual.positions(),
+                expected.positions(),
+                "{what}: the filter the match index derives on its own"
+            );
+        }
+    }
+}
+
 mod given_a_passthrough {
     use super::*;
 

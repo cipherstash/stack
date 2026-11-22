@@ -664,10 +664,14 @@ exactly their own width.
 A `TextMatch` value is indexed by its 3-grams and by each two-letter word
 whole, so a two-letter surname such as "Ng" is stored, and `Matches` with
 "ng" finds the rows holding the word "Ng" ("Ng", "Mike Ng"), not "Nguyen".
-A query's two-letter words must be whole words of the row, so "Mike Ng" does
-not find "Mike Nguyen". The word token reveals one more token per two-letter
-word, in the same filter: someone who clusters tokens across rows can tell
-"Ng" from "Nguyen", where before only the trigram they share was visible.
+A query keeps its two-letter words only when it cuts no 3-gram, which is
+when the whole query is one two-letter word: "Mike Ng" is its 3-grams alone,
+so it finds "Mike Ng" and "Mike Nguyen", and a name typed in part, such as
+"ke Ng", finds its row. The word token is one more token per two-letter word
+in every stored value that holds one, unique to the word: someone who
+clusters tokens across rows can tell the rows holding "Ng" from those
+holding "Nguyen", and count them, where before only the trigram they share
+was visible.
 Text that cuts no token, such as an empty string or one letter, is refused. A
 `TextSearch` value of such text is stored with an empty match filter: `Eq`,
 `Lt`, `Lte`, `Gt` and `Gte` find it through its other terms, and no

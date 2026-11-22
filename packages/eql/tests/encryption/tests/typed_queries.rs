@@ -382,6 +382,28 @@ async fn every_field_query_is_the_term_of_the_row_its_record_stored() {
 mod assertions {
     use super::*;
 
+    /// A match query's filter sets positions, and the stored filter of the
+    /// row `row` sets each of them, so the database's `matches` finds the
+    /// row.
+    pub(super) fn stored_filter_contains_the_querys(
+        name: &str,
+        needle: &str,
+        query: &serde_json::Value,
+        row: &serde_json::Value,
+    ) {
+        assert_eq!(query["i"], row["i"], "{name} {needle:?}: the same column");
+        let asked = query["bf"].as_array().unwrap();
+        let stored = row["bf"].as_array().unwrap();
+        assert!(
+            !asked.is_empty(),
+            "{name} {needle:?}: the query sets a position: {query}"
+        );
+        assert!(
+            asked.iter().all(|position| stored.contains(position)),
+            "{name} {needle:?}: the stored filter of {row} contains the query's {query}"
+        );
+    }
+
     /// Two query values for one value carry the same terms: the same JSON,
     /// save a block ORE `ob`, which carries a random nonce, so two
     /// derivations of one value differ in their bytes and compare equal.
@@ -554,6 +576,139 @@ async fn a_field_reference_match_query_verifies_and_sizes_as_the_data_path_does(
                 )
                 .unwrap();
                 assert_eq!(query.target_limit(want, &stats), data, "{needle} {want}");
+            }
+        }
+    }
+}
+
+/// A field reference's match query keeps a query's two-letter words only
+/// when it cuts no 3-gram, as the data path's does, on every type with a
+/// match index: `TextMatch`, and `TextSearch` and `TextSearchOre`, whose
+/// twins carry the equality and order terms beside the match term. "Ng" is
+/// its word and does not find "Nguyen"; "Mike Ng" and "ke Ng" are their
+/// 3-grams and find "Mike Nguyen".
+mod given_a_two_letter_word_in_a_match_query {
+    use super::*;
+
+    /// The types with a match index, each with the column its field
+    /// reference on `EncryptedColumns` names.
+    const MATCH_TYPES: [(&str, &str); 3] = [
+        ("TextMatch", "text_match"),
+        ("TextSearch", "text_search"),
+        ("TextSearchOre", "text_search_ore"),
+    ];
+
+    /// The rows each query is verified against.
+    const PAGE: [&str; 5] = ["Ng", "Mike Ng", "Mike Nguyen", "Nguyen", "Mike"];
+
+    /// Each query, and which rows of [`PAGE`] it keeps.
+    const QUERIES: [(&str, [bool; 5]); 3] = [
+        ("Ng", [true, true, false, false, false]),
+        ("Mike Ng", [false, true, true, false, false]),
+        ("ke Ng", [false, true, true, false, false]),
+    ];
+
+    /// The field reference's match query of `needle` on the type `name`, as
+    /// it binds, and its verdict on each row of [`PAGE`].
+    async fn field_query(keyset: &Keyset<'_>, name: &str, needle: &str) -> (Vec<u8>, Vec<bool>) {
+        macro_rules! cut {
+            ($reference:expr) => {{
+                let query = $reference.matches(needle).encrypt(keyset).await.unwrap();
+                (
+                    serde_json::to_vec(&query).unwrap(),
+                    PAGE.iter().map(|row| query.verify(row)).collect(),
+                )
+            }};
+        }
+        match name {
+            "TextMatch" => cut!(EncryptedColumns::TEXT_MATCH),
+            "TextSearch" => cut!(EncryptedColumns::TEXT_SEARCH),
+            "TextSearchOre" => cut!(EncryptedColumns::TEXT_SEARCH_ORE),
+            other => panic!("{other} has no match index"),
+        }
+    }
+
+    /// A record whose match fields all hold "Mike Nguyen", stored.
+    async fn scenario(keyset: &Keyset<'_>) -> EncryptedColumns {
+        Columns {
+            text_match: "Mike Nguyen".into(),
+            text_search: "Mike Nguyen".into(),
+            text_search_ore: "Mike Nguyen".into(),
+            ..columns()
+        }
+        .encrypt_into(keyset)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_field_query_verifies_by_the_query_rule() {
+        let (cipher, _) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        for (name, _) in MATCH_TYPES {
+            for (needle, want) in QUERIES {
+                let (_, verdicts) = field_query(&keyset, name, needle).await;
+                assert_eq!(
+                    verdicts, want,
+                    "{name} {needle:?}: verifies by the query's rule"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_data_path_verifies_alike() {
+        for (name, column) in MATCH_TYPES {
+            let plan = data_plan(name, column);
+            for (needle, want) in QUERIES {
+                let data = dynamic::verify(
+                    &plan,
+                    "value",
+                    Op::Matches,
+                    frame(needle),
+                    PAGE,
+                    &EqlTargets,
+                )
+                .unwrap();
+                assert_eq!(
+                    data, want,
+                    "{name} {needle:?}: the data path verifies alike"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_field_query_is_the_data_paths_bytes() {
+        let (cipher, _) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        for (name, column) in MATCH_TYPES {
+            for (needle, _) in QUERIES {
+                let (typed, _) = field_query(&keyset, name, needle).await;
+                let (data, _) = data_term(&cipher, name, column, Op::Matches, frame(needle)).await;
+                assert_eq!(
+                    typed, data,
+                    "{name} {needle:?}: the data path sends the same filter"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_partly_typed_name_finds_the_stored_full_name() {
+        let (cipher, _) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored = scenario(&keyset).await;
+        for (name, column) in MATCH_TYPES {
+            for needle in ["Mike Ng", "ke Ng"] {
+                let (typed, _) = field_query(&keyset, name, needle).await;
+                let query: serde_json::Value = serde_json::from_slice(&typed).unwrap();
+                assertions::stored_filter_contains_the_querys(
+                    name,
+                    needle,
+                    &query,
+                    &stored_field(&stored, column),
+                );
             }
         }
     }
@@ -908,6 +1063,7 @@ async fn a_scoped_field_query_finds_a_value_stored_under_the_same_scope() {
             .twin()
             .bf
             .0
+             .0
             .iter()
             .all(|position| stored.name.bf.0.contains(position)),
         "the stored filter contains the query's"
@@ -923,6 +1079,7 @@ async fn a_scoped_field_query_finds_a_value_stored_under_the_same_scope() {
             .twin()
             .bf
             .0
+             .0
             .iter()
             .all(|position| stored.name.bf.0.contains(position)),
         "under another scope the filter differs"

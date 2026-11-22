@@ -14,6 +14,10 @@
 //! [`MatchOptions::short_words`] on cuts one more kind: each word too short to
 //! hold an n-gram, whole. The two kinds are kept apart ([`Tokens`]) because
 //! each is run through the PRF under a domain of its own.
+//!
+//! A stored value keeps both kinds. A query keeps its short words only when
+//! it cuts no n-gram ([`Side::Query`]), so "Ng" asks for the word `ng` and
+//! "Mike Ng" asks for its trigrams alone.
 
 use std::collections::HashSet;
 
@@ -82,7 +86,36 @@ pub(crate) struct Tokens {
     pub(crate) short_words: Vec<String>,
 }
 
+/// Which side of a match a text is cut for: a value to store, or a query
+/// to find stored values by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Side {
+    /// A value to store: every token of both kinds, so that any query of a
+    /// run of its words finds it.
+    Stored,
+    /// A query: the tokenizer's tokens, and the short words only when the
+    /// tokenizer cut none ([`Tokens::into_query`]).
+    Query,
+}
+
 impl Tokens {
+    /// The tokens a query keeps of the tokens its text cuts: all of them
+    /// when the tokenizer cut none, else the tokenizer's alone, the short
+    /// words wiped.
+    ///
+    /// So a query of short words alone ("Ng") is its word tokens, and finds
+    /// the rows that hold those words whole. A query that cuts an n-gram
+    /// ("Mike Ng") is its n-grams, as with the option off, and finds the rows
+    /// that hold them: "Mike Nguyen" as well as "Mike Ng". Every stored
+    /// value keeps its word tokens, so the rule moves no stored filter, and
+    /// every token a query keeps is still a token its own text stores.
+    fn into_query(mut self) -> Self {
+        if !self.tokenizer.is_empty() {
+            self.short_words.zeroize();
+        }
+        self
+    }
+
     /// Whether no token of either kind was cut.
     pub(crate) fn is_empty(&self) -> bool {
         self.tokenizer.is_empty() && self.short_words.is_empty()
@@ -120,15 +153,26 @@ impl Default for Tokenizer {
 /// unassigned in Unicode 16 is refused, as equality refuses it: its NFC
 /// form could change when the code point is assigned.
 ///
+/// The tokens are cut for `side`: a stored value keeps every token, and a
+/// query its short words only when it cuts no n-gram ([`Side`]).
+///
 /// The normalized copy is held in [`Protected`](vitaminc_protected::Protected)
 /// and wiped on drop.
-pub(crate) fn tokens(text: &str, options: &MatchOptions) -> Result<Tokens, NormalizeError> {
+pub(crate) fn tokens(
+    text: &str,
+    options: &MatchOptions,
+    side: Side,
+) -> Result<Tokens, NormalizeError> {
     let normalized = vitaminc_normalize::text(text)?;
     // `text` returns the UTF-8 of a `str`, so this does not fail; a failure
     // would be a bug there, refused rather than tokenized.
     let normalized =
         std::str::from_utf8(normalized.risky_ref()).map_err(|_| NormalizeError::Invalid)?;
-    Ok(tokenize(normalized, options))
+    let tokens = tokenize(normalized, options);
+    Ok(match side {
+        Side::Stored => tokens,
+        Side::Query => tokens.into_query(),
+    })
 }
 
 /// Split `text` into tokens under `options`' tokenizer, case folding and
@@ -300,6 +344,7 @@ mod tests {
                     downcase: false,
                     ..MatchOptions::default()
                 },
+                Side::Stored,
             )
             .expect("tokens")
             .tokenizer
@@ -321,7 +366,8 @@ mod tests {
                     &MatchOptions {
                         tokenizer: Tokenizer::Standard,
                         ..MatchOptions::default()
-                    }
+                    },
+                    Side::Stored,
                 ),
                 Err(NormalizeError::UnassignedCodePoint)
             ),
@@ -514,7 +560,8 @@ mod tests {
                     &MatchOptions {
                         short_words: true,
                         ..MatchOptions::default()
-                    }
+                    },
+                    Side::Stored,
                 )
                 .expect("normalizes")
                 .short_words,
@@ -627,6 +674,44 @@ mod tests {
                     }
                 }
 
+                /// A query keeps the n-grams its text cuts, and its short
+                /// words only when it cuts none of them; whichever it
+                /// keeps, the same text stored holds them.
+                #[test]
+                fn a_query_keeps_its_short_words_only_when_it_cuts_no_ngram(
+                    (_, text) in text(),
+                    length in 3usize..=5,
+                ) {
+                    let stored = cut(&text, length);
+                    let query = stored.clone().into_query();
+                    prop_assert_eq!(
+                        &query.tokenizer,
+                        &stored.tokenizer,
+                        "a query keeps every n-gram of {:?}",
+                        text
+                    );
+                    if stored.tokenizer.is_empty() {
+                        prop_assert_eq!(
+                            &query.short_words,
+                            &stored.short_words,
+                            "{:?} cuts no n-gram, so its short words are its tokens",
+                            text
+                        );
+                    } else {
+                        prop_assert!(
+                            query.short_words.is_empty(),
+                            "{:?} cuts an n-gram, so it keeps no short word: {:?}",
+                            text,
+                            query.short_words
+                        );
+                    }
+                    prop_assert!(
+                        stored.hold(&query),
+                        "{:?} stored holds every token its query keeps",
+                        text
+                    );
+                }
+
                 /// The n-grams do not depend on the option: it adds word
                 /// tokens and moves nothing else.
                 #[test]
@@ -641,6 +726,78 @@ mod tests {
                         text
                     );
                 }
+            }
+        }
+
+        mod given_a_query {
+            use super::*;
+
+            /// The tokens a query of `text` keeps under 3-grams, downcased,
+            /// with the short-word filter on, as [`tokens`] cuts them.
+            fn query(text: &str) -> Tokens {
+                tokens(
+                    text,
+                    &MatchOptions {
+                        short_words: true,
+                        ..MatchOptions::default()
+                    },
+                    Side::Query,
+                )
+                .expect("normalizes")
+            }
+
+            #[test]
+            fn a_query_of_one_short_word_is_that_word() {
+                let tokens = query("Ng");
+                assert_eq!(tokens.short_words, vec!["ng"], "the word, folded");
+                assert!(
+                    tokens.tokenizer.is_empty(),
+                    "two letters cut no trigram: {:?}",
+                    tokens.tokenizer
+                );
+            }
+
+            #[test]
+            fn a_query_that_cuts_an_ngram_is_its_ngrams_alone() {
+                for text in ["Mike Ng", "ke Ng", "san fr", "Ng Mike", "Li Wu", "Ng "] {
+                    let tokens = query(text);
+                    assert!(
+                        tokens.short_words.is_empty(),
+                        "{text:?} keeps no short word: {:?}",
+                        tokens.short_words
+                    );
+                    assert_eq!(
+                        tokens.tokenizer,
+                        cut(text, 3).tokenizer,
+                        "{text:?} keeps every trigram it cuts"
+                    );
+                }
+            }
+
+            #[test]
+            fn a_stored_value_keeps_its_short_words_beside_its_ngrams() {
+                let stored = tokens(
+                    "Mike Ng",
+                    &MatchOptions {
+                        short_words: true,
+                        ..MatchOptions::default()
+                    },
+                    Side::Stored,
+                )
+                .expect("normalizes");
+                assert_eq!(stored.short_words, vec!["ng"], "the word is stored");
+                assert!(
+                    stored.hold(&query("Mike Ng")) && stored.hold(&query("Ng")),
+                    "and both queries are held"
+                );
+                assert!(
+                    cut("Mike Nguyen", 3).hold(&query("Mike Ng")),
+                    "\"Mike Nguyen\" holds the trigrams of \"Mike Ng\""
+                );
+                assert!(
+                    !cut("Mike Nguyen", 3).hold(&query("Ng")),
+                    "and not the word ng"
+                );
             }
         }
 

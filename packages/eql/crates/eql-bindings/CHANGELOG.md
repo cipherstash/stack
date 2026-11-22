@@ -224,6 +224,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A match query keeps its two-letter words only when it cuts no
+  3-gram** (#1398, `stack-encrypt` feature). `EqlMatch` indexes each
+  two-letter word whole, and a query holding one also asked for that
+  word, so "Mike Ng" did not find "Mike Nguyen". Now a query that cuts a
+  3-gram is its 3-grams alone: "Mike Ng" finds "Mike Ng" and "Mike
+  Nguyen", and "ke Ng" and "san fr" find the names they are part of. A
+  query of one two-letter word is that word's token: "Ng" finds "Ng" and
+  "Mike Ng", and not "Nguyen". Stored values do not change.
+  - The `bf` of every v4 query twin is the new `v4::terms::QueryBloomFilter`
+    (`TextMatchQuery`, `TextSearchMatchQuery`, `TextSearchOreMatchQuery`,
+    and `TextSearchQuery` and `TextSearchOreQuery`, whose `bf` is an
+    `Option<QueryBloomFilter>`). Its JSON and JSON Schema are
+    `BloomFilter`'s, and `From<QueryBloomFilter> for BloomFilter` unwraps
+    it. Its `EncryptTarget` derives the query's filter, so a query twin
+    built directly, by a field reference's `matches`, or by the by-name
+    query dispatch follows the one rule.
+  - `TwinIndex` forwards Stack Encrypt's `Index::query_operation` to the
+    indexes whose terms its twin carries (`Indexes::query_operations`), so
+    `matches` on `TextMatch`, `TextSearch` and `TextSearchOre` sends the
+    query's filter, and every other operator the term its index stores.
 - **A v4 order term is Stack Encrypt's own, typed by its plaintext**
   (`stack-encrypt` feature). An `ob` field is
   `stack_encrypt::sem::OreBlockTerm<T>` and an `op` field
