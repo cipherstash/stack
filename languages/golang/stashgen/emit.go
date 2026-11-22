@@ -802,14 +802,15 @@ func planQueries(f *genFile) error {
 	return nil
 }
 
-// verifiable refuses a probabilistic query on an index-only field: the
-// query's rows are checked by decrypting them with Verify, and an
-// index-only field stores no ciphertext, so Verify could never pass and
-// every real match would be thrown away.
+// verifiable refuses a probabilistic query on a field that only stores an
+// index. The caller checks the rows of such a query by decrypting them
+// with Verify. A field that only stores an index has no ciphertext, so
+// Verify would never pass. The caller would discard every real match.
 //
-// Every index the engine admits on a field answers an operator there, so
-// no index is stored that a generated method cannot query. The engine
-// refuses the one that would be: an order index on bytes.
+// The engine only accepts an index on a field if one of the index's
+// operators accepts the field's type. A generated method can therefore
+// query every stored index. The engine refuses the one index that no
+// method could query: an order index on bytes.
 func verifiable(g *genField) error {
 	if g.Verb != VerbIndex {
 		return nil
