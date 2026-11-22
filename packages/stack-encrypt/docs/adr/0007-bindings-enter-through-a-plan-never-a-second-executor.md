@@ -384,9 +384,12 @@ plan, and `encrypt_with`, `decrypt_with` and `contexts()` run them.
 `check_source` and `check_record` run no combinator: they state the same
 rules through `check_values`, `check_stored` and `opening_base`, which
 the lowering shares. The builder is no longer in the dynamic path.
-The inversion is still to come: those functions run `compose` and
-`opening` themselves rather than building a `Planned`, so `Planned` and
-the record functions are two callers of one lowering until then.
+#1669 inverted the call: `encrypt_with` and `decrypt_with` build a
+`Planned` and run its lowering, so a record is encrypted and opened
+through `Planned` alone, and only `contexts()` composes the plan beside
+it, to read the contexts. The check of a context field against the
+context the guest expects, which only `decrypt_with` takes, runs inside
+that lowering too, as an argument private to `dynamic`, not public API.
 
 **The derive emits no plan.** `encryption_plan()` is not added. A typed
 query starts from a field reference. The field reference has the field's context and

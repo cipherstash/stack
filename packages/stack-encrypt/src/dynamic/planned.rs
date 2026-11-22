@@ -81,7 +81,10 @@ use std::sync::Arc;
 use zeroize::Zeroize;
 
 use super::query::{field_operators, find, query_term, QueryTerm};
-use super::record::{self, Absent, Context, FieldPlan, Plan, Verb};
+use super::record::{
+    self, name_target, open_record, shape_record, write_record, Absent, Context, FieldPlan, Plan,
+    Rows, Verb,
+};
 use super::target::{NoTargets, TargetResolver};
 use super::value_frame::ValueFrame;
 use super::{Error, Op, Reason, TermBytes};
@@ -92,7 +95,9 @@ use crate::target::{
     DecryptSource, Decryption, EncryptTarget, Encrypted, Encryption, ExpectedContext, IndexSpec,
     Indexes, OptionalContext, Owned, Pending,
 };
-use crate::{Encrypt, KeysetCipher, Label, NonEmpty, PlanError, StackCipherText};
+use crate::{
+    CipherRef, CipherText, Encrypt, KeysetCipher, Label, NonEmpty, PlanError, StackCipherText,
+};
 
 /// The resolver of a build without EQL types, for [`Plan::field`].
 static NO_TARGETS: NoTargets = NoTargets;
@@ -334,10 +339,10 @@ impl Plan {
     }
 }
 
-/// A record under a plan encrypts to the stored row, as
-/// [`record::encrypt_with`] produces it: every field under its own context,
-/// the caller's scope and then its bindings after the plan's own. The
-/// borrowed form reads the frame in place; the owned form consumes it.
+/// A record under a plan encrypts to the stored row: every field under its
+/// own context, the caller's scope and then its bindings after the plan's
+/// own. The borrowed form reads the frame in place; the owned form
+/// consumes it.
 impl<'p, R> EncryptTarget<Planned<'p, Plan, ValueFrame, R>> for StackCipherText
 where
     R: TargetResolver + 'p,
@@ -382,8 +387,8 @@ where
     }
 }
 
-/// [`record::encrypt_with`] under the plan extended by the caller's
-/// context, or the refusal.
+/// The record lowered under the plan extended by the caller's context, or
+/// the refusal.
 fn encrypt_record<'a, K: 'static>(
     cipher: &'a KeysetCipher<'_, K>,
     plan: &Plan,
@@ -395,18 +400,17 @@ fn encrypt_record<'a, K: 'static>(
         Ok(plan) => plan,
         Err(error) => return Pending::failed(cipher, wrap(error)),
     };
-    match record::encrypt_with(cipher, value, &plan, resolver) {
+    match Planned::with_resolver(&*plan, value, resolver).run_encrypt(cipher) {
         Ok(pending) => pending,
         Err(error) => Pending::failed(cipher, wrap(error)),
     }
 }
 
-/// A stored row under a plan decrypts to its values, as
-/// [`record::decrypt_with`] opens it, under the caller's scope and
-/// bindings. A row from another keyset than the one the call names is
-/// refused before any key is retrieved. The opening is a closure the
-/// cipher runs later, which owns the plan, the row and the resolver, so
-/// the resolver is `Send + Sync + 'static` here where the encrypt side
+/// A stored row under a plan decrypts to its values, under the caller's
+/// scope and bindings. A row from another keyset than the one the call
+/// names is refused before any key is retrieved. The opening is a closure
+/// the cipher runs later, which owns the plan, the row and the resolver,
+/// so the resolver is `Send + Sync + 'static` here where the encrypt side
 /// borrows it.
 impl<'p, R> DecryptSource<ValueFrame> for Planned<'p, Plan, StackCipherText, R>
 where
@@ -424,12 +428,293 @@ where
             value, resolver, ..
         } = self;
         Decryption::from_open(move |cipher| {
-            match record::decrypt_with(cipher, value, &plan, None, &resolver) {
+            match Planned::with_resolver(&plan, value, &resolver).run_decrypt(cipher, None) {
                 Ok(pending) => pending,
                 Err(error) => Pending::failed(cipher, wrap(error)),
             }
         })
     }
+}
+
+impl<'p, 'r, V, R> Planned<'p, Plan, V, &'r R>
+where
+    V: Encrypt,
+    R: TargetResolver + ?Sized,
+{
+    /// Lower the plan and run it over the value: a record, or a batch of
+    /// records, checked against the plan here, before any key is requested
+    /// ([`Error::Source`]), and each target field's EQL type run through the
+    /// resolver. Every term is derived and every key request queued in the
+    /// one [`Pending`], so awaiting it is one batched `generate_keys` for
+    /// every ciphertext leaf of every row and every target field.
+    ///
+    /// # Errors
+    ///
+    /// As [`record::encrypt_with`].
+    pub(super) fn run_encrypt<'a, K: 'static>(
+        self,
+        cipher: &'a KeysetCipher<'_, K>,
+    ) -> Result<Pending<'a, StackCipherText, K>, Error> {
+        let Planned {
+            plan,
+            value,
+            resolver,
+        } = self;
+        let rows = record::source_rows(value, plan)?;
+        let extend = plan.declared_context();
+        let shape = plan.shape();
+        // Every target field of every row, in row-major order, run by the
+        // resolver; `all` merges their requests with the lowered plan's
+        // below. A row runs the target fields it does not leave out, so each
+        // row's count is its own.
+        let mut pendings = Vec::new();
+        let mut targets = |row: record::Row| -> Result<(Absent, FieldValues, usize), Error> {
+            let fields = plan
+                .target_fields()
+                .filter(|field| !row.absent.contains(field.name()));
+            let mut count = 0;
+            for (field, value) in fields.zip(row.targets) {
+                let name = field.target().unwrap_or_default();
+                pendings.push(
+                    resolver
+                        .encrypt(
+                            name,
+                            field.target_options(),
+                            cipher,
+                            field.label(),
+                            &extend,
+                            value,
+                        )
+                        .map_err(|error| Error::Target(name_target(error, field.name())))?,
+                );
+                count += 1;
+            }
+            Ok((row.absent, row.values, count))
+        };
+        Ok(match rows {
+            Rows::One(row) => {
+                let (absent, values, _) = targets(row)?;
+                let description = compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
+                let eql = Pending::all(cipher, pendings);
+                cipher
+                    .run(description, values, extend)
+                    .zip(eql)
+                    .try_map(move |(values, eql)| shape_record(values, eql, &shape, &absent))
+            }
+            Rows::Batch(rows) => {
+                let rows = rows
+                    .into_iter()
+                    .map(&mut targets)
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let len = rows.len();
+                let mut per_row = Vec::with_capacity(len);
+                let groups = by_absent(
+                    rows.into_iter()
+                        .map(|(absent, values, count)| {
+                            per_row.push((absent.clone(), count));
+                            (absent, values)
+                        })
+                        .collect(),
+                );
+                // One lowered plan per group of rows that leave out the same
+                // fields, every group's requests merged into the one call.
+                let mut runs = Vec::with_capacity(groups.len());
+                let mut positions = Vec::with_capacity(groups.len());
+                for (absent, at, values) in groups {
+                    let mut rows = Vec::with_capacity(values.len());
+                    for values in values {
+                        let description =
+                            compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
+                        rows.push(cipher.run(description, values, extend.clone()));
+                    }
+                    runs.push(Pending::all(cipher, rows));
+                    positions.push(at);
+                }
+                let eql = Pending::all(cipher, pendings);
+                Pending::all(cipher, runs)
+                    .zip(eql)
+                    .try_map(move |(groups, eql)| {
+                        let rows = in_row_order(len, positions.into_iter().zip(groups))?;
+                        let mut eql = eql.into_iter();
+                        rows.into_iter()
+                            .zip(per_row)
+                            .map(|(values, (absent, count))| {
+                                let own: Vec<Vec<u8>> = eql.by_ref().take(count).collect();
+                                shape_record(values, own, &shape, &absent)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                            .map(CipherText::Sequence)
+                    })
+            }
+        })
+    }
+}
+
+impl<'p, 'r, R> Planned<'p, Plan, StackCipherText, &'r R>
+where
+    R: TargetResolver + ?Sized,
+{
+    /// Lower the plan and open the stored row, or batch of rows, through
+    /// it: the stored tree checked against the plan here, before any key is
+    /// requested ([`Error::Record`]), and each target field's EQL value
+    /// opened through the resolver. Every leaf, the target fields' included,
+    /// is confined to the keyset `cipher_ref` names when it names one, so a
+    /// leaf from another keyset is refused before any key is retrieved.
+    ///
+    /// `expected` is the context the caller expects a plan that takes its
+    /// context from a field to find there, checked against each row before
+    /// any key is requested; `None` opens each row under the context it
+    /// stores. The owned entry point passes `None`.
+    ///
+    /// # Errors
+    ///
+    /// As [`record::decrypt_with`].
+    pub(super) fn run_decrypt<'a, K: 'static>(
+        self,
+        cipher_ref: impl Into<CipherRef<'a, K>>,
+        expected: Option<Label>,
+    ) -> Result<Pending<'a, ValueFrame, K>, Error> {
+        let Planned {
+            plan,
+            value,
+            resolver,
+        } = self;
+        let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
+        let rows = record::record_rows(value, plan)?;
+        let extend = plan.declared_context();
+        let shape = plan.shape();
+        let cipher = cipher_ref.cipher();
+        let mut pendings = Vec::new();
+        let mut targets = |row: record::StoredRow| -> Result<(Absent, FieldValues, usize), Error> {
+            let fields = plan
+                .target_fields()
+                .filter(|field| !row.absent.contains(field.name()));
+            let mut count = 0;
+            for (field, stored) in fields.zip(row.targets) {
+                let name = field.target().unwrap_or_default();
+                // Confined to the caller's keyset, as the lowered plan's
+                // leaves are: a target value sealed under another keyset is
+                // refused before any key is retrieved.
+                pendings.push(confine(
+                    resolver
+                        .decrypt(name, cipher, field.label(), &extend, &stored)
+                        .map_err(|error| Error::Target(name_target(error, field.name())))?,
+                    &cipher_ref,
+                ));
+                count += 1;
+            }
+            Ok((row.absent, row.values, count))
+        };
+        Ok(match rows {
+            Rows::One(row) => {
+                let (absent, values, _) = targets(row)?;
+                let eql = Pending::all(cipher, pendings);
+                confine(
+                    cipher.run_decryption(opening::<K>(plan, values, expected, extend, &absent)),
+                    &cipher_ref,
+                )
+                .zip(eql)
+                .try_map(move |(values, eql)| {
+                    write_record(Rows::One(open_record(values, eql, &shape, &absent)?))
+                })
+            }
+            Rows::Batch(rows) => {
+                let rows = rows
+                    .into_iter()
+                    .map(&mut targets)
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let len = rows.len();
+                let mut per_row = Vec::with_capacity(len);
+                let groups = by_absent(
+                    rows.into_iter()
+                        .map(|(absent, values, count)| {
+                            per_row.push((absent.clone(), count));
+                            (absent, values)
+                        })
+                        .collect(),
+                );
+                let mut opens = Vec::with_capacity(groups.len());
+                let mut positions = Vec::with_capacity(groups.len());
+                for (absent, at, values) in groups {
+                    let rows = values.into_iter().map(|values| {
+                        opening::<K>(plan, values, expected.clone(), extend.clone(), &absent)
+                    });
+                    opens.push(confine(
+                        cipher.run_decryption(Decryption::all(rows)),
+                        &cipher_ref,
+                    ));
+                    positions.push(at);
+                }
+                let eql = Pending::all(cipher, pendings);
+                Pending::all(cipher, opens)
+                    .zip(eql)
+                    .try_map(move |(groups, eql)| {
+                        let rows = in_row_order(len, positions.into_iter().zip(groups))?;
+                        let mut eql = eql.into_iter();
+                        let rows = rows
+                            .into_iter()
+                            .zip(per_row)
+                            .map(|(values, (absent, count))| {
+                                let own: Vec<ValueFrame> = eql.by_ref().take(count).collect();
+                                open_record(values, own, &shape, &absent)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        write_record(Rows::Batch(rows))
+                    })
+            }
+        })
+    }
+}
+
+/// A pending the client built, confined to the keyset the caller ran it
+/// through, when the caller ran it through one: the client opens leaves
+/// from any of its keysets, and a keyset cipher refuses a foreign one
+/// before any key is retrieved.
+fn confine<'a, T: 'a, K>(
+    pending: Pending<'a, T, K>,
+    cipher_ref: &CipherRef<'a, K>,
+) -> Pending<'a, T, K> {
+    pending.confined_to(cipher_ref.keyset())
+}
+
+/// The rows of a batch grouped by the fields they leave out, each group
+/// with the positions of its rows in the batch, in the order each group
+/// first appears: one composed description runs each group ([`compose`]).
+/// A batch with no `"null": "sql"` field is one group.
+fn by_absent<R>(rows: Vec<(Absent, R)>) -> Vec<(Absent, Vec<usize>, Vec<R>)> {
+    let mut groups: Vec<(Absent, Vec<usize>, Vec<R>)> = Vec::new();
+    for (at, (absent, row)) in rows.into_iter().enumerate() {
+        match groups.iter_mut().find(|(seen, _, _)| *seen == absent) {
+            Some((_, positions, members)) => {
+                positions.push(at);
+                members.push(row);
+            }
+            None => groups.push((absent, vec![at], vec![row])),
+        }
+    }
+    groups
+}
+
+/// Each group's results back in batch order, the inverse of [`by_absent`].
+/// A group that answers with another count than it was given is the engine
+/// answering with another shape than it was asked.
+fn in_row_order<T>(
+    len: usize,
+    groups: impl IntoIterator<Item = (Vec<usize>, Vec<T>)>,
+) -> Result<Vec<T>, crate::Error> {
+    let mut rows: Vec<Option<T>> = std::iter::repeat_with(|| None).take(len).collect();
+    for (positions, results) in groups {
+        if positions.len() != results.len() {
+            return Err(crate::Error::ResponseShape);
+        }
+        for (at, result) in positions.into_iter().zip(results) {
+            let slot = rows.get_mut(at).ok_or(crate::Error::ResponseShape)?;
+            *slot = Some(result);
+        }
+    }
+    rows.into_iter()
+        .map(|row| row.ok_or(crate::Error::ResponseShape))
+        .collect()
 }
 
 /// A record plan narrowed to one field and one operator: what a query
@@ -706,7 +991,7 @@ impl<'p, R: TargetResolver + ?Sized> DynamicQuery<'p, R> {
 /// output, so no value is copied. The values left over are dropped, and a
 /// frame wipes itself when it drops. This is the one
 /// lowering of a data plan, as the derive's generated code is of a typed
-/// record: `encrypt_with` and `contexts()` run it. The
+/// record: [`Planned`] and `contexts()` run it. The
 /// checks a binding asks without a cipher ([`check_values`],
 /// [`check_stored`], [`opening_base`]) are a second statement of the rules
 /// the description enforces through `inspect`, `lift` and `under_by`, and
