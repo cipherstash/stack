@@ -498,6 +498,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `target::ShareSource` is removed. `target::ConsumeSource` stays for
     `passthrough` only.
   - `dynamic::ValueFrame` and `json::JsonPlaintext` are no longer `Clone`.
+  - A call on a keyset that is not loaded yet keeps no borrow of the
+    plaintext. The call keeps what it derived without the keyset: a
+    term's normalized form or order encoding, wiped on drop. A borrowed
+    JSON document is the one plaintext that is copied. That copy is made
+    once, and wiped.
 - **An operation in `Owned` mode wipes the value it is handed** (#1734).
   `ciphertext` dropped a value whose context was refused without wiping
   it. A match term dropped every value it was handed without wiping it.
@@ -515,11 +520,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     accept already is.
   - A JSON document keeps its own guard and needs no `Zeroize`.
     `json_terms` and `json_document` stay bounded by `SourceMode`.
-  - A call on a keyset that is not loaded yet keeps no borrow of the
-    plaintext. The call keeps what it derived without the keyset: a
-    term's normalized form or order encoding, wiped on drop. A borrowed
-    JSON document is the one plaintext that is copied. That copy is made
-    once, and wiped.
+  - `Encryption::zip` is bounded by `WipeSource` too. While its argument
+    reads an owned value, `zip` holds the value in a guard. If a reader
+    panics, the value is wiped as the stack unwinds. A match term guards
+    the value it reads in the same way.
 - **An order index is bounded by vitaminc-ore's `Orderable`** (#1734).
   `sem::Orderable` and `op::Ordered` are removed. `stack_encrypt::Orderable`
   re-exports vitaminc-ore's trait, and its table is vitaminc-ore's.

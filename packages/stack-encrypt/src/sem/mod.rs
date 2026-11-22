@@ -1837,24 +1837,15 @@ where
     }
 }
 
-/// Derive an ORE term from a `T`'s order encoding: PRF of the encoded
-/// context under a PAE-encoded `[domain, context]` framing — the same
-/// framing every other term kind uses (see the module docs), so no
+/// The ORE term of an order encoding, at the target it was made for: PRF
+/// of the encoded context under a PAE-encoded `[domain, context]` framing,
+/// the same framing every other term kind uses (see the module docs), so no
 /// reimplementation of this derivation can collide with an equality or
-/// match derivation. Only the context enters the PRF — never the
-/// plaintext, whose encoding the keyed scheme encrypts. Deterministic, so
-/// write-time and query-time terms agree; under a 2-party PRF backend this
-/// derivation is a visible ZeroKMS event.
-fn ore<T: Orderable>(
-    prf: &HmacSha256Prf,
-    encoding: &OrderPlaintext,
-    context: Context<'_>,
-) -> Result<OreTerm<T>, TermError> {
-    ore_raw(prf, encoding, context).map(OreTerm::new)
-}
-
-/// [`ore`] as the raw ciphertext, at the target the encoding was made for.
-pub(crate) fn ore_raw(
+/// match derivation. Only the context enters the PRF, never the plaintext,
+/// whose encoding the keyed scheme encrypts. Deterministic, so write-time
+/// and query-time terms agree; under a 2-party PRF backend this derivation
+/// is a visible ZeroKMS event.
+pub(crate) fn ore(
     prf: &HmacSha256Prf,
     encoding: &OrderPlaintext,
     context: Context<'_>,
@@ -1867,31 +1858,11 @@ pub(crate) fn ore_raw(
         .map_err(order_error)
 }
 
-/// The OPE term of `value`, encoded as `T` is, under `context`, read where
-/// it is: the scalar `Ope` index's term of a `T` of the same value. The
-/// JSON index derives a leaf's ordering term through it, from the
-/// document's own `f64` or `&str`.
-pub(crate) fn ope_of<T: Orderable, V: Encrypt>(
-    prf: &HmacSha256Prf,
-    value: V,
-    context: Context<'_>,
-) -> Result<OpeTerm<T>, TermError> {
-    let encoding = order_encoding(target_of::<T>(), value).map_err(order_error)?;
-    ope(prf, &encoding, context)
-}
-
-/// Derive an OPE term — as [`ore`], under the OPE domain so the two schemes
-/// never share a key.
-fn ope<T: Orderable>(
-    prf: &HmacSha256Prf,
-    encoding: &OrderPlaintext,
-    context: Context<'_>,
-) -> Result<OpeTerm<T>, TermError> {
-    ope_raw(prf, encoding, context).map(OpeTerm::new)
-}
-
-/// [`ope`] as the raw ciphertext, at the target the encoding was made for.
-pub(crate) fn ope_raw(
+/// The OPE term of an order encoding, as [`ore`], under the OPE domain so
+/// the two schemes never share a key. The JSON index derives a leaf's
+/// ordering term through it, so a leaf's `op` is the term the scalar `Ope`
+/// index stores for the same value.
+pub(crate) fn ope(
     prf: &HmacSha256Prf,
     encoding: &OrderPlaintext,
     context: Context<'_>,
@@ -1904,19 +1875,9 @@ pub(crate) fn ope_raw(
         .map_err(order_error)
 }
 
-/// Derive a block ORE term — as [`ore`], under the block ORE domain, so
-/// no CLLW scheme shares its key.
-fn ore_block<T: Orderable>(
-    prf: &HmacSha256Prf,
-    encoding: &OrderPlaintext,
-    context: Context<'_>,
-) -> Result<OreBlockTerm<T>, TermError> {
-    ore_block_raw(prf, encoding, context).map(|term| OreBlockTerm(term, PhantomData))
-}
-
-/// [`ore_block`] as the raw ciphertext, at the target the encoding was
-/// made for.
-pub(crate) fn ore_block_raw(
+/// The block ORE term of an order encoding, as [`ore`], under the block ORE
+/// domain, so no CLLW scheme shares its key.
+pub(crate) fn ore_block(
     prf: &HmacSha256Prf,
     encoding: &OrderPlaintext,
     context: Context<'_>,
@@ -1958,181 +1919,62 @@ pub(crate) fn ore_block_fits(encoded: &[u8]) -> Result<(), TermError> {
 /// puts in front of the fold, so the fold itself is at most 1023.
 const ORE_BLOCK_MAX_BYTES: usize = ore_rs::scheme::chained::DEFAULT_MAX_STR_BYTES.get();
 
-/// An ORE term of any [`Orderable`] source, taken by value: the walk that
-/// encodes it wipes it. Under the local HMAC backend, derived during the
-/// synchronous build when the keyset is loaded — the returned [`Pending`]
-/// carries no requests.
-impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OreTerm<S>
-where
-    S: Orderable,
-    T: IntoPrfContext<'c>,
-{
-    // Derived locally: no data key, no descriptor.
+/// The order terms of any [`Orderable`] source, by value or read in place.
+/// Under the local HMAC backend each is derived during the synchronous
+/// build when the keyset is loaded, and the returned [`Pending`] carries no
+/// requests. A term derives no descriptor and requests no data key.
+///
+/// A value handed over by value is wiped by the walk that encodes it. A
+/// value read in place stays with the caller, and is not copied. When the
+/// keyset is not loaded yet, the pending keeps the value's order encoding
+/// until it is, and wipes it.
+macro_rules! order_term {
+    ($($term:ident: $scheme:ident, $refused:ident, $wrap:expr;)+) => {$(
+        impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for $term<S>
+        where
+            S: Orderable,
+            T: IntoPrfContext<'c>,
+        {
+            fn encrypt_from<'a>(
+                source: S,
+                cipher: &'a KeysetCipher<'_, K>,
+                context: NonEmpty<T>,
+            ) -> Pending<'a, Self, K>
+            where
+                Self: 'a,
+            {
+                let context = context.into_prf_context().into_owned();
+                order_pending(cipher, target_of::<S>(), source, context, $refused, |prf, encoding, context| {
+                    $scheme(prf, encoding, context).map($wrap)
+                })
+            }
+        }
 
-    fn encrypt_from<'a>(
-        source: S,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: NonEmpty<T>,
-    ) -> Pending<'a, Self, K>
-    where
-        Self: 'a,
-    {
-        let context = context.into_prf_context().into_owned();
-        order_pending(
-            cipher,
-            target_of::<S>(),
-            source,
-            context,
-            order_error,
-            ore::<S>,
-        )
-    }
+        impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for $term<S>
+        where
+            S: Orderable + EncryptRef,
+            T: IntoPrfContext<'c>,
+        {
+            fn encrypt_from<'a>(
+                source: &S,
+                cipher: &'a KeysetCipher<'_, K>,
+                context: NonEmpty<T>,
+            ) -> Pending<'a, Self, K>
+            where
+                Self: 'a,
+            {
+                let context = context.into_prf_context().into_owned();
+                order_pending(cipher, target_of::<S>(), source.lend(), context, $refused, |prf, encoding, context| {
+                    $scheme(prf, encoding, context).map($wrap)
+                })
+            }
+        }
+    )+};
 }
-
-/// The same term of a value read in place: the value stays with the
-/// caller, and is not copied. When the keyset is not loaded yet, the
-/// pending keeps the value's order encoding until it is, and wipes it.
-impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for OreTerm<S>
-where
-    S: Orderable + EncryptRef,
-    T: IntoPrfContext<'c>,
-{
-    fn encrypt_from<'a>(
-        source: &S,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: NonEmpty<T>,
-    ) -> Pending<'a, Self, K>
-    where
-        Self: 'a,
-    {
-        let context = context.into_prf_context().into_owned();
-        order_pending(
-            cipher,
-            target_of::<S>(),
-            source.lend(),
-            context,
-            order_error,
-            ore::<S>,
-        )
-    }
-}
-
-/// An OPE term of any [`Orderable`] source, taken by value: the walk that
-/// encodes it wipes it. Under the local HMAC backend, derived during the
-/// synchronous build when the keyset is loaded — the returned [`Pending`]
-/// carries no requests.
-impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OpeTerm<S>
-where
-    S: Orderable,
-    T: IntoPrfContext<'c>,
-{
-    // Derived locally: no data key, no descriptor.
-
-    fn encrypt_from<'a>(
-        source: S,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: NonEmpty<T>,
-    ) -> Pending<'a, Self, K>
-    where
-        Self: 'a,
-    {
-        let context = context.into_prf_context().into_owned();
-        order_pending(
-            cipher,
-            target_of::<S>(),
-            source,
-            context,
-            order_error,
-            ope::<S>,
-        )
-    }
-}
-
-/// The same term of a value read in place: the value stays with the
-/// caller, and is not copied. When the keyset is not loaded yet, the
-/// pending keeps the value's order encoding until it is, and wipes it.
-impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for OpeTerm<S>
-where
-    S: Orderable + EncryptRef,
-    T: IntoPrfContext<'c>,
-{
-    fn encrypt_from<'a>(
-        source: &S,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: NonEmpty<T>,
-    ) -> Pending<'a, Self, K>
-    where
-        Self: 'a,
-    {
-        let context = context.into_prf_context().into_owned();
-        order_pending(
-            cipher,
-            target_of::<S>(),
-            source.lend(),
-            context,
-            order_error,
-            ope::<S>,
-        )
-    }
-}
-
-/// A block ORE term of any [`Orderable`] source, taken by value: the walk that
-/// encodes it wipes it. Under the local HMAC backend, derived during the
-/// synchronous build when the keyset is loaded — the returned [`Pending`]
-/// carries no requests.
-impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OreBlockTerm<S>
-where
-    S: Orderable,
-    T: IntoPrfContext<'c>,
-{
-    // Derived locally: no data key, no descriptor.
-
-    fn encrypt_from<'a>(
-        source: S,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: NonEmpty<T>,
-    ) -> Pending<'a, Self, K>
-    where
-        Self: 'a,
-    {
-        let context = context.into_prf_context().into_owned();
-        order_pending(
-            cipher,
-            target_of::<S>(),
-            source,
-            context,
-            ore_block_error,
-            ore_block::<S>,
-        )
-    }
-}
-
-/// The same term of a value read in place: the value stays with the
-/// caller, and is not copied. When the keyset is not loaded yet, the
-/// pending keeps the value's order encoding until it is, and wipes it.
-impl<'c, S, K, T> Term<&S, K, NonEmpty<T>> for OreBlockTerm<S>
-where
-    S: Orderable + EncryptRef,
-    T: IntoPrfContext<'c>,
-{
-    fn encrypt_from<'a>(
-        source: &S,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: NonEmpty<T>,
-    ) -> Pending<'a, Self, K>
-    where
-        Self: 'a,
-    {
-        let context = context.into_prf_context().into_owned();
-        order_pending(
-            cipher,
-            target_of::<S>(),
-            source.lend(),
-            context,
-            ore_block_error,
-            ore_block::<S>,
-        )
-    }
+order_term! {
+    OreTerm: ore, order_error, OreTerm::new;
+    OpeTerm: ope, order_error, OpeTerm::new;
+    OreBlockTerm: ore_block, ore_block_error, |term| OreBlockTerm(term, PhantomData);
 }
 
 // =============================================================================
@@ -2311,14 +2153,7 @@ impl<K> KeysetCipher<'_, K> {
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, OreClww8VariableV1, K> {
         let context = descriptor.into_prf_context().into_owned();
-        order_pending(
-            self,
-            target_of::<T>(),
-            value,
-            context,
-            order_error,
-            |prf, encoding, context| ore::<T>(prf, encoding, context).map(OreTerm::into_inner),
-        )
+        order_pending(self, target_of::<T>(), value, context, order_error, ore)
     }
 
     /// Generate an order-preserving (CLLW OPE) term: ciphertexts compare with
@@ -2331,14 +2166,7 @@ impl<K> KeysetCipher<'_, K> {
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, OpeClww8VariableV1, K> {
         let context = descriptor.into_prf_context().into_owned();
-        order_pending(
-            self,
-            target_of::<T>(),
-            value,
-            context,
-            order_error,
-            |prf, encoding, context| ope::<T>(prf, encoding, context).map(OpeTerm::into_inner),
-        )
+        order_pending(self, target_of::<T>(), value, context, order_error, ope)
     }
 
     /// Generate a block ORE term: ore-rs's 6-bit block ORE, the scheme
@@ -2359,7 +2187,9 @@ impl<K> KeysetCipher<'_, K> {
             value,
             context,
             ore_block_error,
-            ore_block::<T>,
+            |prf, encoding, context| {
+                ore_block(prf, encoding, context).map(|term| OreBlockTerm(term, PhantomData))
+            },
         )
     }
 }

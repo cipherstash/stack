@@ -759,3 +759,73 @@ async fn each_owned_operation_wipes_its_value_once() {
         "matching, refused"
     );
 }
+
+// --- An owned value is wiped when a reader panics ------------------------------
+
+/// A plaintext whose text cannot be read: `as_ref` panics. It counts its
+/// wipes, as [`Wiped`] does, and seals through its text by reference.
+struct Exploding {
+    text: String,
+    wipes: Arc<AtomicUsize>,
+}
+
+impl Exploding {
+    fn new() -> (Self, Arc<AtomicUsize>) {
+        let wipes = Arc::new(AtomicUsize::new(0));
+        let value = Self {
+            text: NUMBER.to_string(),
+            wipes: wipes.clone(),
+        };
+        (value, wipes)
+    }
+}
+impl Zeroize for Exploding {
+    fn zeroize(&mut self) {
+        let _ = self.wipes.fetch_add(1, Ordering::SeqCst);
+        self.text.zeroize();
+    }
+}
+impl Encrypt for Exploding {
+    fn visit<S: Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
+        let walked = self.text.as_str().visit(sink);
+        self.zeroize();
+        walked
+    }
+}
+impl Encrypt for &Exploding {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.text.as_str().visit(sink)
+    }
+}
+impl AsRef<str> for Exploding {
+    fn as_ref(&self) -> &str {
+        panic!("the text cannot be read")
+    }
+}
+
+/// An owned value that a borrowed reader in `zip` panics over is wiped
+/// once, as the stack unwinds, and so is one that a match term panics over
+/// alone.
+#[tokio::test]
+async fn an_owned_value_is_wiped_once_when_a_reader_panics() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let (value, wipes) = Exploding::new();
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
+        let sealed_and_matched = ciphertext::<_, _, Owned>()
+            .accepting::<CallerContext>()
+            .zip(matching::<_, _, Borrowed, DefaultMatch>());
+        drop(keyset.run(sealed_and_matched, value, caller()));
+    }));
+    assert!(unwound.is_err(), "the reader panicked");
+    assert_eq!(wipes.load(Ordering::SeqCst), 1, "zip: one wipe");
+
+    let (value, wipes) = Exploding::new();
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
+        drop(keyset.run(matching::<_, _, Owned, DefaultMatch>(), value, caller()));
+    }));
+    assert!(unwound.is_err(), "the match term panicked");
+    assert_eq!(wipes.load(Ordering::SeqCst), 1, "matching: one wipe");
+}

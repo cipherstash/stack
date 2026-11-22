@@ -297,7 +297,7 @@ pub(crate) async fn load_index_key<K: KeySource<I>, I>(
 ///
 /// ```
 /// use stack_encrypt::kms::{FakeCredentialKeySource, SecretToken};
-/// use stack_encrypt::{Ciphertext, StackCipher};
+/// use stack_encrypt::{Ciphertext, Controlled, Protected, StackCipher};
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// // Once, at startup. No request is made, so no user is needed.
@@ -317,11 +317,11 @@ pub(crate) async fn load_index_key<K: KeySource<I>, I>(
 /// assert_eq!(cipher.kms().credentials_seen(), ["alice.jwt", "alice.jwt"]);
 ///
 /// // Bob's request, on the same cipher. Its only request is its own.
-/// let api_key: String = keyset
+/// let api_key: Protected<String> = keyset
 ///     .decrypt(stored)
 ///     .with_credential(SecretToken::new("bob.jwt"))
 ///     .await?;
-/// assert_eq!(api_key, "sk_live_1234");
+/// assert_eq!(api_key.risky_ref(), "sk_live_1234");
 /// assert_eq!(
 ///     cipher.kms().credentials_seen(),
 ///     ["alice.jwt", "alice.jwt", "bob.jwt"]

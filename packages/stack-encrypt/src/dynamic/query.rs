@@ -824,9 +824,14 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// let plan = record::plan_with(declaration.as_protected_ref(), &Documents)?;
 /// // What `jsonb_path_match(col, $1, $2)` takes: the predicate, and its
 /// // variables as the JSON text of one object.
+/// // Each part goes straight into a protected frame, so no plain buffer
+/// // holds the query's values.
 /// let input = |predicate: &str| -> ValueFrame {
-///     let input = json!({"predicate": predicate, "vars": r#"{"min": 18, "r": "sibling"}"#});
-///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().as_protected_ref()).unwrap()
+///     let parts = std::collections::BTreeMap::from([
+///         ("predicate", ValueFrame::of(predicate).unwrap()),
+///         ("vars", ValueFrame::of(r#"{"min": 18, "r": "sibling"}"#).unwrap()),
+///     ]);
+///     ValueFrame::of(&parts).unwrap()
 /// };
 /// let check = |predicate: &str| {
 ///     check_query(&plan, "profile", Op::Match, input(predicate), &Documents)

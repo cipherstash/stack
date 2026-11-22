@@ -524,21 +524,18 @@ fn leaf_op(
     context: &Context<'_>,
     value: &Value,
 ) -> Result<Option<Vec<u8>>, TermError> {
-    Ok(match value {
-        Value::Number(n) => Some(
-            crate::sem::ope_of::<f64, _>(prf, n.as_f64().unwrap_or(0.0), context.clone())?
-                .into_inner()
-                .as_ref()
-                .to_vec(),
-        ),
-        Value::String(s) => Some(
-            crate::sem::ope_of::<String, _>(prf, s.as_str(), context.clone())?
-                .into_inner()
-                .as_ref()
-                .to_vec(),
-        ),
-        _ => None,
-    })
+    use crate::sem::{ope, order_encoding, order_error, target_of};
+    // The leaf read in place, encoded as the scalar index encodes an `f64`
+    // or a `String`.
+    let encoding = match value {
+        Value::Number(n) => order_encoding(target_of::<f64>(), n.as_f64().unwrap_or(0.0)),
+        Value::String(s) => order_encoding(target_of::<String>(), s.as_str()),
+        _ => return Ok(None),
+    }
+    .map_err(order_error)?;
+    Ok(Some(
+        ope(prf, &encoding, context.clone())?.as_ref().to_vec(),
+    ))
 }
 
 // =============================================================================

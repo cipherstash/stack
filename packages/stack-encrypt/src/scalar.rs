@@ -324,7 +324,7 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// as its purpose or a request id.
     ///
     /// ```
-    /// use stack_encrypt::{AuditMetadata, Ciphertext, StackCipher};
+    /// use stack_encrypt::{AuditMetadata, Ciphertext, Controlled, Protected, StackCipher};
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
     /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
@@ -336,7 +336,7 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// let keyset = cipher.default_keyset();
     /// let stored: Ciphertext = keyset.encrypt(String::from("sk_live_1234")).await?;
     ///
-    /// let api_key: String = keyset
+    /// let api_key: Protected<String> = keyset
     ///     .decrypt(stored)
     ///     .audit(
     ///         AuditMetadata::new()
@@ -344,7 +344,7 @@ impl<K: 'static> KeysetCipher<'_, K> {
     ///             .with("request_id", "req_01J9Z3"),
     ///     )
     ///     .await?;
-    /// assert_eq!(api_key, "sk_live_1234");
+    /// assert_eq!(api_key.risky_ref(), "sk_live_1234");
     /// # Ok::<(), stack_encrypt::Error>(())
     /// # }).unwrap();
     /// ```

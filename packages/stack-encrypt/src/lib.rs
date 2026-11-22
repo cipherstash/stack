@@ -93,7 +93,8 @@ assert_eq!(plaintext, "secret message");
 //! # async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync + 'static>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
 //! let ct = keyset.encrypt_with_context("4111 1111 1111 1111".to_owned(), "users/42/card").await?;
-//! let card: String = keyset.decrypt_with_context(ct, "users/42/card").await?; // ok
+//! let card: stack_encrypt::Protected<String> =
+//!     keyset.decrypt_with_context(ct, "users/42/card").await?; // ok
 //! # Ok(())
 //! # }
 //! ```

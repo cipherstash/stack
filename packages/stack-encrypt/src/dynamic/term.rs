@@ -49,8 +49,8 @@ use serde::{Deserialize, Serialize, Serializer};
 use super::{Error, Reason};
 use crate::json::{JsonOptions, JsonPath};
 use crate::sem::{
-    ope_raw, order_error, order_pending, ore_block_error, ore_block_raw, ore_raw, target_of,
-    DefaultMatch, MatchOptions, TermError, Tokenizer,
+    ope, order_error, order_pending, ore, ore_block, ore_block_error, target_of, DefaultMatch,
+    MatchOptions, TermError, Tokenizer,
 };
 use crate::target::{
     chosen, CallerContext, Encryption, Index, IndexSpec, Pending, Source, WipeSource,
@@ -745,7 +745,7 @@ where
             context,
             order_error,
             |prf, encoding, context| {
-                ore_raw(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
+                ore(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
             },
         ),
         OrderIndex::Ope => order_pending(
@@ -755,7 +755,7 @@ where
             context,
             order_error,
             |prf, encoding, context| {
-                ope_raw(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
+                ope(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
             },
         ),
         OrderIndex::OreBlock => order_pending(
@@ -765,7 +765,7 @@ where
             context,
             ore_block_error,
             |prf, encoding, context| {
-                ore_block_raw(prf, encoding, context).map(|term| TermBytes(term.into_bytes()))
+                ore_block(prf, encoding, context).map(|term| TermBytes(term.into_bytes()))
             },
         ),
     }

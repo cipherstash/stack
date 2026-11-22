@@ -2,6 +2,8 @@
 //! explanation is on [`SourceMode`], which is what the public docs show; this
 //! module is private and its items are re-exported from `target`.
 
+use vitaminc_protected::OpaqueDebug;
+
 /// A description's plaintext is handed to it by reference: the default mode,
 /// and the one a record runs each field in when it takes the field out of a
 /// borrowed struct. Every operation reads the plaintext in place.
@@ -62,19 +64,13 @@ pub trait SourceMode<'s, S: 's>: sealed::Sealed + 's {
 /// [`Owned`] one the value. This type exists so that one owned value can be
 /// lent to several descriptions and then handed to the last.
 #[doc(hidden)]
+#[derive(OpaqueDebug)]
 pub struct Source<'b, S>(Held<'b, S>);
 
 /// What a [`Source`] holds.
 pub(crate) enum Held<'b, S> {
     Lent(&'b S),
     Given(S),
-}
-
-// No `Debug` that prints the plaintext.
-impl<S> std::fmt::Debug for Source<'_, S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Source").finish_non_exhaustive()
-    }
 }
 
 impl<'b, S> Source<'b, S> {
@@ -166,6 +162,46 @@ impl<'s, S: zeroize::Zeroize + 's> WipeSource<'s, S> for Owned {
     }
 }
 
+/// A source that is wiped if it is dropped before an operation takes it.
+/// An operation that reads an owned value before handing it on holds it in
+/// one, so a reader that panics still lets the value go through
+/// [`WipeSource::wipe`]: a value is wiped, and a borrow is left alone.
+pub(crate) struct Guarded<'b, 's, M: WipeSource<'s, S>, S: 's> {
+    source: Option<Source<'b, S>>,
+    mode: std::marker::PhantomData<fn() -> (M, &'s ())>,
+}
+
+impl<'b, 's, M: WipeSource<'s, S>, S: 's> Guarded<'b, 's, M, S> {
+    pub(crate) fn new(source: Source<'b, S>) -> Self {
+        Self {
+            source: Some(source),
+            mode: std::marker::PhantomData,
+        }
+    }
+    /// The source, to read in place.
+    pub(crate) fn source(&self) -> &Source<'b, S> {
+        match &self.source {
+            Some(source) => source,
+            None => unreachable!("a guard holds its source until it is taken"),
+        }
+    }
+    /// Hand the source on: the guard no longer wipes it.
+    pub(crate) fn take(mut self) -> Source<'b, S> {
+        match self.source.take() {
+            Some(source) => source,
+            None => unreachable!("a guard holds its source until it is taken"),
+        }
+    }
+}
+
+impl<'s, M: WipeSource<'s, S>, S: 's> Drop for Guarded<'_, 's, M, S> {
+    fn drop(&mut self) {
+        if let Some(source) = self.source.take() {
+            M::wipe(source);
+        }
+    }
+}
+
 /// A mode in which an operation can take the plaintext by value. Only
 /// [`passthrough`](super::passthrough) asks for it, because its output is
 /// the plaintext itself. [`Owned`] always can: the value is moved. In
@@ -192,13 +228,15 @@ impl<'s, S: 's> ConsumeSource<'s, S> for Owned {
 mod tests {
     use super::Source;
 
-    /// A source's `Debug` names the type and prints nothing it holds.
+    /// A source's `Debug` masks what it holds, lent or given.
     #[test]
     fn a_source_prints_no_plaintext() {
         let secret = String::from("4111 1111 1111 1111");
         let lent = format!("{:?}", Source::lent(&secret));
         let given = format!("{:?}", Source::given(secret.clone()));
-        assert_eq!(lent, "Source { .. }");
-        assert_eq!(given, "Source { .. }");
+        for printed in [lent, given] {
+            assert!(!printed.contains("4111"), "{printed}");
+            assert!(printed.contains("***"), "{printed}");
+        }
     }
 }

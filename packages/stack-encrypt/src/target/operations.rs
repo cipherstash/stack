@@ -20,7 +20,9 @@ use super::context::{
 use super::conversion::{DecryptSource, EncryptTarget};
 use super::core::{encrypt_native, open_native, Term};
 use super::input::{AcceptsContext, NoCallerContext, RequiredContext};
-use super::source::{Borrowed, ConsumeSource, Held, Owned, Source, SourceMode, WipeSource};
+use super::source::{
+    Borrowed, ConsumeSource, Guarded, Held, Owned, Source, SourceMode, WipeSource,
+};
 use super::{CipherRef, Pending};
 use crate::contexts::{self, Contexts, Placeholder, Shape, Shapes, SuppliedContext};
 use crate::json::{JsonDocument, JsonOptions, JsonPlaintext, JsonTerms};
@@ -247,12 +249,17 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// in [`Owned`] mode. So several operations over one owned value put the
     /// one that takes the value first, and the ones that only read it after.
     /// The outputs are in the order written.
+    ///
+    /// While `other` reads an owned value, the value is held in a guard. If
+    /// `other` panics, the value is wiped as the stack unwinds
+    /// ([`WipeSource`]).
     pub fn zip<U: 'static>(
         self,
         other: Encryption<'s, S, U, K, Ctx>,
     ) -> Encryption<'s, S, (T, U), K, Ctx, M>
     where
         Ctx: Clone,
+        M: WipeSource<'s, S>,
     {
         let Self {
             build, mut shapes, ..
@@ -265,8 +272,9 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
         shapes.extend(other_shapes);
         Encryption {
             build: Box::new(move |source, cipher, cx| {
-                let theirs = other_build(source.lend(), cipher, cx.clone());
-                build(source, cipher, cx).zip(theirs)
+                let guarded = Guarded::<M, S>::new(source);
+                let theirs = other_build(guarded.source().lend(), cipher, cx.clone());
+                build(guarded.take(), cipher, cx).zip(theirs)
             }),
             shapes,
             mode: PhantomData,
@@ -1178,18 +1186,19 @@ macro_rules! term_operation {
         {
             Encryption {
                 build: Box::new(move |source, cipher, cx: CallerContext| {
+                    // Wiped when the guard drops: after the read, and if
+                    // the read panics.
+                    let guarded = Guarded::<M, S>::new(source);
                     let (query, stored) = (cx.query(), cx.stored());
-                    let pending = match cx.validated() {
+                    match cx.validated() {
                         Ok(ctx) => <$output as Term<&S, K, _>>::encrypt_from(
-                            source.view(),
+                            guarded.source().view(),
                             cipher,
                             CallerContext::query_nonempty(ctx),
                         )
                         .under_context(query, stored),
                         Err(e) => Pending::failed(cipher, e),
-                    };
-                    M::wipe(source);
-                    pending
+                    }
                 }),
                 shapes: contexts::caller_leaf(),
                 mode: PhantomData,

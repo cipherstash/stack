@@ -15,6 +15,7 @@
 //! use stack_encrypt::dynamic::{record, Op, Planned, QueryTerm, ValueFrame};
 //! use stack_encrypt::target::Scope;
 //! use stack_encrypt::{AsProtectedRef, DecryptFrom, EncryptInto, StackCipher, StackCipherText};
+//! use std::collections::BTreeMap;
 //! use vitaminc_aead_frame::serde::to_vec;
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -30,27 +31,33 @@
 //!     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint64" },
 //! }))?;
 //! let plan = record::plan(declaration.as_protected_ref())?;
-//! let bytes = to_vec(&serde_json::json!({"email": "ada@example.com", "age": 36}))?;
-//! let values = ValueFrame::from_bytes(bytes.as_protected_ref())?;
+//!
+//! // Each value goes straight into a frame, which keeps its bytes under
+//! // `Protected` and wipes them when it is dropped. A row is a map of them.
+//! let row = || -> Result<ValueFrame, Box<dyn std::error::Error>> {
+//!     let fields = BTreeMap::from([
+//!         ("email", ValueFrame::of("ada@example.com")?),
+//!         ("age", ValueFrame::of(36u64)?),
+//!     ]);
+//!     Ok(ValueFrame::of(&fields)?)
+//! };
 //!
 //! // A record under the plan, bound to its row. The values are moved in:
 //! // a frame is not `Clone`.
-//! let row: StackCipherText = Planned::new(&plan, values)
+//! let stored: StackCipherText = Planned::new(&plan, row()?)
 //!     .encrypt_into_with_context(&keyset, Scope::new(42u64).bind(9u128))
 //!     .await?;
 //! let opened = ValueFrame::decrypt_from_with_context(
-//!     Planned::new(&plan, row),
+//!     Planned::new(&plan, stored),
 //!     &keyset,
 //!     Scope::new(42u64).bind(9u128),
 //! )
 //! .await?;
-//! assert_eq!(opened, ValueFrame::from_bytes(bytes.as_protected_ref())?);
+//! assert_eq!(opened, row()?);
 //!
 //! // A query value under a query plan, by the scope alone.
 //! let by_email = plan.query("email", Op::Eq)?;
-//! let email = to_vec("ada@example.com")?;
-//! let probe = ValueFrame::from_bytes(email.as_protected_ref())?;
-//! let term: QueryTerm = Planned::new(&by_email, probe)
+//! let term: QueryTerm = Planned::new(&by_email, ValueFrame::of("ada@example.com")?)
 //!     .encrypt_into_with_context(&keyset, Scope::new(42u64))
 //!     .await?;
 //! assert_eq!(term.operator(), Op::Eq);
@@ -58,7 +65,7 @@
 //! // Or through the field handle, checked against the plan where it is made.
 //! let same: QueryTerm = plan
 //!     .field("email")?
-//!     .eq(ValueFrame::from_bytes(email.as_protected_ref())?)?
+//!     .eq(ValueFrame::of("ada@example.com")?)?
 //!     .scope(Scope::new(42u64))
 //!     .encrypt(&keyset)
 //!     .await?;
