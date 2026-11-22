@@ -11,8 +11,8 @@
 //! [`GuestMemory::linear`], and the `abi` module's `input` and
 //! `take_plaintext` use it. This module has no wasm in it otherwise, so it
 //! builds natively and runs under Miri (`miri:stack-guest-abi`), where a
-//! test names the range with [`GuestMemory::spanning`] over a buffer it
-//! owns. A validation that let a bad pair through would then build a slice
+//! test names the range with `GuestMemory::spanning` (test-only) over a
+//! buffer it owns. A validation that let a bad pair through would then build a slice
 //! past that buffer, which Miri reports as undefined behaviour.
 
 use vitaminc_protected::Protected;
@@ -54,7 +54,12 @@ impl GuestMemory {
     /// free it, afterwards. A pair admitted against a freed region is the
     /// caller's broken promise, as with any pair (see
     /// [`input`](Self::input)).
-    pub fn spanning(region: &[u8]) -> Self {
+    ///
+    /// Test-only: it exists so that the native tests, and Miri, check the
+    /// validation against a real allocation's edges. Nothing outside this
+    /// crate's tests needs a range other than [`linear`](Self::linear).
+    #[cfg(test)]
+    pub(crate) fn spanning(region: &[u8]) -> Self {
         let start = region.as_ptr().addr();
         Self {
             start,
