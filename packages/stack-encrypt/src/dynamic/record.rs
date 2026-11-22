@@ -662,7 +662,6 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         P::FieldLabel { field, .. } => (Some(field), Reason::ContextNotLabel),
         P::DuplicateField { field } => (Some(field), Reason::DuplicateField),
         P::SharedIdentity { second, .. } => (Some(second), Reason::SharedIdentity),
-        P::PassthroughIndexed { field } => (Some(field), Reason::PassthroughWithOutputs),
         P::DuplicateIndex { at, .. } => (Some(at), Reason::DuplicateOutput),
         P::IndexOverlap { at, .. } => (Some(at), Reason::OverlappingOutputs),
         P::EmptyIndexes => (None, Reason::NoOutputs),
@@ -670,17 +669,9 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         P::NotInValue { field } => (Some(field), Reason::FieldMissing),
         P::FieldType { field, .. } => (Some(field), Reason::FieldType),
         P::NoSuchField { field } => (Some(field), Reason::NoSuchField),
-        P::TargetWithVerbs { field } => (Some(field), Reason::OutputsWithTarget),
-        P::IndexNotDeclared { field, .. } | P::IndexOptions { field, .. } => {
-            (Some(field), Reason::Refused)
-        }
         P::BindInQuery => (None, Reason::BindInQuery),
         P::EmptyPart => (None, Reason::EmptyBinding),
-        P::IdentityWithoutField
-        | P::MixedCiphers
-        | P::TwoContextSources { .. }
-        | P::NoContext
-        | P::ContextNotStorable { .. } => (None, Reason::Refused),
+        P::TwoContextSources { .. } | P::ContextNotStorable { .. } => (None, Reason::Refused),
     }
 }
 
@@ -8389,11 +8380,6 @@ mod tests {
                     SharedIdentity,
                 ),
                 (
-                    P::PassthroughIndexed { field: field() }.into(),
-                    some("age"),
-                    PassthroughWithOutputs,
-                ),
-                (
                     P::DuplicateIndex {
                         at: field(),
                         index: "eq",
@@ -8428,32 +8414,6 @@ mod tests {
                     NoSuchField,
                 ),
                 (
-                    P::TargetWithVerbs { field: field() }.into(),
-                    some("age"),
-                    OutputsWithTarget,
-                ),
-                (
-                    P::IndexNotDeclared {
-                        field: field(),
-                        index: "ore",
-                    }
-                    .into(),
-                    some("age"),
-                    Refused,
-                ),
-                (
-                    P::IndexOptions {
-                        field: field(),
-                        declared: IndexSpec::Equality,
-                        asked: IndexSpec::Equality,
-                    }
-                    .into(),
-                    some("age"),
-                    Refused,
-                ),
-                (P::IdentityWithoutField.into(), None, Refused),
-                (P::MixedCiphers.into(), None, Refused),
-                (
                     P::TwoContextSources {
                         first: "the plan",
                         second: "the call",
@@ -8462,7 +8422,6 @@ mod tests {
                     None,
                     Refused,
                 ),
-                (P::NoContext.into(), None, Refused),
                 (P::BindInQuery.into(), None, BindInQuery),
                 (
                     P::IndexOverlap {

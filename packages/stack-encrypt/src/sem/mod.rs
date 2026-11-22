@@ -800,9 +800,18 @@ impl MatchOptions {
 }
 
 /// Type-level match configuration: the [`MatchOptions`] a [`MatchTerms<Self>`]
-/// is generated with. Putting the configuration on the *type* means a record
-/// field and the query probing it agree on tokenizer and filter parameters by
-/// construction. Define your own by implementing this on a marker type.
+/// is generated with. Define your own by implementing this on a marker type.
+///
+/// A field stored as `MatchTerms<O>` and a query made from that field's
+/// reference use one configuration: the field's type names its match index,
+/// [`Match<O>`](struct@crate::target::Match), through
+/// [`Answers`](crate::op::Answers), and the query derives its filter through
+/// that index. A filter derived directly, with
+/// [`match_terms`](crate::KeysetCipher::match_terms) or a `Match<O>` the
+/// caller names, is cut under whatever configuration it is given, and
+/// matches a stored filter only when that configuration is the field's. A
+/// plan that is data has one match index per field, and its stored filter
+/// and its query both read that index's options.
 pub trait MatchConfig: Send + Sync + 'static {
     fn options() -> MatchOptions;
 
@@ -2059,12 +2068,14 @@ impl<K> KeysetCipher<'_, K> {
     /// `descriptor` and the type-level config `O`: tokenize locally, PRF each
     /// token, fold the outputs into Bloom-filter bit positions.
     ///
-    /// The config is a *type* parameter (not runtime options) so write-time
-    /// and query-time terms agree by construction — a term generated under
-    /// one config cannot be compared against a term generated under another,
-    /// which would otherwise silently return false negatives. Byte-identical
-    /// to the target-directed path for the same `O`. For custom options,
-    /// define a marker type implementing [`MatchConfig`].
+    /// The config is a *type* parameter (not runtime options), so the
+    /// filter's type says which configuration cut it. A filter cut under
+    /// one config is not comparable with one cut under another: a query
+    /// would miss rows it should match, with no error. So a filter derived
+    /// here matches a stored one only when `O` is the field's own. A query made from the field's reference takes the
+    /// field's `O` ([`MatchConfig`] says how). Byte-identical to the
+    /// target-directed path for the same `O`. For custom options, define a
+    /// marker type implementing [`MatchConfig`].
     ///
     /// This derives the *stored* filter. Text that yields no tokens (empty
     /// or separator-only text, or text shorter than the n-gram length; see

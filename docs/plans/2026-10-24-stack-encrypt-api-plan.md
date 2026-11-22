@@ -2312,7 +2312,7 @@ review. The rules are the query artifact's.
   `.via`. The `MatchConfig` documentation says a field and its query agree "by
   construction". That is true only for one-value plans today. Both
   are amended, not contradicted in silence.
-- **Tracked in.** Steps 1 and 2 are done: #1279, #1318, #1317 and #1233 are closed. They brought `prepare`, the `sem::query` rules and `Op`, and dropped `Matches`'s case parameter. The analyzer of "Match configuration: one analyzer" is its own work (#1673). Step 3 is done apart from its clean-up: the field references and `Planned` (#1486, closed), and the removal of `DefaultIndex` and `.via` (#1666). Issue #1671 is open to remove `PlanError::IndexOptions` and the other variants nothing raises, and to amend ADR-0009 and the `MatchConfig` documentation. Step 4 is issue #1672, open.
+- **Tracked in.** Steps 1 and 2 are done: #1279, #1318, #1317 and #1233 are closed. They brought `prepare`, the `sem::query` rules and `Op`, and dropped `Matches`'s case parameter. The analyzer of "Match configuration: one analyzer" is its own work (#1673). Step 3 is done apart from its clean-up: the field references and `Planned` (#1486, closed), and the removal of `DefaultIndex` and `.via` (#1666). #1671 removes `PlanError::IndexOptions` and the six other variants nothing raised, and amends ADR-0009 and the `MatchConfig` documentation. Step 4 is issue #1672, open.
 - **Finished when** these are all true:
   - every index's operators appear in one declaration, and a test shows
     the typed and dynamic lookups agree on every index;

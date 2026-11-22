@@ -342,8 +342,9 @@ impl Json {
 /// The value [`Match`](constant@Match) is the index under the default
 /// configuration ([`DefaultMatch`]), as `PhantomData` is a value of its
 /// type; `Match::<MyConfig>::new()` is another. The configuration is on the
-/// type so that a stored field and the query probing it agree on it by
-/// construction.
+/// type, so a field's type fixes the one its stored filter and its queries
+/// are cut under: a query made from the field's reference answers through
+/// the field's own `Match<O>` ([`Answers`](crate::op::Answers)).
 pub struct Match<O = DefaultMatch> {
     config: PhantomData<fn() -> O>,
 }

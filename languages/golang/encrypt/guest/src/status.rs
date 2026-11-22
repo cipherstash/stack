@@ -420,7 +420,7 @@ mod tests {
     fn a_plan_refusal_is_the_callers_input() {
         assert_eq!(
             status_for_error(&stack_encrypt::Error::Plan(
-                stack_encrypt::PlanError::NoContext
+                stack_encrypt::PlanError::BindInQuery
             )),
             STATUS_ENCODING
         );

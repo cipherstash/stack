@@ -249,6 +249,10 @@ pub trait DefaultIndex<S>: Operator {
 }
 ```
 
+*Amended 2026-11-23:* `DefaultIndex` and `.via` are removed. A field's
+target type answers through `Answers`, and a plan that is data through
+`Op::answered_by`. See [Amended 2026-11-23](#amended-2026-11-23-1671).
+
 ### 4. A query term is one of three things, and the trait it implements is its fidelity
 
 ```rust
@@ -1282,3 +1286,41 @@ vitaminc-ore's `Orderable`, which `stack_encrypt::Orderable` re-exports.
 That trait covers the integers of 16 bits and wider, the floats, text,
 dates, timestamps, and decimals. It does not cover bytes or an 8-bit
 integer. Where this ADR names `op::Ordered`, read `Orderable`.
+
+## Amended 2026-11-23 (#1671)
+
+`DefaultIndex` and `.via(index)` are removed (#1666, with the plan builder
+they belonged to). Nothing replaced them with a new choice: each field
+declares at most one index per operator (amended 2026-11-10), so a query
+has nothing to choose.
+
+- **A typed field answers through its target type.** A query starts from
+  the field's reference, which carries the field's target type. That type
+  implements `Answers<Op, In>`, whose `Via` is the index that answers `Op`:
+  `EqualityTerm` answers `Eq` through `Equality`, `MatchTerms<O>` answers
+  `Matches` through `Match<O>`, and a tuple of terms answers through the
+  one term that answers the operator. So a field declared with a match
+  index under configuration `O` is queried under `O`: the query cannot
+  name another index or other options. A field whose type has no
+  `Answers` impl for an operator has no method for it, and the query does
+  not compile.
+- **A plan that is data answers through `Op::answered_by`.** A field of a
+  data plan lists its indexes as `IndexSpec` values. `Op::answered_by(kind,
+  indexes)` returns the one that answers the operator for the field's kind,
+  from each index's own declaration of its operators (`IndexSpec::answers`).
+  The query derives its term under that index's options, which are the
+  options the stored term was derived under. `Plan::query` refuses an
+  operator no index answers before any key is requested.
+
+Neither path takes an index from the caller, so the refusals that guarded a
+caller's choice are removed with it: `PlanError::IndexNotDeclared` (an index
+the field does not declare) and `PlanError::IndexOptions` (a match index
+under other options). Five more variants that only the plan builder raised
+go with them: `IdentityWithoutField`, `MixedCiphers`, `NoContext`,
+`PassthroughIndexed` and `TargetWithVerbs`. A data plan that declares a
+passthrough field with outputs, or a field with both outputs and a target,
+is still refused, by the parser, as `passthrough_with_outputs` and
+`outputs_with_target`.
+
+Where decision 1 and decision 7 write `.via(Ore)` and `.via(Ope)`, read: the
+index the field declares for the operator.

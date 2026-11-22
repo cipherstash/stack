@@ -1,6 +1,5 @@
 //! Why a plan was refused.
 use crate::op::Op;
-use crate::target::IndexSpec;
 use crate::LabelError;
 
 /// Why a plan was refused: when it was parsed, or when it was run against a
@@ -8,19 +7,6 @@ use crate::LabelError;
 ///
 /// Every refusal of a plan is raised before any key is requested: a plan
 /// that does not hold up never reaches ZeroKMS. Carried in [`Error::Plan`].
-///
-/// Some variants were raised only by the Rust plan builder, which is
-/// removed, so nothing raises them now: [`IdentityWithoutField`],
-/// [`MixedCiphers`], [`IndexNotDeclared`], [`IndexOptions`], [`NoContext`]
-/// and [`TargetWithVerbs`]. They stay because each has an error code that a
-/// binding's status table lists. Each one's documentation says so.
-///
-/// [`IdentityWithoutField`]: Self::IdentityWithoutField
-/// [`MixedCiphers`]: Self::MixedCiphers
-/// [`IndexNotDeclared`]: Self::IndexNotDeclared
-/// [`IndexOptions`]: Self::IndexOptions
-/// [`NoContext`]: Self::NoContext
-/// [`TargetWithVerbs`]: Self::TargetWithVerbs
 ///
 /// [`Error::Plan`]: crate::Error::Plan
 ///
@@ -57,14 +43,6 @@ pub enum PlanError {
         #[diagnostic_source]
         source: LabelError,
     },
-    /// `identity` was called before any field was declared, so there was no
-    /// field for it to pin.
-    ///
-    /// Not raised any more: only the removed plan builder raised it. Kept
-    /// for its error code.
-    #[error("identity was set before any field was declared")]
-    #[diagnostic(code(stack_encrypt::plan_identity_without_field))]
-    IdentityWithoutField,
     /// A field was named twice.
     #[error("field {field:?} is named twice")]
     #[diagnostic(code(stack_encrypt::plan_duplicate_field))]
@@ -88,18 +66,6 @@ pub enum PlanError {
         first: String,
         /// The field declared second.
         second: String,
-    },
-    /// A field was declared both passthrough and indexed. A passthrough
-    /// field is carried unsealed and unauthenticated; one that must be
-    /// searchable is sealed, with its indexes beside it.
-    #[error("field {field:?} is declared both passthrough and indexed")]
-    #[diagnostic(
-        code(stack_encrypt::plan_passthrough_indexed),
-        help("A passthrough field is stored unsealed. Seal the field to index it.")
-    )]
-    PassthroughIndexed {
-        /// The field.
-        field: String,
     },
     /// A field, or a record of one value, names the same index twice.
     #[error("{at:?} names the {index} index twice")]
@@ -155,57 +121,6 @@ pub enum PlanError {
         /// The field asked for.
         field: String,
     },
-    /// The operations given to one batch were started on different
-    /// ciphers. The removed `plan::all` refused such a batch.
-    ///
-    /// Not raised any more. [`Pending::zip`](crate::Pending::zip) and
-    /// [`Pending::all`](crate::Pending::all) accept operations started on
-    /// different ciphers, because they check the keyset, not the cipher.
-    /// Kept for its error code.
-    #[error("the operations in one batch were started on different ciphers")]
-    #[diagnostic(
-        code(stack_encrypt::plan_mixed_ciphers),
-        help("Start every operation in one batch on the same cipher.")
-    )]
-    MixedCiphers,
-    /// A query asked a field for an index the field never declared, so it
-    /// would have matched nothing.
-    ///
-    /// Not raised any more: only the removed plan builder raised it. Kept
-    /// for its error code.
-    #[error("field {field:?} declares no {index} index")]
-    #[diagnostic(
-        code(stack_encrypt::plan_index_not_declared),
-        help("Query the field through an index it declares, or declare the index on the field.")
-    )]
-    IndexNotDeclared {
-        /// The field, or `the value` for a one-value plan.
-        field: String,
-        /// The index asked for, as its key.
-        index: &'static str,
-    },
-    /// A query asked a field for an index the field declares with other
-    /// options (a match index under another tokenizer or filter size), so
-    /// its terms would never have matched.
-    ///
-    /// Not raised any more: only the removed plan builder raised it. Kept
-    /// for its error code.
-    #[error(
-        "field {field:?} declares a {} index with other options: declared {declared:?}, asked {asked:?}",
-        declared.key()
-    )]
-    #[diagnostic(
-        code(stack_encrypt::plan_index_options),
-        help("Query with the options the field declares: terms derived under other options never match.")
-    )]
-    IndexOptions {
-        /// The field, or `the value` for a one-value plan.
-        field: String,
-        /// The index as the field declares it.
-        declared: IndexSpec,
-        /// The index as the query asked for it.
-        asked: IndexSpec,
-    },
     /// A field declares two indexes that answer one operator, so a query
     /// for it would have two terms to choose from and the plan has to
     /// guess. A field declares at most one index per operator:
@@ -246,16 +161,6 @@ pub enum PlanError {
         /// Who gave it again.
         second: &'static str,
     },
-    /// The plan was run with no context: it was built without one and has
-    /// no context field, and the call named none.
-    ///
-    /// Not raised any more: only the removed plan builder raised it. Kept
-    /// for its error code.
-    #[error(
-        "the plan has no context: build it with one, name one in the call, or use a context field"
-    )]
-    #[diagnostic(code(stack_encrypt::plan_no_context))]
-    NoContext,
     /// A query was extended by a binding. A binding is in the stored
     /// context alone, so a query cannot carry one: the row is found by its
     /// scopes, and the binding is checked when the row is opened.
@@ -295,18 +200,6 @@ pub enum PlanError {
         /// context that the type was given.
         field: String,
     },
-    /// A field was declared both as a typed target (`encrypt_into`) and with
-    /// a data verb. A field is one or the other: the target's type decides
-    /// its layout and its queries.
-    ///
-    /// Not raised any more: only the removed plan builder raised it. Kept
-    /// for its error code.
-    #[error("field {field:?} is declared both as a typed target and with data verbs")]
-    #[diagnostic(code(stack_encrypt::plan_target_with_verbs))]
-    TargetWithVerbs {
-        /// The field.
-        field: String,
-    },
 }
 
 impl crate::ErrorPayload for PlanError {
@@ -320,11 +213,9 @@ impl crate::ErrorPayload for PlanError {
                 fields
             }
             Self::DuplicateField { field }
-            | Self::PassthroughIndexed { field }
             | Self::NotInPlan { field }
             | Self::NotInValue { field }
             | Self::NoSuchField { field }
-            | Self::TargetWithVerbs { field }
             | Self::ContextNotStorable { field } => payload([("field", field.as_str().into())]),
             Self::SharedIdentity {
                 identity,
@@ -342,19 +233,6 @@ impl crate::ErrorPayload for PlanError {
                 ("field", field.as_str().into()),
                 ("expected", (*expected).into()),
             ]),
-            Self::IndexNotDeclared { field, index } => {
-                payload([("field", field.as_str().into()), ("index", (*index).into())])
-            }
-            Self::IndexOptions {
-                field,
-                declared,
-                asked,
-            } => payload([
-                ("field", field.as_str().into()),
-                ("index", declared.key().into()),
-                ("declared", index_value(declared)),
-                ("asked", index_value(asked)),
-            ]),
             Self::IndexOverlap {
                 at,
                 first,
@@ -369,51 +247,7 @@ impl crate::ErrorPayload for PlanError {
             Self::TwoContextSources { first, second } => {
                 payload([("first", (*first).into()), ("second", (*second).into())])
             }
-            Self::IdentityWithoutField
-            | Self::EmptyIndexes
-            | Self::MixedCiphers
-            | Self::NoContext
-            | Self::BindInQuery
-            | Self::EmptyPart => serde_json::Map::new(),
-        }
-    }
-}
-
-/// An index as a plan writes it: its key, or for a match index the object of
-/// its options (`{"match": {"tokenizer": "standard", "downcase": true,
-/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`, and
-/// `"short_words": true` only when that option is on), and for a
-/// JSON index the object of its options (`{"json": {"sealed_root":
-/// true, "ordered": ["$.age"]}}`). A caller in another language can read
-/// it, and it does not move when a field is added to the Rust type, as
-/// `Debug` text would.
-fn index_value(index: &IndexSpec) -> serde_json::Value {
-    use crate::sem::Tokenizer;
-    match index {
-        IndexSpec::Match(options) => {
-            let tokenizer = match options.tokenizer {
-                Tokenizer::Standard => serde_json::Value::from("standard"),
-                Tokenizer::Ngram { length } => serde_json::json!({ "ngram": length }),
-            };
-            let mut value = serde_json::json!({
-                "tokenizer": tokenizer,
-                "downcase": options.downcase,
-                "k": options.k,
-                "m": options.m,
-            });
-            if options.short_words {
-                value["short_words"] = true.into();
-            }
-            serde_json::json!({ "match": value })
-        }
-        IndexSpec::Json(options) => serde_json::json!({
-            "json": {
-                "sealed_root": options.sealed_root,
-                "ordered": options.ordered,
-            }
-        }),
-        IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => {
-            index.key().into()
+            Self::EmptyIndexes | Self::BindInQuery | Self::EmptyPart => serde_json::Map::new(),
         }
     }
 }
