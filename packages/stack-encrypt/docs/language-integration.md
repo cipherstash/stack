@@ -8,9 +8,10 @@ integration, and every rule below names where in it the rule is kept.
 Stack Encrypt is CipherStash's encryption engine. It encrypts each value of a
 record under its own data key from ZeroKMS, the key service, and derives the
 *search terms* a database can compare without decrypting: an equality term
-(a keyed hash), order terms (for `<`, `>` and `BETWEEN`) and match terms (for
-text search). Rust programs call it directly. Every other language calls it
-through the `dynamic` module, which this guide is about.
+(a keyed hash), order terms (for `<`, `>` and `BETWEEN`), match terms (for
+text search) and the terms of a JSON document. Rust programs call it
+directly. Every other language calls it through the `dynamic` module, which
+this guide is about.
 
 ## 1. A binding and a language SDK are two things
 
@@ -28,13 +29,14 @@ Keep the two apart in code and in words. The user-facing library is never
 WebAssembly guest in `languages/golang/encrypt/guest` and the Go code in
 `languages/golang/internal/guest` that runs it.
 
-Two documents fix what a language SDK may and may not do, and this guide
-does not repeat them: `docs/sdk-design-principles.md` (adopted by ADR-0008
-in `docs/adr/`) and ADR-0007, *bindings enter the engine through a plan,
-never through a second executor*. The one sentence to carry from them: the
-engine does all the work, an SDK declares what to do and sends it across as
-data, and the bytes are the same in every language because every language
-runs the same code.
+Three documents fix what a language SDK may and may not do, and this guide
+does not repeat them: `docs/sdk-design-principles.md` (adopted by ADR-0008),
+ADR-0007, *bindings enter the engine through a plan, never through a second
+executor*, and ADR-0009, *operators select the index, and a query term is
+not the stored term*. The ADRs are in `packages/stack-encrypt/docs/adr`.
+The one sentence to carry from them: the engine does all the work, an SDK
+declares what to do and sends it across as data, and the bytes are the same
+in every language because every language runs the same code.
 
 ## 2. Native or WebAssembly
 
@@ -49,14 +51,14 @@ where WebAssembly is the reason you are there:
   can lock in RAM and can wipe as a whole.
 
 The engine is the same either way. What differs is how bytes cross and who
-owns memory, which sections 6 and 7 cover. A native shell links this crate
-with the `dynamic` feature and calls the functions in section 3 directly. A
-guest wraps the same functions in exports, as `languages/golang/encrypt/guest/src/abi.rs`
-does, over the conventions in the `stack-guest-abi` crate
-(`packages/stack-guest-abi`), which every guest shares so a host reads two
-guests the same way.
+owns memory, which sections 6 and 7 cover. A native library links this
+crate with the `dynamic` feature and calls the functions in section 3
+directly. A guest wraps the same functions in exports, as
+`languages/golang/encrypt/guest/src/abi.rs` does, over the conventions in
+the `stack-guest-abi` crate (`packages/stack-guest-abi`), which every guest
+shares so a host reads two guests the same way.
 
-## 3. The three operations
+## 3. The operations
 
 A binding does three things: encrypt a record, derive a query term, and
 decrypt a record. Each is one function in [`crate::dynamic`], and each is
@@ -68,7 +70,9 @@ those three.
 - A **plan**: the declaration of what each field is, as data. Section 4 has
   the grammar. [`crate::dynamic::record::plan`] reads one from its frame;
   [`crate::dynamic::record::plan_with`] reads one that may name EQL types
-  (section 3, "EQL types").
+  (see "EQL types" below). Both take the frame as a
+  [`vitaminc_protected::ProtectedRef`]; call
+  [`crate::AsProtectedRef::as_protected_ref`] on the bytes.
 - A **value**: the record, as one frame. A binding never builds a tree of
   values; it hands the engine the bytes and the engine walks them in place.
   [`crate::dynamic::ValueFrame`] is the engine's hold on such a value.
@@ -76,32 +80,41 @@ those three.
   [`crate::StackCipher::default_keyset`] gives the default one;
   [`crate::StackCipher::keyset`] names another.
 
+Every operation returns a [`crate::Pending`]: the work, with its key
+requests batched into one ZeroKMS call, not yet sent. Two things attach to a
+pending call before it is awaited. `.audit(metadata)` adds facts about the
+call to the ZeroKMS audit log. `.with_credential(credential)` makes the
+call as one caller, and section 7 says when a binding needs it.
+
 ### Encrypt a record
 
 [`crate::dynamic::record::encrypt`]`(&keyset, &frame, &plan)` returns a
-[`crate::Pending`]: the key requests the record needs, batched into one
-ZeroKMS call. Await it and the result is the stored record, as a frame.
-With a plan that names EQL types, call
-[`crate::dynamic::record::encrypt_with`] and pass the resolver (section 3,
-"EQL types").
+`Pending` that settles to the stored record, as a frame. A batch is a
+sequence of records in one frame, and is still one ZeroKMS call. With a
+plan that names EQL types, call [`crate::dynamic::record::encrypt_with`]
+and pass the resolver.
 
 The Go guest's export is `se_encrypt_record(value, plan, options)` in
 `languages/golang/encrypt/guest/src/abi.rs`. The options object names the
-keyset (`languages/golang/encrypt/guest/src/options.rs`).
+keyset and may carry audit metadata
+(`languages/golang/encrypt/guest/src/options.rs`).
 
 ### Derive a query term
 
 [`crate::dynamic::query_term`]`(&keyset, &plan, field, operator, input, &resolver)`
-takes the plan, the field's name, an operator ([`crate::dynamic::OpSpec`]:
-`eq`, `lt`, `lte`, `gt`, `gte`, `between` or `matches`) and the operator's
-input, and returns the term the database compares against. The engine reads
-the input as the field's declared type, finds the index that answers the
-operator, and derives the term the same way the stored term was derived. An
-operator the field does not answer is refused before any key is touched.
+takes the plan, the field's name, an operator ([`crate::dynamic::Op`]) and
+the operator's input, and returns a [`crate::dynamic::QueryTerm`]: the
+operand the database compares against. An operator is named by its wire
+name: `eq`, `lt`, `lte`, `gt`, `gte`, `between` and `matches` for a single
+value, and the JSON operators below for a document. The engine reads the
+input as the field's declared type, finds the index that answers the
+operator ([`crate::dynamic::Op::answered_by`]), and derives the term the
+same way the stored term was derived. An operator the field does not answer
+is refused before any key is touched.
 
 Two more functions serve a probabilistic term, which is what a match index
-gives: [`crate::dynamic::verify`] answers, for a page of decrypted values,
-which ones the query matches; [`crate::dynamic::target_limit`] says how many
+gives. [`crate::dynamic::verify`] answers, for a page of decrypted values,
+which ones the query matches. [`crate::dynamic::target_limit`] says how many
 rows to fetch. Neither needs a key. [`crate::dynamic::field_operators`]
 lists the operators a plan field answers, so a generator can ask the engine
 instead of keeping a copy of the table.
@@ -111,14 +124,61 @@ and `se_operators`.
 
 ### Decrypt a record
 
-[`crate::dynamic::record::decrypt`]`(scope, stored, &plan, expected_context)`
-returns a `Pending` that opens to the record's frame. The
-[`crate::dynamic::Scope`] says which cipher opens: the client, which opens a
-value sealed under any of its keysets, or one keyset, which refuses a value
-sealed under another before any key is fetched. With EQL types, use
+[`crate::dynamic::record::decrypt`]`(cipher_ref, stored, &plan, expected)`
+returns a `Pending` that opens to the record's frame. The first argument
+says which cipher opens ([`crate::CipherRef`]):
+
+- pass `&cipher`, the client, to open a value sealed under any of its
+  keysets;
+- pass `&keyset` to open only values sealed under that keyset. A value
+  sealed under another is refused before any key is fetched.
+
+`expected` is the context the caller expects, for a plan that takes its
+context from a field of each record (section 4). With EQL types, use
 [`crate::dynamic::record::decrypt_with`].
 
-The Go guest's export is `se_decrypt_record(stored, plan, options)`.
+The Go guest's export is `se_decrypt_record(stored, plan, options)`. Its
+options take the keyset selector `{"any": {}}` to open under whichever
+keyset each value names, the data form of passing `&cipher`.
+
+### Scopes and bindings
+
+A field is sealed under its label, `["profiles", "age"]`. A caller adds to
+that context in two ways:
+
+- A **scope** is added to the context of encryption, decryption and search
+  alike: a tenant, say. A query under a scope finds only the rows sealed
+  under it.
+- A **binding** is added to the stored context only, after every scope:
+  a row ID, say. It decides the data key and the authenticated data, so a
+  value moved to another row does not open. A query takes no binding: its
+  terms derive under the label and the scopes, and a query on a bound plan
+  is refused.
+
+The stored value holds neither; whoever reads it supplies them again. In a
+plan, a scope is written into each field's context and a binding is the
+plan-level `"bind"` key (section 4). In the owned API, they are the
+context argument of [`crate::dynamic::Planned`]:
+`Planned::new(&plan, row).encrypt_into_with_context(&keyset, Scope::new(7u64).bind(9u64))`.
+The full rules, with the cases both languages run, are in
+`conformance/stack-encrypt/context-contract.md`.
+
+### JSON documents
+
+A field of type `"json"` stores a JSON document, which the language SDK
+hands over as UTF-8 JSON text. It names a target that stores a document
+(`JsonSearch`), and its options say which paths are ordered. The engine
+parses the text by one set of rules ([`crate::dynamic::read_json`]) and
+gives it back as text ([`crate::dynamic::json_frame`]). ADR-0013 says why a
+document is one text leaf.
+
+A document answers its own operators: `contains` and `contained_by`; `eq_at`,
+`lt_at` and the other comparisons at a path; `element_match`; `match`, a
+jsonpath predicate; and the reads `selector`, `subtree`, `children` and
+`child_count`. [`crate::dynamic::Op::input`] names each one's input.
+[`crate::dynamic::query_term`] derives the operand for all of them, and
+[`crate::dynamic::json_open`] opens the rows a read returned. The Go guest's
+export for that is `se_json_open`.
 
 ### EQL types
 
@@ -137,65 +197,88 @@ types and one without, and `se_targets` lists the types a build holds.
 
 ### The other guest exports
 
-The Go guest's remaining exports, for a reader of `abi.rs`: `se_cipher_init`
-builds the cipher from a configuration object (section 7) and runs once per
-instance; `se_keyset` loads a keyset by name or id; `se_term` derives one
-index term under an explicit context, kept for one host need the file
-explains; `se_plan_check` reads a plan and reports its refusal with no
-cipher, so a generator can check a declaration before the program runs;
-`se_shutdown` drops every key and wipes every buffer. `se_io`, `se_resume`
-and `se_abort` are the step loop of section 7, and `se_alloc`, `se_dealloc`
-and `se_last_error` come from `stack-guest-abi` (sections 6 and 8).
+The Go guest's remaining exports, for a reader of `abi.rs`:
+
+- `se_cipher_init` builds the cipher from a configuration object (section 7)
+  and runs once per instance.
+- `se_keyset` loads a keyset by name or id.
+- `se_term` derives one index term under an explicit context, kept for one
+  host need the file explains.
+- `se_plan_check` reads a plan and reports its refusal with no cipher, so a
+  generator can check a declaration before the program runs.
+- `se_contexts` prints the context each field of a plan is sealed under, the
+  same text a Rust record's `contexts()` prints, so a test can pin it.
+- `se_shutdown` drops every key and wipes every buffer.
+- `se_io`, `se_resume` and `se_abort` are the step loop of section 7.
+- `se_alloc`, `se_dealloc` and `se_last_error` come from `stack-guest-abi`
+  (sections 6 and 8).
 
 ## 4. The plan grammar
 
 A plan is a map from field name to field spec. The grammar is defined by
-what [`crate::dynamic::record::plan`] accepts, in `src/dynamic/record.rs`;
-the module docs there are the full statement. The shape:
+what [`crate::dynamic::record::plan_with`] accepts, in `src/dynamic/record.rs`;
+its docs and the module docs there are the full statement, and
+`conformance/stack-encrypt/declaration-grammar.md` states it as a contract
+with the cases every binding runs. The shape:
 
 ```text
 {
   "<field>": {
     "context": ["<table>", "<column>"],     // required: the field's label
     "outputs": ["c", "eq", "ore", "ope", "match", "passthrough"],
+    "target":  "IntegerEq",                   // instead of "outputs"
     "type":    "int32",                       // required with any index
-    "target":  "IntegerEq"                    // instead of "outputs"
+    "null":    "sealed" | "sql"               // optional
   },
-  "context_field": "<field>"                  // optional, plan-level
+  "context_field": "<field>",                 // optional, plan-level
+  "bind": [<part>, ...]                       // optional, plan-level
 }
 ```
 
 - **`context`** is the label the field is sealed under, as a list of parts.
   Every field of one plan shares the same prefix (the table) and its last
-  part is the field's identity (the column). A caller's extension, such as
-  a tenant, nests to the left: `[["profiles", "age"], 7]`.
+  part is the field's identity (the column). A scope nests to the left:
+  `[["profiles", "age"], 7]`, and every field carries the same scopes.
 - **`outputs`** are what the engine produces for the field: `c` is the
   ciphertext; `eq`, `ore`, `ope` and `match` are index terms; `passthrough`
-  carries the value as it is. These keys are wire format: they are the map
-  keys of the stored record, fixed in [`crate::dynamic::Output`] and
-  [`crate::target::IndexSpec`], so a binding never spells its own. A match
-  index with options other than the defaults is written as an object,
-  `{"match": {"tokenizer": ..., "downcase": ..., "k": ..., "m": ...}}`;
-  `IndexSpec`'s docs in `src/dynamic/term.rs` give the form, and a bare
-  `"match"` is the default options.
-- **`type`** is a [`crate::dynamic::ValueKind`] name: `string`, `bytes`,
-  `bool`, `int8` to `int128`, `uint8` to `uint128`, `float32`, `float64`,
-  `decimal`, `date`, `timestamp`. A field with any index term must declare
-  one: its terms derive from that kind, never from whatever tag each value
-  arrives with. The type decides which indexes a field may have
-  ([`crate::dynamic::admits`]) and which values it accepts, and nothing
-  about the bytes.
+  carries the value as it is, unsealed and unauthenticated. These keys are
+  wire format: they are the map keys of the stored record, fixed in
+  [`crate::dynamic::Output`] and [`crate::target::IndexSpec`], so a binding
+  never spells its own. A match index with options other than the defaults
+  is written as an object,
+  `{"match": {"tokenizer": ..., "downcase": ..., "short_words": ..., "k": ..., "m": ...}}`;
+  a bare `"match"` is the default options. A field declares at most one
+  index per operator.
 - **`target`** names an EQL type and is exclusive with `outputs`. A target
-  field's label must be exactly a table and a column.
+  field's label must be exactly a table and a column. A type that stores a
+  document takes its options in an object form:
+  `{"name": "JsonSearch", "options": {"sealed_root": <bool>, "ordered": [<path>, ...]}}`.
+- **`type`** is a [`crate::dynamic::ValueKind`] name: `bool`, `int8` to
+  `int128`, `uint8` to `uint128`, `float32`, `float64`, `decimal`, `date`,
+  `timestamp`, `string`, `bytes`, `array`, `object` or `json`. A field with
+  any index term must declare one: its terms derive from that kind, never
+  from whatever tag each value arrives with. The type decides which indexes
+  a field may have ([`crate::dynamic::admits`]) and which values it accepts,
+  and nothing about the bytes.
+- **`null`** says how the field stores a value that is not there. Without
+  it, every row must have the field and a typed field refuses a null.
+  `"sql"` stores nothing for the field, so the host's column holds SQL
+  `NULL`. `"sealed"` seals a null as a value of the field's width, so the
+  stored record does not show which rows are absent; it is for a type of
+  fixed width whose only index is equality, and an `eq` query of a null
+  finds those rows. [`crate::dynamic::NullMode`] has the rules.
 - **`context_field`**, at the top level, names the field whose value is the
   context every other field is sealed under, for a record that names its
-  own tenant. The named field is stored as a passthrough.
+  own tenant. The named field is stored as a passthrough, and each other
+  field's `context` is its identity alone (`["email"]`).
+- **`bind`**, at the top level, is the plan's bindings (section 3): a
+  non-empty list of scalar parts.
 
 The plan is read from a frame, not from JSON. The Go SDK's generator writes
 the plan from struct tags (`languages/golang/encrypt/gensupport/declaration.go`
-turns a declaration into one), and the plan's frame is checked by
-`se_plan_check` at `go generate`, so a mistake is found before the program
-runs. Refusals name the field and a reason (section 8).
+turns a declaration into one), and `se_plan_check` checks the plan's frame
+at `go generate`, so a mistake is found before the program runs. A refusal
+names the field and a reason (section 8).
 
 ## 5. Control messages and plaintext
 
@@ -214,16 +297,28 @@ too, in a buffer wiped on drop.
 object, a configuration, query statistics, a step's requests and responses,
 an error. They cross as frames as well, and the engine reads each straight
 into a typed message with serde (`vitaminc_aead_frame::serde`), with no
-intermediate tree. The general-purpose value tree that earlier versions of
-this crate decoded everything into is gone: there is no type a binding can
-use to hold plaintext as a tree, by design. If you find yourself building
-one, you are building a second value model.
+intermediate tree. There is no type a binding can use to hold plaintext as
+a tree, by design. If you find yourself building one, you are building a
+second value model.
 
 The frame format itself is documented in the crate that owns it,
-[`vitaminc-aead-frame`](https://docs.rs/vitaminc-aead-frame/0.6.1): the
-byte layout, the tag table, the depth and length limits, and the
-conformance corpus. This guide does not restate it. A binding's codec
-targets one version of that crate and says which.
+[`vitaminc-aead-frame`](https://docs.rs/vitaminc-aead-frame/0.10.0): the
+byte layout, the tag table, and the depth and length limits. This guide
+does not restate it. This crate re-exports it as
+[`crate::dynamic::frame`], so a native binding builds against the same
+version the engine does.
+
+A binding either writes frames itself or links the crate that does:
+
+- **A binding with a codec of its own** writes and reads frames in its own
+  language. The Go SDK does, in `languages/golang/internal/guest`, because Go
+  does not link Rust. Its codec targets one version of the frame format and
+  says which.
+- **A native binding that links the crate** has no codec: the crate writes
+  and reads every frame, on both sides. The version it pins in its
+  `Cargo.toml` is the statement of which frame format it speaks. What the
+  binding adds is the conversion from a value of its language to a frame
+  and back, and that conversion is what its tests must cover (section 11).
 
 ## 6. Plaintext hygiene
 
@@ -235,13 +330,14 @@ from `languages/golang/encrypt/guest/src/abi.rs` and
 
 - **Every buffer the host hands the guest is wiped before the export
   returns** when it carries plaintext: the configuration (it holds the
-  client key), a record to seal, a query input, a page of values to verify.
-  The host must not read such a buffer back afterwards, or pass one buffer
-  to two calls.
+  client key), a record to seal, a query input, a page of values to verify,
+  and the responses to a step (they hold wrapped keys). The host must not
+  read such a buffer back afterwards, or pass one buffer to two calls.
 - **Every buffer the guest hands the host is released by the guest**, never
   freed on the host's say-so, through a registry that knows each buffer's
   true length (`stack_guest_abi::buffers`). `se_dealloc` wipes before it
-  frees. A decrypted record is the host's to copy out and release at once.
+  frees. A decrypted record, and a step's requests (they hold the bearer
+  token), are the host's to copy out and release at once.
 - **A paused operation owns its inputs** (section 7) and wipes them when it
   finishes or is aborted. The engine holds a value as a
   [`crate::dynamic::ValueFrame`] in a `Protected` buffer, and an opened
@@ -258,22 +354,44 @@ from `languages/golang/encrypt/guest/src/abi.rs` and
 
 The proof is a test, not a review. `packages/stack-encrypt/tests/heap_hygiene.rs`
 runs each operation under an allocator that watches every freed block for a
-marked plaintext and fails if one is freed unwiped:
-`a_record_encrypted_from_a_value_frame_leaves_no_plaintext_on_the_heap`,
-`a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap`,
-`a_query_term_leaves_no_plaintext_on_the_heap`,
-`an_order_term_of_owned_text_or_bytes_leaves_no_plaintext_on_the_heap` and
-`verify_leaves_no_plaintext_on_the_heap`. The EQL side has the same test
-for a target field (`packages/eql/tests/encryption/tests/heap_hygiene.rs`),
+marked plaintext and fails if one is freed unwiped. Its tests cover a
+record encrypted from a frame and decrypted with a nested field, a failure
+part of the way through a batch, a query term, an order term, `verify`, a
+JSON operator's input and a JSON document; for example
+`a_record_encrypted_from_a_value_frame_leaves_no_plaintext_on_the_heap` and
+`a_query_term_leaves_no_plaintext_on_the_heap`. The EQL side has the same
+test for a target field (`packages/eql/tests/encryption/tests/heap_hygiene.rs`),
 and the Go module has leak tests for the guest's memory
-(`languages/golang/internal/guest`). Write the same test for your binding's
-own copies: it is item 3 of the checklist.
+(`languages/golang/internal/guest`). The lifecycle profile of the
+conformance suite (`conformance/stack-encrypt/lifecycle-contract.md`)
+collects that evidence, with the gaps it knows of. Write the same test for
+your binding's own copies: it is item 4 of the checklist.
 
 ## 7. Keys and authentication
 
-The engine fetches data keys from ZeroKMS with a bearer token. Neither the
-HTTP request nor the token is the engine's business: both come from the
-host.
+The engine fetches data keys from ZeroKMS with a bearer token. How a
+binding gets the token, and who performs the HTTP request, depends on the
+kind of binding.
+
+### A native binding
+
+A native library builds a [`crate::StackCipher`] over a ZeroKMS client and
+an auth strategy from `stack-auth`, and the engine makes its own requests.
+Choose the strategy as a Rust program would:
+
+- A strategy that holds its own credential, such as an access key, serves
+  every call.
+- A strategy that takes a credential with each call, such as
+  `OidcFederationStrategy`, serves the caller who signed in. Every call then
+  needs `.with_credential(credential)` before it is awaited, usually with
+  the end user's JWT. A call through such a cipher does not compile without
+  it, so pass the caller's credential through your binding on every
+  operation that reaches ZeroKMS.
+
+One cipher serves every caller of a service. A cipher and a keyset hold no
+credential; the call does.
+
+### A WebAssembly guest
 
 **The guest never waits on the network: it steps.** An export that may
 reach ZeroKMS runs its work as a future and polls it once. If the work needs
@@ -301,7 +419,7 @@ and queues callers rather than failing them (`maxPaused` in
 This shape is what lets the same guest run under wazero, where a host
 function may block, and on an edge runtime, where it may not. A native
 binding can do the same, or run the `Pending` to completion on a thread it
-owns; either way, the host performs the HTTP.
+owns.
 
 **The token comes through one import.** The guest imports exactly one host
 function, `token_get` in module `cipherstash_transport`
@@ -313,25 +431,35 @@ a host import may re-enter the guest only through `se_alloc`, to place the
 token. Calling any other export from inside an import is undefined
 behaviour of the embedding.
 
-**Cancellation is the host's contract to keep.** The Go SDK's rule, from
-`languages/golang/encrypt/doc.go`: a call whose context ends fails with the
-context's error, and only that call fails. One client is shared by every
-request in a service, and one request giving up must not close it for the
-rest. A step runs under a context the caller cannot end
-(`guest.Detach` in `languages/golang/internal/guest/lock.go`), and the
-client closes itself only when the guest's state is unknown: the guest
-trapped, or a call ran on for 30 seconds after its context ended, which is
-a bug rather than an impatient caller. A call that succeeds after its
-context ended returns the context's error and its output is wiped. Write
-the same contract for your language, and the tests in
-`languages/golang/encrypt/cancel_test.go` are the list of cases to cover.
-
 **Configuration.** `se_cipher_init` takes one object: `client_id`,
 `client_key` and optionally `zerokms_url` and `keyset_cache_size`
 (`languages/golang/encrypt/guest/src/config.rs`). There is no key for a
 keyset: the default keyset is the one ZeroKMS set for the client, and every
 other keyset is chosen per call in the options object. Unknown keys are
 refused, so a typo cannot silently fall back to a default.
+
+**Audit metadata.** The options object of `se_encrypt_record`,
+`se_decrypt_record` and `se_json_open` takes `audit`: an object of facts
+the engine sends with each data-key request, the data form of a Rust
+call's `.audit(metadata)`. A time crosses as RFC 3339 text in UTC, so every
+language SDK logs one form; `options.rs` gives the rules. A term derives
+from the index key and requests no data key, so the term exports refuse
+`audit`.
+
+### Cancellation
+
+**Cancellation is the host's contract to keep.** The Go SDK's rule, from
+`languages/golang/encrypt/doc.go`: a call whose context ends fails with the
+context's error, and only that call fails. One client is shared by every
+request in a service, and one request giving up must not close it for the
+rest. A step runs under a context the caller cannot end
+(`Detach` in `languages/golang/internal/guest/lock.go`), and the client
+closes itself only when the guest's state is unknown: the guest trapped, or
+a call ran on for 30 seconds after its context ended, which is a bug rather
+than an impatient caller. A call that succeeds after its context ended
+returns the context's error and its output is wiped. Write the same
+contract for your language, and the tests in
+`languages/golang/encrypt/cancel_test.go` are the list of cases to cover.
 
 ## 8. Errors
 
@@ -344,30 +472,34 @@ binding author meets first:
 
 | code | name | what a host does |
 |---|---|---|
-| 1 | `AUTH` | the ciphertext did not open: tampered, or the wrong context |
+| 1 | `AUTH` | the ciphertext did not open: it was tampered with, or opened under a context ZeroKMS did not check |
 | 2 | `ENCODING` | malformed input at the boundary; fix the caller |
 | 3 | `STATE` | a call out of order: before init, after shutdown, an unknown handle |
 | 4 | `INTERNAL` | a bug in the guest; report it |
-| 5 | `KMS_UNAUTHORIZED` | refresh the token and retry; the only retryable one |
-| 6, 7, 8, 10 | `KMS_FORBIDDEN`, `KMS_NOT_FOUND`, `KMS_CONFLICT`, `KMS_OTHER` | ZeroKMS's verdict; surface it |
-| 9 | `KMS_TRANSPORT` | no verdict reached: the host's transport or configuration |
+| 5 | `KMS_UNAUTHORIZED` | the credential was refused; refresh the token and retry. The only status a token refresh can fix |
+| 6, 7, 8, 10 | `KMS_FORBIDDEN`, `KMS_NOT_FOUND`, `KMS_CONFLICT`, `KMS_OTHER` | ZeroKMS's verdict; surface it. A wrong context against ZeroKMS is `KMS_FORBIDDEN` |
+| 9 | `KMS_TRANSPORT` | no verdict reached: the host's transport or configuration. A refresh does not fix it; a transient network failure may be retried under your transport's own policy |
 | 11 | `TERM` | a term could not derive from the value (match text with no token) |
 | 12 | `FOREIGN_KEYSET` | the value was sealed under a keyset the call did not allow |
 | 28 | `CONTEXT_MISMATCH` | the record's stored context is not the one expected |
 | 29 | `NEEDS_IO` | not a failure: the step loop of section 7 |
 
-How this guest maps the engine's errors onto those numbers is
+Codes 13 to 27 belong to the credential guest (profile files and sign-in).
+How this guest maps the engine's errors onto those numbers, and what
+`FOREIGN_KEYSET` and `CONTEXT_MISMATCH` do not prove, is
 `languages/golang/encrypt/guest/src/status.rs`.
 
 **The full error** is behind `se_last_error`: the engine's error as a frame,
 with its code, message, help, structured fields and causes
 (`packages/stack-guest-abi/src/last_error.rs`). A host asks for it after a
 non-zero status; a call that succeeds pays nothing. The engine's errors
-implement [`crate::ErrorPayload`], which is what makes them encodable, and
-every input error from the `dynamic` module names the field it is about and
-a [`crate::dynamic::Reason`] (`not_an_object`, `no_such_field`,
-`operator_not_answered`, `field_type`, and so on) as fields, so a caller
-tells a bad plan from a bad value without parsing text.
+implement [`crate::ErrorPayload`], which is what makes them encodable. Every
+input error from the `dynamic` module names the field it is about and a
+[`crate::dynamic::Reason`] (`no_such_field`, `operator_not_answered`,
+`field_type`, `bind_in_query`, and so on) as fields, so a caller tells a bad
+plan from a bad value without parsing text. A native binding gets the same
+error as a Rust value and encodes it the same way. The conformance cases
+assert the code, the reason and the field, never the message.
 
 **Never a value.** No error, warning or log line holds a plaintext value, a
 key, a token, a ciphertext or a context value. The guest's configuration
@@ -386,17 +518,18 @@ Three things have versions, and a binding ties them together.
   the guest built from the same commit, so host and engine cannot drift: a
   tagged Go release carries the guest built at that tag
   (`languages/golang/encrypt/README.md`, "Building").
-- **The wire.** The frame format is `vitaminc-aead-frame`'s and is frozen;
-  a codec in another language targets one version and runs that version's
-  conformance corpus (section 11).
+- **The wire.** The frame format is `vitaminc-aead-frame`'s. A codec in
+  another language targets one version of it; a native binding gets the
+  version this crate depends on (section 5).
 - **The stored record.** A record's map keys (`c`, `eq`, `match`, `ore`,
-  `ope`, `passthrough`, `eql`) and a plan's `type` names are wire format,
-  fixed in [`crate::dynamic`]. A row written under one spelling is read
-  under the same spelling or not at all. What keeps them fixed is a fixture
-  that is never regenerated: `packages/stack-encrypt/tests/fixtures/stored_rows_v1.json`
-  holds rows sealed by one release, and `tests/stored_rows.rs` opens every
-  one on every build. A change that cannot open them is a broken release,
-  not a reason to regenerate. The EQL side has
+  `ope`, `passthrough`, `eql`), a plan's `type` names and the operator
+  names are wire format, fixed in [`crate::dynamic`]. A row written under
+  one spelling is read under the same spelling or not at all. What keeps
+  them fixed is a fixture that is never regenerated:
+  `packages/stack-encrypt/tests/fixtures/stored_rows_v1.json` holds rows
+  sealed by one release, and `tests/stored_rows.rs` opens every one on
+  every build. A change that cannot open them is a broken release, not a
+  reason to regenerate. The EQL side has
   `packages/eql/tests/encryption/fixtures/stored_v4_rows_v1.json`, rows the
   Go SDK stored, opened by Rust and sealed again by Go on every build. Your
   binding should keep the same kind of file: rows it wrote with one version,
@@ -416,6 +549,7 @@ The Go struct in `languages/golang/encrypt/internal/testusers/profiles.go`:
 ```text
 type Profile struct {
     _   struct{} `stash:"context=profiles"`
+    // ...
     Age int32    `stash:"age,encrypt_into=IntegerEq"`
     // ...
 }
@@ -457,6 +591,7 @@ as a test of that:
 ```
 use std::collections::BTreeMap;
 use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::Controlled as _;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -468,11 +603,12 @@ assert_eq!(hex(value.risky_ref()), "042a000000");
 let row = ValueFrame::of(BTreeMap::from([("age", 42i32)]))?;
 assert_eq!(hex(row.risky_ref()), "f10100000003000000616765042a000000");
 
+// A control message is written by serde into a buffer wiped on drop.
 let plan = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
     "age": { "context": ["profiles", "age"], "target": "IntegerEq" }
 }))?;
 assert_eq!(
-    hex(&plan),
+    hex(plan.risky_ref()),
     "f10100000003000000616765\
      f10200000007000000636f6e74657874f0020000000a0800000070726f66696c65730a03000000616765\
      060000007461726765740a09000000496e74656765724571"
@@ -530,29 +666,35 @@ record is the frame that went in:
 
 ```
 use std::collections::BTreeMap;
-use stack_encrypt::dynamic::{query_term, record, NoTargets, OpSpec, Operand, Scope, ValueFrame};
-use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::StackCipher;
+use stack_encrypt::dynamic::{query_term, record, NoTargets, Op, Operand, ValueFrame};
+use stack_encrypt::{AsProtectedRef, StackCipher};
 
 # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+// With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+// the environment, or from the profile that `npx stash auth login` writes.
+let cipher = StackCipher::builder()
+#     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    .init()
+    .await?;
 let keyset = cipher.default_keyset();
 
-let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
     "age": { "context": ["profiles", "age"], "outputs": ["c", "eq"], "type": "int32" },
-}))?)?;
+}))?;
+let plan = record::plan(declaration.as_protected_ref())?;
 let row = ValueFrame::of(BTreeMap::from([("age", 42i32)]))?;
 
 // Encrypt: one pending, one ZeroKMS request, the stored record as a frame.
 let stored = record::encrypt(&keyset, &row, &plan)?.await?;
 
 // Query: the equality term for 42, the bytes the stored `eq` term holds.
-let term = query_term(&keyset, &plan, "age", OpSpec::Eq, 42i32, &NoTargets)?.await?;
+let term = query_term(&keyset, &plan, "age", Op::Eq, 42i32, &NoTargets)?.await?;
 assert!(matches!(term.operand(), Operand::One(bytes) if bytes.len() == 32));
 
-// Decrypt: the record's frame, equal to what went in, in a wiped buffer.
-let opened = record::decrypt(Scope::Client(&cipher), stored, &plan, None)?.await?;
-assert_eq!(opened.risky_ref(), row.risky_ref());
+// Decrypt through the keyset: the record's frame, equal to what went in,
+// in a buffer wiped when it drops.
+let opened = record::decrypt(&keyset, stored, &plan, None)?.await?;
+assert_eq!(opened, row);
 # Ok::<(), Box<dyn std::error::Error>>(())
 # }).unwrap();
 ```
@@ -568,43 +710,64 @@ nowhere else.
 
 ## 11. Checklist for a new binding
 
-Before a binding is called done:
+`conformance/stack-encrypt` holds the shared test contract for bindings:
+language-neutral cases, the outputs the native engine froze for them, and
+the requirement IDs each profile maps onto existing tests. Its `README.md`
+lists every profile and its Rust and Go runners. Before a binding is called
+done:
 
-1. **The conformance corpus passes.** Your codec writes and reads every
-   frame in `vitaminc-aead-frame`'s corpus byte for byte, and refuses every
-   frame the corpus says to refuse (depth, length, a repeated key). The
-   corpus and how to run it from the crate are tracked at
-   <https://github.com/cipherstash/vitaminc/issues/473>.
-2. **The differential fuzzers run against the engine.** The engine's own
-   targets are in `packages/stack-encrypt/fuzz/fuzz_targets`
-   (`plan_build`, `check_record`, `term_decode`, `sealed_value_decode`),
-   run as `docs/fuzzing.md` describes. Add a target that feeds your codec's
-   output to the engine's reader and the engine's output to your codec's
-   reader; a disagreement is a bug on one side.
-3. **The plaintext hygiene tests pass**, for the engine's copies and for
-   yours (section 6).
-4. **A stored-rows fixture exists and is frozen** (section 9): rows your
+1. **The conformance profiles pass in your language.** Write a runner for
+   each profile in `conformance/stack-encrypt/v1`, as
+   `languages/golang/encrypt/*conformance_test.go` does for Go: scalar
+   records, declarations, reads, runtime and nulls, contexts and bindings,
+   value boundaries, query refusals, raw frames and, if your binding links
+   the EQL types, EQL and JSON. Read the frozen expectations; never
+   regenerate them to pass. A profile you have not run is not a pass.
+2. **Fresh artifacts cross both ways.** The exchange profile
+   (`conformance/stack-encrypt/exchange-contract.md`) has your binding open
+   what Rust wrote in the same run, and Rust open what your binding wrote,
+   for every value kind at its edges. Enrol your runner in
+   `scripts/stack-exchange-conformance.mjs`.
+3. **Your value conversion is tested and fuzzed.** For a binding with a
+   codec of its own, the codec writes and reads every frame of the
+   raw-frame profile and refuses every frame it says to refuse; add a
+   fuzz target that feeds your codec's output to the engine's reader and
+   the engine's output to your codec's reader. For a native binding that
+   links the crate, the frame is the crate's, and what you test is the
+   conversion from a value of your language to a frame and back: run the
+   value profile against it, and fuzz the conversion of a host value to a
+   frame and back against [`crate::dynamic::ValueFrame::of`] for the same
+   value. The engine's own fuzz targets are in
+   `packages/stack-encrypt/fuzz/fuzz_targets` (`check_record`, `json_text`,
+   `json_wire_decode`, `label_parse`, `sealed_value_decode`, `term_decode`),
+   run as `docs/fuzzing.md` describes.
+4. **The plaintext hygiene tests pass**, for the engine's copies and for
+   yours (section 6), and the lifecycle profile's cases hold for your
+   language: cancellation, cleanup of a partial output, validation before
+   any key is requested.
+5. **A stored-rows fixture exists and is frozen** (section 9): rows your
    binding wrote with its first release, opened on every build and never
    regenerated.
-5. **The versions are tied.** The engine version, the frame-format version
+6. **The versions are tied.** The engine version, the frame-format version
    and your binding's version move together, and a reader of your release
    notes can tell which engine a release carries.
-6. **The cross-language fixtures agree.** `packages/stack-encrypt/tests/fixtures/record_lowering.json`,
-   `query_operators.json` and `value_kinds.json` are the records, query
-   terms and value kinds the engine derives under a deterministic key
-   source; the Go SDK reads them and derives the same bytes. Read them from
-   your binding's tests too.
 
 ## 12. Where the rest is
 
-- The frame format: [`vitaminc-aead-frame` on docs.rs](https://docs.rs/vitaminc-aead-frame/0.6.1).
+- The frame format: [`vitaminc-aead-frame` on docs.rs](https://docs.rs/vitaminc-aead-frame/0.10.0).
 - The `dynamic` API: [`crate::dynamic`], and `src/dynamic/record.rs` for
   the plan grammar in full.
+- The binding contract and its cases: `conformance/stack-encrypt`, starting
+  at `README.md` and `declaration-grammar.md`.
 - The guest conventions every WebAssembly binding shares:
   `packages/stack-guest-abi`.
 - The reference integration: `languages/golang/encrypt` (SDK),
   `languages/golang/encrypt/guest` (binding) and
   `languages/golang/internal/guest` (the host side of the binding).
-- The design rules: `docs/sdk-design-principles.md`, ADR-0007 and ADR-0008
-  in `packages/stack-encrypt/docs/adr`, and ADR-0002 in `docs/adr` for the
-  value model and the EQL v4 envelope.
+- The design rules: `docs/sdk-design-principles.md`, and in
+  `packages/stack-encrypt/docs/adr` ADR-0007 (bindings enter through a
+  plan), ADR-0008 (the SDK design principles), ADR-0009 (operators select
+  the index), ADR-0010 (what a stored value authenticates), ADR-0013 (a JSON
+  document is one text leaf) and ADR-0014 (operations read the plaintext,
+  and at most one takes it). ADR-0002 in `docs/adr` is the value model and
+  the EQL v4 envelope.
