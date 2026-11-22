@@ -854,29 +854,19 @@ impl<T> MapSink for NoContainer<T> {
     }
 }
 
-/// A dynamic error, where an operation's pending can only carry the crate's.
-/// A cipher error is already the crate's, and passes through unchanged, so a
-/// term the scheme refused (text that does not normalize) keeps its kind;
-/// boxing it would report it as an internal failure.
-fn lifted(error: Error) -> crate::Error {
-    match error {
-        Error::Cipher(error) => error,
-        other => crate::Error::Other(Box::new(other)),
-    }
-}
-
 /// An [`IndexSpec`] is an [`Index`] of a [`ValueFrame`]: the index named as
 /// data, over a plaintext whose type is known only when it arrives. Its
 /// `operation` is [`term`]'s derivation wrapped as a description, which
 /// walks the frame in place to its one scalar, so a field lowered from data
 /// runs through the same `indexed()` and `zip` every other field does, and
-/// its term is a [`TermBytes`]. A Rust chain over `ValueFrame` fields names
-/// its indexes this way too (`(IndexSpec::Equality, IndexSpec::Ore)`), and is
-/// then the same declaration as a data plan's.
+/// its term is a [`TermBytes`]. Rust code that runs the combinators over a
+/// `ValueFrame` names its indexes this way too
+/// (`indexed((IndexSpec::Equality, IndexSpec::Ore))`), and is then the same
+/// declaration as a data plan's.
 ///
 /// A value the index does not take (a container, a boolean under ORE)
 /// fails the description when it runs, with the dynamic [`Error::Term`]
-/// inside [`crate::Error::Other`]; a plan lowered from data refuses it
+/// inside [`crate::Error::Input`]; a plan lowered from data refuses it
 /// before that, at its boundary ([`admits`](super::admits)).
 impl Index<ValueFrame> for IndexSpec {
     type Term = TermBytes;
@@ -897,7 +887,7 @@ impl Index<ValueFrame> for IndexSpec {
             };
             match derive(cipher, M::view(&source), &spec, context) {
                 Ok(pending) => pending.under_context(query, stored),
-                Err(error) => Pending::failed(cipher, lifted(error)),
+                Err(error) => Pending::failed(cipher, error.into_crate()),
             }
         })
     }
@@ -980,10 +970,10 @@ mod tests {
                 )
                 .await;
             match refused {
-                Err(crate::Error::Other(inner)) => assert!(
+                Err(crate::Error::Input(inner)) => assert!(
                     matches!(
-                        inner.downcast_ref::<Error>(),
-                        Some(Error::Term { kind: refused_kind, .. }) if *refused_kind == kind
+                        *inner,
+                        Error::Term { kind: ref refused_kind, .. } if *refused_kind == kind
                     ),
                     "{what}: the lifted error names the index: {inner:?}"
                 ),

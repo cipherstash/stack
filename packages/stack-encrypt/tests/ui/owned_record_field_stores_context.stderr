@@ -1,0 +1,52 @@
+error[E0277]: a field whose type stores a `std::string::String` as its context cannot be a field of a `struct = ..` record
+  --> tests/ui/owned_record_field_stores_context.rs:27:12
+   |
+27 |     email: Stored,
+   |            ^^^^^^ a `std::string::String` cannot be built from the field's own context
+   |
+   = help: the trait `ContextFromField` is not implemented for `std::string::String`
+   = note: the record gives each field a context of its own: the record's scope, then the field's name. Implement `ContextFromField` for `std::string::String` to store that context
+help: the following other types implement trait `From<T>`
+  --> src/target/context.rs
+   |
+   |   impl<'c, T: Clone + IntoContext<'c>> From<NonEmpty<T>> for StoredContext<T> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `StoredContext<T>` implements `From<NonEmpty<T>>`
+...
+   | / impl<'c, T> From<CallerContext> for StoredContext<T>
+   | | where
+   | |     T: ContextFromField + Clone + IntoContext<'c>,
+   | |__________________________________________________^ `StoredContext<T>` implements `From<CallerContext>`
+   = note: required for `StoredContext<std::string::String>` to implement `From<CallerContext>`
+note: required by a bound in `Encryption::<'s, S, T, K, Ctx, M>::under_field`
+  --> src/target/operations.rs
+   |
+   |     pub fn under_field(
+   |            ----------- required by a bound in this associated function
+...
+   |         Ctx: From<CallerContext>,
+   |              ^^^^^^^^^^^^^^^^^^^ required by this bound in `Encryption::<'s, S, T, K, Ctx, M>::under_field`
+
+error[E0277]: a field whose type stores a `std::string::String` as its context cannot be a field of a `struct = ..` record
+  --> tests/ui/owned_record_field_stores_context.rs:27:12
+   |
+27 |     email: Stored,
+   |            ^^^^^^ a `std::string::String` cannot be built from the field's own context
+   |
+   = help: the trait `ContextFromField` is not implemented for `std::string::String`
+   = note: the record gives each field a context of its own: the record's scope, then the field's name. Implement `ContextFromField` for `std::string::String` to store that context
+help: the trait `DecryptField<__P, __Ctx>` is implemented for `Stored`
+  --> tests/ui/owned_record_field_stores_context.rs:10:25
+   |
+10 | #[derive(EncryptTarget, DecryptSource)]
+   |                         ^^^^^^^^^^^^^
+   = note: required for `ExpectedContext<std::string::String>` to implement `From<CallerContext>`
+   = note: required for `CallerContext` to implement `Into<ExpectedContext<std::string::String>>`
+note: required for `Stored` to implement `DecryptField<std::string::String, CallerContext>`
+  --> tests/ui/owned_record_field_stores_context.rs:10:25
+   |
+10 | #[derive(EncryptTarget, DecryptSource)]
+   |                         ^^^^^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+11 | #[stash(plaintext = String)]
+12 | struct Stored {
+   |        ^^^^^^
+   = note: this error originates in the derive macro `DecryptSource` (in Nightly builds, run with -Z macro-backtrace for more info)

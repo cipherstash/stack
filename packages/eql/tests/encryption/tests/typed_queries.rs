@@ -1,16 +1,18 @@
-//! Rust queries an EQL v4 field through Stack Encrypt's typed query chain
-//! (ADR-0009): `cipher.query(op::Eq, v).on(&plan)` on a plan for the type,
-//! answered through the `op::Answers` impls eql-codegen writes, with the
-//! type's query twin as the term.
+//! Rust queries an EQL v4 field through its field reference on a derived
+//! record: `EncryptedUser::EMAIL.eq(v).encrypt(&keyset)`, answered through
+//! the `op::Answers` impls eql-codegen writes, with the type's query twin
+//! as the term. A record that lists a scope takes it with `.scope(..)`.
 //!
 //! The typed path must agree with the data path a binding takes
 //! (`stack_encrypt::dynamic::query_term`, which the Go SDK runs) on three
 //! things: which operators each type answers, the bytes of each query, and
 //! for `TextMatch`, how a decrypted row verifies and how many rows to fetch.
+//! A field query must also be the term of the row its record stored,
+//! under the same scope.
 
 mod common;
 
-use eql_bindings::encryption::query::{MatchTwin, QueryLabelError};
+use eql_bindings::encryption::query::MatchTwin;
 use eql_bindings::encryption::targets as eql_targets;
 use eql_bindings::encryption::EqlTargets;
 use eql_bindings::v4::answers::ANSWERS;
@@ -22,10 +24,14 @@ use eql_bindings::v4::{
 use eql_bindings::Identifier;
 use serde::Serialize;
 use stack_encrypt::dynamic::{self, record, FieldPlan, Op, Operand, TargetDescriptor, ValueFrame};
-use stack_encrypt::op::{self, Probabilistic, Stats};
-use stack_encrypt::{ContextPiece, Encrypt, Error, NonEmpty, Plan, StackCipher};
+use stack_encrypt::op::{Probabilistic, Stats};
+use stack_encrypt::target::Scope;
+use stack_encrypt::{ContextPiece, Encrypt, Error, KeysetCipher, NonEmpty, StackCipher};
+use stack_encrypt::{DecryptSource, EncryptInto, EncryptTarget};
+use zeroize::Zeroize;
 
-type Cipher = StackCipher<common::Observed>;
+type Cipher = StackCipher<common::RecordingKeySource>;
+type Keyset<'k> = KeysetCipher<'k, common::RecordingKeySource>;
 
 /// A Rust value as the engine's runtime plaintext: its frame.
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -78,153 +84,138 @@ fn typed_bytes<Q: Serialize + DomainType>(query: &Q) -> (Vec<u8>, String) {
     )
 }
 
-/// A typed plan for the EQL type `$ty` over `$plaintext`, under
-/// `users/<column>`, and the term of `cipher.query($op, $value)` on it.
+/// One plaintext for each EQL type that answers an operator. Each field is
+/// named after its type, and the name is its column.
+#[derive(Clone, Zeroize)]
+struct Columns {
+    text_eq: String,
+    integer_eq: i32,
+    smallint_eq: i16,
+    date_eq: Date,
+    timestamp_eq: Timestamp,
+    numeric_eq: Decimal,
+    bigint_eq: i64,
+    real_eq: f32,
+    double_eq: f64,
+    text_match: String,
+}
+
+/// A record with a field of each EQL type that answers an operator, in the
+/// table `users`. Its field references are the typed queries under test.
+#[derive(EncryptTarget)]
+#[stash(struct = Columns, scope = "users")]
+struct EncryptedColumns {
+    text_eq: TextEq,
+    integer_eq: integer::IntegerEq,
+    smallint_eq: smallint::SmallintEq,
+    date_eq: date::DateEq,
+    timestamp_eq: timestamp::TimestampEq,
+    numeric_eq: numeric::NumericEq,
+    bigint_eq: bigint::BigintEq,
+    real_eq: real::RealEq,
+    double_eq: double::DoubleEq,
+    text_match: TextMatch,
+}
+
+/// The row each query below asks for. The float values are the ones whose
+/// terms the semantic baseline folds (`-0.0`, NaN), and the timestamp has
+/// nanoseconds below a microsecond, which both paths truncate alike.
+fn columns() -> Columns {
+    Columns {
+        text_eq: "bob@example.com".into(),
+        integer_eq: -42,
+        smallint_eq: -7,
+        date_eq: Date::from_days_since_epoch(19_000).expect("a day in range"),
+        timestamp_eq: Timestamp::new(1_700_000_000, 123_456_789).expect("an instant in range"),
+        numeric_eq: Decimal::new(-1_234_567, 4).expect("a decimal in range"),
+        bigint_eq: i64::MIN + 1,
+        real_eq: -0.0,
+        double_eq: f64::NAN,
+        text_match: "alice".into(),
+    }
+}
+
+/// A field query for one operator, as what the tests compare: the bytes
+/// it binds with its query domain, the column the field reference names, and the
+/// input the data path is given for the same query.
+struct Typed {
+    bytes: (Vec<u8>, String),
+    column: &'static str,
+    input: ValueFrame,
+}
+
+/// The query `$field reference.$operator($value)` under `$keyset`, with `$value` as
+/// the data path's input.
 macro_rules! typed {
-    ($cipher:expr, $column:expr, $ty:ty, $plaintext:ty, $op:expr, $value:expr) => {{
-        let plan = Plan::value::<$plaintext>()
-            .context(format!("users/{}", $column))
-            .encrypt_into::<$ty>()
-            .build()
+    ($keyset:expr, $reference:expr, $operator:ident, $value:expr) => {{
+        let reference = $reference;
+        let value = $value;
+        let query = reference
+            .$operator(value.clone())
+            .encrypt($keyset)
+            .await
             .unwrap();
-        $cipher.query($op, $value).on(&plan).await.unwrap()
+        Typed {
+            bytes: typed_bytes(&query),
+            column: reference.name(),
+            input: frame(value),
+        }
     }};
 }
 
-/// The typed query for each operator a type answers, with the input the
-/// data path is given for the same query: one arm per row of `ANSWERS`, so
-/// a type that starts answering an operator fails here until it has one,
-/// and an arm compiles only if the type implements `op::Answers` for it.
-async fn typed_and_input(
-    cipher: &Cipher,
-    name: &str,
-    operator: &str,
-    column: &str,
-) -> ((Vec<u8>, String), ValueFrame) {
+/// The field query for each operator a type answers, for the value the
+/// row `columns()` holds: one arm per row of `ANSWERS`, so a type that
+/// starts answering an operator fails here until it has one, and an arm
+/// compiles only if the type implements `op::Answers` for it.
+async fn typed_and_input(keyset: &Keyset<'_>, name: &str, operator: &str) -> Typed {
+    let row = columns();
     match (name, operator) {
-        ("TextEq", "eq") => (
-            typed_bytes(&typed!(
-                cipher,
-                column,
-                TextEq,
-                String,
-                op::Eq,
-                "bob@example.com"
-            )),
-            frame("bob@example.com"),
-        ),
-        ("IntegerEq", "eq") => (
-            typed_bytes(&typed!(
-                cipher,
-                column,
-                integer::IntegerEq,
-                i32,
-                op::Eq,
-                &-42i32
-            )),
-            frame(-42i32),
-        ),
-        ("SmallintEq", "eq") => (
-            typed_bytes(&typed!(
-                cipher,
-                column,
-                smallint::SmallintEq,
-                i16,
-                op::Eq,
-                &-7i16
-            )),
-            frame(-7i16),
-        ),
-        ("DateEq", "eq") => {
-            let day = || Date::from_days_since_epoch(19_000).expect("a day in range");
-            (
-                typed_bytes(&typed!(cipher, column, date::DateEq, Date, op::Eq, &day())),
-                frame(day()),
-            )
-        }
+        ("TextEq", "eq") => typed!(keyset, EncryptedColumns::TEXT_EQ, eq, row.text_eq),
+        ("IntegerEq", "eq") => typed!(keyset, EncryptedColumns::INTEGER_EQ, eq, row.integer_eq),
+        ("SmallintEq", "eq") => typed!(keyset, EncryptedColumns::SMALLINT_EQ, eq, row.smallint_eq),
+        ("DateEq", "eq") => typed!(keyset, EncryptedColumns::DATE_EQ, eq, row.date_eq),
         ("TimestampEq", "eq") => {
-            // Sub-microsecond nanoseconds: both paths truncate them alike.
-            let instant =
-                || Timestamp::new(1_700_000_000, 123_456_789).expect("an instant in range");
-            (
-                typed_bytes(&typed!(
-                    cipher,
-                    column,
-                    timestamp::TimestampEq,
-                    Timestamp,
-                    op::Eq,
-                    &instant()
-                )),
-                frame(instant()),
-            )
+            typed!(keyset, EncryptedColumns::TIMESTAMP_EQ, eq, row.timestamp_eq)
         }
-        ("NumericEq", "eq") => {
-            let amount = || Decimal::new(-1_234_567, 4).expect("a decimal in range");
-            (
-                typed_bytes(&typed!(
-                    cipher,
-                    column,
-                    numeric::NumericEq,
-                    Decimal,
-                    op::Eq,
-                    &amount()
-                )),
-                frame(amount()),
-            )
-        }
-        ("BigintEq", "eq") => (
-            typed_bytes(&typed!(
-                cipher,
-                column,
-                bigint::BigintEq,
-                i64,
-                op::Eq,
-                &(i64::MIN + 1)
-            )),
-            frame(i64::MIN + 1),
-        ),
-        ("RealEq", "eq") => (
-            typed_bytes(&typed!(cipher, column, real::RealEq, f32, op::Eq, &-0.0f32)),
-            frame(-0.0f32),
-        ),
-        ("DoubleEq", "eq") => (
-            typed_bytes(&typed!(
-                cipher,
-                column,
-                double::DoubleEq,
-                f64,
-                op::Eq,
-                &f64::NAN
-            )),
-            frame(f64::NAN),
-        ),
+        ("NumericEq", "eq") => typed!(keyset, EncryptedColumns::NUMERIC_EQ, eq, row.numeric_eq),
+        ("BigintEq", "eq") => typed!(keyset, EncryptedColumns::BIGINT_EQ, eq, row.bigint_eq),
+        ("RealEq", "eq") => typed!(keyset, EncryptedColumns::REAL_EQ, eq, row.real_eq),
+        ("DoubleEq", "eq") => typed!(keyset, EncryptedColumns::DOUBLE_EQ, eq, row.double_eq),
         ("TextMatch", "matches") => {
-            let query: MatchTwin<TextMatchQuery> =
-                typed!(cipher, column, TextMatch, String, op::Matches, "alice");
-            (typed_bytes(query.twin()), frame("alice"))
+            let reference = EncryptedColumns::TEXT_MATCH;
+            let query: MatchTwin<TextMatchQuery> = reference
+                .matches(row.text_match.clone())
+                .encrypt(keyset)
+                .await
+                .unwrap();
+            Typed {
+                bytes: typed_bytes(query.twin()),
+                column: reference.name(),
+                input: frame(row.text_match),
+            }
         }
         _ => panic!(
-            "{name} answers `{operator}` in the typed query chain: give it an arm here, with the \
-             input the data path is given"
+            "{name} answers `{operator}` from a field reference: give it a field in \
+             `EncryptedColumns` and an arm here, with the input the data path is given"
         ),
     }
 }
 
-/// The operators each type answers in the typed chain are exactly the ones
-/// the data path answers for a field that names it, type by type, in order,
-/// for every type whose twin the chain assembles: one term, from an equality
-/// or a match index. A producible type whose twin needs an order term, or
-/// several terms, is the chain's one gap: the data path answers it and the
-/// typed chain answers nothing, and this holds the gap to exactly those
-/// types, so a type with an equality or match twin cannot drop out unseen.
-/// The typed impls and `ANSWERS` are generated from one rule, so this is
-/// what holds that rule to the engine's.
+/// The operators each type answers from a field reference are exactly the
+/// ones the data path answers for a field that names it, type by type, in
+/// order, for every type whose twin a field query assembles: one term,
+/// from an equality or a match index. A producible type whose twin needs
+/// an order term, or several terms, is the one gap: the data path answers
+/// it and a field reference answers nothing, and this holds the gap to exactly
+/// those types, so a type with an equality or match twin cannot drop out
+/// unseen. The typed impls and `ANSWERS` are generated from one rule, so
+/// this is what holds that rule to the engine's.
 #[test]
-fn the_typed_chain_answers_what_the_data_path_answers() {
+fn a_field_reference_answers_what_the_data_path_answers() {
     let mut gap = Vec::new();
-    // A document's typed chain is the engine's own document target, not
-    // `op::Answers` on the EQL type: tests/json_tree_data_plan.rs holds the
-    // two to the same operands.
+    // A document's field reference answers through its JSON queries
+    // (`JsonQueries`), not `Answers`: tests/json_tree_field_references.rs holds them
+    // to the data path.
     for target in eql_targets::targets()
         .iter()
         .filter(|t| t.plaintext != Some("json"))
@@ -249,7 +240,7 @@ fn the_typed_chain_answers_what_the_data_path_answers() {
         } else {
             assert!(
                 typed.is_empty(),
-                "{}: the typed chain answers nothing yet",
+                "{}: a field reference answers nothing yet",
                 target.name
             );
             if !data.is_empty() {
@@ -259,9 +250,8 @@ fn the_typed_chain_answers_what_the_data_path_answers() {
     }
     // The gap today: every producible ordered type (OPE and block ORE), and
     // text search, whose twins carry an order term among their three. A type
-    // leaves this list
-    // when the typed chain assembles its twin, and its answers are then
-    // held to the data path's above.
+    // leaves this list when a field query assembles its twin, and its
+    // answers are then held to the data path's above.
     assert_eq!(
         gap,
         [
@@ -302,54 +292,131 @@ fn the_typed_chain_answers_what_the_data_path_answers() {
     assert!(!ANSWERS.is_empty());
 }
 
-/// Every typed query binds the bytes the data path derives for the same
-/// field, operator and value, under the same query domain. The float
-/// values are the ones whose terms the semantic baseline folds (`-0.0`,
-/// NaN).
+/// Every field query binds the bytes the data path derives for the same
+/// column, operator and value, under the same query domain. The twin
+/// names the column the field reference names: the record's scope, then the field.
 #[tokio::test]
-async fn every_typed_query_is_the_data_paths_query() {
+async fn every_field_query_is_the_data_paths_query() {
     let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
     for (name, operators) in ANSWERS {
         for operator in *operators {
-            let column = "col";
-            let (typed, input) = typed_and_input(&cipher, name, operator, column).await;
+            let typed = typed_and_input(&keyset, name, operator).await;
             let op = Op::parse(operator).unwrap();
-            let data = data_term(&cipher, name, column, op, input).await;
-            assert_eq!(typed, data, "{name} {operator}");
-            let json: serde_json::Value = serde_json::from_slice(&typed.0).unwrap();
+            let data = data_term(&cipher, name, typed.column, op, typed.input).await;
+            assert_eq!(typed.bytes, data, "{name} {operator}");
+            let json: serde_json::Value = serde_json::from_slice(&typed.bytes.0).unwrap();
             assert_eq!(json["v"], 4, "{name}");
-            assert_eq!(json["i"], serde_json::json!({"t": "users", "c": column}));
+            assert_eq!(
+                json["i"],
+                serde_json::json!({"t": "users", "c": typed.column})
+            );
         }
     }
 }
 
-/// The typed `TextEq` query is the stored value's term under the same
-/// column, as the data path's is.
+/// Every field query carries the term of the row its record stored: the
+/// `hm` of an exact type's field, and a filter the stored `bf` of a match
+/// type's field contains.
 #[tokio::test]
-async fn a_typed_eq_query_matches_the_stored_term() {
+async fn every_field_query_is_the_term_of_the_row_its_record_stored() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: EncryptedColumns = columns().encrypt_into(&keyset).await.unwrap();
+    let field = |column: &str| {
+        match column {
+            "text_eq" => serde_json::to_value(&stored.text_eq),
+            "integer_eq" => serde_json::to_value(&stored.integer_eq),
+            "smallint_eq" => serde_json::to_value(&stored.smallint_eq),
+            "date_eq" => serde_json::to_value(&stored.date_eq),
+            "timestamp_eq" => serde_json::to_value(&stored.timestamp_eq),
+            "numeric_eq" => serde_json::to_value(&stored.numeric_eq),
+            "bigint_eq" => serde_json::to_value(&stored.bigint_eq),
+            "real_eq" => serde_json::to_value(&stored.real_eq),
+            "double_eq" => serde_json::to_value(&stored.double_eq),
+            "text_match" => serde_json::to_value(&stored.text_match),
+            other => panic!("`EncryptedColumns` has no field {other}"),
+        }
+        .unwrap()
+    };
+    for (name, operators) in ANSWERS {
+        for operator in *operators {
+            let typed = typed_and_input(&keyset, name, operator).await;
+            let query: serde_json::Value = serde_json::from_slice(&typed.bytes.0).unwrap();
+            let row = field(typed.column);
+            assert_eq!(query["i"], row["i"], "{name}: the same column");
+            match *operator {
+                "eq" => assert_eq!(query["hm"], row["hm"], "{name}: the stored term"),
+                "matches" => {
+                    let stored = row["bf"].as_array().unwrap();
+                    let asked = query["bf"].as_array().unwrap();
+                    assert!(!asked.is_empty(), "{name}: the query sets a position");
+                    assert!(
+                        asked.iter().all(|position| stored.contains(position)),
+                        "{name}: the stored filter contains the query's"
+                    );
+                }
+                other => panic!("{name} answers `{other}`: say what its query finds here"),
+            }
+        }
+    }
+}
+
+#[derive(Clone, Zeroize)]
+struct User {
+    email: String,
+    name: String,
+}
+
+/// A record with an exact field and a match field, in the table `users`,
+/// that lists no scope.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = User, scope = "users")]
+struct EncryptedUser {
+    email: TextEq,
+    name: TextMatch,
+}
+
+/// The field reference's `TextEq` query is the term of a value the type stored on
+/// its own under the same column, as the data path's is.
+#[tokio::test]
+async fn a_field_reference_eq_query_matches_the_stored_term() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let column = Identifier::for_column("users", "email").unwrap();
-    let stored: TextEq = keyset
-        .encrypt_as(&"bob@example.com".to_owned(), column)
+    let stored: TextEq = "bob@example.com"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column)
         .await
         .unwrap();
-    let query = typed!(cipher, "email", TextEq, String, op::Eq, "bob@example.com");
+    let query = EncryptedUser::EMAIL
+        .eq("bob@example.com")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
     assert_eq!(query.hm, stored.hm);
     assert_eq!(query.i, stored.i);
-    let other = typed!(cipher, "email", TextEq, String, op::Eq, "alice@example.com");
+    let other = EncryptedUser::EMAIL
+        .eq("alice@example.com")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
     assert_ne!(other.hm, stored.hm);
 }
 
-/// `verify` and `target_limit` on the typed `TextMatch` query answer as
+/// `verify` and `target_limit` on the field reference's `TextMatch` query answer as
 /// the data path's `verify` and `target_limit` do for the same query.
 #[tokio::test]
-async fn a_typed_match_query_verifies_and_sizes_as_the_data_path_does() {
+async fn a_field_reference_match_query_verifies_and_sizes_as_the_data_path_does() {
     let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
     let plan = data_plan("TextMatch", "name");
     for needle in ["alice", "ali", "ALICE SMITH"] {
-        let query: MatchTwin<TextMatchQuery> =
-            typed!(cipher, "name", TextMatch, String, op::Matches, needle);
+        let query: MatchTwin<TextMatchQuery> = EncryptedUser::NAME
+            .matches(needle)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
         let input = frame(needle);
 
         let page = ["Alice Smith", "alicia", "Bob", "malice", "ALICE", "al", ""];
@@ -395,23 +462,17 @@ async fn a_typed_match_query_verifies_and_sizes_as_the_data_path_does() {
     }
 }
 
-/// The query's refusals are the data path's: match text that cuts no token
-/// is refused before any term exists, and a label that names no column is
-/// refused, since the twin stores the column. Both come before the named
-/// keyset is loaded.
+/// A field query refuses what the data path refuses: match text that cuts
+/// no token is no query, by either path.
+///
+/// A field reference's label is its record's scope and its field's name, so it
+/// always names a column: the refusal of a label that names no column is
+/// the data path's alone (tests/targets.rs).
 #[tokio::test]
-async fn a_typed_query_refuses_what_the_data_path_refuses() {
-    let (cipher, calls) = common::cipher().await;
-    let plan = Plan::value::<String>()
-        .context("users/name")
-        .encrypt_into::<TextMatch>()
-        .build()
-        .unwrap();
-    let short = cipher
-        .query(op::Matches, "a")
-        .keyset("tenant")
-        .on(&plan)
-        .await;
+async fn a_field_query_refuses_what_the_data_path_refuses() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let short = EncryptedUser::NAME.matches("a").encrypt(&keyset).await;
     assert!(
         matches!(
             short,
@@ -419,85 +480,119 @@ async fn a_typed_query_refuses_what_the_data_path_refuses() {
         ),
         "{short:?}"
     );
-
-    for label in ["users", "public/users/email"] {
-        let plan = Plan::value::<String>()
-            .context(label)
-            .encrypt_into::<TextEq>()
-            .build()
-            .unwrap();
-        let refused = cipher.query(op::Eq, "bob").keyset("tenant").on(&plan).await;
-        let Err(Error::Other(reason)) = &refused else {
-            panic!("{label}: {refused:?}");
-        };
-        assert_eq!(
-            reason.downcast_ref::<QueryLabelError>(),
-            Some(&QueryLabelError::NotAColumn {
-                label: label.to_owned()
-            }),
-            "{label}: {reason}"
-        );
-    }
-    assert_eq!(calls.lock().unwrap().loads, 0, "refused before any keyset");
+    let data = dynamic::query_term(
+        &keyset,
+        &data_plan("TextMatch", "name"),
+        "value",
+        Op::Matches,
+        frame("a"),
+        &EqlTargets,
+    );
+    assert!(
+        matches!(
+            data,
+            Err(dynamic::Error::Cipher(Error::Term(
+                stack_encrypt::sem::TermError::EmptyTermText
+            )))
+        ),
+        "the data path refuses the same text, before it derives a term"
+    );
 }
 
-/// A query extended with `.extend(..)` derives its terms under the column
-/// and the extension, while the twin stores the column alone, so it could
-/// match nothing: it is refused, before the named keyset is loaded, for an
+#[derive(Clone, Zeroize)]
+struct Person {
+    email: String,
+    name: String,
+}
+
+/// A record whose caller supplies a tenant scope, with an exact field and a
+/// match field. Each field stores its column, and not the tenant.
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Person, scope = "users", scope(tenant: i64))]
+struct EncryptedPerson {
+    email: TextEq,
+    name: TextMatch,
+}
+
+/// A field query given a scope with `.scope(..)` derives its term under
+/// the column and the scope. A record stores its fields the same way under
+/// a scope. So the scoped query is the term of the row stored under that
+/// scope, and the twin stores the column alone, as the row does. For an
 /// exact type and for `TextMatch`.
 #[tokio::test]
-async fn an_extended_typed_query_is_refused_before_any_keyset() {
-    let (cipher, calls) = common::cipher().await;
-    let email = Plan::value::<String>()
-        .context("users/email")
-        .encrypt_into::<TextEq>()
-        .build()
-        .unwrap();
-    let name = Plan::value::<String>()
-        .context("users/name")
-        .encrypt_into::<TextMatch>()
-        .build()
-        .unwrap();
-    let refusals = [
-        cipher
-            .query(op::Eq, "bob")
-            .extend(7i64)
-            .keyset("tenant")
-            .on(&email)
-            .await
-            .map(drop),
-        cipher
-            .query(op::Matches, "alice")
-            .extend(7i64)
-            .keyset("tenant")
-            .on(&name)
-            .await
-            .map(drop),
-    ];
-    for refused in refusals {
-        let Err(Error::Other(reason)) = &refused else {
-            panic!("{refused:?}");
-        };
-        assert_eq!(
-            reason.downcast_ref::<QueryLabelError>(),
-            Some(&QueryLabelError::Extended),
-            "{reason}"
-        );
+async fn a_scoped_field_query_finds_a_value_stored_under_the_same_scope() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: EncryptedPerson = Person {
+        email: "bob@example.com".into(),
+        name: "Bob Jones".into(),
     }
-    assert_eq!(calls.lock().unwrap().loads, 0, "refused before any keyset");
+    .encrypt_into_with_context(&keyset, Scope::new(7i64))
+    .await
+    .unwrap();
 
-    // Unextended, the same query loads the keyset and runs.
-    cipher
-        .query(op::Eq, "bob")
-        .keyset("tenant")
-        .on(&email)
+    let query = EncryptedPerson::EMAIL
+        .eq("bob@example.com")
+        .scope(Scope::new(7i64))
+        .encrypt(&keyset)
         .await
         .unwrap();
-    assert_eq!(calls.lock().unwrap().loads, 1);
+    assert_eq!(query.i, stored.email.i, "the twin stores the column alone");
+    assert_eq!(query.hm, stored.email.hm, "the term of the stored row");
+
+    // Another scope, or none, gives another term. The query with no scope
+    // is from the field reference of a record that lists none, for the same column.
+    let other = EncryptedPerson::EMAIL
+        .eq("bob@example.com")
+        .scope(Scope::new(8i64))
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_ne!(other.hm, stored.email.hm);
+    let unscoped = EncryptedUser::EMAIL
+        .eq("bob@example.com")
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(unscoped.i, stored.email.i);
+    assert_ne!(unscoped.hm, stored.email.hm);
+
+    let query = EncryptedPerson::NAME
+        .matches("jones")
+        .scope(Scope::new(7i64))
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert_eq!(query.twin().i, stored.name.i);
+    // Every position the query sets is set in the stored filter.
+    assert!(
+        query
+            .twin()
+            .bf
+            .0
+            .iter()
+            .all(|position| stored.name.bf.0.contains(position)),
+        "the stored filter contains the query's"
+    );
+    let other = EncryptedPerson::NAME
+        .matches("jones")
+        .scope(Scope::new(8i64))
+        .encrypt(&keyset)
+        .await
+        .unwrap();
+    assert!(
+        !other
+            .twin()
+            .bf
+            .0
+            .iter()
+            .all(|position| stored.name.bf.0.contains(position)),
+        "under another scope the filter differs"
+    );
 }
 
 /// A record field naming a storage-only EQL type may store a null as the
-/// plan says (#1298), through the resolver the Go guest installs:
+/// plan says, through the resolver the Go guest installs:
 /// `"sealed"` stores an EQL value whose `c` is a typed null, as long as a
 /// value's, and `"sql"` stores nothing for the field. Both open as a null.
 #[tokio::test]

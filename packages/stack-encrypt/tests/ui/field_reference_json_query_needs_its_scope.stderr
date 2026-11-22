@@ -1,0 +1,17 @@
+error[E0599]: no method named `encrypt` found for struct `JsonFieldQuery<JsonDocument, stack_encrypt::op::Contains, Needs<stack_encrypt::target::Scope<u64>>>` in the current scope
+  --> tests/ui/field_reference_json_query_needs_its_scope.rs:24:10
+   |
+22 |       let _ = EncryptedCustomer::PROFILE
+   |  _____________-
+23 | |         .contains(serde_json::json!({"a": 1}))
+24 | |         .encrypt(&keyset);
+   | |         -^^^^^^^ method not found in `JsonFieldQuery<JsonDocument, stack_encrypt::op::Contains, Needs<stack_encrypt::target::Scope<u64>>>`
+   | |_________|
+   |
+   |
+   = note: the method was found for
+           - `JsonFieldQuery<T, AtPath<stack_encrypt::op::Between>>`
+           - `JsonFieldQuery<T, AtPath<stack_encrypt::op::Eq>>`
+           - `JsonFieldQuery<T, AtPath<stack_encrypt::op::Gt>>`
+           - `JsonFieldQuery<T, AtPath<stack_encrypt::op::Gte>>`
+           and 8 more types

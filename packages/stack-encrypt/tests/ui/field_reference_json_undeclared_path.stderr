@@ -1,0 +1,60 @@
+error[E0599]: no method named `email` found for struct `EncryptedCustomerProfileAt<W, T, C, P>` in the current scope
+  --> tests/ui/field_reference_json_undeclared_path.rs:30:45
+   |
+15 | #[derive(EncryptTarget)]
+   |          ------------- method `email` not found for this struct
+...
+30 |     let _ = EncryptedCustomer::PROFILE.at().email();
+   |                                             ^^^^^ method not found in `EncryptedCustomerProfileAt<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny>`
+
+error[E0599]: no method named `at` found for struct `EncryptedCustomerProfileElementsVisits<Q>` in the current scope
+  --> tests/ui/field_reference_json_undeclared_path.rs:32:60
+   |
+15 | #[derive(EncryptTarget)]
+   |          ------------- method `at` not found for this struct
+...
+32 |     let _ = EncryptedCustomer::PROFILE.elements().visits().at();
+   |             --------------------------                     ^^ method not found in `EncryptedCustomerProfileElementsVisits<ArrayElements<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny, EncryptedCustomerProfileElementsVisits>>`
+   |             |
+   |             method `at` is available on `FieldReference<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny, EncryptedCustomerProfilePaths>`
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `at`, perhaps you need to implement it:
+           candidate #1: `DocumentPaths`
+
+error[E0599]: no method named `age` found for struct `EncryptedCustomerProfileElements<W, T, C, P>` in the current scope
+  --> tests/ui/field_reference_json_undeclared_path.rs:34:51
+   |
+15 | #[derive(EncryptTarget)]
+   |          ------------- method `age` not found for this struct
+...
+34 |     let _ = EncryptedCustomer::PROFILE.elements().age();
+   |                                                   ^^^ method not found in `EncryptedCustomerProfileElements<Root<EncryptedCustomer>, JsonDocument, NoScope, TakesAny>`
+
+error[E0599]: the method `at` exists for struct `FieldReference<Root<UndeclaredCustomer>, JsonDocument>`, but its trait bounds were not satisfied
+  --> tests/ui/field_reference_json_undeclared_path.rs:36:41
+   |
+36 |     let _ = UndeclaredCustomer::PROFILE.at();
+   |                                         ^^
+   |
+  ::: src/field_reference/json.rs
+   |
+   | pub enum TextPaths {}
+   | ------------------ doesn't satisfy `TextPaths: DocumentPaths`
+   |
+   = note: the following trait bounds were not satisfied:
+           `TextPaths: DocumentPaths`
+
+error[E0599]: the method `elements` exists for struct `FieldReference<Root<UndeclaredCustomer>, JsonDocument>`, but its trait bounds were not satisfied
+  --> tests/ui/field_reference_json_undeclared_path.rs:37:41
+   |
+37 |     let _ = UndeclaredCustomer::PROFILE.elements();
+   |                                         ^^^^^^^^ method cannot be called due to unsatisfied trait bounds
+   |
+  ::: src/field_reference/json.rs
+   |
+   | pub enum TextPaths {}
+   | ------------------ doesn't satisfy `TextPaths: DocumentPaths`
+   |
+   = note: the following trait bounds were not satisfied:
+           `TextPaths: DocumentPaths`

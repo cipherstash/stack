@@ -3,12 +3,12 @@
 //! names a keyset the cipher did not load from ZeroKMS.
 
 use stack_encrypt::{CipherRef, StackCipher};
-use uuid::Uuid;
 
-fn any_keyset<K>(cipher: &StackCipher<K>, id: Uuid) -> CipherRef<'_, K> {
+fn any_keyset<K>(cipher: &StackCipher<K>) -> CipherRef<'_, K> {
     CipherRef {
         cipher,
-        keyset: Some(id),
+        // Whatever the field is given: it cannot be named from here.
+        keyset: unimplemented!(),
     }
 }
 

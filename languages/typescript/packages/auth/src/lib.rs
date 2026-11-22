@@ -7,8 +7,9 @@ use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFun
 use napi::tokio::sync::oneshot;
 use napi_derive::napi;
 use stack_auth::{
-    AlreadyConsumed, AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, InternalError,
-    OidcProvider, PendingDeviceCode, SecretToken, ServerError, ServiceToken, Token, TokenStore,
+    AlreadyConsumed, AuthError, AuthStrategy, CredentialAuthStrategy, CredentialPerCall,
+    DeviceClientError, DeviceCodeStrategy, InternalError, OidcProvider, PendingDeviceCode,
+    SecretToken, ServerError, ServiceToken, Token, TokenStore,
 };
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroizing;
@@ -226,6 +227,12 @@ impl DeviceSessionStrategy {
 
 /// Bridges a JS `getJwt` callback into a Rust [`OidcProvider`].
 ///
+/// The binding keeps this provider itself, and does not give it to the Rust
+/// strategy. A Rust strategy with a provider takes no JWT from its caller,
+/// and `getTokenForJwt` has to hand one in. So the Rust strategy is built
+/// with [`CredentialPerCall`], and each entry passes it a JWT: `getToken`
+/// the one this provider returns, `getTokenForJwt` the one it was given.
+///
 /// `getJwt` is a JS function returning `Promise<string>` — the current
 /// third-party OIDC JWT. The threadsafe function lets the Rust refresh engine
 /// (running on napi's tokio pool) schedule the call onto the Node event-loop
@@ -318,14 +325,25 @@ impl TokenStore for NapiTokenStore {
 }
 
 enum OidcFederationStrategyInner {
-    NoStore(stack_auth::OidcFederationStrategy<NapiOidcProvider>),
-    WithStore(stack_auth::OidcFederationStrategy<NapiOidcProvider, NapiTokenStore>),
+    NoStore(stack_auth::OidcFederationStrategy<CredentialPerCall>),
+    WithStore(stack_auth::OidcFederationStrategy<CredentialPerCall, NapiTokenStore>),
+}
+
+impl OidcFederationStrategyInner {
+    /// The CTS token for `jwt`: the one cached for it, or a fresh exchange.
+    async fn token_for(&self, jwt: SecretToken) -> std::result::Result<ServiceToken, AuthError> {
+        match self {
+            Self::NoStore(s) => s.get_token_with_credential(jwt).await,
+            Self::WithStore(s) => s.get_token_with_credential(jwt).await,
+        }
+    }
 }
 
 /// An auth strategy that federates a third-party OIDC JWT (Clerk, Supabase, …)
 /// into a CipherStash CTS service token via `/api/authorise`.
 #[napi]
 pub struct OidcFederationStrategy {
+    provider: NapiOidcProvider,
     inner: OidcFederationStrategyInner,
 }
 
@@ -376,15 +394,15 @@ impl OidcFederationStrategy {
         cache_capacity: Option<u32>,
     ) -> Result<Self> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let mut builder =
-            stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
-                .maybe_base_url(base_url)
-                .map_err(to_napi_error)?;
+        let mut builder = stack_auth::OidcFederationStrategy::builder(crn, CredentialPerCall)
+            .maybe_base_url(base_url)
+            .map_err(to_napi_error)?;
         if let Some(capacity) = cache_capacity {
             builder = builder.cache_capacity(capacity as usize);
         }
         let inner = builder.build().map_err(to_napi_error)?;
         Ok(Self {
+            provider: NapiOidcProvider { get_jwt },
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
     }
@@ -416,10 +434,9 @@ impl OidcFederationStrategy {
             load: load_token,
             save: save_token,
         };
-        let mut builder =
-            stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
-                .maybe_base_url(base_url)
-                .map_err(to_napi_error)?;
+        let mut builder = stack_auth::OidcFederationStrategy::builder(crn, CredentialPerCall)
+            .maybe_base_url(base_url)
+            .map_err(to_napi_error)?;
         if let Some(capacity) = cache_capacity {
             builder = builder.cache_capacity(capacity as usize);
         }
@@ -428,6 +445,7 @@ impl OidcFederationStrategy {
             .build()
             .map_err(to_napi_error)?;
         Ok(Self {
+            provider: NapiOidcProvider { get_jwt },
             inner: OidcFederationStrategyInner::WithStore(inner),
         })
     }
@@ -442,11 +460,10 @@ impl OidcFederationStrategy {
     /// `getJwt` needs no request context.
     #[napi]
     pub async fn get_token(&self) -> Result<TokenResult> {
-        let token = match &self.inner {
-            OidcFederationStrategyInner::NoStore(s) => s.get_token().await,
-            OidcFederationStrategyInner::WithStore(s) => s.get_token().await,
-        }
-        .map_err(to_napi_error)?;
+        // Ask who this call is for before anything else, as a Rust strategy
+        // with a provider does.
+        let jwt = self.provider.fetch().await.map_err(to_napi_error)?;
+        let token = self.inner.token_for(jwt).await.map_err(to_napi_error)?;
         token_result_from(token)
     }
 
@@ -459,11 +476,7 @@ impl OidcFederationStrategy {
     #[napi]
     pub async fn get_token_for_jwt(&self, jwt: String) -> Result<TokenResult> {
         let jwt = SecretToken::new(jwt);
-        let token = match &self.inner {
-            OidcFederationStrategyInner::NoStore(s) => s.get_token_for_jwt(jwt).await,
-            OidcFederationStrategyInner::WithStore(s) => s.get_token_for_jwt(jwt).await,
-        }
-        .map_err(to_napi_error)?;
+        let token = self.inner.token_for(jwt).await.map_err(to_napi_error)?;
         token_result_from(token)
     }
 }

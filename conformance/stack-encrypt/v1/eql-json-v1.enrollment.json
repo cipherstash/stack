@@ -117,7 +117,7 @@
       "evidence": {
         "eql-record": [
           "a_document_field_answers_the_json_operators",
-          "every_operand_is_the_typed_chains",
+          "every_operand_is_in_the_eql_wire_form_and_finds_what_it_should",
           "a_json_operator_refuses_what_it_cannot_answer",
           "a_document_has_no_one_plaintext_query"
         ],

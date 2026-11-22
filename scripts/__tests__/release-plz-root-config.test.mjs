@@ -12,7 +12,8 @@ import { readWorkflow } from './lib/workflows.mjs'
  * uploading it, but not `release-plz update` from bumping its version and
  * writing its changelog. So the published crates are each in a named
  * `version_group` (`stack-auth` with `stack-profile`, `stack-kms` alone, and
- * `stack-encrypt` with `stack-encrypt-derive`), and every other member
+ * `stack-encrypt` with `stack-encrypt-derive` and `stack-encrypt-jsonpath`),
+ * and every other member
  * carries `release = false`. A member added to the workspace without a line here would
  * be versioned on the next release-plz run.
  *
@@ -36,6 +37,7 @@ const GROUPS = {
   'stack-kms': 'stack-kms',
   'stack-encrypt': 'stack-encrypt',
   'stack-encrypt-derive': 'stack-encrypt',
+  'stack-encrypt-jsonpath': 'stack-encrypt',
 }
 const PUBLISHED = Object.keys(GROUPS).sort()
 

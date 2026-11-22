@@ -21,6 +21,7 @@ on:
       - packages/stack-auth/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
+      - packages/stack-encrypt-jsonpath/**
       - Cargo.toml
       - Cargo.lock
       - mise.toml

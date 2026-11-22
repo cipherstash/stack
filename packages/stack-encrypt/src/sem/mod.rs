@@ -3,7 +3,7 @@
 //! Index terms are stored alongside a
 //! [`StackCipherText`](crate::StackCipherText) so encrypted values can be
 //! queried without decryption. Each term type implements
-//! [`EncryptFrom`](crate::EncryptFrom), so the usual entry point is
+//! [`EncryptTarget`](crate::EncryptTarget), so the usual entry point is
 //! target-directed:
 //!
 //! ```text
@@ -22,7 +22,7 @@
 //!   bounds' terms as one [`RangeQuery`].
 //!
 //! Every term type here is built on exactly one thing the cipher exposes
-//! publicly — its PRF ([`KeysetCipher::prf`], keyed by the index key of the
+//! publicly — its PRF ([`KeysetCipher::with_prf`], keyed by the index key of the
 //! keyset the handle is bound to). These core implementations own term
 //! generation; downstream storage types can wrap the supported operations or
 //! consume their native output with a visitor (see [`target`](crate::target)).
@@ -53,7 +53,7 @@
 //! [`HmacSha256Prf`] — keyed by the
 //! deterministic per-keyset [`IndexKey`](crate::kms::IndexKey) from
 //! [`kms::IndexKeySource`](crate::kms::IndexKeySource), loaded when the keyset is selected — so
-//! every derivation completes with no I/O and an [`EncryptFrom`](crate::EncryptFrom) term
+//! every derivation completes with no I/O and an [`EncryptTarget`](crate::EncryptTarget) term
 //! carries **no requests** in its [`Pending`]. That is the backend's
 //! property, not the API's: the term is a `Pending` either way. The next
 //! ZeroKMS release adds 2-party PRF generation; under
@@ -282,8 +282,8 @@ pub enum TermError {
     /// A match query's text produced no tokens under the index's tokenizer:
     /// empty or separator-only text, or (for n-grams, as in the v1 match
     /// indexer) text shorter than the n-gram length. A query with no tokens
-    /// would match every row, so the query chain refuses it when the query
-    /// is awaited, before a term exists. A *stored* value with no tokens is
+    /// would match every row, so a query refuses it when it is encrypted,
+    /// before a term exists. A *stored* value with no tokens is
     /// not refused: it is stored as the empty filter, which no query
     /// matches, so a short or empty value is a valid thing to hold in a
     /// match column. The empty filter shows that the value cut no token
@@ -356,7 +356,7 @@ pub enum TermError {
     #[error("an ordering at a JSON path takes a number or a string")]
     #[diagnostic(
         code(stack_encrypt::json_leaf_not_ordered),
-        help("The JSON index derives an ordering term for number and string leaves only: query `op::AtPath(op::Eq)` for a boolean or a null.")
+        help("The JSON index derives an ordering term for number and string leaves only. Ask for a boolean or a null with equality at the path: a field reference's path query, `at().age().eq(v)` or `at().age().is_null()`, or the dynamic interface's `eq_at`.")
     )]
     JsonLeafNotOrdered,
     /// An ordering was asked at a JSON path the index does not order: no
@@ -383,9 +383,19 @@ pub enum TermError {
     #[error("equality at a JSON path takes a scalar")]
     #[diagnostic(
         code(stack_encrypt::json_value_not_scalar),
-        help("`op::AtPath(op::Eq)` compares one value at a path: a string, a number, a boolean or a null. To ask whether the value at a path holds an object or an array, query `op::Contains` with the document that holds it there.")
+        help("Equality at a path (a field reference's `at().age().eq(v)`, or the dynamic interface's `eq_at`) compares one value: a string, a number, a boolean or a null. To ask whether the value at a path holds an object or an array, query containment (`contains(doc)`, or `contains`) with the document that holds it there.")
     )]
     JsonValueNotScalar,
+    /// A JSON query was given a NaN or an infinity, which no JSON number
+    /// is: no stored document holds one, and JSON has no way to write one.
+    /// Refused before any key is requested, where a conversion to JSON would
+    /// otherwise turn it into `null` and match the documents holding `null`.
+    #[error("a JSON query takes no NaN or infinity")]
+    #[diagnostic(
+        code(stack_encrypt::json_number_not_finite),
+        help("A JSON number is finite. Ask for a JSON `null` with a path's `is_null()`.")
+    )]
+    JsonNumberNotFinite,
 }
 
 impl crate::ErrorPayload for TermError {
@@ -408,7 +418,8 @@ impl crate::ErrorPayload for TermError {
             | Self::JsonLeafNotOrdered
             | Self::JsonPathNotOrdered
             | Self::JsonOrderingAtPosition
-            | Self::JsonValueNotScalar => serde_json::Map::new(),
+            | Self::JsonValueNotScalar
+            | Self::JsonNumberNotFinite => serde_json::Map::new(),
         }
     }
 }
@@ -650,8 +661,20 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = equality(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = equality(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            // Normalized now, so the source is read and wiped during the
+            // build. The PRF runs when the pending has loaded the keyset.
+            None => match normalized(source) {
+                Ok(normalized) => cipher.deferred(move |keyset| {
+                    equality_of_normalized(&keyset.prf, normalized, context).map_err(Error::from)
+                }),
+                Err(error) => Pending::ready(cipher, Err(error.into())),
+            },
+        }
     }
 }
 
@@ -664,9 +687,9 @@ where
 /// `m = 256`-bit filter, no short-word tokens.
 ///
 /// Every option is part of the index's identity: a stored filter and a query
-/// filter agree only when both were cut under the same options, so a query
-/// asked under options other than the index's is refused
-/// ([`PlanError::IndexOptions`](crate::plan::PlanError::IndexOptions)).
+/// filter agree only when both were cut under the same options. So a query
+/// takes its options from the field it queries: a field reference from the
+/// field's type, and a plan that is data from the plan.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MatchOptions {
     /// How text splits into tokens.
@@ -865,7 +888,7 @@ impl<O> MatchTerms<O> {
     ///
     /// An empty `query` returns `false`: containment of zero positions is
     /// vacuously true, which would turn an empty query into a match-every-row
-    /// query. A query chain already refuses to build such a query
+    /// query. A field query already refuses to build such a query
     /// ([`TermError::EmptyTermText`]); this guards any other (e.g.
     /// deserialized) source of an empty one. The stored side is the other
     /// way round: a value with no tokens is stored as the empty filter, and
@@ -973,7 +996,7 @@ impl<O> Eq for MatchTerms<O> {}
 /// The two are different types because they are different things, even
 /// where their bytes share an encoding: a query is never stored, and a
 /// stored filter is never sent as a query. A
-/// `MatchQuery` comes from a query chain ([`op::Matches`](struct@crate::op::Matches)),
+/// `MatchQuery` comes from a field query ([`op::Matches`](struct@crate::op::Matches)),
 /// never from a target.
 ///
 /// A Bloom filter can hold every bit of the query without the value holding
@@ -1086,7 +1109,7 @@ impl<O> Eq for MatchQuery<O> {}
 /// term the index would send for that value alone, which is how a query
 /// domain that carries a range serialises it.
 ///
-/// It comes only from a query chain: a range is never stored. Both ends
+/// It comes only from a field query: a range is never stored. Both ends
 /// are inclusive, and a range whose low bound is above its high bound is
 /// not refused: as SQL's `BETWEEN`, it matches nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1120,8 +1143,8 @@ impl<T> RangeQuery<T> {
 /// The query's tokens, as a match index cuts them from the query's value:
 /// a match query's verifier, which a [`MatchQuery`] keeps to verify a row. Plaintext, so it is
 /// zeroized on drop and has no `Debug`.
-/// [`Supports::prepare`](crate::op::Supports::prepare) makes one; only a query
-/// chain can join it to a filter
+/// [`Supports::prepare`](crate::op::Supports::prepare) makes one; only a field
+/// field query can join it to a filter
 /// ([`Supports::query`](crate::op::Supports::query) takes a token no caller
 /// can make), so one query's tokens never verify rows for another value's
 /// filter.
@@ -1143,7 +1166,7 @@ impl QueryTokens {
     /// ([`TermError::InvalidOptions`]), checked before the text is
     /// tokenised, or text that cuts no token ([`TermError::EmptyTermText`]),
     /// whose filter would match every row. The one rule for a match query:
-    /// the query chain and the `dynamic` path both apply it, so they cannot
+    /// a field query and the `dynamic` path both apply it, so they cannot
     /// disagree on what they refuse. The stored side keeps token-less text
     /// as the empty filter instead.
     pub(crate) fn of_query(text: &str, options: &MatchOptions) -> Result<Self, TermError> {
@@ -1247,8 +1270,8 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
 /// no PRF call. Stored,
 /// it is a value no query matches, since a query always has at least one
 /// token and the empty filter holds none of its positions. This is the
-/// *stored* side's answer; a query of such text is refused by the query
-/// chain before it gets here ([`TermError::EmptyTermText`]).
+/// *stored* side's answer; a query of such text is refused before it gets
+/// here ([`TermError::EmptyTermText`]).
 fn match_term<O>(
     prf: &HmacSha256Prf,
     text: &str,
@@ -1304,6 +1327,25 @@ fn bloom_positions(
         .map_err(TermError::from_prf)
 }
 
+/// The match term of `text`, through a keyset that is not loaded
+/// yet. The pending keeps a copy of the text, wiped on drop, and derives
+/// the term when it has loaded the keyset.
+fn match_deferred<'a, K, O>(
+    cipher: &'a KeysetCipher<'_, K>,
+    text: &str,
+    context: Context<'_>,
+    options: MatchOptions,
+) -> Pending<'a, MatchTerms<O>, K>
+where
+    O: MatchConfig,
+{
+    let text = Zeroizing::new(text.to_owned());
+    let context = context.into_owned();
+    cipher.deferred(move |keyset| {
+        match_term(&keyset.prf, &text, context, options).map_err(Error::from)
+    })
+}
+
 /// A match term of any text source, generated under `O`'s options. Under
 /// the local HMAC backend, derived during the synchronous build — the
 /// returned [`Pending`] carries no requests (tokenize makes the one
@@ -1325,9 +1367,14 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term =
-            match_term(cipher.prf(), source.as_ref(), context, O::options()).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = match_term(&keyset.prf, source.as_ref(), context, O::options())
+                    .map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            None => match_deferred(cipher, source.as_ref(), context, O::options()),
+        }
     }
 }
 
@@ -2020,8 +2067,14 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ore(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = ore(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            None => cipher
+                .deferred(move |keyset| ore(&keyset.prf, source, context).map_err(Error::from)),
+        }
     }
 }
 
@@ -2044,8 +2097,14 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ope(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = ope(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            None => cipher
+                .deferred(move |keyset| ope(&keyset.prf, source, context).map_err(Error::from)),
+        }
     }
 }
 
@@ -2068,8 +2127,15 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ore_block(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.loaded_state() {
+            Some(keyset) => {
+                let term = ore_block(&keyset.prf, source, context).map_err(Error::from);
+                Pending::ready(cipher, term)
+            }
+            None => cipher.deferred(move |keyset| {
+                ore_block(&keyset.prf, source, context).map_err(Error::from)
+            }),
+        }
     }
 }
 
@@ -2139,8 +2205,16 @@ impl<K> KeysetCipher<'_, K> {
     where
         T: Encrypt,
     {
-        let term = equality(self.prf(), value, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term = equality(&keyset.prf, value, descriptor.into_prf_context());
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => match normalized(value) {
+                Ok(normalized) => self.equality_term_normalized(normalized, descriptor),
+                Err(error) => Pending::ready(self, Err(error.into())),
+            },
+        }
     }
 
     /// Generate a match (full-text) term for `text` under the field
@@ -2158,8 +2232,8 @@ impl<K> KeysetCipher<'_, K> {
     /// or separator-only text, or text shorter than the n-gram length; see
     /// [`Tokenizer::Ngram`]) is the empty filter, which no query matches,
     /// so a short value can be stored. A query is the other type,
-    /// [`MatchQuery`], and comes from the query chain
-    /// (`cipher.query(op::Matches, ..)`), which refuses a query of such
+    /// [`MatchQuery`], and comes from a query
+    /// (a field reference's `matches(..)`), which refuses a query of such
     /// text ([`TermError::EmptyTermText`]) because its filter would match
     /// every row; this method does not know which it is deriving and
     /// refuses nothing.
@@ -2184,8 +2258,19 @@ impl<K> KeysetCipher<'_, K> {
         normalized: Normalized,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, EqualityTerm, K> {
-        let term = equality_of_normalized(self.prf(), normalized, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term =
+                    equality_of_normalized(&keyset.prf, normalized, descriptor.into_prf_context());
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                self.deferred(move |keyset| {
+                    equality_of_normalized(&keyset.prf, normalized, context).map_err(Error::from)
+                })
+            }
+        }
     }
 
     /// [`match_terms`](Self::match_terms) under runtime options, for the
@@ -2204,8 +2289,13 @@ impl<K> KeysetCipher<'_, K> {
     where
         O: MatchConfig + MaybeSend,
     {
-        let term = match_term(self.prf(), text, descriptor.into_prf_context(), options);
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term = match_term(&keyset.prf, text, descriptor.into_prf_context(), options);
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => match_deferred(self, text, descriptor.into_prf_context(), options),
+        }
     }
 
     /// Generate an order-revealing (CLLW ORE) term for a range-queryable value
@@ -2224,8 +2314,21 @@ impl<K> KeysetCipher<'_, K> {
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, OreClww8VariableV1, K> {
-        let term = ore(self.prf(), value, descriptor.into_prf_context()).map(OreTerm::into_inner);
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term =
+                    ore(&keyset.prf, value, descriptor.into_prf_context()).map(OreTerm::into_inner);
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                self.deferred(move |keyset| {
+                    ore(&keyset.prf, value, context)
+                        .map(OreTerm::into_inner)
+                        .map_err(Error::from)
+                })
+            }
+        }
     }
 
     /// Generate an order-preserving (CLLW OPE) term: ciphertexts compare with
@@ -2237,8 +2340,21 @@ impl<K> KeysetCipher<'_, K> {
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, OpeClww8VariableV1, K> {
-        let term = ope(self.prf(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner);
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term =
+                    ope(&keyset.prf, value, descriptor.into_prf_context()).map(OpeTerm::into_inner);
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                self.deferred(move |keyset| {
+                    ope(&keyset.prf, value, context)
+                        .map(OpeTerm::into_inner)
+                        .map_err(Error::from)
+                })
+            }
+        }
     }
 
     /// Generate a block ORE term: ore-rs's 6-bit block ORE, the scheme
@@ -2252,8 +2368,18 @@ impl<K> KeysetCipher<'_, K> {
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, OreBlockTerm<T>, K> {
-        let term = ore_block(self.prf(), value, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+        match self.loaded_state() {
+            Some(keyset) => {
+                let term = ore_block(&keyset.prf, value, descriptor.into_prf_context());
+                Pending::ready(self, term.map_err(Error::from))
+            }
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                self.deferred(move |keyset| {
+                    ore_block(&keyset.prf, value, context).map_err(Error::from)
+                })
+            }
+        }
     }
 }
 
@@ -2268,7 +2394,7 @@ mod tests {
 
     #[test]
     fn a_match_query_with_no_tokens_verifies_nothing() {
-        // A query chain refuses token-less text before a term exists, so
+        // A query refuses token-less text before a term exists, so
         // this cannot reach a `MatchQuery` through the API; the guard is for
         // one built any other way, which must never match every row.
         let query = MatchQuery::<DefaultMatch>::new(

@@ -13,14 +13,13 @@ use stack_encrypt::kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
     IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
 };
-use stack_encrypt::plan::{Field, Fields};
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    all, nonempty, AuditMetadata, Ciphertext, Decrypt, DecryptInto, EncryptFrom, Equality, Error,
-    Pending, Plan, StackCipher, StackCipherText,
+    nonempty, AuditMetadata, Ciphertext, Decrypt, DecryptFrom, DecryptSource, EncryptInto,
+    EncryptTarget, Error, Pending, StackCipher, StackCipherText,
 };
 use uuid::Uuid;
+use zeroize::Zeroize;
 
 /// Which key call a request was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +56,10 @@ impl RecordingSource {
     fn take(&self) -> Vec<Sent> {
         std::mem::take(&mut *self.sent.lock().unwrap())
     }
+}
+
+impl stack_encrypt::kms::KeySourceKind for RecordingSource {
+    type Kind = stack_encrypt::kms::OwnIdentity;
 }
 
 impl DataKeySource for RecordingSource {
@@ -262,7 +265,7 @@ async fn an_audited_call_that_failed_gives_its_error() {
 
 /// Audit metadata goes with data-key requests. A call that makes none sends
 /// nothing and still succeeds. The test covers a query term, a record of
-/// passthrough fields only, an absent value, and an empty list. The last
+/// terms only, an absent value, and an empty list. The last
 /// two depend on the data, so an error there would fail a program on an
 /// empty page of rows.
 #[tokio::test]
@@ -283,13 +286,10 @@ async fn an_audited_call_that_requests_no_data_key_succeeds_and_sends_nothing() 
         .unwrap();
     assert_eq!(audited, plain);
 
-    // A record whose only field is stored in the clear.
+    // A record whose only field is a term.
     let account = Account { email };
-    let _ = cipher
-        .encrypt(&account)
-        .context("accounts")
-        .fields()
-        .passthrough::<String>("email")
+    let _: AccountTerms = account
+        .encrypt_into(&keyset)
         .audit(list_issues())
         .await
         .unwrap();
@@ -307,8 +307,7 @@ async fn an_audited_call_that_requests_no_data_key_succeeds_and_sends_nothing() 
         .await
         .unwrap();
     assert!(empty.is_empty());
-    let opened: Vec<String> = empty
-        .decrypt_into(&cipher, nonempty!("users/email"))
+    let opened = Vec::<String>::decrypt_from_with_context(empty, &cipher, nonempty!("users/email"))
         .audit(list_issues())
         .await
         .unwrap();
@@ -324,10 +323,7 @@ async fn an_audited_call_that_requests_no_data_key_succeeds_and_sends_nothing() 
 async fn trees_send_their_metadata_on_every_request() {
     let (cipher, source) = cipher().await;
     let first = cipher.default_keyset();
-    let second = cipher
-        .keyset(IdentifiedBy::Name("tenant-b".to_string().into()))
-        .await
-        .unwrap();
+    let second = cipher.keyset(IdentifiedBy::Name("tenant-b".to_string().into()));
 
     let a = first
         .encrypt_tree(String::from("alice"), "users/name")
@@ -407,142 +403,72 @@ async fn a_tree_decrypt_takes_a_target_that_need_not_be_send() {
     assert_eq!((alice.as_str(), bob.as_str()), ("alice", "bob"));
 }
 
-#[tokio::test]
-async fn plan_chains_send_their_metadata() {
-    let (cipher, source) = cipher().await;
-    let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
-    let email = String::from("bob@example.com");
-
-    let written = cipher
-        .encrypt(&email)
-        .using(&email_plan)
-        .audit(list_issues())
-        .await
-        .unwrap();
-    assert_eq!(
-        source.take(),
-        vec![(Call::Generate, Some(list_issues_json()))]
-    );
-
-    let back: String = cipher
-        .open(written)
-        .using(&email_plan)
-        .audit(AuditMetadata::new().with("purpose", "send receipt"))
-        .await
-        .unwrap();
-    assert_eq!(back, email);
-    assert_eq!(
-        source.take(),
-        vec![(Call::Retrieve, Some(json!({ "purpose": "send receipt" })))]
-    );
-}
-
-/// `all` makes one request for its chains, and metadata on the batch goes
-/// on it.
-#[tokio::test]
-async fn a_batch_of_chains_sends_its_metadata() {
-    let (cipher, source) = cipher().await;
-    let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
-    let (alice, bob) = (
-        String::from("alice@example.com"),
-        String::from("bob@example.com"),
-    );
-
-    let _ = all((
-        cipher.encrypt(&alice).using(&email_plan),
-        cipher.encrypt(&bob).using(&email_plan),
-    ))
-    .audit(list_issues())
-    .await
-    .unwrap();
-    assert_eq!(
-        source.take(),
-        vec![(Call::Generate, Some(list_issues_json()))]
-    );
-
-    // With none on the batch, its request carries none.
-    let _ = all((
-        cipher.encrypt(&alice).using(&email_plan),
-        cipher.encrypt(&bob).using(&email_plan),
-    ))
-    .await
-    .unwrap();
-    assert_eq!(source.take(), vec![(Call::Generate, None)]);
-}
-
-/// A record with one encrypted field, for the `.fields()` chain.
+/// A record whose only field is a term, so sealing it requests no data
+/// key.
+#[derive(Zeroize)]
 struct Account {
     email: String,
 }
-impl Fields for Account {
-    fn field_names(&self) -> Vec<&str> {
-        vec!["email"]
-    }
-}
-impl Field<String> for Account {
-    fn field(&self, name: &str) -> Option<&String> {
-        (name == "email").then_some(&self.email)
-    }
+
+#[derive(EncryptTarget)]
+#[stash(struct = Account, scope = "accounts")]
+struct AccountTerms {
+    #[allow(dead_code)]
+    email: EqualityTerm,
 }
 
-/// Every encrypt chain that can be awaited takes `.audit(..)`: a context
-/// alone, a context with indexes, and fields.
+/// Two records zipped are one request, and metadata on the zipped call goes
+/// on it. With none on the call, its request carries none.
 #[tokio::test]
-async fn every_encrypt_chain_sends_its_metadata() {
+async fn zipped_records_send_their_metadata_on_their_one_request() {
     let (cipher, source) = cipher().await;
-    let email = String::from("bob@example.com");
-
-    let _ = cipher
-        .encrypt(&email)
-        .context("users/email")
-        .audit(list_issues())
-        .await
-        .unwrap();
-    let _ = cipher
-        .encrypt(&email)
-        .context("users/email")
-        .with(Equality)
-        .audit(list_issues())
-        .await
-        .unwrap();
-    let account = Account {
-        email: email.clone(),
+    let keyset = cipher.default_keyset();
+    let seal = |email: &str| {
+        email
+            .to_owned()
+            .encrypt_into_with_context::<EncryptedEmail, _>(&keyset, nonempty!("users/email"))
     };
-    let _ = cipher
-        .encrypt(&account)
-        .context("accounts")
-        .fields()
-        .encrypt::<String>("email")
+
+    let _ = seal("alice@example.com")
+        .zip(seal("bob@example.com"))
         .audit(list_issues())
         .await
         .unwrap();
     assert_eq!(
         source.take(),
-        vec![(Call::Generate, Some(list_issues_json())); 3]
+        vec![(Call::Generate, Some(list_issues_json()))]
     );
+
+    let _ = seal("alice@example.com")
+        .zip(seal("bob@example.com"))
+        .await
+        .unwrap();
+    assert_eq!(source.take(), vec![(Call::Generate, None)]);
 }
 
-/// `all(..)` settles chains that open leaves from any keyset in a request
-/// of their own, beside the batch. Both requests carry the batch's one map.
+/// An encrypt zipped with a decrypt makes one request of each kind, and
+/// both carry the zipped call's one map.
 #[tokio::test]
-async fn a_batch_of_encrypt_and_open_chains_sends_one_map_on_every_request() {
+async fn a_zipped_encrypt_and_decrypt_send_one_map_on_every_request() {
     let (cipher, source) = cipher().await;
-    let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
-    let (alice, bob) = (
-        String::from("alice@example.com"),
-        String::from("bob@example.com"),
-    );
-    let stored = cipher.encrypt(&alice).using(&email_plan).await.unwrap();
+    let keyset = cipher.default_keyset();
+    let stored: EncryptedEmail = String::from("alice@example.com")
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+        .await
+        .unwrap();
     let _ = source.take();
 
-    let (_, opened): (_, String) = all((
-        cipher.encrypt(&bob).using(&email_plan),
-        cipher.open(stored).using(&email_plan),
-    ))
-    .audit(list_issues())
-    .await
-    .unwrap();
-    assert_eq!(opened, alice);
+    let (_, opened): (EncryptedEmail, String) = String::from("bob@example.com")
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
+        .zip(String::decrypt_from_with_context(
+            stored,
+            &keyset,
+            nonempty!("users/email"),
+        ))
+        .audit(list_issues())
+        .await
+        .unwrap();
+    assert_eq!(opened, "alice@example.com");
     assert_eq!(
         source.take(),
         vec![
@@ -552,48 +478,9 @@ async fn a_batch_of_encrypt_and_open_chains_sends_one_map_on_every_request() {
     );
 }
 
-/// A batch that fails its check gives that error when its audited form is
-/// awaited, and makes no request.
-#[tokio::test]
-async fn an_audited_batch_that_fails_its_check_makes_no_request() {
-    let (cipher, source) = cipher().await;
-    let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
-    let email = String::from("bob@example.com");
-
-    let refused = all((
-        cipher.encrypt(&email).using(&email_plan),
-        cipher.encrypt(&email).context("not a label//"),
-    ))
-    .audit(list_issues())
-    .await;
-    assert!(matches!(refused, Err(Error::Plan(_))));
-    assert_eq!(source.take(), vec![]);
-}
-
-/// A chain that names a keyset still sends its metadata: the keyset is
-/// loaded, then the one request carries the map.
-#[tokio::test]
-async fn a_chain_that_names_a_keyset_sends_its_metadata() {
-    let (cipher, source) = cipher().await;
-    let email_plan = Plan::context("users/email").with(Equality).build().unwrap();
-    let email = String::from("bob@example.com");
-
-    let _ = cipher
-        .encrypt(&email)
-        .using(&email_plan)
-        .keyset("tenant-b")
-        .audit(list_issues())
-        .await
-        .unwrap();
-    assert_eq!(
-        source.take(),
-        vec![(Call::Generate, Some(list_issues_json()))]
-    );
-}
-
 /// A derived record's fields settle as one `Pending`, which takes the
 /// metadata like any other.
-#[derive(EncryptFrom, DecryptInto)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String)]
 struct EncryptedEmail {
     c: StackCipherText,
@@ -610,8 +497,7 @@ async fn a_derived_record_sends_its_metadata() {
         .audit(list_issues())
         .await
         .unwrap();
-    let email: String = record
-        .decrypt_into(&cipher, nonempty!("users/email"))
+    let email = String::decrypt_from_with_context(record, &cipher, nonempty!("users/email"))
         .audit(list_issues())
         .await
         .unwrap();

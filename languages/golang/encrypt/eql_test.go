@@ -328,23 +328,90 @@ func TestTextEqIsRefusedByTheBuildWithoutEQLTypes(t *testing.T) {
 	if err := eqlChecker.Check(ctx, notDocument); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Errorf("a string Json field: Check = %v, want ErrEncoding", err)
 	}
-	// A declared type other than TextEq's plaintext, and an extended plan.
+	// A declared type other than TextEq's plaintext.
 	wrongKind := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.Uint64, Target: "TextEq"}}}
 	if err := eqlChecker.Check(ctx, wrongKind); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Errorf("a uint64 TextEq field: Check = %v, want ErrEncoding", err)
 	}
-	extended := &record.Plan{Context: []string{"users"}, Extension: []any{uint64(7)}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: "TextEq"}}}
-	if err := eqlChecker.Check(ctx, extended); !errors.Is(err, encrypt.ErrEncoding) {
-		t.Errorf("an extended plan with a target field: Check = %v, want ErrEncoding", err)
+	// A plan with a scope and a binding: both come after a target field's
+	// column, so the engine takes the plan.
+	scoped := &record.Plan{Context: []string{"users"}, Extension: []any{uint64(7)}, Bind: []any{uint64(9)}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: "TextEq"}}}
+	if err := eqlChecker.Check(ctx, scoped); err != nil {
+		t.Errorf("a plan with a scope, a binding and a target field: Check = %v", err)
 	}
 }
 
-func TestExtendedCipherRefusesATextEqField(t *testing.T) {
+// A scope and a binding come after the column in an EQL field's context, as
+// they do for a field with outputs. The EQL value stores the column alone.
+// So a query supplies the scope, and whoever opens the value supplies the
+// scope and the binding again.
+func TestAnEQLFieldTakesAScopeAndABinding(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
-	tenant := c.DefaultKeyset().Extend(uint64(7))
-	_, err := testusers.EncryptContact(ctx, tenant, contacts[:1])
-	if !errors.Is(err, encrypt.ErrEncoding) {
-		t.Fatalf("an extended cipher sealed a TextEq field: %v", err)
+	plain := c.DefaultKeyset()
+	tenant := plain.Scope(uint64(7))
+	bound := tenant.Bind(uint64(9))
+
+	encrypted, err := testusers.EncryptContact(ctx, bound, contacts[:1])
+	if err != nil {
+		t.Fatalf("a cipher with a scope and a binding did not seal a TextEq field: %v", err)
+	}
+	env := decodeEnvelope(t, encrypted[0].Email)
+	if env.I.T != "users" || env.I.C != "email" {
+		t.Errorf("i = %+v, want users/email and nothing else", env.I)
+	}
+
+	// The term is derived under the column, then the tenant. A query through
+	// the tenant's cipher gives the stored term, and names the column alone.
+	hmOf := func(cipher *encrypt.Cipher) string {
+		t.Helper()
+		query, err := testusers.ContactFields.Email.Eq(ctx, cipher, contacts[0].Email)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var probe struct {
+			I  struct{ T, C string }
+			HM string `json:"hm"`
+		}
+		if err := json.Unmarshal(query, &probe); err != nil {
+			t.Fatal(err)
+		}
+		if probe.I.T != "users" || probe.I.C != "email" {
+			t.Errorf("the query's i = %+v, want users/email", probe.I)
+		}
+		return probe.HM
+	}
+	if hm := hmOf(tenant); hm != env.HM {
+		t.Errorf("the tenant's query has hm %s, and the stored value %s", hm, env.HM)
+	}
+	if hmOf(plain) == env.HM || hmOf(plain.Scope(uint64(8))) == env.HM {
+		t.Error("a query with no tenant, or with another, gave the tenant's term")
+	}
+	// A binding is in no query context: another row has the same term.
+	other, err := testusers.EncryptContact(ctx, tenant.Bind(uint64(10)), contacts[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decodeEnvelope(t, other[0].Email).HM != env.HM {
+		t.Error("another row of the tenant has another term")
+	}
+
+	// The value opens under the same scope and binding, and under no other.
+	decrypted, err := testusers.DecryptContact(ctx, bound, encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decrypted[0] != contacts[0] {
+		t.Errorf("opened %+v, want %+v", decrypted[0], contacts[0])
+	}
+	for name, cipher := range map[string]*encrypt.Cipher{
+		"another tenant": plain.Scope(uint64(8)).Bind(uint64(9)),
+		"another row":    tenant.Bind(uint64(10)),
+		"no binding":     tenant,
+		"no scope":       plain,
+	} {
+		if _, err := testusers.DecryptContact(ctx, cipher, encrypted); err == nil {
+			t.Errorf("%s: the value opened", name)
+		}
 	}
 }

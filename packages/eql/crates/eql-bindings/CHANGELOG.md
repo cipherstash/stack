@@ -9,6 +9,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `JsonTreeDocument` field is queried from its field reference** (#1459,
+  #1687). As a field of a derived record, a `JsonTreeDocument` (and an
+  `Option<JsonTreeDocument>`) has Stack Encrypt's JSON field queries,
+  which return the EQL query types a parameter binds as:
+  `EncryptedCustomer::PROFILE.contains(doc)` gives a `JsonTreeQuery`,
+  `at().age().gt(v)` a `JsonTreeLeafQuery`, `elements().visits()..` a
+  `JsonTreeElementsQuery`, `predicate(text).var(name, v)` a
+  `JsonTreePredicateQuery`, `at().age().selector()` a `JsonTreeSelector`
+  and `children(path)` a `JsonTreeToken`. A field marked
+  `#[stash(json(ordered = { "$.age": u32 }))]` is sealed under those
+  options, so its orderings compare, and each declared path has a typed
+  method that the compiler checks; `at_text_path(path)` and
+  `elements_text_path(path)` take a path built at run time. Each operand
+  is the one a data plan naming `JsonSearch` derives for the same column
+  and options. `JsonTreeDocument` implements `JsonTarget` and
+  `JsonQueries`.
+
+- **A value passed by value is sealed without a copy** (#1687). Sealing
+  took a copy of the value when the type had no owned form of its own.
+  Both copies were wiped, so nothing leaked, but the copy was not needed.
+  - `JsonTreeDocument` overrides `EncryptTarget::owned_encryption` and
+    `JsonTarget::json_owned_encryption`. `encrypt_into`, and a derived
+    record's `JsonTreeDocument` field, move the document out of the
+    `JsonPlaintext` into the seal.
+  - A data plan field that names `JsonSearch` moves the document it parses
+    into the seal.
+  - `Ciphertext` (`c`) has an owned form, which moves the value into the
+    seal and wipes it when the context is refused. So the 11 storage-only
+    v4 types (`Integer`, `Bigint`, `Smallint`, `Boolean`, `Date`,
+    `Timestamp`, `Numeric`, `Real`, `Double`, `Text` and `Json`) seal with
+    no copy, through `encrypt_into` and through a data plan.
+  - A data plan field that names an EQL type runs the type's owned form.
+    A type with search terms guards the value and wipes it, as before.
+  - The stored bytes do not change. Needs the Stack Encrypt in this
+    repository, which adds the owned `Encryption::storing` and
+    `Encryption::over_json_plaintext`.
+
+- **The parts of a `JsonSearch` document decrypt through the owned API**
+  (#1660). `JsonTreeExtracted`, the entry `->` returns, implements
+  `DecryptSource<JsonPlaintext>`. `JsonTreeSubtree`, the rows of a subtree
+  read, implements `DecryptSource` for `JsonPlaintext`,
+  `Option<JsonPlaintext>` and `Vec<JsonPlaintext>`. So
+  `JsonPlaintext::decrypt_from_with_context(extracted, &keyset, column)`
+  opens one entry, and the value is wiped when it is dropped.
+  - The context is required. Pass the document's column. For a document
+    that is a field of a record with scopes or bindings, pass the column,
+    then those scopes and bindings.
+
+- **EQL types as record fields** (#1658). An EQL v4 type can be a field
+  of a Stack Encrypt `#[derive(EncryptTarget, DecryptSource)]` record
+  with `struct = ..`. The field's column is the record's scope and the
+  field's name: `scope = "members"` and the field `email` store
+  `{"t": "members", "c": "email"}` in `i`. The field writes the terms the
+  type writes on its own under `Identifier::for_column("members",
+  "email")`, and the terms a data plan that names the type writes.
+  - `Identifier` implements `stack_encrypt::target::ContextFromField`.
+  - A record can list a scope or a binding, such as `scope(tenant: u64)`
+    or `bind(row: u128)`, supplied by the caller or stored in the row. The
+    terms of an EQL field then derive under the column and the scope. The
+    ciphertext is sealed under the column, the scope and the binding. A
+    field of any other type works the same way. `i` stores the column
+    alone, and nothing a caller supplies. The reader supplies the scope
+    and the binding again.
+  - An EQL field of a record nested in another stores its own column too.
+    The outer record's names come after it in the field's context.
+  - A query from the field reference, such as `EncryptedMember::EMAIL.eq(..)`,
+    gives the term stored in the row, for the types that answer it. For a
+    record with a scope, pass the scope: `.scope(Scope::new(tenant))`.
+  - A plan's query for an EQL type can carry a scope too. It gives the
+    term of the values stored under that scope, so `QueryLabelError` has
+    no `Extended` variant.
+  - A data plan that names an EQL type takes a scope and a binding too
+    (`targets` feature). `EqlTargets` runs the type under the field's
+    label, then the plan's scopes and bindings, and the value stores the
+    column alone. Under the same scope and binding, a data plan and a
+    derived record write the same terms, and each opens the other's
+    values. This is the path the Go module takes.
+  - The encrypt input of an EQL type is the hidden
+    `stack_encrypt::target::StoredContext<Identifier>`. A caller passes a
+    `NonEmpty<Identifier>`. Generic code names the input as
+    `ContextInput: AcceptsContext<Value = NonEmpty<Identifier>>`.
+
+- **`JsonTreeDocument` implements `EncryptTarget<JsonPlaintext>` and
+  `DecryptSource<JsonPlaintext>`** (#1658). It encrypts from a
+  `JsonPlaintext` under the default options, with the column as its
+  context, and writes the search terms that `JsonTree::default()` writes
+  for the same document. It can be a record field too.
+
 - **`Target::leaf_query_sql_domain`** (`targets` feature, #1350): the
   domain a document type's ordering at a path binds as,
   `eql_v4.query_json_leaf` for `JsonSearch` and `None` for every
@@ -54,11 +142,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry carrying another selector (`stack_encrypt::Error::JsonWrongEntry`),
   and a read's rows through the key that keyed it, which checks each row
   against the path the same way; `JsonTreeEntry` does not open on its own.
-  The document is an `EncryptFrom<Value>` and `DecryptInto<Value>` target,
-  the extracted entry and the subtree open through `DecryptInto`, and the needle and
+  The document is an `EncryptTarget<JsonPlaintext>` and
+  `DecryptSource<JsonPlaintext>` target, the extracted entry and the
+  subtree open through `DecryptSource`, and the needle and
   the ordering operand convert from Stack Encrypt's `JsonQuery` and
   `JsonLeafQuery`. `JsonTree::new(options)` is the `json_tree` layout under
-  index options other than the defaults (a `Layout<Value>`, so a program
+  index options other than the defaults (a program
   seals with `keyset.run(JsonTree::new(options).encryption(), ..)`), such
   as the paths that carry an ordering term. The wire fields are typed apart
   from the v3 hex terms, and each names its text encoding:
@@ -116,13 +205,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `eql_v4.query_<family>_range_<ore|ope>` domains in the v4 SQL bundle. No
   range type derives Stack Encrypt's traits yet, because the ordered types
   they range over are not producible. There are no v3 range types.
-- **Rust queries an EQL v4 field through Stack Encrypt's typed query chain**
-  (`stack-encrypt` feature, #1238). `cipher.query(op::Eq, v).on(&plan)` on a
-  plan for `TextEq`, `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`,
-  `DoubleEq`, `DateEq`, `TimestampEq` or `NumericEq`
-  (`Plan::value::<S>().context("table/column").encrypt_into::<T>()`)
-  returns the type's query twin (`TextEqQuery`, …), and
-  `cipher.query(op::Matches, text).on(&plan)` on a plan for `TextMatch`
+- **Rust queries an EQL v4 field through a field reference**
+  (`stack-encrypt` feature, #1238). On a derived record, the field reference of a
+  field typed `TextEq`, `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`,
+  `DoubleEq`, `DateEq`, `TimestampEq` or `NumericEq` has `eq`:
+  `EncryptedMember::EMAIL.eq(v).encrypt(&keyset)` returns the type's query
+  twin (`TextEqQuery`, …). The field reference of a field typed `TextMatch` has
+  `matches`, which
   returns a `MatchTwin<TextMatchQuery>`: the twin, which it serializes as,
   with `verify` and `target_limit` under `EqlMatch`. The query is the bytes
   the data path (`stack_encrypt::dynamic::query_term`) derives for the same
@@ -131,31 +220,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no `dynamic` layer and so not the `targets` feature, from each type's
   indexes, by the rule the data path answers an EQL type's operators
   with. A producible type whose twin carries an order term (`IntegerOrd`,
-  `TextOrd`, …) answers nothing in the typed chain yet: the chain sends one
-  index's term as the twin, and those twins need an order term, or several
-  terms at once. The encryption tests hold that gap to exactly the ordered
-  types, so query them through the data path for now. An operator a type
-  does not answer, or another index named with `.via(..)`, does not
+  `TextOrd`, …) answers nothing from a field reference yet: a field query sends
+  one index's term as the twin, and those twins need an order term, or
+  several terms at once. The encryption tests hold that gap to exactly the
+  ordered types, so query them through the data path for now. An operator
+  a type does not answer does not
   compile. Each answering type is an
-  `op::LabelledTarget`. The label must name the column, table then column,
-  and the query must not be extended, or the awaited query is refused
-  before any keyset is resolved, with a `QueryLabelError` in
-  `Error::Other`. `eql_bindings::encryption::query` holds `TwinIndex`
+  `op::LabelledTarget`. A field reference's label names the column, table then
+  column. `eql_bindings::encryption::query` holds `TwinIndex`
   (Stack Encrypt's index, its query sent as the twin, for the twin's own
   plaintext only), `MatchTwin`, `QueryTwin` and `QueryLabelError`.
-  `Hmac256` and `BloomFilter` now declare their indexes (`EncryptFrom::indexes`),
+  `Hmac256` and `BloomFilter` now declare their indexes (`EncryptTarget::indexes`),
   so a type holding one declares the equality or match index, and `EqlMatch`
   implements `op::MatchCase` (case-insensitive).
 - **`eql_bindings::v4` needs the `stack-encrypt` feature.** Only Stack
   Encrypt produces an EQL v4 value (ADR-0002), so the module is compiled with
-  that feature alone, and its producible types derive `EncryptFrom` and
-  `DecryptInto` with no attribute of their own gated on it.
+  that feature alone, and its producible types derive `EncryptTarget` and
+  `DecryptSource` with no attribute of their own gated on it.
 - **A `targets` feature for the by-name dispatch.** `encryption::targets` and
   `v4::targets`, which name an EQL type at run time and take a `ValueFrame`,
   need `targets`, which turns on `stack-encrypt` and Stack Encrypt's
   `dynamic` feature. `stack-encrypt` alone builds Stack Encrypt with no
   default features and no `dynamic` layer, so a Rust program that encrypts
-  the v4 types through `encrypt_as` no longer compiles it.
+  the v4 types through `encrypt_into` no longer compiles it.
 - **`IntegerEq`, `BigintEq`, `RealEq` and `DoubleEq` are producible**
   (`stack-encrypt` feature), from `i32`, `i64`, `f32` and `f64`. Their equality term follows ADR-0002's semantic
   baseline, so `=` compares as PostgreSQL's own integer and `float8 =` do:
@@ -192,8 +279,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Encrypt's OPE term over ADR-0002's order key, hex encoded, which EQL
   compares as bytes: floats order as PostgreSQL's `float8` does, and text by
   its fold (case and accents folded), so text order types keep `TextEq`'s
-  equality term for `=`. `OpeCllw` implements `EncryptFrom` for any
-  orderable plaintext. Their query twins carry one bound, so the engine
+  equality term for `=`. Their query twins carry one bound, so the engine
   answers `<`, `<=`, `>` and `>=` (and `=` on text) through them, not
   `BETWEEN`.
 - **`TextSearch` is producible** (`stack-encrypt` feature), from `String`.
@@ -209,7 +295,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TextMatch` and every query keep `BloomFilter`, which refuses it. Its
   query is built per index, through
   `TextSearchEqualityQuery`, `TextSearchOrderQuery` or
-  `TextSearchMatchQuery` (each `EncryptFrom<String>` and
+  `TextSearchMatchQuery` (each `EncryptTarget<String>` and
   `Into<TextSearchQuery>`), so it carries only the term its operator reads:
   `=` and `<` on two-letter text work, and a match query on it is refused.
   The by-name dispatch picks the projection for the index it is handed.
@@ -218,8 +304,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DoubleOrdOre` from `i32`, `i16`, `i64`, `f32` and `f64`, and `TextOrdOre` and `TextSearchOre` from
   `String`. Their `ob` term is Stack Encrypt's block ORE term (ore-rs's
   6-bit fixed-width scheme for the numbers, its chained scheme for text):
-  one element, the hex of the whole ciphertext. `OreBlock256` implements
-  `EncryptFrom` for any orderable plaintext and never decrypts. This is not
+  one element, the hex of the whole ciphertext. This is not
   EQL v3's `ob` (cipherstash-client's 8-bit blocks, up to six per text
   value), and only EQL v4's comparator, `compare_ore_block_v2_term`, reads
   it. Every term carries a random nonce, so a query's `ob` never equals the
@@ -245,7 +330,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indexes, query twin, and whether the engine can produce it today with the
   reason when not — serializable as the guest's `se_targets` export, and
   `encrypt` / `decrypt` / `query` entry points that dispatch on the name and
-  run the type's own `EncryptFrom` / `DecryptInto` plan, resolving to the EQL
+  run the type's own `EncryptTarget` / `DecryptSource`, resolving to the EQL
   value's JSON bytes through the engine's `Pending`. The plaintext crosses as
   Stack Encrypt's `dynamic::ValueFrame`, one value as its transport frame:
   `encrypt` and `query` take one, `decrypt` resolves to one, and the
@@ -273,6 +358,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inventory).
 
 ### Breaking
+
+- **The EQL v4 types no longer implement `EncryptFrom` and `DecryptInto`**
+  (#1661, #1662). Stack Encrypt removed those traits, with `encrypt_as`,
+  `decrypt_as`, the plan builder and the query chain. Every type keeps
+  `EncryptTarget` and `DecryptSource`.
+  - Write with `value.encrypt_into_with_context(&keyset, column)` and read
+    with `P::decrypt_from_with_context(stored, &keyset, column)`, or
+    `P::decrypt_from(stored, &keyset)` to open under the stored column.
+  - A typed query is a field reference of a derived record:
+    `EncryptedMember::EMAIL.eq("bob").encrypt(&keyset)` gives the
+    `TextEqQuery`. `cipher.query(op::Eq, ..).on(&plan)` and `.via(..)` are
+    gone.
+  - A JSON document is a `JsonPlaintext`, not a `serde_json::Value`.
+    `JsonTreeDocument`, `JsonTreeExtracted` and `JsonTreeSubtree` open to
+    it. A typed JSON query is a document field's reference query (above).
+  - `JsonTree` no longer implements `stack_encrypt::target::Layout`, which
+    is removed. `JsonTree::encryption()`, `index()` and `specs()` are its
+    own methods, and `index()` returns the index by value.
 
 - **`v4::text::TextSearchQuery` and `TextSearchOreQuery` hold each term as
   an `Option`**, left out of the JSON when `None`, to match EQL v4's

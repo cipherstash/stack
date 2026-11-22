@@ -1,24 +1,12 @@
 # Attributes
 
-All attributes are written inside `#[stash(...)]`. There are two pairs of
-derives, and they read the same attributes.
+All attributes are written inside `#[stash(...)]`. The two derives,
+`EncryptTarget` and `DecryptSource`, read the same attributes.
 
-**Use `EncryptTarget` and `DecryptSource`.** With these, encryption takes
-the plaintext by value. The call `user.encrypt_into(&keyset)` moves `user`
-into the encryption, so the caller has no copy left. The encryption then
-wipes the plaintext: it overwrites the memory that held each encrypted
-field. Only this pair accepts `passthrough`.
-
-`EncryptFrom` and `DecryptInto` are the older pair. They encrypt a borrowed
-plaintext, `&user`. The caller keeps the original, and must wipe it. Plans
-and the dynamic engine still use them. The older pair will be removed once
-plans and the dynamic engine use the new pair (#1488).
-
-Derive one pair or the other on a record. `EncryptTarget` and
-`DecryptSource` already implement `EncryptFrom` and `DecryptInto` for the
-record, so an owned record also works where the older pair is expected.
-If you derive both pairs, those traits are implemented twice. That does not
-compile.
+Encryption takes the plaintext by value. The call
+`user.encrypt_into(&keyset)` moves `user` into the encryption, so the
+caller has no copy left. The encryption then wipes the plaintext: it
+overwrites the memory that held each encrypted field.
 
 ## On the struct
 
@@ -49,17 +37,18 @@ field from the whole `User`. To encrypt a struct field by field, use
 | Attribute | Effect |
 |---|---|
 | `context_field` | This field stores the record's context, and decryption reads it back. At most one per record. Not with any other field attribute. |
-| `identity = "..."` | With `struct` only. The field is derived under `("<scope>", "<identity>")`, in place of the plaintext field's name. One plain segment. The plan builder's `.identity(segment)` does the same. |
+| `identity = "..."` | With `struct` only. The field is derived under `("<scope>", "<identity>")`, in place of the plaintext field's name. One plain segment. |
 | `from = field` or `from = 0` | With `struct` only. Derive this field from `plaintext.field`, or `plaintext.0` for a tuple struct, when the names differ. Each plaintext field has one output, so two fields `from` the same plaintext field are refused. A ciphertext with search terms is one `Encrypted<Terms>` field. |
 | `default` or `default = expr` | The field is not derived. It is filled with `Default::default()` or `expr`. It is not encrypted and not authenticated. |
 | `decrypt` | Decryption opens this field. Use it only when the field types do not decide it. See [Which field decryption opens](#which-field-decryption-opens). |
 | `passthrough` | Owned derives, with `struct` only. The plaintext field is moved into the record as it is, and moved back on decryption. It is **not encrypted and not authenticated**. See [Passthrough fields](#passthrough-fields). Not with `identity`, `default` or `decrypt`. |
+| `json(ordered = { "$.path": Type, .. }, paths = { "$.path": Type, .. }, names = { "key": word, .. }, sealed_root = false)` | Owned derives, with `struct` only, on a field whose type stores a JSON document (`JsonDocument`, or EQL's `JsonTreeDocument`). The field is sealed under the JSON index options it names: `ordered` maps each path whose numbers and strings carry an ordering term to the type of the values at it, `paths` declares a path's type for equality alone and adds nothing to the options, and `sealed_root = false` turns off the sealed root, which is on by default. The field's reference queries under the same options, and has one typed method per path: `PROFILE.at().age().gt(30)`. See [A field that stores a JSON document](#a-field-that-stores-a-json-document). Without it, the field takes the default options, which order no path. |
 
 A field cannot have a `context = ".."` of its own, on any derive. Every
 field of a `plaintext` record shares the caller's context. Every field of a
 `struct` record sits under the record's scope, and `identity` changes only
-its second part. To write one value under two contexts, use a plan that
-picks the same source twice.
+its second part. To write one value under two contexts, encrypt it twice,
+once under each context.
 
 **Upgrading from 0.2.0.** Version 0.2.0 accepted a field `context = ".."`
 and `#[stash(nested)]`. Each change below derives the field under a
@@ -108,7 +97,7 @@ pass one, or must not pass one. This table shows which:
 |---|---|---|---|
 | `struct = User, scope = "users"` | `DeclaredScopes`, which takes no context from the caller | The same as for encryption | `user.encrypt_into(&keyset)` |
 | `plaintext = T` | `RequiredContext<CallerContext>`, or `RequiredContext<AeadContext>` with `context_type = AeadContext` | The same as for encryption | `value.encrypt_into_with_context(&keyset, nonempty!("users/email"))` |
-| With a `context_field` of type `C` | `RequiredContext<NonEmpty<C>>` | Nothing, or the `NonEmpty<C>` the caller expects | `T::decrypt_from_with_context(record, &cipher, nonempty!(..))`, which checks the stored context before it decrypts |
+| With a `context_field` of type `C` | The `NonEmpty<C>` that the record stores, which the caller must pass | Nothing, or the `NonEmpty<C>` the caller expects | `T::decrypt_from_with_context(record, &cipher, nonempty!(..))`, which checks the stored context before it decrypts |
 
 #### Check where a record with a `context_field` came from
 
@@ -163,6 +152,10 @@ context from the record. These targets accept one:
   `RequiredContext<CallerContext>`.
 - `StackCipherText`, whose input is `RequiredContext<AeadContext>`.
 - A `plaintext` record.
+- A record with a `context_field`, when the stored type implements
+  `ContextFromField`. An EQL type is one. It stores the field's own
+  context, `("users", "<field>")`, and not the record's scopes or
+  bindings. The reader supplies those again.
 - Another `struct` record. The outer field's context then extends the
   inner record's own contexts.
 
@@ -206,9 +199,9 @@ change it, and the encrypted fields beside it still decrypt. So:
 - If a value must be readable and also detect changes, it belongs in the
   record's context. A `struct` record cannot take a caller's context yet.
 
-The field's type must implement `Clone`. The owned conversion never clones
-it, but the older `EncryptFrom` form of the record does, and plans run that
-form.
+The field's type must implement `Clone`. Encrypting the record by value
+never clones it. The borrowed form of the record's declaration does, and a
+record that is a field of another record can run that form.
 
 ### Wiping
 
@@ -256,19 +249,18 @@ compile error at the term, because a term needs a `CallerContext`. A call
 that leaves out a required context is a compile error at the call
 (`AllowsNoContext`), even if the context type implements `Default`.
 
-### The structural traits
+### A record as a field of another record
 
-Each owned derive also implements the structural traits:
+Each derive also implements the trait that lets a record be a field of
+another record:
 
-- `EncryptTarget` also implements `EncryptFrom` and `Decryptable`.
-  `EncryptFrom` converts the record's structural context into the owned
-  input. The structural context is a `DeclaredContext`, a `CallerContext`,
-  or a `NonEmpty<C>`.
-- `DecryptSource` also implements `DecryptInto` and `DecryptField`.
+- `EncryptTarget` also implements `Decryptable`, which says whether the
+  record holds a ciphertext that decryption can open.
+- `DecryptSource` also implements `DecryptField`, which opens the record
+  through its own `DecryptSource`, under the context the outer record
+  gives the field.
 
-So an owned record can be a field of a `#[derive(EncryptFrom)]` record, or a
-typed field of a plan (`encrypt_into::<Record, _>`), with no second derive.
-A hand-written owned target that will be a record field must implement
+A hand-written target that will be a record field must implement
 `Decryptable` and `DecryptField`, as well as `DecryptSource`.
 
 ### Example
@@ -327,6 +319,135 @@ assert_eq!(opened.len(), 1);
 # Ok::<(), stack_encrypt::Error>(())
 # }).unwrap();
 ```
+
+## A field that stores a JSON document
+
+`json(..)` on a field of a `struct` record names the JSON index's options
+the field is sealed and queried under. Its `ordered` entry maps each path
+whose values carry an ordering term to the type of those values. Its
+`paths` entry maps a path compared with equality alone to its type: the
+field stores no ordering term for it, so the entry changes no stored or
+derived byte.
+
+```rust
+use serde_json::json;
+use stack_encrypt::json::{JsonDocument, JsonPlaintext};
+use stack_encrypt::target::EncryptTarget;
+use stack_encrypt::{EncryptInto, StackCipher};
+use zeroize::Zeroize;
+
+#[derive(Zeroize)]
+struct Customer {
+    profile: JsonPlaintext,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Customer, scope = "customers")]
+struct EncryptedCustomer {
+    #[stash(json(
+        ordered = {
+            "$.age": u32,
+            "$.firstName": String,
+            "$.visits[*].at": u64,
+            "$.visits[*].place": String,
+            "$[\"ship to\"].zip": String,
+        },
+        paths = { "$.vip": bool },
+        names = { "ship to": shipping },
+    ))]
+    profile: JsonDocument,
+}
+
+# tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+let cipher = StackCipher::builder()
+#     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    .init()
+    .await?;
+let keyset = cipher.default_keyset();
+let stored: EncryptedCustomer = Customer {
+    profile: json!({
+        "age": 35,
+        "firstName": "Ada",
+        "visits": [{"place": "home", "at": 15}],
+        "ship to": {"zip": "3000"},
+        "vip": true
+    })
+    .into(),
+}
+.encrypt_into(&keyset)
+.await?;
+
+// One method per path under `at()`, taking the path's type.
+let older = EncryptedCustomer::PROFILE.at().age().gt(30).encrypt(&keyset).await?;
+let ada = EncryptedCustomer::PROFILE.at().first_name().eq("Ada").encrypt(&keyset).await?;
+let zip = EncryptedCustomer::PROFILE.at().shipping_zip().eq("3000").encrypt(&keyset).await?;
+assert!(ada.matches(stored.profile.selector_set()));
+assert!(zip.matches(stored.profile.selector_set()));
+
+// A path under `paths` has equality, and no ordering.
+let vip = EncryptedCustomer::PROFILE.at().vip().eq(true).encrypt(&keyset).await?;
+assert!(vip.matches(stored.profile.selector_set()));
+
+// One method per array under `elements()`, and one per member: every
+// condition holds of one element together.
+let home = EncryptedCustomer::PROFILE
+    .elements()
+    .visits()
+    .place().eq("home")
+    .and().at().gt(10)
+    .encrypt(&keyset)
+    .await?;
+assert_eq!(home.len(), 2);
+
+// A path built at run time is text, checked when the query is encrypted.
+let same = EncryptedCustomer::PROFILE.at_text_path("$.age").gt(30).encrypt(&keyset).await?;
+assert_eq!(older.selector(), same.selector());
+# Ok::<(), stack_encrypt::Error>(())
+# }).unwrap();
+```
+
+The derive parses each path with the engine's grammar when it compiles the
+record. A path that does not parse, has no `$`, names an array position
+(`[2]`), is given twice, or is given under both `ordered` and `paths` is a
+compile error at the path. An `ordered` type is `i8` to `i64`, `u8` to
+`u64`, `f64` or `String`; a `paths` type is any of those or `bool`. Any
+other is a compile error at the type.
+
+Each path, under either key, gets a method under `at()`. A path under
+`paths` has `eq`, `is_null` and `selector`; an ordering of it (`lt`,
+`gt`, `between` and the rest) is a compile error that says to declare it
+under `ordered`. Each array whose elements have an ordered member gets a
+method under `elements()`, with a method for each ordered member: an
+element-scoped condition compares ordering terms, even for equality, so
+a `paths` member has none. A method's name comes from the path's keys,
+under either key:
+
+- A key gives a word: its ASCII letters in lower case, with `_` before an
+  upper-case letter that follows a lower-case letter or a digit, and `-`
+  read as `_`. `firstName` gives `first_name`, and `user-id` gives
+  `user_id`.
+- A method's name is the words of its keys joined by `_`, with the
+  wildcards left out. `$.visits[*].at` is `at().visits_at()`; its array
+  `$.visits[*]` is `elements().visits()`, and the member is `at()`. A path
+  or an array with no keys is `root`.
+- A name that is a Rust keyword is a raw identifier: `$.type` is
+  `at().r#type()`.
+
+A key with any other character, such as a space, gives no word, and is a
+compile error until `names = { "key": word }` gives it one. Two paths, two
+arrays, or two members of one array that give the same name are a compile
+error too; `names` resolves that as well.
+
+A value of another type than the path declares does not compile, and
+neither does a member of another array: after a condition, `and()` gives
+the members of the same array. An element predicate has `encrypt` only
+after its first condition.
+
+`at_text_path(path)` and `elements_text_path(path)` take a path as text,
+for a filter a program builds at run time. They check the path when the
+query is encrypted, before any key is requested, and derive the same
+operand as the typed method for the same path and value. A field that
+declares no paths has only these.
 
 ## Which context a record takes
 
@@ -417,9 +538,9 @@ record's fields.
 
 A `struct = ..` record takes no context from the caller. A `plaintext = ..`
 record and a record with a `context_field` do take one. See [The context a
-call takes](#the-context-a-call-takes). A plan that contains a `struct = ..`
-record can still extend each field's context. Under a plan extension `7u64`, the `age` field
-is derived under `(("users", "age"), 7u64)`.
+call takes](#the-context-a-call-takes). A record that lists a scope, such
+as `scope(tenant: u64)`, extends each field's context with it. Under the
+tenant `7u64`, the `age` field is derived under `(("users", "age"), 7u64)`.
 
 ### Why the scope is required
 

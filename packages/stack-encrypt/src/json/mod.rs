@@ -53,7 +53,7 @@
 //! selectors, tokens and grouping), which a query is built from. Sealing is
 //! a separate operation, [`json_document`](crate::target::json_document),
 //! whose output is the stored [`JsonDocument`]; `JsonDocument` is itself an
-//! [`EncryptFrom<Value>`](crate::EncryptFrom) target, so a plan or a record
+//! [`EncryptTarget<JsonPlaintext>`](crate::EncryptTarget), so a record
 //! names it by type. The query terms are [`JsonQuery`] (containment and
 //! `AtPath<Eq>`), [`JsonLeafQuery`] (ordering at a path), and the two
 //! extraction keys a caller derives through the keyset cipher,
@@ -129,23 +129,32 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vitaminc_protected::OpaqueDebug;
 
-use crate::target::{DecryptField, DecryptInto, Decryptable, Decryption};
+use crate::target::{DecryptField, DecryptSource, Decryptable, Decryption};
 
 mod cascade;
 mod derive;
+pub(crate) mod inputs;
 mod path;
 mod plain;
 mod plaintext;
+pub(crate) mod predicate;
 mod query;
 mod shuffle;
+mod target;
 mod text;
 
 pub use derive::JsonTerms;
+pub(crate) use path::IndexPath;
 pub use path::{JsonPath, JsonPathError, Segment};
 pub use plaintext::JsonPlaintext;
+pub(crate) use query::JsonElementsMember;
 pub use query::{
-    AtPathTerms, JsonLeafQuery, JsonQuery, JsonSelector, JsonSelectorSet, JsonSubtreeKey,
+    JsonElementsQuery, JsonLeafQuery, JsonPredicateQuery, JsonQuery, JsonSelector, JsonSelectorSet,
+    JsonSubtreeKey,
 };
+#[doc(hidden)]
+pub use target::{seal_field, seal_field_owned, FieldOptions};
+pub use target::{JsonQueries, JsonTarget};
 pub use text::{parse_text, to_text, JsonTextError};
 
 /// Wipe a JSON value's plaintext in place: every string (object keys too)
@@ -161,12 +170,10 @@ pub fn wipe_value(value: &mut serde_json::Value) {
 
 /// The deepest a document nests: the data plan refuses a path with more
 /// steps, which names no node.
-#[cfg(feature = "dynamic")]
 pub(crate) use derive::MAX_DEPTH;
 pub(crate) use derive::{seal_pending, terms_pending};
 pub(crate) use plain::PlainJson;
 pub(crate) use shuffle::Randomness;
-pub(crate) use text::{string_end, string_text};
 
 /// A sixteen-byte tag: a selector or a token.
 pub type Tag = [u8; 16];
@@ -201,7 +208,8 @@ pub struct JsonOptions {
     /// whole document from the root's token.
     pub sealed_root: bool,
     /// The paths whose number and string leaves carry an ordering term
-    /// `op`, and so answer `op::AtPath(op::Lt)` and the other orderings.
+    /// `op`, and so answer a field reference's `at().age().lt(v)` and the other
+    /// orderings, and the dynamic interface's `lt_at` and the rest.
     /// None by default: an ordering term reveals the order of the leaf
     /// across every row that holds one, and costs about eighty bytes a
     /// leaf, so a path pays for it only when asked. A wildcard step covers
@@ -458,8 +466,13 @@ impl JsonEntry {
 /// A stored JSON document: its [`JsonHeader`] and its entries, one per
 /// node, in a random order drawn for the document when it was sealed, with
 /// the root first. What
-/// [`json_document`](crate::target::json_document) produces and
-/// [`DecryptInto<Value>`](crate::DecryptInto) opens.
+/// [`json_document`](crate::target::json_document) produces.
+///
+/// A [`JsonPlaintext`] encrypts into a document
+/// ([`EncryptTarget<JsonPlaintext>`](crate::EncryptTarget)), and the
+/// document decrypts to one
+/// ([`DecryptSource<JsonPlaintext>`](crate::DecryptSource)). A
+/// `JsonPlaintext` is wiped when it is dropped.
 ///
 /// Serializes to the wire form the EQL domain stores: `{"h": "…", "sv":
 /// [{"s": "…", "c": "…", …}, …], "q": {"sv": [{"s", "vs"}, …], "el":
@@ -624,10 +637,10 @@ impl JsonDocument {
 impl Decryptable for JsonDocument {
     const DECRYPTABLE: bool = true;
 }
-impl<P: 'static, Ctx> DecryptField<P, Ctx> for JsonDocument
+impl<P: zeroize::Zeroize + 'static, Ctx> DecryptField<P, Ctx> for JsonDocument
 where
-    Self: crate::DecryptInto<P>,
-    Ctx: Into<<Self as crate::DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
         Some(self.decryption(context.into()))
@@ -678,12 +691,14 @@ impl JsonNode {
 }
 
 /// The entry `->` returned, with the selector the client asked for: what
-/// [`DecryptInto<Value>`](crate::DecryptInto) opens to the node's scalar,
-/// or to the whole document for a sealed root asked for at `$`. Built only
+/// [`DecryptSource<JsonPlaintext>`](crate::DecryptSource) opens to the
+/// node's scalar, or to the whole document for a sealed root asked for at
+/// `$`. The value is wiped when it is dropped. Built only
 /// by [`JsonSelector::open`], so it always carries the selector the entry
 /// is checked against; an entry carrying another is refused with
 /// [`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry) before any key
 /// is retrieved.
+///
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonExtracted {
     node: JsonNode,
@@ -713,10 +728,10 @@ impl JsonExtracted {
 impl Decryptable for JsonExtracted {
     const DECRYPTABLE: bool = true;
 }
-impl<P: 'static, Ctx> DecryptField<P, Ctx> for JsonExtracted
+impl<P: zeroize::Zeroize + 'static, Ctx> DecryptField<P, Ctx> for JsonExtracted
 where
-    Self: crate::DecryptInto<P>,
-    Ctx: Into<<Self as crate::DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
         Some(self.decryption(context.into()))
@@ -725,9 +740,10 @@ where
 
 /// The entries the server returned for one subtree read, ready to open:
 /// what `json_tree_subtree(doc, key.tokens(), budget)` yields, collected,
-/// and what [`DecryptInto<Value>`](crate::DecryptInto),
-/// `DecryptInto<Option<Value>>` and `DecryptInto<Vec<Value>>` open into the
-/// value at the read's path. Built only by the key that keyed the read
+/// and what [`DecryptSource`] opens into the value at
+/// the read's path: a [`JsonPlaintext`], an `Option<JsonPlaintext>` or a
+/// `Vec<JsonPlaintext>`, each wiped when it is dropped. Built only by the
+/// key that keyed the read
 /// ([`JsonSubtreeKey::open`]), so it always carries the key, and what
 /// checks every row against it when the rows are opened (see
 /// [`JsonSubtreeKey::open`] for the checks).
@@ -784,10 +800,10 @@ impl JsonSubtree {
 impl Decryptable for JsonSubtree {
     const DECRYPTABLE: bool = true;
 }
-impl<P: 'static, Ctx> DecryptField<P, Ctx> for JsonSubtree
+impl<P: zeroize::Zeroize + 'static, Ctx> DecryptField<P, Ctx> for JsonSubtree
 where
-    Self: crate::DecryptInto<P>,
-    Ctx: Into<<Self as crate::DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
         Some(self.decryption(context.into()))

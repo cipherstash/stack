@@ -14,68 +14,19 @@
 
 // One context per target, threaded through the declaration tree:
 // packages/stack-encrypt/docs/adr/0004-one-context-per-target-threaded-through-the-declaration-tree.md.
-use super::context::{AeadContext, CallerContext, DeclaredContext, Extends, StoredParts};
+use super::context::{
+    AeadContext, CallerContext, DeclaredContext, Extends, StoredContext, StoredParts,
+};
 use super::conversion::{DecryptSource, EncryptTarget};
 use super::core::{encrypt_native, open_native, Term};
-use super::index::{Index, IndexSpec, Json};
 use super::input::{AcceptsContext, NoCallerContext, RequiredContext};
 use super::source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 use super::{CipherRef, Pending};
 use crate::contexts::{self, Contexts, Placeholder, Shape, Shapes, SuppliedContext};
-use crate::json::{JsonDocument, JsonOptions, JsonTerms};
+use crate::json::{JsonDocument, JsonOptions, JsonPlaintext, JsonTerms};
 use crate::{Error, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
 use std::fmt;
-
-/// Declaration that an encrypted target is produced from `S`.
-///
-/// The derive supplies it; a hand-written implementation composes the
-/// constructors in this module ([`ciphertext`], [`equality`], [`matching`],
-/// [`ore`], [`ope`], [`ore_block`]) and converts their output with [`Encryption::map`] or
-/// [`Encryption::transcode`]. Nothing here receives the plaintext or a
-/// cipher: the returned [`Encryption`]'s execution is private, so a target
-/// can choose operations and build its output but cannot replace encryption.
-pub trait EncryptFrom<S>: Sized + 'static {
-    /// The context this target still needs when it is run — what a caller
-    /// supplies alongside the plaintext: a [`CallerContext`] for a target
-    /// that derives terms, an [`AeadContext`] for one that only seals, a
-    /// `NonEmpty<T>` for a record that stores its identifier, or a
-    /// [`DeclaredContext`] — which `()` satisfies — for a record whose fields
-    /// name their own.
-    type Context;
-    /// The description the cipher executes for one value of `S`. The context
-    /// is supplied when the description is run, not here, so every operation
-    /// beneath it receives the same one.
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's;
-    /// The indexes this target's terms answer queries by, as data, under
-    /// the context the target is run under: what a plan field typed with
-    /// this target ([`encrypt_into`](crate::plan::FieldsBuilder::encrypt_into))
-    /// lets a query ask for. A query for any other index is refused rather
-    /// than derived, since it would match nothing.
-    ///
-    /// The default is none, which is right for a ciphertext and for a record
-    /// whose fields sit under contexts of their own; a term, an
-    /// [`Encrypted<Terms>`](super::Encrypted) and a tuple of targets name
-    /// theirs.
-    fn indexes() -> Vec<super::IndexSpec> {
-        vec![]
-    }
-}
-/// Declaration of how a stored target recovers `P`.
-///
-/// Inspection sees no cipher: the implementation selects the recoverable
-/// ciphertext and its context, and [`open`] describes the rest. A query-only
-/// target (terms alone) has no implementation.
-pub trait DecryptInto<P>: Sized {
-    /// The context that a caller passes to decrypt the target. For a
-    /// record that stores its context, the caller passes `()`, or the
-    /// `NonEmpty<T>` that the caller expects the record to store.
-    type Context;
-    /// The description the cipher executes to recover `P`.
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K>;
-}
 
 // What the description is handed is `M::Source`: `&'s S` in the default
 // `Borrowed` mode, `S` itself in `Owned` mode (see `SourceMode`).
@@ -107,8 +58,9 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 /// `Ctx` it is handed when it runs.
 ///
 /// Built from the constructors in this module and the combinators below;
-/// executed only by [`KeysetCipher::encrypt_as`]. Nothing runs, and no key is
-/// requested, until then.
+/// executed only by a keyset cipher: [`EncryptInto`](super::EncryptInto) runs
+/// a target's declaration, and [`KeysetCipher::run`] runs a description held
+/// in a variable. Nothing runs, and no key is requested, until then.
 ///
 /// `Ctx` is the context this description still needs. It is a type parameter,
 /// not a stored value, and that is what makes two rules hold at compile time
@@ -133,9 +85,9 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 ///   the plaintext.
 ///
 /// `M` is how the description is handed its plaintext ([`SourceMode`]):
-/// by reference in the default [`Borrowed`] mode, which every
-/// [`EncryptFrom`] declaration runs in, or by value in
-/// [`Owned`] mode, run with [`KeysetCipher::run`]. In owned mode
+/// by reference in the default [`Borrowed`] mode, which a declaration that
+/// takes a field out of a borrowed struct runs in, or by value in
+/// [`Owned`] mode, which [`EncryptInto`](super::EncryptInto) runs. In owned mode
 /// a single operation consumes the plaintext without copying it, so `S` need
 /// not be `Clone`; [`zip`](Self::zip) is the one place that asks for it.
 #[must_use = "an encryption description does nothing until a keyset cipher executes it"]
@@ -148,8 +100,10 @@ pub struct Encryption<'s, S: 's, T, K, Ctx, M: SourceMode<'s, S> = Borrowed> {
 }
 /// A composable description of how `T` is recovered from a stored target.
 ///
-/// Built from [`open`] and the combinators below; executed only by
-/// `decrypt_as`. Nothing runs, and no key is retrieved, until then.
+/// Built from [`open`] and the combinators below; executed only by a
+/// cipher: [`DecryptFrom`](super::DecryptFrom) runs a stored target's
+/// declaration, and `run_decryption` runs a description held in a variable.
+/// Nothing runs, and no key is retrieved, until then.
 #[must_use = "a decryption description does nothing until a cipher executes it"]
 pub struct Decryption<T, K> {
     inner: Opening<T, K>,
@@ -243,6 +197,19 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
         Self {
             build: Box::new(move |_, cipher, _| Pending::failed(cipher, error)),
             shapes: Vec::new(),
+        }
+    }
+    /// Reject this declaration as [`failed`](Self::failed) does, but keep
+    /// the contexts of its leaves. [`contexts`](Self::contexts) then still
+    /// shows each field the declaration names, and running it yields
+    /// `error` without I/O. A set of indexes that is refused (two indexes
+    /// for one operator, say) uses this, so its field does not disappear
+    /// from `contexts()`. Hidden: generated code calls it.
+    #[doc(hidden)]
+    pub fn refused(self, error: Error) -> Self {
+        Self {
+            build: Box::new(move |_, cipher, _| Pending::failed(cipher, error)),
+            shapes: self.shapes,
         }
     }
     /// Build the destination from the completed output. `f` sees ciphertext
@@ -358,9 +325,49 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// its own cannot be run under `()`. Available wherever a
     /// [`CallerContext`] can become what the subtree needs: a leaf of either
     /// kind, or a record whose own contexts a caller's extends.
+    ///
+    /// A part the caller passed empty is refused here, before the subtree
+    /// runs. In [`Owned`] mode that refusal drops the plaintext without
+    /// wiping it, because `S` need not be `Zeroize`. A derived record wipes
+    /// it instead.
     pub fn under(
+        self,
+        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+    ) -> Encryption<'s, S, T, K, DeclaredContext, M>
+    where
+        Ctx: From<CallerContext>,
+    {
+        self.under_refusing(own, drop)
+    }
+    /// [`under`](Self::under), for a field of a derived `struct = ..`
+    /// record. A context that is refused here wipes a plaintext that was
+    /// passed by value. `under` drops it as it is.
+    ///
+    /// **This method is for generated code.** The derive emits it for each
+    /// sealed field, in the borrowed form and in the owned form. The
+    /// plaintext is `Zeroize`, as the source of every
+    /// [`EncryptTarget`] is.
+    #[doc(hidden)]
+    pub fn under_field(
+        self,
+        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+    ) -> Encryption<'s, S, T, K, DeclaredContext, M>
+    where
+        Ctx: From<CallerContext>,
+        S: zeroize::Zeroize,
+    {
+        self.under_refusing(own, |source| {
+            M::release(source, |value| {
+                drop(vitaminc_protected::Protected::new(value))
+            })
+        })
+    }
+    /// The body of [`under`](Self::under). `refused` is given the source
+    /// when the context is refused, before the subtree has seen it.
+    fn under_refusing(
         mut self,
         own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+        refused: fn(M::Source),
     ) -> Encryption<'s, S, T, K, DeclaredContext, M>
     where
         Ctx: From<CallerContext>,
@@ -372,7 +379,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
             build: Box::new(move |source, cipher, cx: DeclaredContext| {
                 match cx.checked_under(own) {
                     Ok(context) => build(source, cipher, context.into()),
-                    Err(error) => Pending::failed(cipher, error),
+                    Err(error) => {
+                        refused(source);
+                        Pending::failed(cipher, error)
+                    }
                 }
             }),
             shapes,
@@ -444,6 +454,57 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
         self.shapes = contexts::substitute(self.shapes, &Shape::under(own.get().clone()));
         self.needing(move |cx: C| cx.extend(own).into())
     }
+    /// [`refused`](Self::refused), for the owned form of a derived record.
+    /// A description refused here wipes a plaintext that was passed by value.
+    /// `refused` drops it as it is, because `S` need not be `Zeroize`.
+    ///
+    /// **This method is for generated code.** The derive emits it when a
+    /// record's indexes are refused, in the owned form of a record that
+    /// moves its plaintext into its one field.
+    #[doc(hidden)]
+    pub fn refused_wiping(self, error: Error) -> Self
+    where
+        S: zeroize::Zeroize,
+    {
+        Self {
+            build: Box::new(move |source, cipher, _| {
+                M::release(source, |value| {
+                    drop(vitaminc_protected::Protected::new(value))
+                });
+                Pending::failed(cipher, error)
+            }),
+            shapes: self.shapes,
+        }
+    }
+    /// The body of [`storing`](Encryption::storing). `refused` is given the
+    /// source when the context cannot be stored, before the description has
+    /// seen it.
+    fn storing_refusing<C, U: 'static, F>(
+        self,
+        store: F,
+        refused: fn(M::Source),
+    ) -> Encryption<'s, S, U, K, StoredContext<C>, M>
+    where
+        Ctx: From<CallerContext>,
+        C: MaybeSend + 'static,
+        F: FnOnce(T, C) -> U + MaybeSend + 'static,
+    {
+        let Self { build, shapes } = self;
+        Encryption {
+            build: Box::new(
+                move |source, cipher, cx: StoredContext<C>| match cx.into_parts() {
+                    Ok((stored, context)) => {
+                        build(source, cipher, context.into()).map(move |value| store(value, stored))
+                    }
+                    Err(error) => {
+                        refused(source);
+                        Pending::failed(cipher, error)
+                    }
+                },
+            ),
+            shapes,
+        }
+    }
 }
 
 impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
@@ -467,6 +528,36 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
             build: Box::new(move |source, cipher, cx| build(select(source), cipher, cx)),
             shapes,
         }
+    }
+    /// Store the context this description runs under, for a record that
+    /// writes its context into the row (`#[stash(context_field)]`).
+    ///
+    /// The result takes a [`StoredContext`]: the context to store, and the
+    /// context to run under. `store` builds the output from this
+    /// description's output and the context to store.
+    ///
+    /// - On its own, the record stores the context the caller passes, and
+    ///   runs under it.
+    /// - As a field of a `struct = ..` record, it stores the field's own
+    ///   context, and runs under the scopes and bindings of the record too.
+    ///
+    /// A field whose type cannot store the field's own context fails here,
+    /// before any key is requested
+    /// ([`PlanError::ContextNotStorable`](crate::PlanError::ContextNotStorable)).
+    /// The plaintext is borrowed, so the refusal drops no plaintext. The
+    /// [`Owned`] form of this method wipes the plaintext it is handed when
+    /// the context is refused.
+    ///
+    /// **This method is for generated code.** The derive emits it at the
+    /// root of a `#[stash(context_field)]` record.
+    #[doc(hidden)]
+    pub fn storing<C, U: 'static, F>(self, store: F) -> Encryption<'s, S, U, K, StoredContext<C>>
+    where
+        Ctx: From<CallerContext>,
+        C: MaybeSend + 'static,
+        F: FnOnce(T, C) -> U + MaybeSend + 'static,
+    {
+        self.storing_refusing(store, drop)
     }
     /// Takes the context from a field of the plaintext. The caller then
     /// supplies no context.
@@ -604,12 +695,13 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// reads the label from the borrowed source, or fails, in which case the
     /// description yields that error without I/O.
     ///
-    /// Crate-internal: the plan builder and the data plan's lowering
-    /// (`dynamic::planned::compose`) are its callers.
+    /// Crate-internal: the data plan's lowering
+    /// (`dynamic::planned::compose`) is its caller.
     ///
     /// `field` names the field of the source the label is read from, and
     /// `identity` the segment `own` joins to it, for
     /// [`contexts`](Self::contexts).
+    #[cfg(feature = "dynamic")]
     pub(crate) fn under_by<G>(
         self,
         field: &str,
@@ -638,37 +730,15 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
             shapes,
         }
     }
-    /// [`under`](Encryption::under) for a context the call names, which a
-    /// plan built without one takes. The description fails with `error`
-    /// if it runs, and shows the call's context as a placeholder.
-    ///
-    /// Crate-internal: the plan builder is its caller, for
-    /// [`contexts`](Self::contexts) on such a plan.
-    pub(crate) fn under_call(
-        self,
-        identity: Option<&str>,
-        error: Error,
-    ) -> Encryption<'s, S, T, K, DeclaredContext>
-    where
-        Ctx: From<CallerContext>,
-    {
-        let shapes = contexts::substitute(
-            self.shapes,
-            &Shape::under_label(Placeholder::required("context", "Label"), identity),
-        );
-        Encryption {
-            build: Box::new(move |_, cipher, _: DeclaredContext| Pending::failed(cipher, error)),
-            shapes,
-        }
-    }
     /// [`project`](Self::project) for a field picked by name at run time, as
-    /// a plan's `fields()` does: `select` may capture the name, and may fail
+    /// a data plan does: `select` may capture the name, and may fail
     /// (the value has no such field, or not of this type), in which case the
     /// description yields that error without I/O.
     ///
-    /// Crate-internal: the plan builder and the data plan's lowering are
-    /// its callers, and what `select` captures is a field name. The public combinator stays the
+    /// Crate-internal: the data plan's lowering is its caller, and what
+    /// `select` captures is a field name. The public combinator stays the
     /// capture-free `project`.
+    #[cfg(feature = "dynamic")]
     pub(crate) fn project_by<P: 's, G>(self, select: G) -> Encryption<'s, P, T, K, Ctx>
     where
         G: for<'b> FnOnce(&'b P) -> Result<&'b S, Error> + MaybeSend + 's,
@@ -709,6 +779,33 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
             build: Box::new(move |source, cipher, cx| build(select(source), cipher, cx)),
             shapes,
         }
+    }
+    /// [`storing`](Encryption::storing) for a plaintext passed by value.
+    ///
+    /// A context that cannot be stored is refused before the description
+    /// runs, as in the borrowed form. The refusal wipes the plaintext. That
+    /// is why `S` must be `Zeroize`: a `serde_json::Value` cannot be the
+    /// source here. Convert it to a [`JsonPlaintext`] first, with
+    /// [`over_json_plaintext`](Encryption::over_json_plaintext).
+    ///
+    /// **This method is for generated and binding code.** The derive emits
+    /// it at the root of the owned form of a `#[stash(context_field)]`
+    /// record with one field, and `eql-bindings` seals a JSON tree document
+    /// through it.
+    #[doc(hidden)]
+    pub fn storing<C, U: 'static, F>(
+        self,
+        store: F,
+    ) -> Encryption<'s, S, U, K, StoredContext<C>, Owned>
+    where
+        Ctx: From<CallerContext>,
+        C: MaybeSend + 'static,
+        F: FnOnce(T, C) -> U + MaybeSend + 'static,
+        S: zeroize::Zeroize,
+    {
+        self.storing_refusing(store, |source| {
+            drop(vitaminc_protected::Protected::new(source))
+        })
     }
     /// Divide a plaintext passed by value between two descriptions, under the
     /// one context this description is given. The key requests of both
@@ -767,6 +864,24 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
     }
 }
 
+impl<'s, T: 'static, K: 'static, Ctx: 's> Encryption<'s, serde_json::Value, T, K, Ctx, Owned> {
+    /// The same description, over a [`JsonPlaintext`] passed by value. The
+    /// document is moved out of the `JsonPlaintext` and handed to this
+    /// description, with no copy. This description then owns the document,
+    /// and must wipe it: [`json_document`] and [`json_terms`] do.
+    ///
+    /// Nothing here returns the document to the caller, so no caller can
+    /// take an unwiped `serde_json::Value` out of a `JsonPlaintext`.
+    ///
+    /// **This method is for generated and binding code.** `eql-bindings`
+    /// seals a JSON tree document through it. A JSON target in this crate
+    /// moves its document in the same way.
+    #[doc(hidden)]
+    pub fn over_json_plaintext(self) -> Encryption<'s, JsonPlaintext, T, K, Ctx, Owned> {
+        self.project_owned(JsonPlaintext::into_value)
+    }
+}
+
 /// The part of a [`split`](Encryption::split) value that waits while the
 /// description of the other part runs. If it is dropped before
 /// [`hand_over`](Self::hand_over), because that description unwound, it passes
@@ -820,8 +935,10 @@ where
 
 /// A description that only checks the borrowed source, yielding `()` or the
 /// error without I/O. Zipped beside a record's fields, a failed check fails
-/// the whole record before any key is requested. Crate-internal: the plan
-/// builder uses it to refuse a value whose fields the plan does not match.
+/// the whole record before any key is requested. Crate-internal: the data
+/// plan's lowering uses it to refuse a value whose fields the plan does not
+/// match.
+#[cfg(feature = "dynamic")]
 pub(crate) fn inspect<'s, S: 's, K: 'static, Ctx: 's, C>(check: C) -> Encryption<'s, S, (), K, Ctx>
 where
     C: FnOnce(&S) -> Result<(), Error> + MaybeSend + 's,
@@ -1094,9 +1211,10 @@ pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
 /// The JSON index's one sealing operation: flatten the document, derive
 /// its terms, request one data key under the context's descriptor and seal
 /// every node under it, into a [`JsonDocument`]. The stored form of a JSON
-/// field; what [`JsonDocument`]'s own [`EncryptFrom<Value>`] runs. The
+/// field; what [`JsonDocument`]'s own [`EncryptTarget<JsonPlaintext>`] runs. The
 /// document is consumed, so in the default [`Borrowed`] mode it is cloned
-/// once, as [`ciphertext`] clones its plaintext.
+/// once, as [`ciphertext`] clones its plaintext. In [`Owned`] mode it is
+/// moved, and wiped when it has been sealed or the context is refused.
 pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
     options: JsonOptions,
 ) -> Encryption<'s, serde_json::Value, JsonDocument, K, CallerContext, M> {
@@ -1115,126 +1233,68 @@ pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
                     )
                     .under_context(query, stored)
                 }
-                Err(e) => Pending::failed(cipher, e),
+                Err(e) => {
+                    // A document this description owns is wiped rather
+                    // than dropped.
+                    M::release(source, |value| drop(crate::json::PlainJson::protect(value)));
+                    Pending::failed(cipher, e)
+                }
             }
         }),
         shapes: contexts::caller_leaf(),
     }
 }
 
-/// A target's layout, chosen by value rather than by type.
+/// A [`JsonPlaintext`] seals into a document as the JSON index lays it out
+/// under the default options, and declares that index.
 ///
-/// Most targets have one layout, fixed by their type: the type's
-/// [`EncryptFrom`] says what is sealed and which terms sit beside it, and
-/// a plan uses it with
-/// [`encrypt_into::<T>()`](crate::plan::ValueStart::encrypt_into). A
-/// target that takes options needs more than a type, and a layout is the
-/// value that carries them.
-///
-/// The JSON index is the layout this crate provides. `Json::new(options)`
-/// seals the same [`JsonDocument`] as `encrypt_into::<JsonDocument>()`,
-/// but under `options` instead of the defaults: for example, with the
-/// leaves at `$.age` ordered, so that a query can compare them.
-///
-/// A plan takes a layout with
-/// [`encrypt_with_layout`](crate::plan::ValueStart::encrypt_with_layout).
-/// A query through that plan uses the layout's index ([`Layout::index`]),
-/// so it derives under the same options without naming them again.
+/// The context is required. It is the column the document is stored in,
+/// and every selector is derived under it:
 ///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
 /// use serde_json::json;
-/// use stack_encrypt::json::{JsonDocument, JsonOptions};
-/// use stack_encrypt::sem::TermError;
-/// use stack_encrypt::target::Json;
-/// use stack_encrypt::{op, Error, Plan, StackCipher};
+/// use stack_encrypt::json::{JsonDocument, JsonPlaintext};
+/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::{nonempty, DecryptFrom, EncryptInto, StackCipher};
 ///
-/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
-/// // the environment, or from the profile that `npx stash auth login` writes.
-/// let cipher = StackCipher::builder()
-/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
-///     .init()
+/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// let column = nonempty!("users").with("profile");
+///
+/// let profile = JsonPlaintext::from(json!({"name": "Ada", "age": 35}));
+/// let document: JsonDocument = profile
+///     .encrypt_into_with_context(&cipher.default_keyset(), column.clone())
 ///     .await?;
-/// let profile = json!({"name": "Bob", "age": 34});
 ///
-/// // By value: the JSON index with `$.age` ordered.
-/// let options = JsonOptions::default().ordering(["$.age"])?;
-/// let ordered = Plan::value::<serde_json::Value>()
-///     .context("users/profile")
-///     .encrypt_with_layout(Json::new(options))
-///     .build()?;
-/// let doc: JsonDocument = cipher.encrypt(&profile).using(&ordered).await?;
-/// // The leaf at `$.age` carries an ordering term...
-/// assert_eq!(doc.entries().iter().filter(|e| e.ordering_term().is_some()).count(), 1);
-/// // ...and a query through the plan derives under the same options.
-/// let _adults = cipher.query(op::AtPath(op::Gte), &("$.age", 18)).on(&ordered).await?;
-///
-/// // By type: the same target under the default options, which order no
-/// // path, so the same query is refused.
-/// let unordered = Plan::value::<serde_json::Value>()
-///     .context("users/profile")
-///     .encrypt_into::<JsonDocument>()
-///     .build()?;
-/// let refused = cipher.query(op::AtPath(op::Gte), &("$.age", 18)).on(&unordered).await;
-/// assert!(matches!(refused, Err(Error::Term(TermError::JsonPathNotOrdered))));
+/// let opened = JsonPlaintext::decrypt_from_with_context(document, &cipher, column).await?;
+/// assert_eq!(opened.value()["name"], "Ada");
 /// # Ok(())
 /// # }
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 /// ```
 ///
-/// A layout belongs to a plan. The cipher's
-/// [`encrypt_as`](crate::KeysetCipher::encrypt_as) is a different layer:
-/// it seals one value as a target type's own `EncryptFrom` does, with no
-/// plan and no options.
-pub trait Layout<S>: Clone + fmt::Debug + 'static {
-    /// What a run produces: the target the layout seals a value into.
-    type Target: EncryptFrom<S>;
-    /// The index a query through the plan runs through: the layout
-    /// itself, for an index with options.
-    type Index: Index<S> + Clone;
-    /// The description the cipher executes for one value of `S`, under
-    /// this layout's options.
-    fn encryption<'s, K: 'static>(
-        &self,
-    ) -> Encryption<'s, S, Self::Target, K, <Self::Target as EncryptFrom<S>>::Context>
+/// The plaintext is wiped when the document has been sealed, and when the
+/// context is refused. `encrypt_into` moves the document into the sealing,
+/// with no copy. Sealing a borrowed plaintext, such as an element of a
+/// collection, reads the document through one copy, which is wiped too.
+impl EncryptTarget<JsonPlaintext> for JsonDocument {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput>
     where
-        S: 's;
-    /// The index, with its options.
-    fn index(&self) -> &Self::Index;
-    /// The indexes the plan declares, as data: the index's.
-    fn specs(&self) -> Vec<IndexSpec> {
-        vec![self.index().spec()]
-    }
-}
-
-/// The JSON index seals a [`JsonDocument`] under its options, and is the
-/// index a query through the plan runs through.
-impl Layout<serde_json::Value> for Json {
-    type Target = JsonDocument;
-    type Index = Json;
-    fn encryption<'s, K: 'static>(
-        &self,
-    ) -> Encryption<'s, serde_json::Value, JsonDocument, K, CallerContext>
-    where
-        serde_json::Value: 's,
-    {
-        json_document(self.options.clone())
-    }
-    fn index(&self) -> &Json {
-        self
-    }
-}
-
-/// A JSON document seals as the JSON index lays it out under the default
-/// options, and declares that index: a plan typed with it answers
-/// containment and the accessors through [`Json`](struct@super::Json).
-impl EncryptFrom<serde_json::Value> for JsonDocument {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, serde_json::Value, Self, K, Self::Context>
-    where
-        serde_json::Value: 's,
+        JsonPlaintext: 's,
     {
         json_document(JsonOptions::default())
+            .project(JsonPlaintext::value)
+            .accepting()
+    }
+    fn owned_encryption<'s, K: 'static>(
+    ) -> Encryption<'s, JsonPlaintext, Self, K, Self::ContextInput, Owned>
+    where
+        JsonPlaintext: 's,
+    {
+        json_document::<K, Owned>(JsonOptions::default())
+            .over_json_plaintext()
+            .accepting()
     }
     fn indexes() -> Vec<super::IndexSpec> {
         vec![super::IndexSpec::Json(JsonOptions::default())]
@@ -1259,11 +1319,17 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     /// A description whose opening is `open`: a crate-internal target
     /// that builds its own key requests (the JSON index's documents) runs
     /// through here, as [`open`] does for a native tree.
+    ///
+    /// The output is recovered plaintext, so the pending is marked as one
+    /// that can be wiped, as [`open`]'s is. A [`zip`](Self::zip) or an
+    /// [`all`](Self::all) this description is part of then wipes the output
+    /// when a later item fails.
     pub(crate) fn from_open<F>(open: F) -> Self
     where
         F: for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K> + MaybeSend + 'static,
+        T: zeroize::Zeroize,
     {
-        Self::open(Box::new(open))
+        Self::open(Box::new(move |cipher| open(cipher).wiping()))
     }
     /// A description whose output is already known: a defaulted field, or
     /// an absent optional.
@@ -1285,6 +1351,12 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     }
     /// Open both, retrieving their keys in one batch. A failed side fails
     /// the pair, the left one first, without executing the other.
+    ///
+    /// When the right side fails after the left side recovered plaintext,
+    /// the left side's plaintext is wiped before the error is returned, if
+    /// the left side is an [`open`] or a target's own decryption. A
+    /// description built with [`ready`](Self::ready) or [`map`](Self::map)
+    /// is not wiped: its output is dropped as it is.
     pub fn zip<U: 'static>(self, other: Decryption<U, K>) -> Decryption<(T, U), K> {
         match (self.inner, other.inner) {
             (Opening::Failed(error), _) | (_, Opening::Failed(error)) => Decryption::failed(error),
@@ -1319,6 +1391,11 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     /// column fails with that error, and the descriptions after it are never
     /// built. A `Vec<T>` whose rows validate a stored context does not go on
     /// validating rows once one has been refused.
+    ///
+    /// When an item fails after the items before it recovered plaintext,
+    /// each of those items that is an [`open`] or a target's own decryption
+    /// is wiped before the error is returned, as [`zip`](Self::zip) does for
+    /// its left side.
     pub fn all<I>(items: I) -> Decryption<Vec<T>, K>
     where
         I: IntoIterator<Item = Self>,
@@ -1372,48 +1449,44 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             None => Decryption::ready(None),
         }
     }
-    /// Execute under a scope. A [`KeysetCipher`] scope refuses a leaf from any
-    /// other keyset; a [`StackCipher`] scope opens leaves from any.
-    pub(super) fn open_in<'a>(self, scope: impl Into<CipherRef<'a, K>>) -> Pending<'a, T, K> {
-        let scope: CipherRef<'a, K> = scope.into();
+    /// Run this opening through `cipher_ref`. Through a [`KeysetCipher`],
+    /// a leaf from any other keyset is refused. Through a [`StackCipher`],
+    /// leaves from any keyset are opened.
+    ///
+    /// The opening builds its pending through the client, which opens
+    /// leaves from any keyset. So the pending is then confined to the
+    /// keyset of `cipher_ref`, when it has one.
+    pub(super) fn open_in<'a>(self, cipher_ref: impl Into<CipherRef<'a, K>>) -> Pending<'a, T, K> {
+        let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
         let pending = match self.inner {
-            Opening::Failed(error) => return Pending::failed(scope, error),
-            Opening::Open(open) => open(scope.cipher()),
+            Opening::Failed(error) => return Pending::failed(cipher_ref, error),
+            Opening::Open(open) => open(cipher_ref.cipher()),
         };
-        match scope.keyset_id() {
-            Some(id) => pending.scoped_to(id),
-            None => pending,
-        }
+        pending.confined_to(cipher_ref.keyset())
     }
 }
 /// The canonical opening operation: retrieve the tree's keys and decode `P`
 /// through its own Vitamin C `Decrypt` implementation, under `context`.
-pub fn open<P: crate::Decrypt + Send + 'static, K: 'static>(
+///
+/// `P` is recovered plaintext, so it must be `Zeroize`: a
+/// [`Decryption::zip`] or [`Decryption::all`] that holds this opening wipes
+/// its output when a later item fails after this one's key arrived.
+pub fn open<P: crate::Decrypt + zeroize::Zeroize + Send + 'static, K: 'static>(
     tree: StackCipherText,
     context: impl Into<AeadContext>,
 ) -> Decryption<P, K> {
     let context = context.into();
     Decryption::open(Box::new(move |cipher| match context.validated() {
-        Ok(ctx) => open_native(tree, cipher, ctx),
+        Ok(ctx) => open_native(tree, cipher, ctx).wiping(),
         Err(e) => Pending::failed(cipher, e),
     }))
 }
 
 impl<K: 'static> KeysetCipher<'_, K> {
-    /// Encrypt `source` into `T` under this keyset, as `T`'s declaration
-    /// describes. The returned [`Pending`] settles every key request the
-    /// declaration made in one batch.
-    pub fn encrypt_as<'a, S, T>(&'a self, source: &S, context: T::Context) -> Pending<'a, T, K>
-    where
-        T: EncryptFrom<S>,
-    {
-        (T::encryption().build)(source, self, context)
-    }
     /// Run a description held in a variable over `source`, under `context`.
     ///
     /// `source` is what the description's mode hands its operations: `&S`
-    /// for a [`Borrowed`]-mode description (the default, and what
-    /// [`encrypt_as`](Self::encrypt_as) runs for a type), or `S` itself for
+    /// for a [`Borrowed`]-mode description (the default), or `S` itself for
     /// an [`Owned`]-mode one. Owned mode is how a plaintext
     /// that is not `Clone` reaches an operation: a single operation consumes
     /// it without a copy.
@@ -1458,8 +1531,8 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// A borrowed source is `&'s S`, tied to the description's own lifetime
     /// `'s`, so a description fixed at one `'s` can only run over sources
     /// that live that long. A boxed, reusable description must therefore
-    /// keep `'s` higher-ranked (as `plan::Lower` does, with a phantom
-    /// `PhantomData<&'s ()>` argument) or be created per call.
+    /// keep `'s` higher-ranked or be created per call. Creating a fresh
+    /// description for each call is the simpler choice.
     pub fn run<'a, 's, S: 's, T: 'static, Ctx, M: SourceMode<'s, S>>(
         &'a self,
         encryption: Encryption<'s, S, T, K, Ctx, M>,
@@ -1470,14 +1543,14 @@ impl<K: 'static> KeysetCipher<'_, K> {
     }
     /// Run a [`Decryption`] held in a variable under this keyset: the
     /// counterpart of [`run`](Self::run), and what
-    /// [`decrypt_as`](Self::decrypt_as) does with a type's declaration. A
+    /// [`DecryptFrom`](super::DecryptFrom) does with a type's declaration. A
     /// leaf sealed under another keyset is refused
     /// ([`Error::ForeignKeyset`]) before any key is retrieved.
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use stack_encrypt::target::{self, AeadContext, Decryption};
-    /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
+    /// use stack_encrypt::{nonempty, EncryptInto, StackCipher, StackCipherText};
     ///
     /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
     /// // the environment, or from the profile that `npx stash auth login` writes.
@@ -1487,7 +1560,10 @@ impl<K: 'static> KeysetCipher<'_, K> {
     ///     .await?;
     /// let keyset = cipher.default_keyset();
     /// let context = || AeadContext::from(nonempty!("users/email"));
-    /// let sealed: StackCipherText = keyset.encrypt_as(&"bob@example.com".to_string(), context()).await?;
+    /// let sealed: StackCipherText = "bob@example.com"
+    ///     .to_string()
+    ///     .encrypt_into_with_context(&keyset, context())
+    ///     .await?;
     ///
     /// let opening: Decryption<String, _> = target::open(sealed, context());
     /// assert_eq!(keyset.run_decryption(opening).await?, "bob@example.com");
@@ -1501,58 +1577,6 @@ impl<K: 'static> KeysetCipher<'_, K> {
     ) -> Pending<'a, P, K> {
         decryption.open_in(self)
     }
-    /// Recover `P` from `source`, as its declaration describes. A leaf sealed
-    /// under another keyset is refused ([`Error::ForeignKeyset`]) before any
-    /// key is retrieved.
-    ///
-    /// # Audit metadata
-    ///
-    /// ZeroKMS logs every key request with the identity that made it. To
-    /// provide additional context for the audit log, call `.audit(..)`
-    /// before you await the result. `.audit(..)` takes an
-    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
-    /// as its purpose or a request id.
-    ///
-    /// ```
-    /// use stack_encrypt::target::AeadContext;
-    /// use stack_encrypt::{nonempty, AuditMetadata, StackCipher, StackCipherText};
-    ///
-    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
-    /// // the environment, or from the profile that `npx stash auth login` writes.
-    /// let cipher = StackCipher::builder()
-    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
-    ///     .init()
-    ///     .await?;
-    /// let keyset = cipher.default_keyset();
-    /// let context = || AeadContext::from(nonempty!("users/email"));
-    /// let stored: StackCipherText = keyset
-    ///     .encrypt_as(&String::from("bob@example.com"), context())
-    ///     .await?;
-    ///
-    /// let email: String = keyset
-    ///     .decrypt_as(stored, context())
-    ///     .audit(AuditMetadata::new().with("purpose", "send receipt"))
-    ///     .await?;
-    /// assert_eq!(email, "bob@example.com");
-    /// # Ok::<(), stack_encrypt::Error>(())
-    /// # }).unwrap();
-    /// ```
-    ///
-    /// ZeroKMS records the facts as given and does not verify them. The
-    /// decrypt does not need them. The facts can differ from those sent
-    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
-    /// send plaintext or secrets.
-    pub fn decrypt_as<'a, P: 'static, T>(
-        &'a self,
-        source: T,
-        context: T::Context,
-    ) -> Pending<'a, P, K>
-    where
-        T: DecryptInto<P>,
-    {
-        source.decryption(context).open_in(self)
-    }
 }
 impl<K: 'static> StackCipher<K> {
     /// Run a [`Decryption`] held in a variable through the client: leaves
@@ -1563,235 +1587,6 @@ impl<K: 'static> StackCipher<K> {
         decryption: Decryption<P, K>,
     ) -> Pending<'a, P, K> {
         decryption.open_in(self)
-    }
-    /// Recover `P` from `source`, as its declaration describes. Leaves from
-    /// any of the client's keysets open here.
-    ///
-    /// # Audit metadata
-    ///
-    /// ZeroKMS logs every key request with the identity that made it. To
-    /// provide additional context for the audit log, call `.audit(..)`
-    /// before you await the result. `.audit(..)` takes an
-    /// [`AuditMetadata`](crate::AuditMetadata): facts about the call, such
-    /// as its purpose or a request id.
-    ///
-    /// ```
-    /// use stack_encrypt::target::AeadContext;
-    /// use stack_encrypt::{nonempty, AuditMetadata, StackCipher, StackCipherText};
-    ///
-    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-    /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
-    /// // the environment, or from the profile that `npx stash auth login` writes.
-    /// let cipher = StackCipher::builder()
-    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
-    ///     .init()
-    ///     .await?;
-    /// let keyset = cipher.default_keyset();
-    /// let context = || AeadContext::from(nonempty!("users/email"));
-    /// let stored: StackCipherText = keyset
-    ///     .encrypt_as(&String::from("bob@example.com"), context())
-    ///     .await?;
-    ///
-    /// let email: String = cipher
-    ///     .decrypt_as(stored, context())
-    ///     .audit(AuditMetadata::new().with("purpose", "send receipt"))
-    ///     .await?;
-    /// assert_eq!(email, "bob@example.com");
-    /// # Ok::<(), stack_encrypt::Error>(())
-    /// # }).unwrap();
-    /// ```
-    ///
-    /// ZeroKMS records the facts as given and does not verify them. The
-    /// decrypt does not need them. The facts can differ from those sent
-    /// with the encrypt. ZeroKMS writes the facts to its logs, so do not
-    /// send plaintext or secrets.
-    ///
-    /// This call makes one key request for each keyset the leaves were sealed
-    /// under. Each request is sent with the same facts.
-    pub fn decrypt_as<'a, P: 'static, T>(
-        &'a self,
-        source: T,
-        context: T::Context,
-    ) -> Pending<'a, P, K>
-    where
-        T: DecryptInto<P>,
-    {
-        source.decryption(context).open_in(self)
-    }
-}
-
-/// Source-side call syntax for [`KeysetCipher::encrypt_as`], implemented for
-/// every type: `value.encrypt_into(&keyset)`. Targets implement
-/// [`EncryptFrom`], never these methods.
-pub trait LegacyEncryptInto: Sized {
-    /// Encrypt into `T` with its default context — `()` for a declaration
-    /// that carries its own contexts.
-    fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
-    where
-        T: EncryptFrom<Self>,
-        T::Context: Default,
-    {
-        cipher.encrypt_as(self, Default::default())
-    }
-    /// Encrypt into `T` under `context`, accepting anything that converts
-    /// into `T`'s context — a `nonempty!` literal, say.
-    fn encrypt_into_with_context<'a, T, K: 'static>(
-        &self,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: impl Into<T::Context>,
-    ) -> Pending<'a, T, K>
-    where
-        T: EncryptFrom<Self>,
-    {
-        cipher.encrypt_as(self, context.into())
-    }
-    /// [`encrypt_into_with_context`](Self::encrypt_into_with_context) named
-    /// from the target's side: `Target::encrypt_from(&value, &keyset, ctx)`.
-    fn encrypt_from<'a, S, K: 'static>(
-        source: &S,
-        cipher: &'a KeysetCipher<'_, K>,
-        context: impl Into<<Self as EncryptFrom<S>>::Context>,
-    ) -> Pending<'a, Self, K>
-    where
-        Self: EncryptFrom<S>,
-    {
-        cipher.encrypt_as(source, context.into())
-    }
-}
-impl<T> LegacyEncryptInto for T {}
-/// Source-side call syntax for `decrypt_as`, implemented for every type:
-/// `stored.decrypt_into(&cipher, ctx)`. Targets implement [`DecryptInto`],
-/// never these methods.
-pub trait LegacyDecryptFrom: Sized + 'static {
-    /// Recover `P` through `cipher`, which may be a [`KeysetCipher`] (refusing
-    /// foreign leaves) or a [`StackCipher`] (opening any).
-    fn decrypt_into<'a, P: 'static, K: 'static>(
-        self,
-        cipher: impl Into<CipherRef<'a, K>>,
-        context: impl Into<<Self as DecryptInto<P>>::Context>,
-    ) -> Pending<'a, P, K>
-    where
-        Self: DecryptInto<P>,
-    {
-        self.decryption(context.into()).open_in(cipher)
-    }
-    /// Recover `Self` from `source` with its default context — the plain
-    /// "read the stored context and validate it" for a record that stores
-    /// one.
-    fn decrypt_from<'a, S, K: 'static>(
-        source: S,
-        cipher: impl Into<CipherRef<'a, K>>,
-    ) -> Pending<'a, Self, K>
-    where
-        S: DecryptInto<Self> + 'static,
-        S::Context: Default,
-    {
-        source.decrypt_into(cipher, S::Context::default())
-    }
-    /// Recover `Self` from `source` under `context`.
-    fn decrypt_from_with_context<'a, S, K: 'static>(
-        source: S,
-        cipher: impl Into<CipherRef<'a, K>>,
-        context: impl Into<S::Context>,
-    ) -> Pending<'a, Self, K>
-    where
-        S: DecryptInto<Self> + 'static,
-    {
-        source.decrypt_into(cipher, context.into())
-    }
-}
-impl<T: 'static> LegacyDecryptFrom for T {}
-
-// The leaf declarations below keep `Clone` on purpose. An `EncryptFrom`
-// declaration runs in the `Borrowed` mode (`encrypt_as` hands it `&S`), and an
-// operation that consumes a borrowed plaintext must clone it: the bound is
-// `Borrowed: ConsumeSource<'s, S>`, spelled out. The constructors themselves
-// (`ciphertext`, `equality`, `ore`, `ope`) ask only for the scheme's own
-// capability, and run a non-`Clone` plaintext in `Owned` mode.
-impl<S: crate::Encrypt + Clone> EncryptFrom<S> for StackCipherText {
-    type Context = AeadContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        ciphertext()
-    }
-}
-impl<P: crate::Decrypt + Send + 'static> DecryptInto<P> for StackCipherText {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
-        open(self, context)
-    }
-}
-impl<S: crate::Encrypt + Clone> EncryptFrom<S> for crate::sem::EqualityTerm {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        equality()
-    }
-    fn indexes() -> Vec<super::IndexSpec> {
-        vec![super::IndexSpec::Equality]
-    }
-}
-impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
-    for crate::sem::MatchTerms<O>
-{
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        matching()
-    }
-    fn indexes() -> Vec<super::IndexSpec> {
-        vec![super::IndexSpec::Match(O::options())]
-    }
-}
-impl<S> EncryptFrom<S> for crate::sem::OreTerm<S>
-where
-    S: crate::sem::Orderable + Clone,
-{
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        ore()
-    }
-    fn indexes() -> Vec<super::IndexSpec> {
-        vec![super::IndexSpec::Ore]
-    }
-}
-impl<S> EncryptFrom<S> for crate::sem::OpeTerm<S>
-where
-    S: crate::sem::Orderable + Clone,
-{
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        ope()
-    }
-    fn indexes() -> Vec<super::IndexSpec> {
-        vec![super::IndexSpec::Ope]
-    }
-}
-impl<S> EncryptFrom<S> for crate::sem::OreBlockTerm<S>
-where
-    S: crate::sem::Orderable + Clone,
-{
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        ore_block()
-    }
-    fn indexes() -> Vec<super::IndexSpec> {
-        vec![super::IndexSpec::OreBlock]
     }
 }
 
@@ -1840,7 +1635,7 @@ impl<S: crate::Encrypt + Clone + zeroize::Zeroize> EncryptTarget<S> for crate::s
         equality().accepting()
     }
     fn indexes() -> Vec<super::IndexSpec> {
-        <Self as EncryptFrom<S>>::indexes()
+        vec![super::IndexSpec::Equality]
     }
 }
 impl<S: AsRef<str> + zeroize::Zeroize, O: crate::sem::MatchConfig + 'static> EncryptTarget<S>
@@ -1854,11 +1649,11 @@ impl<S: AsRef<str> + zeroize::Zeroize, O: crate::sem::MatchConfig + 'static> Enc
         matching().accepting()
     }
     fn indexes() -> Vec<super::IndexSpec> {
-        <Self as EncryptFrom<S>>::indexes()
+        vec![super::IndexSpec::Match(O::options())]
     }
 }
 macro_rules! owned_order_term {
-    ($($ty:ident, $operation:ident;)+) => {$(
+    ($($ty:ident, $operation:ident, $spec:ident;)+) => {$(
         impl<S: crate::sem::Orderable + Clone + zeroize::Zeroize> EncryptTarget<S> for crate::sem::$ty<S> {
             type ContextInput = RequiredContext<CallerContext>;
             fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
@@ -1868,83 +1663,15 @@ macro_rules! owned_order_term {
                 $operation().accepting()
             }
             fn indexes() -> Vec<super::IndexSpec> {
-                <Self as EncryptFrom<S>>::indexes()
+                vec![super::IndexSpec::$spec]
             }
         }
     )+};
 }
 owned_order_term! {
-    OreTerm, ore;
-    OpeTerm, ope;
-    OreBlockTerm, ore_block;
-}
-
-// A `Vec<Target>` is a row per item, each encrypted independently under the
-// same context and settled in one batch; an `Option<Target>` is one row or
-// nothing, without I/O. (A plaintext `Vec`/`Option` sealed into a
-// `StackCipherText` is a different thing: Vitamin C's native sequence and
-// option, with their authenticated markers.)
-impl<S, T: EncryptFrom<S>> EncryptFrom<Vec<S>> for Vec<T>
-where
-    T::Context: Clone + 'static + MaybeSend,
-{
-    type Context = T::Context;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, Vec<S>, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        Encryption {
-            shapes: T::encryption::<K>().shapes(),
-            build: Box::new(move |source, cipher, cx: T::Context| {
-                Pending::collect(
-                    cipher,
-                    source
-                        .iter()
-                        .map(|item| cipher.encrypt_as(item, cx.clone())),
-                )
-            }),
-        }
-    }
-}
-impl<S, T: EncryptFrom<S> + MaybeSend> EncryptFrom<Option<S>> for Option<T>
-where
-    T::Context: 'static + MaybeSend,
-{
-    type Context = T::Context;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, Option<S>, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        Encryption {
-            shapes: T::encryption::<K>().shapes(),
-            build: Box::new(move |source, cipher, cx: T::Context| match source {
-                Some(item) => cipher.encrypt_as(item, cx).map(Some),
-                None => Pending::ready(cipher, Ok(None)),
-            }),
-        }
-    }
-}
-// Opened through `all_wiping`, as the owned `Vec<T>` is. If an element fails
-// after its key arrives, the column fails, and the elements recovered before
-// it are wiped. That is why `P` must implement `Zeroize`. Every plaintext the
-// engine decrypts into already implements it.
-impl<P: zeroize::Zeroize + 'static, T: DecryptInto<P> + 'static> DecryptInto<Vec<P>> for Vec<T>
-where
-    T::Context: Clone + 'static,
-{
-    type Context = T::Context;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<P>, K> {
-        Decryption::all_wiping(
-            self.into_iter()
-                .map(|item| item.decryption(context.clone())),
-        )
-    }
-}
-impl<P: 'static + MaybeSend, T: DecryptInto<P> + 'static> DecryptInto<Option<P>> for Option<T> {
-    type Context = T::Context;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<P>, K> {
-        Decryption::optional(self.map(|item| item.decryption(context)))
-    }
+    OreTerm, ore, Ore;
+    OpeTerm, ope, Ope;
+    OreBlockTerm, ore_block, OreBlock;
 }
 
 /// How a derive finds the one recoverable field of a record among its terms.
@@ -1957,13 +1684,13 @@ pub trait DecryptField<P, Ctx>: Sized {
     /// The opening description, if this field holds recoverable ciphertext.
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>>;
 }
-impl<P: 'static, Ctx> DecryptField<P, Ctx> for StackCipherText
+impl<P: zeroize::Zeroize + 'static, Ctx> DecryptField<P, Ctx> for StackCipherText
 where
-    Self: DecryptInto<P>,
-    Ctx: Into<<Self as DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(<Self as DecryptInto<P>>::decryption(self, context.into()))
+        Some(<Self as DecryptSource<P>>::decryption(self, context.into()))
     }
 }
 impl<
@@ -2015,7 +1742,7 @@ impl<T: Decryptable> Decryptable for Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{nonempty, sem::EqualityTerm};
+    use crate::{nonempty, sem::EqualityTerm, EncryptInto};
     use stack_kms::FakeDataKeySource;
 
     #[tokio::test]
@@ -2030,7 +1757,13 @@ mod tests {
 
         for expected in [Some("secret nickname".to_string()), None] {
             let sealed: Option<StackCipherText> = match &expected {
-                Some(value) => Some(keyset.encrypt_as(value, context()).await.unwrap()),
+                Some(value) => Some(
+                    value
+                        .clone()
+                        .encrypt_into_with_context(&keyset, context())
+                        .await
+                        .unwrap(),
+                ),
                 None => None,
             };
             let opening: Decryption<Option<String>, FakeDataKeySource> = sealed

@@ -4,21 +4,19 @@
 //! request with the identity that made it. [`AuditMetadata`] adds facts
 //! that only the application knows, such as the purpose of the call.
 //!
-//! To send it, call `.audit(..)` on a call before you await it. Each
-//! decrypt method shows how, with an example:
+//! To send it, call `.audit(..)` on a call before you await it. These
+//! decrypt methods show how, with an example:
 //!
 //! - [`KeysetCipher::decrypt`](crate::KeysetCipher::decrypt) and
 //!   [`decrypt_with_context`](crate::KeysetCipher::decrypt_with_context),
 //!   for one value;
 //! - [`KeysetCipher::decrypt_tree`](crate::KeysetCipher::decrypt_tree) and
 //!   [`StackCipher::decrypt`](crate::StackCipher::decrypt), for a tree of
-//!   values;
-//! - [`KeysetCipher::decrypt_as`](crate::KeysetCipher::decrypt_as), for a
-//!   derived record;
-//! - [`StackCipher::open`](crate::StackCipher::open), for a record that a
-//!   plan wrote.
+//!   values.
 //!
-//! An encrypt call takes `.audit(..)` in the same way. Audit metadata is
+//! A derived record's decrypt,
+//! [`DecryptFrom::decrypt_from`](crate::DecryptFrom::decrypt_from), and
+//! every encrypt call take `.audit(..)` in the same way. Audit metadata is
 //! optional: a call without it sends none.
 //!
 //! In the ZeroKMS protocol, audit metadata is the key request's
@@ -484,9 +482,8 @@ impl<'de> Visitor<'de> for FactVisitor {
     }
 }
 
-/// A call with [audit metadata](AuditMetadata) attached. `.audit(..)`
-/// returns this type on a [`Pending`](crate::Pending), on a plan chain,
-/// and on a batch of chains ([`All`](crate::plan::All)).
+/// A call with [audit metadata](AuditMetadata) attached. `.audit(..)` on a
+/// [`Pending`](crate::Pending) returns this type.
 ///
 /// You can only await it. Awaiting runs the call, and sends the metadata
 /// with every data-key request that the call makes.
@@ -498,7 +495,7 @@ impl<'de> Visitor<'de> for FactVisitor {
 ///
 /// - a query term, because the cipher derives it from the index key of
 ///   the keyset;
-/// - a record that has only passthrough fields;
+/// - a record that has only terms and passthrough fields;
 /// - a call over no values, such as an absent value (`None`) or an empty
 ///   list.
 ///
@@ -584,6 +581,15 @@ impl<C> Audited<C> {
     /// The call, and the metadata to send with its key requests.
     pub(crate) fn into_parts(self) -> (C, Unverified) {
         (self.call, self.metadata)
+    }
+
+    /// The same metadata, on the call `wrap` makes of this one: what
+    /// attaching a credential to an audited call does.
+    pub(crate) fn rewrap<D>(self, wrap: impl FnOnce(C) -> D) -> Audited<D> {
+        Audited {
+            call: wrap(self.call),
+            metadata: self.metadata,
+        }
     }
 }
 

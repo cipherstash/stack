@@ -97,11 +97,22 @@ pub(crate) fn seal_pending<'a, K>(
     if let Err(e) = descriptor.check() {
         return Pending::ready(cipher, Err(e));
     }
-    let keyset_id = cipher.keyset_id();
-    let requests = std::iter::repeat_with(|| Request::generate_under(descriptor.clone()))
-        .take(tree.key_count())
-        .collect();
+    // The id every sealed leaf carries. A keyset that is not loaded yet
+    // may have none to give here: the pending asks for the keyset,
+    // and reads its id when it settles.
+    let known = cipher.loaded_state().map(|keyset| keyset.id);
+    let mut requests: Vec<Request> =
+        std::iter::repeat_with(|| Request::generate_under(descriptor.clone()))
+            .take(tree.key_count())
+            .collect();
+    if known.is_none() {
+        requests.push(Request::selected_keyset());
+    }
     Pending::request(cipher, requests, move |responses| {
+        let keyset_id = match known {
+            Some(keyset_id) => keyset_id,
+            None => responses.next_keyset()?.id,
+        };
         tree.seal_with(keyset_id, responses.drain_generated())
             .map_err(Error::from)
     })
@@ -110,17 +121,17 @@ pub(crate) fn seal_pending<'a, K>(
 /// Retrieve every leaf's data key and bind it onto its leaf, ready for
 /// [`open_keyed`](crate::cipher::open_keyed).
 pub(crate) fn bind_pending<'a, K>(
-    scope: impl Into<CipherRef<'a, K>>,
+    cipher_ref: impl Into<CipherRef<'a, K>>,
     ciphertext: StackCipherText,
     descriptor: Descriptor,
 ) -> Pending<'a, KeyedCipherText, K> {
-    let scope: CipherRef<'a, K> = scope.into();
+    let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
     // Fast path, as in `seal_pending`; `dispatch` is the gate.
     if let Err(e) = descriptor.check() {
-        return Pending::ready(scope, Err(e));
+        return Pending::ready(cipher_ref, Err(e));
     }
     let requests = retrieve_requests(&ciphertext, &descriptor);
-    Pending::request(scope, requests, move |responses| {
+    Pending::request(cipher_ref, requests, move |responses| {
         keyed_from_responses(ciphertext, responses)
     })
 }

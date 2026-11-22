@@ -114,10 +114,22 @@ The optional `stack-encrypt` feature implements Stack Encrypt's
 `DecryptSource<String>` for `v4::text::TextEq`. These owned traits take the
 plaintext by value and wipe it.
 
-The same derives also implement the older `EncryptFrom` and `DecryptInto`.
-Plans, the dynamic layer, and `encrypt_as` still use them, until Stack Encrypt
-removes them. Stack Encrypt writes EQL v4 only, so no `v3` type implements
-these traits. `eql-codegen` emits the derives.
+Stack Encrypt writes EQL v4 only, so no `v3` type implements these traits.
+`eql-codegen` emits the derives.
+
+Each Rust example in this file is a complete program, and the encryption
+test crate runs it as a doctest:
+
+```bash
+# From packages/eql:
+cargo test -p eql-encryption-tests --doc
+```
+
+The examples build their cipher over `FakeDataKeySource`, from the
+`test-support` feature of `stack-kms`. It holds its keys in memory, so an
+example needs no credentials. A real program passes its own key source to
+`.kms(..)`, or leaves `.kms(..)` out to use ZeroKMS. That needs Stack
+Encrypt's `http` feature, which is on by default.
 
 The other v4 types Stack Encrypt produces take a Rust primitive as their
 plaintext, or, for a date, a timestamp or a decimal, one of
@@ -219,19 +231,33 @@ repeated member, valid Unicode), and a `c` that opens but does not hold a
 document is `Error::OpenedType`. Nothing inside a `Json` value can be
 queried: use `JsonSearch` for a document that is searched.
 
-```rust,ignore
+```rust
 use eql_bindings::v4::{json::Json, plaintext::JsonPlaintext};
 use eql_bindings::Identifier;
 use serde_json::json;
-use stack_encrypt::{DecryptFrom, EncryptInto};
+use stack_encrypt::{DecryptFrom, EncryptInto, StackCipher};
+use stack_kms::FakeDataKeySource;
 
-let column = Identifier::for_column("users", "profile")?;
-let profile = JsonPlaintext::from(json!({"name": "Ada", "tags": ["maths"]}));
-let stored: Json = profile.encrypt_into_with_context(&keyset, column.clone()).await?;
-// INSERT ... VALUES ($1::public.eql_v4_json), binding sqlx::types::Json(&stored)
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Local example only: these keys are held in memory, not in ZeroKMS.
+    let cipher = StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await?;
+    let keyset = cipher.default_keyset();
 
-let opened = JsonPlaintext::decrypt_from_with_context(stored, &keyset, column).await?;
-assert_eq!(opened.value()["tags"][0], "maths");
+    let column = Identifier::for_column("users", "profile")?;
+    let profile = JsonPlaintext::from(json!({"name": "Ada", "tags": ["maths"]}));
+    let stored: Json = profile
+        .encrypt_into_with_context(&keyset, column.clone())
+        .await?;
+    // INSERT ... VALUES ($1::public.eql_v4_json), binding sqlx::types::Json(&stored)
+
+    let opened = JsonPlaintext::decrypt_from_with_context(stored, &keyset, column).await?;
+    assert_eq!(opened.value()["tags"][0], "maths");
+    Ok(())
+}
 ```
 
 Each ordered v4 family also has two range query types, one per order term:
@@ -247,32 +273,45 @@ resolve an untyped `$1`. Nothing produces a range yet, since the ordered types
 are not producible, and Stack Encrypt will need to build the envelope when
 they are. EQL v3 has no range types or `between`.
 
-The generated API docs include a complete, executable example in the
-`eql_bindings::encryption` module, from cipher setup through decryption. Its
-[source](src/encryption/example.rs) is also run by the encryption test crate:
+A text column with an equality term, from cipher setup through decryption:
 
-```bash
-# From packages/eql:
-cargo test -p eql-encryption-tests --test text_eq_example
+```rust
+use eql_bindings::v4::text::{TextEq, TextEqQuery};
+use eql_bindings::Identifier;
+use stack_encrypt::{DecryptFrom, EncryptInto, StackCipher};
+use stack_kms::FakeDataKeySource;
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Local example only: these keys are held in memory, not in ZeroKMS.
+    let cipher = StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await?;
+    let keyset = cipher.default_keyset();
+
+    let column = Identifier::for_column("users", "email")?;
+    let stored: TextEq = "alice@example.com"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column.clone())
+        .await?;
+    // The query for the same text carries the stored equality term.
+    let query: TextEqQuery = "alice@example.com"
+        .to_owned()
+        .encrypt_into_with_context(&keyset, column.clone())
+        .await?;
+    assert_eq!(query.hm, stored.hm);
+
+    let opened = String::decrypt_from_with_context(stored, &keyset, column).await?;
+    assert_eq!(opened, "alice@example.com");
+    Ok(())
+}
 ```
 
-With an initialized cipher, the essential calls are:
-
-```rust,ignore
-use eql_bindings::{Identifier, v4::text::{TextEq, TextEqQuery}};
-
-use stack_encrypt::{DecryptFrom, EncryptInto};
-
-let column = Identifier::for_column("users", "email")?;
-let keyset = cipher.default_keyset();
-let stored: TextEq = "alice@example.com".to_owned()
-    .encrypt_into_with_context(&keyset, column.clone())
-    .await?;
-let query: TextEqQuery = "alice@example.com".to_owned()
-    .encrypt_into_with_context(&keyset, column.clone())
-    .await?;
-let opened = String::decrypt_from_with_context(stored, &keyset, column).await?;
-```
+The generated API docs of the `eql_bindings::encryption` module show the same
+steps. That example is a program of its own
+([source](src/encryption/example.rs)), which the encryption test crate runs
+too: `cargo test -p eql-encryption-tests --test text_eq_example`.
 
 Both identifier components must be nonempty. Encryption stores the identifier
 in `i`; its table and column supply the ciphertext AAD, term context, and ZeroKMS
@@ -314,61 +353,104 @@ escaped in the descriptor rather than read as two names.
 
 ### Querying an EQL v4 field from Rust
 
-A query names an operator, and a plan for the column's EQL type finds the
-index that answers it (Stack Encrypt's ADR-0009). The term that comes back
-is the type's query twin, the value the `eql_v4.query_*` domain takes:
+A typed query starts from a field of a derived record. The record derive
+gives each field a field reference, such as `EncryptedUser::EMAIL`, with a method for
+each operator the field's EQL type answers. The term that comes back is the
+type's query twin, the value the `eql_v4.query_*` domain takes:
 
-```rust,ignore
+```rust
 use eql_bindings::v4::text::{TextEq, TextMatch};
-use stack_encrypt::op::{self, Probabilistic, Stats};
-use stack_encrypt::Plan;
+use stack_encrypt::op::{Probabilistic, Stats};
+use stack_encrypt::{EncryptInto, EncryptTarget, StackCipher};
+use stack_kms::FakeDataKeySource;
 
-// A plan for the column's type, under the label that names the column:
-// "users/email" is Identifier::for_column("users", "email").
-let email_plan = Plan::value::<String>().context("users/email").encrypt_into::<TextEq>().build()?;
-let query = cipher.query(op::Eq, "alice@example.com").on(&email_plan).await?; // a TextEqQuery
-// WHERE email = $1::eql_v4.query_text_eq, binding sqlx::types::Json(&query)
+#[derive(zeroize::Zeroize)]
+struct User {
+    email: String,
+    name: String,
+}
 
-let name_plan = Plan::value::<String>().context("users/name").encrypt_into::<TextMatch>().build()?;
-let query = cipher.query(op::Matches, "ali").on(&name_plan).await?; // a MatchTwin<TextMatchQuery>
-let fetch = query.target_limit(10, &Stats::declared(1_000_000)).fetch_or(50);
-// WHERE name @@ $1::eql_v4.query_text_match LIMIT $2, then keep the
-// decrypted rows for which query.verify(&name) is true.
+// The record's scope names the table, and each field's name is its column.
+#[derive(EncryptTarget)]
+#[stash(struct = User, scope = "users")]
+struct EncryptedUser {
+    email: TextEq,   // i = {"t": "users", "c": "email"}
+    name: TextMatch, // i = {"t": "users", "c": "name"}
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Local example only: these keys are held in memory, not in ZeroKMS.
+    let cipher = StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await?;
+    let keyset = cipher.default_keyset();
+
+    let user = User {
+        email: "alice@example.com".into(),
+        name: "Alice Nguyen".into(),
+    };
+    let stored: EncryptedUser = user.encrypt_into(&keyset).await?;
+
+    // A `TextEqQuery`.
+    let query = EncryptedUser::EMAIL
+        .eq("alice@example.com")
+        .encrypt(&keyset)
+        .await?;
+    // WHERE email = $1::eql_v4.query_text_eq, binding sqlx::types::Json(&query)
+    assert_eq!(query.i.t, "users");
+    assert_eq!(query.i.c, "email");
+    assert_eq!(query.hm, stored.email.hm);
+
+    // A `MatchTwin<TextMatchQuery>`.
+    let query = EncryptedUser::NAME.matches("ali").encrypt(&keyset).await?;
+    // How many rows to fetch to expect 10 real matches in a million.
+    let fetch = query
+        .target_limit(10, &Stats::declared(1_000_000))
+        .fetch_or(50);
+    assert!(fetch >= 10);
+    // WHERE name @@ $1::eql_v4.query_text_match LIMIT $2, binding `fetch`.
+    // Then keep the decrypted rows that verify.
+    assert!(query.verify("Alice Nguyen"));
+    assert!(!query.verify("Bob Li"));
+    Ok(())
+}
 ```
 
-| v4 type | Operator | Query term |
-| --- | --- | --- |
-| `TextEq` | `op::Eq` | `TextEqQuery` |
-| `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`, `DoubleEq` | `op::Eq` | `SmallintEqQuery`, `IntegerEqQuery`, `BigintEqQuery`, `RealEqQuery`, `DoubleEqQuery` |
-| `DateEq`, `TimestampEq`, `NumericEq` | `op::Eq` | `DateEqQuery`, `TimestampEqQuery`, `NumericEqQuery` (from `v4::plaintext::Date`, `Timestamp`, `Decimal`) |
-| `TextMatch` | `op::Matches` | `MatchTwin<TextMatchQuery>` |
+| v4 type | Field reference method | Operator | Query term |
+| --- | --- | --- | --- |
+| `TextEq` | `eq` | `op::Eq` | `TextEqQuery` |
+| `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`, `DoubleEq` | `eq` | `op::Eq` | `SmallintEqQuery`, `IntegerEqQuery`, `BigintEqQuery`, `RealEqQuery`, `DoubleEqQuery` |
+| `DateEq`, `TimestampEq`, `NumericEq` | `eq` | `op::Eq` | `DateEqQuery`, `TimestampEqQuery`, `NumericEqQuery` (from `v4::plaintext::Date`, `Timestamp`, `Decimal`) |
+| `TextMatch` | `matches` | `op::Matches` | `MatchTwin<TextMatchQuery>` |
 
 `MatchTwin` serializes as the twin and adds `verify` and `target_limit`
 under `EqlMatch`: a filter can match a row that does not hold the query's
 text, so keep only the decrypted rows that verify. An exact query has no
-`verify`. An operator a type does not answer does not compile: `op::Lt` on
-`TextEq`, or `op::Matches` on `IntegerEq`. Nor does naming another index
-with `.via(..)`, such as the bare `Equality`, whose term the type's SQL does
-not take. The ordered types (`IntegerOrd`, `TextOrd`, …) answer nothing in
-the typed chain yet: their twins need an order term, or several terms at
-once, and the chain sends one index's term. Query them through the data
-path (`stack_encrypt::dynamic::query_term`) for now.
+`verify`. An operator a type does not answer does not compile: `.lt(..)` on
+a `TextEq` field, or `.matches(..)` on an `IntegerEq` field. A field reference names
+its field's type and no index, so a query cannot send another index's term,
+such as the bare `Equality` term, which the type's SQL does not take. The
+ordered types (`IntegerOrd`, `TextOrd`, …) and the text search types answer
+nothing from a field reference yet: their twins need an order term, or several terms
+at once, and a field query sends one index's term. Query them through
+the data path (`stack_encrypt::dynamic::query_term`) for now.
 
-The label must name the column the value was written under, as two
-segments, table then column. A label of any other length, and a query
-extended with `.extend(..)` (whose terms would be derived under more than
-the column the twin stores), are refused when the query is awaited, before
-any keyset is resolved, with an `encryption::query::QueryLabelError` in
-`Error::Other`. A label's segments are plain, so a table or column name
-that is not a plain label segment cannot be named on a plan, and such a
-column, which `Identifier::for_column` accepts, cannot be queried this way:
-for instance a name that starts with a digit, `-` or `b64:`, or one holding
-`/`, `(`, `)`, or a control or invisible format character.
-The plan is for queries: write with
-`value.encrypt_into_with_context(&keyset, column)` and open with
-`P::decrypt_from_with_context`, since
-an EQL type is sealed under its column rather than the plan's label. The
-query is the same bytes the data path derives for a field that names the
+The query is derived under the field reference's label: the record's scope, then the
+field's name (or its `identity`). That is the column the field stores in
+`i`, so the query finds the values the record wrote, and the values the
+type wrote on its own with
+`value.encrypt_into_with_context(&keyset, Identifier::for_column("users", "email")?)`.
+A field reference's label always has those two segments, so it always names a
+column. The derive accepts only plain label segments. So a column whose
+table or column name is not one, which `Identifier::for_column` accepts,
+cannot be a record field, and cannot be queried this way: for instance a
+name that starts with a digit, `-` or `b64:`, or one holding `/`, `(`, `)`,
+or a control or invisible format character.
+A record that lists a scope, such as a tenant, takes it on the query with
+`.scope(..)`: see [EQL types as record fields](#eql-types-as-record-fields).
+The query is the same bytes the data path derives for a field that names the
 type (`stack_encrypt::dynamic::query_term`), which is what the Go SDK sends,
 and `tests/encryption/tests/typed_queries.rs` checks that for every type and
 operator. The `op::Answers` impls are generated into `src/v4/answers.rs`
@@ -398,6 +480,151 @@ the domain check on insert. A plain `=` between a v3 column and a v4 query
 term still returns zero rows with no error, so keep each column to one
 version.
 
+### EQL types as record fields
+
+An EQL type can be a field of a Stack Encrypt record. The record derive gives
+each field the record's scope and the field's name, and the EQL type stores
+that pair as its column in `i`:
+
+```rust
+use eql_bindings::v4::{integer::IntegerOrd, json_tree::JsonTreeDocument, text::TextEq};
+use serde_json::json;
+use stack_encrypt::json::JsonPlaintext;
+use stack_encrypt::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget, StackCipher};
+use stack_kms::FakeDataKeySource;
+
+#[derive(zeroize::Zeroize)]
+struct Member {
+    id: u64,
+    email: String,
+    age: i32,
+    profile: JsonPlaintext,
+}
+
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Member, scope = "members")]
+struct EncryptedMember {
+    #[stash(passthrough)]
+    id: u64,
+    email: TextEq,             // i = {"t": "members", "c": "email"}
+    age: IntegerOrd,           // i = {"t": "members", "c": "age"}
+    profile: JsonTreeDocument, // i = {"t": "members", "c": "profile"}
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Local example only: these keys are held in memory, not in ZeroKMS.
+    let cipher = StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await?;
+    let keyset = cipher.default_keyset();
+
+    let member = Member {
+        id: 7,
+        email: "alice@example.com".into(),
+        age: 36,
+        profile: JsonPlaintext::from(json!({"name": "Alice"})),
+    };
+    let stored: EncryptedMember = member.encrypt_into(&keyset).await?;
+    assert_eq!(stored.email.i.t, "members");
+    assert_eq!(stored.email.i.c, "email");
+
+    // A query from the field reference carries the stored equality term.
+    let query = EncryptedMember::EMAIL
+        .eq("alice@example.com")
+        .encrypt(&keyset)
+        .await?;
+    assert_eq!(query.hm, stored.email.hm);
+
+    let opened = Member::decrypt_from(stored, &keyset).await?;
+    assert_eq!(opened.email, "alice@example.com");
+    Ok(())
+}
+```
+
+Each field writes the terms its type writes on its own under
+`Identifier::for_column("members", <field>)`, and the terms a data plan that
+names the type writes. On decrypt, each field's stored `i` must be its own
+column, checked before any key is requested. So a renamed field does not
+read the rows written under its old name. Keep the old name with
+`#[stash(identity = "email")]`, as for a field of any other type.
+
+A record can also list a scope or a binding, such as a tenant or a row ID.
+The caller passes them as `Scope::new(tenant).bind(row)`. This record has
+one EQL field, to keep the example short:
+
+```rust
+use eql_bindings::v4::text::TextEq;
+use stack_encrypt::target::Scope;
+use stack_encrypt::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget, StackCipher};
+use stack_kms::FakeDataKeySource;
+
+#[derive(zeroize::Zeroize)]
+struct Member {
+    id: u64,
+    email: String,
+}
+
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Member, scope = "members", scope(tenant: u64), bind(row: u128))]
+struct EncryptedMember {
+    #[stash(passthrough)]
+    id: u64,
+    email: TextEq, // i = {"t": "members", "c": "email"}
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Local example only: these keys are held in memory, not in ZeroKMS.
+    let cipher = StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await?;
+    let keyset = cipher.default_keyset();
+    let tenant = 42u64;
+    let row = 9u128;
+
+    let member = Member {
+        id: 7,
+        email: "alice@example.com".into(),
+    };
+    let stored: EncryptedMember = member
+        .encrypt_into_with_context(&keyset, Scope::new(tenant).bind(row))
+        .await?;
+    // `i` stores the table and the column, and not the tenant or the row.
+    assert_eq!(stored.email.i.t, "members");
+    assert_eq!(stored.email.i.c, "email");
+
+    // A query supplies the scope, and no binding.
+    let query = EncryptedMember::EMAIL
+        .eq("alice@example.com")
+        .scope(Scope::new(tenant))
+        .encrypt(&keyset)
+        .await?;
+    assert_eq!(query.hm, stored.email.hm);
+
+    // The reader supplies the scope and the binding again.
+    let opened =
+        Member::decrypt_from_with_context(stored, &keyset, Scope::new(tenant).bind(row)).await?;
+    assert_eq!(opened.email, "alice@example.com");
+    Ok(())
+}
+```
+
+`i` stores the table and the column, and nothing a caller supplies. A field
+of any other type uses the scope and the binding in the same way:
+
+- the terms of the field derive under the column, then the scope. So a
+  query supplies the scope, and finds only the values stored under it;
+- a binding is in no query, so it does not change the terms;
+- the ciphertext is sealed under the column, then the scope, then the
+  binding. So the reader supplies the scope and the binding again, and a
+  value does not open without them.
+
+An EQL field of a record nested in another stores its own column in the same
+way. The outer record's names come after the column in the field's context.
+
 ### EQL types as plan field targets
 
 A binding has no Rust type to name: its plan arrives as data, and a field of
@@ -410,7 +637,7 @@ indexes it carries (`eq` / `match` / `ore` / `ope` / `json`), its query twin,
 and whether the engine can produce it today, with the reason when not. A guest
 serializes it for its `se_targets` export; the module docs are the wire format.
 `encrypt`, `decrypt` and `query` dispatch on the name and run the type's own
-Rust plan — the same `EncryptFrom` the typed `encrypt_as::<TextEq>` runs, so
+Rust declaration — the same one the typed `encrypt_into::<TextEq>` runs, so
 the two paths produce the same identifier and equality term and open each
 other's values. An unproducible name is refused with the table's reason; an
 unknown one with "no such EQL type". Every type in the table is producible
@@ -418,16 +645,42 @@ today. A type that stores a JSON document (`Json`, `JsonSearch`) takes the
 plaintext kind `json`: the document's UTF-8 JSON text, in a text or bytes
 value, and it opens back to its text.
 
-```rust,ignore
+```rust
+// Needs the `targets` feature.
 use eql_bindings::encryption::targets;
-use stack_encrypt::Label;
+use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::target::IndexSpec;
+use stack_encrypt::{Label, StackCipher};
+use stack_kms::FakeDataKeySource;
 
-let column = Label::new(["users", "email"])?; // the field's context: table/column
-let email = ValueFrame::of("alice@example.com")?; // the plaintext as its transport frame
-let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, email.clone())?.await?;
-let probe: Vec<u8> = targets::query("TextEq", &keyset, &column, email)?.await?;
-let opened: ValueFrame = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Local example only: these keys are held in memory, not in ZeroKMS.
+    let cipher = StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await?;
+    let keyset = cipher.default_keyset();
+
+    // The field's context: the table, then the column.
+    let column = Label::new(["users", "email"])?;
+    // The plaintext, as its transport frame.
+    let email = ValueFrame::of("alice@example.com")?;
+
+    // Each call names the type, and returns the EQL value as JSON bytes.
+    let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, email.clone())?.await?;
+    // A query also names the index that answers its operator.
+    let index = IndexSpec::Equality;
+    let probe: Vec<u8> = targets::query("TextEq", &index, &keyset, &column, email.clone())?.await?;
+    let stored_value: TextEq = serde_json::from_slice(&stored)?;
+    let query: TextEqQuery = serde_json::from_slice(&probe)?;
+    assert_eq!(query.hm, stored_value.hm);
+
+    let opened: ValueFrame = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
+    assert_eq!(opened, email);
+    Ok(())
+}
 ```
 
 The table and the dispatch are generated into `src/v4/targets.rs` beside
@@ -438,18 +691,20 @@ the Go package `languages/golang/encrypt/eql` from the same rows
 engine's `TargetResolver` (stack-encrypt's `dynamic` module) is implemented
 over this module by `encryption::EqlTargets`. A program that runs data plans
 with EQL types passes `&EqlTargets` wherever the dynamic interface takes a
-resolver, as the Go guest's `eql` build does. A type is producible exactly
+resolver, as the Go guest's `eql` build does. A data plan's scopes and
+bindings reach the type through `EqlTargets`: the type runs under the
+field's label, then those parts, and the EQL value stores the column alone,
+as it does for a [record field](#eql-types-as-record-fields). A type is producible exactly
 when its generated struct carries the `stack-encrypt` derives
 (`ENCRYPTION_DOMAINS` in `eql-codegen`), because the dispatch runs the derived
-plan; `targets::targets()` lists them, each with `producible` and, when it is
+declaration; `targets::targets()` lists them, each with `producible` and, when it is
 `false`, the reason.
 
 ### Features
 
 - `stack-encrypt`: the EQL v4 types (`eql_bindings::v4`) with Stack
   Encrypt's `EncryptTarget` and `DecryptSource`, for a Rust program that
-  encrypts through `encrypt_into`. The older `EncryptFrom` and `DecryptInto`
-  are implemented too. It builds Stack Encrypt with no default
+  encrypts through `encrypt_into`. It builds Stack Encrypt with no default
   features and without its `dynamic` layer.
 - `targets`: `stack-encrypt`, plus the by-name dispatch a language binding
   needs (`encryption::targets`, `v4::targets`), where the EQL type is named at

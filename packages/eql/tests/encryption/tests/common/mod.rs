@@ -8,20 +8,32 @@ use stack_kms::{
 };
 use uuid::Uuid;
 
+/// What a [`RecordingKeySource`] has been asked for, in order.
 #[derive(Default)]
 pub struct Calls {
+    /// The descriptor of each data key generated, one list per request.
     pub generate: Vec<Vec<String>>,
+    /// The descriptor of each data key retrieved, one list per request.
     pub retrieve: Vec<Vec<String>>,
     /// Index key loads, one per keyset a call resolves after the cipher is
     /// built.
     pub loads: usize,
 }
 
-pub struct Observed {
+/// The fake key source every test in this crate encrypts with. It hands out
+/// [`FakeDataKeySource`]'s keys, and records each request in [`Calls`]: the
+/// descriptor of every data key generated or retrieved, and the number of
+/// index key loads. So a test can check which context a key was asked for
+/// under, or that a refused call asked for no key at all.
+pub struct RecordingKeySource {
     inner: FakeDataKeySource,
     calls: Arc<Mutex<Calls>>,
 }
-impl DataKeySource for Observed {
+impl stack_kms::KeySourceKind for RecordingKeySource {
+    type Kind = stack_kms::OwnIdentity;
+}
+
+impl DataKeySource for RecordingKeySource {
     async fn generate_keys(
         &self,
         payloads: Vec<GenerateKeyPayload<'_>>,
@@ -49,7 +61,7 @@ impl DataKeySource for Observed {
         self.inner.retrieve_keys(payloads, keyset, context).await
     }
 }
-impl IndexKeySource for Observed {
+impl IndexKeySource for RecordingKeySource {
     async fn load_index_key(
         &self,
         keyset: Option<IdentifiedBy>,
@@ -58,10 +70,12 @@ impl IndexKeySource for Observed {
         self.inner.load_index_key(keyset).await
     }
 }
-pub async fn cipher() -> (StackCipher<Observed>, Arc<Mutex<Calls>>) {
+/// A cipher over a [`RecordingKeySource`], and the calls it records. The
+/// index key loaded while the cipher is built is not counted.
+pub async fn cipher() -> (StackCipher<RecordingKeySource>, Arc<Mutex<Calls>>) {
     let calls = Arc::new(Mutex::new(Calls::default()));
     let cipher = StackCipher::builder()
-        .kms(Observed {
+        .kms(RecordingKeySource {
             inner: FakeDataKeySource::new(),
             calls: calls.clone(),
         })

@@ -83,6 +83,10 @@ fn vitur(status: u16) -> ViturRequestError {
 #[derive(Default)]
 struct Failing(FakeDataKeySource);
 
+impl stack_kms::KeySourceKind for Failing {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl DataKeySource for Failing {
     async fn generate_keys(
         &self,
@@ -543,9 +547,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
         (
             "a record opened through another keyset",
             failure("foreign keyset", &["stack_encrypt::foreign_keyset"], || {
-                let globex =
-                    block_on(cipher.keyset(IdentifiedBy::Name("globex".to_owned().into())))
-                        .expect("keyset");
+                let globex = cipher.keyset(IdentifiedBy::Name("globex".to_owned().into()));
                 let record = sealed(&cipher, &plan_under(label("email")));
                 block_on(ops::decrypt_record(
                     globex,
@@ -904,9 +906,8 @@ fn a_keyset_not_found_carries_its_help_and_request_kind() {
 #[test]
 fn a_foreign_keyset_carries_both_keyset_ids() {
     let cipher = cipher();
-    let globex =
-        block_on(cipher.keyset(IdentifiedBy::Name("globex".to_owned().into()))).expect("keyset");
-    let globex_id = globex.keyset_id();
+    let globex = cipher.keyset(IdentifiedBy::Name("globex".to_owned().into()));
+    let globex_id = block_on(globex.keyset_id()).unwrap();
     let record = sealed(&cipher, &plan_under(label("email")));
     let error = failure("foreign", &["stack_encrypt::foreign_keyset"], || {
         block_on(ops::decrypt_record(
@@ -921,6 +922,10 @@ fn a_foreign_keyset_carries_both_keyset_ids() {
     assert_eq!(text(get(fields, "expected")), Some(globex_id.to_string()));
     assert_eq!(
         text(get(fields, "found")),
-        Some(cipher.default_keyset().keyset_id().to_string())
+        Some(
+            block_on(cipher.default_keyset().keyset_id())
+                .unwrap()
+                .to_string()
+        )
     );
 }

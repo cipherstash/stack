@@ -6,8 +6,7 @@ use serde_json::{json, Value};
 use stack_encrypt::nonempty;
 use stack_encrypt::sem::{OpeTerm, Orderable, OreBlockTerm, OreTerm, TermBytesError};
 
-use stack_encrypt::target::legacy::EncryptInto;
-use stack_encrypt::{KeysetCipher, StackCipher};
+use stack_encrypt::{EncryptInto, KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
 
 async fn cipher() -> StackCipher<FakeDataKeySource> {

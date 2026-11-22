@@ -1,10 +1,10 @@
 //! How a description receives its plaintext (`target::{Borrowed, Owned}`).
 //!
 //! Vitamin C's by-value `Encrypt` walk and `PrfValue` consume their input. A description
-//! handed a borrow (the default, and what every `EncryptFrom` declaration
-//! runs in) clones before an operation consumes; one handed the value
-//! (`Owned`) gives it to the operation. These tests hold the two claims that
-//! make owned mode worth having:
+//! handed a borrow (the default, and what every `EncryptTarget::encryption`
+//! declaration runs in) clones before an operation consumes; one handed the
+//! value (`Owned`) gives it to the operation. These tests hold the two claims
+//! that make owned mode worth having:
 //!
 //! - a plaintext that is **not `Clone`** runs a single operation — a
 //!   ciphertext alone, or one term alone — and the output is the same as the
@@ -21,11 +21,15 @@ use stack_encrypt::sem::{EqualityTerm, MatchTerms};
 use stack_encrypt::target::{
     ciphertext, equality, matching, AeadContext, Borrowed, CallerContext, Encryption, Owned,
 };
-use stack_encrypt::{nonempty, Encrypt, NonEmpty, StackCipherText};
+use stack_encrypt::target::{EncryptTarget, RequiredContext, StoredContext};
+use stack_encrypt::{
+    nonempty, DecryptFrom, Encrypt, EncryptInto, Label, NonEmpty, StackCipherText,
+};
 use stack_kms::FakeDataKeySource;
 use vitaminc_aead::plaintext::Sink;
 use vitaminc_prf::{IntoPrfContext, Prf, PrfValue, PrfVisitor};
 use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroize;
 
 mod common;
 use common::stack_cipher;
@@ -119,6 +123,13 @@ impl AsRef<str> for Counted {
         &self.text
     }
 }
+/// The source of an [`EncryptTarget`] must be `Zeroize`. The counter is
+/// not secret.
+impl Zeroize for Counted {
+    fn zeroize(&mut self) {
+        self.text.zeroize();
+    }
+}
 
 // --- A plaintext that is not `Clone` ----------------------------------------
 
@@ -132,7 +143,9 @@ async fn a_plaintext_that_is_not_clone_seals_through_ciphertext_alone() {
         .await
         .unwrap();
 
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(
         opened, NUMBER,
         "an owned, non-Clone plaintext should seal to a ciphertext that opens to its text"
@@ -192,7 +205,9 @@ async fn a_value_frame_seals_by_value_through_ciphertext_alone() {
         .await
         .unwrap();
 
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(
         opened, NUMBER,
         "a value frame should seal by value and open to the same text"
@@ -248,7 +263,9 @@ async fn an_owned_zip_copies_for_every_side_but_the_last() {
     );
 
     // And what each side made is what it would have made alone.
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(opened, NUMBER, "the zipped ciphertext opens to the text");
     let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
     assert_eq!(term, expected, "the zipped term is the text's term");
@@ -275,7 +292,9 @@ async fn a_borrowed_operation_copies_once_for_each_operation_that_consumes() {
         .await
         .unwrap();
     assert_eq!(clones.load(Ordering::SeqCst), 1, "a borrowed ciphertext");
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(opened, NUMBER, "the borrowed ciphertext opens to the text");
 
     let (value, clones) = Counted::new(NUMBER);
@@ -311,6 +330,131 @@ async fn a_match_term_never_copies_its_text() {
         0,
         "a match term reads its text in either mode"
     );
+}
+
+// --- How many copies a derived `plaintext = T` record makes ----------------
+
+/// A record with one field derived from the plaintext: its owned form moves
+/// the value into that field's owned form.
+#[derive(EncryptTarget)]
+#[stash(plaintext = Counted)]
+struct SealedOnly {
+    c: StackCipherText,
+}
+
+/// The same, storing the context it was sealed under.
+#[derive(EncryptTarget)]
+#[stash(plaintext = Counted)]
+struct SealedWithContext {
+    #[stash(context_field)]
+    scope: Label,
+    c: StackCipherText,
+}
+
+/// A record with two fields derived from the plaintext: its owned form is the
+/// default, which reads the value through the borrowed form.
+#[derive(EncryptTarget)]
+#[stash(plaintext = Counted)]
+struct SealedAndEqual {
+    c: StackCipherText,
+    hm: EqualityTerm,
+}
+
+fn scope() -> NonEmpty<Label> {
+    NonEmpty::from(Label::parse("cards/number").unwrap())
+}
+
+#[tokio::test]
+async fn a_record_with_one_derived_field_moves_the_value_into_it() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let (value, clones) = Counted::new(NUMBER);
+    let owned: SealedOnly = value
+        .encrypt_into_with_context(&keyset, context())
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        0,
+        "the owned form copies nothing"
+    );
+    let opened: String = String::decrypt_from_with_context(owned.c, &cipher, aead())
+        .await
+        .unwrap();
+    assert_eq!(opened, NUMBER, "the moved value is what is sealed");
+
+    // The borrowed form, which a collection runs for each element, copies
+    // the value once to seal it.
+    let (value, clones) = Counted::new(NUMBER);
+    let _: SealedOnly = keyset
+        .run(
+            <SealedOnly as EncryptTarget<Counted>>::encryption(),
+            &value,
+            RequiredContext::from(caller()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        1,
+        "the borrowed form copies once"
+    );
+
+    // A record that stores its context moves the value too.
+    let (value, clones) = Counted::new(NUMBER);
+    let stored: SealedWithContext = value
+        .encrypt_into_with_context(&keyset, scope())
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        0,
+        "the owned form copies nothing"
+    );
+    assert_eq!(stored.scope, scope().into_inner());
+    let opened: String =
+        String::decrypt_from_with_context(stored.c, &cipher, AeadContext::from(scope()))
+            .await
+            .unwrap();
+    assert_eq!(opened, NUMBER, "the moved value is what is sealed");
+    let (value, clones) = Counted::new(NUMBER);
+    let _: SealedWithContext = keyset
+        .run(
+            <SealedWithContext as EncryptTarget<Counted>>::encryption(),
+            &value,
+            StoredContext::from(scope()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        1,
+        "the borrowed form copies once"
+    );
+}
+
+#[tokio::test]
+async fn a_record_with_two_derived_fields_copies_the_value_for_each() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let (value, clones) = Counted::new(NUMBER);
+    let record: SealedAndEqual = value
+        .encrypt_into_with_context(&keyset, context())
+        .await
+        .unwrap();
+    assert_eq!(
+        clones.load(Ordering::SeqCst),
+        2,
+        "the default owned form reads the value through the borrowed form"
+    );
+    let opened: String = String::decrypt_from_with_context(record.c, &cipher, aead())
+        .await
+        .unwrap();
+    assert_eq!(opened, NUMBER);
+    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    assert_eq!(record.hm, expected);
 }
 
 // --- When an owned plaintext is dropped -------------------------------------
@@ -385,7 +529,9 @@ async fn an_owned_plaintext_is_dropped_before_its_key_request_is_sent() {
         1,
         "ciphertext: dropped exactly once"
     );
-    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    let opened: String = String::decrypt_from_with_context(sealed, &cipher, aead())
+        .await
+        .unwrap();
     assert_eq!(
         opened, NUMBER,
         "the text was sealed before the husk dropped"

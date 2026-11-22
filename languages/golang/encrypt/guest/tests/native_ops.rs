@@ -29,7 +29,7 @@ use stack_encrypt::{
 };
 use stack_encrypt::{AuditMetadata, Controlled, Protected};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
-use stack_encrypt_guest::options::{parse_options, scope_for, Export, KeysetSelector};
+use stack_encrypt_guest::options::{cipher_ref_for, parse_options, Export, KeysetSelector};
 use stack_encrypt_guest::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_TERM,
 };
@@ -69,6 +69,10 @@ impl Counting {
     fn take_unverified(&self) -> Vec<(&'static str, Option<UnverifiedContext>)> {
         std::mem::take(&mut *self.unverified.lock().expect("not poisoned"))
     }
+}
+
+impl stack_kms::KeySourceKind for Counting {
+    type Kind = stack_kms::OwnIdentity;
 }
 
 impl DataKeySource for Counting {
@@ -1236,14 +1240,14 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
 }
 
 // =============================================================================
-// Keysets: the scope a call selects
+// Keysets: the keyset a call selects
 // =============================================================================
 
 fn keyset_named<'c>(
     cipher: &'c StackCipher<Counting>,
     name: &str,
 ) -> stack_encrypt::KeysetCipher<'c, Counting> {
-    block_on(cipher.keyset(IdentifiedBy::Name(name.to_string().into()))).expect("select keyset")
+    cipher.keyset(IdentifiedBy::Name(name.to_string().into()))
 }
 
 /// A record batch whose rows were sealed under different keysets opens
@@ -1321,14 +1325,15 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
 #[test]
 fn each_opening_selector_names_its_keyset() {
     let cipher = cipher();
-    let acme = keyset_named(&cipher, "acme").keyset_id();
-    let keyset_of =
-        |selector: KeysetSelector| block_on(scope_for(&cipher, &selector)).map(|r| r.keyset_id());
+    let acme = block_on(keyset_named(&cipher, "acme").keyset_id()).unwrap();
+    let keyset_of = |selector: KeysetSelector| {
+        block_on(cipher_ref_for(&cipher, &selector)).map(|r| r.keyset_id())
+    };
 
     assert_eq!(keyset_of(KeysetSelector::Any), Ok(None));
     assert_eq!(
         keyset_of(KeysetSelector::Default),
-        Ok(Some(cipher.default_keyset().keyset_id()))
+        Ok(Some(block_on(cipher.default_keyset().keyset_id()).unwrap()))
     );
     let name = zerokms_protocol::Name::try_from("acme")
         .ok()

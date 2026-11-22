@@ -23,6 +23,8 @@
 //! Rust slice (see [`holds_mark`]).
 #![cfg(unix)]
 
+mod common;
+
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -84,10 +86,21 @@ unsafe fn holds_mark(ptr: *const u8, len: usize) -> bool {
     !memmem(ptr.cast(), len, MARK.as_ptr().cast(), MARK.len()).is_null()
 }
 
+/// The size of block [`allocations_of`] counts, or 0 when nothing is
+/// counted; and how many blocks of that size the watched thread allocated.
+static COUNT_SIZE: AtomicUsize = AtomicUsize::new(0);
+static COUNTED: AtomicUsize = AtomicUsize::new(0);
+
 struct Spy;
 
 unsafe impl GlobalAlloc for Spy {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if layout.size() == COUNT_SIZE.load(Ordering::SeqCst)
+            && WATCHING.with(Cell::get)
+            && !BUSY.with(Cell::get)
+        {
+            COUNTED.fetch_add(1, Ordering::SeqCst);
+        }
         System.alloc(layout)
     }
 
@@ -128,6 +141,27 @@ static SPY: Spy = Spy;
 /// the marker.
 fn watched<T>(what: &str, f: impl FnOnce() -> T) -> T {
     let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    watched_in_gate(what, f)
+}
+
+/// [`watched`], and count the blocks of exactly `size` bytes the watched
+/// thread allocated meanwhile.
+///
+/// A copy of a string allocates a block of the string's length. So with a
+/// string of a length nothing else allocates, two runs of one operation, one
+/// that copies the string and one that does not, differ by one block.
+fn allocations_of(size: usize, what: &str, f: impl FnOnce()) -> usize {
+    assert_ne!(size, 0, "a block size to count");
+    let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    COUNTED.store(0, Ordering::SeqCst);
+    COUNT_SIZE.store(size, Ordering::SeqCst);
+    watched_in_gate(what, f);
+    COUNT_SIZE.store(0, Ordering::SeqCst);
+    COUNTED.load(Ordering::SeqCst)
+}
+
+/// [`watched`], for a caller already holding [`GATE`].
+fn watched_in_gate<T>(what: &str, f: impl FnOnce() -> T) -> T {
     FOUND.lock().unwrap().clear();
     *EXCLUDED.lock().unwrap() = [0; 1];
     WATCHING.with(|on| on.set(true));
@@ -404,6 +438,10 @@ impl Stalling {
     }
 }
 
+impl stack_kms::KeySourceKind for Stalling {
+    type Kind = stack_kms::OwnIdentity;
+}
+
 impl DataKeySource for Stalling {
     async fn generate_keys(
         &self,
@@ -542,10 +580,8 @@ fn a_cancelled_text_target_leaves_no_plaintext_on_the_heap() {
 /// can hold another test's freed bytes. stack-encrypt's `heap_hygiene`,
 /// run one test to a process, holds containers to the same rule.
 ///
-/// The seal and open themselves are the JSON index's
-/// (`stack_encrypt::json`), which is not held to this rule yet: its path
-/// derivation frees key and leaf plaintext unwiped, so they are not
-/// watched here.
+/// The seal is watched in [`owned_seals`]. Opening a document is the JSON
+/// index's (`stack_encrypt::json`), and is not watched here.
 #[test]
 fn a_document_leaves_no_plaintext_on_the_heap_at_the_boundary() {
     let mark = marked("doc");
@@ -571,6 +607,299 @@ fn a_document_leaves_no_plaintext_on_the_heap_at_the_boundary() {
         });
     }
     drop(document);
+}
+
+/// The owned forms that move a plaintext into its seal, with no copy: a JSON
+/// tree document ([`JsonTreeDocument`]), sealed from a `JsonPlaintext`, from a
+/// data plan's frame (`JsonSearch`), and as a field under the options its
+/// record names; and the storage-only types, whose one field is the
+/// ciphertext. Each is watched on success and on each refusal, and each
+/// refusal requests no key.
+///
+/// [`JsonTreeDocument`]: eql_bindings::v4::json_tree::JsonTreeDocument
+mod owned_seals {
+    use super::*;
+
+    use eql_bindings::v4::json::Json;
+    use eql_bindings::v4::json_tree::{JsonTree, JsonTreeDocument};
+    use eql_bindings::v4::text::Text;
+    use eql_bindings::Identifier;
+    use serde_json::{json, Value};
+    use stack_encrypt::json::{JsonOptions, JsonPlaintext, JsonTarget};
+    use stack_encrypt::plan::PlanError;
+    use stack_encrypt::target::{CallerContext, DeclaredContext, Scope, StoredContext};
+    use stack_encrypt::{nonempty, EncryptInto, EncryptTarget, Error, NonEmpty};
+
+    fn column() -> NonEmpty<Identifier> {
+        Identifier::for_column("users", "profile").unwrap()
+    }
+
+    /// The column, then an empty scope: the column can be stored, and the
+    /// empty scope is refused when the value is sealed.
+    fn empty_scope() -> StoredContext<Identifier> {
+        StoredContext::from(
+            DeclaredContext::default()
+                .with(CallerContext::from(Scope::new(String::new())))
+                .under(nonempty!("users").with("profile")),
+        )
+    }
+
+    /// A context of one part, which no `Identifier` can store.
+    fn not_storable() -> StoredContext<Identifier> {
+        StoredContext::from(CallerContext::from(nonempty!("profile")))
+    }
+
+    /// A document with the marker in a key, in an array and in a string
+    /// with escapes, and a string long enough to make a short buffer grow.
+    fn document() -> Value {
+        let mut members = serde_json::Map::new();
+        members.insert(marked("key"), json!([marked("in-array"), 1.5, null]));
+        members.insert(
+            "escaped".to_owned(),
+            Value::String(format!("{}\n\"", marked("escaped"))),
+        );
+        members.insert("pad".to_owned(), Value::String("x".repeat(8 * 1024)));
+        Value::Object(members)
+    }
+
+    fn generated(calls: &std::sync::Mutex<common::Calls>) -> usize {
+        calls.lock().unwrap().generate.len()
+    }
+
+    #[test]
+    fn a_document_sealed_by_value_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let (cipher, calls) = rt.block_on(common::cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        watched("JsonTreeDocument, encrypt_into", || {
+            let _: JsonTreeDocument = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, column())
+                    .await
+                    .unwrap()
+            });
+        });
+        // A record field sealed under the options its record names.
+        let source = JsonPlaintext::from(document());
+        watched("JsonTreeDocument, as a field", || {
+            let description =
+                <JsonTreeDocument as JsonTarget<JsonPlaintext>>::json_owned_encryption(
+                    JsonOptions::default(),
+                );
+            let _: JsonTreeDocument = rt.block_on(async {
+                keyset
+                    .run(description, source, StoredContext::from(column()))
+                    .await
+                    .unwrap()
+            });
+        });
+        assert_eq!(generated(&calls), 2, "one data key for each seal");
+    }
+
+    /// A refused context. With an empty scope, the document has been moved
+    /// out of the `JsonPlaintext` when the scope is refused, and the seal
+    /// wipes it. With a column that cannot be stored, the refusal comes
+    /// first, and dropping the `JsonPlaintext` wipes the document.
+    #[test]
+    fn a_document_refused_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let (cipher, calls) = rt.block_on(common::cipher());
+        let keyset = cipher.default_keyset();
+        let source = JsonPlaintext::from(document());
+        watched("JsonTreeDocument, an empty scope", || {
+            let description =
+                <JsonTreeDocument as EncryptTarget<JsonPlaintext>>::owned_encryption();
+            let refused =
+                rt.block_on(async { keyset.run(description, source, empty_scope()).await });
+            assert!(
+                matches!(refused, Err(Error::Plan(PlanError::EmptyPart))),
+                "an empty scope is refused: {refused:?}"
+            );
+        });
+        let source = JsonPlaintext::from(document());
+        watched("JsonTreeDocument, a column it cannot store", || {
+            let description =
+                <JsonTreeDocument as JsonTarget<JsonPlaintext>>::json_owned_encryption(
+                    JsonOptions::default(),
+                );
+            let refused =
+                rt.block_on(async { keyset.run(description, source, not_storable()).await });
+            assert!(
+                matches!(
+                    refused,
+                    Err(Error::Plan(PlanError::ContextNotStorable { .. }))
+                ),
+                "one part is not a column: {refused:?}"
+            );
+        });
+        assert_eq!(generated(&calls), 0, "a refusal requests no key");
+    }
+
+    /// A data plan's `JsonSearch` field: the document parsed from the
+    /// frame is moved into the seal.
+    #[test]
+    fn a_document_from_a_frame_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let (cipher, calls) = rt.block_on(common::cipher());
+        let keyset = cipher.default_keyset();
+        let label = Label::new(["users", "profile"]).unwrap();
+        let text = joined(&[
+            r#"{""#,
+            &marked("key"),
+            r#"": [""#,
+            &marked("in-array"),
+            r#"\n"]}"#,
+        ]);
+        let frame = ValueFrame::of(text.as_str()).unwrap();
+        drop(text);
+        watched("JsonSearch, encrypt", || {
+            rt.block_on(async {
+                targets::encrypt("JsonSearch", &keyset, &label, frame)
+                    .unwrap()
+                    .await
+                    .unwrap()
+            });
+        });
+        assert_eq!(generated(&calls), 1, "one data key");
+    }
+
+    /// A storage-only type moves its plaintext into its ciphertext.
+    #[test]
+    fn a_storage_only_value_sealed_by_value_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let (cipher, calls) = rt.block_on(common::cipher());
+        let keyset = cipher.default_keyset();
+        let source = marked("text");
+        watched("Text, encrypt_into", || {
+            let _: Text = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, column())
+                    .await
+                    .unwrap()
+            });
+        });
+        let source = JsonPlaintext::from(document());
+        watched("Json, encrypt_into", || {
+            let _: Json = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, column())
+                    .await
+                    .unwrap()
+            });
+        });
+        assert_eq!(generated(&calls), 2, "one data key for each seal");
+    }
+
+    /// A refused context wipes a storage-only type's plaintext: a column it
+    /// cannot store is refused before the ciphertext is reached, and an
+    /// empty scope is refused by the ciphertext.
+    #[test]
+    fn a_storage_only_value_refused_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let (cipher, calls) = rt.block_on(common::cipher());
+        let keyset = cipher.default_keyset();
+        let source = marked("not-storable");
+        watched("Text, a column it cannot store", || {
+            let description = <Text as EncryptTarget<String>>::owned_encryption();
+            let refused =
+                rt.block_on(async { keyset.run(description, source, not_storable()).await });
+            assert!(
+                matches!(
+                    refused,
+                    Err(Error::Plan(PlanError::ContextNotStorable { .. }))
+                ),
+                "one part is not a column: {:?}",
+                refused.err()
+            );
+        });
+        let source = marked("empty-scope");
+        watched("Text, an empty scope", || {
+            let description = <Text as EncryptTarget<String>>::owned_encryption();
+            let refused =
+                rt.block_on(async { keyset.run(description, source, empty_scope()).await });
+            assert!(
+                matches!(refused, Err(Error::Plan(PlanError::EmptyPart))),
+                "an empty scope is refused: {:?}",
+                refused.err()
+            );
+        });
+        assert_eq!(generated(&calls), 0, "a refusal requests no key");
+    }
+
+    /// A string of a length no other block in the seal has, in a document.
+    const LONG: usize = 12_289;
+    fn long() -> Value {
+        let mut text = marked("long");
+        text.extend(std::iter::repeat_n('y', LONG - text.len()));
+        json!({"long": text, "short": marked("short")})
+    }
+
+    /// The owned forms do not copy the document: each makes one block
+    /// fewer of the length of the document's long string than the borrowed
+    /// form of the same type, which copies the document once.
+    #[test]
+    fn a_document_sealed_by_value_is_not_copied() {
+        let rt = runtime();
+        let cipher = cipher(&rt);
+        let keyset = cipher.default_keyset();
+
+        let source = long();
+        let borrowed = allocations_of(LONG, "JsonTreeDocument, borrowed", || {
+            let _: JsonTreeDocument = rt.block_on(async {
+                keyset
+                    .run(JsonTree::default().encryption(), &source, column())
+                    .await
+                    .unwrap()
+            });
+        });
+        drop(source);
+        let source = JsonPlaintext::from(long());
+        let owned = allocations_of(LONG, "JsonTreeDocument, owned", || {
+            let _: JsonTreeDocument = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, column())
+                    .await
+                    .unwrap()
+            });
+        });
+        assert_eq!(
+            borrowed,
+            owned + 1,
+            "JsonTreeDocument: the borrowed form copies the document once and the owned \
+             form does not (borrowed {borrowed}, owned {owned})"
+        );
+
+        let source = JsonPlaintext::from(long());
+        let borrowed = allocations_of(LONG, "Json, borrowed", || {
+            let _: Json = rt.block_on(async {
+                keyset
+                    .run(
+                        <Json as EncryptTarget<JsonPlaintext>>::encryption(),
+                        &source,
+                        StoredContext::from(column()),
+                    )
+                    .await
+                    .unwrap()
+            });
+        });
+        drop(source);
+        let source = JsonPlaintext::from(long());
+        let owned = allocations_of(LONG, "Json, owned", || {
+            let _: Json = rt.block_on(async {
+                source
+                    .encrypt_into_with_context(&keyset, column())
+                    .await
+                    .unwrap()
+            });
+        });
+        assert_eq!(
+            borrowed,
+            owned + 1,
+            "Json: the borrowed form copies the document once and the owned form does not \
+             (borrowed {borrowed}, owned {owned})"
+        );
+    }
 }
 
 /// `parts` joined into a string sized for them before it is written, so

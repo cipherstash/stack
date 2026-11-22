@@ -30,14 +30,14 @@
 //! has at least two segments. A field's label may be extended by the
 //! caller's parts, nested to the left as a binding extends one part at a
 //! time (`[["users", "age"], 7]`, then `[[["users", "age"], 7], "eu"]`), and
-//! every field must carry the same extension: it becomes the call's
-//! `.extend(..)`. A context that is not a label (one text part `"users/age"`,
+//! every field must carry the same extension: it extends the context of
+//! each field. A context that is not a label (one text part `"users/age"`,
 //! an integer, bytes) is refused as a plan a fields plan cannot express.
 //!
 //! # A plan whose context is a field of the record
 //!
-//! The typed plan builder's third context source, `context_field`, has a
-//! data form too: a plan-level key, `"context_field": "<field name>"`, beside
+//! A plan can take its context from a field of each record: a plan-level
+//! key, `"context_field": "<field name>"`, beside
 //! the field specs. The named field's value in each record is then the
 //! context every other field is sealed under — a tenant label such as
 //! `"tenants/acme"`, which must parse as a plain [`Label`] — and the field
@@ -76,11 +76,15 @@
 //! a target field whose label has any other number of segments
 //! ([`TargetError::Column`]) — [`FieldPlan::with_target`] itself takes any
 //! label, as every field constructor does; the segment rules are the
-//! plan's — and an extended plan (a tenant part on every
-//! label) has no column for it and is refused with
-//! [`TargetError::Extended`] rather than silently dropping the extension,
-//! as is a plan with a context field, whose labels are identities alone
-//! under whatever table each record names ([`TargetError::ContextField`]).
+//! plan's. A plan with a context field is refused too: its labels are
+//! identities alone, under whatever table each record names
+//! ([`TargetError::ContextField`]).
+//!
+//! The scopes and the bindings of the plan and of the call come after the
+//! label, as they do for a field with outputs: a tenant part on every
+//! label, a row ID. The resolver runs the type under the label, then
+//! those parts. The EQL value stores the column alone, so whoever reads
+//! the value supplies the parts again.
 //! The field's `"type"`, when declared, must be the kind the EQL type is
 //! produced from ([`TargetError::Kind`]); undeclared, it is that kind, so
 //! every value is checked against it as any typed field's is.
@@ -106,7 +110,7 @@
 //! kind, once checked — by the typed path's derivation, so they are the
 //! bytes a Rust `u32` or `String` field derives under the same label.
 //!
-//! The ciphertext is where a data plan and a Rust chain meet too. Every
+//! The ciphertext is where a data plan and typed Rust code meet too. Every
 //! leaf is tagged with its type, a typed Rust value's as much as
 //! a [`ValueFrame`]'s, so a Rust `u32` field and a `uint32` data field seal
 //! the same leaf under the same context, and each opens the other's. A reader
@@ -672,9 +676,11 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         }
         P::BindInQuery => (None, Reason::BindInQuery),
         P::EmptyPart => (None, Reason::EmptyBinding),
-        P::IdentityWithoutField | P::MixedCiphers | P::TwoContextSources { .. } | P::NoContext => {
-            (None, Reason::Refused)
-        }
+        P::IdentityWithoutField
+        | P::MixedCiphers
+        | P::TwoContextSources { .. }
+        | P::NoContext
+        | P::ContextNotStorable { .. } => (None, Reason::Refused),
     }
 }
 
@@ -701,9 +707,8 @@ pub struct Plan {
     fields: Vec<FieldPlan>,
 }
 
-/// Where a data plan takes its context from: the builder's first and third
-/// sources. The second, the call, has no data form: a binding names the
-/// context in the declaration it sends.
+/// Where a data plan takes its context from: the plan, or a field of each
+/// record. A binding names the context in the declaration it sends.
 #[derive(Clone, Debug)]
 pub(super) enum Context {
     /// The plan's own label, which every field's label extends.
@@ -741,7 +746,8 @@ impl Plan {
     /// rule, so a parsed and a hand-built plan are refused alike.
     /// [`Error::Target`] if a target field names a type the
     /// resolver does not know or cannot produce, declares a `"type"` other
-    /// than the kind that type is produced from, or sits in an extended plan.
+    /// than the kind that type is produced from, or has a label that is not
+    /// a column.
     pub fn new_with(
         mut fields: Vec<FieldPlan>,
         resolver: &(impl TargetResolver + ?Sized),
@@ -750,7 +756,6 @@ impl Plan {
             return Err(Error::bad_plan(Reason::NoFields));
         };
         let context = first.prefix()?;
-        let extension = first.extension.clone();
         for field in &fields {
             // `prefix` refuses a one-segment label, which has nothing to
             // sit under; a longer one must sit under the first field's.
@@ -764,13 +769,6 @@ impl Plan {
         for field in fields.iter_mut().filter(|field| field.is_target()) {
             let name = field.target.clone().unwrap_or_default();
             let descriptor = resolver.resolve(&name)?;
-            if !extension.is_empty() {
-                return Err(TargetError::Extended {
-                    name: field.name.clone(),
-                    label: field.label.to_string(),
-                }
-                .into());
-            }
             // An EQL value is stored under a table and a column, so the
             // label is exactly two segments. Decided here, where the plan is
             // built and se_plan_check reports it, not at the first value: a
@@ -840,8 +838,7 @@ impl Plan {
     }
 
     /// A plan over `fields` that takes its context from the field named
-    /// `context_field`: the plan builder's
-    /// [`context_field`](crate::plan::FieldsBuilder::context_field), as data. That
+    /// `context_field`. That
     /// field's value in each record is the context every other field is
     /// sealed under, and the field is carried as a passthrough of type
     /// string. Each field's label is its identity alone, a one-segment
@@ -891,7 +888,7 @@ impl Plan {
         // A target field's label must be a column, `<table>/<column>`,
         // which a context field's one-segment identity is not: the table
         // is each record's own, and an EQL value stores one fixed by the
-        // declaration. The same refusal as an extended plan's.
+        // declaration.
         if let Some(target) = fields.iter().find(|field| field.is_target()) {
             return Err(TargetError::ContextField {
                 name: target.name.clone(),
@@ -982,8 +979,7 @@ impl Plan {
 
     /// The plan's one context: the label every field's label extends.
     /// `None` for a plan that takes its context from a field
-    /// ([`context_field`](Self::context_field)), as the builder's
-    /// [`Plan::label`](crate::Plan::label) is.
+    /// ([`context_field`](Self::context_field)).
     pub fn label(&self) -> Option<&Label> {
         match &self.context {
             Context::Label(label) => Some(label),
@@ -991,8 +987,7 @@ impl Plan {
         }
     }
 
-    /// The field the plan takes its context from, if it has one: the
-    /// builder's [`Plan::context_field`](crate::Plan::context_field).
+    /// The field the plan takes its context from, if it has one.
     pub fn context_field(&self) -> Option<&str> {
         match &self.context {
             Context::Field(name) => Some(name),
@@ -1009,36 +1004,32 @@ impl Plan {
     /// The contexts this plan's fields are sealed and indexed under, with
     /// the plan's extension applied and a placeholder for a context read
     /// from a field of each record. No key is requested. The same view as
-    /// [`Plan::contexts`](crate::Plan::contexts) for a typed plan, so a
-    /// binding can show a record's contexts, and a test in that language
-    /// can pin them.
+    /// a derived record's `contexts()`, so a binding can show a record's
+    /// contexts, and a test in that language can pin them.
     ///
     /// # Errors
     ///
     /// Unreachable for a plan from [`plan`], [`Plan::new`] or
     /// [`Plan::with_context_field`]: a parsed plan always composes.
     pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
-        let lowered = crate::contexts::under_declared(
-            compose::<()>(self, &Absent::new())?.shapes(),
-            &self.declared_context(),
-        );
+        let shapes = self.placed(compose::<()>(self, &Absent::new())?.shapes());
         Ok(crate::contexts::resolve(
-            self.placed(lowered),
+            crate::contexts::under_declared(shapes, &self.declared_context()),
             crate::contexts::CallerShape::none(),
         ))
     }
 
     /// The shape of every field's context, in plan order: the `lowered`
-    /// fields' shapes, and each target field under its label alone. An EQL
-    /// value is sealed under its table and column by the resolver, and
-    /// takes no part from the caller: the plan refuses an extension for it
-    /// before it runs.
+    /// fields' shapes, and each target field under its label, then the
+    /// context it is handed. The resolver runs an EQL type under its label
+    /// and the plan's parts, as the lowering runs a field with outputs, so
+    /// the two kinds of field show the same parts.
     fn placed(&self, lowered: crate::contexts::Shapes) -> crate::contexts::Shapes {
         let mut lowered = lowered.into_iter().peekable();
         let mut shapes = crate::contexts::Shapes::with_capacity(self.fields.len());
         for field in &self.fields {
             if field.is_target() {
-                shapes.push(crate::contexts::known_leaf(
+                shapes.push(crate::contexts::leaf_under(
                     &field.name,
                     field.label.clone().into_context(),
                 ));
@@ -1068,22 +1059,10 @@ impl Plan {
     ///
     /// [`Error::Plan`] with [`Reason::EmptyBinding`] for an empty part: a
     /// row ID not yet assigned would bind every row to one context, and
-    /// the typed path refuses the same. [`Error::Target`] if a field names
-    /// an EQL type: an EQL value is stored under its table and column
-    /// alone, so a binding cannot extend it, as an extension cannot
-    /// ([`TargetError::Extended`]).
+    /// the typed path refuses the same.
     pub fn with_bindings(mut self, parts: Vec<ContextPiece<'static>>) -> Result<Self, Error> {
         if parts.iter().any(crate::MaybeEmpty::is_empty) {
             return Err(Error::bad_plan(Reason::EmptyBinding));
-        }
-        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
-            if !parts.is_empty() {
-                return Err(TargetError::Extended {
-                    name: target.name.clone(),
-                    label: target.label.to_string(),
-                }
-                .into());
-            }
         }
         self.bindings = parts;
         Ok(self)
@@ -1101,8 +1080,8 @@ impl Plan {
     /// plan's own extension, then the scopes. A call with no scope borrows
     /// the plan instead, and copies nothing.
     ///
-    /// A plan with a field that names an EQL type takes no scope. An EQL
-    /// value is stored under its table and column alone.
+    /// A field that names an EQL type is scoped as any other field is. Its
+    /// EQL value stores its table and column, and not the scope.
     ///
     /// The scope shows in the context of the call. Here a record under a
     /// one-field plan is encrypted under the scope `42u64`:
@@ -1140,9 +1119,7 @@ impl Plan {
     ///
     /// # Errors
     ///
-    /// [`Error::Plan`] with [`Reason::EmptyContext`] for an empty part, and
-    /// [`Error::Target`] if a field names an EQL type
-    /// ([`TargetError::Extended`]), as [`with_bindings`](Self::with_bindings).
+    /// [`Error::Plan`] with [`Reason::EmptyContext`] for an empty part.
     pub(super) fn with_scopes(
         mut self,
         parts: impl IntoIterator<Item = ContextPiece<'static>>,
@@ -1150,15 +1127,6 @@ impl Plan {
         let parts: Vec<_> = parts.into_iter().collect();
         if parts.iter().any(crate::MaybeEmpty::is_empty) {
             return Err(Error::bad_plan(Reason::EmptyContext));
-        }
-        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
-            if !parts.is_empty() {
-                return Err(TargetError::Extended {
-                    name: target.name.clone(),
-                    label: target.label.to_string(),
-                }
-                .into());
-            }
         }
         for field in &mut self.fields {
             for part in &parts {
@@ -1173,25 +1141,32 @@ impl Plan {
     /// then the context the caller hands a [`Planned`](super::Planned)
     /// record.
     pub(super) fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
-        Ok(self.placed(crate::contexts::under_declared_then_caller(
-            compose::<()>(self, &Absent::new())?.shapes(),
+        Ok(crate::contexts::under_declared_then_caller(
+            self.placed(compose::<()>(self, &Absent::new())?.shapes()),
             &self.declared_context(),
-        )))
+        ))
     }
 
-    /// The context every field's label is run under: the extension, as the
-    /// chain's `.extend(..)` would carry it, then the bindings.
-    fn declared_context(&self) -> DeclaredContext {
-        let scopes = self
-            .extension
+    /// The scopes every field's label is run under: the extension. A
+    /// query runs under these alone.
+    fn scopes(&self) -> DeclaredContext {
+        self.extension
             .iter()
             .cloned()
             .fold(DeclaredContext::default(), |context, part| {
                 context.with(CallerContext::from_piece(part))
-            });
-        self.bindings.iter().cloned().fold(scopes, |context, part| {
-            context.with(CallerContext::bind_piece(part))
-        })
+            })
+    }
+
+    /// The context every field's label is run under: the scopes, then the
+    /// bindings.
+    pub(super) fn declared_context(&self) -> DeclaredContext {
+        self.bindings
+            .iter()
+            .cloned()
+            .fold(self.scopes(), |context, part| {
+                context.with(CallerContext::bind_piece(part))
+            })
     }
 
     fn shape(&self) -> Vec<FieldShape> {
@@ -1842,7 +1817,14 @@ pub fn encrypt_with<'a, K: 'static>(
             let name = field.target().unwrap_or_default();
             pendings.push(
                 resolver
-                    .encrypt(name, field.target_options(), cipher, field.label(), value)
+                    .encrypt(
+                        name,
+                        field.target_options(),
+                        cipher,
+                        field.label(),
+                        &extend,
+                        value,
+                    )
                     .map_err(|error| Error::Target(name_target(error, &field.name)))?,
             );
             count += 1;
@@ -1949,7 +1931,8 @@ fn in_row_order<T>(
 
 /// Derive the EQL query value of one target field for one plaintext: the
 /// operand that matches stored values of the field, as JSON bytes, through
-/// the type's own query plan. A query derives no data key, so the pending
+/// the type's own query plan. It runs under the field's label, then the
+/// plan's scopes, and under no binding. A query derives no data key, so the pending
 /// settles without I/O; it is a [`Pending`] all the same, for one shape at
 /// the call site.
 ///
@@ -2002,7 +1985,7 @@ pub fn query<'a, K: 'static>(
         check_field(&value, field)?;
     }
     resolver
-        .query(name, index, cipher, field.label(), value)
+        .query(name, index, cipher, field.label(), &plan.scopes(), value)
         .map_err(|error| Error::Target(name_target(error, &field.name)))
 }
 
@@ -2066,14 +2049,12 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 /// against `expected` or leaves the sealed fields unable to open.
 ///
 /// `expected` is the context the caller expects, for a plan with a
-/// [context field](Plan::with_context_field): the chain's
-/// `open(record).context(expected)`. Each record's stored context field is
+/// [context field](Plan::with_context_field). Each record's stored context field is
 /// checked against it before any key is requested, and a record that
 /// names another context fails the pending with
 /// [`Error::ContextMismatch`](crate::Error::ContextMismatch). `None`
 /// opens each record under whatever context it stores. For a plan with a
-/// context of its own there is nothing to expect: `Some` is refused as the
-/// chain refuses it, with
+/// context of its own there is nothing to expect: `Some` is refused with
 /// [`PlanError::TwoContextSources`](crate::PlanError::TwoContextSources).
 ///
 /// # Errors
@@ -2093,17 +2074,17 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 /// [`decrypt_with`]. This runs under [`NoTargets`], so such a plan is
 /// refused ([`Error::Target`]).
 pub fn decrypt<'a, K: 'static>(
-    scope: impl Into<CipherRef<'a, K>>,
+    cipher_ref: impl Into<CipherRef<'a, K>>,
     record: StackCipherText,
     plan: &Plan,
     expected: Option<Label>,
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
-    decrypt_with(scope, record, plan, expected, &NoTargets)
+    decrypt_with(cipher_ref, record, plan, expected, &NoTargets)
 }
 
 /// [`decrypt`], opening each target field's EQL value (the [`EQL_KEY`]
 /// node) through `resolver`: the type's own decryption, under the field's
-/// column, zipped into the record's pending and confined to the scope's
+/// column, zipped into the record's pending and confined to the caller's
 /// keyset as every other leaf is.
 ///
 /// # Errors
@@ -2111,17 +2092,17 @@ pub fn decrypt<'a, K: 'static>(
 /// As [`decrypt`], plus [`Error::Target`] for a stored value that is not
 /// the type, or a name the resolver refuses.
 pub fn decrypt_with<'a, K: 'static>(
-    scope: impl Into<CipherRef<'a, K>>,
+    cipher_ref: impl Into<CipherRef<'a, K>>,
     record: StackCipherText,
     plan: &Plan,
     expected: Option<Label>,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
-    let scope: CipherRef<'a, K> = scope.into();
+    let cipher_ref: CipherRef<'a, K> = cipher_ref.into();
     let rows = record_rows(record, plan)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
-    let (cipher, keyset) = (scope.cipher(), scope.keyset_id());
+    let cipher = cipher_ref.cipher();
     let mut pendings = Vec::new();
     let mut targets = |row: StoredRow| -> Result<(Absent, FieldValues, usize), Error> {
         let fields = plan
@@ -2130,14 +2111,14 @@ pub fn decrypt_with<'a, K: 'static>(
         let mut count = 0;
         for (field, stored) in fields.zip(row.targets) {
             let name = field.target().unwrap_or_default();
-            // Confined to the scope's keyset, as the lowered plan's leaves
+            // Confined to the caller's keyset, as the lowered plan's leaves
             // are: a target value sealed under another keyset is refused
             // before any key is retrieved.
             pendings.push(confine(
                 resolver
-                    .decrypt(name, cipher, field.label(), &stored)
+                    .decrypt(name, cipher, field.label(), &extend, &stored)
                     .map_err(|error| Error::Target(name_target(error, &field.name)))?,
-                keyset,
+                &cipher_ref,
             ));
             count += 1;
         }
@@ -2149,7 +2130,7 @@ pub fn decrypt_with<'a, K: 'static>(
             let eql = Pending::all(cipher, pendings);
             confine(
                 cipher.run_decryption(opening::<K>(plan, values, expected, extend, &absent)),
-                keyset,
+                &cipher_ref,
             )
             .zip(eql)
             .try_map(move |(values, eql)| {
@@ -2179,7 +2160,7 @@ pub fn decrypt_with<'a, K: 'static>(
                 });
                 opens.push(confine(
                     cipher.run_decryption(Decryption::all(rows)),
-                    keyset,
+                    &cipher_ref,
                 ));
                 positions.push(at);
             }
@@ -2203,17 +2184,15 @@ pub fn decrypt_with<'a, K: 'static>(
     })
 }
 
-/// A pending confined to `keyset` when the caller's scope is one keyset:
-/// the client opens leaves from any of its keysets, a keyset cipher
-/// refuses a foreign one before any key is retrieved.
+/// A pending the client built, confined to the keyset the caller ran it
+/// through, when the caller ran it through one: the client opens leaves
+/// from any of its keysets, and a keyset cipher refuses a foreign one
+/// before any key is retrieved.
 fn confine<'a, T: 'a, K>(
     pending: Pending<'a, T, K>,
-    keyset: Option<uuid::Uuid>,
+    cipher_ref: &CipherRef<'a, K>,
 ) -> Pending<'a, T, K> {
-    match keyset {
-        Some(keyset) => pending.scoped_to(keyset),
-        None => pending,
-    }
+    pending.confined_to(cipher_ref.keyset())
 }
 
 /// Check a source against a plan without encrypting it — everything
@@ -2919,10 +2898,10 @@ mod tests {
     use vitaminc_protected::Controlled;
 
     use crate::dynamic::term;
-    use crate::plan::pick;
+    use crate::plan::join;
     use crate::sem::EqualityTerm;
-    use crate::target::{AeadContext, DecryptInto, EncryptFrom};
-    use crate::{nonempty, Equality, PlanError, StackCipher};
+    use crate::target::{ciphertext, indexed, AeadContext, Borrowed, DecryptSource, EncryptTarget};
+    use crate::{nonempty, DecryptFrom, EncryptInto, Equality, Indexes, PlanError, StackCipher};
 
     /// `FakeDataKeySource` with call counters, so the batching contract —
     /// one key request per invocation, none for a refused call — is
@@ -2932,6 +2911,10 @@ mod tests {
         inner: FakeDataKeySource,
         generate_calls: AtomicUsize,
         retrieve_calls: AtomicUsize,
+    }
+
+    impl stack_kms::KeySourceKind for Counting {
+        type Kind = stack_kms::OwnIdentity;
     }
 
     impl DataKeySource for Counting {
@@ -3366,8 +3349,8 @@ mod tests {
 
         /// A field's context is its label, optionally extended, and nothing
         /// else: what a fields plan can give a field. The shapes refused here
-        /// are contexts (`dynamic::context` reads them) that no `.fields()`
-        /// chain could spell.
+        /// are contexts (`dynamic::context` reads them) that no field of a
+        /// record can have.
         #[test]
         fn refuses_a_field_context_that_is_not_a_label() {
             // The text, one-segment, malformed-segment and nested-extension
@@ -3442,7 +3425,7 @@ mod tests {
         }
 
         /// Two sealed fields keyed under one identity would have one context
-        /// and interchangeable terms: the builder refuses it, so the plan does.
+        /// and interchangeable terms, so the plan refuses it.
         #[test]
         fn refuses_two_fields_keyed_under_one_identity() {
             let parsed = plan(obj(vec![
@@ -4198,41 +4181,46 @@ mod tests {
             assert_eq!(text_of(&email[1].1), "b@x");
         }
 
-        /// The lowering is the plan builder: the record a data plan seals is
-        /// the record the chain seals under the same declaration over the
-        /// same plaintext type, a [`ValueFrame`] per field — the same terms,
-        /// and ciphertexts each side opens.
+        /// The lowering is the combinators: each field of the record a data
+        /// plan seals is what the combinator for its outputs seals over the
+        /// same plaintext type, a [`ValueFrame`], under the field's label.
+        /// The terms are the same, and each side opens the other's
+        /// ciphertext.
         #[tokio::test]
-        async fn seals_what_the_chain_seals_under_the_same_declaration() {
-            struct User {
-                age: ValueFrame,
-                email: ValueFrame,
-                nick: ValueFrame,
-                id: u64,
-            }
+        async fn seals_what_the_combinators_seal_under_the_same_declaration() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let frame = |value: Tree| ValueFrame::of(&value).expect("a value");
-            let user = User {
-                age: frame(Tree::UInt32(34)),
-                email: frame(s("a@x")),
-                nick: frame(s("al smith")),
-                id: 7,
-            };
             let default_match = IndexSpec::Match(crate::sem::MatchOptions::default());
-            let mut chain = cipher
-                .encrypt(&user)
-                .context("users")
-                .fields()
-                .encrypt_index(
-                    pick("age", |u: &User| &u.age),
-                    (IndexSpec::Equality, IndexSpec::Ore),
+            // `c`, `eq` and `ore`: a ciphertext with its terms beside it.
+            let age: Encrypted<(TermBytes, TermBytes)> = keyset
+                .run(
+                    indexed::<_, _, Borrowed, _>((IndexSpec::Equality, IndexSpec::Ore))
+                        .under(nonempty!("users").with("age")),
+                    &frame(Tree::UInt32(34)),
+                    DeclaredContext::default(),
                 )
-                .encrypt(pick("email", |u: &User| &u.email))
-                .index(pick("nick", |u: &User| &u.nick), default_match)
-                .passthrough(pick("id", |u: &User| &u.id))
                 .await
-                .expect("the chain");
+                .expect("age");
+            // `c` alone: a ciphertext.
+            let email: StackCipherText = keyset
+                .run(
+                    ciphertext::<_, _, Borrowed>().under(nonempty!("users").with("email")),
+                    &frame(s("a@x")),
+                    DeclaredContext::default(),
+                )
+                .await
+                .expect("email");
+            // `match` alone: the terms, with no ciphertext.
+            let nick: TermBytes = keyset
+                .run(
+                    Indexes::<ValueFrame>::operations::<_, Borrowed>(&default_match)
+                        .under(nonempty!("users").with("nick")),
+                    &frame(s("al smith")),
+                    DeclaredContext::default(),
+                )
+                .await
+                .expect("nick");
             let plan = plan(obj(vec![
                 (
                     "age",
@@ -4245,7 +4233,6 @@ mod tests {
             .expect("plan");
             let mut fields = map(seal(&keyset, row(34), &plan).await);
 
-            let age: Encrypted<(TermBytes, TermBytes)> = chain.take("age").expect("age");
             let mut lowered_age = map(node(&mut fields, "age"));
             assert_eq!(
                 term_bytes(&node(&mut lowered_age, "eq")),
@@ -4257,7 +4244,6 @@ mod tests {
                 age.terms.1.as_bytes(),
                 "the same ore term"
             );
-            let nick: TermBytes = chain.take("nick").expect("nick");
             let mut lowered_nick = map(node(&mut fields, "nick"));
             assert_eq!(
                 term_bytes(&node(&mut lowered_nick, "match")),
@@ -4266,15 +4252,14 @@ mod tests {
             );
 
             // Each side's ciphertext opens through the other.
-            let chain_opened: Tree = cipher
+            let typed_opened: Tree = cipher
                 .decrypt(
                     node(&mut lowered_age, "c"),
                     Label::parse("users/age").expect("label"),
                 )
                 .await
-                .expect("the chain's reader opens the lowering's leaf");
-            assert_eq!(u32_of(&chain_opened), 34);
-            let email: StackCipherText = chain.take("email").expect("email");
+                .expect("the cipher's reader opens the lowering's leaf");
+            assert_eq!(u32_of(&typed_opened), 34);
             let stored = CipherText::Map(vec![
                 (
                     "age".to_string(),
@@ -4294,7 +4279,7 @@ mod tests {
             assert_eq!(
                 u32_of(&opened[0].1),
                 34,
-                "the lowering opens the chain's leaf"
+                "the lowering opens the combinator's leaf"
             );
             assert_eq!(text_of(&opened[1].1), "a@x", "and its string");
             assert_eq!(u64_of(&opened[2].1), 7);
@@ -4322,15 +4307,11 @@ mod tests {
             }
         }
 
-        /// A field's extension lowers to the chain's `.extend(..)`: the
-        /// record is the typed chain's under the same extension, and the
-        /// stored terms are the probes under the extended context, not the
-        /// flat one.
+        /// A field's extension extends the field's context: the stored term
+        /// is the term the combinator derives under the same extension, and
+        /// the probe under the extended context, not the flat one.
         #[tokio::test]
-        async fn a_one_part_extension_is_the_chains_extend() {
-            struct Age {
-                age: u32,
-            }
+        async fn a_one_part_extension_extends_the_fields_context() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let parts = [Tree::UInt64(7)];
@@ -4343,20 +4324,19 @@ mod tests {
             let mut fields = map(seal(&keyset, obj(vec![("age", Tree::UInt32(34))]), &plan).await);
             let mut age = map(node(&mut fields, "age"));
 
-            let mut typed_record = cipher
-                .encrypt(&Age { age: 34 })
-                .context("users")
-                .fields()
-                .encrypt_index(pick("age", |a: &Age| &a.age), Equality)
-                .extend(7u64)
+            let typed_age: Encrypted<EqualityTerm> = keyset
+                .run(
+                    indexed::<_, _, Borrowed, _>(Equality).under(nonempty!("users").with("age")),
+                    &34u32,
+                    DeclaredContext::from(CallerContext::from(7u64)),
+                )
                 .await
-                .expect("typed chain");
-            let typed_age: Encrypted<EqualityTerm> = typed_record.take("age").expect("age");
+                .expect("the combinator");
             let stored = term_bytes(&node(&mut age, "eq"));
             assert_eq!(
                 stored,
                 typed_age.terms.to_bytes(),
-                "the same term as the chain extended by the same part"
+                "the same term as the combinator extended by the same part"
             );
             let native = nonempty!("users").with("age").with(7u64);
             let probe = keyset.equality_term(34u32, native).await.expect("probe");
@@ -4395,19 +4375,15 @@ mod tests {
             let mut age = map(node(&mut fields, "age"));
             let stored = term_bytes(&node(&mut age, "eq"));
 
-            struct Age {
-                age: u32,
-            }
-            let mut typed = cipher
-                .encrypt(&Age { age: 34 })
-                .context("users")
-                .fields()
-                .encrypt_index(pick("age", |a: &Age| &a.age), Equality)
-                .extend(7u64)
-                .extend(nonempty!("eu"))
+            let typed_age: Encrypted<EqualityTerm> = keyset
+                .run(
+                    indexed::<_, _, Borrowed, _>(Equality).under(nonempty!("users").with("age")),
+                    &34u32,
+                    DeclaredContext::from(CallerContext::from(7u64))
+                        .with(CallerContext::from(nonempty!("eu"))),
+                )
                 .await
-                .expect("typed chain");
-            let typed_age: Encrypted<EqualityTerm> = typed.take("age").expect("age");
+                .expect("the combinator");
             assert_eq!(stored, typed_age.terms.to_bytes());
 
             let nested = nonempty!("users").with("age").with(7u64).with("eu");
@@ -4896,32 +4872,30 @@ mod tests {
             plan.fields().iter().map(FieldPlan::name).collect()
         }
 
-        struct Age {
-            age: u32,
-        }
-
-        /// The equality term the typed chain stores for `age` under
+        /// The equality term the combinator stores for `age` under
         /// `<context>/age`, extended by `parts`: what the lowering must
         /// derive when the context comes from the record.
-        async fn chain_term(
+        async fn typed_term(
             cipher: &StackCipher<Counting>,
             context: &str,
             age: u32,
             parts: &[u64],
         ) -> Vec<u8> {
-            let value = Age { age };
-            let chain = cipher
-                .encrypt(&value)
-                .context(context)
-                .fields()
-                .encrypt_index(pick("age", |a: &Age| &a.age), Equality);
-            let mut record = match parts {
-                [] => chain.await,
-                [part] => chain.extend(*part).await,
+            let label = join(&Label::parse(context).expect("a label"), "age").expect("a label");
+            let extension = match parts {
+                [] => DeclaredContext::default(),
+                [part] => DeclaredContext::from(CallerContext::from(*part)),
                 _ => panic!("one part at most"),
-            }
-            .expect("typed chain");
-            let typed: Encrypted<EqualityTerm> = record.take("age").expect("age");
+            };
+            let typed: Encrypted<EqualityTerm> = cipher
+                .default_keyset()
+                .run(
+                    indexed::<_, _, Borrowed, _>(Equality).under(NonEmpty::from(label)),
+                    &age,
+                    extension,
+                )
+                .await
+                .expect("the combinator");
             typed.terms.to_bytes()
         }
 
@@ -5155,13 +5129,13 @@ mod tests {
             let globex_term = term_bytes(&node(&mut map(node(&mut globex, "age")), "eq"));
             assert_eq!(
                 acme_term,
-                chain_term(&cipher, "tenants/acme", 34, &[]).await,
-                "the chain's term under tenants/acme"
+                typed_term(&cipher, "tenants/acme", 34, &[]).await,
+                "the typed term under tenants/acme"
             );
             assert_eq!(
                 globex_term,
-                chain_term(&cipher, "tenants/globex", 34, &[]).await,
-                "the chain's term under tenants/globex"
+                typed_term(&cipher, "tenants/globex", 34, &[]).await,
+                "the typed term under tenants/globex"
             );
             assert_ne!(
                 acme_term, globex_term,
@@ -5200,8 +5174,7 @@ mod tests {
         }
 
         /// The caller's expected context is checked against each record's
-        /// stored one before any key is requested: the chain's
-        /// `open(record).context(expected)`.
+        /// stored one before any key is requested.
         #[tokio::test]
         async fn an_expected_context_refuses_a_record_stored_under_another() {
             let cipher = cipher().await;
@@ -5352,7 +5325,7 @@ mod tests {
 
         /// An expected context is for a plan that takes its context from a
         /// field. For one with a context of its own it is a second source,
-        /// refused as the chain refuses it.
+        /// and it is refused.
         #[tokio::test]
         async fn an_expected_context_on_a_plan_with_its_own_is_two_sources() {
             let cipher = cipher().await;
@@ -5373,7 +5346,7 @@ mod tests {
             ));
         }
 
-        /// `.extend(..)` extends the context the field supplies, as it
+        /// An extension extends the context the field supplies, as it
         /// extends a plan's own: the term is the probe under
         /// `<tenant>/age` then the part.
         #[tokio::test]
@@ -5401,8 +5374,8 @@ mod tests {
             let stored = term_bytes(&node(&mut map(node(&mut fields, "age")), "eq"));
             assert_eq!(
                 stored,
-                chain_term(&cipher, "tenants/acme", 34, &[7]).await,
-                "the chain's term under tenants/acme, extended by 7"
+                typed_term(&cipher, "tenants/acme", 34, &[7]).await,
+                "the typed term under tenants/acme, extended by 7"
             );
             let sealed = seal(&keyset, source(), &plan).await;
             let opened = object(open(&cipher, sealed, &plan).await);
@@ -5415,7 +5388,7 @@ mod tests {
 
         /// The context field may be declared after the fields it keys: the
         /// lowering reads it by name wherever the plan puts it, the terms
-        /// are the chain's, and the record comes back in plan order.
+        /// are the typed terms, and the record comes back in plan order.
         #[tokio::test]
         async fn the_context_field_may_be_declared_last() {
             let cipher = cipher().await;
@@ -5445,8 +5418,8 @@ mod tests {
             let stored = term_bytes(&node(&mut map(node(&mut fields, "age")), "eq"));
             assert_eq!(
                 stored,
-                chain_term(&cipher, "tenants/acme", 34, &[]).await,
-                "the chain's term under tenants/acme"
+                typed_term(&cipher, "tenants/acme", 34, &[]).await,
+                "the typed term under tenants/acme"
             );
 
             let sealed = seal(&keyset, source(), &plan).await;
@@ -5558,7 +5531,7 @@ mod tests {
         }
     }
 
-    mod given_a_keyset_scope {
+    mod given_a_keyset {
         use super::*;
 
         fn named(name: &str) -> IdentifiedBy {
@@ -5568,8 +5541,16 @@ mod tests {
         #[tokio::test]
         async fn refuses_a_leaf_from_another_keyset_before_any_key_is_retrieved() {
             let cipher = cipher().await;
-            let acme = cipher.keyset(named("acme")).await.expect("acme");
-            let globex = cipher.keyset(named("globex")).await.expect("globex");
+            let acme = cipher
+                .keyset(named("acme"))
+                .loaded(&crate::OwnIdentity)
+                .await
+                .expect("acme");
+            let globex = cipher
+                .keyset(named("globex"))
+                .loaded(&crate::OwnIdentity)
+                .await
+                .expect("globex");
             let plan = the_plan();
 
             let sealed = seal(&acme, row(34), &plan).await;
@@ -5581,7 +5562,7 @@ mod tests {
                 matches!(
                     err,
                     Some(crate::Error::ForeignKeyset { expected, found })
-                        if expected == globex.keyset_id() && found == acme.keyset_id()
+                        if expected == globex.keyset_id().await.unwrap() && found == acme.keyset_id().await.unwrap()
                 ),
                 "another tenant's keyset refuses the leaf, naming both keysets: {err:?}"
             );
@@ -5616,7 +5597,10 @@ mod tests {
             assert!(any.contains("keyset_id: None"), "{any}");
             let keyset = cipher.default_keyset();
             let one = format!("{:?}", CipherRef::from(&keyset));
-            assert!(one.contains(&format!("{:?}", keyset.keyset_id())), "{one}");
+            assert!(
+                one.contains(&format!("{:?}", keyset.keyset_id().await.unwrap())),
+                "{one}"
+            );
         }
     }
 
@@ -6506,9 +6490,10 @@ mod tests {
     }
 
     /// A resolver shaped like the EQL one, over this engine: it seals a
-    /// string as one leaf under the field's label and writes it into a JSON
-    /// envelope with the label as its `i`, opens it back checking that `i`,
-    /// and derives an equality term for a query. What it proves is the
+    /// string as one leaf under the field's label, then the plan's parts,
+    /// and writes it into a JSON envelope with the label alone as its `i`,
+    /// opens it back checking that `i`, and derives an equality term for a
+    /// query under the label and the scopes. What it proves is the
     /// lowering's half — the target field rides in the record's request,
     /// is stored under `"eql"`, opens through the resolver, and every
     /// refusal is decided before a key is touched — not EQL's envelope,
@@ -6629,14 +6614,16 @@ mod tests {
                 _: Option<&crate::dynamic::TargetOptions>,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
+                parts: &crate::target::DeclaredContext,
                 plaintext: ValueFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 let _ = self.resolve(name)?;
                 let text = text_of_value(name, plaintext)?;
                 let column = column(name, label)?;
                 let stored_label = label.to_string();
-                Ok(keyset
-                    .encrypt_as::<String, StackCipherText>(&text, AeadContext::from(column))
+                let context = AeadContext::from(parts.clone().under(column));
+                Ok(text
+                    .encrypt_into_with_context::<StackCipherText, K>(keyset, context)
                     .try_map(move |sealed| {
                         let CipherText::Single(leaf) = sealed else {
                             return Err(crate::Error::UnsupportedShape);
@@ -6655,6 +6642,7 @@ mod tests {
                 name: &str,
                 cipher: &'a StackCipher<K>,
                 label: &Label,
+                parts: &crate::target::DeclaredContext,
                 stored: &[u8],
             ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
                 let _ = self.resolve(name)?;
@@ -6680,8 +6668,9 @@ mod tests {
                         crate::Error::Other("stored under another column".into()),
                     ));
                 }
+                let context = AeadContext::from(parts.clone().under(column));
                 let opening: Decryption<String, K> =
-                    crate::target::open(CipherText::Single(leaf), AeadContext::from(column));
+                    crate::target::open(CipherText::Single(leaf), context);
                 Ok(cipher.run_decryption(opening).try_map(|text| {
                     ValueFrame::of(text.as_str()).map_err(|e| crate::Error::Other(Box::new(e)))
                 }))
@@ -6693,14 +6682,18 @@ mod tests {
                 _: &IndexSpec,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
+                scopes: &crate::target::DeclaredContext,
                 plaintext: ValueFrame,
             ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
                 let _ = self.resolve(name)?;
                 let text = text_of_value(name, plaintext)?;
                 let column = column(name, label)?;
                 let stored_label = label.to_string();
-                Ok(keyset
-                    .encrypt_as::<String, EqualityTerm>(&text, CallerContext::from(column))
+                Ok(text
+                    .encrypt_into_with_context::<EqualityTerm, K>(
+                        keyset,
+                        scopes.clone().under(column),
+                    )
                     .try_map(move |term| {
                         serde_json::to_vec(&serde_json::json!({
                             "v": 3,
@@ -6732,23 +6725,55 @@ mod tests {
             obj(vec![("age", Tree::UInt32(age)), ("email", s(email))])
         }
 
-        /// An EQL value is stored under its table and column alone, so a
-        /// plan with a target field takes no binding, as it takes no
-        /// extension; no binding at all leaves it as it is.
-        #[test]
-        fn a_target_field_refuses_a_binding() {
-            let refused = mixed_plan()
-                .with_bindings(vec![ContextPiece::U64(9)])
-                .unwrap_err();
-            assert!(
-                matches!(
-                    &refused,
-                    Error::Target(TargetError::Extended { name, label })
-                        if name == "email" && label == "users/email"
-                ),
-                "{refused:?}"
+        /// A binding binds a target field as it binds any other: the
+        /// resolver seals the value under the label, then the binding. The
+        /// EQL value stores the label alone, so it opens only under the
+        /// same binding.
+        #[tokio::test]
+        async fn a_target_field_takes_a_binding() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let bound = |row: u64| {
+                mixed_plan()
+                    .with_bindings(vec![ContextPiece::U64(row)])
+                    .expect("a plan with a target field takes a binding")
+            };
+            // `StackCipherText` is not `Clone`, so each check seals a row.
+            let seal = || async {
+                encrypt_with(
+                    &keyset,
+                    mixed_row(34, "ada@example.com"),
+                    &bound(9),
+                    &FakeEql,
+                )
+                .unwrap()
+                .await
+                .unwrap()
+            };
+            let mut record = map(seal().await);
+            assert_eq!(
+                eql_json(&mut record, "email")["i"],
+                "users/email",
+                "the value stores its column, and not the binding"
             );
-            assert!(mixed_plan().with_bindings(vec![]).is_ok());
+
+            let opened = decrypt_with(&cipher, seal().await, &bound(9), None, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(
+                Tree::from_frame(opened.risky_ref()).unwrap(),
+                mixed_row(34, "ada@example.com")
+            );
+            // Another row, and no binding at all, do not open it.
+            for plan in [bound(10), mixed_plan()] {
+                let refused = decrypt_with(&cipher, seal().await, &plan, None, &FakeEql)
+                    .unwrap()
+                    .await;
+                assert!(refused.is_err());
+            }
+
+            // The plan's own `"bind"` key is the same binding.
             let wired = plan_with(
                 obj(vec![
                     ("age", typed(label("age"), &["c", "eq"], "uint32")),
@@ -6756,18 +6781,46 @@ mod tests {
                     ("bind", Tree::Array(vec![Tree::UInt64(9)])),
                 ]),
                 &FakeEql,
-            );
-            assert!(
-                matches!(wired, Err(Error::Target(TargetError::Extended { .. }))),
-                "{wired:?}"
+            )
+            .expect("a bound plan with a target field parses");
+            let opened = decrypt_with(&cipher, seal().await, &wired, None, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(
+                Tree::from_frame(opened.risky_ref()).unwrap(),
+                mixed_row(34, "ada@example.com")
             );
         }
 
-        /// The context view shows a target field under its label alone, in
-        /// plan order among the lowered fields: an EQL value takes no part
-        /// from the caller, so there is nothing to fill in.
+        /// The context view shows a target field in plan order among the
+        /// lowered fields, under its label and the same parts as they are:
+        /// the plan's extension, then its bindings.
         #[test]
         fn the_contexts_show_a_target_field_in_plan_order() {
+            let extended = |field: &str| Tree::Array(vec![label(field), Tree::UInt32(7)]);
+            let plan = plan_with(
+                obj(vec![
+                    ("age", typed(extended("age"), &["c", "eq"], "uint32")),
+                    ("email", target_spec(extended("email"), TEXT_EQ)),
+                ]),
+                &FakeEql,
+            )
+            .expect("an extended plan with a target parses")
+            .with_bindings(vec![ContextPiece::U64(9)])
+            .unwrap();
+            let contexts = plan.contexts().unwrap();
+            let (age, email) = (contexts.get("age").unwrap(), contexts.get("email").unwrap());
+            assert_eq!(
+                email.to_string().replace("email", "age"),
+                age.to_string().replace("email", "age"),
+                "a target field shows the parts a field with outputs shows"
+            );
+            assert_eq!(
+                contexts.to_string(),
+                "age\n  query context:  (users / age) / 7u32\n  stored context: ((users / age) / 7u32) / 9u64\nemail\n  query context:  (users / email) / 7u32\n  stored context: ((users / email) / 7u32) / 9u64\n"
+            );
+
             let plan = plan_with(
                 obj(vec![
                     ("age", typed(label("age"), &["c", "eq"], "uint32")),
@@ -7059,7 +7112,7 @@ mod tests {
             assert_eq!(u32_of(&fields[0].1), 1, "seal_mixed's age");
             assert_eq!(text_of(&fields[1].1), "a@x");
 
-            // Through a keyset scope, the target's pending is confined to it
+            // Through a keyset, the target's pending is confined to it
             // like every other leaf's.
             let record = seal_mixed(&keyset, &plan).await;
             let opened = decrypt_with(
@@ -7331,16 +7384,24 @@ mod tests {
         }
 
         /// The resolver opens a target value through the client, which opens
-        /// every keyset's values; `confine` is what holds it to the scope's
+        /// every keyset's values; `confine` is what holds it to the caller's
         /// keyset. A plan of one target field, so no lowered leaf can cause
         /// the refusal instead: this fails if `confine` stops calling
-        /// `scoped_to`, and one tenant's cipher opens another's column.
+        /// `confined_to`, and one tenant's cipher opens another's column.
         #[tokio::test]
         async fn a_keyset_scope_refuses_a_target_value_from_another_keyset() {
             let cipher = cipher().await;
             let named = |n: &str| IdentifiedBy::Name(n.to_string().into());
-            let acme = cipher.keyset(named("acme")).await.expect("acme");
-            let globex = cipher.keyset(named("globex")).await.expect("globex");
+            let acme = cipher
+                .keyset(named("acme"))
+                .loaded(&crate::OwnIdentity)
+                .await
+                .expect("acme");
+            let globex = cipher
+                .keyset(named("globex"))
+                .loaded(&crate::OwnIdentity)
+                .await
+                .expect("globex");
             let plan = plan_with(
                 obj(vec![("email", target_spec(label("email"), TEXT_EQ))]),
                 &FakeEql,
@@ -7363,7 +7424,7 @@ mod tests {
                 0,
                 "refused before any key was retrieved"
             );
-            // acme's own scope, and the client, still open it.
+            // acme's own keyset, and the client, still open it.
             let sealed = encrypt_with(&acme, obj(vec![("email", s("a@x"))]), &plan, &FakeEql)
                 .unwrap()
                 .await
@@ -7523,27 +7584,91 @@ mod tests {
             assert_eq!(generates(&cipher), 0);
         }
 
-        #[test]
-        fn an_extended_plan_refuses_a_target_field_rather_than_dropping_the_extension() {
-            let extended = |field: &str| Tree::Array(vec![label(field), Tree::UInt32(7)]);
-            let value = obj(vec![
-                ("age", spec(extended("age"), &["c"])),
-                ("email", target_spec(extended("email"), TEXT_EQ)),
-            ]);
-            let error = target_error(plan_with(value, &FakeEql).unwrap_err());
-            assert!(
-                matches!(&error, TargetError::Extended { name, label } if name == "email" && label == "users/email"),
-                "{error}"
-            );
-            // The same plan without the target field extends as before.
-            let value = obj(vec![("age", spec(extended("age"), &["c"]))]);
-            assert!(plan_with(value, &FakeEql).is_ok());
+        /// An extended plan runs a target field under its label, then the
+        /// extension, as it runs a field with outputs. The EQL value stores
+        /// the label alone. A query under the same extension derives the
+        /// term of the label and the extension.
+        #[tokio::test]
+        async fn an_extended_plan_runs_a_target_field_under_the_extension() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let extended =
+                |field: &str, part: u32| Tree::Array(vec![label(field), Tree::UInt32(part)]);
+            let plan = |part: u32| {
+                plan_with(
+                    obj(vec![
+                        ("age", spec(extended("age", part), &["c"])),
+                        ("email", target_spec(extended("email", part), TEXT_EQ)),
+                    ]),
+                    &FakeEql,
+                )
+                .expect("an extended plan with a target field parses")
+            };
+            let row = || {
+                obj(vec![
+                    ("age", Tree::UInt32(34)),
+                    ("email", s("ada@example.com")),
+                ])
+            };
+            // `StackCipherText` is not `Clone`, so each check seals a row.
+            let seal = || async {
+                encrypt_with(&keyset, row(), &plan(7), &FakeEql)
+                    .unwrap()
+                    .await
+                    .unwrap()
+            };
+            let mut record = map(seal().await);
+            assert_eq!(eql_json(&mut record, "email")["i"], "users/email");
+
+            let opened = decrypt_with(&cipher, seal().await, &plan(7), None, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(Tree::from_frame(opened.risky_ref()).unwrap(), row());
+            // Under another extension the value does not open.
+            let refused = decrypt_with(&cipher, seal().await, &plan(8), None, &FakeEql)
+                .unwrap()
+                .await;
+            assert!(refused.is_err());
+
+            // The query term is the equality term under the label, then the
+            // extension, and names the label alone.
+            let term = |part: u32| {
+                let (keyset, plan) = (&keyset, plan(part));
+                async move {
+                    let json = query(
+                        keyset,
+                        &plan,
+                        "email",
+                        &IndexSpec::Equality,
+                        "ada@example.com",
+                        &FakeEql,
+                    )
+                    .unwrap()
+                    .await
+                    .unwrap();
+                    serde_json::from_slice::<serde_json::Value>(&json).unwrap()
+                }
+            };
+            let under = |part: u32| {
+                CallerContext::from(crate::target::Scope::new(part))
+                    .extend(NonEmpty::from(Label::parse("users/email").unwrap()))
+            };
+            let direct: EqualityTerm = "ada@example.com"
+                .to_owned()
+                .encrypt_into_with_context(&keyset, under(7))
+                .await
+                .unwrap();
+            let seven = term(7).await;
+            assert_eq!(seven["i"], "users/email");
+            assert_eq!(seven["hm"], hex(direct.as_bytes()));
+            assert_ne!(seven["hm"], term(8).await["hm"]);
         }
 
         /// A plan with a context field has no table of its own: each
         /// record names one. An EQL value stores a table the declaration
-        /// fixes, so a target field is refused there as it is in an extended
-        /// plan, and before the resolver is asked.
+        /// fixes, so a target field is refused there, before the resolver is
+        /// asked.
         #[test]
         fn a_context_field_plan_refuses_a_target_field() {
             let identity = |field: &str| strings(&[field]);
@@ -7835,7 +7960,7 @@ mod tests {
     mod given_the_leaf_encoding {
         use super::*;
 
-        #[derive(EncryptFrom, DecryptInto)]
+        #[derive(EncryptTarget, DecryptSource)]
         #[stash(plaintext = u32, crate = "crate")]
         struct Age {
             c: StackCipherText,
@@ -7952,8 +8077,11 @@ mod tests {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let label_ = Label::parse("users/age").expect("label");
-            let derived: Age = keyset
-                .encrypt_as(&34u32, CallerContext::from(NonEmpty::from(label_.clone())))
+            let derived: Age = 34u32
+                .encrypt_into_with_context(
+                    &keyset,
+                    CallerContext::from(NonEmpty::from(label_.clone())),
+                )
                 .await
                 .expect("derive");
 
@@ -7970,13 +8098,13 @@ mod tests {
                 "the same equality term"
             );
 
-            let as_u32: u32 = keyset
-                .decrypt_as(
-                    node(&mut age, "c"),
-                    AeadContext::from(NonEmpty::from(label_.clone())),
-                )
-                .await
-                .expect("the derive opens the lowering's leaf");
+            let as_u32 = u32::decrypt_from_with_context(
+                node(&mut age, "c"),
+                &keyset,
+                AeadContext::from(NonEmpty::from(label_.clone())),
+            )
+            .await
+            .expect("the derive opens the lowering's leaf");
             assert_eq!(as_u32, 34);
             let stored = CipherText::Map(vec![(
                 "age".to_string(),
@@ -8347,7 +8475,7 @@ mod tests {
             }
         }
 
-        /// Each refusal from the plan builder maps to the field it names and
+        /// Each plan refusal maps to the field it names and
         /// the reason a binding reports: the lowering checks most of these
         /// first, so not every one is reachable through [`plan`].
         #[test]

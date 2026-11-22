@@ -86,9 +86,9 @@ pub enum QueryKind {
     Subtree,
     /// `@>`: a containment needle, with its `alt`.
     Contains,
-    /// `AtPath<Eq>`: a containment needle with no `alt`.
+    /// `eq_at`: a containment needle with no `alt`.
     Equals,
-    /// `AtPath<Gte>`: a selector and an ordering term.
+    /// `gte_at`: a selector and an ordering term.
     Order,
 }
 

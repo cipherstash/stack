@@ -1,6 +1,7 @@
 # Target-directed encryption
 
 **Status:** design record, reconciled with the shipped API on 2026-08-28 and again on 2026-09-04 (contexts are vitaminc's `NonEmpty<T>`; a caller's context *extends* a field's own; `row = ..` became `struct = ..`, and `from` exists only there). The snippets below are the API as it ships in `stack-encrypt` (cipherstash-suite #2146, #2147); the async shape is specified by [RFC 0002](rfcs/0002-async-shape-for-target-directed-encryption.md).
+**Superseded in part:** the snippets record the design as it first shipped. Since then `EncryptFrom`, `DecryptInto`, `encrypt_as`, `decrypt_as`, the plan builder and the call chain were removed. The API that ships now is `EncryptTarget` and `DecryptSource` with `encrypt_into` and `decrypt_from`, field markers for queries, and `dynamic::Planned` for a declaration that is data. See the crate docs and `packages/stack-encrypt/CHANGELOG.md`.
 **Date:** 2026-08-21
 **Scope:** vitaminc (primitives), stack-encrypt (the new trait + batching), eql-bindings (one class of targets)
 

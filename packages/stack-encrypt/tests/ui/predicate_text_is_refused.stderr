@@ -1,0 +1,65 @@
+error: this predicate does not parse: text the grammar does not read at byte 7
+  --> tests/ui/predicate_text_is_refused.rs:24:52
+   |
+24 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age >");
+   |                                                    ^^^^^^^^^
+
+error: this predicate does not parse: text the grammar does not read at byte 6
+  --> tests/ui/predicate_text_is_refused.rs:25:52
+   |
+25 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age = 30");
+   |                                                    ^^^^^^^^^^^^
+
+error: the JSON index cannot answer this predicate: it uses `like_regex` at byte 6
+  --> tests/ui/predicate_text_is_refused.rs:27:52
+   |
+27 |     let _ = predicate!(EncryptedCustomer::PROFILE, r#"$.age like_regex "^3""#);
+   |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: the JSON index cannot answer this predicate: it uses arithmetic (`+`, `-`, `*`, `/`, `%`) at byte 6
+  --> tests/ui/predicate_text_is_refused.rs:28:52
+   |
+28 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age + 1 > 30");
+   |                                                    ^^^^^^^^^^^^^^^^
+
+error: this predicate names an array position at byte 8: the JSON index reads every element of an array alike, so write `[*]`
+  --> tests/ui/predicate_text_is_refused.rs:29:52
+   |
+29 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.visits[2].place == \"home\"");
+   |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: the JSON index cannot answer `!=` at a path with a wildcard, at byte 10: it asks whether some element differs
+  --> tests/ui/predicate_text_is_refused.rs:30:52
+   |
+30 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.tags[*] != \"x\"");
+   |                                                    ^^^^^^^^^^^^^^^^^^^^
+
+error: the JSON index cannot answer this predicate: it uses an ordering of an array's elements themselves at byte 10
+  --> tests/ui/predicate_text_is_refused.rs:31:52
+   |
+31 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.tags[*] > \"x\"");
+   |                                                    ^^^^^^^^^^^^^^^^^^^
+
+error: the filter at byte 7 is on a path with no wildcard: a filter tests the elements of an array, as `exists($.visits[*] ? (@.place == "home"))`
+  --> tests/ui/predicate_text_is_refused.rs:32:52
+   |
+32 |     let _ = predicate!(EncryptedCustomer::PROFILE, "exists($.age ? (@ == 1))");
+   |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: the JSON index cannot answer this predicate: it uses an ordering of an array's elements themselves at byte 22
+  --> tests/ui/predicate_text_is_refused.rs:33:52
+   |
+33 |     let _ = predicate!(EncryptedCustomer::PROFILE, "exists($.visits[*] ? (@ > 1 && @.place == \"x\"))");
+   |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: an ordering compares a number or a string, and the literal at byte 9 is `null`: ask for it with `==`
+  --> tests/ui/predicate_text_is_refused.rs:35:52
+   |
+35 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age >= null");
+   |                                                    ^^^^^^^^^^^^^^^
+
+error: the number `1e999` at byte 9 is not one the JSON index reads: an integer fits in 64 bits, and a number with a fraction or an exponent is a finite `f64`
+  --> tests/ui/predicate_text_is_refused.rs:36:52
+   |
+36 |     let _ = predicate!(EncryptedCustomer::PROFILE, "$.age == 1e999");
+   |                                                    ^^^^^^^^^^^^^^^^

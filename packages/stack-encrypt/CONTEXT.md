@@ -21,7 +21,7 @@ _Avoid_: raw path, low-level path
 Encryption driven by the output type: the type being produced (a ciphertext, a
 term, a record) declares what it is derived from, which operations produce it,
 and which context it demands; execution belongs to the cipher. Rust-only: a
-hand-written `EncryptFrom` type, the combinators, and the derive. With
+hand-written `EncryptTarget` type, the combinators, and the derive. With
 cipher-directed, the preferred entry point for a native Rust caller. A
 binding reaches indexes and field-by-field encryption only through a plan
 lowered from data, which runs the same engine.
@@ -68,7 +68,7 @@ mapping, config, target (a plan may name a target type for a field)
 
 **Target**:
 A type that decides a field's layout, and so the queries it answers, through
-its own `EncryptFrom`: an EQL type, `Encrypted<Terms>`, or a type of the
+its own `EncryptTarget`: an EQL type, `Encrypted<Terms>`, or a type of the
 consumer's. A plan field is either plain verbs (encrypt, index, passthrough)
 or one target, never both. Rust-only, since it names a Rust type; a binding's
 counterpart is generated code (in Go, the generator's output), which
@@ -161,7 +161,7 @@ needing different kinds of context do not zip. `under` and `extend` are the
 only ways to change it; each covers a whole subtree and is written in the
 declaration, and the tree does not tell a record's two fields from a target's
 two halves.
-_Avoid_: scope (that is a `Pending`'s), shared context, per-operation context
+_Avoid_: scope (that is one part of a context), shared context, per-operation context
 
 **Descriptor**:
 The context, rendered as the string ZeroKMS binds into every data key and
@@ -275,26 +275,39 @@ Case belongs to the match index's configuration, not to the operator.
 _Avoid_: query type, index (that is what answers the operator), `OpSpec`
 (the dynamic enum's old name)
 
-**Field marker**:
+**Field reference**:
 The value a typed query of a derived record's field starts from. The
 derive emits one per field, as an associated constant named after the field
-in upper case (`EncryptedUser::EMAIL`). A marker names the field, the
+in upper case (`EncryptedUser::EMAIL`). A field reference names the field, the
 context the derive sealed it under, and the field's target type. It also
 names the type of the scope the record's caller supplies. The target
-type's `Answers` impls give the marker one method per operator the
+type's `Answers` impls give the field reference one method per operator the
 field's index answers, checked at compile time.
 
-A query from a marker takes the record's scope once, by type. It takes no
+A query from a field reference takes the record's scope once, by type. It takes no
 binding. It derives under the declaration the derive wrote, so it is the
 stored term. No plan is written by hand beside the record.
 
-`Marker::contexts()` is the record's contexts narrowed to the field, and
-`assert_context!` takes a marker. A field of several indexes answers each
+`FieldReference::contexts()` is the record's contexts narrowed to the field, and
+`assert_context!` takes a field reference. A field of several indexes answers each
 operator through the one index that answers it. A nullable field answers
-what a present value answers. A record field's marker reaches the inner
-record's markers with `.field(..)`, under the outer field's context.
-`#[stash(query = T)]` gives a marker the type its queries take.
-_Avoid_: field handle (that is the dynamic form), column, accessor
+what a present value answers. A record field's reference reaches the inner
+record's field references with `.field(..)`, under the outer field's context.
+`#[stash(query = T)]` gives a field reference the type its queries take.
+_Avoid_: field reference (its old name), field handle (that is the dynamic form),
+column, accessor
+
+**Declared path**:
+A path into a JSON document field that the field's
+`#[stash(json(ordered = { "$.age": u32 }, paths = { "$.name": String }))]`
+names, with the type of the values at it. An `ordered` path's values carry
+an ordering term; a `paths` path is compared with equality alone and adds
+nothing to the field's options. The derive parses it at compile time and
+gives it a method under the field reference's `at()`, and, for an ordered
+member of an array, one under `elements()` (`DeclaredPath`,
+`ElementMember`). A path given as text at run time (`at_text_path`) is not
+a declared path.
+_Avoid_: typed path (that is the target-directed form), static path
 
 **Planned**:
 A value under a plan that is data, `Planned::new(&plan, value)`. The
@@ -326,9 +339,9 @@ has one method per scalar operator and `op(..)` for any operator. Each is
 checked against the plan where it is called, then `.scope(..)` and
 `.encrypt(&keyset)` follow.
 
-The dynamic counterpart of a field marker. Neither has a `bind` method: a
+The dynamic counterpart of a field reference. Neither has a `bind` method: a
 binding is in no query context.
-_Avoid_: field marker (that is the typed form), column
+_Avoid_: field reference (that is the typed form), column
 
 **Query term**:
 The value a query sends to the server. It is not the stored term: equality
@@ -364,10 +377,36 @@ the encrypt. The ZeroKMS protocol calls audit metadata the request's
 *unverified context*.
 _Avoid_: context, unverified context, label, lock context
 
+**Credential**:
+What a caller hands over with a call so that the call's requests are made
+as that caller. It is whatever the auth strategy exchanges for a ZeroKMS
+token: for `OidcFederationStrategy`, a JWT, most often the end user's.
+Attach it last, with `.with_credential(..)`, as audit metadata is
+attached: the result (`WithCredential`) can only be awaited, or audited
+and then awaited. So one call has one credential. Every request the call
+makes is made with it: its key requests, and the load of a keyset it needs
+that the cipher has not loaded. A cipher and a keyset hold no credential.
+A key source is one of two kinds. One that takes a credential with each
+call (`CredentialKeySource`) can only be called with one: a call without
+`.with_credential(..)` does not compile. One with an identity of its own,
+such as a client with an access key, takes none: `.with_credential(..)`
+does not compile.
+_Avoid_: user (a credential may be a service's or a job's), token (that is
+what the strategy gets in exchange, and what ZeroKMS receives), identity
+(that is a value's `Identity` in a context), lock context (that is bound
+into the key)
+
+A key source that takes a credential with each call has none at startup.
+For such a key source, `init` loads no keyset. The first call on the default
+keyset that is awaited loads it, with the credential of that call. A call on a
+keyset selected by id or by name loads that keyset only. Until then a
+handle on the default keyset is on a keyset that is not loaded: a call
+built through it asks for the keyset when it settles.
+
 **Keyset**:
 The ZeroKMS key domain a data key is minted under and an index key belongs
 to — one per tenant is the common shape. A client may use any number;
-`StackCipher` is scoped to the client, not to a keyset. Its **id** (a UUID)
+`StackCipher` belongs to the client, not to a keyset. Its **id** (a UUID)
 is its identity: globally unique, carried in every sealed leaf, never
 re-checked.
 _Avoid_: dataset, key ring, tenant (a tenant *has* a keyset)
@@ -381,16 +420,18 @@ not a capability: it refuses a leaf from any other keyset.
 _Avoid_: keyset handle (use "handle" only for the object, not the concept),
 sub-cipher, tenant cipher
 
-**Scope**:
-What a `Pending` was built through, and therefore what it is allowed to do:
-a `KeysetCipher` scope mints under its keyset and opens leaves from no
-other; a `StackCipher` scope mints nothing and opens leaves from any keyset.
-`CipherRef` is the one borrowed value that carries the choice: a connection
-and an optional keyset ID. It is built from a reference to either cipher, or
-from an owned `KeysetCipher`. The typed API and the dynamic interface both
-take it. Two pendings merge when their scopes agree on a keyset — which
-cipher *value* each came from is not part of the rule.
-_Avoid_: binding (that is a name's), context (that is the AAD's), opener
+**Cipher reference**:
+`CipherRef`: what a `Pending` was built through, and therefore what it is
+allowed to do. Built through a `KeysetCipher`, a pending is *confined to*
+that keyset: it mints under it and opens leaves from no other. Built
+through a `StackCipher`, it mints nothing and opens leaves from any keyset.
+A `CipherRef` is the one borrowed value that carries the choice: a
+connection and, for a keyset, which one. It is built from a reference to
+either cipher, or from an owned `KeysetCipher`. The typed API and the
+dynamic interface both take it. Two pendings merge when they agree on a
+keyset — which cipher *value* each came from is not part of the rule.
+_Avoid_: scope (that is a part of a context), binding (that is a name's),
+context (that is the AAD's), opener
 
 **Name binding**:
 The cache's record that a keyset name resolved to a keyset id, and when.
@@ -433,7 +474,7 @@ that raise it)
 A keyset other than the one a `KeysetCipher` is bound to, from that
 handle's point of view. Handing it a leaf sealed under one is
 `Error::ForeignKeyset`, refused before any key is retrieved — the
-guarantee a tenant-scoped handler asked for by taking a handle.
+guarantee a handler for one tenant asked for by taking a handle.
 _Avoid_: wrong keyset, other tenant
 
 ## Guest memory (Go host)

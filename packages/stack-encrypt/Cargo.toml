@@ -21,8 +21,11 @@ stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy. Only needed with `http`.
 stack-auth = { workspace = true, optional = true }
-# `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
+# `#[derive(EncryptTarget)]` / `#[derive(DecryptSource)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.3.0" }
+# The JSONPath grammar the JSON index addresses, re-exported at
+# `stack_encrypt::json`. The derive reads declared paths with the same crate.
+stack-encrypt-jsonpath = { path = "../stack-encrypt-jsonpath", version = "0.3.0", features = ["diagnostics"] }
 
 # The workspace vitaminc: one canonical context encoding shared by
 # the AEAD and PRF derivations (`IntoContext`, cipherstash/vitaminc#339),
@@ -52,7 +55,10 @@ vitaminc = { workspace = true }
 rand = { version = "0.10.1", default-features = false }
 # `future::join` and `join_all`: a pending's dispatch loads the keysets its
 # JSON documents need beside the data-key retrieval, in one await.
-futures = { version = "0.3.25", default-features = false }
+# `lock::Mutex` (behind `std`): a deferred cipher holds it while the first
+# credential loads the default keyset, so callers arriving together make
+# one load between them.
+futures = { version = "0.3.25", default-features = false, features = ["std"] }
 # Two things: the storage profile (`storage`, behind `serde`) that
 # `OpaqueBlob<T>` encodes a whole value with before sealing it as one leaf,
 # the same versioned bytes the Go SDK writes through `vcffi.MarshalStorage`;

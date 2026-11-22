@@ -275,6 +275,32 @@ sends queries:
   the decoding of JSON paths and predicates, and the opening of a sealed
   JSON document. Stored values and query terms do not change.
 
+### Changed
+
+- **An `encrypt_into` field takes a scope and a binding.** A cipher with a
+  scope or a binding refused a struct with a field that names an EQL type,
+  as `ErrEncoding`. It now seals the field as it seals any other. The scope
+  and the binding come after the column in the field's context: the search
+  terms derive under the column and the scope, and the value is sealed
+  under the binding too. The EQL value stores the table and the column
+  alone, in `i`. Open it through a cipher with the same scope and binding,
+  and query it through a cipher with the same scope. `Plan.Validate` takes
+  a plan with `Extension` or `Bind` and a target field. Values stored
+  through a cipher with no scope and no binding do not change.
+  - A `JsonSearch` document is found and read in the same way. A query,
+    and a read prepared with `Selector` or `Subtree`, derive under the
+    column and the scope.
+  - `Cipher.JSONOpen` opens a read's rows through a cipher with a binding,
+    where it refused one. Every row of one call opens under that binding.
+  - `Selector` and `Subtree` take a cipher with a binding, where they
+    refused one as `ErrEncoding`. The selector or the tokens derive under
+    the cipher's scopes alone, so they are the ones a cipher with the same
+    scopes and no binding derives. The entries open under the scopes and
+    the binding. So a read through a cipher with a binding reads that
+    binding's row. `Cipher.QueryTerm` takes a binding for the `selector`
+    and `subtree` operators for this. A query still refuses a binding,
+    and so do `Children` and `ChildCount`, whose tokens open nothing.
+
 ## [0.1.0-rc.4] - 2026-11-13
 
 ### Upgrading from rc.3

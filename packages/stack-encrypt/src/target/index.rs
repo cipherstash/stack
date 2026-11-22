@@ -48,9 +48,11 @@
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
-//! On the query side a field's indexes answer one at a time, with no
-//! ciphertext: [`Indexes::select`] picks the index by type and
-//! [`Index::operation`] is its term alone.
+//! One term can be derived alone, with no ciphertext: [`Indexes::select`]
+//! picks an index out of a set by type, and [`Index::operation`] is its
+//! term alone. A field query does not use `select`: the field's
+//! target type names the index that answers each operator
+//! ([`Answers`](crate::op::Answers)).
 //!
 //! For the FFI and for saved plans an index lowers to data,
 //! [`IndexSpec`], through [`Index::spec`]. Parameters live on the index
@@ -65,8 +67,8 @@ use super::operations::{
 };
 use super::source::{ConsumeSource, Owned, ShareSource};
 use super::{
-    DecryptField, DecryptInto, DecryptSource, Decryptable, Decryption, EncryptFrom, EncryptTarget,
-    Encryption, RequiredContext,
+    DecryptField, DecryptSource, Decryptable, Decryption, EncryptTarget, Encryption,
+    RequiredContext,
 };
 use crate::json::{JsonOptions, JsonTerms};
 use crate::op::Op;
@@ -182,6 +184,55 @@ pub(crate) fn overlapping(indexes: &[IndexSpec]) -> Option<(&IndexSpec, &IndexSp
                 .map(|op| (first, second, *op))
         })
     })
+}
+
+/// Refuse a set of indexes that one value cannot declare together: one
+/// index named twice, or two indexes that answer one operator.
+///
+/// Two match indexes with different options are still one index twice: a
+/// value has one term for each kind of index. `Ore` and `Ope` both answer
+/// the orderings, so a query for one would have to choose between them.
+/// The dynamic path refuses the same declarations when it parses a plan.
+///
+/// A target calls this when it is described, so the refusal comes before
+/// any key is requested: [`Encrypted<Terms>`] used as a target checks the
+/// indexes its terms name, and a derived `plaintext = T` record checks the
+/// indexes of its fields.
+///
+/// The combinator [`indexed`] does not call it. A description built by
+/// hand from `indexed((Ore, Ope))` and run with
+/// [`KeysetCipher::run`](crate::KeysetCipher::run) derives both terms.
+///
+/// # Errors
+///
+/// [`PlanError::DuplicateIndex`](crate::PlanError::DuplicateIndex) or
+/// [`PlanError::IndexOverlap`](crate::PlanError::IndexOverlap), in
+/// [`Error::Plan`](crate::Error::Plan).
+#[doc(hidden)]
+pub fn check_indexes(indexes: &[IndexSpec]) -> Result<(), crate::Error> {
+    const AT: &str = "the value";
+    for (i, index) in indexes.iter().enumerate() {
+        if indexes[..i]
+            .iter()
+            .any(|earlier| earlier.key() == index.key())
+        {
+            return Err(crate::PlanError::DuplicateIndex {
+                at: AT.to_owned(),
+                index: index.key(),
+            }
+            .into());
+        }
+    }
+    if let Some((first, second, operator)) = overlapping(indexes) {
+        return Err(crate::PlanError::IndexOverlap {
+            at: AT.to_owned(),
+            first: first.key(),
+            second: second.key(),
+            operator,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 impl fmt::Display for IndexSpec {
@@ -426,7 +477,7 @@ impl Index<serde_json::Value> for Json {
 }
 
 /// A non-empty set of indexes over `S`: one [`Index`], or a tuple of two to
-/// four of them.
+/// five of them.
 ///
 /// Not implemented for `()`. An indexed field with no index would be a
 /// ciphertext-only field that says otherwise; that field is [`ciphertext`]
@@ -639,7 +690,7 @@ impl<S, I: Index<S>> Indexes<S> for Vec<I> {
 ///
 /// There are deliberately no named accessors (`out.ore()`): they would need
 /// a type-level search of the tuple to serve a case that barely exists. A
-/// struct with named fields is what `#[derive(EncryptFrom)]` is for.
+/// struct with named fields is what `#[derive(EncryptTarget)]` is for.
 ///
 /// Decrypting it opens the ciphertext: the terms are one-way.
 #[derive(Debug)]
@@ -650,37 +701,11 @@ pub struct Encrypted<Terms> {
     pub terms: Terms,
 }
 
-impl<P: crate::Decrypt + Send + 'static, Terms> DecryptInto<P> for Encrypted<Terms> {
-    type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
-        open(self.ciphertext, context)
-    }
-}
-
-/// `Encrypted<Terms>` is a target, so a record field, a typed verb or a
-/// caller names a ciphertext with its terms by type alone:
+/// `Encrypted<Terms>` is a target, so a record field or a caller names a
+/// ciphertext with its terms by type alone:
 /// `email: Encrypted<(EqualityTerm, MatchTerms)>`. The terms name their
-/// indexes ([`TermSet`]), and the description is [`indexed`] over them, so
-/// the bytes are the data spelling's and the hand composition's.
-impl<S, Terms> EncryptFrom<S> for Encrypted<Terms>
-where
-    S: crate::Encrypt + Clone,
-    Terms: TermSet<S>,
-{
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        indexed(Terms::INDEXES)
-    }
-    fn indexes() -> Vec<IndexSpec> {
-        Terms::INDEXES.specs()
-    }
-}
-
-/// The owned declaration of the same layout: the ciphertext with its terms,
-/// under the one caller context that the record field or the caller supplies.
+/// indexes ([`TermSet`]), and the description is [`indexed`] over them, under
+/// the one caller context that the record field or the caller supplies.
 ///
 /// The owned form is handed the value. The ciphertext takes a copy, and the
 /// terms take the value. When the context is refused, the ciphertext wipes its
@@ -695,13 +720,29 @@ where
     where
         S: 's,
     {
-        indexed(Terms::INDEXES).accepting()
+        let described = indexed(Terms::INDEXES).accepting();
+        if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
+            // Refused with the leaves' contexts kept, so `contexts()`
+            // still shows the field.
+            return described.refused(error);
+        }
+        described
     }
     fn owned_encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput, Owned>
     where
         S: 's,
     {
-        indexed_beside(wiping_ciphertext::<S, K, Owned>(), Terms::INDEXES).accepting()
+        let described =
+            indexed_beside(wiping_ciphertext::<S, K, Owned>(), Terms::INDEXES).accepting();
+        if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
+            // The refused value is the description's to wipe. The leaves'
+            // contexts are kept, as in the borrowed form.
+            return Encryption::from_build(described.shapes(), move |mut source: S, cipher, _| {
+                zeroize::Zeroize::zeroize(&mut source);
+                super::Pending::failed(cipher, error)
+            });
+        }
+        described
     }
     fn indexes() -> Vec<IndexSpec> {
         Terms::INDEXES.specs()
@@ -720,18 +761,18 @@ impl<P: crate::Decrypt + zeroize::Zeroize + Send + 'static, Terms> DecryptSource
 impl<Terms> Decryptable for Encrypted<Terms> {
     const DECRYPTABLE: bool = true;
 }
-impl<P: 'static, Ctx, Terms> DecryptField<P, Ctx> for Encrypted<Terms>
+impl<P: zeroize::Zeroize + 'static, Ctx, Terms> DecryptField<P, Ctx> for Encrypted<Terms>
 where
-    Self: DecryptInto<P>,
-    Ctx: Into<<Self as DecryptInto<P>>::Context>,
+    Self: DecryptSource<P>,
+    Ctx: Into<<Self as DecryptSource<P>>::ContextInput>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(<Self as DecryptInto<P>>::decryption(self, context.into()))
+        Some(<Self as DecryptSource<P>>::decryption(self, context.into()))
     }
 }
 
 /// The terms of a set of indexes, named from the terms' side: one term type,
-/// or a tuple of two to five, each naming the index that derives it. This is
+/// or a tuple of two or three, each naming the index that derives it. This is
 /// what lets [`Encrypted<Terms>`] be a target with no value in hand: its type
 /// says which indexes to run.
 ///
@@ -741,6 +782,11 @@ where
 ///
 /// A match term names its configuration in its type (`MatchTerms<O>`), so
 /// the index it names is `Match<O>`, the configuration included.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a set of terms over `{S}`",
+    label = "expected one term, or a tuple of two or three terms over `{S}`",
+    note = "a value holds at most one term for each family of operators (equality, match and the orderings), so a tuple of terms has at most three"
+)]
 pub trait TermSet<S>: Sized + 'static {
     /// The indexes that derive these terms.
     type Indexes: Indexes<S, Terms = Self>;
@@ -779,6 +825,11 @@ where
 
 /// A tuple of terms names the tuple of their indexes. Each element must be
 /// one term (its set is one index), as a tuple of indexes holds indexes.
+///
+/// A tuple has at most three terms. A value holds at most one term for each
+/// family of operators: equality, match, and the orderings. Four terms
+/// would include two that answer one family, which [`check_indexes`]
+/// refuses every time, so there is no impl for four or five.
 macro_rules! tuple_of_terms {
     ($(($($name:ident),+),)+) => {$(
         impl<S, $($name),+> TermSet<S> for ($($name,)+)
@@ -796,8 +847,6 @@ mod term_tuples {
     tuple_of_terms! {
         (A, B),
         (A, B, C),
-        (A, B, C, D),
-        (A, B, C, D, E),
     }
 }
 
@@ -816,6 +865,11 @@ mod term_tuples {
 ///
 /// The type parameters are in the order [`ciphertext`]'s are, with the
 /// indexes last: `indexed::<u32, _, Borrowed, _>((Equality, Ore))`.
+///
+/// This does not check the set of indexes. A set that names one index
+/// twice, or two indexes that answer one operator, derives every term it
+/// names. The target [`Encrypted<Terms>`] refuses such a set before any
+/// key is requested.
 pub fn indexed<'s, S, K, M, X>(
     indexes: X,
 ) -> Encryption<'s, S, Encrypted<X::Terms>, K, CallerContext, M>

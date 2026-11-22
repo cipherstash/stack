@@ -170,7 +170,7 @@ fn parse_term(value: Frame<'_>, kind: u32) -> Result<IndexSpec, u32> {
 /// result is a codec-encoded ciphertext tree — per record a map of
 /// `field → { output-key → node }`.
 ///
-/// The plan is lowered into the engine's plan builder and run there
+/// The plan is lowered into the engine's combinators and run there
 /// (ADR-0007): [`dynamic::record::encrypt`] hands back the plan's `Pending`
 /// with every key request queued and nothing sent, and awaiting it here is
 /// the one batched `generate_keys` for all rows and fields. That batch
@@ -226,7 +226,7 @@ where
 /// (see [`crate::options`]). The engine sends it with every
 /// `retrieve_keys` request of the call. Empty metadata sends nothing.
 pub async fn decrypt_record<'a, K>(
-    scope: impl Into<CipherRef<'a, K>>,
+    cipher_ref: impl Into<CipherRef<'a, K>>,
     record: &[u8],
     plan: &Bytes,
     expected: Option<Label>,
@@ -236,12 +236,17 @@ where
     K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
-    let value =
-        dynamic::record::decrypt_with(scope, decode_tree(record)?, &plan, expected, &resolver())
-            .map_err(|e| fail_dynamic(&e))?
-            .audit(audit)
-            .await
-            .map_err(|e| fail_error(&e))?;
+    let value = dynamic::record::decrypt_with(
+        cipher_ref,
+        decode_tree(record)?,
+        &plan,
+        expected,
+        &resolver(),
+    )
+    .map_err(|e| fail_dynamic(&e))?
+    .audit(audit)
+    .await
+    .map_err(|e| fail_error(&e))?;
     encode_frame(value)
 }
 

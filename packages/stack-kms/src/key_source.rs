@@ -10,6 +10,7 @@
 use std::borrow::Cow;
 use std::future::Future;
 
+use stack_auth::{CredentialPerCall, OwnIdentity, SecretToken};
 use uuid::Uuid;
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
@@ -17,6 +18,174 @@ use crate::errors::Error;
 use crate::key::{DataKey, DataKeyWithTag, IndexKey};
 use crate::maybe_send::MaybeSend;
 use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
+
+/// Which of the two kinds a key source is.
+///
+/// A key source makes every request as itself, or as the caller whose
+/// credential comes with the call. It is never both: a key source that had
+/// both would make a call that forgot its credential as itself, and nobody
+/// would know. This trait is what stops a type from being both. A type
+/// implements it once, so it has one [`Kind`](Self::Kind):
+///
+/// - [`OwnIdentity`], for a key source with an identity of its own.
+///   [`DataKeySource`] and [`IndexKeySource`] require this kind.
+/// - [`CredentialPerCall`], for a key source that takes a credential with
+///   each call. [`CredentialKeySource`] requires this kind.
+///
+/// Every key source states its kind, in one impl beside the traits of that
+/// kind. [`StackKms`](crate::StackKms) does not choose: its kind is the kind
+/// of its auth strategy ([`stack_auth::StrategyKind`]).
+///
+/// Code built on a key source, such as Stack Encrypt, reads the kind from
+/// which of the traits the key source has. It adds no rule of its own.
+///
+// The examples wrap the test doubles, so they are in the docs only with
+// `test-support`.
+#[cfg_attr(
+    feature = "test-support",
+    doc = r#"# Example
+
+A key source of your own with an identity of its own. This one counts the
+keyset loads of the key source it wraps:
+
+```
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use stack_kms::{
+    DataKey, DataKeySource, DataKeyWithTag, Error, FakeDataKeySource, GenerateKeyPayload,
+    IdentifiedBy, IndexKey, IndexKeySource, KeySourceKind, OwnIdentity, RetrieveKeyPayload,
+    UnverifiedContext,
+};
+use uuid::Uuid;
+
+#[derive(Default)]
+struct Counted {
+    inner: FakeDataKeySource,
+    loads: AtomicUsize,
+}
+
+impl KeySourceKind for Counted {
+    type Kind = OwnIdentity;
+}
+
+impl DataKeySource for Counted {
+    async fn generate_keys(
+        &self,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, Error> {
+        self.inner.generate_keys(payloads, keyset_id, unverified_context).await
+    }
+
+    async fn retrieve_keys(
+        &self,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, Error> {
+        self.inner.retrieve_keys(payloads, keyset_id, unverified_context).await
+    }
+}
+
+impl IndexKeySource for Counted {
+    async fn load_index_key(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), Error> {
+        self.loads.fetch_add(1, Ordering::Relaxed);
+        self.inner.load_index_key(keyset_id).await
+    }
+}
+
+# async fn example() -> Result<(), Error> {
+let source = Counted::default();
+let (keyset_id, _index_key) = source.load_index_key(None).await?;
+# let _ = keyset_id;
+assert_eq!(source.loads.load(Ordering::Relaxed), 1);
+# Ok(())
+# }
+# tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(example()).unwrap();
+```
+
+A key source of both kinds does not compile. `Both` says it has an identity
+of its own, so it cannot also take a credential with each call:
+
+```compile_fail,E0271
+use std::borrow::Cow;
+
+use stack_kms::{
+    CredentialKeySource, DataKey, DataKeyWithTag, Error, FakeCredentialKeySource,
+    GenerateKeyPayload, IdentifiedBy, IndexKey, KeySourceKind, OwnIdentity, RetrieveKeyPayload,
+    SecretToken, UnverifiedContext,
+};
+use uuid::Uuid;
+
+#[derive(Default)]
+struct Both {
+    inner: FakeCredentialKeySource,
+}
+
+impl KeySourceKind for Both {
+    type Kind = OwnIdentity;
+}
+
+impl CredentialKeySource for Both {
+    async fn generate_keys_with_credential(
+        &self,
+        credential: &SecretToken,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, Error> {
+        self.inner
+            .generate_keys_with_credential(credential, payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn retrieve_keys_with_credential(
+        &self,
+        credential: &SecretToken,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, Error> {
+        self.inner
+            .retrieve_keys_with_credential(credential, payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn load_index_key_with_credential(
+        &self,
+        credential: &SecretToken,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), Error> {
+        self.inner.load_index_key_with_credential(credential, keyset_id).await
+    }
+}
+```"#
+)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not say which kind of key source it is",
+    label = "this key source has no `KeySourceKind`",
+    note = "a key source with an identity of its own (`DataKeySource`, `IndexKeySource`) implements `KeySourceKind` with `type Kind = OwnIdentity`",
+    note = "a key source that takes a credential with each call (`CredentialKeySource`) implements `KeySourceKind` with `type Kind = CredentialPerCall`"
+)]
+pub trait KeySourceKind {
+    /// [`OwnIdentity`] or [`CredentialPerCall`].
+    type Kind;
+}
+
+/// A ZeroKMS client is the kind of key source that its auth strategy is a
+/// kind of strategy. stack-auth decides that, and a strategy is one kind.
+impl<C, Conn> KeySourceKind for crate::StackKms<C, Conn>
+where
+    C: stack_auth::AuthStrategyBounds,
+    &'static C: stack_auth::StrategyKind,
+{
+    type Kind = <&'static C as stack_auth::StrategyKind>::Kind;
+}
 
 /// The slice of ZeroKMS data-key functionality required to encrypt and decrypt:
 /// generating fresh data keys and re-deriving them for stored ciphertexts.
@@ -28,7 +197,18 @@ use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
 /// The returned futures are bounded by [`MaybeSend`]: `Send` on native targets
 /// so callers can drive them on a multi-threaded runtime, unbounded on wasm32
 /// (see [`MaybeSend`] for why).
-pub trait DataKeySource {
+///
+/// A source that implements this trait has an identity of its own, and
+/// makes every request as that identity: it states the kind
+/// [`OwnIdentity`] ([`KeySourceKind`]). A source that takes a credential
+/// with each call implements [`CredentialKeySource`] instead, and cannot
+/// implement this trait.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a key source with an identity of its own",
+    label = "this makes a key request with no credential",
+    note = "if `{Self}` takes a credential with each call (`CredentialKeySource`), pass one: in Stack Encrypt, call `.with_credential(..)` before `.await`"
+)]
+pub trait DataKeySource: KeySourceKind<Kind = OwnIdentity> {
     /// Generate one fresh data key per payload, in payload order.
     fn generate_keys(
         &self,
@@ -56,8 +236,14 @@ pub trait DataKeySource {
 /// separately: record encryption needs data keys, term generation needs the
 /// index key. Production implementations provide both.
 ///
-/// As with [`DataKeySource`], the returned future is bounded by [`MaybeSend`].
-pub trait IndexKeySource {
+/// As with [`DataKeySource`], the returned future is bounded by [`MaybeSend`],
+/// and a source that implements this trait has an identity of its own.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a key source with an identity of its own",
+    label = "this loads a keyset with no credential",
+    note = "if `{Self}` takes a credential with each call (`CredentialKeySource`), pass one: in Stack Encrypt, call `.with_credential(..)` before `.await`"
+)]
+pub trait IndexKeySource: KeySourceKind<Kind = OwnIdentity> {
     /// Load the index key for a keyset — identified by id or name, or the
     /// client's default keyset when `keyset_id` is `None`. Returns the
     /// resolved keyset id alongside the key, so callers pinning `None` or a
@@ -68,6 +254,71 @@ pub trait IndexKeySource {
     /// query time.
     fn load_index_key(
         &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>> + MaybeSend;
+}
+
+/// A key source that makes each request with a credential that comes with
+/// the call, so ZeroKMS serves and logs the request as that caller.
+///
+/// The credential is whatever the source's auth strategy exchanges for an
+/// access token. For [`StackKms`](crate::StackKms) over an
+/// [`OidcFederationStrategy`](stack_auth::OidcFederationStrategy) built
+/// with `credential_per_call`, it is the JWT of an end user. One long-lived
+/// source then serves every caller, and each request says which caller it
+/// is for.
+///
+/// Each method is the one of [`DataKeySource`] or [`IndexKeySource`] with
+/// `credential` added. An implementation must make the request with that
+/// credential, or fail. It must never fall back to another identity.
+///
+/// A key source is one kind or the other, never both. [`KeySourceKind`]
+/// holds that: a type states one kind, and each trait requires its own.
+///
+/// - A source with an identity of its own (an access key, a saved login)
+///   implements [`DataKeySource`] and [`IndexKeySource`], and not this
+///   trait. Code that passes a credential does not compile against it, so
+///   a credential is never ignored.
+/// - A source that takes a credential with each call implements this
+///   trait, and not the other two. Code that makes a request with no
+///   credential does not compile against it, so a credential is never
+///   forgotten.
+///
+/// [`StackKms`](crate::StackKms) is the first kind over a
+/// [`stack_auth::AuthStrategy`], and the second over a
+/// [`stack_auth::CredentialAuthStrategy`]. A strategy is one of the two and
+/// never both ([`stack_auth::StrategyKind`]), so a `StackKms` is one kind.
+///
+/// As with [`DataKeySource`], the returned futures are bounded by
+/// [`MaybeSend`].
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not take a credential with each call",
+    label = "this passes a credential to a key source that has an identity of its own",
+    note = "a key source with an identity of its own makes every request as that identity. To make each request as its caller, build the key source over an auth strategy that takes a credential with each call, such as `OidcFederationStrategy::credential_per_call`"
+)]
+pub trait CredentialKeySource: KeySourceKind<Kind = CredentialPerCall> {
+    /// [`DataKeySource::generate_keys`], made with `credential`.
+    fn generate_keys_with_credential(
+        &self,
+        credential: &SecretToken,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> impl Future<Output = Result<Vec<DataKeyWithTag>, Error>> + MaybeSend;
+
+    /// [`DataKeySource::retrieve_keys`], made with `credential`.
+    fn retrieve_keys_with_credential(
+        &self,
+        credential: &SecretToken,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> impl Future<Output = Result<Vec<DataKey>, Error>> + MaybeSend;
+
+    /// [`IndexKeySource::load_index_key`], made with `credential`.
+    fn load_index_key_with_credential(
+        &self,
+        credential: &SecretToken,
         keyset_id: Option<IdentifiedBy>,
     ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>> + MaybeSend;
 }
@@ -114,6 +365,59 @@ where
     }
 }
 
+impl<C, Conn> CredentialKeySource for crate::StackKms<C, Conn>
+where
+    C: stack_auth::AuthStrategyBounds,
+    for<'a> &'a C: stack_auth::CredentialAuthStrategy,
+    Conn: crate::ZeroKMSConnection + Send + Sync,
+{
+    async fn generate_keys_with_credential(
+        &self,
+        credential: &SecretToken,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, Error> {
+        // The inherent method of the same name, which takes `impl IntoIterator`.
+        crate::StackKms::generate_keys_with_credential(
+            self,
+            credential,
+            payloads,
+            keyset_id,
+            unverified_context,
+        )
+        .await
+    }
+
+    async fn retrieve_keys_with_credential(
+        &self,
+        credential: &SecretToken,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, Error> {
+        crate::StackKms::retrieve_keys_with_credential(
+            self,
+            credential,
+            payloads,
+            keyset_id,
+            unverified_context,
+        )
+        .await
+    }
+
+    async fn load_index_key_with_credential(
+        &self,
+        credential: &SecretToken,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), Error> {
+        let (keyset, index_key) = self
+            .load_keyset_with_credential(credential, keyset_id)
+            .await?;
+        Ok((keyset.id, index_key))
+    }
+}
+
 #[cfg(feature = "test-support")]
 mod fake {
     use super::*;
@@ -150,9 +454,23 @@ mod fake {
     /// independently built stubs agree — search terms generated by one cipher
     /// must match terms generated by another, and known-answer tests can pin
     /// term bytes. That is plain determinism, not ZeroKMS's derivation.
-    #[derive(Debug, Default)]
+    ///
+    /// This stub has an identity of its own: no request takes a credential.
+    /// [`FakeCredentialKeySource`] is the stub that takes one with each
+    /// call.
+    #[derive(Default)]
     pub struct FakeDataKeySource {
         keys: Mutex<HashMap<(Iv, Vec<u8>), Key>>,
+    }
+
+    /// The number of keys held. The keys are key material, so they are not
+    /// printed.
+    impl std::fmt::Debug for FakeDataKeySource {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("FakeDataKeySource")
+                .field("keys", &self.len())
+                .finish()
+        }
     }
 
     /// UUID namespace for name resolution: `Uuid::new_v5` mints deterministic,
@@ -195,11 +513,9 @@ mod fake {
         Ok(Generatable::random(rng).map_err(GenerateKeyError::GenerateIv)?)
     }
 
-    impl IndexKeySource for FakeDataKeySource {
-        async fn load_index_key(
-            &self,
-            keyset_id: Option<IdentifiedBy>,
-        ) -> Result<(Uuid, IndexKey), Error> {
+    impl FakeDataKeySource {
+        /// The index key of `keyset_id`, whoever asks.
+        fn index_key(&self, keyset_id: Option<IdentifiedBy>) -> (Uuid, IndexKey) {
             let resolved = match keyset_id {
                 None => Uuid::nil(),
                 Some(IdentifiedBy::Uuid(id)) => id,
@@ -216,16 +532,13 @@ mod fake {
             hasher.update(b"stack-kms::FakeDataKeySource::index-key::v1");
             hasher.update(resolved.as_bytes());
             let key: Key = hasher.finalize().into();
-            Ok((resolved, IndexKey::from(key)))
+            (resolved, IndexKey::from(key))
         }
-    }
 
-    impl DataKeySource for FakeDataKeySource {
-        async fn generate_keys(
+        /// One fresh key for each payload, remembered, whoever asks.
+        fn generate(
             &self,
             payloads: Vec<GenerateKeyPayload<'_>>,
-            _keyset_id: Option<Uuid>,
-            _unverified_context: Option<Cow<'_, UnverifiedContext>>,
         ) -> Result<Vec<DataKeyWithTag>, Error> {
             let mut rng = SafeRand::from_entropy().map_err(GenerateKeyError::GenerateIv)?;
             let mut keys = self.lock();
@@ -245,12 +558,8 @@ mod fake {
                 .collect()
         }
 
-        async fn retrieve_keys(
-            &self,
-            payloads: Vec<RetrieveKeyPayload<'_>>,
-            _keyset_id: Option<Uuid>,
-            _unverified_context: Option<&UnverifiedContext>,
-        ) -> Result<Vec<DataKey>, Error> {
+        /// The remembered key of each payload, whoever asks.
+        fn retrieve(&self, payloads: Vec<RetrieveKeyPayload<'_>>) -> Result<Vec<DataKey>, Error> {
             let keys = self.lock();
             payloads
                 .iter()
@@ -267,10 +576,173 @@ mod fake {
                 .collect()
         }
     }
+
+    impl KeySourceKind for FakeDataKeySource {
+        type Kind = OwnIdentity;
+    }
+
+    impl IndexKeySource for FakeDataKeySource {
+        async fn load_index_key(
+            &self,
+            keyset_id: Option<IdentifiedBy>,
+        ) -> Result<(Uuid, IndexKey), Error> {
+            Ok(self.index_key(keyset_id))
+        }
+    }
+
+    impl DataKeySource for FakeDataKeySource {
+        async fn generate_keys(
+            &self,
+            payloads: Vec<GenerateKeyPayload<'_>>,
+            _keyset_id: Option<Uuid>,
+            _unverified_context: Option<Cow<'_, UnverifiedContext>>,
+        ) -> Result<Vec<DataKeyWithTag>, Error> {
+            self.generate(payloads)
+        }
+
+        async fn retrieve_keys(
+            &self,
+            payloads: Vec<RetrieveKeyPayload<'_>>,
+            _keyset_id: Option<Uuid>,
+            _unverified_context: Option<&UnverifiedContext>,
+        ) -> Result<Vec<DataKey>, Error> {
+            self.retrieve(payloads)
+        }
+    }
+
+    /// An in-memory stub [`CredentialKeySource`], for tests and examples of
+    /// code that makes each key request as its caller.
+    ///
+    /// It is [`FakeDataKeySource`] with a credential on every request: it
+    /// generates, retrieves and loads as that stub does, takes any
+    /// credential, and records it.
+    /// [`credentials_seen`](Self::credentials_seen) lists the credential of
+    /// each request, in order. A test of a request handler reads the list
+    /// to check that the handler's key requests carried its own caller's
+    /// credential.
+    ///
+    /// Like every [`CredentialKeySource`], it has no request without a
+    /// credential. A test of a request handler built on it does not
+    /// compile if the handler makes a key request without one.
+    ///
+    /// The stub exchanges nothing and refuses no credential, so it says
+    /// nothing about whether ZeroKMS would accept one. Its index keys are
+    /// those of [`FakeDataKeySource`], so the terms of one stub match the
+    /// terms of the other.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use stack_kms::{CredentialKeySource, FakeCredentialKeySource, SecretToken};
+    ///
+    /// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+    /// let source = FakeCredentialKeySource::new();
+    /// let alice = SecretToken::new("alice.jwt");
+    ///
+    /// let (keyset_id, _index_key) = source.load_index_key_with_credential(&alice, None).await?;
+    /// assert!(keyset_id.is_nil(), "the stub's default keyset");
+    /// assert_eq!(source.credentials_seen(), ["alice.jwt"]);
+    /// # Ok::<(), stack_kms::Error>(())
+    /// # }).unwrap();
+    /// ```
+    ///
+    /// A request with no credential does not compile:
+    ///
+    /// ```compile_fail,E0599
+    /// use stack_kms::{FakeCredentialKeySource, IndexKeySource};
+    ///
+    /// let source = FakeCredentialKeySource::new();
+    /// let _ = source.load_index_key(None);
+    /// ```
+    #[derive(Default)]
+    pub struct FakeCredentialKeySource {
+        keys: FakeDataKeySource,
+        /// The credential of each request, in order.
+        credentials: Mutex<Vec<SecretToken>>,
+    }
+
+    /// The number of keys held, and of credentials seen. The keys are key
+    /// material and the credentials are secrets, so neither is printed.
+    impl std::fmt::Debug for FakeCredentialKeySource {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("FakeCredentialKeySource")
+                .field("keys", &self.len())
+                .field("credentials_seen", &lock(&self.credentials).len())
+                .finish()
+        }
+    }
+
+    impl FakeCredentialKeySource {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Number of keys generated so far and available to retrieve.
+        pub fn len(&self) -> usize {
+            self.keys.len()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.len() == 0
+        }
+
+        /// The credential of each request, in the order the requests were
+        /// made.
+        ///
+        /// The credentials are returned as plain strings so that a test can
+        /// compare them. Use test values, never a real credential.
+        pub fn credentials_seen(&self) -> Vec<String> {
+            lock(&self.credentials)
+                .iter()
+                .map(|credential| credential.as_str().to_string())
+                .collect()
+        }
+
+        fn saw(&self, credential: &SecretToken) {
+            lock(&self.credentials).push(credential.clone());
+        }
+    }
+
+    impl KeySourceKind for FakeCredentialKeySource {
+        type Kind = CredentialPerCall;
+    }
+
+    impl CredentialKeySource for FakeCredentialKeySource {
+        async fn generate_keys_with_credential(
+            &self,
+            credential: &SecretToken,
+            payloads: Vec<GenerateKeyPayload<'_>>,
+            _keyset_id: Option<Uuid>,
+            _unverified_context: Option<Cow<'_, UnverifiedContext>>,
+        ) -> Result<Vec<DataKeyWithTag>, Error> {
+            self.saw(credential);
+            self.keys.generate(payloads)
+        }
+
+        async fn retrieve_keys_with_credential(
+            &self,
+            credential: &SecretToken,
+            payloads: Vec<RetrieveKeyPayload<'_>>,
+            _keyset_id: Option<Uuid>,
+            _unverified_context: Option<&UnverifiedContext>,
+        ) -> Result<Vec<DataKey>, Error> {
+            self.saw(credential);
+            self.keys.retrieve(payloads)
+        }
+
+        async fn load_index_key_with_credential(
+            &self,
+            credential: &SecretToken,
+            keyset_id: Option<IdentifiedBy>,
+        ) -> Result<(Uuid, IndexKey), Error> {
+            self.saw(credential);
+            Ok(self.keys.index_key(keyset_id))
+        }
+    }
 }
 
 #[cfg(feature = "test-support")]
-pub use fake::FakeDataKeySource;
+pub use fake::{FakeCredentialKeySource, FakeDataKeySource};
 
 /// The deterministic test source: every key derives from a seed and the
 /// descriptor, so a record sealed in one process opens in another built from
@@ -344,6 +816,10 @@ mod deterministic {
             hasher.update(salt);
             hasher.finalize().into()
         }
+    }
+
+    impl super::KeySourceKind for DeterministicSource {
+        type Kind = super::OwnIdentity;
     }
 
     impl DataKeySource for DeterministicSource {
@@ -459,6 +935,64 @@ mod tests {
             Err(other) => panic!("{what}: expected FailedRetrieval, got {other:?}"),
             Ok(_) => panic!("{what}: expected rejection, got a key"),
         }
+    }
+
+    /// The credential stub records the credential of each request, in
+    /// order, round-trips a key between two callers, agrees with the plain
+    /// stub on a keyset's index key, and keeps keys and credentials out of
+    /// `Debug`.
+    #[tokio::test]
+    async fn the_credential_fake_records_the_credential_of_each_request() {
+        let src = FakeCredentialKeySource::new();
+        let (alice, bob) = (SecretToken::new("alice.jwt"), SecretToken::new("bob.jwt"));
+        assert!(src.is_empty());
+        assert!(src.credentials_seen().is_empty());
+
+        let (default, index_key) = src
+            .load_index_key_with_credential(&alice, None)
+            .await
+            .unwrap();
+        let (plain_default, plain_index_key) =
+            FakeDataKeySource::new().load_index_key(None).await.unwrap();
+        assert_eq!(default, plain_default);
+        assert_eq!(index_key.key(), plain_index_key.key());
+
+        let generated = src
+            .generate_keys_with_credential(
+                &bob,
+                vec![GenerateKeyPayload::new("users/email", Cow::Owned(vec![]))],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(src.len(), 1);
+        assert!(!src.is_empty());
+        let retrieved = src
+            .retrieve_keys_with_credential(
+                &alice,
+                vec![RetrieveKeyPayload::new(
+                    generated.key.iv,
+                    "users/email",
+                    &generated.tag,
+                )],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(retrieved.key(), generated.key.key());
+
+        assert_eq!(
+            src.credentials_seen(),
+            ["alice.jwt", "bob.jwt", "alice.jwt"]
+        );
+        let debug = format!("{src:?}");
+        assert!(debug.contains("keys: 1"), "{debug}");
+        assert!(debug.contains("credentials_seen: 3"), "{debug}");
+        assert!(!debug.contains("alice.jwt"), "{debug}");
     }
 
     /// The deterministic source refuses a key retrieved under another

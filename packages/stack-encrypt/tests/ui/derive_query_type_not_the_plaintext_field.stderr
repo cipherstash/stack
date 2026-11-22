@@ -7,7 +7,7 @@ error[E0277]: the plaintext field is `std::string::String`, which `query = u64` 
    = help: the trait `QueryField<u64>` is not implemented for `std::string::String`
    = note: `#[stash(query = T)]` names the plaintext field's type, or the type inside its `Option`
 help: the trait `QueryField<V>` is implemented for `Option<V>`
-  --> src/marker.rs
+  --> src/field_reference.rs
    |
    | impl<V> QueryField<V> for Option<V> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

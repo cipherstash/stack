@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -276,6 +277,152 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	unreadable := vcvalue.Object{{Key: "operation", Value: "subtree"}, {Key: "path", Value: "$.visits[*].at"}, {Key: "wildcard_bound", Value: "1"}}
 	if _, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", unreadable, [][][]byte{{}}); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("a bound that is not an integer: %v", err)
+	}
+}
+
+// jsonEntry is the entry `col -> selector` returns for a sealed document,
+// as eql_v4.json_tree_graft writes it, or nil when no entry of the document
+// carries the selector.
+func jsonEntry(t *testing.T, document []byte, selector string) []byte {
+	t.Helper()
+	var doc struct {
+		H  string                       `json:"h"`
+		SV []map[string]json.RawMessage `json:"sv"`
+	}
+	if err := json.Unmarshal(document, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for j, entry := range doc.SV {
+		var s string
+		_ = json.Unmarshal(entry["s"], &s)
+		if s == selector {
+			entry["h"], _ = json.Marshal(doc.H)
+			entry["j"], _ = json.Marshal(j)
+			out, _ := json.Marshal(entry)
+			return out
+		}
+	}
+	return nil
+}
+
+// A JSON document sealed through a cipher with a scope, or with a scope and
+// a binding, is found and read under them.
+//
+// Its selectors derive under the column, then the scope, so a cipher with
+// the scope finds its entries, and a cipher with another scope, or none,
+// does not. A binding is in no query, and a read derives its selector
+// under the scope alone. The entries open under the scope and the binding,
+// so a cipher with another binding, or none, finds an entry and does not
+// open it.
+func TestAJSONDocumentIsFoundAndReadUnderItsScopeAndBinding(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	plain := c.DefaultKeyset()
+	tenant := plain.Scope(uint64(7))
+	bound := tenant.Bind(uint64(9))
+	source := []record.Source{{"profile": []byte(`{"name":"Alice","age":34}`)}}
+	request := vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.name"}}
+	selector := func(cipher *encrypt.Cipher) string {
+		t.Helper()
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "selector", vcvalue.Object{{Key: "path", Value: "$.name"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return term.Text[0]
+	}
+	opens := func(cipher *encrypt.Cipher, entry []byte) error {
+		t.Helper()
+		opened, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", request, [][][]byte{{entry}})
+		if err != nil {
+			return err
+		}
+		if len(opened) != 1 || len(opened[0]) != 1 || string(opened[0][0]) != `"Alice"` {
+			t.Fatalf("opened %q", opened)
+		}
+		return nil
+	}
+
+	for _, sealedBy := range []struct {
+		name   string
+		cipher *encrypt.Cipher
+		// The ciphers that find the entry and do not open it.
+		closed map[string]*encrypt.Cipher
+	}{
+		{"a scope", tenant, map[string]*encrypt.Cipher{
+			"a binding the document was not sealed under": bound,
+		}},
+		{"a scope and a binding", bound, map[string]*encrypt.Cipher{
+			"another row": tenant.Bind(uint64(10)),
+			"no row":      tenant,
+		}},
+	} {
+		t.Run(sealedBy.name, func(t *testing.T) {
+			sealed, err := sealedBy.cipher.Seal(ctx, jsonPlan(), source)
+			if err != nil {
+				t.Fatalf("the cipher did not seal a JSON document: %v", err)
+			}
+			document := sealed[0]["profile"].EQL
+			var stored struct{ I struct{ T, C string } }
+			if err := json.Unmarshal(document, &stored); err != nil {
+				t.Fatal(err)
+			}
+			if stored.I.T != "users" || stored.I.C != "profile" {
+				t.Errorf("i = %+v, want users/profile and nothing else", stored.I)
+			}
+
+			// A read prepared with the scope and no binding opens through the
+			// cipher the document was sealed through.
+			name := jsonEntry(t, document, selector(tenant))
+			if name == nil {
+				t.Fatal("the tenant's selector names no entry of the tenant's document")
+			}
+			if err := opens(sealedBy.cipher, name); err != nil {
+				t.Fatalf("the cipher that sealed the document did not open its entry: %v", err)
+			}
+			for whose, other := range sealedBy.closed {
+				if err := opens(other, name); err == nil {
+					t.Errorf("%s: the entry opened", whose)
+				}
+			}
+			for whose, other := range map[string]*encrypt.Cipher{
+				"another tenant": plain.Scope(uint64(8)),
+				"no tenant":      plain,
+			} {
+				if jsonEntry(t, document, selector(other)) != nil {
+					t.Errorf("%s: the selector names an entry of the tenant's document", whose)
+				}
+				if err := opens(other, name); err == nil {
+					t.Errorf("%s: the entry opened", whose)
+				}
+			}
+		})
+	}
+
+	// A cipher with a binding prepares a read: its selector and its subtree
+	// tokens derive under the scope alone, so they are the tenant's. A query,
+	// and a node's token, take no binding.
+	if got := selector(bound); got != selector(tenant) {
+		t.Errorf("a selector through a cipher with a binding is not the tenant's")
+	}
+	subtree := func(cipher *encrypt.Cipher) ([]string, error) {
+		term, err := cipher.QueryTerm(ctx, jsonPlan(), "profile", "subtree", vcvalue.Object{{Key: "path", Value: "$.name"}})
+		return term.Text, err
+	}
+	boundTokens, err := subtree(bound)
+	if err != nil {
+		t.Fatalf("a subtree read through a cipher with a binding: %v", err)
+	}
+	if tenantTokens, err := subtree(tenant); err != nil || !slices.Equal(boundTokens, tenantTokens) {
+		t.Errorf("a subtree read's tokens through a cipher with a binding are not the tenant's: %v", err)
+	}
+	for _, operator := range []string{"children", "child_count", "eq_at"} {
+		input := vcvalue.Object{{Key: "path", Value: "$.name"}}
+		if operator == "eq_at" {
+			input = append(input, vcvalue.Field{Key: "json", Value: []byte(`"Alice"`)})
+		}
+		if _, err := bound.QueryTerm(ctx, jsonPlan(), "profile", operator, input); !errors.Is(err, encrypt.ErrEncoding) {
+			t.Errorf("%s through a cipher with a binding: %v, want ErrEncoding", operator, err)
+		}
 	}
 }
 

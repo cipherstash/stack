@@ -389,7 +389,7 @@ The inversion is still to come: those functions run `compose` and
 the record functions are two callers of one lowering until then.
 
 **The derive emits no plan.** `encryption_plan()` is not added. A typed
-query starts from a field marker. The marker has the field's context and
+query starts from a field reference. The field reference has the field's context and
 indexes at compile time. The query lowers to the term combinator under
 that context, with no plan in between.
 
@@ -409,8 +409,8 @@ type's plan. The equivalence suite uses data plans written by hand.
 2. **The builder's typed surface had one Rust author.** In the engine's
    own source, nothing outside `plan/` and `dynamic/` builds a plan. The
    one real use is a typed query, `cipher.query(op, value).on(&plan)`.
-   That use existed only because field markers were not built; they
-   are, since #1486's markers pull request.
+   That use existed only because field references were not built; they
+   are, since #1486's field references pull request.
    `eql-bindings` and the tests are the other users. A plan is the
    dynamic interface's declaration. A Rust program that learns its
    declaration at run time uses the dynamic interface through `Planned`,

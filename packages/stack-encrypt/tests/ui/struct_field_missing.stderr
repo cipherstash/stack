@@ -1,7 +1,13 @@
 error[E0609]: no field `nickname` on type `&User`
-  --> tests/ui/struct_field_missing.rs:13:5
+  --> tests/ui/struct_field_missing.rs:15:5
    |
-13 |     nickname: StackCipherText,
+15 |     nickname: StackCipherText,
    |     ^^^^^^^^ unknown field
    |
    = note: available field is: `email`
+
+error[E0026]: struct `User` does not have a field named `nickname`
+  --> tests/ui/struct_field_missing.rs:15:5
+   |
+15 |     nickname: StackCipherText,
+   |     ^^^^^^^^ struct `User` does not have this field

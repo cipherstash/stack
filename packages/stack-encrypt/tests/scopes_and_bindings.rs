@@ -1,5 +1,5 @@
-//! Scopes and bindings on a derived record (#1487): the context scenarios
-//! 2 to 7 of the Stack Encrypt API plan.
+//! Scopes and bindings on a derived record: the context scenarios 2 to 7
+//! of the Stack Encrypt API plan.
 //!
 //! A scope is a part a query can supply too, such as a tenant. A binding
 //! ties a ciphertext to one row, such as a row ID. Search terms derive
@@ -524,8 +524,8 @@ fn a_record_with_no_binding_has_one_context_per_field() {
 /// its binding and under nothing less.
 mod a_bound_json_document {
     use super::*;
-    use stack_encrypt::json::{JsonDocument, JsonPath};
-    use stack_encrypt::target::{CallerContext, DecryptInto, EncryptFrom};
+    use stack_encrypt::json::{JsonDocument, JsonPath, JsonPlaintext};
+    use stack_encrypt::target::CallerContext;
 
     fn profile() -> stack_encrypt::NonEmpty<(&'static str, &'static str)> {
         nonempty!("users").with("profile")
@@ -537,11 +537,8 @@ mod a_bound_json_document {
         let keyset = cipher.default_keyset();
         let value = serde_json::json!({"hello": "world"});
         let bound = CallerContext::from(Scope::new(42u64).bind(9u128)).extend(profile());
-        let sealing = keyset.run(
-            <JsonDocument as EncryptFrom<serde_json::Value>>::encryption::<FakeDataKeySource>(),
-            &value,
-            bound.clone(),
-        );
+        let sealing = JsonPlaintext::from(value.clone())
+            .encrypt_into_with_context::<JsonDocument, _>(&keyset, bound.clone());
         assert_eq!(
             sealing.context().to_string(),
             "query context:  (users / profile) / 42u64\n\
@@ -575,25 +572,13 @@ mod a_bound_json_document {
         );
 
         // The document opens under its binding, and not under the scopes.
-        let opened: serde_json::Value = keyset
-            .run_decryption(
-                <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
-                    document.clone(),
-                    bound.into(),
-                ),
-            )
+        let opened = JsonPlaintext::decrypt_from_with_context(document.clone(), &keyset, bound)
             .await
             .unwrap();
-        assert_eq!(opened, value);
+        assert_eq!(opened.value(), &value);
         let scopes_alone = CallerContext::from(Scope::new(42u64)).extend(profile());
-        let refused = keyset
-            .run_decryption(
-                <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
-                    document,
-                    scopes_alone.into(),
-                ),
-            )
-            .await;
+        let refused =
+            JsonPlaintext::decrypt_from_with_context(document, &keyset, scopes_alone).await;
         assert!(refused.is_err(), "the binding left out: {refused:?}");
     }
 
@@ -616,85 +601,96 @@ mod a_bound_json_document {
             .run(json_document::<_, Borrowed>(options), &value, bound.clone())
             .await
             .unwrap();
-        let opened: serde_json::Value = keyset
-            .run_decryption(
-                <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
-                    document.clone(),
-                    bound.into(),
-                ),
-            )
+        let opened = JsonPlaintext::decrypt_from_with_context(document.clone(), &keyset, bound)
             .await
             .unwrap();
-        assert_eq!(opened, value);
+        assert_eq!(opened.value(), &value);
         let scopes_alone = CallerContext::from(Scope::new(42u64)).extend(profile());
-        let refused = keyset
-            .run_decryption(
-                <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
-                    document,
-                    scopes_alone.into(),
-                ),
-            )
-            .await;
+        let refused =
+            JsonPlaintext::decrypt_from_with_context(document, &keyset, scopes_alone).await;
         assert!(refused.is_err(), "the binding left out: {refused:?}");
     }
 }
 
-/// A query carries no binding. A bare `Bind` does not compile
-/// (`tests/ui/bind_in_query.rs`); a binding that reaches the chain inside
-/// a `CallerContext` or a `DeclaredContext` is refused when the query is
-/// awaited, before any key is requested, rather than dropped.
-mod a_binding_in_a_query_chain {
+/// A query carries no binding. A typed query cannot be given one: a field reference
+/// takes the scope its record lists and nothing else
+/// (`tests/ui/field_query_has_no_bind.rs`). A query from a plan that is
+/// data takes its context as a value. A binding in that value is refused
+/// when the query is awaited, before any key is requested, rather than
+/// dropped.
+#[cfg(feature = "dynamic")]
+mod a_binding_in_a_query {
     use super::*;
-    use stack_encrypt::target::{CallerContext, DeclaredContext};
-    use stack_encrypt::{op, Equality, Plan, PlanError};
+    use common::frames::frame;
+    use stack_encrypt::dynamic::{record, Op, Operand, Planned, QueryTerm};
+    use stack_encrypt::target::DeclaredContext;
+    use stack_encrypt::{AsProtectedRef, PlanError};
+    use std::sync::atomic::Ordering;
+
+    /// A record whose caller supplies its tenant and its row.
+    #[derive(EncryptTarget, DecryptSource)]
+    #[stash(struct = User, scope = "users", scope(tenant: u64), bind(row: u128))]
+    struct TenantRowBound {
+        email: Encrypted<EqualityTerm>,
+    }
+
+    /// The data plan of the same column: `email` under `("users", "email")`,
+    /// with its ciphertext and an equality term.
+    fn plan() -> record::Plan {
+        let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+            "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
+        }))
+        .unwrap();
+        record::plan(declaration.as_protected_ref()).unwrap()
+    }
 
     #[tokio::test]
     async fn is_refused_before_any_key_is_requested() {
-        let cipher = cipher().await;
-        let plan = Plan::context("users/email")
-            .with::<String, _>(Equality)
-            .build()
-            .unwrap();
-        let bound = || CallerContext::from(Scope::new(7u64).bind(9u128));
-        let refused = cipher
-            .query(op::Eq, "ada@example.com")
-            .extend(bound())
-            .on(&plan)
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = plan();
+        let by_email = plan.query("email", Op::Eq).unwrap();
+        let refused = Planned::new(&by_email, frame("ada@example.com"))
+            .encrypt_into_with_context::<QueryTerm, _>(&keyset, Scope::new(7u64).bind(9u128))
             .await;
         assert!(
             matches!(refused, Err(Error::Plan(PlanError::BindInQuery))),
             "{refused:?}"
         );
-        let refused = cipher
-            .query(op::Eq, "ada@example.com")
-            .extend(DeclaredContext::default().with(Bind::new(9u128)))
-            .on(&plan)
+        let refused = plan
+            .field("email")
+            .unwrap()
+            .eq(frame("ada@example.com"))
+            .unwrap()
+            .scope(DeclaredContext::default().with(Bind::new(9u128)))
+            .encrypt(&keyset)
             .await;
         assert!(
             matches!(refused, Err(Error::Plan(PlanError::BindInQuery))),
             "{refused:?}"
         );
+        assert_eq!(generates.load(Ordering::SeqCst), 0);
+        assert_eq!(retrieves.load(Ordering::SeqCst), 0);
         assert_eq!(
             PlanError::BindInQuery.to_string(),
             "a query takes no binding: a binding is in the stored context only"
         );
 
-        // The same context seals a write through the plan, and the scopes
-        // alone derive the stored term: the row is found by its tenant.
-        let keyset = cipher.default_keyset();
-        let stored = cipher
-            .encrypt(&String::from("ada@example.com"))
-            .using(&plan)
-            .extend(bound())
+        // The same context seals a write, and the scopes alone derive the
+        // stored term: the row is found by its tenant.
+        let stored: TenantRowBound = User {
+            email: "ada@example.com".into(),
+        }
+        .encrypt_into_with_context(&keyset, Scope::new(7u64).bind(9u128))
+        .await
+        .unwrap();
+        let query: QueryTerm = Planned::new(&by_email, frame("ada@example.com"))
+            .encrypt_into_with_context(&keyset, Scope::new(7u64))
             .await
             .unwrap();
-        let query = cipher
-            .query(op::Eq, "ada@example.com")
-            .extend(Scope::new(7u64))
-            .on(&plan)
-            .await
-            .unwrap();
-        assert_eq!(stored.terms, query);
-        let _ = keyset;
+        assert_eq!(
+            query.operand(),
+            &Operand::One(stored.email.terms.as_bytes().to_vec())
+        );
     }
 }
