@@ -1,8 +1,11 @@
 // Security lints — the block `stack-encrypt` and `stack-auth` carry, minus
 // `deny(unsafe_code)`: the export surface (`abi`) and the host import
-// (`transport`) are `extern "C"` over raw pointers by nature. Every `unsafe`
-// block is confined to those two modules, the pair validation (`memory`)
-// and the buffer registry, and documented at the site;
+// (`transport`) are `extern "C"` over raw pointers by nature. A raw pointer
+// becomes a slice or a `Vec` in two places only: the pair validation
+// (`memory`) and the buffer registry (`buffers`). Every other `unsafe` block
+// (in `abi`, `transport`, `call`, `step` and `last_error`) builds neither:
+// it calls an unsafe function of those two modules, a host import, or a
+// wrapper over them. Each is documented at the site, and
 // `unsafe_op_in_unsafe_fn` keeps each one explicit.
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(clippy::unwrap_used)]
@@ -65,8 +68,9 @@
 //!   appends after them. The Go side decodes the table once.
 //! - [`transport`] — the `cipherstash_transport::transport_send` host import
 //!   (wasm32 only), wrapped so a guest performs one HTTP request as a safe
-//!   call and gets both response buffers back through the registry
-//!   ([`transport::reclaim`], on every target).
+//!   call and gets both response buffers back through the registry. The
+//!   reclaim of those buffers has no wasm in it, so its tests run natively
+//!   and under Miri.
 //! - [`headers`] — the `name: value` line format request and response
 //!   headers cross the import in.
 //! - [`value`] — [`HostValue`](value::HostValue), a value a guest hands its

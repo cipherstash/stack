@@ -89,8 +89,10 @@ impl GuestMemory {
     /// The bounds check keeps the read inside this memory. It cannot see
     /// who owns the range or for how long, and that is what the caller
     /// promises: `ptr`/`len` must name a buffer the host wrote and still
-    /// owns, and that buffer must stay allocated and unwritten for the
-    /// whole of `'a`. In practice the borrow ends before the export returns
+    /// owns, `ptr` must be valid for reads of `len` bytes (derived from that
+    /// buffer, not merely an address inside it), and the buffer must stay
+    /// allocated and unwritten for the whole of `'a`. In practice the
+    /// borrow ends before the export returns
     /// and before any wipe of an overlapping range ([`wipe_input`],
     /// [`take_plaintext`](Self::take_plaintext)). The lifetime is otherwise
     /// unconstrained, so a caller choosing `'static` over a range it is
@@ -108,9 +110,10 @@ impl GuestMemory {
         }
         // SAFETY: `ptr` is non-null and the range is inside this memory and
         // no longer than `isize::MAX`. Every byte of it is initialized: wasm
-        // linear memory is (fresh pages are zero), and so is a `&[u8]` that
-        // `spanning` was built over. That the range stays allocated and
-        // unwritten for `'a` is the caller's contract, above.
+        // linear memory always is (fresh pages are zero), and elsewhere the
+        // caller promises a buffer the host wrote. That `ptr` is valid for
+        // reads of the range, and that the range stays allocated and
+        // unwritten for `'a`, is the caller's contract, above.
         Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
     }
 
@@ -130,14 +133,18 @@ impl GuestMemory {
     ///
     /// # Safety
     ///
-    /// `ptr`/`len` must name a host buffer the caller is done with, with no
-    /// borrow of any part of it live; it is zeroed before this returns.
+    /// `ptr`/`len` must name a live host buffer the caller is done with,
+    /// `ptr` must be valid for reads and writes of `len` bytes, and no
+    /// borrow of any part of the buffer may be live. It is zeroed before
+    /// this returns.
     pub unsafe fn take_plaintext(&self, ptr: *mut u8, len: u32) -> Result<Protected<Vec<u8>>, u32> {
         // SAFETY: the borrow lives only for the copy on this line, over a
-        // buffer the caller has promised is the host's and live.
+        // buffer the caller has promised is the host's, live and readable.
         let taken = Protected::new(unsafe { self.input(ptr, len)? }.to_vec());
         // SAFETY: the range passed `input` just above, and the borrow it
-        // returned ended with the copy.
+        // returned ended with the copy. That the buffer is still live,
+        // writable through `ptr`, and has no other borrow is the caller's
+        // contract, above.
         unsafe { wipe_input(ptr, len) };
         Ok(taken)
     }
@@ -145,18 +152,20 @@ impl GuestMemory {
 
 /// Zeroize a validated input range in place, without freeing it: the host
 /// still owns the buffer and releases it with `se_dealloc` after the call.
-/// A null pointer or a zero length is a no-op.
 ///
 /// # Safety
 ///
-/// The range must have passed [`GuestMemory::input`], name a buffer that is
-/// still live, and have no borrow of any part of it live.
+/// A null pointer or a zero length is always allowed and does nothing.
+/// Otherwise the range must have passed [`GuestMemory::input`], `ptr` must
+/// be valid for writes of `len` bytes, the buffer must still be live, and
+/// no borrow of any part of it may be live.
 pub unsafe fn wipe_input(ptr: *mut u8, len: u32) {
     if ptr.is_null() || len == 0 {
         return;
     }
-    // SAFETY: the caller's contract: a validated, live range with no
-    // outstanding borrow, so a unique borrow over it is sound.
+    // SAFETY: the caller's contract: a validated, live range, writable
+    // through `ptr`, with no outstanding borrow, so a unique borrow over it
+    // is sound.
     unsafe { std::slice::from_raw_parts_mut(ptr, len as usize) }.zeroize();
 }
 
@@ -268,8 +277,14 @@ mod tests {
             start: 0,
             end: u64::MAX,
         };
-        assert!(memory.admits(1, isize::MAX as usize - 1));
-        assert!(!memory.admits(1, isize::MAX as usize + 1));
+        assert!(
+            memory.admits(1, isize::MAX as usize),
+            "a length of exactly isize::MAX is admitted"
+        );
+        assert!(
+            !memory.admits(1, isize::MAX as usize + 1),
+            "a length of isize::MAX + 1 is refused"
+        );
     }
 
     #[test]
@@ -347,6 +362,27 @@ mod properties {
 
     use super::*;
 
+    /// The bounds rule, worked in `u128` so that nothing in it can wrap: the
+    /// range `addr..addr + len` starts inside `start..end`, ends at or before
+    /// `end`, ends at or before the top of the address space, and is no
+    /// longer than `isize::MAX`.
+    fn bounds_rule(start: usize, end: u64, addr: usize, len: usize) -> bool {
+        let range_end = addr as u128 + len as u128;
+        addr >= start
+            && range_end <= end as u128
+            && range_end <= usize::MAX as u128
+            && len as u128 <= isize::MAX as u128
+    }
+
+    fn memory_of(start: usize, end: u64) -> GuestMemory {
+        GuestMemory { start, end }
+    }
+
+    /// An address or length within two bytes of `edge`, either side.
+    fn near(edge: usize) -> impl Strategy<Value = usize> {
+        (-2isize..=2).prop_map(move |delta| edge.saturating_add_signed(delta))
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig {
             // Miri interprets every case, so it runs fewer.
@@ -356,17 +392,49 @@ mod properties {
             ..ProptestConfig::default()
         })]
 
-        /// `admits` is exactly "inside the range, slice-sized, no wrap".
+        /// Anywhere in and around a small range, `admits` follows the rule.
         #[test]
-        fn admits_is_the_bounds_rule(
+        fn admits_follows_the_bounds_rule(
             start in 0usize..1 << 20,
             size in 0u64..1 << 20,
             addr in 0usize..1 << 21,
             len in 0usize..1 << 21,
         ) {
-            let memory = GuestMemory { start, end: start as u64 + size };
-            let inside = addr >= start && (addr + len) as u64 <= start as u64 + size;
-            prop_assert_eq!(memory.admits(addr, len), inside);
+            let end = start as u64 + size;
+            prop_assert_eq!(memory_of(start, end).admits(addr, len), bounds_rule(start, end, addr, len));
+        }
+
+        /// At the edges of the range, where an off-by-one lives: an address
+        /// within two bytes of the start or the end, and a length that puts
+        /// the range's end within two bytes of the end.
+        #[test]
+        fn admits_follows_the_bounds_rule_at_the_edges(
+            (start, size, addr, range_end) in (0usize..1 << 20, 0usize..1 << 20)
+                .prop_flat_map(|(start, size)| {
+                    let end = start + size;
+                    (
+                        Just(start),
+                        Just(size),
+                        prop_oneof![near(start), near(end)],
+                        near(end),
+                    )
+                }),
+        ) {
+            let end = (start + size) as u64;
+            let len = range_end.saturating_sub(addr);
+            prop_assert_eq!(memory_of(start, end).admits(addr, len), bounds_rule(start, end, addr, len));
+        }
+
+        /// At the top of the address space and at `isize::MAX`: an address
+        /// whose range would wrap is refused, and so is a length one past
+        /// the slice limit, with a memory that would otherwise admit both.
+        #[test]
+        fn admits_refuses_a_wrap_and_an_oversized_length(
+            addr in prop_oneof![usize::MAX - 64..=usize::MAX, 0usize..64],
+            len in prop_oneof![0usize..128, near(isize::MAX as usize)],
+        ) {
+            let memory = memory_of(0, u64::MAX);
+            prop_assert_eq!(memory.admits(addr, len), bounds_rule(0, u64::MAX, addr, len));
         }
 
         /// Every admitted pair over a real buffer borrows the bytes at its

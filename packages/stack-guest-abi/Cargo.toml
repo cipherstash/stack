@@ -31,9 +31,10 @@ vitaminc-aead-frame = { workspace = true }
 vitaminc-protected = { workspace = true }
 
 [dev-dependencies]
-# The registry's property test (`buffers::properties`): random interleavings
-# of alloc / register / take / dealloc / wipe_all against a model of what the
-# host holds, run natively and under Miri. `std` only: the `fork` and
+# The property tests, run natively and under Miri: the registry's
+# (`buffers::properties`), random interleavings of alloc / register / take /
+# dealloc / wipe_all against a model of what the host holds; and the pair
+# validation's (`memory::properties`), the bounds rule at and around its edges. `std` only: the `fork` and
 # `timeout` defaults spawn processes and threads Miri cannot interpret.
 proptest = { version = "1.7", default-features = false, features = ["std"] }
 # `step`'s tests drive the loop through the combinators the ZeroKMS client

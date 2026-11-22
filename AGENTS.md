@@ -818,10 +818,12 @@ That covers the code that turns a host `(ptr, len)` pair into a slice
 (`memory.rs`, run over a buffer the test owns), the buffer registry, and the
 reclaim of the transport's response buffers, as well as the headers and the
 status table. Miri cannot run wasm, so the `memory_size` intrinsic and the
-host imports stay outside it. The exports that call them (`abi.rs`,
-`transport::send`, and the guests' own `abi.rs` and `host.rs`) only pass
-pointers to those functions, and their hostile-input behaviour is pinned from
-the Go side (`mise run go:test`). Keep new pointer handling in
+host imports stay outside it. The code that calls them (`abi.rs`,
+`transport::send`, and the guests' own `abi.rs` and `host.rs`) reads through
+no host pointer itself: it hands each one, or each address the host wrote into
+an out-slot, to the checked code (`memory`, the buffer registry, or the
+transport's response reclaim). Its hostile-input behaviour is pinned from the
+Go side (`mise run go:test`). Keep new pointer handling in
 `stack-guest-abi`, where Miri reaches it, not in a guest.
 
 ### Mutation testing
