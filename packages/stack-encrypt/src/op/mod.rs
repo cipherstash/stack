@@ -501,7 +501,7 @@ impl LeafArity for Pair {}
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not what a query of arity `{A}` takes",
     label = "the operator takes another input",
-    note = "an operator of arity `One` takes one value, and `op::Between` (arity `Pair`) takes a pair, `(lo, hi)`; a JSON query at a path is a document field's reference query, `at(\"$.a\")`"
+    note = "an operator of arity `One` takes one value, and `op::Between` (arity `Pair`) takes a pair, `(lo, hi)`; a JSON query at a path is a document field's reference query: `at().age()` for a path the field declares, or `at_text_path(\"$.a\")` for a path given as text"
 )]
 pub trait Input<A: Arity>: Sized + 'static {
     /// The plaintext the index is declared over.

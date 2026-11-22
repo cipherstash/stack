@@ -15,7 +15,7 @@ error[E0599]: the method `contains` exists for struct `FieldReference<Root<Encry
 error[E0599]: the method `at` exists for struct `FieldReference<Root<EncryptedUser>, Encrypted<EqualityTerm>>`, but its trait bounds were not satisfied
   --> tests/ui/field_reference_json_on_a_scalar_field.rs:22:34
    |
-22 |     let _ = EncryptedUser::EMAIL.at("$.a");
+22 |     let _ = EncryptedUser::EMAIL.at();
    |                                  ^^
    |
   ::: src/field_reference/json.rs
@@ -30,4 +30,18 @@ error[E0599]: the method `at` exists for struct `FieldReference<Root<EncryptedUs
    |
    = note: the following trait bounds were not satisfied:
            `TextPaths: DocumentPaths`
+           `Encrypted<EqualityTerm>: JsonQueries`
+
+error[E0599]: the method `at_text_path` exists for struct `FieldReference<Root<EncryptedUser>, Encrypted<EqualityTerm>>`, but its trait bounds were not satisfied
+  --> tests/ui/field_reference_json_on_a_scalar_field.rs:23:34
+   |
+23 |     let _ = EncryptedUser::EMAIL.at_text_path("$.a");
+   |                                  ^^^^^^^^^^^^ method cannot be called due to unsatisfied trait bounds
+   |
+  ::: src/target/index.rs
+   |
+   | pub struct Encrypted<Terms> {
+   | --------------------------- doesn't satisfy `Encrypted<EqualityTerm>: JsonQueries`
+   |
+   = note: the following trait bounds were not satisfied:
            `Encrypted<EqualityTerm>: JsonQueries`

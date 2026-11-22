@@ -19,5 +19,6 @@ struct EncryptedUser {
 
 fn main() {
     let _ = EncryptedUser::EMAIL.contains(serde_json::json!({"a": 1}));
-    let _ = EncryptedUser::EMAIL.at("$.a");
+    let _ = EncryptedUser::EMAIL.at();
+    let _ = EncryptedUser::EMAIL.at_text_path("$.a");
 }

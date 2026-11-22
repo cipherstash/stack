@@ -1,8 +1,13 @@
 //! A path's key names can be customer data, so a path wipes them when it
 //! drops, and a parse that refuses its text part way wipes the keys it has
 //! read. Checked with an allocator that looks inside every block it frees.
+//!
+//! Unix only: the allocator scans a freed block with libc's `memmem`.
+
+#![cfg(unix)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use stack_encrypt_jsonpath::JsonPath;
@@ -16,6 +21,26 @@ static WATCHING: AtomicBool = AtomicBool::new(false);
 
 struct Spy;
 
+/// Whether the `len` bytes at `ptr` hold [`MARK`]. A freed block can hold
+/// bytes Rust never initialised (a `Vec`'s spare capacity, a struct's
+/// padding), and reading those through a `&[u8]` is undefined behaviour, so
+/// the scan is libc's `memmem`, which reads the block as plain memory.
+///
+/// # Safety
+///
+/// `ptr` must point to `len` allocated bytes.
+unsafe fn holds_mark(ptr: *const u8, len: usize) -> bool {
+    extern "C" {
+        fn memmem(
+            haystack: *const c_void,
+            haystack_len: usize,
+            needle: *const c_void,
+            needle_len: usize,
+        ) -> *mut c_void;
+    }
+    !memmem(ptr.cast(), len, MARK.as_ptr().cast(), MARK.len()).is_null()
+}
+
 // SAFETY: every call is forwarded to `System`; `dealloc` only reads the
 // block it is given before freeing it.
 unsafe impl GlobalAlloc for Spy {
@@ -27,8 +52,7 @@ unsafe impl GlobalAlloc for Spy {
         if WATCHING.load(Ordering::SeqCst) {
             // SAFETY: `ptr` is a live block of `layout.size()` bytes until
             // the `System.dealloc` below.
-            let block = std::slice::from_raw_parts(ptr, layout.size());
-            if block.windows(MARK.len()).any(|window| window == MARK) {
+            if holds_mark(ptr, layout.size()) {
                 let _ = FOUND.fetch_add(1, Ordering::SeqCst);
             }
         }
