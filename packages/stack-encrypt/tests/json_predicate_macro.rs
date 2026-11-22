@@ -209,7 +209,7 @@ mod given_each_construct_of_the_grammar {
 mod given_how_a_caller_writes_it {
     use super::*;
 
-    /// A local variable's name alone gives it, as `format!` takes one; a
+    /// A local variable's name alone gives it, and moves it; a
     /// quoted variable is given by its name as a string; a value is any
     /// expression, and a trailing comma is read.
     #[tokio::test]

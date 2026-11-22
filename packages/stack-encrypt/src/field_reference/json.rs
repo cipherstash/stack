@@ -210,9 +210,11 @@ pub mod predicate_checks;
 /// predicate's text, a string literal in the grammar
 /// [`predicate(text)`](FieldReference::predicate) reads. Then each variable
 /// the text names as `$name`: `name = value`, a local variable's name alone
-/// for `name = name` (as `format!` takes one), or `"any name" = value` for
-/// a `$"any name"` that is not a Rust identifier. Each value is evaluated
-/// once, in the order given.
+/// for `name = name`, or `"any name" = value` for a `$"any name"` that is
+/// not a Rust identifier. Each value is evaluated once, in the order given,
+/// and moved into the query: a local given by its name alone is moved, as
+/// [`var`](JsonFieldQuery::var) takes its value, so pass `name.clone()` or
+/// `name.as_str()` to keep a `String`.
 ///
 /// It returns what `predicate(text)` returns, with each variable given by
 /// [`var`](JsonFieldQuery::var): a query whose
@@ -234,8 +236,10 @@ pub mod predicate_checks;
 ///   a filter of one equality is containment at the member's path, which
 ///   any declared path answers);
 /// - a value of another type than the path's: a variable's value, a
-///   literal in the text (`$.age > "x"`), and an ordering's `true`,
-///   `false` or `null`.
+///   literal in the text (`$.age > "x"`), a number literal the path's type
+///   does not hold (`$.age > 1.5`, `$.age >= -1` and `$.age == 99999999999`
+///   for a `u32`; an `f64` path takes any number), and an ordering's
+///   `true`, `false` or `null`.
 ///
 /// So every path the text names must be declared. A predicate on a path
 /// the field does not declare, or one built at run time from a user's

@@ -1,16 +1,20 @@
 //! What [`predicate!`](crate::predicate) expands to so that the compiler
 //! checks a predicate against the paths its field declares. For generated
-//! code only: nothing here is called when a program runs.
+//! code only. [`document`] is what an expansion calls when the program
+//! runs; everything else here is type-checked and never run.
 //!
 //! The macro sees the predicate's text and the field reference's
 //! expression, never the field's declaration. So it names each path the
 //! text uses as a type, [`Char`] by [`Char`], and asks for the derive's
-//! lookup of that path: [`PathLookup`], [`ArrayLookup`] and
-//! [`MemberLookup`], which `#[derive(EncryptTarget)]` implements once for
-//! each path, array and member the field's `#[stash(json(ordered = {..}))]`
-//! declares, by calling the accessor it generated for it. The lookup is
-//! keyed by the path's text, not the accessor's name, so a `names = {..}`
-//! override, which the macro cannot see, changes nothing here.
+//! lookup of that path. `#[derive(EncryptTarget)]` implements
+//! [`PathLookup`] once for each path the field's `#[stash(json(..))]`
+//! declares, under `ordered = {..}` or under `paths = {..}`, and
+//! [`ArrayLookup`] and [`MemberLookup`] once for each array and member
+//! under `ordered = {..}` alone, since an element condition compares by an
+//! ordering term. Each lookup calls the accessor the derive generated. The
+//! lookup is keyed by the path's text, not the accessor's name, so a
+//! `names = {..}` override, which the macro cannot see, changes nothing
+//! here.
 //!
 //! The macro's own trait, generated at each use, refuses a path the field
 //! does not declare with a message that names it. The finders below then
@@ -122,9 +126,21 @@ pub trait ValueFits<V> {}
 impl<V: JsonScalarType, X: PathValue<V>> ValueFits<V> for X {}
 impl<X> ValueFits<Unknown> for X {}
 
-/// A type a number literal fits: the number types a path holds, and
-/// [`Unknown`].
-pub trait NumberFits {}
+/// A number literal that is an integer of zero or more, named by the
+/// narrowest of the integer types that holds it: `UpTo<u8>` is 128 to 255.
+pub struct UpTo<N>(PhantomData<N>);
+/// A number literal that is an integer below zero, named by the narrowest
+/// of the signed types that holds it: `DownTo<i16>` is -32768 to -129.
+pub struct DownTo<N>(PhantomData<N>);
+/// A number literal with a fraction or an exponent.
+pub enum Fraction {}
+
+/// A type the number literal `L` fits: an integer type that holds the
+/// literal, `f64` for any number, and [`Unknown`]. The macro names `L`
+/// from the literal's text, so `$.age > 1.5`, `$.age >= -1` and
+/// `$.age == 99999999999` are refused for a `u32`, as the typed accessor
+/// refuses those values.
+pub trait NumberFits<L> {}
 /// A type a string literal fits: `String`, and [`Unknown`].
 pub trait StringFits {}
 /// A type `true` or `false` fits: `bool`, which a path under `paths` can
@@ -132,9 +148,26 @@ pub trait StringFits {}
 pub trait BooleanFits {}
 
 macro_rules! number_fits {
-    ($($ty:ty),+) => {$(impl NumberFits for $ty {})+};
+    ($($literal:ty => $($ty:ty),+;)+) => {
+        $($(impl NumberFits<$literal> for $ty {})+)+
+    };
 }
-number_fits!(i8, i16, i32, i64, u8, u16, u32, u64, f64, Unknown);
+number_fits! {
+    UpTo<i8> => i8, u8, i16, u16, i32, u32, i64, u64, f64;
+    UpTo<u8> => u8, i16, u16, i32, u32, i64, u64, f64;
+    UpTo<i16> => i16, u16, i32, u32, i64, u64, f64;
+    UpTo<u16> => u16, i32, u32, i64, u64, f64;
+    UpTo<i32> => i32, u32, i64, u64, f64;
+    UpTo<u32> => u32, i64, u64, f64;
+    UpTo<i64> => i64, u64, f64;
+    UpTo<u64> => u64, f64;
+    DownTo<i8> => i8, i16, i32, i64, f64;
+    DownTo<i16> => i16, i32, i64, f64;
+    DownTo<i32> => i32, i64, f64;
+    DownTo<i64> => i64, f64;
+    Fraction => f64;
+}
+impl<L> NumberFits<L> for Unknown {}
 impl StringFits for String {}
 impl StringFits for Unknown {}
 impl BooleanFits for bool {}

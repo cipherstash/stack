@@ -429,13 +429,14 @@ mod given_a_structure_the_index_cannot_answer {
     }
 
     /// An ordering at a wildcard splits at the last wildcard, and is refused
-    /// when nothing follows it.
+    /// when nothing follows it. A path with no wildcard names no array.
     #[test]
     fn an_ordering_at_a_wildcard_names_a_member() {
         let (base, member) = comparison("$.a[*].b[*].c.d > 1")
             .path
             .element_member(16)
-            .unwrap();
+            .unwrap()
+            .expect("a path with a wildcard");
         assert_eq!(
             (base.to_string(), member.to_string()),
             ("$.a[*].b[*]".to_owned(), "$.c.d".to_owned())
@@ -449,6 +450,13 @@ mod given_a_structure_the_index_cannot_answer {
                 7
             )
         );
+        for text in ["$ > 1", "$.a > 1", "$.a.b > 1"] {
+            assert_eq!(
+                comparison(text).path.element_member(4).unwrap(),
+                None,
+                "{text}"
+            );
+        }
     }
 
     /// A filter needs a wildcard on its path and none in its members, and

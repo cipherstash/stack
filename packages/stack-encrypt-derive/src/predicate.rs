@@ -112,7 +112,7 @@ impl Parse for Variable {
 }
 
 /// Expand `$crate ; reference, "text", variables…`.
-pub(crate) fn expand(input: TokenStream, location: (usize, usize)) -> syn::Result<TokenStream> {
+pub(crate) fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let mut tokens = input.into_iter();
     let mut krate = TokenStream::new();
     for token in tokens.by_ref() {
@@ -133,6 +133,9 @@ pub(crate) fn expand(input: TokenStream, location: (usize, usize)) -> syn::Resul
     check_variables(&arguments, &expression)?;
     check_structure(&text, &expression)
         .map_err(|message| syn::Error::new(arguments.text.span(), message))?;
+    // Where the predicate literal is written, for the names of the checks.
+    let literal = arguments.text.span().unwrap();
+    let location = (literal.line(), literal.column());
     Ok(Expansion::new(krate, &arguments, &text, location).expand(&expression))
 }
 
@@ -265,15 +268,11 @@ fn check_structure(text: &str, expression: &Expression) -> Result<(), String> {
                 Operator::Equal | Operator::NotEqual => literal(text, &comparison.value, false),
                 _ => {
                     literal(text, &comparison.value, true)?;
-                    if comparison.path.path.is_positional() {
-                        Ok(())
-                    } else {
-                        comparison
-                            .path
-                            .element_member(comparison.at)
-                            .map(drop)
-                            .map_err(refusal_message)
-                    }
+                    comparison
+                        .path
+                        .element_member(comparison.at)
+                        .map(drop)
+                        .map_err(refusal_message)
                 }
             }
         }
@@ -331,6 +330,45 @@ pub(crate) fn number_is_read(token: &str) -> bool {
     }
 }
 
+/// The type a number literal is named by in `NumberFits`, from its text:
+/// `Fraction` for a number with a fraction or an exponent, else `UpTo` or
+/// `DownTo` the narrowest integer type that holds it. `None` for a number
+/// the engine does not read, which is refused before this is asked.
+pub(crate) fn number_class(token: &str) -> Option<(&'static str, Option<&'static str>)> {
+    if token.contains(['.', 'e', 'E']) {
+        return Some(("Fraction", None));
+    }
+    if let Ok(value) = token.parse::<u64>() {
+        let narrowest = [
+            ("i8", u64::from(i8::MAX.unsigned_abs())),
+            ("u8", u64::from(u8::MAX)),
+            ("i16", u64::from(i16::MAX.unsigned_abs())),
+            ("u16", u64::from(u16::MAX)),
+            ("i32", u64::from(i32::MAX.unsigned_abs())),
+            ("u32", u64::from(u32::MAX)),
+            ("i64", i64::MAX.unsigned_abs()),
+        ]
+        .into_iter()
+        .find(|(_, max)| value <= *max)
+        .map_or("u64", |(name, _)| name);
+        return Some(("UpTo", Some(narrowest)));
+    }
+    let value = token.parse::<i64>().ok()?;
+    if value >= 0 {
+        // `-0`.
+        return Some(("UpTo", Some("i8")));
+    }
+    let narrowest = [
+        ("i8", i64::from(i8::MIN)),
+        ("i16", i64::from(i16::MIN)),
+        ("i32", i64::from(i32::MIN)),
+    ]
+    .into_iter()
+    .find(|(_, min)| value >= *min)
+    .map_or("i64", |(name, _)| name);
+    Some(("DownTo", Some(narrowest)))
+}
+
 /// What a check site asks of a path's accessor.
 #[derive(Clone, Copy)]
 enum Ask {
@@ -353,8 +391,11 @@ struct Expansion<'a> {
     values: Vec<Ident>,
     checks: Vec<TokenStream>,
     /// The predicate literal's line and column, and how many checks have
-    /// been named: each check's trait has a name of its own in the crate,
-    /// so the compiler names it without its path.
+    /// been named: each check's trait has a name of its own in its file,
+    /// so the compiler names it without its path. (Two predicates at the
+    /// same line and column of two files of one crate share a name, and
+    /// the compiler then prints the path of each. Each check is in a block
+    /// of its own, so that changes a message and nothing else.)
     location: (usize, usize),
     named: std::cell::Cell<usize>,
 }
@@ -671,10 +712,33 @@ impl<'a> Expansion<'a> {
         else {
             return TokenStream::new();
         };
-        let (bound, what) = match kind {
-            LiteralKind::Number => (quote!(#support::NumberFits), "a number"),
-            LiteralKind::String => (quote!(#support::StringFits), "a string"),
-            LiteralKind::Boolean => (quote!(#support::BooleanFits), "a boolean"),
+        let (bound, what, note) = match kind {
+            LiteralKind::Number => {
+                let Some((class, narrowest)) = number_class(literal) else {
+                    // Refused already: a number the engine does not read.
+                    return TokenStream::new();
+                };
+                let class = Ident::new(class, Span::call_site());
+                let narrowest = narrowest.map(|name| {
+                    let name = Ident::new(name, Span::call_site());
+                    quote!(<::core::primitive::#name>)
+                });
+                (
+                    quote!(#support::NumberFits<#support::#class #narrowest>),
+                    "a number it does not hold",
+                    "an integer path holds the integers of its type, and an `f64` path any number",
+                )
+            }
+            LiteralKind::String => (
+                quote!(#support::StringFits),
+                "a string",
+                "a string literal fits a `String` path",
+            ),
+            LiteralKind::Boolean => (
+                quote!(#support::BooleanFits),
+                "a boolean",
+                "`true` and `false` fit a `bool` path, which `paths = {{..}}` can declare",
+            ),
             LiteralKind::Null => return TokenStream::new(),
         };
         let literal = escaped(literal);
@@ -688,7 +752,7 @@ impl<'a> Expansion<'a> {
         );
         let name = self.name("Fits");
         quote! {{
-            #[diagnostic::on_unimplemented(message = #message, label = #label)]
+            #[diagnostic::on_unimplemented(message = #message, label = #label, note = #note)]
             trait #name {}
             #[diagnostic::do_not_recommend]
             impl<V: #bound> #name for V {}
@@ -738,6 +802,48 @@ mod tests {
                 stack_encrypt::json::parse_text(token.as_bytes()).is_ok(),
                 "{token}"
             );
+        }
+    }
+
+    /// A number literal is named by the narrowest type that holds it, at
+    /// each type's limits.
+    #[test]
+    fn names_a_number_by_the_narrowest_type_that_holds_it() {
+        for (token, class) in [
+            ("0", ("UpTo", Some("i8"))),
+            ("-0", ("UpTo", Some("i8"))),
+            ("127", ("UpTo", Some("i8"))),
+            ("128", ("UpTo", Some("u8"))),
+            ("255", ("UpTo", Some("u8"))),
+            ("256", ("UpTo", Some("i16"))),
+            ("32767", ("UpTo", Some("i16"))),
+            ("32768", ("UpTo", Some("u16"))),
+            ("65535", ("UpTo", Some("u16"))),
+            ("65536", ("UpTo", Some("i32"))),
+            ("2147483647", ("UpTo", Some("i32"))),
+            ("2147483648", ("UpTo", Some("u32"))),
+            ("4294967295", ("UpTo", Some("u32"))),
+            ("4294967296", ("UpTo", Some("i64"))),
+            ("9223372036854775807", ("UpTo", Some("i64"))),
+            ("9223372036854775808", ("UpTo", Some("u64"))),
+            ("18446744073709551615", ("UpTo", Some("u64"))),
+            ("-1", ("DownTo", Some("i8"))),
+            ("-128", ("DownTo", Some("i8"))),
+            ("-129", ("DownTo", Some("i16"))),
+            ("-32768", ("DownTo", Some("i16"))),
+            ("-32769", ("DownTo", Some("i32"))),
+            ("-2147483648", ("DownTo", Some("i32"))),
+            ("-2147483649", ("DownTo", Some("i64"))),
+            ("-9223372036854775808", ("DownTo", Some("i64"))),
+            ("1.5", ("Fraction", None)),
+            ("-0.0", ("Fraction", None)),
+            ("1e3", ("Fraction", None)),
+            ("2E-2", ("Fraction", None)),
+        ] {
+            assert_eq!(number_class(token), Some(class), "{token}");
+        }
+        for token in ["18446744073709551616", "-9223372036854775809"] {
+            assert_eq!(number_class(token), None, "{token}");
         }
     }
 }

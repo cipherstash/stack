@@ -55,8 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     feature.
   - Needs stack-auth 0.44.0 and stack-kms 0.2.0.
 
-- **Three more records derive** (#1661). The owned derives did not accept
-
 - **`predicate!`** (#1459). `predicate!(EncryptedCustomer::PROFILE, "$.age
   >= $min && $.name == $name", min = 30, name)` checks a SQL/JSON path
   predicate when the program compiles and sends the same text when it
@@ -69,8 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a path the field does not declare (under `ordered` or `paths`), an
   ordering of a path declared under `paths`, and a member of an array, in
   a filter of more than one condition, that the array does not order; and
-  a value, variable or literal, of another type than the path's. The
-  macro finds a path's accessor by the path's text, through lookups the
+  a value, variable or literal, of another type than the path's, which
+  for a number literal means one the path's type does not hold (`1.5`,
+  `-1` and `99999999999` for a `u32`). A variable's value is moved into
+  the query. The macro finds a path's accessor by the path's text, through lookups the
   derive now generates (hidden, in `field_reference::json::predicate_checks`),
   so a `names` override changes nothing. It is a `macro_rules` wrapper
   that passes `$crate`, so it works however a program reaches this crate.

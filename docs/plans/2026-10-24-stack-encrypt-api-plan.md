@@ -516,7 +516,7 @@ The kinds of JSON query, the field reference method for each, and what each find
 | Comparison at a path | `at().age().gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery`; two for `between`, low then high |
 | A path's selector | `at().age().selector()` | The selector `->` and `ORDER BY eql_v4.ord_term(col -> $1)` take | `JsonTreeSelector` |
 | Element match | `elements().visits().place().eq(v).and().at().gt(v)` | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
-| Jsonpath predicate | `predicate(text)`, with `.var(name, v)` for each variable | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
+| Jsonpath predicate | `predicate!(FIELD, "text", name = v, ..)`, checked when the program compiles, and `predicate(text)`, with `.var(name, v)` for each variable, for text built at run time | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
 | Children and child count | `children(path)` | The entries directly below one node, or how many there are | `JsonTreeToken` |
 
 Paths are typed, from the attribute. Decided by Dan on 21 November 2026:
@@ -547,8 +547,14 @@ Paths are typed, from the attribute. Decided by Dan on 21 November 2026:
   path and value. A field that declares no paths has only these.
 - A predicate's variables are given one at a time: `.var(name, v)`, with
   `v` a scalar, and `.var_null(name)`. A repeated name, a NaN and an
-  infinity are refused before any key is fetched. The predicate text is
-  checked when the query is encrypted.
+  infinity are refused before any key is fetched. The text of
+  `predicate(text)` is checked when the query is encrypted.
+- `predicate!(FIELD, "text", name = v, ..)` checks a predicate written in
+  the program when the program compiles: that the text parses, that the
+  index can answer it, that each variable is given once and used, that the
+  field declares each path and member, and that each value, a variable's or
+  a literal's, is of the path's type. It sends the same text, so its
+  operand is the one `predicate(text)` derives.
 
 Two limits of the SQL stay, from the reference page's sections on
 comparing a value at a path and on what the SQL cannot do. Sorting rows by a path through an array

@@ -246,7 +246,6 @@ impl Compiler<'_> {
             value,
             at,
         } = comparison;
-        let wild = !path.path.is_positional();
         let compare = match operator {
             // `==`: containment of the value at the path, exact; at a
             // wildcard, of any element.
@@ -264,11 +263,10 @@ impl Compiler<'_> {
             Operator::Greater => Compare::Gt,
             Operator::GreaterOrEqual => Compare::Gte,
         };
-        Ok(if wild {
+        let value = self.ordered(&value)?;
+        Ok(if let Some((base, member)) = path.element_member(at)? {
             // An ordering at a wildcard: some element's field, which is
             // `element_match` on the array through the last wildcard.
-            let value = self.ordered(&value)?;
-            let (base, member) = path.element_member(at)?;
             let predicate = self.member(&base, member, compare, value)?;
             Node::Leaf(Input::Elements(self.bound, vec![predicate]))
         } else {
@@ -281,7 +279,6 @@ impl Compiler<'_> {
             // into true and NULL into NULL, so the tree also asks that the
             // node is not null. That `null` needle tells the database which
             // rows hold null at the path, so it is sent only there.
-            let value = self.ordered(&value)?;
             let path = ordered_path_of(self.options, path.path)?;
             let mut leaves = vec![Node::Leaf(Input::Selector(path.clone()))];
             if negated {

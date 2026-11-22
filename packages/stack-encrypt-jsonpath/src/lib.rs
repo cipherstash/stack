@@ -1,3 +1,24 @@
+// Security lints
+#![forbid(unsafe_code)]
+#![warn(clippy::unwrap_used)]
+#![warn(clippy::expect_used)]
+#![warn(clippy::panic)]
+// Prevent mem::forget from bypassing ZeroizeOnDrop
+#![warn(clippy::mem_forget)]
+// Prevent accidental data leaks via output
+#![warn(clippy::print_stdout)]
+#![warn(clippy::print_stderr)]
+#![warn(clippy::dbg_macro)]
+// Code quality
+#![warn(unreachable_pub)]
+#![warn(unused_results)]
+#![warn(clippy::todo)]
+#![warn(clippy::unimplemented)]
+// Relax in tests
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::panic))]
+#![cfg_attr(test, allow(unused_results))]
 //! The JSONPath subset that `stack-encrypt`'s JSON index addresses.
 //!
 //! A [`JsonPath`] names a node of a JSON document: `$`, object members
@@ -30,7 +51,6 @@
 //! assert!(JsonPath::parse("visits").is_err(), "a path starts with `$`");
 //! # Ok::<(), stack_encrypt_jsonpath::JsonPathError>(())
 //! ```
-#![forbid(unsafe_code)]
 
 pub mod json_string;
 mod path;

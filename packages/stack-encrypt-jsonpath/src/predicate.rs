@@ -377,7 +377,8 @@ impl Comparison {
 
 impl PathAt {
     /// The array and the member of an ordering at a path with a wildcard:
-    /// the path up to its last wildcard, and the steps after it.
+    /// the path up to its last wildcard, and the steps after it. `None`
+    /// for a path with no wildcard, which names one node and no array.
     /// `operator_at` is where the ordering's operator is.
     ///
     /// # Errors
@@ -387,12 +388,14 @@ impl PathAt {
     pub fn element_member(
         &self,
         operator_at: usize,
-    ) -> Result<(JsonPath, JsonPath), PredicateError> {
+    ) -> Result<Option<(JsonPath, JsonPath)>, PredicateError> {
         let steps = self.path.segments();
-        let last = steps
+        let Some(last) = steps
             .iter()
             .rposition(|segment| *segment == Segment::Wildcard)
-            .unwrap_or_default();
+        else {
+            return Ok(None);
+        };
         // Each half is copied straight into a path, which wipes its keys,
         // before anything can refuse.
         let (base, member) = steps.split_at(last + 1);
@@ -406,7 +409,7 @@ impl PathAt {
                 operator_at,
             ));
         }
-        Ok((base, member))
+        Ok(Some((base, member)))
     }
 }
 
