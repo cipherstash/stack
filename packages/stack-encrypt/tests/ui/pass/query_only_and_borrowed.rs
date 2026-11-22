@@ -2,7 +2,7 @@
 //! plaintext.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{CallerContext, EncryptTarget};
-use stack_encrypt::{nonempty, Encrypt, EncryptInto, StackCipher, StackCipherText};
+use stack_encrypt::{nonempty, Encrypt, EncryptInto, EncryptRef, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
 use zeroize::Zeroize;
 
@@ -13,7 +13,7 @@ struct Probe {
 
 // No `Decrypt` bound: producing a term requires only that the value
 // describes itself, not that it can be read back.
-fn query<S: Encrypt + Clone + Zeroize>(cipher: &StackCipher<FakeDataKeySource>, value: S) {
+fn query<S: Encrypt + EncryptRef + Zeroize>(cipher: &StackCipher<FakeDataKeySource>, value: S) {
     let keyset = cipher.default_keyset();
     let _ = value.encrypt_into_with_context::<Probe, _>(&keyset, nonempty!("column"));
 }

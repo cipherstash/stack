@@ -62,10 +62,8 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use super::context::{AeadContext, CallerContext};
-use super::operations::{
-    ciphertext, equality, json_terms, matching, ope, open, ore, ore_block, wiping_ciphertext,
-};
-use super::source::{ConsumeSource, Owned, ShareSource};
+use super::operations::{ciphertext, equality, json_terms, matching, ope, open, ore, ore_block};
+use super::source::{Owned, WipeSource};
 use super::{
     DecryptField, DecryptSource, Decryptable, Decryption, EncryptTarget, Encryption,
     RequiredContext,
@@ -268,7 +266,7 @@ pub trait Index<S> {
     ///
     /// A fresh description per call: a description is single-use, and an
     /// index is not, so a saved plan asks again each time it runs.
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -381,12 +379,12 @@ impl<O> fmt::Debug for Match<O> {
     }
 }
 
-impl<S: crate::Encrypt> Index<S> for Equality {
+impl<S: crate::Encrypt + vitaminc_aead::EncryptRef> Index<S> for Equality {
     type Term = EqualityTerm;
     fn spec(&self) -> IndexSpec {
         IndexSpec::Equality
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -400,7 +398,7 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
     fn spec(&self) -> IndexSpec {
         IndexSpec::Match(O::options())
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -411,13 +409,13 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
 }
 impl<S> Index<S> for Ore
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Term = OreTerm<S>;
     fn spec(&self) -> IndexSpec {
         IndexSpec::Ore
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -428,13 +426,13 @@ where
 }
 impl<S> Index<S> for Ope
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Term = OpeTerm<S>;
     fn spec(&self) -> IndexSpec {
         IndexSpec::Ope
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -445,13 +443,13 @@ where
 }
 impl<S> Index<S> for OreBlock
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Term = OreBlockTerm<S>;
     fn spec(&self) -> IndexSpec {
         IndexSpec::OreBlock
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -469,7 +467,7 @@ impl Index<serde_json::Value> for Json {
     fn spec(&self) -> IndexSpec {
         IndexSpec::Json(self.options.clone())
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, serde_json::Value>>(
         &self,
     ) -> Encryption<'s, serde_json::Value, Self::Term, K, CallerContext, M> {
         json_terms::<K, M>(self.options.clone())
@@ -498,12 +496,13 @@ pub trait Indexes<S> {
     /// The description that derives every term, under the one
     /// [`CallerContext`] it is handed, settling them in one batch.
     ///
-    /// Several indexes over one owned plaintext share it, so in
-    /// [`Owned`](super::Owned) mode `S` must be `Clone` (see [`ShareSource`]).
+    /// Several indexes over one plaintext all read it in place, so nothing
+    /// is copied in either mode. In [`Owned`](super::Owned) mode the first
+    /// index is handed the value, once the others have read it.
     fn operations<'s, K: 'static, M>(&self) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
     where
         S: 's,
-        M: ConsumeSource<'s, S> + ShareSource<'s, S>;
+        M: WipeSource<'s, S>;
     /// The one index of type `I` in this set, for the query side, where a
     /// query asks one index for one term and needs no ciphertext; its
     /// [`operation`](Index::operation) is that term alone.
@@ -587,7 +586,7 @@ macro_rules! single_index {
             ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
             where
                 S: 's,
-                M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+                M: WipeSource<'s, S>,
             {
                 self.operation()
             }
@@ -610,7 +609,7 @@ macro_rules! tuple_of_indexes {
             ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
             where
                 S: 's,
-                M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+                M: WipeSource<'s, S>,
             {
                 tuple_of_indexes!(@zip self, $($at),+)
                     .map(|$nested| ($($name,)+))
@@ -619,7 +618,7 @@ macro_rules! tuple_of_indexes {
         tuple_of_indexes!(@select [$($name),+] $($name $at),+);
     )+};
     (@zip $self:ident, $first:tt $(, $rest:tt)*) => {
-        $self.$first.operation()$(.zip($self.$rest.operation()))*
+        $self.$first.operation()$(.zip($self.$rest.operation::<K, super::super::Borrowed>()))*
     };
     // One `Select` impl per position, each over the whole tuple.
     (@select [$($all:ident),+] $name:ident $at:tt $(, $rest:ident $rest_at:tt)*) => {
@@ -663,17 +662,19 @@ impl<S, I: Index<S>> Indexes<S> for Vec<I> {
     fn operations<'s, K: 'static, M>(&self) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
     where
         S: 's,
-        M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+        M: WipeSource<'s, S>,
     {
         let mut indexes = self.iter();
         let Some(first) = indexes.next() else {
             return Encryption::failed(crate::PlanError::EmptyIndexes.into());
         };
         indexes.fold(first.operation().map(|term| vec![term]), |terms, index| {
-            terms.zip(index.operation()).map(|(mut terms, term)| {
-                terms.push(term);
-                terms
-            })
+            terms
+                .zip(index.operation::<K, super::Borrowed>())
+                .map(|(mut terms, term)| {
+                    terms.push(term);
+                    terms
+                })
         })
     }
 }
@@ -707,12 +708,12 @@ pub struct Encrypted<Terms> {
 /// indexes ([`TermSet`]), and the description is [`indexed`] over them, under
 /// the one caller context that the record field or the caller supplies.
 ///
-/// The owned form is handed the value. The ciphertext takes a copy, and the
-/// terms take the value. When the context is refused, the ciphertext wipes its
-/// copy, and each term scheme consumes its own.
+/// The owned form is handed the value. The terms read it in place, and then
+/// the ciphertext takes it. Vitamin C wipes it when it is sealed, and the
+/// ciphertext wipes it when the context is refused. Nothing is copied.
 impl<S, Terms> EncryptTarget<S> for Encrypted<Terms>
 where
-    S: crate::Encrypt + Clone + zeroize::Zeroize,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + zeroize::Zeroize,
     Terms: TermSet<S>,
 {
     type ContextInput = RequiredContext<CallerContext>;
@@ -732,15 +733,11 @@ where
     where
         S: 's,
     {
-        let described =
-            indexed_beside(wiping_ciphertext::<S, K, Owned>(), Terms::INDEXES).accepting();
+        let described = indexed::<S, K, Owned, _>(Terms::INDEXES).accepting();
         if let Err(error) = check_indexes(&Terms::INDEXES.specs()) {
             // The refused value is the description's to wipe. The leaves'
             // contexts are kept, as in the borrowed form.
-            return Encryption::from_build(described.shapes(), move |mut source: S, cipher, _| {
-                zeroize::Zeroize::zeroize(&mut source);
-                super::Pending::failed(cipher, error)
-            });
+            return described.refused_wiping(error);
         }
         described
     }
@@ -793,7 +790,7 @@ pub trait TermSet<S>: Sized + 'static {
     /// Those indexes, as a value.
     const INDEXES: Self::Indexes;
 }
-impl<S: crate::Encrypt> TermSet<S> for EqualityTerm {
+impl<S: crate::Encrypt + vitaminc_aead::EncryptRef> TermSet<S> for EqualityTerm {
     type Indexes = Equality;
     const INDEXES: Equality = Equality;
 }
@@ -803,21 +800,21 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> TermSet<S> for MatchTerms<O> {
 }
 impl<S> TermSet<S> for OreTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Indexes = Ore;
     const INDEXES: Ore = Ore;
 }
 impl<S> TermSet<S> for OpeTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Indexes = Ope;
     const INDEXES: Ope = Ope;
 }
 impl<S> TermSet<S> for OreBlockTerm<S>
 where
-    S: crate::sem::Orderable,
+    S: crate::Orderable + vitaminc_aead::EncryptRef + 'static,
 {
     type Indexes = OreBlock;
     const INDEXES: OreBlock = OreBlock;
@@ -858,10 +855,9 @@ mod term_tuples {
 /// so a field with indexes is one line and its output is an
 /// [`Encrypted<Terms>`]. The bytes are exactly the hand composition's.
 ///
-/// The ciphertext and every term share the plaintext, so in
-/// [`Owned`](super::Owned) mode `S` must be `Clone`; a plaintext that must
-/// never be copied can still be sealed alone ([`ciphertext`]) or indexed
-/// alone ([`Index::operation`]).
+/// The ciphertext and every term read the same plaintext in place, so
+/// nothing is copied in either mode. In [`Owned`](super::Owned) mode the
+/// terms read the value first, and then the ciphertext takes it.
 ///
 /// The type parameters are in the order [`ciphertext`]'s are, with the
 /// indexes last: `indexed::<u32, _, Borrowed, _>((Equality, Ore))`.
@@ -874,28 +870,13 @@ pub fn indexed<'s, S, K, M, X>(
     indexes: X,
 ) -> Encryption<'s, S, Encrypted<X::Terms>, K, CallerContext, M>
 where
-    S: crate::Encrypt + 's,
+    S: crate::Encrypt + vitaminc_aead::EncryptRef + 's,
     K: 'static,
-    M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+    M: WipeSource<'s, S>,
     X: Indexes<S>,
 {
-    indexed_beside(ciphertext::<S, K, M>(), indexes)
-}
-/// The terms of `indexes` beside the ciphertext that `sealed` describes. This
-/// is the body of [`indexed`]. The owned declaration of [`Encrypted`] passes a
-/// ciphertext that wipes its plaintext when the context is refused.
-fn indexed_beside<'s, S, K, M, X>(
-    sealed: Encryption<'s, S, StackCipherText, K, AeadContext, M>,
-    indexes: X,
-) -> Encryption<'s, S, Encrypted<X::Terms>, K, CallerContext, M>
-where
-    S: crate::Encrypt + 's,
-    K: 'static,
-    M: ConsumeSource<'s, S> + ShareSource<'s, S>,
-    X: Indexes<S>,
-{
-    sealed
+    ciphertext::<S, K, M>()
         .accepting::<CallerContext>()
-        .zip(indexes.operations())
+        .zip(indexes.operations::<K, super::Borrowed>())
         .map(|(ciphertext, terms)| Encrypted { ciphertext, terms })
 }

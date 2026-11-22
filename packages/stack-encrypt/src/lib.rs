@@ -93,7 +93,8 @@ assert_eq!(plaintext, "secret message");
 //! # async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync + 'static>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
 //! let ct = keyset.encrypt_with_context("4111 1111 1111 1111".to_owned(), "users/42/card").await?;
-//! let card: String = keyset.decrypt_with_context(ct, "users/42/card").await?; // ok
+//! let card: stack_encrypt::Protected<String> =
+//!     keyset.decrypt_with_context(ct, "users/42/card").await?; // ok
 //! # Ok(())
 //! # }
 //! ```
@@ -753,9 +754,66 @@ pub use target::{
 // `IntoAad` and `IntoPrfContext` are vitaminc's blankets over it, so both
 // derivations see the same bytes.
 pub use vitaminc_aead::{
-    CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, IntoAad,
-    IntoContext, Node, PassthroughFrame, Unspecified,
+    CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, EncryptRef,
+    IntoAad, IntoContext, Node, PassthroughFrame, Unspecified,
 };
+/// A type with an order target of its own: what an order index
+/// ([`Ore`], [`Ope`], [`OreBlock`]), an order term ([`sem::OreTerm`],
+/// [`sem::OpeTerm`], [`sem::OreBlockTerm`]) and the ordering operators
+/// ([`op::Lt`] and the others) are bounded by. It is vitaminc-ore's trait,
+/// and its table is vitaminc-ore's. This crate names no target.
+///
+/// | Type | Target |
+/// | --- | --- |
+/// | `u16` to `u128`, `i16` to `i128` | the integer at its own width |
+/// | `f32`, `f64` | `F64`: an `f32` widens to it exactly, `-0.0` ties `0.0`, every NaN is one value after `+Infinity` |
+/// | `String`, `&str` | `Text`: Unicode 16 NFC with case and accents folded |
+/// | `value::Date` | `Date`: the day |
+/// | `value::Timestamp` | `Timestamp`: the instant truncated to the microsecond, so instants in one microsecond tie |
+/// | `value::Decimal` | `Decimal`: the number with its scale normalised, so `1.5` ties `1.50` |
+///
+/// A reference to each is `Orderable` too. An order index reads its value
+/// in place, so it also asks for [`EncryptRef`], and in `Owned` mode for
+/// `Zeroize` ([`target::WipeSource`]).
+///
+/// vitaminc-ore's table also has jiff's `civil::Date` and `Timestamp`, and
+/// rust_decimal's `Decimal`. Those types are `Copy` and are not `Zeroize`,
+/// so nothing wipes them. A target and an owned index need `Zeroize`, so
+/// neither takes them. The keyset's term functions
+/// ([`KeysetCipher::ore_term`] and the others) and a borrowed index do take
+/// them: a value passed by value is a copy the caller still holds. To have
+/// the plaintext wiped, use `value::Date`, `value::Timestamp`, or
+/// `value::Decimal`.
+///
+/// Bytes have no order term. No ordering operator compares bytes, so such
+/// a term would answer no query, and would still reveal the order of the
+/// rows. vitaminc-ore orders bytes only into a target that is named, and
+/// this crate does not name one.
+///
+/// A `bool`, a `u8` and an `i8` have no target. An order term over a domain
+/// that small tells anyone holding the column too much: with two values it
+/// says which rows are `true`, and with 256 it puts every row in one of
+/// 256 ranks, which a few known rows resolve to the values. Each keeps its
+/// equality term.
+///
+/// ```compile_fail
+/// use stack_encrypt::sem::OreTerm;
+///
+/// let _: Option<OreTerm<bool>> = None; // `bool` is not `Orderable`
+/// ```
+///
+/// ```compile_fail
+/// use stack_encrypt::sem::OpeTerm;
+///
+/// let _: Option<OpeTerm<u8>> = None; // `u8` is not `Orderable`
+/// ```
+///
+/// ```compile_fail
+/// use stack_encrypt::sem::OreTerm;
+///
+/// let _: Option<OreTerm<Vec<u8>>> = None; // bytes are not `Orderable`
+/// ```
+pub use vitaminc_ore::Orderable;
 // The vitaminc 0.4 names, deprecated there; re-exported for one transition so
 // a caller that spelled them keeps compiling with a warning.
 #[allow(deprecated)]

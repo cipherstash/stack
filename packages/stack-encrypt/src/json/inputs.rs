@@ -24,7 +24,7 @@ use super::{
 };
 use crate::refusal::{Error, Reason};
 use crate::sem::TermError;
-use crate::target::{AeadContext, CallerContext, DeclaredContext, Index, Json, Owned};
+use crate::target::{AeadContext, CallerContext, DeclaredContext, Owned};
 use crate::{ContextPiece, KeysetCipher, Label, NonEmpty, Pending};
 
 /// A document parsed from an input, wiped when it drops.
@@ -449,7 +449,11 @@ fn terms<'a, K: 'static>(
     value: Value,
 ) -> Pending<'a, crate::json::JsonTerms, K> {
     keyset.run(
-        Index::<Value>::operation::<K, Owned>(&Json::new(options.clone())).under(under.column()),
+        // A refused context wipes the document through its own guard.
+        crate::target::json_terms::<K, Owned>(options.clone())
+            .under_refusing(under.column(), |source| {
+                source.release(|value| drop(crate::json::PlainJson::protect(value)))
+            }),
         value,
         under.parts.clone(),
     )
@@ -489,28 +493,27 @@ pub(crate) fn derive<'a, K: 'static>(
 ) -> Result<Pending<'a, Derived, K>, Error> {
     Ok(match input {
         Input::Document(document) => {
-            // Checked before the clone, which recurses once per level: a
-            // document a caller built deeper than the index reads is
-            // refused as the walk would refuse it, not cloned first.
+            // A document a caller built deeper than the index reads is
+            // refused as the walk would refuse it, before it is handed on.
             if !super::text::nests_within(&document.0, super::MAX_DEPTH) {
                 return Err(term(TermError::JsonTooDeep));
             }
-            terms(keyset, options, under, document.0.clone())
+            // Each operand below is moved into its terms, not copied, and
+            // wiped there.
+            terms(keyset, options, under, document.take())
                 .map(|terms| Derived::Query(JsonQuery::of_terms(terms)))
         }
-        Input::EqAt(path, value) => terms(keyset, options, under, path.holding(value.0.clone()))
+        Input::EqAt(path, value) => terms(keyset, options, under, path.holding(value.take()))
             .map(|terms| Derived::Query(JsonQuery::at_path(terms))),
         Input::Ordering(_, path, value) => {
-            terms(keyset, options, under, path.holding(value.0.clone()))
+            terms(keyset, options, under, path.holding(value.take()))
                 .map(|terms| Derived::Leaf(JsonLeafQuery::of_leaf(&terms)))
         }
-        Input::Between(path, low, high) => {
-            terms(keyset, options, under, path.holding(low.0.clone()))
-                .zip(terms(keyset, options, under, path.holding(high.0.clone())))
-                .map(|(lo, hi)| {
-                    Derived::Range(JsonLeafQuery::of_leaf(&lo), JsonLeafQuery::of_leaf(&hi))
-                })
-        }
+        Input::Between(path, low, high) => terms(keyset, options, under, path.holding(low.take()))
+            .zip(terms(keyset, options, under, path.holding(high.take())))
+            .map(|(lo, hi)| {
+                Derived::Range(JsonLeafQuery::of_leaf(&lo), JsonLeafQuery::of_leaf(&hi))
+            }),
         // The three below derive under the keyset's index key. With the
         // keyset loaded they derive now, so a refusal is this call's own
         // error. With a keyset that is not loaded yet, the pending

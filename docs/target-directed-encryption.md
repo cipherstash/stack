@@ -1,7 +1,7 @@
 # Target-directed encryption
 
 **Status:** design record, reconciled with the shipped API on 2026-08-28 and again on 2026-09-04 (contexts are vitaminc's `NonEmpty<T>`; a caller's context *extends* a field's own; `row = ..` became `struct = ..`, and `from` exists only there). The snippets below are the API as it ships in `stack-encrypt` (cipherstash-suite #2146, #2147); the async shape is specified by [RFC 0002](rfcs/0002-async-shape-for-target-directed-encryption.md).
-**Superseded in part:** the snippets record the design as it first shipped. Since then `EncryptFrom`, `DecryptInto`, `encrypt_as`, `decrypt_as`, the plan builder and the call chain were removed. The API that ships now is `EncryptTarget` and `DecryptSource` with `encrypt_into` and `decrypt_from`, field markers for queries, and `dynamic::Planned` for a declaration that is data. See the crate docs and `packages/stack-encrypt/CHANGELOG.md`.
+**Superseded in part:** the snippets record the design as it first shipped. Since then `EncryptFrom`, `DecryptInto`, `encrypt_as`, `decrypt_as`, the plan builder and the call chain were removed. The API that ships now is `EncryptTarget` and `DecryptSource` with `encrypt_into` and `decrypt_from`, field markers for queries, and `dynamic::Planned` for a declaration that is data. See the crate docs and `packages/stack-encrypt/CHANGELOG.md`. Implementation note 1 below resolved to option 1, a `Clone` bound and one copy for each term. ADR 0014 (`packages/stack-encrypt/docs/adr/0014-operations-read-the-plaintext-and-at-most-one-takes-it.md`) replaced it with option 2: every operation reads the plaintext through a reference (`EncryptRef`), and nothing is copied. Note 2's term clones are gone with it.
 **Date:** 2026-08-21
 **Scope:** vitaminc (primitives), stack-encrypt (the new trait + batching), eql-bindings (one class of targets)
 
@@ -303,9 +303,9 @@ An earlier iteration had two traits, `EncryptInto<T, C>` on the source and `Deri
 2. Blanket `impl<T> Encrypt for &T where T: Encrypt`. vitaminc already has `impl Encrypt for &str`, so the shape exists but is not systematic.
 3. Derive hands ownership to the ciphertext field and borrows to the term fields. Cheapest; puts field-ordering knowledge into the macro.
 
-**Resolved:** (1). `S: Encrypt + Clone` on the bridge; (2) later if the copies show up in a profile.
+**Resolved:** (1). `S: Encrypt + Clone` on the bridge; (2) later if the copies show up in a profile. **Superseded by ADR 0014:** (2), through vitaminc's `EncryptRef`. No plaintext is copied.
 
-**2. Fan-out and zeroize.** **Resolved, and narrower than proposed.** The source reaches k consumers, but only the ciphertext's copy lives in `Protected` — it is held inside the pending and wiped as it seals. Term clones are ordinary values consumed during the synchronous build and dropped before any I/O; they are not wrapped. So the custody widening is bounded to the build phase for terms and to the pending's lifetime for the ciphertext. Stated in the `stack_encrypt::target` rustdoc ("Plaintext fan-out"), as this section asked.
+**2. Fan-out and zeroize.** **Resolved, and narrower than proposed. Superseded by ADR 0014: no term takes a clone.** The source reaches k consumers, but only the ciphertext's copy lives in `Protected` — it is held inside the pending and wiped as it seals. Term clones are ordinary values consumed during the synchronous build and dropped before any I/O; they are not wrapped. So the custody widening is bounded to the build phase for terms and to the pending's lifetime for the ciphertext. Stated in the `stack_encrypt::target` rustdoc ("Plaintext fan-out"), as this section asked.
 
 **3. Orphan rule.** `impl<C> EncryptFrom<i64, C> for IntegerOrdOre` in eql-bindings is legal — `Self` is local. The reverse-direction sugar (`EncryptInto::encrypt_into` on `i64`) is a blanket impl over a local trait, also fine. Worth a compile test pinning both, since the layout puts the trait, the source type and the target type in three different crates.
 

@@ -33,14 +33,15 @@
 //!     .init()
 //!     .await?;
 //! let keyset = cipher.default_keyset();
-//! let value = "alice@example.com".to_owned();
 //! // The output type selects a ciphertext and an equality term. The context
-//! // is stored in `identifier`.
-//! let encrypted: TextEq = value.clone().encrypt_into_with_context(&keyset, nonempty!("users/email")).await?;
+//! // is stored in `identifier`. The value is moved in, and wiped once it is
+//! // sealed.
+//! let value = String::from("alice@example.com");
+//! let encrypted: TextEq = value.encrypt_into_with_context(&keyset, nonempty!("users/email")).await?;
 //! // Passing the expected context refuses a value stored under any other
 //! // context, before any key is requested.
 //! let opened = Protected::<String>::decrypt_from_with_context(encrypted, &cipher, nonempty!("users/email")).await?;
-//! # assert_eq!(opened.risky_ref(), &value);
+//! # assert_eq!(opened.risky_ref(), "alice@example.com");
 //! # Ok::<(), Box<dyn std::error::Error>> (())
 //! # }).unwrap();
 //! ```
@@ -225,8 +226,8 @@
 //! use stack_encrypt::target::transcode::{Transcode, Visitor};
 //! use stack_encrypt::target::{self, CallerContext, EncryptTarget, RequiredContext};
 //! use stack_encrypt::{
-//!     CipherText, Decryptable, EncryptInto, Encryption, Error, Encrypt, SealedValue,
-//!     StackCipher, nonempty,
+//!     CipherText, Controlled, Decryptable, EncryptInto, Encryption, Error, Encrypt, EncryptRef,
+//!     Protected, SealedValue, StackCipher, nonempty,
 //! };
 //! use zeroize::Zeroize;
 //!
@@ -255,7 +256,7 @@
 //! }
 //! // The declaration: the canonical ciphertext operation, read into this type.
 //! // It seals under the AEAD half of the context the record threads to it.
-//! impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for LeafBytes {
+//! impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for LeafBytes {
 //!     type ContextInput = RequiredContext<CallerContext>;
 //!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
 //!     where
@@ -283,14 +284,15 @@
 //!     .init()
 //!     .await?;
 //! let keyset = cipher.default_keyset();
-//! let value = "alice@example.com".to_owned();
+//! let value = String::from("alice@example.com");
 //! let context = nonempty!("users/email");
-//! let encrypted: TextEq = value.clone().encrypt_into_with_context(&keyset, context.clone()).await?;
+//! let encrypted: TextEq = value.encrypt_into_with_context(&keyset, context.clone()).await?;
 //!
 //! // What the column holds is the leaf itself: the canonical path opens it.
 //! let leaf = SealedValue::from_bytes(&encrypted.c.0)?;
-//! let opened: String = cipher.decrypt(CipherText::Single(leaf), context).await?;
-//! assert_eq!(opened, value);
+//! // Opened into `Protected`, so the plaintext is wiped when it drops.
+//! let opened: Protected<String> = cipher.decrypt(CipherText::Single(leaf), context).await?;
+//! assert_eq!(opened.risky_ref(), "alice@example.com");
 //! # Ok::<(), Box<dyn std::error::Error>> (())
 //! # }).unwrap();
 //! ```

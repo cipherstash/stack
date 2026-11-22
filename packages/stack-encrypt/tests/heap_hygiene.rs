@@ -947,16 +947,6 @@ fn an_order_term_of_owned_text_or_bytes_leaves_no_plaintext_on_the_heap() {
         rt.block_on(async { keyset.ope_term(text, nonempty!("users/surname")).await })
             .unwrap();
     });
-    let bytes = marked("order").into_bytes();
-    watched("ore_term (Vec<u8>)", || {
-        rt.block_on(async { keyset.ore_term(bytes, nonempty!("users/blob")).await })
-            .unwrap();
-    });
-    let bytes = marked("order").into_bytes();
-    watched("ope_term (Vec<u8>)", || {
-        rt.block_on(async { keyset.ope_term(bytes, nonempty!("users/blob")).await })
-            .unwrap();
-    });
 }
 
 #[test]
@@ -1954,9 +1944,9 @@ mod json_plaintext {
         assert_eq!(generates.load(Ordering::SeqCst), 0, "no key is requested");
     }
 
-    /// The owned form of a document field does not copy the document: it
-    /// makes one block fewer of the length of the document's one long
-    /// string than the borrowed form, which copies the document once.
+    /// Neither form of a document field copies the document: the owned
+    /// form and the borrowed form make the same number of blocks of the
+    /// length of the document's one long string.
     #[test]
     fn a_json_plaintext_sealed_into_a_document_field_is_not_copied() {
         use stack_encrypt::json::{JsonDocument, JsonOptions, JsonTarget};
@@ -1991,10 +1981,8 @@ mod json_plaintext {
                 rt.block_on(async { keyset.run(description, source, context()).await.unwrap() });
         });
         assert_eq!(
-            borrowed,
-            owned + 1,
-            "the borrowed form copies the document once and the owned form does not \
-             (borrowed {borrowed}, owned {owned})"
+            borrowed, owned,
+            "neither form copies the document (borrowed {borrowed}, owned {owned})"
         );
     }
 

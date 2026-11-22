@@ -648,10 +648,11 @@ owned_query_inputs!(
     f64,
     String,
     Vec<u8>,
-    crate::value::Date,
-    crate::value::Timestamp,
-    crate::value::Decimal,
 );
+#[cfg(feature = "jiff")]
+owned_query_inputs!(crate::value::Date, crate::value::Timestamp);
+#[cfg(feature = "rust_decimal")]
+owned_query_inputs!(crate::value::Decimal);
 impl<V: QueryInput> QueryInput for Option<V> {
     type Value = Option<V::Value>;
     fn into_value(self) -> Self::Value {
@@ -1042,7 +1043,6 @@ mod tests {
     /// owned one.
     #[test]
     fn a_query_input_is_owned_or_copied_in() {
-        use crate::value::{Date, Decimal, Timestamp};
         macro_rules! owned_as_it_is {
             ($($value:expr),+ $(,)?) => {$(
                 assert_eq!($value.into_value(), $value);
@@ -1066,18 +1066,24 @@ mod tests {
             String::from("ada"),
             b"ada".to_vec(),
         );
-        let date = Date::from_days_since_epoch(7).unwrap();
-        assert_eq!(date.into_value().days_since_epoch(), 7);
-        let instant = Timestamp::new(7, 9).unwrap();
-        let instant = instant.into_value();
-        assert_eq!((instant.seconds(), instant.nanoseconds()), (7, 9));
-        let decimal = Decimal::new(75, 1).unwrap();
-        let decimal = decimal.into_value();
-        assert_eq!((decimal.mantissa(), decimal.scale()), (75, 1));
 
         assert_eq!("ada".into_value(), String::from("ada"));
         assert_eq!((&String::from("ada")).into_value(), String::from("ada"));
         assert_eq!(b"ada"[..].into_value(), b"ada".to_vec());
         assert_eq!((&b"ada".to_vec()).into_value(), b"ada".to_vec());
+    }
+
+    /// A date, a timestamp and a decimal are the query's as they are.
+    #[cfg(all(feature = "jiff", feature = "rust_decimal"))]
+    #[test]
+    fn a_date_a_timestamp_and_a_decimal_are_owned_query_inputs() {
+        use crate::value::{Date, Decimal, Timestamp};
+        let day = jiff::civil::date(1970, 1, 8);
+        assert_eq!(Date::new(day).into_value().to_jiff(), day);
+        let instant = jiff::Timestamp::new(7, 9).unwrap();
+        let held = Timestamp::new(instant).unwrap();
+        assert_eq!(held.into_value().to_jiff(), instant);
+        let number = rust_decimal::Decimal::new(75, 1);
+        assert_eq!(Decimal::new(number).into_value().to_decimal(), number);
     }
 }

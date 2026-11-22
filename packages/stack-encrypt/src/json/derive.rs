@@ -35,6 +35,7 @@ use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, Jso
 use crate::keyset::KeysetState;
 use crate::sem::TermError;
 use crate::target::{AeadContext, Decryption, Pending, Request, RequiredContext};
+use crate::target::{Held, Source};
 use crate::ContextPiece;
 use crate::{DecryptSource, Descriptor, Error, KeysetCipher, NonEmpty, StackCipher};
 
@@ -523,21 +524,18 @@ fn leaf_op(
     context: &Context<'_>,
     value: &Value,
 ) -> Result<Option<Vec<u8>>, TermError> {
-    Ok(match value {
-        Value::Number(n) => Some(
-            crate::sem::ope(prf, n.as_f64().unwrap_or(0.0), context.clone())?
-                .into_inner()
-                .as_ref()
-                .to_vec(),
-        ),
-        Value::String(s) => Some(
-            crate::sem::ope(prf, s.clone(), context.clone())?
-                .into_inner()
-                .as_ref()
-                .to_vec(),
-        ),
-        _ => None,
-    })
+    use crate::sem::{ope, order_encoding, order_error, target_of};
+    // The leaf read in place, encoded as the scalar index encodes an `f64`
+    // or a `String`.
+    let encoding = match value {
+        Value::Number(n) => order_encoding(target_of::<f64>(), n.as_f64().unwrap_or(0.0)),
+        Value::String(s) => order_encoding(target_of::<String>(), s.as_str()),
+        _ => return Ok(None),
+    }
+    .map_err(order_error)?;
+    Ok(Some(
+        ope(prf, &encoding, context.clone())?.as_ref().to_vec(),
+    ))
 }
 
 // =============================================================================
@@ -808,23 +806,29 @@ fn query_terms(
     })
 }
 
-/// Seal `value` into a [`JsonDocument`]: one data key for the document,
+/// Seal the document `source` holds into a [`JsonDocument`]: one data key for
+/// the document,
 /// requested under the descriptor of the stored context `stored`, and every
 /// entry sealed under it with the AAD that binds the entry to the document,
 /// the column and its ordinal. The selectors and the other terms derive
 /// under the query context `query`, as [`terms_pending`] derives a query's,
 /// so a document bound to its row is still found by a query under the
 /// scopes. The two are one context for a caller with no binding.
+///
+/// The document is read in place. A document `source` was given is wiped
+/// when this returns, or when the pending that keeps it is dropped. A
+/// borrowed document is copied only when the keyset is not loaded yet: the
+/// pending then keeps its own copy until it settles, wiped on drop.
 pub(crate) fn seal_pending<'a, K: 'static>(
-    value: Value,
+    source: Source<'_, Value>,
     options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
     query: NonEmpty<ContextPiece<'static>>,
     stored: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonDocument, K> {
-    // The caller's document, owned here: wiped when this returns, also when
-    // the context is refused below.
-    let value = PlainJson::protect(value);
+    // Guarded from here, so a document this call was given is wiped on
+    // every return below.
+    let document = Sealing::from(source);
     let piece = stored.into_context();
     let descriptor = Descriptor::from_piece(&piece);
     if let Err(error) = descriptor.check() {
@@ -844,7 +848,7 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     let loaded = cipher.loaded_state().cloned();
     let walked = match &loaded {
         Some(keyset) => match walk(
-            value.risky_ref().value(),
+            document.view(),
             options,
             &keyset.prf,
             &prf_context,
@@ -860,10 +864,10 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         let opens = |number: &serde_json::Number| {
             number_text(number).is_some_and(|text| number_text_opens(&text))
         };
-        if !every_number(value.risky_ref().value(), &opens) {
+        if !every_number(document.view(), &opens) {
             return Pending::failed(cipher, Error::Aead);
         }
-        match sealed_root_plaintext(value.risky_ref().value()) {
+        match sealed_root_plaintext(document.view()) {
             Ok(bytes) => Some(bytes),
             Err(error) => return Pending::failed(cipher, Error::Other(Box::new(error))),
         }
@@ -886,6 +890,7 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         // The pending asks for the keyset beside the data key. It keeps the
         // document, wiped on drop, and walks it once the keyset is loaded.
         _ => {
+            let value = document.into_guarded();
             let options = options.clone();
             Pending::request(
                 cipher,
@@ -906,6 +911,40 @@ pub(crate) fn seal_pending<'a, K: 'static>(
                     seal(walked, whole, keyset.id, key, &aad, sealed_root, rng)
                 },
             )
+        }
+    }
+}
+
+/// The document [`seal_pending`] reads: the caller's borrow, or the value it
+/// was given, guarded so that it is wiped on drop.
+enum Sealing<'b> {
+    Lent(&'b Value),
+    Given(Protected<PlainJson>),
+}
+
+impl<'b> From<Source<'b, Value>> for Sealing<'b> {
+    fn from(source: Source<'b, Value>) -> Self {
+        match source.into_held() {
+            Held::Lent(value) => Self::Lent(value),
+            Held::Given(value) => Self::Given(PlainJson::protect(value)),
+        }
+    }
+}
+
+impl Sealing<'_> {
+    /// The document, read in place.
+    fn view(&self) -> &Value {
+        match self {
+            Self::Lent(value) => value,
+            Self::Given(value) => value.risky_ref().value(),
+        }
+    }
+    /// The document for a pending to keep until it settles: the value this
+    /// was given, or a guarded copy of the borrow.
+    fn into_guarded(self) -> Protected<PlainJson> {
+        match self {
+            Self::Lent(value) => PlainJson::protect(value.clone()),
+            Self::Given(value) => value,
         }
     }
 }

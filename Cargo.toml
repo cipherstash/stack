@@ -152,6 +152,6 @@ vitaminc-hmac = "0.10.0"
 vitaminc-normalize = "0.10.0"
 # The text order key: the system ADR-0002's fold, pinned to Unicode 16,
 # which text ORE and OPE terms are derived over (ADR-0009).
-vitaminc-ore = "0.10.0"
+vitaminc-ore = { version = "0.10.0", features = ["prf"] }
 vitaminc-prf = { version = "0.10.0", features = ["normalize"] }
 vitaminc-protected = "0.10.0"

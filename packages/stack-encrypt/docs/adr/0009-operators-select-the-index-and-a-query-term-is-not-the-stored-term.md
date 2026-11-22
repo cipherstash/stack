@@ -599,7 +599,7 @@ their canonical encoding), which belongs to the ORE crates. One call
 derives both bounds, under one
 context, so a caller cannot pair a bound from one column with a bound from
 another. The ordering operators are answered over the integer types, the
-floats and text (`op::Ordered`), by the ORE index by default and by OPE
+floats and text (`op::Ordered`; amended below), by the ORE index by default and by OPE
 through `.via(Ope)`. Each term is cllw-ore's encryption of the value's
 ADR-0002 order key at its type's target, so a float orders as Postgres's
 `float8` does (`-0.0` ties `0.0`, NaN sorts last), and an `f32` is ordered
@@ -1273,3 +1273,12 @@ who read the column how its values order, for nothing.
 The ADR-0004 decision 5 history above is unchanged. ADR-0007's rule, one
 executor and never a second, is nearer: the dynamic path still has its
 own term derivation, which the API plan's step 4 moves onto the typed one.
+
+## Amended 2026-11-22 (#1737)
+
+`op::Ordered` is removed, and so is `sem::Orderable`. ADR 0014 decision 5
+bounds every order index, order term, and ordering operator on
+vitaminc-ore's `Orderable`, which `stack_encrypt::Orderable` re-exports.
+That trait covers the integers of 16 bits and wider, the floats, text,
+dates, timestamps, and decimals. It does not cover bytes or an 8-bit
+integer. Where this ADR names `op::Ordered`, read `Orderable`.

@@ -635,6 +635,7 @@ mod given_encrypted_terms_as_a_target {
     async fn same_bytes<S, Terms, X>(value: S, indexes: X)
     where
         S: stack_encrypt::Encrypt
+            + stack_encrypt::EncryptRef
             + stack_encrypt::Decrypt
             + zeroize::Zeroize
             + Send
@@ -756,7 +757,7 @@ mod given_encrypted_terms_as_a_target {
 /// A boolean has no equality term, on the typed path as on the dynamic one
 /// (`dynamic::admits`): refused when the term is derived, before any key
 /// is minted. (It has no order term either, which is a compile error:
-/// `bool` is not `sem::Orderable`, so `OreTerm<bool>`, `OpeTerm<bool>` and
+/// `bool` is not `Orderable`, so `OreTerm<bool>`, `OpeTerm<bool>` and
 /// `indexed::<bool, _, _, _>(Ore)` do not build.)
 #[tokio::test]
 async fn a_boolean_has_no_equality_term() {

@@ -1,6 +1,6 @@
 //! A `u8` and an `i8` have no order term, as a `bool` has none: with 256
 //! values, an order term would rank every row among 256, which a few known
-//! rows resolve to the values. So neither is `sem::Orderable`: an
+//! rows resolve to the values. So neither is `Orderable`: an
 //! `OreTerm<u8>`, an `OpeTerm<i8>` and an `Ore` index on an `i8` do not
 //! compile. A field with no order term has no ordering query. Each keeps
 //! its equality term.

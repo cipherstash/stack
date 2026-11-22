@@ -1459,7 +1459,7 @@ impl<K> KeysetCipher<'_, K> {
     /// as its purpose or a request id.
     ///
     /// ```
-    /// use stack_encrypt::{AuditMetadata, StackCipher};
+    /// use stack_encrypt::{AuditMetadata, Controlled, Protected, StackCipher};
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
     /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
@@ -1471,11 +1471,11 @@ impl<K> KeysetCipher<'_, K> {
     /// let keyset = cipher.default_keyset();
     /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
     ///
-    /// let name: String = keyset
+    /// let name: Protected<String> = keyset
     ///     .decrypt_tree(stored, "users/name")
     ///     .audit(AuditMetadata::new().with("purpose", "profile page"))
     ///     .await?;
-    /// assert_eq!(name, "alice");
+    /// assert_eq!(name.risky_ref(), "alice");
     /// # Ok::<(), stack_encrypt::Error>(())
     /// # }).unwrap();
     /// ```
@@ -1562,7 +1562,7 @@ impl<K> StackCipher<K> {
     /// as its purpose or a request id.
     ///
     /// ```
-    /// use stack_encrypt::{AuditMetadata, StackCipher};
+    /// use stack_encrypt::{AuditMetadata, Controlled, Protected, StackCipher};
     ///
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
     /// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
@@ -1574,11 +1574,11 @@ impl<K> StackCipher<K> {
     /// let keyset = cipher.default_keyset();
     /// let stored = keyset.encrypt_tree(String::from("alice"), "users/name").await?;
     ///
-    /// let name: String = cipher
+    /// let name: Protected<String> = cipher
     ///     .decrypt(stored, "users/name")
     ///     .audit(AuditMetadata::new().with("purpose", "profile page"))
     ///     .await?;
-    /// assert_eq!(name, "alice");
+    /// assert_eq!(name.risky_ref(), "alice");
     /// # Ok::<(), stack_encrypt::Error>(())
     /// # }).unwrap();
     /// ```

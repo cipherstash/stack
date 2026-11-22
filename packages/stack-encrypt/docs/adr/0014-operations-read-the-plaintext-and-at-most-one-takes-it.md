@@ -214,7 +214,8 @@ type. Two operations that both take the value therefore do not compile.
 - `ShareSource` is removed. `zip` lends the value.
 - `ConsumeSource` stays, for `passthrough` alone. No other operation
   asks for it. The public `Index` trait's `operation` is bounded by
-  `SourceMode`, where it was `ConsumeSource`.
+  `SourceMode`, where it was `ConsumeSource`. (Amended below: by
+  `WipeSource`.)
 - **A borrowed `passthrough` still copies its value, so that value is
   `Clone`.** This is ADR-0012's rule for a field stored in the clear,
   and it stands. The value is not sealed, so the copy is not a copy of a
@@ -412,3 +413,27 @@ Three pull requests touch the same code. They land in this order:
 4. **The dynamic interface.** It fits. A data plan's sealed and indexed
    fields read their `ValueFrame` in place, and a passthrough field's
    value is moved into the output.
+
+## Amended 2026-11-22 (#1737)
+
+Decision 4 left the form of the `Zeroize` bound to the implementation.
+#1737 writes it as a third mode trait, `WipeSource`.
+
+- `Borrowed` implements it for every plaintext. `Owned` implements it for
+  a plaintext that is `Zeroize`. So the bound applies in `Owned` mode
+  only, as decision 4 says. A borrowed `&str` is still sealed.
+- Every operation that seals or indexes is bounded by it: `ciphertext`,
+  `equality`, `matching`, the three order terms, and `indexed`. So are
+  `Index::operation` and `Indexes::operations`. Decision 3 named
+  `SourceMode` for `Index::operation`. That bound is now `WipeSource`.
+- The JSON operations keep `SourceMode`. A document has its own guard
+  (`PlainJson`). `serde_json::Value` is not `Zeroize`. A JSON index
+  run in `Owned` mode calls `json_terms` directly, and not through
+  `Index`.
+- A typed query hands its value to the index by value, so a query value
+  is `Zeroize`.
+- #1737 also lands decision 5. The typed path has no order term of bytes.
+  A data plan can still declare an order index on bytes until #1611 refuses
+  it. Until then the dynamic path derives that term by naming the `Bytes`
+  target. So the stored rows and the conformance corpus do not change in
+  #1737.

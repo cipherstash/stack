@@ -118,8 +118,8 @@ use stack_encrypt::target::{
 };
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, Decryptable, Decryption, Describe,
-    Description, Encrypt, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, SealedValue,
-    StackCipherText,
+    Description, Encrypt, EncryptRef, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty,
+    SealedValue, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -261,10 +261,10 @@ impl Reader for Ciphertext {
 // AEAD (authenticated encryption) half of the context, as Stack Encrypt's own
 // `StackCipherText` does.
 //
-// The borrowed form clones the plaintext to seal it. The owned form is Stack
+// The borrowed form reads the plaintext in place. The owned form is Stack
 // Encrypt's own owned form of `StackCipherText`: it moves the value into the
-// seal, with no copy, and wipes it when the context is refused.
-impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Ciphertext {
+// seal, and wipes it when the context is refused.
+impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for Ciphertext {
     type ContextInput = RequiredContext<AeadContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
@@ -334,7 +334,7 @@ impl Transcode for Hmac256 {
         EqualityVisitor
     }
 }
-impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Hmac256 {
+impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for Hmac256 {
     type ContextInput = RequiredContext<CallerContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where

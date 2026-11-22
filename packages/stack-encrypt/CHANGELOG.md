@@ -494,6 +494,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns `None` for a keyset that is not loaded yet, unless it was
   selected by its id.
 
+- **A plaintext is read in place, and no longer needs `Clone`** (#1734).
+  One value that feeds a ciphertext and several terms is not copied.
+  - A sealed or indexed plaintext is bounded by `Encrypt + EncryptRef`,
+    where it was `Encrypt + Clone`. `EncryptRef` means `&T: Encrypt`.
+    vitaminc's types and its derive provide it. A type with only a
+    by-value `Encrypt` impl must add `impl Encrypt for &T`.
+    `stack_encrypt::EncryptRef` is a new re-export.
+  - `Encryption::zip` takes a borrowed description as its second
+    argument, and runs it first. The outputs keep their written order.
+  - `target::ShareSource` is removed. `target::ConsumeSource` stays for
+    `passthrough` only.
+  - `dynamic::ValueFrame` and `json::JsonPlaintext` are no longer `Clone`.
+  - A call on a keyset that is not loaded yet keeps no borrow of the
+    plaintext. The call keeps what it derived without the keyset: a
+    term's normalized form or order encoding, wiped on drop. A borrowed
+    JSON document is the one plaintext that is copied. That copy is made
+    once, and wiped.
+- **An operation in `Owned` mode wipes the value it is handed** (#1734).
+  `ciphertext` dropped a value whose context was refused without wiping
+  it. A match term dropped every value it was handed without wiping it.
+  Both wipe the value now, as every other operation does.
+  - `ciphertext`, `equality`, `matching`, `ore`, `ope`, `ore_block`, and
+    `indexed` are bounded by the new `target::WipeSource`, where they
+    were bounded by `SourceMode`. `Borrowed` implements it for every
+    plaintext. `Owned` implements it for a plaintext that is `Zeroize`.
+    So a value sealed or indexed in `Owned` mode must be `Zeroize`.
+  - `Index::operation` and `Indexes::operations` are bounded by
+    `WipeSource`. An `Index` implemented outside this crate changes
+    `M: SourceMode<'s, S>` to `M: WipeSource<'s, S>`.
+  - A query's value is handed to its index by value, so it must be
+    `Zeroize` too. Every query value this crate and `eql-bindings`
+    accept already is.
+  - A JSON document keeps its own guard and needs no `Zeroize`.
+    `json_terms` and `json_document` stay bounded by `SourceMode`.
+  - `Encryption::zip` is bounded by `WipeSource` too. While its argument
+    reads an owned value, `zip` holds the value in a guard. If a reader
+    panics, the value is wiped as the stack unwinds. A match term guards
+    the value it reads in the same way.
+- **An order index is bounded by vitaminc-ore's `Orderable`** (#1734).
+  `sem::Orderable` and `op::Ordered` are removed. `stack_encrypt::Orderable`
+  re-exports vitaminc-ore's trait, and its table is vitaminc-ore's.
+  - It covers the integers of 16 bits and wider, `f32`, `f64`, `String`,
+    `&str`, and `value::Date`, `value::Timestamp`, and `value::Decimal`. It
+    covers a reference to each. It does not cover bytes, an 8-bit integer,
+    or a `bool`.
+  - An order term, an order index, or an ordering operator over bytes does
+    not compile. Before, `OreTerm<Vec<u8>>` compiled, but no ordering
+    operator answered it. Its term revealed the order of the rows.
+  - To upgrade a record with an order index on bytes, remove the index.
+    Rows stored before stay readable. Opening reads only the ciphertext
+    and ignores the stored order term, so name the field
+    `StackCipherText`, or `Encrypted<..>` over the terms it keeps.
+  - `KeysetCipher::ore_term`, `ope_term`, and `ore_block_term` no longer
+    take bytes. They take a reference such as `&String` or `&str`, as well
+    as a value.
+  - An order index reads its value in place, so it is bounded by
+    `Orderable + EncryptRef`. A target or a query value of it is also
+    `Zeroize` and `'static`.
+  - A data plan still accepts an order index on bytes, and derives its term
+    as before. Stored rows and the conformance corpus do not change.
+  - The JSON index derives a string leaf's OPE term from the document in
+    place, and a data plan derives a text field's order term from the
+    frame in place. Each copied the text before.
+- **`value::Date`, `value::Timestamp`, and `value::Decimal` are vitaminc's
+  types** (#1734). Stack Encrypt's own copies are removed. The stored
+  format is unchanged.
+  - Build a `Date` from a jiff `civil::Date`, a `Timestamp` from a jiff
+    `Timestamp`, and a `Decimal` from a rust_decimal `Decimal`, with
+    `new` or `From`. Read one back with `to_jiff` or `to_decimal`.
+  - These are removed: `Date::from_days_since_epoch`,
+    `Date::days_since_epoch`, `Timestamp::new(seconds, nanoseconds)`,
+    `Timestamp::seconds`, `Timestamp::nanoseconds`,
+    `Decimal::new(mantissa, scale)`, `Decimal::mantissa`,
+    `Decimal::scale`, and `value::RangeError`.
+  - `Timestamp::new` returns `value::OutOfRange` for an instant that jiff
+    1.0.0 can make before its own minimum. `Date::new` and `Decimal::new`
+    cannot fail.
+  - None of the three is `Clone`.
+  - The `jiff` and `rust_decimal` features are on by default, and the
+    `dynamic` feature turns both on. With one off, its types do not
+    exist. A build with `default-features = false` must name them.
 - **The tree entry points return a `Pending`** (#1705), so they can take
   audit metadata like every other call. `KeysetCipher::encrypt_tree`,
   `KeysetCipher::decrypt_tree`, and `StackCipher::decrypt` were

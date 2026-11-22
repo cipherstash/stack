@@ -17,14 +17,17 @@
 //! ([`TermError::OreBlockTooLong`], [`TermError::OreBlockTrailingNul`]).
 //! A range whose low bound is above its high bound is not refused: as
 //! SQL's `BETWEEN`, it matches nothing.
-use vitaminc_aead::Encrypt;
+use vitaminc_aead::{Encrypt, EncryptRef};
+use vitaminc_ore::OrderTarget;
 
-use super::{normalized, sealed, MatchOptions, Orderable, QueryTokens, TermError};
+use super::{normalized, MatchOptions, QueryTokens, TermError};
+use crate::Orderable;
 
 /// An equality query of `value`: refused when the value has no equality
 /// term, or is text the index cannot normalize. The value is consumed as
-/// it is normalized, so a caller that still needs it passes a copy, as the
-/// typed `Equality::prepare` does; vitaminc wipes what it reads.
+/// it is normalized. A caller that still needs it lends it
+/// (`EncryptRef::lend`), as the typed `Equality::prepare` does, and then
+/// nothing is copied.
 ///
 /// # Errors
 ///
@@ -44,8 +47,18 @@ pub(crate) fn equality<T: Encrypt>(value: T) -> Result<(), TermError> {
 ///
 /// [`TermError::Normalize`], [`TermError::OreBlockTooLong`],
 /// [`TermError::OreBlockTrailingNul`].
-pub(crate) fn order<T: Orderable>(value: &T, block: bool) -> Result<(), TermError> {
-    sealed::Sealed::check_query(value, block)
+pub(crate) fn order<T: Orderable + EncryptRef>(value: &T, block: bool) -> Result<(), TermError> {
+    if super::target_of::<T>() != OrderTarget::Text {
+        return Ok(());
+    }
+    // The value read in place. Its encoding is the marker byte and the
+    // fold, which `order_text` checks for text read from a frame.
+    let encoding =
+        super::order_encoding(OrderTarget::Text, value.lend()).map_err(super::order_error)?;
+    if block {
+        return super::ore_block_fits(vitaminc_protected::Controlled::risky_ref(encoding.bytes()));
+    }
+    Ok(())
 }
 
 /// [`order`] for text read from a frame, where the type is known only at
@@ -54,6 +67,7 @@ pub(crate) fn order<T: Orderable>(value: &T, block: bool) -> Result<(), TermErro
 /// # Errors
 ///
 /// As [`order`].
+#[cfg(feature = "dynamic")]
 pub(crate) fn order_text(text: &str, block: bool) -> Result<(), TermError> {
     if block {
         return super::ore_block_text(text);

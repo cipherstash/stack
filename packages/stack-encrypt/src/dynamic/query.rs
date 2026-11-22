@@ -42,7 +42,7 @@
 //! declares only one of them is answered through it. Every order term is
 //! derived over the value's order key: a float's ties `-0.0` with
 //! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
-//! bytes is not answered, as `op::Ordered` does not cover them. Nor is one
+//! bytes is not answered, as `Orderable` does not cover them. Nor is one
 //! over an 8-bit integer, which has no order term. A timestamp orders by the
 //! microsecond and a decimal by value, so `1.5` ties `1.50`.
 //!
@@ -213,7 +213,7 @@ impl Op {
 
 /// The kinds the ordering operators are answered over: the integers of 16
 /// bits and wider, `int16` to `uint128`, the floats, text, and dates,
-/// timestamps and decimals, as [`op::Ordered`](crate::op::Ordered) covers
+/// timestamps and decimals, as [`Orderable`](crate::Orderable) covers
 /// them in the typed path. Not `int8` or `uint8`, which have no order term.
 /// Each orders by its order key; a `float32` is ordered as the
 /// `f64` it widens to, as the typed path asks.
@@ -824,9 +824,14 @@ fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryToken
 /// let plan = record::plan_with(declaration.as_protected_ref(), &Documents)?;
 /// // What `jsonb_path_match(col, $1, $2)` takes: the predicate, and its
 /// // variables as the JSON text of one object.
+/// // Each part goes straight into a protected frame, so no plain buffer
+/// // holds the query's values.
 /// let input = |predicate: &str| -> ValueFrame {
-///     let input = json!({"predicate": predicate, "vars": r#"{"min": 18, "r": "sibling"}"#});
-///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().as_protected_ref()).unwrap()
+///     let parts = std::collections::BTreeMap::from([
+///         ("predicate", ValueFrame::of(predicate).unwrap()),
+///         ("vars", ValueFrame::of(r#"{"min": 18, "r": "sibling"}"#).unwrap()),
+///     ]);
+///     ValueFrame::of(&parts).unwrap()
 /// };
 /// let check = |predicate: &str| {
 ///     check_query(&plan, "profile", Op::Match, input(predicate), &Documents)
@@ -2287,7 +2292,8 @@ mod tests {
                     .as_protected_ref(),
             )
             .expect("context");
-            let value = value.clone();
+            // A frame is not `Clone`: the future owns a frame of the same bytes.
+            let value = ValueFrame::from_bytes(value.as_protected_ref()).expect("a frame");
             async move {
                 super::super::term(keyset, &value, &IndexSpec::Equality, ctx)
                     .await
@@ -2295,14 +2301,16 @@ mod tests {
             }
         };
         let day = frame(Some(Logical::Date), Physical::Int(Int::I32(19_782)));
-        let term = ask("day", Op::Eq, day.clone()).await.unwrap();
-        assert_eq!(term.operand(), &Operand::One(stored(&day, "day").await));
+        let expected = stored(&day, "day").await;
+        let term = ask("day", Op::Eq, day).await.unwrap();
+        assert_eq!(term.operand(), &Operand::One(expected));
         let at = frame(
             Some(Logical::Timestamp(TimeUnit::Nanos)),
             Physical::Int(Int::I128(1_760_662_923_123_456_789)),
         );
-        let term = ask("at", Op::Eq, at.clone()).await.unwrap();
-        assert_eq!(term.operand(), &Operand::One(stored(&at, "at").await));
+        let expected = stored(&at, "at").await;
+        let term = ask("at", Op::Eq, at).await.unwrap();
+        assert_eq!(term.operand(), &Operand::One(expected));
         let price = frame(
             Some(Logical::Decimal { scale: 2 }),
             Physical::Int(Int::I64(3400)),

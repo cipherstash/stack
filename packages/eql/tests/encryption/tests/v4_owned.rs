@@ -117,35 +117,35 @@ impl<T: Seen> Seen for Option<T> {
 impl Seen for DateValue {
     type View = CivilDate;
     fn view(&self) -> CivilDate {
-        CivilDate::from(self)
+        self.to_jiff()
     }
 }
 impl Seen for TimestampValue {
     type View = jiff::Timestamp;
     fn view(&self) -> jiff::Timestamp {
-        jiff::Timestamp::from(self)
+        self.to_jiff()
     }
 }
 impl Seen for DecimalValue {
     type View = String;
     fn view(&self) -> String {
-        rust_decimal::Decimal::from(self).to_string()
+        self.to_decimal().to_string()
     }
 }
 
 /// Writes each stored type twice, from the same plaintext under the same
-/// column. Checks that the terms match, and that each ciphertext opens: under
+/// column. The plaintext is built again for each write: it is not `Clone`. Checks that the terms match, and that each ciphertext opens: under
 /// the column it stores, and under the column the reader expects.
 macro_rules! stored_round_trips {
     ($keyset:expr, $plaintext:ty, $value:expr, [$($ty:ty),+ $(,)?]) => {$({
         let value: $plaintext = $value;
-        let first: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let first: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
-        let second: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let second: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
@@ -165,14 +165,13 @@ macro_rules! stored_round_trips {
 /// ORE operand is compared by the ORE scheme, as the type's `PartialEq` does.
 macro_rules! query_is_stable {
     ($keyset:expr, $plaintext:ty, $value:expr, [$($ty:ty),+ $(,)?]) => {$({
-        let value: $plaintext = $value;
-        let first: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let first: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
-        let second: $ty = value
-            .clone()
+        let again: $plaintext = $value;
+        let second: $ty = again
             .encrypt_into_with_context(&$keyset, column())
             .await
             .unwrap();
@@ -640,9 +639,10 @@ fn the_traits_the_compile_fail_examples_refuse_exist_for_the_right_shapes() {
     encrypts::<text::TextEqQuery>();
 }
 
-/// How many copies of the plaintext the ciphertext `c` makes. The owned form
-/// that `encrypt_into` runs moves the plaintext into the seal. The borrowed
-/// form, which a collection runs for each element, copies it once.
+/// How many copies of the plaintext the ciphertext `c` makes: none. The
+/// owned form that `encrypt_into` runs moves the plaintext into the seal.
+/// The borrowed form, which a collection runs for each element, reads it in
+/// place.
 mod the_ciphertext {
     use super::*;
 
@@ -674,6 +674,12 @@ mod the_ciphertext {
             self.text.visit(sink)
         }
     }
+    /// Sealing a borrowed value reads the text in place.
+    impl Encrypt for &Counted {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            self.text.as_str().visit(sink)
+        }
+    }
     /// The counter is not secret.
     impl Zeroize for Counted {
         fn zeroize(&mut self) {
@@ -695,7 +701,7 @@ mod the_ciphertext {
     }
 
     #[tokio::test]
-    async fn the_owned_form_copies_nothing_and_the_borrowed_form_copies_once() {
+    async fn neither_the_owned_form_nor_the_borrowed_form_copies_the_plaintext() {
         let (cipher, _) = common::cipher().await;
         let keyset = cipher.default_keyset();
 
@@ -718,7 +724,7 @@ mod the_ciphertext {
         );
 
         let (value, clones) = counted();
-        let _: Ciphertext = keyset
+        let borrowed: Ciphertext = keyset
             .run(
                 <Ciphertext as EncryptTarget<Counted>>::encryption(),
                 &value,
@@ -726,7 +732,11 @@ mod the_ciphertext {
             )
             .await
             .unwrap();
-        assert_eq!(clones.load(Ordering::SeqCst), 1, "the borrowed form");
+        assert_eq!(clones.load(Ordering::SeqCst), 0, "the borrowed form");
+        let opened: String = String::decrypt_from_with_context(borrowed, &cipher, aead())
+            .await
+            .unwrap();
+        assert_eq!(opened, "ada@example.com", "the borrowed value is sealed");
     }
 
     /// A refused context requests no key.

@@ -1173,7 +1173,9 @@ dependencies = [
  "base85-simd",
  "eql-domains",
  "hex",
+ "jiff",
  "proptest",
+ "rust_decimal",
  "schemars",
  "serde",
  "serde_json",
@@ -4225,11 +4227,9 @@ dependencies = [
  "base85-simd",
  "clww-ore",
  "futures",
- "jiff",
  "miette",
  "ore-rs 0.12.0",
  "rand 0.10.1",
- "rust_decimal",
  "serde",
  "serde_json",
  "serdect",
@@ -5238,12 +5238,15 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a1d92d394e577ee424b4f35479a101896aecbce98f00c37bca5af1aa0d3b2c0"
 dependencies = [
+ "jiff",
+ "rust_decimal",
  "thiserror 2.0.20",
  "unicode-general-category",
  "unicode-normalization",
  "vitaminc-aead 0.10.0",
  "vitaminc-context 0.10.0",
  "vitaminc-normalize",
+ "vitaminc-prf",
  "vitaminc-protected 0.10.0",
  "zeroize",
 ]

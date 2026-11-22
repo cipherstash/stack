@@ -48,10 +48,17 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
 use crate::json::{JsonOptions, JsonPath};
-use crate::sem::{DefaultMatch, MatchOptions, Orderable, TermError, Tokenizer};
-use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
+use crate::sem::{
+    ope, order_error, order_pending, ore, ore_block, ore_block_error, target_of, DefaultMatch,
+    MatchOptions, TermError, Tokenizer,
+};
+use crate::target::{
+    chosen, CallerContext, Encryption, Index, IndexSpec, Pending, Source, WipeSource,
+};
 use crate::value::{Date, Decimal, Timestamp};
+use crate::Orderable;
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
+use vitaminc_ore::OrderTarget;
 
 /// The runtime half of [`IndexSpec`]: the domain table, and the index's wire
 /// form in a record plan.
@@ -457,11 +464,12 @@ pub async fn term<'c, K, P, D>(
 ) -> Result<Vec<u8>, Error>
 where
     K: DataKeySource + IndexKeySource + Sync + 'static,
-    P: Encrypt + Clone,
+    P: Encrypt + EncryptRef,
     D: IntoPrfContext<'c>,
 {
-    // A value the index does not take is refused as that kind, first.
-    if !kind.defines(value.clone()) {
+    // A value the index does not take is refused as that kind, first. The
+    // checks read the value in place.
+    if !kind.defines(value.lend()) {
         return Err(Error::Term {
             field: None,
             kind: kind.clone(),
@@ -472,7 +480,7 @@ where
     // derived as the empty filter a stored value keeps. The value is read
     // as it is, not re-framed, so every scalar `defines` takes is one a
     // probe takes.
-    prepare_probe(kind, value.clone())?;
+    prepare_probe(kind, value.lend())?;
     derive(cipher, value, kind, context)?
         .await
         .map(TermBytes::into_bytes)
@@ -634,12 +642,10 @@ enum OrderIndex {
 /// Rust type the typed path would have named; `None` for a scalar it does
 /// not order ([`ordered`]).
 ///
-/// Text and bytes are copied out of the walk into an owned `String` or
-/// `Vec<u8>` and moved to the encryptor, which wraps the one copy in a
-/// `Zeroizing` on receipt: the order term takes its value by ownership
-/// (the visitor carries it) and wipes it, so nothing is freed with the
-/// plaintext still in it, in a guest's linear memory, where the host can
-/// read it.
+/// Text and bytes are read where the walk holds them, and not copied:
+/// each term makes the scalar's order encoding first, under `Protected`,
+/// so nothing is freed with the plaintext still in it, in a guest's linear
+/// memory, where the host can read it.
 ///
 /// Each scalar is encoded at the target of the Rust type named here
 /// ([`Orderable`]), as on the typed path: text by its case and accent
@@ -690,14 +696,14 @@ where
         Physical::Int(Int::U128(v)) => order(cipher, index, v, context),
         Physical::Float(Float::F32(v)) => order(cipher, index, v, context),
         Physical::Float(Float::F64(v)) => order(cipher, index, v, context),
-        Physical::Text(t) => order(cipher, index, t.to_owned(), context),
-        Physical::Bytes(b) => order(cipher, index, b.to_vec(), context),
+        Physical::Text(t) => order(cipher, index, t, context),
+        Physical::Bytes(b) => order_at(cipher, index, OrderTarget::Bytes, b, context),
         _ => return None,
     })
 }
 
-/// The term of `value` under `index`. The term's bytes are its frozen
-/// encoding: the raw CLLW ciphertext, or the serialised block ORE one.
+/// The term of `value` under `index`, encoded at the target of its own
+/// type ([`Orderable`]).
 fn order<'a, 'c, K: 'static, T, D>(
     cipher: &'a KeysetCipher<'_, K>,
     index: OrderIndex,
@@ -708,16 +714,60 @@ where
     T: Orderable,
     D: IntoPrfContext<'c>,
 {
+    order_at(cipher, index, target_of::<T>(), value, context)
+}
+
+/// The term of `value` under `index`, encoded as `target`. The term's
+/// bytes are its frozen encoding: the raw CLLW ciphertext, or the
+/// serialised block ORE one.
+///
+/// Bytes are not [`Orderable`]: no ordering operator compares them, so the
+/// typed path has no order term of bytes. A data plan can still declare an
+/// order index on bytes, and the rows it stored carry the term, so this path
+/// derives it as it did, by naming the `Bytes` target.
+fn order_at<'a, 'c, K: 'static, V, D>(
+    cipher: &'a KeysetCipher<'_, K>,
+    index: OrderIndex,
+    target: OrderTarget,
+    value: V,
+    context: NonEmpty<D>,
+) -> Pending<'a, TermBytes, K>
+where
+    V: Encrypt,
+    D: IntoPrfContext<'c>,
+{
+    let context = context.into_prf_context().into_owned();
     match index {
-        OrderIndex::Ore => cipher
-            .ore_term(value, context)
-            .map(|term| TermBytes(term.as_ref().to_vec())),
-        OrderIndex::Ope => cipher
-            .ope_term(value, context)
-            .map(|term| TermBytes(term.as_ref().to_vec())),
-        OrderIndex::OreBlock => cipher
-            .ore_block_term(value, context)
-            .map(|term| TermBytes(term.into_bytes())),
+        OrderIndex::Ore => order_pending(
+            cipher,
+            target,
+            value,
+            context,
+            order_error,
+            |prf, encoding, context| {
+                ore(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
+            },
+        ),
+        OrderIndex::Ope => order_pending(
+            cipher,
+            target,
+            value,
+            context,
+            order_error,
+            |prf, encoding, context| {
+                ope(prf, encoding, context).map(|term| TermBytes(term.as_ref().to_vec()))
+            },
+        ),
+        OrderIndex::OreBlock => order_pending(
+            cipher,
+            target,
+            value,
+            context,
+            ore_block_error,
+            |prf, encoding, context| {
+                ore_block(prf, encoding, context).map(|term| TermBytes(term.into_bytes()))
+            },
+        ),
     }
 }
 
@@ -873,23 +923,25 @@ impl Index<ValueFrame> for IndexSpec {
     fn spec(&self) -> IndexSpec {
         self.clone()
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, ValueFrame>>(
+    fn operation<'s, K: 'static, M: WipeSource<'s, ValueFrame>>(
         &self,
     ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
         let spec = self.clone();
-        chosen(move |source: M::Source, cipher, cx: CallerContext| {
-            // A term derives under the query context: the scopes, with no
-            // binding.
-            let (query, stored) = (cx.query(), cx.stored());
-            let context = match cx.validated() {
-                Ok(context) => CallerContext::query_nonempty(context),
-                Err(error) => return Pending::failed(cipher, error),
-            };
-            match derive(cipher, M::view(&source), &spec, context) {
-                Ok(pending) => pending.under_context(query, stored),
-                Err(error) => Pending::failed(cipher, error.into_crate()),
-            }
-        })
+        chosen(
+            move |source: Source<'_, ValueFrame>, cipher, cx: CallerContext| {
+                // A term derives under the query context: the scopes, with no
+                // binding.
+                let (query, stored) = (cx.query(), cx.stored());
+                let context = match cx.validated() {
+                    Ok(context) => CallerContext::query_nonempty(context),
+                    Err(error) => return Pending::failed(cipher, error),
+                };
+                match derive(cipher, source.view(), &spec, context) {
+                    Ok(pending) => pending.under_context(query, stored),
+                    Err(error) => Pending::failed(cipher, error.into_crate()),
+                }
+            },
+        )
     }
 }
 
@@ -1255,15 +1307,17 @@ mod tests {
             ordered!(1.5f32, Tree::Float32(1.5), "f32");
             ordered!(2.5f64, Tree::Float64(2.5), "f64");
             ordered!("alice".to_string(), s("alice"), "text");
-            ordered!(b"ab".to_vec(), bytes(b"ab"), "bytes");
             // A date, a timestamp and a decimal, as their `value` types.
             ordered!(
-                crate::value::Date::from_days_since_epoch(19_782).expect("in range"),
+                crate::value::Date::new(jiff::civil::date(2024, 2, 29)),
                 Tree::Typed(Logical::Date, Box::new(Tree::Int32(19_782))),
                 "date"
             );
             ordered!(
-                crate::value::Timestamp::new(1_700_000_000, 123_456_789).expect("in range"),
+                crate::value::Timestamp::new(
+                    jiff::Timestamp::new(1_700_000_000, 123_456_789).expect("in range")
+                )
+                .expect("in range"),
                 Tree::Typed(
                     Logical::Timestamp(vitaminc_aead::plaintext::TimeUnit::Nanos),
                     Box::new(Tree::Int128(1_700_000_000_123_456_789))
@@ -1271,7 +1325,7 @@ mod tests {
                 "timestamp"
             );
             ordered!(
-                crate::value::Decimal::new(-123_450, 2).expect("in range"),
+                crate::value::Decimal::new(rust_decimal::Decimal::new(-123_450, 2)),
                 Tree::Typed(
                     Logical::Decimal { scale: 2 },
                     Box::new(Tree::Int128(-123_450))

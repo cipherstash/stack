@@ -131,6 +131,16 @@ impl FieldValues {
     }
 }
 
+/// Let go of every field. A record a data plan encrypts holds its fields as
+/// [`ValueFrame`](crate::dynamic::ValueFrame)s, which keep their bytes under
+/// `Protected` and wipe them as they drop. So clearing the record wipes
+/// each field once.
+impl zeroize::Zeroize for FieldValues {
+    fn zeroize(&mut self) {
+        self.slots.clear();
+    }
+}
+
 impl fmt::Debug for FieldValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut map = f.debug_map();
@@ -144,6 +154,28 @@ impl fmt::Debug for FieldValues {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wiping a record lets go of every field, so each one drops, and a
+    /// frame wipes itself as it drops.
+    #[test]
+    fn zeroize_drops_every_field() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use zeroize::Zeroize;
+        struct Counted(Arc<AtomicUsize>);
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                let _ = self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let drops = Arc::new(AtomicUsize::new(0));
+        let mut values = FieldValues::new();
+        let _ = values
+            .insert("a", Counted(drops.clone()))
+            .insert("b", Counted(drops.clone()));
+        values.zeroize();
+        assert_eq!(drops.load(Ordering::SeqCst), 2, "both fields dropped");
+        assert_eq!(values.names().count(), 0, "no field is left");
+    }
 
     #[test]
     fn insert_replaces_a_field_in_place_and_keeps_order() {

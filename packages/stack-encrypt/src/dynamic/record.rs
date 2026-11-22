@@ -1837,7 +1837,7 @@ pub fn encrypt_with<'a, K: 'static>(
             let description = compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
             let eql = Pending::all(cipher, pendings);
             cipher
-                .run(description, &values, extend)
+                .run(description, values, extend)
                 .zip(eql)
                 .try_map(move |(values, eql)| shape_record(values, eql, &shape, &absent))
         }
@@ -1862,7 +1862,7 @@ pub fn encrypt_with<'a, K: 'static>(
             let mut positions = Vec::with_capacity(groups.len());
             for (absent, at, values) in groups {
                 let mut rows = Vec::with_capacity(values.len());
-                for values in &values {
+                for values in values {
                     let description = compose::<K>(plan, &absent).map_err(|_| Error::Internal)?;
                     rows.push(cipher.run(description, values, extend.clone()));
                 }

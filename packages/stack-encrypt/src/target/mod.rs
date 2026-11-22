@@ -116,13 +116,14 @@
 //! ```
 //! use stack_encrypt::sem::EqualityTerm;
 //! use stack_encrypt::target::{self, CallerContext, EncryptTarget, RequiredContext};
-//! use stack_encrypt::{Encrypt, Encryption};
+//! use stack_encrypt::{Encrypt, EncryptRef, Encryption};
 //! use zeroize::Zeroize;
 //!
 //! /// An equality term, stored as its bytes.
 //! struct StoredEquality([u8; 32]);
 //!
-//! impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for StoredEquality {
+//! // The term reads the plaintext in place, by reference (`EncryptRef`).
+//! impl<S: Encrypt + EncryptRef + Zeroize> EncryptTarget<S> for StoredEquality {
 //!     type ContextInput = RequiredContext<CallerContext>;
 //!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
 //!     where
@@ -140,12 +141,11 @@
 //! New cryptographic operations belong in core; output adapters cannot install an
 //! execution callback.
 //!
-//! Those schemes consume the plaintext. A description is handed it by
-//! reference by default, and an operation clones it before consuming it, so a
-//! declaration's plaintext is `Clone`. A plaintext that must not be copied
-//! runs in [`Owned`] mode through [`KeysetCipher::run`](crate::KeysetCipher::run):
-//! a single operation takes the value with no copy, and only
-//! [`Encryption::zip`] asks for `Clone`. See [`SourceMode`].
+//! Every operation reads the plaintext in place, so a plaintext does not
+//! need to be `Clone`. A description is handed the plaintext by reference by
+//! default, and the plaintext stays with the caller. In [`Owned`] mode,
+//! through [`KeysetCipher::run`](crate::KeysetCipher::run), the description
+//! is handed the value, and wipes it once. See [`SourceMode`].
 //!
 //! # Collections and authentication
 //!
@@ -204,7 +204,8 @@ pub use operations::{
 pub(crate) use pending::KeysetSelector;
 pub use pending::{CipherRef, Pending, PendingFuture};
 pub use request::{Request, Responses};
-pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
+pub(crate) use source::Held;
+pub use source::{Borrowed, ConsumeSource, Owned, Source, SourceMode, WipeSource};
 pub use stack_encrypt_derive::{DecryptSource, EncryptTarget};
 /// The cleanup trait that every owned plaintext must implement. It is
 /// re-exported here so that the derives can name it, even when the caller's

@@ -13,12 +13,12 @@ mod common;
 use std::sync::atomic::Ordering as AtomicOrdering;
 
 use common::{counting_cipher, recording_cipher, stack_cipher};
-use stack_encrypt::sem::Orderable;
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OreTerm, TermError};
 use stack_encrypt::target::{
     AeadContext, CallerContext, DecryptSource, EncryptTarget, Encrypted, Encryption,
     RequiredContext, Scope,
 };
+use stack_encrypt::Orderable;
 use stack_encrypt::{
     nonempty, ContextPiece, DecryptField, DecryptFrom, Decryptable, EncryptInto, Error,
     IntoContext, Label, MaybeEmpty, NonEmpty, StackCipherText,

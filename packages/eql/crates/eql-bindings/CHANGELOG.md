@@ -359,6 +359,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A plaintext no longer needs `Clone`** (#1734). The `Ciphertext` and
+  `Hmac256` targets and the query targets bound their plaintext on
+  `Encrypt + EncryptRef`, where it was `Encrypt + Clone`. `EncryptRef`
+  means `&T: Encrypt`. vitaminc's types and its derive provide it.
+- **`v4::plaintext::Date`, `Timestamp`, and `Decimal` are vitaminc's
+  types** (#1734). The stored format is unchanged.
+  - Build a `Date` from a jiff `civil::Date`, a `Timestamp` from a jiff
+    `Timestamp`, and a `Decimal` from a rust_decimal `Decimal`, with
+    `new` or `From`. Read one back with `to_jiff` or `to_decimal`.
+  - The constructors from integers and the integer accessors are removed,
+    with `v4::plaintext::RangeError`. `Timestamp::new` returns
+    `v4::plaintext::OutOfRange`.
+  - None of the three is `Clone`.
+  - The `stack-encrypt` feature now depends on jiff and rust_decimal. The
+    `jiff` and `rust_decimal` features remain, and each only turns on
+    `stack-encrypt`.
 - **The EQL v4 types no longer implement `EncryptFrom` and `DecryptInto`**
   (#1661, #1662). Stack Encrypt removed those traits, with `encrypt_as`,
   `decrypt_as`, the plan builder and the query chain. Every type keeps
