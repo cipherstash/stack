@@ -1587,15 +1587,25 @@ Base64.
     `DecryptSource<JsonPlaintext>`.
   - A query from a field reference works for the equality and match
     types, with the record's scope. A data plan's query for an EQL type
-    takes a scope too. The order types do not implement `Answers` yet, so
-    a field reference cannot query them (#1668).
+    takes a scope too.
+  - In #1668, a field reference queries the order types too: `lt`, `lte`,
+    `gt` and `gte` on every ordered type, `eq` as well on `TextOrd`, and
+    the orderings and `matches` on text search. A twin that requires
+    several terms (`TextOrdQuery`'s `hm` and `op`) gets all of them for the
+    one value; a twin whose terms are optional gets the answering index's
+    term alone, as the data plan's does. No SQL or stored form changes.
+    Each query is the data plan's for the same value, and each finds the
+    rows the other finds
+    (`packages/eql/tests/encryption/tests/typed_queries.rs`,
+    `typed_order_queries.rs`). `between` is not answered from a field
+    reference, as the data plan answers it on no EQL type.
   - A data plan that names an EQL type takes a scope and a binding too.
     `TargetResolver` receives them after the field's label, and
     `TargetError::Extended` is removed. Under the same scope and binding,
     a data plan and a derived record write the same terms, and each
     opens the other's values. A Go struct with an `encrypt_into` field
     seals through `cipher.Scope(..).Bind(..)`.
-- **Tracked in.** Issue #1658 is open. Pull request #1659, open, closes it. Issue #1668 is open for order queries from a field reference. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
+- **Tracked in.** Issue #1658 is open. Pull request #1659, open, closes it. Issue #1668 is for order queries from a field reference. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release with `ContextFromField` must come before the `eql-bindings` release that uses it.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
     the new API, including order queries;

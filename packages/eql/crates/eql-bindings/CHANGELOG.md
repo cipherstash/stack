@@ -27,6 +27,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the `JsonTreeToken` to send. The call also returns the key that
     decrypts what the query returns.
   - The stored format and the SQL do not change.
+  `JsonSubtreeKey` of its parent's path, and opens
+  (`DecryptSource<JsonPlaintext>`) to the child's value. It is checked
+  against the parent as Stack Encrypt's `JsonSubtreeKey::open_child`
+  checks it. A child with members of its own does not open alone: read it
+  through `JsonTreeSubtree`. The stored format and the SQL do not change.
+- **Order queries from a field reference** (#1668). The field reference of a
+  field typed with an ordered EQL v4 type has `lt`, `lte`, `gt` and `gte`:
+  `EncryptedMember::AGE.gt(30).encrypt(&keyset)` returns the type's query
+  twin (`IntegerOrdQuery`, `DateOrdOreQuery`, …). This covers every
+  producible `…Ord`, `…OrdOpe` and `…OrdOre` type. `TextOrd`, `TextOrdOpe`
+  and `TextOrdOre` answer `eq` too. `TextSearch` and `TextSearchOre` answer
+  `eq`, the orderings and `matches`. Each query is the one a data plan
+  derives for a field that names the type, for the same operator and value,
+  and binds as the twin's query domain. A block ORE term carries a random
+  nonce, so its bytes differ between derivations, and it compares equal.
+  - A twin that requires several terms carries all of them whatever the
+    operator: a `TextOrd` query derives both its `hm` and its `op` for the
+    one value, since `eql_v4.query_text_ord` requires both. A text search
+    twin's terms are optional, so its query carries only the term of the
+    index that answers the operator. No EQL SQL and no stored form changes.
+  - `TwinIndex` takes a third type parameter, the indexes whose terms the
+    twin carries. It defaults to the answering index, so
+    `TwinIndex<Equality, TextEqQuery>` is unchanged. `TextOrd` answers
+    `op::Lt` through `TwinIndex<Ope, TextOrdQuery, (Equality, Ope)>`.
+  - `QueryTwin<T>` is implemented for an order term (`OpeTerm<S>`,
+    `OreBlockTerm<S>`), for a pair `(Hmac256, OpeTerm<String>)` or
+    `(Hmac256, OreBlockTerm<String>)`, and, for a twin whose terms are
+    optional, once per term.
+  - No type answers `between` from a field reference, as a data plan
+    answers no `between` on an EQL type.
 
 - **A `JsonTreeDocument` field is queried from its field reference** (#1459,
   #1687). As a field of a derived record, a `JsonTreeDocument` (and an

@@ -19,7 +19,7 @@ use eql_bindings::v4::answers::ANSWERS;
 use eql_bindings::v4::plaintext::{Date, Decimal, Timestamp};
 use eql_bindings::v4::text::{TextEq, TextMatch, TextMatchQuery};
 use eql_bindings::v4::{
-    bigint, date, double, integer, numeric, real, smallint, timestamp, DomainType,
+    bigint, date, double, integer, numeric, real, smallint, text, timestamp, DomainType,
 };
 use eql_bindings::Identifier;
 use serde::Serialize;
@@ -28,6 +28,7 @@ use stack_encrypt::op::{Probabilistic, Stats};
 use stack_encrypt::target::Scope;
 use stack_encrypt::{ContextPiece, Encrypt, Error, KeysetCipher, NonEmpty, StackCipher};
 use stack_encrypt::{DecryptSource, EncryptInto, EncryptTarget};
+use std::cmp::Ordering;
 use zeroize::Zeroize;
 
 type Cipher = StackCipher<common::RecordingKeySource>;
@@ -88,16 +89,45 @@ fn typed_bytes<Q: Serialize + DomainType>(query: &Q) -> (Vec<u8>, String) {
 /// named after its type, and the name is its column.
 #[derive(Zeroize)]
 struct Columns {
-    text_eq: String,
     integer_eq: i32,
+    integer_ord_ore: i32,
+    integer_ord: i32,
+    integer_ord_ope: i32,
     smallint_eq: i16,
-    date_eq: Date,
-    timestamp_eq: Timestamp,
-    numeric_eq: Decimal,
+    smallint_ord_ore: i16,
+    smallint_ord: i16,
+    smallint_ord_ope: i16,
     bigint_eq: i64,
-    real_eq: f32,
-    double_eq: f64,
+    bigint_ord_ore: i64,
+    bigint_ord: i64,
+    bigint_ord_ope: i64,
+    date_eq: Date,
+    date_ord_ore: Date,
+    date_ord: Date,
+    date_ord_ope: Date,
+    timestamp_eq: Timestamp,
+    timestamp_ord_ore: Timestamp,
+    timestamp_ord: Timestamp,
+    timestamp_ord_ope: Timestamp,
+    numeric_eq: Decimal,
+    numeric_ord_ore: Decimal,
+    numeric_ord: Decimal,
+    numeric_ord_ope: Decimal,
+    text_eq: String,
     text_match: String,
+    text_ord_ore: String,
+    text_ord: String,
+    text_ord_ope: String,
+    text_search_ore: String,
+    text_search: String,
+    real_eq: f32,
+    real_ord_ore: f32,
+    real_ord: f32,
+    real_ord_ope: f32,
+    double_eq: f64,
+    double_ord_ore: f64,
+    double_ord: f64,
+    double_ord_ope: f64,
 }
 
 /// A record with a field of each EQL type that answers an operator, in the
@@ -105,16 +135,45 @@ struct Columns {
 #[derive(EncryptTarget)]
 #[stash(struct = Columns, scope = "users")]
 struct EncryptedColumns {
-    text_eq: TextEq,
     integer_eq: integer::IntegerEq,
+    integer_ord_ore: integer::IntegerOrdOre,
+    integer_ord: integer::IntegerOrd,
+    integer_ord_ope: integer::IntegerOrdOpe,
     smallint_eq: smallint::SmallintEq,
-    date_eq: date::DateEq,
-    timestamp_eq: timestamp::TimestampEq,
-    numeric_eq: numeric::NumericEq,
+    smallint_ord_ore: smallint::SmallintOrdOre,
+    smallint_ord: smallint::SmallintOrd,
+    smallint_ord_ope: smallint::SmallintOrdOpe,
     bigint_eq: bigint::BigintEq,
+    bigint_ord_ore: bigint::BigintOrdOre,
+    bigint_ord: bigint::BigintOrd,
+    bigint_ord_ope: bigint::BigintOrdOpe,
+    date_eq: date::DateEq,
+    date_ord_ore: date::DateOrdOre,
+    date_ord: date::DateOrd,
+    date_ord_ope: date::DateOrdOpe,
+    timestamp_eq: timestamp::TimestampEq,
+    timestamp_ord_ore: timestamp::TimestampOrdOre,
+    timestamp_ord: timestamp::TimestampOrd,
+    timestamp_ord_ope: timestamp::TimestampOrdOpe,
+    numeric_eq: numeric::NumericEq,
+    numeric_ord_ore: numeric::NumericOrdOre,
+    numeric_ord: numeric::NumericOrd,
+    numeric_ord_ope: numeric::NumericOrdOpe,
+    text_eq: text::TextEq,
+    text_match: text::TextMatch,
+    text_ord_ore: text::TextOrdOre,
+    text_ord: text::TextOrd,
+    text_ord_ope: text::TextOrdOpe,
+    text_search_ore: text::TextSearchOre,
+    text_search: text::TextSearch,
     real_eq: real::RealEq,
+    real_ord_ore: real::RealOrdOre,
+    real_ord: real::RealOrd,
+    real_ord_ope: real::RealOrdOpe,
     double_eq: double::DoubleEq,
-    text_match: TextMatch,
+    double_ord_ore: double::DoubleOrdOre,
+    double_ord: double::DoubleOrd,
+    double_ord_ope: double::DoubleOrdOpe,
 }
 
 /// The row each query below asks for. The float values are the ones whose
@@ -122,17 +181,93 @@ struct EncryptedColumns {
 /// nanoseconds below a microsecond, which both paths truncate alike.
 fn columns() -> Columns {
     Columns {
-        text_eq: "bob@example.com".into(),
         integer_eq: -42,
+        integer_ord_ore: -42,
+        integer_ord: -42,
+        integer_ord_ope: -42,
         smallint_eq: -7,
-        date_eq: common::date_of_days(19_000),
-        timestamp_eq: common::timestamp_of(1_700_000_000, 123_456_789),
-        numeric_eq: common::decimal_of(-1_234_567, 4),
+        smallint_ord_ore: -7,
+        smallint_ord: -7,
+        smallint_ord_ope: -7,
         bigint_eq: i64::MIN + 1,
-        real_eq: -0.0,
-        double_eq: f64::NAN,
+        bigint_ord_ore: i64::MIN + 1,
+        bigint_ord: i64::MIN + 1,
+        bigint_ord_ope: i64::MIN + 1,
+        date_eq: common::date_of_days(19_000),
+        date_ord_ore: common::date_of_days(19_000),
+        date_ord: common::date_of_days(19_000),
+        date_ord_ope: common::date_of_days(19_000),
+        timestamp_eq: common::timestamp_of(1_700_000_000, 123_456_789),
+        timestamp_ord_ore: common::timestamp_of(1_700_000_000, 123_456_789),
+        timestamp_ord: common::timestamp_of(1_700_000_000, 123_456_789),
+        timestamp_ord_ope: common::timestamp_of(1_700_000_000, 123_456_789),
+        numeric_eq: common::decimal_of(-1_234_567, 4),
+        numeric_ord_ore: common::decimal_of(-1_234_567, 4),
+        numeric_ord: common::decimal_of(-1_234_567, 4),
+        numeric_ord_ope: common::decimal_of(-1_234_567, 4),
+        text_eq: "bob@example.com".into(),
         text_match: "alice".into(),
+        text_ord_ore: "bob@example.com".into(),
+        text_ord: "bob@example.com".into(),
+        text_ord_ope: "bob@example.com".into(),
+        text_search_ore: "alice smith".into(),
+        text_search: "alice smith".into(),
+        real_eq: -0.0,
+        real_ord_ore: -0.0,
+        real_ord: -0.0,
+        real_ord_ope: -0.0,
+        double_eq: f64::NAN,
+        double_ord_ore: f64::NAN,
+        double_ord: f64::NAN,
+        double_ord_ope: f64::NAN,
     }
+}
+
+/// The stored value of the field `column` of `stored`, as JSON.
+fn stored_field(stored: &EncryptedColumns, column: &str) -> serde_json::Value {
+    match column {
+        "integer_eq" => serde_json::to_value(&stored.integer_eq),
+        "integer_ord_ore" => serde_json::to_value(&stored.integer_ord_ore),
+        "integer_ord" => serde_json::to_value(&stored.integer_ord),
+        "integer_ord_ope" => serde_json::to_value(&stored.integer_ord_ope),
+        "smallint_eq" => serde_json::to_value(&stored.smallint_eq),
+        "smallint_ord_ore" => serde_json::to_value(&stored.smallint_ord_ore),
+        "smallint_ord" => serde_json::to_value(&stored.smallint_ord),
+        "smallint_ord_ope" => serde_json::to_value(&stored.smallint_ord_ope),
+        "bigint_eq" => serde_json::to_value(&stored.bigint_eq),
+        "bigint_ord_ore" => serde_json::to_value(&stored.bigint_ord_ore),
+        "bigint_ord" => serde_json::to_value(&stored.bigint_ord),
+        "bigint_ord_ope" => serde_json::to_value(&stored.bigint_ord_ope),
+        "date_eq" => serde_json::to_value(&stored.date_eq),
+        "date_ord_ore" => serde_json::to_value(&stored.date_ord_ore),
+        "date_ord" => serde_json::to_value(&stored.date_ord),
+        "date_ord_ope" => serde_json::to_value(&stored.date_ord_ope),
+        "timestamp_eq" => serde_json::to_value(&stored.timestamp_eq),
+        "timestamp_ord_ore" => serde_json::to_value(&stored.timestamp_ord_ore),
+        "timestamp_ord" => serde_json::to_value(&stored.timestamp_ord),
+        "timestamp_ord_ope" => serde_json::to_value(&stored.timestamp_ord_ope),
+        "numeric_eq" => serde_json::to_value(&stored.numeric_eq),
+        "numeric_ord_ore" => serde_json::to_value(&stored.numeric_ord_ore),
+        "numeric_ord" => serde_json::to_value(&stored.numeric_ord),
+        "numeric_ord_ope" => serde_json::to_value(&stored.numeric_ord_ope),
+        "text_eq" => serde_json::to_value(&stored.text_eq),
+        "text_match" => serde_json::to_value(&stored.text_match),
+        "text_ord_ore" => serde_json::to_value(&stored.text_ord_ore),
+        "text_ord" => serde_json::to_value(&stored.text_ord),
+        "text_ord_ope" => serde_json::to_value(&stored.text_ord_ope),
+        "text_search_ore" => serde_json::to_value(&stored.text_search_ore),
+        "text_search" => serde_json::to_value(&stored.text_search),
+        "real_eq" => serde_json::to_value(&stored.real_eq),
+        "real_ord_ore" => serde_json::to_value(&stored.real_ord_ore),
+        "real_ord" => serde_json::to_value(&stored.real_ord),
+        "real_ord_ope" => serde_json::to_value(&stored.real_ord_ope),
+        "double_eq" => serde_json::to_value(&stored.double_eq),
+        "double_ord_ore" => serde_json::to_value(&stored.double_ord_ore),
+        "double_ord" => serde_json::to_value(&stored.double_ord),
+        "double_ord_ope" => serde_json::to_value(&stored.double_ord_ope),
+        other => panic!("`EncryptedColumns` has no field {other}"),
+    }
+    .unwrap()
 }
 
 /// A field query for one operator, as what the tests compare: the bytes
@@ -144,19 +279,27 @@ struct Typed {
     input: ValueFrame,
 }
 
-/// The query `$field reference.$operator(value)` under `$keyset`, where
-/// `value` is the row's `$field`, with the same value as the data path's
-/// input. The row is built twice: a plaintext is not `Clone`.
+/// The query `$reference.<operator>(value)` under `$keyset`, for the
+/// operator named at run time among those the type answers: each of
+/// `$exact` returns the twin, and `matches` a `MatchTwin` of it, whose twin
+/// is what binds. `value` is the row's `$field`, and the data path's input
+/// is the same value. The row is built again for each: a plaintext is not
+/// `Clone`. An arm compiles only if the type implements `op::Answers` for
+/// its operator.
 macro_rules! typed {
-    ($keyset:expr, $reference:expr, $operator:ident, $field:ident) => {{
+    ($keyset:expr, $operator:expr, $reference:expr, $field:ident, [$($exact:ident),*] $(, $matches:ident)?) => {{
         let reference = $reference;
-        let query = reference
-            .$operator(columns().$field)
-            .encrypt($keyset)
-            .await
-            .unwrap();
+        let bytes = match $operator {
+            $(stringify!($exact) => typed_bytes(
+                &reference.$exact(columns().$field).encrypt($keyset).await.unwrap(),
+            ),)*
+            $(stringify!($matches) => typed_bytes(
+                reference.$matches(columns().$field).encrypt($keyset).await.unwrap().twin(),
+            ),)?
+            other => panic!("{} answers no `{other}` from a field reference", stringify!($field)),
+        };
         Typed {
-            bytes: typed_bytes(&query),
+            bytes,
             column: reference.name(),
             input: frame(columns().$field),
         }
@@ -165,35 +308,267 @@ macro_rules! typed {
 
 /// The field query for each operator a type answers, for the value the
 /// row `columns()` holds: one arm per row of `ANSWERS`, so a type that
-/// starts answering an operator fails here until it has one, and an arm
-/// compiles only if the type implements `op::Answers` for it.
+/// starts answering an operator fails here until it has one.
 async fn typed_and_input(keyset: &Keyset<'_>, name: &str, operator: &str) -> Typed {
-    let row = columns();
-    match (name, operator) {
-        ("TextEq", "eq") => typed!(keyset, EncryptedColumns::TEXT_EQ, eq, text_eq),
-        ("IntegerEq", "eq") => typed!(keyset, EncryptedColumns::INTEGER_EQ, eq, integer_eq),
-        ("SmallintEq", "eq") => typed!(keyset, EncryptedColumns::SMALLINT_EQ, eq, smallint_eq),
-        ("DateEq", "eq") => typed!(keyset, EncryptedColumns::DATE_EQ, eq, date_eq),
-        ("TimestampEq", "eq") => {
-            typed!(keyset, EncryptedColumns::TIMESTAMP_EQ, eq, timestamp_eq)
-        }
-        ("NumericEq", "eq") => typed!(keyset, EncryptedColumns::NUMERIC_EQ, eq, numeric_eq),
-        ("BigintEq", "eq") => typed!(keyset, EncryptedColumns::BIGINT_EQ, eq, bigint_eq),
-        ("RealEq", "eq") => typed!(keyset, EncryptedColumns::REAL_EQ, eq, real_eq),
-        ("DoubleEq", "eq") => typed!(keyset, EncryptedColumns::DOUBLE_EQ, eq, double_eq),
-        ("TextMatch", "matches") => {
-            let reference = EncryptedColumns::TEXT_MATCH;
-            let query: MatchTwin<TextMatchQuery> = reference
-                .matches(row.text_match.clone())
-                .encrypt(keyset)
-                .await
-                .unwrap();
-            Typed {
-                bytes: typed_bytes(query.twin()),
-                column: reference.name(),
-                input: frame(row.text_match),
-            }
-        }
+    match name {
+        "IntegerEq" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::INTEGER_EQ,
+            integer_eq,
+            [eq]
+        ),
+        "IntegerOrdOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::INTEGER_ORD_ORE,
+            integer_ord_ore,
+            [lt, lte, gt, gte]
+        ),
+        "IntegerOrd" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::INTEGER_ORD,
+            integer_ord,
+            [lt, lte, gt, gte]
+        ),
+        "IntegerOrdOpe" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::INTEGER_ORD_OPE,
+            integer_ord_ope,
+            [lt, lte, gt, gte]
+        ),
+        "SmallintEq" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::SMALLINT_EQ,
+            smallint_eq,
+            [eq]
+        ),
+        "SmallintOrdOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::SMALLINT_ORD_ORE,
+            smallint_ord_ore,
+            [lt, lte, gt, gte]
+        ),
+        "SmallintOrd" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::SMALLINT_ORD,
+            smallint_ord,
+            [lt, lte, gt, gte]
+        ),
+        "SmallintOrdOpe" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::SMALLINT_ORD_OPE,
+            smallint_ord_ope,
+            [lt, lte, gt, gte]
+        ),
+        "BigintEq" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::BIGINT_EQ,
+            bigint_eq,
+            [eq]
+        ),
+        "BigintOrdOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::BIGINT_ORD_ORE,
+            bigint_ord_ore,
+            [lt, lte, gt, gte]
+        ),
+        "BigintOrd" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::BIGINT_ORD,
+            bigint_ord,
+            [lt, lte, gt, gte]
+        ),
+        "BigintOrdOpe" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::BIGINT_ORD_OPE,
+            bigint_ord_ope,
+            [lt, lte, gt, gte]
+        ),
+        "DateEq" => typed!(keyset, operator, EncryptedColumns::DATE_EQ, date_eq, [eq]),
+        "DateOrdOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::DATE_ORD_ORE,
+            date_ord_ore,
+            [lt, lte, gt, gte]
+        ),
+        "DateOrd" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::DATE_ORD,
+            date_ord,
+            [lt, lte, gt, gte]
+        ),
+        "DateOrdOpe" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::DATE_ORD_OPE,
+            date_ord_ope,
+            [lt, lte, gt, gte]
+        ),
+        "TimestampEq" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TIMESTAMP_EQ,
+            timestamp_eq,
+            [eq]
+        ),
+        "TimestampOrdOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TIMESTAMP_ORD_ORE,
+            timestamp_ord_ore,
+            [lt, lte, gt, gte]
+        ),
+        "TimestampOrd" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TIMESTAMP_ORD,
+            timestamp_ord,
+            [lt, lte, gt, gte]
+        ),
+        "TimestampOrdOpe" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TIMESTAMP_ORD_OPE,
+            timestamp_ord_ope,
+            [lt, lte, gt, gte]
+        ),
+        "NumericEq" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::NUMERIC_EQ,
+            numeric_eq,
+            [eq]
+        ),
+        "NumericOrdOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::NUMERIC_ORD_ORE,
+            numeric_ord_ore,
+            [lt, lte, gt, gte]
+        ),
+        "NumericOrd" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::NUMERIC_ORD,
+            numeric_ord,
+            [lt, lte, gt, gte]
+        ),
+        "NumericOrdOpe" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::NUMERIC_ORD_OPE,
+            numeric_ord_ope,
+            [lt, lte, gt, gte]
+        ),
+        "TextEq" => typed!(keyset, operator, EncryptedColumns::TEXT_EQ, text_eq, [eq]),
+        "TextMatch" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TEXT_MATCH,
+            text_match,
+            [],
+            matches
+        ),
+        "TextOrdOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TEXT_ORD_ORE,
+            text_ord_ore,
+            [eq, lt, lte, gt, gte]
+        ),
+        "TextOrd" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TEXT_ORD,
+            text_ord,
+            [eq, lt, lte, gt, gte]
+        ),
+        "TextOrdOpe" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TEXT_ORD_OPE,
+            text_ord_ope,
+            [eq, lt, lte, gt, gte]
+        ),
+        "TextSearchOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TEXT_SEARCH_ORE,
+            text_search_ore,
+            [eq, lt, lte, gt, gte],
+            matches
+        ),
+        "TextSearch" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::TEXT_SEARCH,
+            text_search,
+            [eq, lt, lte, gt, gte],
+            matches
+        ),
+        "RealEq" => typed!(keyset, operator, EncryptedColumns::REAL_EQ, real_eq, [eq]),
+        "RealOrdOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::REAL_ORD_ORE,
+            real_ord_ore,
+            [lt, lte, gt, gte]
+        ),
+        "RealOrd" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::REAL_ORD,
+            real_ord,
+            [lt, lte, gt, gte]
+        ),
+        "RealOrdOpe" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::REAL_ORD_OPE,
+            real_ord_ope,
+            [lt, lte, gt, gte]
+        ),
+        "DoubleEq" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::DOUBLE_EQ,
+            double_eq,
+            [eq]
+        ),
+        "DoubleOrdOre" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::DOUBLE_ORD_ORE,
+            double_ord_ore,
+            [lt, lte, gt, gte]
+        ),
+        "DoubleOrd" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::DOUBLE_ORD,
+            double_ord,
+            [lt, lte, gt, gte]
+        ),
+        "DoubleOrdOpe" => typed!(
+            keyset,
+            operator,
+            EncryptedColumns::DOUBLE_ORD_OPE,
+            double_ord_ope,
+            [lt, lte, gt, gte]
+        ),
         _ => panic!(
             "{name} answers `{operator}` from a field reference: give it a field in \
              `EncryptedColumns` and an arm here, with the input the data path is given"
@@ -203,16 +578,11 @@ async fn typed_and_input(keyset: &Keyset<'_>, name: &str, operator: &str) -> Typ
 
 /// The operators each type answers from a field reference are exactly the
 /// ones the data path answers for a field that names it, type by type, in
-/// order, for every type whose twin a field query assembles: one term,
-/// from an equality or a match index. A producible type whose twin needs
-/// an order term, or several terms, is the one gap: the data path answers
-/// it and a field reference answers nothing, and this holds the gap to exactly
-/// those types, so a type with an equality or match twin cannot drop out
-/// unseen. The typed impls and `ANSWERS` are generated from one rule, so
-/// this is what holds that rule to the engine's.
+/// order: the equality, match and ordered types, and text search. The
+/// typed impls and `ANSWERS` are generated from one rule, so this is what
+/// holds that rule to the engine's.
 #[test]
 fn a_field_reference_answers_what_the_data_path_answers() {
-    let mut gap = Vec::new();
     // A document's field reference answers through its JSON queries
     // (`JsonQueries`), not `Answers`: tests/json_tree_field_references.rs holds them
     // to the data path.
@@ -230,123 +600,75 @@ fn a_field_reference_answers_what_the_data_path_answers() {
             .find(|(name, _)| *name == target.name)
             .map(|(_, ops)| ops.to_vec())
             .unwrap_or_default();
-        let one_term = target.indexes.len() <= 1
-            && target
-                .indexes
-                .iter()
-                .all(|index| matches!(*index, "eq" | "match"));
-        if one_term {
-            assert_eq!(typed, data, "{}", target.name);
-        } else {
-            assert!(
-                typed.is_empty(),
-                "{}: a field reference answers nothing yet",
-                target.name
-            );
-            if !data.is_empty() {
-                gap.push(target.name);
-            }
-        }
+        assert_eq!(
+            typed, data,
+            "{}: a field reference answers what the data path answers",
+            target.name
+        );
     }
-    // The gap today: every producible ordered type (OPE and block ORE), and
-    // text search, whose twins carry an order term among their three. A type
-    // leaves this list when a field query assembles its twin, and its
-    // answers are then held to the data path's above.
-    assert_eq!(
-        gap,
-        [
-            "IntegerOrdOre",
-            "IntegerOrd",
-            "IntegerOrdOpe",
-            "SmallintOrdOre",
-            "SmallintOrd",
-            "SmallintOrdOpe",
-            "BigintOrdOre",
-            "BigintOrd",
-            "BigintOrdOpe",
-            "DateOrdOre",
-            "DateOrd",
-            "DateOrdOpe",
-            "TimestampOrdOre",
-            "TimestampOrd",
-            "TimestampOrdOpe",
-            "NumericOrdOre",
-            "NumericOrd",
-            "NumericOrdOpe",
-            "TextOrdOre",
-            "TextOrd",
-            "TextOrdOpe",
-            "TextSearchOre",
-            "TextSearch",
-            "RealOrdOre",
-            "RealOrd",
-            "RealOrdOpe",
-            "DoubleOrdOre",
-            "DoubleOrd",
-            "DoubleOrdOpe",
-        ]
-    );
     for (name, _) in ANSWERS {
         assert!(eql_targets::target(name).is_some(), "{name} is a target");
     }
-    assert!(!ANSWERS.is_empty());
+    let ordered = ANSWERS
+        .iter()
+        .filter(|(_, ops)| ops.contains(&"lt"))
+        .count();
+    assert_eq!(
+        ordered, 29,
+        "every ordered type and both text search types answer the orderings"
+    );
 }
 
 /// Every field query binds the bytes the data path derives for the same
-/// column, operator and value, under the same query domain. The twin
-/// names the column the field reference names: the record's scope, then the field.
+/// column, operator and value, under the same query domain, save a block
+/// ORE term's nonce. The twin names the column the field reference names:
+/// the record's scope, then the field.
 #[tokio::test]
 async fn every_field_query_is_the_data_paths_query() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
+    let mut block_ore = 0;
     for (name, operators) in ANSWERS {
         for operator in *operators {
             let typed = typed_and_input(&keyset, name, operator).await;
             let op = Op::parse(operator).unwrap();
-            let data = data_term(&cipher, name, typed.column, op, typed.input).await;
-            assert_eq!(typed.bytes, data, "{name} {operator}");
+            let (bytes, domain) = data_term(&cipher, name, typed.column, op, typed.input).await;
+            assert_eq!(typed.bytes.1, domain, "{name} {operator}: the query domain");
             let json: serde_json::Value = serde_json::from_slice(&typed.bytes.0).unwrap();
+            let data: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            if json.get("ob").is_some() {
+                block_ore += 1;
+            } else {
+                assert_eq!(typed.bytes.0, bytes, "{name} {operator}: the bytes");
+            }
+            assertions::same_terms(name, operator, &json, &data);
             assert_eq!(json["v"], 4, "{name}");
             assert_eq!(
                 json["i"],
-                serde_json::json!({"t": "users", "c": typed.column})
+                serde_json::json!({"t": "users", "c": typed.column}),
+                "{name}: the field reference's column"
             );
         }
     }
+    assert!(block_ore > 0, "some queries carry a block ORE term");
 }
 
-/// Every field query carries the term of the row its record stored: the
-/// `hm` of an exact type's field, and a filter the stored `bf` of a match
-/// type's field contains.
+/// Every field query carries the terms of the row its record stored for
+/// the same value, so an equality finds the row and an ordering compares
+/// equal to it: the `hm` and `op` of the row, a block ORE term that compares
+/// equal to the row's, and for a match, a filter the stored `bf` contains.
 #[tokio::test]
 async fn every_field_query_is_the_term_of_the_row_its_record_stored() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let stored: EncryptedColumns = columns().encrypt_into(&keyset).await.unwrap();
-    let field = |column: &str| {
-        match column {
-            "text_eq" => serde_json::to_value(&stored.text_eq),
-            "integer_eq" => serde_json::to_value(&stored.integer_eq),
-            "smallint_eq" => serde_json::to_value(&stored.smallint_eq),
-            "date_eq" => serde_json::to_value(&stored.date_eq),
-            "timestamp_eq" => serde_json::to_value(&stored.timestamp_eq),
-            "numeric_eq" => serde_json::to_value(&stored.numeric_eq),
-            "bigint_eq" => serde_json::to_value(&stored.bigint_eq),
-            "real_eq" => serde_json::to_value(&stored.real_eq),
-            "double_eq" => serde_json::to_value(&stored.double_eq),
-            "text_match" => serde_json::to_value(&stored.text_match),
-            other => panic!("`EncryptedColumns` has no field {other}"),
-        }
-        .unwrap()
-    };
     for (name, operators) in ANSWERS {
         for operator in *operators {
             let typed = typed_and_input(&keyset, name, operator).await;
             let query: serde_json::Value = serde_json::from_slice(&typed.bytes.0).unwrap();
-            let row = field(typed.column);
+            let row = stored_field(&stored, typed.column);
             assert_eq!(query["i"], row["i"], "{name}: the same column");
             match *operator {
-                "eq" => assert_eq!(query["hm"], row["hm"], "{name}: the stored term"),
                 "matches" => {
                     let stored = row["bf"].as_array().unwrap();
                     let asked = query["bf"].as_array().unwrap();
@@ -356,9 +678,70 @@ async fn every_field_query_is_the_term_of_the_row_its_record_stored() {
                         "{name}: the stored filter contains the query's"
                     );
                 }
+                "eq" | "lt" | "lte" | "gt" | "gte" => {
+                    assertions::carries_the_rows_terms(name, operator, &query, &row)
+                }
                 other => panic!("{name} answers `{other}`: say what its query finds here"),
             }
         }
+    }
+}
+
+mod assertions {
+    use super::*;
+
+    /// Two query values for one value carry the same terms: the same JSON,
+    /// save a block ORE `ob`, which carries a random nonce, so two
+    /// derivations of one value differ in their bytes and compare equal.
+    pub(super) fn same_terms(
+        name: &str,
+        operator: &str,
+        typed: &serde_json::Value,
+        data: &serde_json::Value,
+    ) {
+        let (mut typed, mut data) = (typed.clone(), data.clone());
+        let typed_ob = typed.as_object_mut().unwrap().remove("ob");
+        let data_ob = data.as_object_mut().unwrap().remove("ob");
+        match (&typed_ob, &data_ob) {
+            (Some(typed_ob), Some(data_ob)) => assert_eq!(
+                common::ob_order(name, typed_ob, data_ob),
+                Ordering::Equal,
+                "{name} {operator}: the block ORE terms of one value compare equal"
+            ),
+            (None, None) => {}
+            _ => panic!("{name} {operator}: one path carries a block ORE term, the other none"),
+        }
+        assert_eq!(typed, data, "{name} {operator}: the same terms");
+    }
+
+    /// An exact query of the row's own value carries the row's terms: each
+    /// of `hm` and `op` it carries is the row's, and a block ORE `ob`
+    /// compares equal to the row's. It carries at least one.
+    pub(super) fn carries_the_rows_terms(
+        name: &str,
+        operator: &str,
+        query: &serde_json::Value,
+        row: &serde_json::Value,
+    ) {
+        let mut carried = 0;
+        for key in ["hm", "op"] {
+            if let Some(term) = query.get(key) {
+                carried += 1;
+                assert_eq!(term, &row[key], "{name} {operator}: the row's `{key}`");
+            }
+        }
+        if let Some(term) = query.get("ob") {
+            carried += 1;
+            assert_eq!(
+                common::ob_order(name, term, &row["ob"]),
+                Ordering::Equal,
+                "{name} {operator}: compares equal to the row's `ob`"
+            );
+        }
+        assert!(
+            carried > 0,
+            "{name} {operator}: the query carries a term: {query}"
+        );
     }
 }
 

@@ -126,3 +126,48 @@ pub fn decimal_of(mantissa: i128, scale: u32) -> eql_bindings::v4::plaintext::De
         mantissa, scale,
     ))
 }
+
+/// The order of two block ORE `ob` terms of the type `name`, by ore-rs's
+/// comparator, which EQL v4's comparator agrees with
+/// (tests/v4_ore_block.rs).
+#[allow(dead_code)]
+pub fn ob_order(name: &str, a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
+    fn compare<T: stack_encrypt::Orderable>(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+        let a = stack_encrypt::sem::OreBlockTerm::<T>::try_from(a).unwrap();
+        let b = stack_encrypt::sem::OreBlockTerm::<T>::try_from(b).unwrap();
+        a.compare(&b).expect("terms of one index compare")
+    }
+    let unhex = |term: &serde_json::Value| -> Vec<u8> {
+        let hex = term.as_str().expect("an `ob` term is one hex string");
+        (0..hex.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
+            .collect()
+    };
+    let (a, b) = (unhex(a), unhex(b));
+    let family = [
+        "Integer",
+        "Smallint",
+        "Bigint",
+        "Date",
+        "Timestamp",
+        "Numeric",
+        "Text",
+        "Real",
+        "Double",
+    ]
+    .into_iter()
+    .find(|family| name.starts_with(family))
+    .unwrap_or_else(|| panic!("{name}: no family"));
+    match family {
+        "Integer" => compare::<i32>(&a, &b),
+        "Smallint" => compare::<i16>(&a, &b),
+        "Bigint" => compare::<i64>(&a, &b),
+        "Date" => compare::<eql_bindings::v4::plaintext::Date>(&a, &b),
+        "Timestamp" => compare::<eql_bindings::v4::plaintext::Timestamp>(&a, &b),
+        "Numeric" => compare::<eql_bindings::v4::plaintext::Decimal>(&a, &b),
+        "Text" => compare::<String>(&a, &b),
+        "Real" => compare::<f32>(&a, &b),
+        _ => compare::<f64>(&a, &b),
+    }
+}
